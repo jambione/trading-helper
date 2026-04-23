@@ -1,0 +1,30 @@
+2026-03-29 17:33:03  CRITICAL  Fatal error: {"message": "unauthorized."}
+Traceback (most recent call last):
+  File "C:\Users\jonmb\AppData\Roaming\Python\Python311\site-packages\alpaca\common\rest.py", line 198, in _one_request
+    response.raise_for_status()
+  File "C:\Users\jonmb\AppData\Roaming\Python\Python311\site-packages\requests\models.py", line 1026, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://paper-api.alpaca.markets/v2/account
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\jonmb\Desktop\Claude\alpaca_trading_bot\alpaca_stocks_bot.py", line 531, in <module>
+    trading_client, data_client = connect_alpaca(CONFIG)
+                                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jonmb\Desktop\Claude\alpaca_trading_bot\alpaca_stocks_bot.py", line 240, in connect_alpaca
+    account = trading.get_account()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jonmb\AppData\Roaming\Python\Python311\site-packages\alpaca\trading\client.py", line 474, in get_account
+    response = self.get("/account")
+               ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jonmb\AppData\Roaming\Python\Python311\site-packages\alpaca\common\rest.py", line 225, in get
+    return self._request("GET", path, data, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jonmb\AppData\Roaming\Python\Python311\site-packages\alpaca\common\rest.py", line 131, in _request
+    return self._one_request(method, url, opts, retry)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jonmb\AppData\Roaming\Python\Python311\site-packages\alpaca\common\rest.py", line 207, in _one_request
+    raise APIError(error, http_error)
+alpaca.common.exceptions.APIError: {"message": "unauthorized."}
+
