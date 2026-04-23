@@ -1,4 +1,5 @@
-import csv
+import argparse
+import json
 import pyaudiowpatch as pyaudio
 import numpy as np
 import time
@@ -124,30 +125,68 @@ def normalize_transcript(text: str) -> str:
 
     return text
 
-# ========================= TICKER LOG =========================
-TICKER_LOG_FILE = Path(__file__).parent / "ticker_log.csv"
-_logged_tickers: set = set()
+# ========================= LOG FILES =========================
+TICKER_LOG_FILE     = Path(__file__).parent / "transcribed_stocks.txt"
+TRANSCRIPT_LOG_FILE = Path(__file__).parent / "transcript.log"
 _log_lock = threading.Lock()
+
+# Load existing tickers into memory so we don't re-add ones from a previous session
+_logged_tickers: set = set()
+try:
+    _existing = TICKER_LOG_FILE.read_text(encoding="utf-8").strip()
+    if _existing:
+        _logged_tickers = {t.strip().upper() for t in _existing.split(",") if t.strip()}
+except Exception:
+    pass
+
+# Truncate transcript log at session start so dashboard shows only current run
+try:
+    TRANSCRIPT_LOG_FILE.write_text("")
+except Exception:
+    pass
+
+
+def _write_transcript_log(line: str):
+    ts = time.strftime("%H:%M:%S")
+    try:
+        with open(TRANSCRIPT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{ts} {line}\n")
+    except Exception:
+        pass
 
 
 def log_ticker(ticker: str):
-    """Write ticker to CSV log (deduplicated within the current session)."""
+    """Add ticker to in-memory set and persist the full list to transcribed_stocks.txt."""
     ticker = ticker.upper()
     with _log_lock:
         if ticker in _logged_tickers:
             return
         _logged_tickers.add(ticker)
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        snapshot = sorted(_logged_tickers)
     try:
-        with open(TICKER_LOG_FILE, "a", newline="") as f:
-            csv.writer(f).writerow([ts, ticker])
-        print(f"[LOG] {ticker}")
+        TICKER_LOG_FILE.write_text(",".join(snapshot), encoding="utf-8")
+        msg = f"[LOG] {ticker}"
+        print(msg)
+        _write_transcript_log(msg)
     except Exception as e:
         print(f"[LOG] Could not write ticker log: {e}")
 
 
 # ========================= CONFIG =========================
-DEVICE_INDEX   = None          # set to an int to skip the prompt
+# --device N from CLI, else read from bot_config.json, else prompt
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--device", type=int, default=None)
+_args, _ = _parser.parse_known_args()
+
+_cfg_file = Path(__file__).parent.parent / "bot_config.json"
+_saved_device = None
+if _cfg_file.exists():
+    try:
+        _saved_device = json.loads(_cfg_file.read_text()).get("device_index")
+    except Exception:
+        pass
+
+DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
 LLM_MODEL      = "gemma2:2b"
 LLM_INTERVAL   = 2.0          # min seconds between LLM calls
@@ -306,7 +345,8 @@ def transcription_worker():
                 if not text or len(text.split()) < 4:
                     continue
 
-                print(f"[{time.strftime('%H:%M:%S')}] 🎤 {text}")
+                print(f"[{time.strftime('%H:%M:%S')}] {text}")
+                _write_transcript_log(text)
 
                 # Add to rolling window and send combined context to LLM
                 transcript_window.append(text)

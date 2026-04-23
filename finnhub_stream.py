@@ -186,30 +186,7 @@ def fetch_realtime_quote(api_key: str, ticker: str) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def fetch_candles(api_key: str, ticker: str, timeframe: str = "5", count: int = 100) -> dict:
-    """Fetch candlestick data from Finnhub REST API."""
-    try:
-        import urllib.request
-        url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution={timeframe}&count={count}&token={api_key}"
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read())
-            if data.get("s") == "ok":
-                return {
-                    "ok": True,
-                    "ticker": ticker,
-                    "t": data.get("t", []),  # Timestamps
-                    "o": data.get("o", []),  # Open
-                    "h": data.get("h", []),  # High
-                    "l": data.get("l", []),  # Low
-                    "c": data.get("c", []),  # Close
-                    "v": data.get("v", []),  # Volume
-                }
-            return {"ok": False, "error": "No data"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-def get_latest_price(ticker: str) -> float | None:
+def get_latest_price(ticker: str) -> "float | None":
     """Return the last received trade price for a ticker from the active Finnhub stream."""
     with FINNHUB_STATE.lock:
         data = FINNHUB_STATE.prices.get(ticker)
@@ -218,41 +195,10 @@ def get_latest_price(ticker: str) -> float | None:
         return float(data.get("price", 0)) if data.get("price") is not None else None
 
 
-def fetch_bars(api_key: str, ticker: str, cfg: dict) -> "pd.DataFrame | None":
-    """Fetch candles from Finnhub and convert to a pandas DataFrame."""
-    try:
-        import pandas as pd
-        tf_map = {
-            "1Min": "1",
-            "5Min": "5",
-            "15Min": "15",
-            "1Hour": "60",
-            "1Day": "D",
-        }
-        resolution = tf_map.get(cfg.get("bar_timeframe", "5Min"), "5")
-        count = min(int(cfg.get("bar_count", 300)), 1000)
-        result = fetch_candles(api_key, ticker, resolution, count)
-        if not result.get("ok"):
-            return None
-        df = pd.DataFrame({
-            "open": result["o"],
-            "high": result["h"],
-            "low": result["l"],
-            "close": result["c"],
-            "volume": result["v"],
-        }, index=pd.to_datetime(result["t"], unit="s", utc=True))
-        df.index.name = "timestamp"
-        return df
-    except Exception:
-        return None
-
-
 # ── Module Exports ─────────────────────────────────────────────
 __all__ = [
     "FINNHUB_STATE",
     "start_finnhub_stream",
     "fetch_realtime_quote",
-    "fetch_candles",
     "get_latest_price",
-    "fetch_bars",
 ]

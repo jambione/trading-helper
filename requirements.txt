@@ -3,12 +3,8 @@ uvicorn
 alpaca-py
 pandas
 numpy
+scipy
 websockets
-requests
-beautifulsoup4
-finvizfinance
-yfinance
-mss
-opencv-python
-easyocr
-pyyaml
+faster-whisper
+pyaudiowpatch
+ollama
