@@ -5,13 +5,14 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                  from './api.js';
-import { subscribe, set }               from './store.js';
-import { init as initTranscription }    from './transcription.js';
-import { init as initTickers }          from './tickers.js';
-import { init as initTradingView }      from './tradingview.js';
-import { init as initConfig, open as openConfig } from './config.js';
-import * as controls                    from './controls.js';
+import { connect, on }                           from './api.js';
+import { subscribe, set }                        from './store.js';
+import { init as initTranscription }             from './transcription.js';
+import { init as initTickers }                   from './tickers.js';
+import { init as initTradingView }               from './tradingview.js';
+import { init as initConfig, open as openConfig }from './config.js';
+import * as controls                             from './controls.js';
+import * as notifications                        from './notifications.js';
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -21,19 +22,29 @@ document.addEventListener('DOMContentLoaded', () => {
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initTradingView(document.querySelector('[data-panel="tradingview"]')); }  catch (e) { console.error('[app] initTradingView', e); }
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
+  notifications.init();
 
   // ── Wire button actions ──────────────────────────────────────
-  const txBtn    = document.querySelector('[data-tx-btn]');
-  const scanBtn  = document.querySelector('[data-scan-btn]');
-  const clrWlBtn = document.querySelector('[data-clear-watchlist-btn]');
-  const clrTxBtn = document.querySelector('[data-clear-transcript-btn]');
-  const settBtn  = document.querySelector('[data-settings-btn]');
+  const txBtn     = document.querySelector('[data-tx-btn]');
+  const scanBtn   = document.querySelector('[data-scan-btn]');
+  const clrWlBtn  = document.querySelector('[data-clear-watchlist-btn]');
+  const clrTxBtn  = document.querySelector('[data-clear-transcript-btn]');
+  const settBtn   = document.querySelector('[data-settings-btn]');
+  const notifBtn  = document.querySelector('[data-notif-btn]');
 
   txBtn    ?.addEventListener('click', () => controls.toggleTranscriber(txBtn));
   scanBtn  ?.addEventListener('click', () => controls.triggerScan(scanBtn));
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
+
+  notifBtn?.addEventListener('click', async () => {
+    const granted = await notifications.requestPermission();
+    _syncNotifBtn(notifBtn, granted);
+  });
+
+  // Reflect already-granted state from a previous session
+  _syncNotifBtn(notifBtn, notifications.isEnabled());
 
   // ── WebSocket → store (snapshot ingest) ──────────────────────
   on('message', snap => {
@@ -60,13 +71,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const scanPill = document.querySelector('[data-scan-pill]');
 
   subscribe('scan_running', running => {
-    if (!scanPill) return;
+    // Pill and button are independent — guard them separately
+    if (scanPill) {
+      if (running) {
+        scanPill.textContent = '◉ Scanning';
+        scanPill.className   = 'scan-pill scan-pill--scanning';
+      }
+      // Pill text on completion is set by the scan_ts subscriber below
+    }
+
     if (running) {
-      scanPill.textContent = '◉ Scanning';
-      scanPill.className   = 'scan-pill scan-pill--scanning';
       if (scanBtn) scanBtn.disabled = true;
     } else {
-      // Pill resets to last-scan text when scan_ts updates; restore button now.
       if (scanBtn) {
         scanBtn.textContent = '↺ Scan Now';
         scanBtn.disabled    = false;
@@ -75,9 +91,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   subscribe('scan_ts', ts => {
-    if (!scanPill || !ts) return;
-    scanPill.textContent = `Last scan ${ts}`;
-    scanPill.className   = 'scan-pill';
+    if (!ts) return;
+    if (scanPill) {
+      scanPill.textContent = `Last scan ${ts}`;
+      scanPill.className   = 'scan-pill';
+    }
+    const el = document.querySelector('[data-statusbar-scan]');
+    if (el) el.textContent = ts;
   });
 
   // ── Store → transcription controls ──────────────────────────
@@ -92,8 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
       lbl.className   = `tx-label${tx.running ? ' tx-label--on' : ''}`;
     }
 
-    // Sync button label/class from confirmed WS state.
-    // disabled state is owned by controls.js (always released in finally).
+    // Only sync label when button is not mid-click (disabled = in-flight action)
     if (txBtn && !txBtn.disabled) {
       txBtn.textContent = tx.running ? 'Stop Transcription' : 'Start Transcription';
       txBtn.className   = `tx-btn ${tx.running ? 'tx-btn--stop' : 'tx-btn--start'}`;
@@ -109,11 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Store → status bar ───────────────────────────────────────
-  subscribe('scan_ts', ts => {
-    const el = document.querySelector('[data-statusbar-scan]');
-    if (el && ts) el.textContent = ts;
-  });
-
   subscribe('tickers', rows => {
     const el = document.querySelector('[data-statusbar-tickers]');
     if (el) el.textContent = rows.length || '—';
@@ -122,3 +136,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── Boot ─────────────────────────────────────────────────────
   connect();
 });
+
+// ── Helpers ───────────────────────────────────────────────────
+
+function _syncNotifBtn(btn, granted) {
+  if (!btn) return;
+  if (granted) {
+    btn.textContent = '🔔 Alerts On';
+    btn.classList.add('btn--alert-on');
+    btn.title = 'BUY signal alerts enabled';
+  } else {
+    btn.textContent = '🔔 Alerts';
+    btn.classList.remove('btn--alert-on');
+    btn.title = 'Click to enable BUY signal alerts';
+  }
+}

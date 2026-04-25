@@ -237,11 +237,24 @@ def _scan_loop():
 
 # ── Price polling ─────────────────────────────────────────────────────────────
 
+_known_tickers: set = set()
+
+
 def _price_loop():
+    global _known_tickers
     while True:
         try:
             tickers = load_tickers()
-            client  = STATE.data_client
+            current = set(tickers)
+
+            # Auto-scan when the transcriber adds tickers we haven't seen before
+            new = current - _known_tickers
+            if new and not STATE.scan_running:
+                log.info(f"[PRICE] New tickers {new} — triggering auto-scan")
+                threading.Thread(target=run_scan, daemon=True, name="scan-auto").start()
+            _known_tickers = current
+
+            client = STATE.data_client
             if tickers and client:
                 prices = _api.get_latest_trade_prices(client, tickers, STATE.cfg)
                 ts     = datetime.now(ET).strftime("%H:%M:%S")
