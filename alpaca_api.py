@@ -137,13 +137,13 @@ def get_latest_trade_price(data_client, ticker: str, cfg: dict = None) -> Option
 
     @retry_with_backoff(max_retries=3, base_wait=1.0)
     def _fetch():
-        from alpaca.data.requests import StockLatestBarRequest
-        resp = data_client.get_stock_latest_bar(StockLatestBarRequest(
+        from alpaca.data.requests import StockLatestTradeRequest
+        resp = data_client.get_stock_latest_trade(StockLatestTradeRequest(
             symbol_or_symbols=ticker,
             **_get_feed_arg(cfg)
         ))
-        bar = resp.get(ticker)
-        return float(bar.close) if bar else None
+        trade = resp.get(ticker)
+        return float(trade.price) if trade else None
 
     try:
         return _fetch()
@@ -158,17 +158,17 @@ def get_latest_trade_prices(data_client, tickers: list, cfg: dict = None) -> dic
 
     @retry_with_backoff(max_retries=3, base_wait=1.0)
     def _fetch():
-        from alpaca.data.requests import StockLatestBarRequest
-        resp = data_client.get_stock_latest_bar(StockLatestBarRequest(
+        from alpaca.data.requests import StockLatestTradeRequest
+        resp = data_client.get_stock_latest_trade(StockLatestTradeRequest(
             symbol_or_symbols=tickers,
             **_get_feed_arg(cfg)
         ))
         results = {}
         for t in tickers:
             try:
-                bar = resp.get(t)
-                if bar is not None and getattr(bar, "close", None) is not None:
-                    results[t] = float(bar.close)
+                trade = resp.get(t)
+                if trade is not None and getattr(trade, "price", None) is not None:
+                    results[t] = float(trade.price)
             except Exception:
                 continue
         return results

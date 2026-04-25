@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('transcription/transcribe_action.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -u transcription/transcribe_action.py --device 10)",
+      "Bash(cat transcription/transcriber_err.log)",
+      "Bash(cat transcription/transcript.log)",
+      "Bash(where python *)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(python -c \"import faster_whisper; print\\('ok'\\)\")",
+      "Bash(timeout 10 python -u transcription/transcribe_action.py --device 17)"
+    ]
+  }
+}

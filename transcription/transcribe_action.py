@@ -4,67 +4,15 @@ import pyaudiowpatch as pyaudio
 import numpy as np
 import time
 import re
-import subprocess
-import urllib.request
-import ollama
 import threading
 from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
 from queue import Queue, Full
-from collections import deque
 from pathlib import Path
-
-
-# ========================= OLLAMA STARTUP CHECK =========================
-
-def ensure_ollama_running(timeout: int = 20):
-    """
-    Ping the Ollama API. If it's not responding, launch `ollama serve`
-    and wait up to `timeout` seconds for it to become ready.
-    """
-    url = "http://localhost:11434/api/tags"
-
-    def is_ready() -> bool:
-        try:
-            urllib.request.urlopen(url, timeout=2)
-            return True
-        except Exception:
-            return False
-
-    if is_ready():
-        print("✅ Ollama already running.\n")
-        return
-
-    print("⚡ Ollama not detected — starting ollama serve...")
-    try:
-        subprocess.Popen(
-            ["ollama", "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,  # no console popup on Windows
-        )
-    except Exception as e:
-        print(f"❌ Could not start ollama serve: {e}")
-        print("   Make sure Ollama is installed: https://ollama.com/download")
-        raise SystemExit(1)
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if is_ready():
-            print("✅ Ollama ready.\n")
-            return
-        time.sleep(0.5)
-
-    print(f"❌ Ollama did not respond within {timeout}s — aborting.")
-    raise SystemExit(1)
-
-
-ensure_ollama_running()
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
 
-# NATO phonetic alphabet → letter mapping
 _NATO = {
     "alpha": "A", "bravo": "B", "charlie": "C", "delta": "D",
     "echo": "E", "foxtrot": "F", "golf": "G", "hotel": "H",
@@ -75,49 +23,23 @@ _NATO = {
     "x-ray": "X", "yankee": "Y", "zulu": "Z",
 }
 
-# Pre-compiled pattern: 2–5 consecutive NATO words (case-insensitive)
 _nato_word = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
-_NATO_PATTERN = re.compile(
-    rf"(?i)\b{_nato_word}(?:[ \t]+{_nato_word}){{1,4}}\b"
-)
+_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:[ \t]+{_nato_word}){{1,4}}\b")
 
 
 def normalize_transcript(text: str) -> str:
-    """
-    Collapses all spelled-out ticker formats into solid uppercase strings
-    before the text is printed or sent to the LLM.
-
-      NATO phonetic    Charlie Oscar Sierra        →  COS
-                       Alpha Alpha Papa Lima       →  AAPL
-                       Tango Sierra Lima Alpha     →  TSLA
-
-      Dot-separated    U.S.A.R.  →  USAR
-                       A.A.P.L.  →  AAPL
-                       N.V.D.A   →  NVDA  (no trailing dot)
-
-      Hyphen-separated F-C-H-L   →  FCHL
-                       T-S-L-A   →  TSLA
-    """
-    # ── NATO phonetic alphabet ───────────────────────────────────────────────
     def collapse_nato(m: re.Match) -> str:
-        words   = m.group(0).lower().split()
-        letters = "".join(_NATO.get(w, "") for w in words)
-        if 2 <= len(letters) <= 5:
-            return letters
-        return m.group(0)   # leave unchanged if out of ticker-length range
+        letters = "".join(_NATO.get(w, "") for w in m.group(0).lower().split())
+        return letters if 2 <= len(letters) <= 5 else m.group(0)
 
     text = _NATO_PATTERN.sub(collapse_nato, text)
 
-    # ── Dot-separated: U.S.A.R. or N.V.D.A ─────────────────────────────────
     def collapse_dots(m: re.Match) -> str:
         letters = m.group(0).replace(".", "").upper()
-        if 3 <= len(letters) <= 5:   # require 3+ to avoid collapsing "U.S."
-            return letters
-        return m.group(0)
+        return letters if 3 <= len(letters) <= 5 else m.group(0)
 
     text = re.sub(r'(?<!\w)(?:[A-Za-z]\.){2,5}', collapse_dots, text)
 
-    # ── Hyphen-separated: F-C-H-L or T-S-L-A ───────────────────────────────
     def collapse_hyphens(m: re.Match) -> str:
         return m.group(0).replace("-", "").upper()
 
@@ -125,38 +47,101 @@ def normalize_transcript(text: str) -> str:
 
     return text
 
-# ========================= LOG FILES =========================
-TICKER_LOG_FILE     = Path(__file__).parent / "transcribed_stocks.txt"
-TRANSCRIPT_LOG_FILE = Path(__file__).parent / "transcript.log"
-_log_lock = threading.Lock()
 
-# Load existing tickers into memory so we don't re-add ones from a previous session
+# ========================= TICKER EXTRACTION =========================
+
+# Uppercase tokens Whisper produces that are not stock tickers
+_STOP_WORDS = {
+    "A", "I", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "IF", "IN", "IS",
+    "IT", "ME", "MY", "NO", "OF", "OK", "ON", "OR", "SO", "TO", "UP", "US",
+    "WE", "AND", "ARE", "BUT", "CAN", "DID", "FOR", "GET", "GOT", "HAD",
+    "HAS", "HIM", "HIS", "HOW", "HER", "ITS", "NEW", "NOT", "NOW", "OLD",
+    "ONE", "OUR", "OUT", "SAY", "SEE", "THE", "TOO", "TWO", "WAS", "WHO",
+    "WHY", "YET", "YOU", "ALL", "ANY", "LET", "PUT", "RUN", "SET", "ADD",
+    "BUY", "HIT", "TRY", "USE", "WAY", "DAY", "MAY", "OWN", "ASK", "ACT",
+    "ALSO", "BACK", "BEEN", "CALL", "COME", "DOES", "DOWN", "EACH", "EVEN",
+    "FROM", "GIVE", "GOOD", "HAVE", "HERE", "HIGH", "HOLD", "INTO", "JUST",
+    "KEEP", "KNOW", "LAST", "LIKE", "LIVE", "LONG", "LOOK", "MADE", "MAKE",
+    "MANY", "MORE", "MOST", "MOVE", "MUCH", "MUST", "NEXT", "ONLY", "OPEN",
+    "OVER", "PAST", "PLAY", "REAL", "SAME", "SELL", "SHOW", "SIDE", "SOME",
+    "STOP", "SUCH", "TAKE", "THAN", "THAT", "THEM", "THEN", "THEY", "THIS",
+    "TIME", "VERY", "WANT", "WELL", "WHAT", "WHEN", "WILL", "WITH", "WORK",
+    "YOUR", "SAID", "SAYS", "TOLD", "TELL", "TALK", "WENT", "GOES", "BOTH",
+    "ONCE", "UPON", "SOON", "EVER", "YEAR", "WEEK", "DAYS", "LETS", "PUTS",
+    # financial/market terms that aren't tickers
+    "ETF", "IPO", "CEO", "CFO", "COO", "CTO", "SEC", "FDA", "FED", "GDP",
+    "CPI", "EPS", "ATH", "ATL", "RSI", "SMA", "EMA", "MACD", "BEAR", "BULL",
+    "CALL", "PUTS", "SPAC", "REIT", "BOND", "DEBT", "CASH", "RATE", "RISK",
+    "LOSS", "GAIN", "NEWS", "CNBC", "NYSE", "NASDAQ",
+    # months / days
+    "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
+    "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
+}
+
+# Spoken company names → ticker (Whisper capitalizes proper nouns)
+_NAME_TO_TICKER = {
+    "apple": "AAPL", "tesla": "TSLA", "nvidia": "NVDA", "amazon": "AMZN",
+    "google": "GOOGL", "alphabet": "GOOGL", "microsoft": "MSFT",
+    "meta": "META", "facebook": "META", "netflix": "NFLX",
+    "palantir": "PLTR", "coinbase": "COIN", "robinhood": "HOOD",
+    "uber": "UBER", "lyft": "LYFT", "airbnb": "ABNB", "snowflake": "SNOW",
+    "salesforce": "CRM", "oracle": "ORCL", "intel": "INTC", "amd": "AMD",
+    "qualcomm": "QCOM", "broadcom": "AVGO", "micron": "MU",
+    "jpmorgan": "JPM", "goldman": "GS", "morgan stanley": "MS",
+    "bank of america": "BAC", "wells fargo": "WFC", "citigroup": "C",
+    "visa": "V", "mastercard": "MA", "paypal": "PYPL", "square": "SQ",
+    "shopify": "SHOP", "zoom": "ZM", "spotify": "SPOT", "pinterest": "PINS",
+    "snap": "SNAP", "twitter": "X", "discord": "DSCO",
+    "berkshire": "BRK", "johnson": "JNJ", "pfizer": "PFE", "moderna": "MRNA",
+    "unitedhealth": "UNH", "humana": "HUM", "cigna": "CI",
+    "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP",
+    "boeing": "BA", "lockheed": "LMT", "raytheon": "RTX",
+    "walmart": "WMT", "target": "TGT", "costco": "COST", "home depot": "HD",
+    "disney": "DIS", "comcast": "CMCSA", "verizon": "VZ", "att": "T",
+    "ford": "F", "general motors": "GM", "rivian": "RIVN", "lucid": "LCID",
+}
+
+_TICKER_RE = re.compile(r'\b([A-Z]{2,5})\b')
+_NAME_RE   = {name: re.compile(rf'\b{re.escape(name)}\b', re.I)
+              for name in _NAME_TO_TICKER}
+
+
+def extract_tickers(text: str) -> list:
+    found = []
+    seen  = set()
+
+    # All-caps tokens — spoken as ticker letters or caught by normalize_transcript
+    for m in _TICKER_RE.finditer(text):
+        t = m.group(1)
+        if t not in _STOP_WORDS and t not in seen:
+            found.append(t)
+            seen.add(t)
+
+    # Spoken company names
+    lower = text.lower()
+    for name, ticker in _NAME_TO_TICKER.items():
+        if ticker not in seen and _NAME_RE[name].search(lower):
+            found.append(ticker)
+            seen.add(ticker)
+
+    return found
+
+
+# ========================= TICKER LOG =========================
+
+TICKER_LOG_FILE = Path(__file__).parent / "wb_watchlist.json"
+_log_lock       = threading.Lock()
+
 _logged_tickers: set = set()
 try:
-    _existing = TICKER_LOG_FILE.read_text(encoding="utf-8").strip()
-    if _existing:
-        _logged_tickers = {t.strip().upper() for t in _existing.split(",") if t.strip()}
+    _existing = json.loads(TICKER_LOG_FILE.read_text(encoding="utf-8"))
+    if isinstance(_existing, list):
+        _logged_tickers = {t.strip().upper() for t in _existing if isinstance(t, str) and t.strip()}
 except Exception:
     pass
-
-# Truncate transcript log at session start so dashboard shows only current run
-try:
-    TRANSCRIPT_LOG_FILE.write_text("")
-except Exception:
-    pass
-
-
-def _write_transcript_log(line: str):
-    ts = time.strftime("%H:%M:%S")
-    try:
-        with open(TRANSCRIPT_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{ts} {line}\n")
-    except Exception:
-        pass
 
 
 def log_ticker(ticker: str):
-    """Add ticker to in-memory set and persist the full list to transcribed_stocks.txt."""
     ticker = ticker.upper()
     with _log_lock:
         if ticker in _logged_tickers:
@@ -164,16 +149,14 @@ def log_ticker(ticker: str):
         _logged_tickers.add(ticker)
         snapshot = sorted(_logged_tickers)
     try:
-        TICKER_LOG_FILE.write_text(",".join(snapshot), encoding="utf-8")
-        msg = f"[LOG] {ticker}"
-        print(msg)
-        _write_transcript_log(msg)
+        TICKER_LOG_FILE.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+        print(f"[LOG] {ticker}")
     except Exception as e:
-        print(f"[LOG] Could not write ticker log: {e}")
+        print(f"[LOG] Could not write watchlist: {e}")
 
 
 # ========================= CONFIG =========================
-# --device N from CLI, else read from bot_config.json, else prompt
+
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--device", type=int, default=None)
 _args, _ = _parser.parse_known_args()
@@ -188,98 +171,77 @@ if _cfg_file.exists():
 
 DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
-LLM_MODEL      = "gemma2:2b"
-LLM_INTERVAL   = 2.0          # min seconds between LLM calls
-
-WHISPER_MODEL     = "small"   # "tiny" = faster, "small" = more accurate
-WHISPER_BEAM_SIZE = 3         # 1 = greedy (fastest); 3 = good balance; 5 = most accurate
+WHISPER_MODEL     = "small"
+WHISPER_BEAM_SIZE = 3
 
 SAMPLE_RATE       = 44100
 TARGET_SR         = 16000
-CHUNK_DURATION    = 4.5       # seconds per Whisper chunk
-OVERLAP           = 1.2       # seconds of overlap between chunks
-SILENCE_THRESHOLD = 0.009     # RMS below this → skip (checked before resampling)
+CHUNK_DURATION    = 4.5
+OVERLAP           = 1.2
+SILENCE_THRESHOLD = 0.009
 
-# Rolling transcript context — how many recent lines to send to the LLM together.
-# More lines = better context for ticker detection at the cost of a slightly longer prompt.
-TRANSCRIPT_CONTEXT_LINES = 5
-
-# ── Pre-computed constants ────────────────────────────────────────────────────
-CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)     # 72 000
-OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)            # 19 200
-ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES     # 52 800
+CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
+OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
+ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES
 READ_FRAMES     = int(SAMPLE_RATE * 0.5)
 
-# 44 100 → 16 000  simplified ratio (GCD=100 → 441/160)
 RESAMPLE_UP   = 160
 RESAMPLE_DOWN = 441
 
+
 # ========================= MODEL INIT =========================
+
 print(f"Loading Whisper '{WHISPER_MODEL}' model...")
 whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-print("✅ Whisper ready.\n")
-print(f"Loading LLM: {LLM_MODEL}...")
-print("✅ LLM ready.\n")
+print("Whisper ready.")
+
 
 # ========================= AUDIO SETUP =========================
+
 p = pyaudio.PyAudio()
 
 print("Available audio input devices:")
 for i in range(p.get_device_count()):
     dev = p.get_device_info_by_index(i)
     if dev["maxInputChannels"] > 0:
-        tag = " ← LOOPBACK (system audio)" if "loopback" in dev["name"].lower() else ""
+        tag = " <- LOOPBACK" if "loopback" in dev["name"].lower() else ""
         print(f"  {i:2d}: {dev['name']}{tag}")
 
 if DEVICE_INDEX is None:
     try:
-        choice = input(
-            "\nEnter device index (loopback = system audio, mic = AirPods/built-in; "
-            "press Enter for default): "
-        ).strip()
+        choice = input("\nEnter device index (press Enter for default): ").strip()
         DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
     except Exception:
         DEVICE_INDEX = p.get_default_input_device_info()["index"]
 
-print(f"✅ Using audio device index: {DEVICE_INDEX}\n")
+print(f"Using audio device index: {DEVICE_INDEX}")
 
-stream = p.open(
-    format=pyaudio.paFloat32,
-    channels=2,
-    rate=SAMPLE_RATE,
-    input=True,
-    input_device_index=DEVICE_INDEX,
-    frames_per_buffer=READ_FRAMES,
-)
+try:
+    stream = p.open(
+        format=pyaudio.paFloat32,
+        channels=2,
+        rate=SAMPLE_RATE,
+        input=True,
+        input_device_index=DEVICE_INDEX,
+        frames_per_buffer=READ_FRAMES,
+    )
+except OSError as e:
+    print(f"ERROR: Could not open device {DEVICE_INDEX}: {e}")
+    print("Update device_index in bot_config.json to one of the devices listed above.")
+    p.terminate()
+    raise SystemExit(1)
+
 
 # ========================= SHARED STATE =========================
-audio_queue    = Queue(maxsize=12)
-llm_queue      = Queue(maxsize=8)
 
-running = threading.Event()
+audio_queue = Queue(maxsize=12)
+running     = threading.Event()
 running.set()
-
-_llm_time_lock = threading.Lock()
-_last_llm_time = 0.0
-
-
-def _get_llm_time() -> float:
-    with _llm_time_lock:
-        return _last_llm_time
-
-
-def _set_llm_time(t: float):
-    global _last_llm_time
-    with _llm_time_lock:
-        _last_llm_time = t
 
 
 # ========================= WORKER: AUDIO CAPTURE =========================
+
 def audio_capture():
-    """
-    Reads audio → stereo-to-mono → silence gate → resample to 16 kHz → enqueue.
-    Silence is gated BEFORE resampling to skip the expensive resample on quiet frames.
-    """
     local_buf = np.empty(0, dtype=np.float32)
 
     while running.is_set():
@@ -288,7 +250,6 @@ def audio_capture():
             raw   = np.frombuffer(data, dtype=np.float32)
             mono  = raw.reshape(-1, 2).mean(axis=1)
 
-            # Gate on raw mono — skip resampling entirely if silent
             if np.sqrt(np.mean(mono ** 2)) < SILENCE_THRESHOLD:
                 continue
 
@@ -301,22 +262,16 @@ def audio_capture():
                 try:
                     audio_queue.put_nowait(chunk)
                 except Full:
-                    pass  # drop rather than stall the audio thread
+                    pass
 
         except Exception:
             time.sleep(0.05)
 
 
 # ========================= WORKER: TRANSCRIPTION =========================
+
 def transcription_worker():
-    """
-    Accumulates audio chunks, runs Whisper, and maintains a rolling buffer of
-    recent transcript lines. Every new line triggers an LLM check using the
-    last TRANSCRIPT_CONTEXT_LINES lines combined — giving the LLM enough
-    context to reliably detect tickers that appear across multiple short chunks.
-    """
-    local_buf         = np.empty(0, dtype=np.float32)
-    transcript_window = deque(maxlen=TRANSCRIPT_CONTEXT_LINES)
+    local_buf = np.empty(0, dtype=np.float32)
 
     while running.is_set():
         try:
@@ -345,82 +300,26 @@ def transcription_worker():
                 if not text or len(text.split()) < 4:
                     continue
 
-                print(f"[{time.strftime('%H:%M:%S')}] {text}")
-                _write_transcript_log(text)
+                print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
-                # Add to rolling window and send combined context to LLM
-                transcript_window.append(text)
-                if time.time() - _get_llm_time() > LLM_INTERVAL:
-                    combined = " ".join(transcript_window)
-                    try:
-                        llm_queue.put_nowait(combined)
-                    except Full:
-                        pass
+                for ticker in extract_tickers(text):
+                    log_ticker(ticker)
 
         except Exception:
             continue
 
 
-# ========================= WORKER: LLM CLASSIFIER =========================
-def llm_worker():
-    """
-    Extracts stock ticker symbols from combined transcript context and logs them.
-    Receives the last N transcript lines joined as one string.
-    """
-    while running.is_set():
-        try:
-            text = llm_queue.get(timeout=1.0)
-            if text is None:
-                break
-
-            if time.time() - _get_llm_time() < LLM_INTERVAL:
-                continue
-
-            prompt = (
-                "You are a stock ticker extractor.\n"
-                "Only respond if a clear stock ticker symbol (2-5 uppercase letters "
-                "like AAPL, TSLA, UNH, BLD, QXO, CM) is mentioned.\n\n"
-                "Reply with EXACTLY one line and nothing else:\n"
-                '- The ticker symbol (e.g. "AAPL") if a stock is clearly mentioned\n'
-                '- "NO ACTION" otherwise\n\n'
-                f"Text: {text}"
-            )
-
-            resp = ollama.chat(
-                model=LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.0, "num_ctx": 512, "num_predict": 20},
-            )
-
-            _set_llm_time(time.time())
-
-            result = resp["message"]["content"].strip().upper()
-            # Accept plain ticker (e.g. "AAPL") or old-style "WATCH AAPL"
-            parts = result.split()
-            ticker = None
-            if len(parts) == 1 and parts[0] not in ("NO", "NO ACTION"):
-                ticker = parts[0]
-            elif len(parts) >= 2 and parts[0] in ("BUY", "SELL", "WATCH"):
-                ticker = parts[1]
-
-            if ticker and 2 <= len(ticker) <= 5 and ticker.isalpha():
-                log_ticker(ticker)
-
-        except Exception:
-            pass
-
-
 # ========================= START =========================
+
 threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     threading.Thread(target=transcription_worker, daemon=True, name="transcription"),
-    threading.Thread(target=llm_worker,           daemon=True, name="llm"),
 ]
 for t in threads:
     t.start()
 
-print("🎙️  Listening — tickers will be logged to:", TICKER_LOG_FILE)
-print("   Press Ctrl+C to stop.\n")
+print(f"Listening - tickers will be saved to: {TICKER_LOG_FILE}")
+print("Press Ctrl+C to stop.")
 
 try:
     while running.is_set():
@@ -428,13 +327,12 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down...")
     running.clear()
-    for q in (audio_queue, llm_queue):
-        try:
-            q.put_nowait(None)
-        except Full:
-            pass
+    try:
+        audio_queue.put_nowait(None)
+    except Full:
+        pass
 
 stream.stop_stream()
 stream.close()
 p.terminate()
-print("✅ Stopped cleanly.")
+print("Stopped.")

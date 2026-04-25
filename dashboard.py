@@ -26,9 +26,7 @@ import alpaca_api as _api
 
 ET                 = ZoneInfo("America/New_York")
 PORT               = 8888
-TICKER_LOG         = Path("transcription/transcribed_stocks.txt")
-TRANSCRIPT_LOG     = Path("transcription/transcript.log")
-TRANSCRIBER_ERR    = Path("transcription/transcriber_err.log")
+TICKER_LOG         = Path("transcription/wb_watchlist.json")
 TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -39,13 +37,14 @@ log = logging.getLogger(__name__)
 
 class _State:
     def __init__(self):
-        self.lock         = threading.Lock()
-        self.cfg          = load_config()
-        self.data_client  = None
-        self.tickers: dict      = {}   # ticker → signal/price dict
-        self.transcriber        = None # subprocess.Popen or None
-        self.scan_ts            = ""
-        self.scan_running       = False
+        self.lock              = threading.Lock()
+        self.cfg               = load_config()
+        self.data_client       = None
+        self.tickers: dict     = {}   # ticker → signal/price dict
+        self.transcriber       = None # subprocess.Popen or None
+        self.transcript_lines  = []   # in-memory only, never written to disk
+        self.scan_ts           = ""
+        self.scan_running      = False
 
     @property
     def transcriber_running(self) -> bool:
@@ -60,58 +59,74 @@ def load_tickers() -> list:
     if not TICKER_LOG.exists():
         return []
     try:
-        text = TICKER_LOG.read_text(encoding="utf-8").strip()
-        return [t.strip().upper() for t in text.split(",") if t.strip()] if text else []
+        import json as _json
+        data = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
+        return [t.strip().upper() for t in data if isinstance(t, str) and t.strip()]
     except Exception:
         return []
 
 
 def clear_ticker_log():
     try:
-        TICKER_LOG.write_text("")
+        import json as _json
+        TICKER_LOG.write_text(_json.dumps([]), encoding="utf-8")
     except Exception:
         pass
     with STATE.lock:
         STATE.tickers.clear()
 
 
-# ── Transcript log ────────────────────────────────────────────────────────────
-
-def read_transcript_lines(n: int = 30) -> list:
-    lines = []
-    for path in (TRANSCRIPT_LOG, TRANSCRIBER_ERR):
-        if path.exists():
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace").strip()
-                if text:
-                    lines.extend(text.splitlines())
-            except Exception:
-                pass
-    return lines[-n:]
-
-
 # ── Transcription subprocess ──────────────────────────────────────────────────
+
+_MAX_TRANSCRIPT_LINES = 200
+
+
+def _stdout_reader(proc: subprocess.Popen):
+    """Read subprocess stdout line-by-line into STATE.transcript_lines (in memory only)."""
+    try:
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if not line:
+                continue
+            with STATE.lock:
+                STATE.transcript_lines.append(line)
+                if len(STATE.transcript_lines) > _MAX_TRANSCRIPT_LINES:
+                    STATE.transcript_lines = STATE.transcript_lines[-_MAX_TRANSCRIPT_LINES:]
+    except Exception:
+        pass
+
+
+def read_transcript_lines(n: int = 60) -> list:
+    with STATE.lock:
+        return list(STATE.transcript_lines[-n:])
+
+
+def clear_transcript():
+    with STATE.lock:
+        STATE.transcript_lines.clear()
+
 
 def start_transcriber() -> dict:
     if STATE.transcriber_running:
         return {"ok": False, "msg": "already running"}
-    args = [sys.executable, str(TRANSCRIBER_SCRIPT)]
+    clear_transcript()
+    args = [sys.executable, "-u", str(TRANSCRIBER_SCRIPT)]
     device = STATE.cfg.get("device_index")
     if device is not None:
         args += ["--device", str(int(device))]
     try:
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-        err_log = open(TRANSCRIBER_ERR, "w", encoding="utf-8")
         proc = subprocess.Popen(
             args,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=err_log,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             cwd=Path(__file__).parent,
             env=env,
         )
         with STATE.lock:
             STATE.transcriber = proc
+        threading.Thread(target=_stdout_reader, args=(proc,), daemon=True, name="tx-reader").start()
         log.info(f"[TX] Started pid={proc.pid}")
         return {"ok": True}
     except Exception as e:
@@ -312,6 +327,12 @@ async def api_clear():
     return JSONResponse({"ok": True})
 
 
+@app.post("/api/transcript/clear")
+async def api_transcript_clear():
+    await asyncio.get_event_loop().run_in_executor(None, clear_transcript)
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/audio-devices")
 async def api_audio_devices():
     def _list():
@@ -373,11 +394,14 @@ async def ws_endpoint(ws: WebSocket):
         while True:
             snap = await asyncio.get_event_loop().run_in_executor(None, _snapshot)
             await ws.send_json(snap)
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
     except (WebSocketDisconnect, Exception):
         pass
 
 
 if __name__ == "__main__":
-    print(f"\n  Signal Scanner  —  http://localhost:{PORT}\n  Ctrl+C to stop\n")
+    import webbrowser
+    url = f"http://localhost:{PORT}"
+    print(f"\n  Signal Scanner  —  {url}\n  Ctrl+C to stop\n")
+    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
     uvicorn.run("dashboard:app", host="0.0.0.0", port=PORT, log_level="warning")
