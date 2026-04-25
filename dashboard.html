@@ -4,506 +4,302 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal Scanner</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; }
-
-    @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.3; } }
-    .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
-
-    @keyframes flash-green { 0% { color:#34d399; } 100% { color:inherit; } }
-    .price-flash { animation: flash-green .5s ease-out; }
-
-    #transcript-box { overflow-y:auto; }
-    #transcript-box::-webkit-scrollbar { width:3px; }
-    #transcript-box::-webkit-scrollbar-track { background:#09090b; }
-    #transcript-box::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:2px; }
-  </style>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <!-- TradingView widget library — loaded once, used by tradingview.js -->
+  <script src="https://s3.tradingview.com/tv.js" defer></script>
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+<body>
 
-<!-- ── Header ───────────────────────────────────────────────────────── -->
-<header class="border-b border-zinc-800 px-5 py-3 flex items-center justify-between">
-  <div class="flex items-center gap-2.5">
-    <div class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
-    <span class="text-xs font-semibold tracking-[.15em] uppercase text-zinc-400">Signal Scanner</span>
+<!-- ═══════════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════════════════ -->
+<header class="hdr">
+
+  <div class="hdr-brand">
+    <span class="hdr-logo">◈</span>
+    <span class="hdr-title">Signal Scanner</span>
+    <div data-ws-dot class="ws-dot" title="Disconnected"></div>
   </div>
-  <div class="flex items-center gap-4">
-    <span id="scan-status" class="text-xs text-zinc-600">—</span>
-    <button onclick="openSettings()"
-      class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs transition-colors">
-      ⚙ Settings
-    </button>
+
+  <div class="hdr-center">
+    <span data-scan-pill class="scan-pill">No scan yet</span>
   </div>
+
+  <div class="hdr-actions">
+    <button data-scan-btn class="btn btn--ghost">↺ Scan Now</button>
+    <button data-settings-btn class="btn btn--ghost">⚙ Settings</button>
+  </div>
+
 </header>
 
-<!-- ── Main grid ─────────────────────────────────────────────────────── -->
-<main class="p-4 grid gap-4" style="grid-template-columns:300px 1fr; height:calc(100vh - 49px);">
+<!-- ═══════════════════════════════════════════════════════════
+     MAIN  —  3-column panel grid
+════════════════════════════════════════════════════════════════ -->
+<main class="main-grid">
 
-  <!-- Left: Transcription panel -->
-  <div class="flex flex-col gap-3 h-full min-h-0">
+  <!-- ── LEFT: Live Transcript ─────────────────────────── -->
+  <section data-panel="transcript" class="panel panel-transcript">
 
-    <!-- Status + controls -->
-    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-      <div class="flex items-center justify-between mb-4">
-        <span class="text-xs uppercase tracking-widest text-zinc-600">Transcription</span>
-        <div class="flex items-center gap-2">
-          <div id="tx-dot" class="w-2 h-2 rounded-full bg-zinc-700"></div>
-          <span id="tx-label" class="text-xs text-zinc-500">STOPPED</span>
-        </div>
-      </div>
-      <button id="tx-btn" onclick="toggleTx()"
-        class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-black text-xs font-bold transition-colors">
-        Start
-      </button>
-      <p id="tx-count" class="mt-3 text-xs text-zinc-700">0 tickers logged today</p>
-    </div>
-
-    <!-- Live transcript -->
-    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex-1 flex flex-col min-h-0">
-      <div class="text-xs uppercase tracking-widest text-zinc-600 mb-3 shrink-0">Live Transcript</div>
-      <div id="transcript-box" class="text-xs leading-relaxed flex-1 min-h-0">
-        <span class="text-zinc-700 italic">Waiting for transcription…</span>
+    <div class="panel-header">
+      <span class="panel-title">Live Transcript</span>
+      <div class="tx-status-row">
+        <div data-tx-dot class="tx-dot"></div>
+        <span data-tx-label class="tx-label">STOPPED</span>
       </div>
     </div>
 
-  </div>
-
-  <!-- Right: Ticker table -->
-  <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col">
-
-    <!-- Table controls -->
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex items-center gap-3">
-        <span class="text-xs uppercase tracking-widest text-zinc-600">Tickers</span>
-        <span id="ticker-count" class="text-xs text-zinc-700"></span>
-      </div>
-      <div class="flex gap-2">
-        <button onclick="scanNow()" id="scan-btn"
-          class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs transition-colors">
-          ↺ Scan Now
-        </button>
-        <button onclick="clearWatchlist()"
-          class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-red-950 text-zinc-500 hover:text-red-400 text-xs transition-colors">
-          Clear Watchlist
-        </button>
+    <div class="tx-controls">
+      <button data-tx-btn class="tx-btn tx-btn--start">Start Transcription</button>
+      <div class="tx-meta">
+        <span data-tx-count class="tx-count">0 tickers captured today</span>
+        <button data-clear-transcript-btn class="btn btn--ghost btn--sm">Clear</button>
       </div>
     </div>
 
-    <!-- Column headers -->
-    <div class="grid text-xs text-zinc-700 uppercase tracking-wider pb-2 border-b border-zinc-800 mb-1 px-2"
-         style="grid-template-columns:70px 80px 1fr 55px 50px 55px 90px 36px;">
-      <span>Ticker</span>
-      <span>Price</span>
-      <span>Zone Proximity</span>
-      <span>%R</span>
-      <span>RSI</span>
-      <span>Streak</span>
-      <span>Status</span>
-      <span></span>
+    <div data-transcript-box class="transcript-box">
+      <span class="tx-placeholder">Waiting for transcription…</span>
     </div>
 
-    <!-- Rows -->
-    <div id="ticker-table" class="flex-1 overflow-auto space-y-0.5">
-      <div class="text-xs text-zinc-700 italic py-8 text-center">
-        No tickers yet — start the transcriber and mention some stocks.
+  </section>
+
+  <!-- ── CENTER: Ticker Table ──────────────────────────── -->
+  <section data-panel="tickers" class="panel panel-tickers">
+
+    <div class="panel-header">
+      <div class="panel-header-left">
+        <span class="panel-title">Tickers</span>
+        <span data-ticker-count class="ticker-count"></span>
+      </div>
+      <div class="panel-header-right">
+        <button data-clear-watchlist-btn class="btn btn--ghost btn--danger btn--sm">✕ Clear Watchlist</button>
       </div>
     </div>
 
-  </div>
+    <!-- Column headers mirror .table-cols grid in CSS -->
+    <div class="table-header">
+      <div class="table-cols">
+        <div class="th">Ticker</div>
+        <div class="th">Price</div>
+        <div class="th">Zone Proximity</div>
+        <div class="th">%R</div>
+        <div class="th">RSI-2</div>
+        <div class="th">OBV</div>
+        <div class="th">Streak</div>
+        <div class="th">Signal</div>
+      </div>
+    </div>
+
+    <div data-ticker-rows class="ticker-rows">
+      <div class="table-empty">No tickers — start the transcriber and mention some stocks.</div>
+    </div>
+
+  </section>
+
+  <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
+  <section data-panel="tradingview" class="panel panel-tradingview">
+
+    <div class="panel-header">
+      <span class="panel-title">Chart</span>
+      <span data-tv-symbol class="tv-symbol-badge" style="display:none"></span>
+    </div>
+
+    <div data-tv-placeholder class="tv-placeholder">
+      <div class="tv-placeholder-icon">📈</div>
+      <div class="tv-placeholder-text">Click any ticker to open chart</div>
+      <div class="tv-placeholder-sub">Powered by TradingView</div>
+    </div>
+
+    <div data-tv-widget class="tv-widget-wrap hidden">
+      <div id="tv_chart_container"></div>
+    </div>
+
+  </section>
+
 </main>
 
-<!-- ── Settings modal ────────────────────────────────────────────────── -->
-<div id="settings-modal"
-  class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-  <div class="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-lg max-h-[90vh] overflow-auto">
+<!-- ═══════════════════════════════════════════════════════════
+     STATUS BAR
+════════════════════════════════════════════════════════════════ -->
+<footer class="status-bar">
+  <div class="status-items">
 
-    <div class="px-6 py-5 border-b border-zinc-800 flex items-center justify-between">
-      <span class="text-sm font-semibold tracking-wide">Settings</span>
-      <button onclick="closeSettings()" class="text-zinc-500 hover:text-white text-2xl leading-none">×</button>
-    </div>
+    <span class="status-item">
+      <span class="status-label">WS</span>
+      <span data-ws-dot class="ws-dot ws-dot--sm" title="WebSocket"></span>
+    </span>
 
-    <div class="p-6 space-y-6 text-sm">
+    <span class="status-divider">|</span>
 
-      <!-- Alpaca -->
-      <div>
-        <div class="text-xs uppercase tracking-widest text-zinc-600 mb-3">Alpaca API</div>
-        <div class="space-y-2">
-          <input id="s-api-key" type="password" placeholder="API Key"
-            class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 placeholder-zinc-600" />
-          <input id="s-secret-key" type="password" placeholder="Secret Key"
-            class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 placeholder-zinc-600" />
-        </div>
-      </div>
+    <span class="status-item">
+      <span class="status-label">Last scan</span>
+      <span data-statusbar-scan class="status-value">—</span>
+    </span>
 
-      <!-- Data -->
-      <div>
-        <div class="text-xs uppercase tracking-widest text-zinc-600 mb-3">Data</div>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Bar Timeframe</label>
-            <select id="s-timeframe"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500">
-              <option value="1Min">1 Min</option>
-              <option value="5Min">5 Min</option>
-              <option value="15Min">15 Min</option>
-              <option value="1Hour">1 Hour</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Bar Count</label>
-            <input id="s-bar-count" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Scan Interval (sec)</label>
-            <input id="s-scan-interval" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-          <div class="col-span-2">
-            <label class="text-xs text-zinc-500 block mb-1.5">Audio Device</label>
-            <select id="s-device-index"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500">
-              <option value="">Loading…</option>
-            </select>
-          </div>
-        </div>
-      </div>
+    <span class="status-divider">|</span>
 
-      <!-- %R Exhaustion -->
-      <div>
-        <div class="text-xs uppercase tracking-widest text-zinc-600 mb-3">Signal — %R Exhaustion (On Deck)</div>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Overbought Zone Edge <span class="text-zinc-700">(default 20)</span></label>
-            <input id="s-rte-threshold" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Min Consecutive Bars <span class="text-zinc-700">(default 2)</span></label>
-            <input id="s-rte-min-boxes" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-        </div>
-      </div>
+    <span class="status-item">
+      <span class="status-label">Tickers</span>
+      <span data-statusbar-tickers class="status-value">—</span>
+    </span>
 
-      <!-- OBV + Volume -->
-      <div>
-        <div class="text-xs uppercase tracking-widest text-zinc-600 mb-3">Signal — OBV &amp; Volume</div>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">OBV EMA Length</label>
-            <input id="s-obv-length" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Volume Surge ×</label>
-            <input id="s-vol-surge" type="number" step="0.1"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-        </div>
-      </div>
+    <span class="status-divider">|</span>
 
-      <!-- MACD -->
-      <div>
-        <div class="text-xs uppercase tracking-widest text-zinc-600 mb-3">Signal — MACD</div>
-        <div class="grid grid-cols-3 gap-3">
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Fast</label>
-            <input id="s-macd-fast" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Slow</label>
-            <input id="s-macd-slow" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-          <div>
-            <label class="text-xs text-zinc-500 block mb-1.5">Signal</label>
-            <input id="s-macd-sig" type="number"
-              class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" />
-          </div>
-        </div>
-      </div>
+    <span class="status-item">
+      <span class="status-label">Audio</span>
+      <span data-audio-status class="status-value">Stopped</span>
+    </span>
 
-      <button onclick="saveSettings()"
-        class="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl transition-colors">
-        Save Settings
-      </button>
-
-    </div>
   </div>
-</div>
 
-<script>
-  // ── State ────────────────────────────────────────────────────────
-  let state = { transcriber:{running:false,lines:[],count:0}, tickers:[], scan_ts:'', scan_running:false, config:{} };
-  let prevPrices = {};
+  <span class="status-version">Signal Scanner v2</span>
+</footer>
 
-  // ── WebSocket ────────────────────────────────────────────────────
-  let ws;
-  function connect() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onmessage = e => { state = JSON.parse(e.data); render(); };
-    ws.onclose   = () => setTimeout(connect, 2000);
-  }
+<!-- ═══════════════════════════════════════════════════════════
+     SETTINGS DRAWER  (slide-in from right)
+════════════════════════════════════════════════════════════════ -->
+<div data-drawer="config" class="drawer-backdrop">
+<aside class="drawer">
 
-  // ── Render ───────────────────────────────────────────────────────
-  function render() {
-    renderHeader();
-    renderTranscriber();
-    renderTickers();
-  }
+  <div class="drawer-header">
+    <span class="drawer-title">Settings</span>
+    <button data-close-btn class="btn btn--ghost btn--icon">✕</button>
+  </div>
 
-  function renderHeader() {
-    const el = document.getElementById('scan-status');
-    if (state.scan_running) {
-      el.innerHTML = '<span class="text-yellow-500">scanning…</span>';
-    } else if (state.scan_ts) {
-      el.textContent = `last scan ${state.scan_ts}`;
-    } else {
-      el.textContent = 'no scan yet';
-    }
-  }
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-btn tab-btn--active" data-tab-btn="api">API Keys</button>
+    <button class="tab-btn" data-tab-btn="data">Data</button>
+    <button class="tab-btn" data-tab-btn="signals">Signals</button>
+    <button class="tab-btn" data-tab-btn="audio">Audio</button>
+  </div>
 
-  function renderTranscriber() {
-    const running = state.transcriber.running;
-    document.getElementById('tx-dot').className =
-      `w-2 h-2 rounded-full ${running ? 'bg-emerald-400 pulse-dot' : 'bg-zinc-700'}`;
-    document.getElementById('tx-label').textContent = running ? 'LISTENING' : 'STOPPED';
-    document.getElementById('tx-label').className =
-      `text-xs ${running ? 'text-emerald-400' : 'text-zinc-500'}`;
+  <div class="drawer-body">
 
-    const btn = document.getElementById('tx-btn');
-    if (running) {
-      btn.textContent = 'Stop';
-      btn.className = 'w-full py-2.5 rounded-xl bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-xs font-bold transition-colors';
-    } else {
-      btn.textContent = 'Start';
-      btn.className = 'w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-black text-xs font-bold transition-colors';
-    }
+    <!-- ── Tab: API Keys ─────────────────────────── -->
+    <div class="tab-panel" data-tab-panel="api">
+      <div class="form-group">
+        <label for="cfg-api-key">Alpaca API Key</label>
+        <input id="cfg-api-key" type="password" placeholder="PKXXXXXXXXXXXXXXXX" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label for="cfg-secret-key">Alpaca Secret Key</label>
+        <input id="cfg-secret-key" type="password" placeholder="••••••••••••••••••••••••" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label for="cfg-finnhub-key">Finnhub API Key</label>
+        <input id="cfg-finnhub-key" type="password" placeholder="••••••••••••••••" autocomplete="off" />
+      </div>
+    </div>
 
-    const n = state.transcriber.count;
-    document.getElementById('tx-count').textContent =
-      `${n} ticker${n !== 1 ? 's' : ''} logged today`;
-
-    const box = document.getElementById('transcript-box');
-    const lines = state.transcriber.lines;
-    if (!lines || !lines.length) return;
-
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-
-    box.innerHTML = lines.map(l => {
-      if (l.includes('[LOG]')) {
-        return `<div class="text-emerald-400 mb-0.5">${esc(l)}</div>`;
-      }
-      if (l.includes('Traceback') || l.includes('Error:') || l.startsWith('  File')) {
-        return `<div class="text-red-400 mb-0.5">${esc(l)}</div>`;
-      }
-      // Format "[HH:MM:SS] text" lines from subprocess stdout
-      const m = l.match(/^\[(\d{2}:\d{2}:\d{2})\] ([\s\S]*)$/);
-      if (m) {
-        const ts   = `<span class="text-zinc-600">${esc(m[1])}</span>`;
-        const text = esc(m[2]).replace(/\b([A-Z]{2,5})\b/g, '<strong class="text-zinc-100 font-bold">$1</strong>');
-        return `<div class="text-zinc-400 mb-1">${ts} ${text}</div>`;
-      }
-      // Startup/status lines (no timestamp)
-      return `<div class="text-zinc-600 mb-0.5 text-xs italic">${esc(l)}</div>`;
-    }).join('');
-
-    if (atBottom) box.scrollTop = box.scrollHeight;
-  }
-
-  function renderTickers() {
-    const table = document.getElementById('ticker-table');
-    const count = document.getElementById('ticker-count');
-    const rows  = state.tickers || [];
-
-    count.textContent = rows.length ? `${rows.length} ticker${rows.length !== 1 ? 's' : ''}` : '';
-
-    if (!rows.length) {
-      table.innerHTML = '<div class="text-xs text-zinc-700 italic py-8 text-center">No tickers yet — start the transcriber and mention some stocks.</div>';
-      return;
-    }
-
-    table.innerHTML = rows.map(t => rowHtml(t)).join('');
-
-    // Flash price cells that changed
-    for (const t of rows) {
-      if (t.price && prevPrices[t.ticker] !== undefined && prevPrices[t.ticker] !== t.price) {
-        const el = document.getElementById(`p-${t.ticker}`);
-        if (el) { el.classList.remove('price-flash'); void el.offsetWidth; el.classList.add('price-flash'); }
-      }
-      if (t.price !== undefined) prevPrices[t.ticker] = t.price;
-    }
-  }
-
-  function rowHtml(t) {
-    const status    = t.status    ?? 'NO_DATA';
-    const proximity = t.proximity ?? 0;
-    const price     = t.price     != null ? `$${t.price.toFixed(2)}`  : '—';
-    const rte       = t.rte_fast  != null ? t.rte_fast.toFixed(0)     : '—';
-    const rsi       = t.cm_rsi    != null ? t.cm_rsi.toFixed(0)       : '—';
-    const streak    = t.streak    != null ? t.streak                   : '—';
-    const tvUrl     = `https://www.tradingview.com/chart/?symbol=${t.ticker}`;
-
-    const { row: rowCls, badge: badgeCls, label: badgeLabel } = statusTheme(status);
-    const barW  = Math.round(proximity * 100);
-    const barBg = proximityColor(proximity);
-
-    return `
-      <div class="grid items-center px-2 py-2 rounded-xl transition-colors hover:bg-zinc-800/60 ${rowCls}"
-           style="grid-template-columns:70px 80px 1fr 55px 50px 55px 90px 36px;">
-        <span class="text-sm font-bold text-zinc-200">${t.ticker}</span>
-        <span id="p-${t.ticker}" class="text-sm text-zinc-300 tabular-nums">${price}</span>
-        <div class="pr-3">
-          <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-            <div class="h-full rounded-full transition-all duration-700"
-                 style="width:${barW}%; background:${barBg};"></div>
-          </div>
-          <div class="text-zinc-700 text-xs mt-0.5">${barW}%</div>
+    <!-- ── Tab: Data ─────────────────────────────── -->
+    <div class="tab-panel hidden" data-tab-panel="data">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-timeframe">Bar Timeframe</label>
+          <select id="cfg-timeframe">
+            <option value="1Min">1 Min</option>
+            <option value="5Min">5 Min</option>
+            <option value="15Min">15 Min</option>
+            <option value="1Hour">1 Hour</option>
+            <option value="1Day">1 Day</option>
+          </select>
         </div>
-        <span class="text-xs tabular-nums text-zinc-500">${rte}</span>
-        <span class="text-xs tabular-nums text-zinc-500">${rsi}</span>
-        <span class="text-xs tabular-nums ${t.streak >= 1 ? 'text-yellow-500' : 'text-zinc-500'}">${streak}</span>
-        <span class="text-xs px-2 py-0.5 rounded font-mono ${badgeCls}">${badgeLabel}</span>
-        <a href="${tvUrl}" target="_blank" rel="noopener"
-           class="text-xs text-zinc-700 hover:text-sky-400 text-center transition-colors">TV</a>
-      </div>`;
-  }
+        <div class="form-group">
+          <label for="cfg-bar-count">Bar Count</label>
+          <input id="cfg-bar-count" type="number" min="50" max="1000" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="cfg-scan-interval">Scan Interval (seconds)</label>
+        <input id="cfg-scan-interval" type="number" min="10" max="3600" />
+      </div>
+    </div>
 
-  function statusTheme(s) {
-    switch (s) {
-      case 'BUY':     return { row:'bg-emerald-950/30', badge:'bg-emerald-900/60 text-emerald-400', label:'BUY' };
-      case 'ON_DECK': return { row:'bg-yellow-950/20',  badge:'bg-yellow-900/40 text-yellow-400',   label:'ON DECK' };
-      case 'WARMING': return { row:'',                  badge:'bg-sky-900/30 text-sky-400',          label:'WARMING' };
-      case 'COLD':    return { row:'',                  badge:'text-zinc-700',                       label:'COLD' };
-      default:        return { row:'',                  badge:'text-zinc-700',                       label:s };
-    }
-  }
+    <!-- ── Tab: Signals ──────────────────────────── -->
+    <div class="tab-panel hidden" data-tab-panel="signals">
 
-  function proximityColor(p) {
-    if (p >= 1.0) return '#34d399'; // emerald — in zone
-    if (p >= 0.8) return '#facc15'; // yellow  — approaching
-    if (p >= 0.5) return '#38bdf8'; // sky     — warming
-    return '#3f3f46';               // zinc    — cold
-  }
+      <div class="form-section">%R Trend Exhaustion (On Deck)</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-rte-threshold">OB Zone Edge <span class="hint">default 20</span></label>
+          <input id="cfg-rte-threshold" type="number" min="5" max="50" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-rte-min-boxes">Min Bars in Zone <span class="hint">default 2</span></label>
+          <input id="cfg-rte-min-boxes" type="number" min="1" max="10" />
+        </div>
+      </div>
 
-  function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
+      <div class="form-section">OBV Oscillator</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-obv-length">OBV EMA Length</label>
+          <input id="cfg-obv-length" type="number" min="5" max="100" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-vol-surge">Volume Surge ×</label>
+          <input id="cfg-vol-surge" type="number" step="0.1" min="1" max="10" />
+        </div>
+      </div>
 
-  // ── Controls ─────────────────────────────────────────────────────
-  async function toggleTx() {
-    const running = state.transcriber?.running;
-    const btn = document.getElementById('tx-btn');
-    btn.disabled = true;
-    btn.textContent = running ? 'Stopping…' : 'Starting…';
-    await fetch(running ? '/api/transcriber/stop' : '/api/transcriber/start', {method:'POST'});
-    btn.disabled = false;
-  }
+      <div class="form-section">CM RSI-2</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-cm-rsi-len">RSI Period</label>
+          <input id="cfg-cm-rsi-len" type="number" min="2" max="30" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-cm-rsi-os">Oversold Level</label>
+          <input id="cfg-cm-rsi-os" type="number" min="5" max="50" />
+        </div>
+      </div>
 
-  async function clearWatchlist() {
-    if (!confirm('Clear the watchlist? This will remove all tickers from wb_watchlist.json.')) return;
-    await fetch('/api/ticker-log/clear', {method:'POST'});
-  }
+      <div class="form-section">MACD</div>
+      <div class="form-row form-row-3">
+        <div class="form-group">
+          <label for="cfg-macd-fast">Fast</label>
+          <input id="cfg-macd-fast" type="number" min="3" max="50" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-macd-slow">Slow</label>
+          <input id="cfg-macd-slow" type="number" min="5" max="100" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-macd-signal">Signal</label>
+          <input id="cfg-macd-signal" type="number" min="3" max="30" />
+        </div>
+      </div>
 
-  async function scanNow() {
-    const btn = document.getElementById('scan-btn');
-    btn.textContent = 'Scanning…';
-    btn.disabled = true;
-    await fetch('/api/scan', {method:'POST'});
-    setTimeout(() => { btn.textContent = '↺ Scan Now'; btn.disabled = false; }, 4000);
-  }
+    </div>
 
-  // ── Settings ─────────────────────────────────────────────────────
-  async function openSettings() {
-    const c = state.config || {};
-    const set = (id, val, fallback) => {
-      const el = document.getElementById(id);
-      if (el) el.value = (val !== null && val !== undefined) ? val : (fallback ?? '');
-    };
-    set('s-api-key',        c.api_key,          '');
-    set('s-secret-key',     c.secret_key,        '');
-    set('s-timeframe',      c.bar_timeframe,     '5Min');
-    set('s-bar-count',      c.bar_count,          300);
-    set('s-scan-interval',  c.scan_interval_sec,   60);
-    set('s-rte-threshold',  c.rte_threshold,        20);
-    set('s-rte-min-boxes',  c.rte_min_boxes,         2);
-    set('s-obv-length',     c.obv_length,           20);
-    set('s-vol-surge',      c.volume_surge_mult,   1.5);
-    set('s-macd-fast',      c.macd_fast,            12);
-    set('s-macd-slow',      c.macd_slow,            26);
-    set('s-macd-sig',       c.macd_signal,           9);
+    <!-- ── Tab: Audio ────────────────────────────── -->
+    <div class="tab-panel hidden" data-tab-panel="audio">
+      <div class="form-group">
+        <label for="cfg-device-index">Audio Input Device</label>
+        <div class="input-row">
+          <select id="cfg-device-index">
+            <option value="">Loading…</option>
+          </select>
+          <button data-refresh-devices class="btn btn--ghost btn--sm" title="Refresh device list">↺</button>
+        </div>
+      </div>
+      <div class="device-hint">
+        Devices marked <strong>⟳ LOOPBACK</strong> capture system audio playing through your speakers —
+        ideal for transcribing financial media. Mic devices capture your voice directly.
+      </div>
+    </div>
 
-    // Populate audio device dropdown
-    const sel = document.getElementById('s-device-index');
-    sel.innerHTML = '<option value="">Loading…</option>';
-    try {
-      const resp = await fetch('/api/audio-devices');
-      const data = await resp.json();
-      sel.innerHTML = '<option value="">— system default —</option>';
-      for (const d of data.devices || []) {
-        const tag  = d.loopback ? ' [LOOPBACK]' : '';
-        const opt  = document.createElement('option');
-        opt.value  = d.index;
-        opt.text   = `${d.index}: ${d.name}${tag}`;
-        if (d.index === c.device_index) opt.selected = true;
-        sel.appendChild(opt);
-      }
-      if (!data.ok && data.error) {
-        sel.innerHTML = `<option value="">Error: ${esc(data.error)}</option>`;
-      }
-    } catch (e) {
-      sel.innerHTML = '<option value="">Failed to load devices</option>';
-    }
+  </div><!-- /drawer-body -->
 
-    document.getElementById('settings-modal').classList.remove('hidden');
-  }
+  <div class="drawer-footer">
+    <button data-save-btn class="btn btn--primary">Save Settings</button>
+  </div>
 
-  function closeSettings() {
-    document.getElementById('settings-modal').classList.add('hidden');
-  }
+</aside>
+</div><!-- /drawer-backdrop -->
 
-  async function saveSettings() {
-    const g   = id => document.getElementById(id);
-    const num = id => { const v = g(id).value; return v !== '' ? +v : undefined; };
-    const str = id => g(id).value.trim() || undefined;
+<!-- Module entry point -->
+<script type="module" src="/static/js/app.js"></script>
 
-    const body = {
-      bar_timeframe:     g('s-timeframe').value,
-      bar_count:         num('s-bar-count'),
-      scan_interval_sec: num('s-scan-interval'),
-      device_index:      (() => { const v = g('s-device-index').value; return v !== '' ? +v : null; })(),
-      rte_threshold:     num('s-rte-threshold'),
-      rte_min_boxes:     num('s-rte-min-boxes'),
-      obv_length:        num('s-obv-length'),
-      volume_surge_mult: num('s-vol-surge'),
-      macd_fast:         num('s-macd-fast'),
-      macd_slow:         num('s-macd-slow'),
-      macd_signal:       num('s-macd-sig'),
-    };
-    const ak = str('s-api-key');
-    const sk = str('s-secret-key');
-    if (ak) body.api_key    = ak;
-    if (sk) body.secret_key = sk;
-
-    // Remove undefined keys
-    Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);
-
-    await fetch('/api/config', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    closeSettings();
-  }
-
-  document.getElementById('settings-modal')
-    .addEventListener('click', e => { if (e.target === e.currentTarget) closeSettings(); });
-
-  connect();
-</script>
 </body>
 </html>

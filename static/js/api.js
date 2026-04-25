@@ -1,0 +1,85 @@
+/**
+ * api.js — WebSocket + REST communication layer
+ *
+ * Single responsibility: talk to the server.
+ * Consumers subscribe via `on(event, fn)`.
+ * REST calls return promises resolving to parsed JSON.
+ */
+
+const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
+
+export function on(event, fn) {
+  if (!_handlers.has(event)) _handlers.set(event, []);
+  _handlers.get(event).push(fn);
+}
+
+function emit(event, data) {
+  (_handlers.get(event) ?? []).forEach(fn => {
+    try { fn(data); } catch (e) { console.error('[api] handler error', event, e); }
+  });
+}
+
+// ── WebSocket ─────────────────────────────────────────────────
+
+let _ws = null;
+let _reconnectTimer = null;
+let _reconnectDelay = 1500;
+
+export function connect() {
+  if (_ws && _ws.readyState < WebSocket.CLOSING) return;
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  _ws.onopen = () => {
+    _reconnectDelay = 1500;
+    clearTimeout(_reconnectTimer);
+    emit('connected', true);
+  };
+
+  _ws.onmessage = ({ data }) => {
+    try {
+      const msg = JSON.parse(data);
+      emit('message', msg);
+    } catch (e) {
+      console.warn('[api] unparseable WS message', e);
+    }
+  };
+
+  _ws.onclose = () => {
+    emit('connected', false);
+    _reconnectTimer = setTimeout(() => {
+      _reconnectDelay = Math.min(_reconnectDelay * 1.5, 15000);
+      connect();
+    }, _reconnectDelay);
+  };
+
+  _ws.onerror = () => _ws.close();
+}
+
+// ── REST helpers ──────────────────────────────────────────────
+
+async function request(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// ── Public API surface ────────────────────────────────────────
+
+export const api = {
+  getState:        ()    => request('GET',  '/api/state'),
+  startTx:         ()    => request('POST', '/api/transcriber/start'),
+  stopTx:          ()    => request('POST', '/api/transcriber/stop'),
+  clearWatchlist:  ()    => request('POST', '/api/ticker-log/clear'),
+  clearTranscript: ()    => request('POST', '/api/transcript/clear'),
+  triggerScan:     ()    => request('POST', '/api/scan'),
+  getConfig:       ()    => request('GET',  '/api/config'),
+  saveConfig:      cfg   => request('POST', '/api/config', cfg),
+  audioDevices:    ()    => request('GET',  '/api/audio-devices'),
+};

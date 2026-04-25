@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from signals import compute_signals
@@ -285,6 +286,7 @@ def _snapshot() -> dict:
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.on_event("startup")
