@@ -2,8 +2,7 @@
  * controls.js — User action handlers
  *
  * Single responsibility: execute user-triggered actions.
- * No DOM queries beyond the specific button passed in.
- * Returns promises so callers can chain or ignore.
+ * Buttons are always re-enabled in finally blocks regardless of outcome.
  */
 
 import { api } from './api.js';
@@ -17,12 +16,21 @@ export async function toggleTranscriber(btnEl) {
     btnEl.textContent = running ? 'Stopping…' : 'Starting…';
   }
 
+  let result = null;
   try {
-    await (running ? api.stopTx() : api.startTx());
+    result = await (running ? api.stopTx() : api.startTx());
   } catch (e) {
     console.error('[controls] toggleTranscriber', e);
+  } finally {
+    if (btnEl) {
+      // Use the API response state when available; fall back to current store state.
+      // The WS subscriber will correct any mismatch within 1 second.
+      const actual = result?.running ?? get('transcriber').running;
+      btnEl.disabled    = false;
+      btnEl.textContent = actual ? 'Stop Transcription' : 'Start Transcription';
+      btnEl.className   = `tx-btn ${actual ? 'tx-btn--stop' : 'tx-btn--start'}`;
+    }
   }
-  // State update arrives via WebSocket — btn re-enables via store subscriber
 }
 
 export async function clearWatchlist() {
@@ -52,12 +60,9 @@ export async function triggerScan(btnEl) {
     await api.triggerScan();
   } catch (e) {
     console.error('[controls] triggerScan', e);
-  }
-
-  if (btnEl) {
-    setTimeout(() => {
-      btnEl.textContent = '↺ Scan Now';
-      btnEl.disabled    = false;
-    }, 5000);
+  } finally {
+    // Re-enable immediately — the scan_running store state drives the pill indicator.
+    // The app.js scan_running subscriber will also re-enable if still disabled when scan ends.
+    if (btnEl) btnEl.disabled = false;
   }
 }
