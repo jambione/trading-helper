@@ -210,6 +210,7 @@ body {
 }
 .btn--primary:hover { background: var(--accent-dim); }
 .btn--danger:hover  { color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg); }
+.btn--alert-on      { color: var(--buy); border-color: var(--buy-border); background: var(--buy-bg); }
 .btn--sm { padding: 4px 8px; font-size: 11px; }
 .btn--icon { padding: 4px 8px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
