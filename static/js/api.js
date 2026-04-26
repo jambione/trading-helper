@@ -73,13 +73,14 @@ async function request(method, path, body) {
 // ── Public API surface ────────────────────────────────────────
 
 export const api = {
-  getState:        ()    => request('GET',  '/api/state'),
-  startTx:         ()    => request('POST', '/api/transcriber/start'),
-  stopTx:          ()    => request('POST', '/api/transcriber/stop'),
-  clearWatchlist:  ()    => request('POST', '/api/ticker-log/clear'),
-  clearTranscript: ()    => request('POST', '/api/transcript/clear'),
-  triggerScan:     ()    => request('POST', '/api/scan'),
-  getConfig:       ()    => request('GET',  '/api/config'),
-  saveConfig:      cfg   => request('POST', '/api/config', cfg),
-  audioDevices:    ()    => request('GET',  '/api/audio-devices'),
+  getState:        ()       => request('GET',  '/api/state'),
+  startTx:         ()       => request('POST', '/api/transcriber/start'),
+  stopTx:          ()       => request('POST', '/api/transcriber/stop'),
+  clearWatchlist:  ()       => request('POST', '/api/ticker-log/clear'),
+  clearTranscript: ()       => request('POST', '/api/transcript/clear'),
+  triggerScan:     ()       => request('POST', '/api/scan'),
+  getConfig:       ()       => request('GET',  '/api/config'),
+  saveConfig:      cfg      => request('POST', '/api/config', cfg),
+  audioDevices:    ()       => request('GET',  '/api/audio-devices'),
+  addTicker:       ticker   => request('POST', '/api/tickers/add', { ticker }),
 };

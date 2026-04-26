@@ -171,13 +171,14 @@ if _cfg_file.exists():
 
 DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
-WHISPER_MODEL     = "small"
+# small.en is English-only: same size as small but faster and more accurate for English
+WHISPER_MODEL     = "small.en"
 WHISPER_BEAM_SIZE = 3
 
 SAMPLE_RATE       = 44100
 TARGET_SR         = 16000
-CHUNK_DURATION    = 4.5
-OVERLAP           = 1.2
+CHUNK_DURATION    = 3.0    # shorter chunks = lower latency (was 4.5)
+OVERLAP           = 0.7    # enough overlap to catch words split at chunk boundary
 SILENCE_THRESHOLD = 0.009
 
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
@@ -188,12 +189,61 @@ READ_FRAMES     = int(SAMPLE_RATE * 0.5)
 RESAMPLE_UP   = 160
 RESAMPLE_DOWN = 441
 
+# Seeding Whisper with financial vocabulary is the single biggest accuracy lever.
+# It biases token probabilities toward these words before hearing anything.
+INITIAL_PROMPT = (
+    "CNBC financial news, stock market trading on NYSE and NASDAQ. "
+    "Tickers: AAPL TSLA NVDA AMZN GOOGL MSFT META NFLX PLTR COIN HOOD "
+    "UBER LYFT ABNB SNOW CRM ORCL INTC AMD QCOM AVGO MU SPY QQQ IWM "
+    "JPM GS MS BAC WFC C V MA PYPL SQ SHOP ZM SPOT PINS SNAP "
+    "XOM CVX COP BA LMT RTX WMT TGT COST HD DIS CMCSA VZ T "
+    "F GM RIVN LCID PFE MRNA UNH HUM CI BRK JNJ AMGN GILD "
+    "Earnings per share, price target, analyst upgrade, buy hold sell, "
+    "market cap, S and P five hundred, Dow Jones, breakout, resistance."
+)
+
 
 # ========================= MODEL INIT =========================
 
-print(f"Loading Whisper '{WHISPER_MODEL}' model...")
-whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-print("Whisper ready.")
+def _init_whisper():
+    """Load model on GPU if available and working, otherwise CPU int8."""
+    try:
+        import ctranslate2 as _ct2
+        hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
+    except Exception:
+        hw = "cpu"
+    ct = "float16" if hw == "cuda" else "int8"
+
+    print(f"Loading Whisper '{WHISPER_MODEL}' model on {hw} ({ct})...", flush=True)
+    m = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+
+    if hw == "cuda":
+        # Force CUDA kernels to load now — catches missing DLLs (cublas, etc.) before
+        # the capture loop starts, so we can fall back cleanly instead of error-looping.
+        try:
+            _probe = np.zeros(1600, dtype=np.float32)
+            list(m.transcribe(_probe, beam_size=1)[0])
+            print(f"CUDA verified.", flush=True)
+        except Exception as e:
+            print(f"[WARN] CUDA unavailable ({e}) — falling back to CPU int8", flush=True)
+            hw, ct = "cpu", "int8"
+            m = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+
+    print(f"Whisper ready on {hw}.", flush=True)
+    return m
+
+whisper = _init_whisper()
+
+# Detect which optional params the installed faster-whisper version supports
+import inspect as _inspect
+_TRANSCRIBE_EXTRAS: dict = {}
+try:
+    _sig = _inspect.signature(whisper.transcribe)
+    if "repetition_penalty" in _sig.parameters:
+        _TRANSCRIBE_EXTRAS["repetition_penalty"] = 1.1
+except Exception:
+    pass
+print(f"[INFO] faster-whisper extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
 
 
 # ========================= AUDIO SETUP =========================
@@ -271,42 +321,41 @@ def audio_capture():
 # ========================= WORKER: TRANSCRIPTION =========================
 
 def transcription_worker():
-    local_buf = np.empty(0, dtype=np.float32)
-
+    # audio_capture already produces correctly-windowed CHUNK_SAMPLES chunks;
+    # process each one directly rather than re-sliding over accumulated audio.
     while running.is_set():
         try:
             chunk = audio_queue.get(timeout=1.0)
             if chunk is None:
                 break
 
-            local_buf = np.concatenate((local_buf, chunk))
+            segments, _ = whisper.transcribe(
+                chunk,
+                language="en",
+                initial_prompt=INITIAL_PROMPT,
+                vad_filter=True,
+                beam_size=WHISPER_BEAM_SIZE,
+                temperature=0.0,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.35,
+                **_TRANSCRIBE_EXTRAS,
+            )
+            text = " ".join(s.text.strip() for s in segments).strip()
+            text = normalize_transcript(text)
 
-            while len(local_buf) >= CHUNK_SAMPLES:
-                whisper_in = local_buf[:CHUNK_SAMPLES]
-                local_buf  = local_buf[ADVANCE_SAMPLES:]
+            if not text or len(text.split()) < 3:
+                continue
 
-                segments, _ = whisper.transcribe(
-                    whisper_in,
-                    language="en",
-                    vad_filter=True,
-                    beam_size=WHISPER_BEAM_SIZE,
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    no_speech_threshold=0.45,
-                )
-                text = " ".join(s.text.strip() for s in segments).strip()
-                text = normalize_transcript(text)
+            print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
-                if not text or len(text.split()) < 4:
-                    continue
+            for ticker in extract_tickers(text):
+                log_ticker(ticker)
 
-                print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
-
-                for ticker in extract_tickers(text):
-                    log_ticker(ticker)
-
-        except Exception:
-            continue
+        except Exception as e:
+            msg = str(e).strip()
+            if msg:
+                print(f"[WARN] chunk skipped ({type(e).__name__}): {msg}", flush=True)
+            time.sleep(0.05)
 
 
 # ========================= START =========================

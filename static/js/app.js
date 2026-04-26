@@ -11,6 +11,7 @@ import { init as initTranscription }             from './transcription.js';
 import { init as initTickers }                   from './tickers.js';
 import { init as initTradingView }               from './tradingview.js';
 import { init as initConfig, open as openConfig }from './config.js';
+import { init as initResizer }                   from './resizer.js';
 import * as controls                             from './controls.js';
 import * as notifications                        from './notifications.js';
 
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initTradingView(document.querySelector('[data-panel="tradingview"]')); }  catch (e) { console.error('[app] initTradingView', e); }
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
+  try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer')); } catch (e) { console.error('[app] initResizer', e); }
   notifications.init();
 
   // ── Wire button actions ──────────────────────────────────────
@@ -37,6 +39,18 @@ document.addEventListener('DOMContentLoaded', () => {
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
+
+  const addInput = document.getElementById('add-ticker-input');
+  const addBtn   = document.querySelector('[data-add-ticker-btn]');
+  addBtn?.addEventListener('click', () => controls.addTicker(addInput, addBtn));
+  addInput?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') controls.addTicker(addInput, addBtn);
+  });
+  addInput?.addEventListener('input', e => {
+    const pos = e.target.selectionStart;
+    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+    e.target.setSelectionRange(pos, pos);
+  });
 
   notifBtn?.addEventListener('click', async () => {
     const granted = await notifications.requestPermission();
@@ -131,6 +145,15 @@ document.addEventListener('DOMContentLoaded', () => {
   subscribe('tickers', rows => {
     const el = document.querySelector('[data-statusbar-tickers]');
     if (el) el.textContent = rows.length || '—';
+  });
+
+  // ── Persist selected ticker across reloads ───────────────────
+  const _savedTicker = localStorage.getItem('ss:selected-ticker');
+  if (_savedTicker) set({ selectedTicker: _savedTicker });
+
+  subscribe('selectedTicker', ticker => {
+    if (ticker) localStorage.setItem('ss:selected-ticker', ticker);
+    else        localStorage.removeItem('ss:selected-ticker');
   });
 
   // ── Boot ─────────────────────────────────────────────────────

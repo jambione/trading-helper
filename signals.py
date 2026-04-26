@@ -66,37 +66,35 @@ def calc_rvol(df: pd.DataFrame, avg_daily_vol: int = 0) -> pd.Series:
 def compute_cm_rsi_lower(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """
     CM RSI-2 Logic:
-    - RSI with 2-period RMA smoothing
+    - RSI with configurable-period RMA smoothing (default 2, per Larry Connors)
     - Green (bullish) when: close > SMA(200) AND close < SMA(5) AND RSI < 10
-    - This version checks if RSI is approaching the oversold threshold (< 25)
+    - Approaching signal when RSI < cm_rsi_oversold threshold
     """
     df = df.copy()
-    
-    # RSI-2 calculation (same as Pine script)
+
+    period = max(2, int(cfg.get("cm_rsi_length", 2)))
+    alpha  = 1.0 / period
+    approach_lvl = float(cfg.get("cm_rsi_oversold", 25))
+
     delta = df["close"].diff()
-    up = delta.clip(lower=0).ewm(alpha=0.5, adjust=False).mean()  # RMA with alpha=0.5 = 2-period
-    down = (-delta.clip(upper=0)).ewm(alpha=0.5, adjust=False).mean()
+    up   = delta.clip(lower=0).ewm(alpha=alpha, adjust=False).mean()
+    down = (-delta.clip(upper=0)).ewm(alpha=alpha, adjust=False).mean()
     rsi2 = np.where(down == 0, 100, np.where(up == 0, 0, 100 - (100 / (1 + up / down))))
     df["cm_rsi"] = pd.Series(rsi2, index=df.index)
-    
-    # Moving averages for conditions
+
     df["ma_200"] = sma(df["close"], 200)
-    df["ma_5"] = sma(df["close"], 5)
-    
-    # Check if approaching condition (RSI < 25 and price conditions met)
+    df["ma_5"]   = sma(df["close"], 5)
+
     df["cm_rsi_approaching"] = (
-        (df["close"] > df["ma_200"]) &  # Price above 200 MA
-        (df["close"] < df["ma_5"]) &     # Price below 5 MA (pullback)
-        (df["cm_rsi"] < 25)              # RSI approaching oversold
+        (df["close"] > df["ma_200"]) &
+        (df["close"] < df["ma_5"]) &
+        (df["cm_rsi"] < approach_lvl)
     )
-    
-    # Full bullish signal (from original Pine - RSI < 10)
     df["cm_rsi_bullish"] = (
         (df["close"] > df["ma_200"]) &
         (df["close"] < df["ma_5"]) &
         (df["cm_rsi"] < 10)
     )
-    
     return df
 
 
@@ -116,13 +114,11 @@ def compute_obv_oscillator(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     
     length = cfg.get("obv_length", 20)
     
-    # Calculate OBV
-    change = df["close"].diff()
-    obv = pd.Series(0.0, index=df.index)
-    obv[change > 0] = df["volume"][change > 0]
-    obv[change < 0] = -df["volume"][change < 0]
-    obv = obv.cumsum()
-    df["obv"] = obv
+    # Calculate OBV — use np.where to avoid pandas SettingWithCopyWarning
+    change     = df["close"].diff()
+    signed_vol = np.where(change > 0, df["volume"],
+                 np.where(change < 0, -df["volume"], 0.0))
+    df["obv"]  = pd.Series(signed_vol, index=df.index).cumsum()
     
     # Calculate EMA of OBV
     df["obv_ema"] = ema(obv, length)

@@ -219,11 +219,39 @@ body {
 .main-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 240px 1fr 380px;
+  /* transcript | tickers | resizer | chart — chart starts ~2× tickers width */
+  grid-template-columns: 240px 300px 6px 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
   gap: 0;
   min-height: 0;
+}
+
+/* Drag handle between tickers and chart */
+.panel-resizer {
+  background: var(--border);
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+  transition: background 0.15s;
+}
+.panel-resizer:hover { background: var(--border-hi); }
+/* Wider invisible hit area so it's easier to grab */
+.panel-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 -5px;
+}
+
+/* Suppress iframe pointer events during drag so mousemove isn't swallowed */
+.main-grid--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.main-grid--resizing iframe,
+.main-grid--resizing .tv-widget-wrap {
+  pointer-events: none;
 }
 
 /* ── Panel base ─────────────────────────────────────────────── */
@@ -712,6 +740,36 @@ body {
 /* Save feedback states */
 .btn--saved  { background: var(--accent-dim) !important; }
 .btn--failed { background: var(--danger) !important; }
+
+/* ── Add ticker input ────────────────────────────────────────── */
+.add-ticker-row {
+  display: flex;
+  gap: 6px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.add-ticker-row input {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  text-transform: uppercase;
+  transition: border-color 0.15s;
+}
+.add-ticker-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.add-ticker-row input::placeholder {
+  color: var(--text-muted);
+  text-transform: none;
+  font-family: var(--font-ui);
+}
 
 /* ── Utility ─────────────────────────────────────────────────── */
 .hidden { display: none !important; }

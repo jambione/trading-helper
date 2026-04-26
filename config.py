@@ -25,7 +25,9 @@ DEFAULT_CONFIG = {
     "rte_side":      "red",  # "red" = overbought watch
 
     # ── Signal: CM RSI-2 ────────────────────────────────────
-    "rmi_ma_slow":   200,    # slow MA for price-above-trend filter
+    "cm_rsi_length":    2,   # RSI period (2 = original Larry Connors CM RSI-2)
+    "cm_rsi_oversold": 25,   # approaching-oversold threshold for signal
+    "rmi_ma_slow":    200,   # slow MA for price-above-trend filter
 
     # ── Signal: OBV Oscillator ──────────────────────────────
     "obv_length": 20,
@@ -58,6 +60,7 @@ SAFE_CONFIG_KEYS = [
     "bar_timeframe", "bar_count", "scan_interval_sec",
     "ticker_log_file",
     "rte_threshold", "rte_min_boxes", "rte_side",
+    "cm_rsi_length", "cm_rsi_oversold",
     "rmi_ma_slow",
     "obv_length",
     "macd_fast", "macd_slow", "macd_signal",

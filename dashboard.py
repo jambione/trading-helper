@@ -24,6 +24,11 @@ from fastapi.staticfiles import StaticFiles
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from signals import compute_signals
 import alpaca_api as _api
+from finnhub_stream import (
+    FINNHUB_STATE,
+    start_finnhub_stream,
+    request_subscribe as _fh_subscribe,
+)
 
 ET                 = ZoneInfo("America/New_York")
 PORT               = 8888
@@ -56,13 +61,25 @@ STATE = _State()
 
 # ── Ticker log ────────────────────────────────────────────────────────────────
 
+_ticker_cache: dict = {"mtime": -1.0, "tickers": []}
+
+
 def load_tickers() -> list:
+    """Read the watchlist JSON file, caching by mtime to avoid constant disk I/O."""
     if not TICKER_LOG.exists():
+        _ticker_cache["mtime"]   = -1.0
+        _ticker_cache["tickers"] = []
         return []
     try:
+        mtime = TICKER_LOG.stat().st_mtime
+        if mtime == _ticker_cache["mtime"]:
+            return list(_ticker_cache["tickers"])
         import json as _json
-        data = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
-        return [t.strip().upper() for t in data if isinstance(t, str) and t.strip()]
+        data    = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
+        tickers = [t.strip().upper() for t in data if isinstance(t, str) and t.strip()]
+        _ticker_cache["mtime"]   = mtime
+        _ticker_cache["tickers"] = tickers
+        return tickers
     except Exception:
         return []
 
@@ -71,10 +88,30 @@ def clear_ticker_log():
     try:
         import json as _json
         TICKER_LOG.write_text(_json.dumps([]), encoding="utf-8")
+        _ticker_cache["mtime"]   = -1.0
+        _ticker_cache["tickers"] = []
     except Exception:
         pass
     with STATE.lock:
         STATE.tickers.clear()
+
+
+def add_ticker_to_log(ticker: str) -> bool:
+    """Add a single ticker to the watchlist. Returns True if already present or added OK."""
+    ticker = ticker.upper()
+    try:
+        import json as _json
+        tickers = load_tickers()
+        if ticker in tickers:
+            return True
+        tickers = sorted(set(tickers + [ticker]))
+        TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
+        TICKER_LOG.write_text(_json.dumps(tickers, indent=2), encoding="utf-8")
+        _ticker_cache["mtime"] = -1.0   # invalidate cache
+        return True
+    except Exception as e:
+        log.error(f"[TICKER] Add {ticker} failed: {e}")
+        return False
 
 
 # ── Transcription subprocess ──────────────────────────────────────────────────
@@ -121,7 +158,7 @@ def start_transcriber() -> dict:
             args,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,  # merge stderr so errors appear in transcript panel
             cwd=Path(__file__).parent,
             env=env,
         )
@@ -168,7 +205,6 @@ def _signal_summary(row, cfg: dict) -> dict:
     else:
         status = "COLD"
 
-    # 0 = far from zone edge, 1.0 = at or inside zone
     proximity = round(min(1.0, max(0.0, (rte_fast + 100) / max(1, 100 - threshold))), 3)
 
     return {
@@ -200,21 +236,34 @@ def run_scan():
         bars = _api.fetch_bars_batch(client, tickers, cfg)
         ts   = datetime.now(ET).strftime("%H:%M:%S")
 
+        # Compute signals WITHOUT holding STATE.lock — this is CPU-intensive pandas
+        # work that can take seconds for many tickers. Holding the lock here would
+        # starve _snapshot (called every second from the WebSocket loop).
+        computed: dict = {}
+        for t in tickers:
+            df = bars.get(t)
+            if df is None or len(df) < 50:
+                computed[t] = None                # sentinel: no data
+            else:
+                try:
+                    sig_df     = compute_signals(df, cfg)
+                    computed[t] = _signal_summary(sig_df.iloc[-1], cfg)
+                except Exception as ex:
+                    log.debug(f"[SCAN] {t}: {ex}")
+                    computed[t] = False            # sentinel: error
+
         with STATE.lock:
             for t in tickers:
-                df    = bars.get(t)
-                entry = STATE.tickers.get(t, {})
-                if df is None or len(df) < 50:
+                entry  = STATE.tickers.get(t, {})
+                result = computed.get(t)
+                if result is None:
                     entry.update({"status": "NO_DATA", "proximity": 0,
                                   "streak": 0, "rte_fast": -100, "rte_slow": -100,
                                   "cm_rsi": 50, "obv_up": False})
+                elif result is False:
+                    entry["status"] = "ERROR"
                 else:
-                    try:
-                        sig_df = compute_signals(df, cfg)
-                        entry.update(_signal_summary(sig_df.iloc[-1], cfg))
-                    except Exception as ex:
-                        log.debug(f"[SCAN] {t}: {ex}")
-                        entry["status"] = "ERROR"
+                    entry.update(result)
                 entry["last_scan"] = ts
                 STATE.tickers[t]   = entry
             STATE.scan_ts = ts
@@ -232,7 +281,12 @@ def _scan_loop():
             run_scan()
         except Exception as e:
             log.error(f"[SCAN] {e}")
-        time.sleep(STATE.cfg.get("scan_interval_sec", 60))
+        # Sleep in 2-second increments so config interval changes take effect quickly
+        start = time.monotonic()
+        while True:
+            time.sleep(2)
+            if time.monotonic() - start >= STATE.cfg.get("scan_interval_sec", 60):
+                break
 
 
 # ── Price polling ─────────────────────────────────────────────────────────────
@@ -247,19 +301,39 @@ def _price_loop():
             tickers = load_tickers()
             current = set(tickers)
 
-            # Auto-scan when the transcriber adds tickers we haven't seen before
+            # Auto-scan and subscribe Finnhub when new tickers appear
             new = current - _known_tickers
             if new and not STATE.scan_running:
                 log.info(f"[PRICE] New tickers {new} — triggering auto-scan")
+                if FINNHUB_STATE.connected:
+                    _fh_subscribe(list(new))
                 threading.Thread(target=run_scan, daemon=True, name="scan-auto").start()
             _known_tickers = current
 
             client = STATE.data_client
+            ts     = datetime.now(ET).strftime("%H:%M:%S")
+
             if tickers and client:
-                prices = _api.get_latest_trade_prices(client, tickers, STATE.cfg)
-                ts     = datetime.now(ET).strftime("%H:%M:%S")
+                # Primary: Finnhub real-time stream prices (zero extra HTTP cost)
+                finnhub_prices: dict = {}
+                if FINNHUB_STATE.connected:
+                    with FINNHUB_STATE.lock:
+                        for t in tickers:
+                            d = FINNHUB_STATE.prices.get(t)
+                            if d and d.get("price"):
+                                finnhub_prices[t] = float(d["price"])
+
+                # Fallback: Alpaca REST for tickers not covered by Finnhub
+                alpaca_tickers = [t for t in tickers if t not in finnhub_prices]
+                alpaca_prices: dict = {}
+                if alpaca_tickers:
+                    alpaca_prices = _api.get_latest_trade_prices(
+                        client, alpaca_tickers, STATE.cfg
+                    )
+
+                all_prices = {**alpaca_prices, **finnhub_prices}
                 with STATE.lock:
-                    for t, p in prices.items():
+                    for t, p in all_prices.items():
                         if t not in STATE.tickers:
                             STATE.tickers[t] = {}
                         STATE.tickers[t]["price"]    = round(p, 4)
@@ -273,8 +347,12 @@ def _price_loop():
 
 _STATUS_ORDER = {"BUY": 0, "ON_DECK": 1, "WARMING": 2, "COLD": 3, "NO_DATA": 4, "ERROR": 5}
 
+
 def _snapshot() -> dict:
-    tickers = load_tickers()
+    tickers  = load_tickers()
+    # Read transcript lines BEFORE acquiring STATE.lock — read_transcript_lines also
+    # acquires STATE.lock, and threading.Lock is non-reentrant; nested acquisition deadlocks.
+    tx_lines = read_transcript_lines(30)
     with STATE.lock:
         rows = []
         for t in tickers:
@@ -286,7 +364,7 @@ def _snapshot() -> dict:
         return {
             "transcriber": {
                 "running": STATE.transcriber_running,
-                "lines":   read_transcript_lines(30),
+                "lines":   tx_lines,
                 "count":   len(tickers),
             },
             "tickers":      rows,
@@ -304,11 +382,27 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.on_event("startup")
 async def _startup():
-    try:
-        STATE.data_client = _api.connect_data_client(STATE.cfg)
-        log.info("[STARTUP] Alpaca connected")
-    except Exception as e:
-        log.warning(f"[STARTUP] Alpaca unavailable: {e}")
+    loop = asyncio.get_running_loop()
+
+    # connect_data_client makes a blocking network handshake — run in executor so it
+    # doesn't freeze the uvicorn event loop during startup.
+    def _connect_alpaca():
+        try:
+            STATE.data_client = _api.connect_data_client(STATE.cfg)
+            log.info("[STARTUP] Alpaca connected")
+        except Exception as e:
+            log.warning(f"[STARTUP] Alpaca unavailable: {e}")
+
+    await loop.run_in_executor(None, _connect_alpaca)
+
+    fh_key = STATE.cfg.get("finnhub_key", "")
+    if fh_key:
+        try:
+            start_finnhub_stream(fh_key, load_tickers())
+            log.info("[STARTUP] Finnhub stream started")
+        except Exception as e:
+            log.warning(f"[STARTUP] Finnhub unavailable: {e}")
+
     threading.Thread(target=_scan_loop,  daemon=True, name="scan").start()
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
 
@@ -320,32 +414,50 @@ async def root():
 
 @app.get("/api/state")
 async def api_state():
-    snap = await asyncio.get_event_loop().run_in_executor(None, _snapshot)
+    loop = asyncio.get_running_loop()
+    snap = await loop.run_in_executor(None, _snapshot)
     return JSONResponse(snap)
 
 
 @app.post("/api/transcriber/start")
 async def api_tx_start():
-    result = await asyncio.get_event_loop().run_in_executor(None, start_transcriber)
+    loop   = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, start_transcriber)
     return JSONResponse({**result, "running": STATE.transcriber_running})
 
 
 @app.post("/api/transcriber/stop")
 async def api_tx_stop():
-    await asyncio.get_event_loop().run_in_executor(None, stop_transcriber)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, stop_transcriber)
     return JSONResponse({"ok": True, "running": False})
 
 
 @app.post("/api/ticker-log/clear")
 async def api_clear():
-    await asyncio.get_event_loop().run_in_executor(None, clear_ticker_log)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, clear_ticker_log)
     return JSONResponse({"ok": True})
 
 
 @app.post("/api/transcript/clear")
 async def api_transcript_clear():
-    await asyncio.get_event_loop().run_in_executor(None, clear_transcript)
+    await asyncio.get_running_loop().run_in_executor(None, clear_transcript)
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/tickers/add")
+async def api_add_ticker(request: Request):
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        loop = asyncio.get_running_loop()
+        ok   = await loop.run_in_executor(None, lambda: add_ticker_to_log(ticker))
+        return JSONResponse({"ok": ok})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @app.get("/api/audio-devices")
@@ -359,15 +471,15 @@ async def api_audio_devices():
                 dev = p.get_device_info_by_index(i)
                 if dev["maxInputChannels"] > 0:
                     devices.append({
-                        "index": i,
-                        "name":  dev["name"],
+                        "index":    i,
+                        "name":     dev["name"],
                         "loopback": "loopback" in dev["name"].lower(),
                     })
             p.terminate()
             return {"ok": True, "devices": devices}
         except Exception as e:
             return {"ok": False, "error": str(e), "devices": []}
-    result = await asyncio.get_event_loop().run_in_executor(None, _list)
+    result = await asyncio.get_running_loop().run_in_executor(None, _list)
     return JSONResponse(result)
 
 
@@ -386,17 +498,28 @@ async def api_config():
 @app.post("/api/config")
 async def api_config_save(request: Request):
     try:
-        body = await request.json()
+        body       = await request.json()
+        old_fh_key = STATE.cfg.get("finnhub_key", "")
         with STATE.lock:
             for k, v in body.items():
                 if k in SAFE_CONFIG_KEYS:
                     STATE.cfg[k] = v
             save_config(dict(STATE.cfg))
+
         if any(k in body for k in ("api_key", "secret_key")):
             try:
                 STATE.data_client = _api.connect_data_client(STATE.cfg)
             except Exception:
                 pass
+
+        new_fh_key = STATE.cfg.get("finnhub_key", "")
+        if new_fh_key and new_fh_key != old_fh_key:
+            try:
+                start_finnhub_stream(new_fh_key, load_tickers())
+                log.info("[CFG] Finnhub stream restarted with new key")
+            except Exception as e:
+                log.warning(f"[CFG] Finnhub restart: {e}")
+
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -407,7 +530,7 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     try:
         while True:
-            snap = await asyncio.get_event_loop().run_in_executor(None, _snapshot)
+            snap = await asyncio.get_running_loop().run_in_executor(None, _snapshot)
             await ws.send_json(snap)
             await asyncio.sleep(1)
     except (WebSocketDisconnect, Exception):

@@ -90,11 +90,20 @@
       </div>
     </div>
 
+    <div class="add-ticker-row">
+      <input id="add-ticker-input" type="text" placeholder="Add ticker (e.g. AAPL)"
+             maxlength="5" autocomplete="off" spellcheck="false" />
+      <button data-add-ticker-btn class="btn btn--ghost btn--sm">+ Add</button>
+    </div>
+
     <div data-ticker-rows class="ticker-rows">
       <div class="table-empty">No tickers — start the transcriber and mention some stocks.</div>
     </div>
 
   </section>
+
+  <!-- ── RESIZER: drag handle between tickers and chart ── -->
+  <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
 
   <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
   <section data-panel="tradingview" class="panel panel-tradingview">

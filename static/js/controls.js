@@ -50,6 +50,22 @@ export async function clearTranscript() {
   }
 }
 
+export async function addTicker(inputEl, btnEl) {
+  const ticker = (inputEl?.value ?? '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!ticker || ticker.length > 5) return;
+
+  if (btnEl) btnEl.disabled = true;
+  try {
+    await api.addTicker(ticker);
+    if (inputEl) inputEl.value = '';
+  } catch (e) {
+    console.error('[controls] addTicker', e);
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+    if (inputEl) inputEl.focus();
+  }
+}
+
 export async function triggerScan(btnEl) {
   if (btnEl) {
     btnEl.disabled    = true;

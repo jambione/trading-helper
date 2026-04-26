@@ -75,5 +75,13 @@ function _createWidget(containerId, symbol) {
     save_image:          false,
     withdateranges:      false,
     container_id:        containerId,
+    // Indicators that match the scanner's signal logic
+    studies: [
+      'Volume@tv-basicstudies',
+      { id: 'RSI@tv-basicstudies',  inputs: { length: 2 } },
+      'MACD@tv-basicstudies',
+      'OBV@tv-basicstudies',
+      'WilliamsR@tv-basicstudies',
+    ],
   });
 }
