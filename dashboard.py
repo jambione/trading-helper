@@ -13,6 +13,8 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
