@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -60,6 +61,8 @@ class _State:
         self.dirty_tickers     = set() # tickers needing signal recalculation
         self.api_call_count    = 0
         self.api_reset_ts      = time.time()
+        self.executor          = ThreadPoolExecutor(max_workers=10)
+        self.last_calc_price   = {}   # ticker -> last price used for signal calc
 
     def record_api_call(self, count: int = 1):
         with self.lock:
@@ -238,6 +241,26 @@ def _signal_summary(row, cfg: dict) -> dict:
     }
 
 
+def _compute_ticker_signal(t: str, df: pd.DataFrame, lp: float, cfg: dict) -> tuple[str, any]:
+    """Helper for parallel signal calculation."""
+    if df is None or len(df) < 50:
+        return t, None
+    try:
+        # Inject latest price as a synthetic last row
+        if lp:
+            now_et = datetime.now(ET)
+            # Faster way to append a single row to a DataFrame
+            new_row_data = [[lp, lp, lp, lp, 0]]
+            new_row_df = pd.DataFrame(new_row_data, columns=["open", "high", "low", "close", "volume"], index=[now_et])
+            df = pd.concat([df, new_row_df])
+
+        sig_df = compute_signals(df, cfg)
+        return t, _signal_summary(sig_df.iloc[-1], cfg)
+    except Exception as ex:
+        log.debug(f"[SCAN] {t}: {ex}")
+        return t, False
+
+
 def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
     tickers = ticker_subset if ticker_subset else load_tickers()
     cfg     = STATE.cfg
@@ -275,33 +298,33 @@ def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
             with FINNHUB_STATE.lock:
                 latest_prices = {t: d["price"] for t in tickers if (d := FINNHUB_STATE.prices.get(t)) and d.get("price")}
 
-        # Compute signals WITHOUT holding STATE.lock
-        computed: dict = {}
-        for t in tickers:
-            df = bars.get(t)
-            if df is None or len(df) < 50:
-                computed[t] = None                # sentinel: no data
-            else:
-                try:
-                    # Inject latest price as a synthetic last row if it's newer than the last bar
-                    lp = latest_prices.get(t)
-                    if lp:
-                        last_bar_ts = df.index[-1]
-                        now_et = datetime.now(ET)
-                        # Only inject if we don't already have a bar for this minute/period
-                        # or if the price is different enough to matter.
-                        # Simple approach: append a new row with the latest price.
-                        new_row = pd.DataFrame({
-                            "open": [lp], "high": [lp], "low": [lp], "close": [lp], "volume": [0]
-                        }, index=[now_et])
-                        df = pd.concat([df, new_row])
+        # Filter out tickers whose price hasn't changed enough since last calculation
+        to_calc = []
+        with STATE.lock:
+            for t in tickers:
+                lp = latest_prices.get(t)
+                last_lp = STATE.last_calc_price.get(t)
+                # If we have a price and it's basically the same as last time, skip
+                if lp and last_lp and abs(lp - last_lp) < 1e-6:
+                    continue
+                to_calc.append(t)
+                if lp:
+                    STATE.last_calc_price[t] = lp
 
-                    sig_df     = compute_signals(df, cfg)
-                    computed[t] = _signal_summary(sig_df.iloc[-1], cfg)
-                except Exception as ex:
-                    log.debug(f"[SCAN] {t}: {ex}")
-                    computed[t] = False            # sentinel: error
+        if not to_calc:
+            return
 
+        # Compute signals in parallel WITHOUT holding STATE.lock
+        futures = [
+            STATE.executor.submit(_compute_ticker_signal, t, bars.get(t), latest_prices.get(t), cfg)
+            for t in to_calc
+        ]
+        
+        computed = {}
+        for future in futures:
+            t, result = future.result()
+            computed[t] = result
+        
         with STATE.lock:
             for t in tickers:
                 entry  = STATE.tickers.get(t, {})
