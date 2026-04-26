@@ -9,7 +9,8 @@
       "Bash(where python *)",
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
       "Bash(python -c \"import faster_whisper; print\\('ok'\\)\")",
-      "Bash(timeout 10 python -u transcription/transcribe_action.py --device 17)"
+      "Bash(timeout 10 python -u transcription/transcribe_action.py --device 17)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
