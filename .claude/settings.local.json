@@ -15,7 +15,12 @@
       "Bash(git check-ignore *)",
       "Bash(node -e ' *)",
       "Bash(python -m py_compile transcription/workflows.py)",
-      "Bash(python -m py_compile dashboard.py)"
+      "Bash(python -m py_compile dashboard.py)",
+      "Bash(python -c 'import ast, sys *)",
+      "Bash(python -c \"import ast; [print\\('OK', f\\) or ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['dashboard.py','alpaca_api.py','config.py']]\")",
+      "Bash(echo \"exit:$?\")",
+      "Bash(python -c \"import ast; files=['dashboard.py','alpaca_api.py','config.py']; [print\\('OK', f\\) for f in files if not ast.parse\\(open\\(f\\).read\\(\\)\\)]\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('dashboard.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
