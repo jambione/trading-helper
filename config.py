@@ -3,7 +3,9 @@ import os
 import tempfile
 from pathlib import Path
 
-CONFIG_FILE = Path(__file__).parent / "bot_config.json"
+CONFIG_FILE  = Path(__file__).parent / "bot_config.json"
+SECRETS_FILE = Path(__file__).parent / "secrets.json"
+SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key"]
 
 DEFAULT_CONFIG = {
     # ── API credentials ──────────────────────────────────────
@@ -12,7 +14,7 @@ DEFAULT_CONFIG = {
     "finnhub_key": os.getenv("FINNHUB_API_KEY", ""),
 
     # ── Data fetching ────────────────────────────────────────
-    "bar_timeframe":    "5Min",   # 1Min | 5Min | 15Min | 1Hour | 1Day
+    "bar_timeframe":    "1Min",   # 1Min | 5Min | 15Min | 1Hour | 1Day
     "bar_count":        300,
     "scan_interval_sec": 60,
 
@@ -83,16 +85,26 @@ def load_config() -> dict:
                 cfg.update(saved)
         except Exception as e:
             print(f"[CFG] Failed to load config ({e}) — using defaults")
+    if SECRETS_FILE.exists():
+        try:
+            with open(SECRETS_FILE, "r", encoding="utf-8") as f:
+                secrets = json.load(f)
+            if isinstance(secrets, dict):
+                for k in SECRETS_KEYS:
+                    if k in secrets:
+                        cfg[k] = secrets[k]
+        except Exception as e:
+            print(f"[CFG] Failed to load secrets ({e})")
     return cfg
 
 
-def save_config(cfg: dict):
+def _write_json(path: Path, data: dict):
     try:
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=CONFIG_FILE.parent, suffix=".tmp")
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
-            Path(tmp_path).replace(CONFIG_FILE)
+                json.dump(data, f, indent=2)
+            Path(tmp_path).replace(path)
         except Exception:
             try:
                 os.unlink(tmp_path)
@@ -100,4 +112,12 @@ def save_config(cfg: dict):
                 pass
             raise
     except Exception as e:
-        print(f"[CFG] Failed to save config: {e}")
+        print(f"[CFG] Failed to save {path.name}: {e}")
+
+
+def save_config(cfg: dict):
+    secrets  = {k: cfg[k] for k in SECRETS_KEYS if k in cfg and cfg[k]}
+    main_cfg = {k: v for k, v in cfg.items() if k not in SECRETS_KEYS}
+    _write_json(CONFIG_FILE, main_cfg)
+    if secrets:
+        _write_json(SECRETS_FILE, secrets)

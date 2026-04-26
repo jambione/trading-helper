@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   addInput?.addEventListener('input', e => {
     const pos = e.target.selectionStart;
-    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+    e.target.value = e.target.value.toUpperCase();
     e.target.setSelectionRange(pos, pos);
   });
 

@@ -82,5 +82,6 @@ export const api = {
   getConfig:       ()       => request('GET',  '/api/config'),
   saveConfig:      cfg      => request('POST', '/api/config', cfg),
   audioDevices:    ()       => request('GET',  '/api/audio-devices'),
-  addTicker:       ticker   => request('POST', '/api/tickers/add', { ticker }),
+  addTicker:       ticker   => request('POST', '/api/tickers/add',      { ticker }),
+  addBulk:         tickers  => request('POST', '/api/tickers/add-bulk', { tickers }),
 };

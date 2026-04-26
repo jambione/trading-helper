@@ -1,7 +1,4 @@
 {
-  "api_key": "PKXWFCBB2SHJZTB25EH6OC2PFM",
-  "secret_key": "57FiYCyHu5K22EwrvW3pkXeTT9HXMsGxkoPaXxyMYsgS",
-  "finnhub_key": "d764hl9r01qm4b7su3mgd764hl9r01qm4b7su3n0",
   "bar_timeframe": "1Min",
   "bar_count": 300,
   "scan_interval_sec": 60,
@@ -21,7 +18,7 @@
   "ema_long": 21,
   "wr_length": 14,
   "tv_chart_url": "https://www.tradingview.com/chart/x04Gfcu8",
-  "device_index": null,
+  "device_index": 16,
   "strategy": "multiple_os",
   "paper": true,
   "tickers": [],

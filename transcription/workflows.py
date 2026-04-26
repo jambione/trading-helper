@@ -324,6 +324,50 @@ def find_window_title(title_fragment: str) -> str | None:
 
 # ========================= WORKFLOWS =========================
 
+def _wb_add_one(hwnd: int, win, ticker: str) -> bool:
+    """
+    Type one ticker into the already-focused Webull window and confirm with Enter.
+    Caller is responsible for opening/focusing the window first.
+    """
+    import time, numpy as np
+
+    # Ctrl+2 → Stocks tab
+    _pyautogui.hotkey("ctrl", "2")
+    time.sleep(0.5)
+
+    # Capture baseline for dropdown detection
+    try:
+        margin = 10
+        region = (win.left + margin, win.top + 40, win.width - margin * 2, min(300, win.height // 3))
+        baseline = np.array(_pyautogui.screenshot(region=region), dtype=np.int16)
+    except Exception:
+        baseline = None
+
+    # Type each letter directly into the Webull window's message queue
+    for letter in ticker:
+        _wb_post_char(hwnd, letter)
+        time.sleep(0.08)
+
+    # Poll for the dropdown (pixel change in the search region)
+    detected = False
+    if baseline is not None:
+        deadline = time.time() + 4.0
+        while time.time() < deadline:
+            time.sleep(0.1)
+            try:
+                current = np.array(_pyautogui.screenshot(region=region), dtype=np.int16)
+                if np.abs(current - baseline).mean() >= 3.0:
+                    detected = True
+                    break
+            except Exception:
+                break
+
+    time.sleep(0.15 if detected else 0.5)
+    _wb_post_enter(hwnd)
+    print(f"   ✅ ADD_WB done for {ticker}" + ("" if detected else " (dropdown timeout — Enter sent anyway)"))
+    return True
+
+
 def workflow_add_wb(ticker: str, dry_run: bool = False) -> bool:
     """
     Open/focus Webull Desktop, switch to the Stocks tab (Ctrl+2),
@@ -347,52 +391,64 @@ def workflow_add_wb(ticker: str, dry_run: bool = False) -> bool:
         print(f"   ❌ ADD_WB failed — could not open Webull Desktop")
         return False
 
-    import time, numpy as np
-
+    import time
     win  = _find_window(WB_WINDOW)
     hwnd = win._hWnd
     time.sleep(0.4)
 
-    # Ctrl+2 → Stocks tab (via pyautogui — Webull is focused at this point)
-    _pyautogui.hotkey("ctrl", "2")
-    time.sleep(0.5)
-
-    # Capture baseline screenshot for dropdown detection
-    try:
-        margin = 10
-        region = (win.left + margin, win.top + 40, win.width - margin * 2, min(300, win.height // 3))
-        baseline = np.array(_pyautogui.screenshot(region=region), dtype=np.int16)
-    except Exception:
-        baseline = None
-
-    # Type each letter directly into the Webull window
-    for letter in ticker:
-        _wb_post_char(hwnd, letter)
-        time.sleep(0.08)
-
-    # Poll for the dropdown (pixel change in the search region)
-    detected = False
-    if baseline is not None:
-        deadline = time.time() + 4.0
-        while time.time() < deadline:
-            time.sleep(0.1)
-            try:
-                current = np.array(_pyautogui.screenshot(region=region), dtype=np.int16)
-                if np.abs(current - baseline).mean() >= 3.0:
-                    detected = True
-                    break
-            except Exception:
-                break
-
-    if detected:
-        time.sleep(0.15)   # let list fully render before confirming
-    else:
-        time.sleep(0.5)    # fallback
-
-    _wb_post_enter(hwnd)
+    _wb_add_one(hwnd, win, ticker)
     wb_watchlist_add(ticker)
-    print(f"   ✅ ADD_WB done for {ticker}" + ("" if detected else " (dropdown timeout — Enter sent anyway)"))
     return True
+
+
+def workflow_add_wb_bulk(tickers: list, dry_run: bool = False) -> dict:
+    """
+    Add multiple tickers to Webull watchlist sequentially in a single session.
+    Opens/focuses Webull once, then processes each ticker one at a time so
+    keystrokes never interleave. Returns counts of added/skipped/failed tickers.
+    """
+    results: dict = {"added": [], "skipped": [], "failed": []}
+    tickers = [t.upper() for t in tickers]
+
+    to_add           = [t for t in tickers if not wb_watchlist_contains(t)]
+    results["skipped"] = [t for t in tickers if wb_watchlist_contains(t)]
+
+    if not to_add:
+        return results
+
+    if not LIVE_MODE or dry_run:
+        for t in to_add:
+            print(f"📊 [LOG] ADD_WB → {t}")
+            wb_watchlist_add(t)
+            results["added"].append(t)
+        return results
+
+    if not _ensure_open(WB_WINDOW, WB_LAUNCH):
+        print(f"   ❌ ADD_WB_BULK failed — could not open Webull Desktop")
+        results["failed"] = to_add
+        return results
+
+    import time
+    win = _find_window(WB_WINDOW)
+    if not win:
+        results["failed"] = to_add
+        return results
+
+    hwnd = win._hWnd
+    time.sleep(0.4)
+
+    for i, ticker in enumerate(to_add, 1):
+        print(f"📊 ADD_WB → {ticker} ({i}/{len(to_add)})")
+        try:
+            _wb_add_one(hwnd, win, ticker)
+            wb_watchlist_add(ticker)
+            results["added"].append(ticker)
+            time.sleep(0.3)   # brief pause between tickers
+        except Exception as e:
+            print(f"   ❌ ADD_WB failed for {ticker}: {e}")
+            results["failed"].append(ticker)
+
+    return results
 
 
 def workflow_add_tv(ticker: str, dry_run: bool = False) -> bool:

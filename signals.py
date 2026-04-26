@@ -147,7 +147,7 @@ def compute_obv_oscillator(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df["obv"]  = pd.Series(signed_vol, index=df.index).cumsum()
     
     # Calculate EMA of OBV
-    df["obv_ema"] = ema(obv, length)
+    df["obv_ema"] = ema(df["obv"], length)
     
     # Calculate oscillator
     df["obv_osc"] = df["obv"] - df["obv_ema"]
@@ -326,14 +326,7 @@ def compute_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df["signal"] = "HOLD"
     df.loc[buy_condition, "signal"] = "BUY"
     
-    # Additional: OFF DECK signal (bull trend break = potential entry on pullback)
     df["signal_off_deck_buy"] = False
-    off_deck_buy = (
-        df["signal_cm_rsi"] &
-        df["signal_obv"] &
-        df["signal_off_deck"]  # OFF DECK: Bull trend break (reversal)
-    )
-    df.loc[off_deck_buy, "signal_off_deck_buy"] = True
     
     # Williams %R for additional context
     df["wr"] = williams_pr(df["high"], df["low"], df["close"], cfg.get("wr_length", 14))
@@ -350,8 +343,8 @@ def compute_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df["volume_trend_up"] = df["obv_trending_up"]
     
     # Add box tracking for streak display
-    df["rte_boxes_streak"] = df["ob_consecutive"].fillna(0).astype(int)
-    df["rte_boxes_completed"] = df["ob_consecutive"].fillna(0).astype(int)
+    df["rte_boxes_streak"] = df["os_consecutive"].fillna(0).astype(int)
+    df["rte_boxes_completed"] = df["os_consecutive"].fillna(0).astype(int)
     
     # Add RSI column for backward compatibility (some code uses "rsi" instead of "rsi2" or "cm_rsi")
     df["rsi"] = df["cm_rsi"]

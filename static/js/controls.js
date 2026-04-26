@@ -50,17 +50,42 @@ export async function clearTranscript() {
   }
 }
 
+function parseTickers(text) {
+  const upper = text.toUpperCase();
+  const seen = new Set();
+  const tickers = [];
+  for (const m of upper.matchAll(/\b[A-Z]{2,5}\b/g)) {
+    if (!seen.has(m[0])) { seen.add(m[0]); tickers.push(m[0]); }
+  }
+  return tickers;
+}
+
 export async function addTicker(inputEl, btnEl) {
-  const ticker = (inputEl?.value ?? '').trim().toUpperCase().replace(/[^A-Z]/g, '');
-  if (!ticker || ticker.length > 5) return;
+  const raw = (inputEl?.value ?? '').trim();
+  if (!raw) return;
+
+  const tickers = parseTickers(raw);
+  if (tickers.length === 0) return;
 
   if (btnEl) btnEl.disabled = true;
+  const origLabel = btnEl?.textContent ?? '+ Add';
+
   try {
-    await api.addTicker(ticker);
+    if (tickers.length === 1) {
+      await api.addTicker(tickers[0]);
+      selectTicker(tickers[0]);
+    } else {
+      if (btnEl) btnEl.textContent = 'Adding…';
+      await api.addBulk(tickers);
+      if (btnEl) {
+        btnEl.textContent = `Added ${tickers.length}`;
+        setTimeout(() => { if (btnEl) btnEl.textContent = origLabel; }, 2000);
+      }
+    }
     if (inputEl) inputEl.value = '';
-    selectTicker(ticker);
   } catch (e) {
     console.error('[controls] addTicker', e);
+    if (btnEl) btnEl.textContent = origLabel;
   } finally {
     if (btnEl) btnEl.disabled = false;
     if (inputEl) inputEl.focus();

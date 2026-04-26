@@ -27,7 +27,7 @@ import alpaca_api as _api
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from workflows import workflow_add_wb
+from workflows import workflow_add_wb, workflow_add_wb_bulk
 from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
@@ -219,12 +219,13 @@ def _signal_summary(row, cfg: dict) -> dict:
         status = "BUY"
     elif streak >= min_boxes:
         status = "ON_DECK"
-    elif rte_fast > -60:
+    elif rte_fast < -60:
         status = "WARMING"
     else:
         status = "COLD"
 
-    proximity = round(min(1.0, max(0.0, (rte_fast + 100) / max(1, 100 - threshold))), 3)
+    # Proximity: 0 = far from oversold, 1 = deep in oversold zone
+    proximity = round(min(1.0, max(0.0, (-rte_fast - threshold) / max(1, 100 - threshold))), 3)
 
     return {
         "rte_fast":  round(rte_fast, 1),
@@ -363,6 +364,7 @@ def _price_loop():
 
             client = STATE.data_client
             ts     = datetime.now(ET).strftime("%H:%M:%S")
+            now    = time.time()
 
             if tickers and client:
                 # Primary: Finnhub real-time stream prices (zero extra HTTP cost)
@@ -374,16 +376,16 @@ def _price_loop():
                             if d and d.get("price"):
                                 finnhub_prices[t] = float(d["price"])
 
-                # Fallback: Alpaca REST for tickers not covered by Finnhub
-                # Optimization: Only poll Alpaca at high frequency if Finnhub is disconnected.
-                # If Finnhub IS connected, we only poll Alpaca for missing tickers every 5 seconds.
+                # Fallback: Alpaca REST for tickers not covered by Finnhub.
+                # Only poll Alpaca at full frequency if Finnhub is disconnected;
+                # otherwise check missing tickers every ~5 seconds.
                 alpaca_prices: dict = {}
                 alpaca_tickers = [t for t in tickers if t not in finnhub_prices]
-                
+
                 should_poll_alpaca = False
                 if not FINNHUB_STATE.connected:
-                    should_poll_alpaca = True # Polling at price_loop frequency (0.2s)
-                elif alpaca_tickers and (now % 5 < 0.25): # Polling missing tickers every ~5s
+                    should_poll_alpaca = True
+                elif alpaca_tickers and (now % 5 < 0.25):
                     should_poll_alpaca = True
 
                 if alpaca_tickers and should_poll_alpaca:
@@ -409,7 +411,6 @@ def _price_loop():
                         STATE.tickers[t]["price_ts"] = ts
                 
                 # REACTIVE UPDATE: Trigger a light-weight scan for dirty tickers
-                now = time.time()
                 if not STATE.scan_running and (now - last_signal_update > 0.5):
                     with STATE.lock:
                         to_scan = list(STATE.dirty_tickers)
@@ -542,6 +543,32 @@ async def api_add_ticker(request: Request):
             threading.Thread(target=workflow_add_wb, args=(ticker,),
                              daemon=True, name=f"wb-{ticker}").start()
         return JSONResponse({"ok": ok})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/add-bulk")
+async def api_add_bulk(request: Request):
+    try:
+        body = await request.json()
+        raw  = body.get("tickers", [])
+        if not isinstance(raw, list):
+            return JSONResponse({"ok": False, "error": "tickers must be a list"}, status_code=400)
+        loop  = asyncio.get_running_loop()
+        added = []
+        for item in raw[:100]:          # safety cap
+            t = str(item).strip().upper()
+            if not t or not t.isalpha() or not (1 <= len(t) <= 5):
+                continue
+            ok, is_new = await loop.run_in_executor(None, lambda t=t: add_ticker_to_log(t))
+            if ok and is_new:
+                added.append(t)
+        if added:
+            # Single thread processes the list sequentially — concurrent threads
+            # would interleave keystrokes in the Webull search box.
+            threading.Thread(target=workflow_add_wb_bulk, args=(added,),
+                             daemon=True, name="wb-bulk").start()
+        return JSONResponse({"ok": True, "added": len(added), "tickers": added})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 

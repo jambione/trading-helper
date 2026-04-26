@@ -1,0 +1,7 @@
+secrets.json
+__pycache__/
+*.pyc
+*.pyo
+debug.log
+*.log
+transcription/__pycache__/
