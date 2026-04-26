@@ -58,7 +58,7 @@ class _State:
         self.bars_cache        = {}   # ticker -> pd.DataFrame
         self.last_bar_fetch    = 0    # timestamp
         self.dirty_tickers     = set() # tickers needing signal recalculation
-        self.api_call_count    = 0     # track Alpaca REST calls
+        self.api_call_count    = 0
         self.api_reset_ts      = time.time()
 
     def record_api_call(self, count: int = 1):
@@ -68,7 +68,7 @@ class _State:
                 self.api_call_count = 0
                 self.api_reset_ts = now
             self.api_call_count += count
-            if self.api_call_count > 150: # Alarm if more than 150 calls/min
+            if self.api_call_count > 150:
                 log.warning(f"[SAFETY] High API volume: {self.api_call_count} calls/min")
 
     @property
@@ -262,7 +262,7 @@ def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
             all_tickers = load_tickers()
             log.info(f"[SCAN] Fetching fresh bars for {len(all_tickers)} tickers…")
             bars = _api.fetch_bars_batch(client, all_tickers, cfg)
-            STATE.record_api_call(1) # Batch fetch is 1 call
+            STATE.record_api_call(1)
             with STATE.lock:
                 STATE.bars_cache = bars
                 STATE.last_bar_fetch = ts_now
@@ -343,10 +343,28 @@ def _scan_loop():
 
 _known_tickers: set = set()
 
+# Alpaca fallback runs in its own thread so it never blocks the price loop.
+_alpaca_price_cache: dict = {}          # last results from Alpaca fallback
+_alpaca_cache_lock = threading.Lock()
+_alpaca_fallback_running = False
+
+
+def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
+    """Fetch Alpaca latest-trade prices in a background thread and cache the result."""
+    global _alpaca_fallback_running
+    try:
+        prices = _api.get_latest_trade_prices(client, tickers, cfg)
+        STATE.record_api_call(1)
+        with _alpaca_cache_lock:
+            _alpaca_price_cache.update(prices)
+    finally:
+        _alpaca_fallback_running = False
+
 
 def _price_loop():
-    global _known_tickers
+    global _known_tickers, _alpaca_fallback_running
     last_signal_update = 0
+    last_alpaca_poll   = 0
     while True:
         try:
             tickers = load_tickers()
@@ -358,7 +376,7 @@ def _price_loop():
                 log.info(f"[PRICE] New tickers {new} — triggering auto-scan")
                 if FINNHUB_STATE.connected:
                     _fh_subscribe(list(new))
-                threading.Thread(target=run_scan, kwargs={"force_fetch_bars": True}, 
+                threading.Thread(target=run_scan, kwargs={"force_fetch_bars": True},
                                  daemon=True, name="scan-auto").start()
             _known_tickers = current
 
@@ -377,54 +395,52 @@ def _price_loop():
                                 finnhub_prices[t] = float(d["price"])
 
                 # Fallback: Alpaca REST for tickers not covered by Finnhub.
-                # Only poll Alpaca at full frequency if Finnhub is disconnected;
-                # otherwise check missing tickers every ~5 seconds.
-                alpaca_prices: dict = {}
+                # Runs in a background thread — never blocks this loop.
+                # Polls every 5s when Finnhub has gaps; every 2s when Finnhub is down.
                 alpaca_tickers = [t for t in tickers if t not in finnhub_prices]
+                poll_interval  = 2.0 if not FINNHUB_STATE.connected else 5.0
+                if alpaca_tickers and not _alpaca_fallback_running and (now - last_alpaca_poll > poll_interval):
+                    last_alpaca_poll       = now
+                    _alpaca_fallback_running = True
+                    threading.Thread(
+                        target=_alpaca_fallback_worker,
+                        args=(client, alpaca_tickers, STATE.cfg),
+                        daemon=True, name="alpaca-fallback",
+                    ).start()
 
-                should_poll_alpaca = False
-                if not FINNHUB_STATE.connected:
-                    should_poll_alpaca = True
-                elif alpaca_tickers and (now % 5 < 0.25):
-                    should_poll_alpaca = True
+                # Merge: Finnhub wins over cached Alpaca values
+                with _alpaca_cache_lock:
+                    cached_alpaca = dict(_alpaca_price_cache)
+                all_prices = {**cached_alpaca, **finnhub_prices}
 
-                if alpaca_tickers and should_poll_alpaca:
-                    alpaca_prices = _api.get_latest_trade_prices(
-                        client, alpaca_tickers, STATE.cfg
-                    )
-                    STATE.record_api_call(1)
-
-                all_prices = {**alpaca_prices, **finnhub_prices}
                 with STATE.lock:
                     for t, p in all_prices.items():
+                        if t not in tickers:
+                            continue
                         entry = STATE.tickers.get(t, {})
                         old_p = entry.get("price")
-                        # If price changed significantly, mark as dirty
                         if old_p is not None and abs(p - old_p) / old_p > 0.0001:
                             STATE.dirty_tickers.add(t)
-                        
                         if t not in STATE.tickers:
                             STATE.tickers[t] = {}
                             STATE.dirty_tickers.add(t)
-                        
                         STATE.tickers[t]["price"]    = round(p, 4)
                         STATE.tickers[t]["price_ts"] = ts
-                
-                # REACTIVE UPDATE: Trigger a light-weight scan for dirty tickers
-                if not STATE.scan_running and (now - last_signal_update > 0.5):
+
+                # Reactive signal recompute — at most every 250ms
+                if not STATE.scan_running and (now - last_signal_update > 0.25):
                     with STATE.lock:
                         to_scan = list(STATE.dirty_tickers)
                         STATE.dirty_tickers.clear()
-                    
                     if to_scan:
                         last_signal_update = now
-                        threading.Thread(target=run_scan, 
+                        threading.Thread(target=run_scan,
                                          kwargs={"force_fetch_bars": False, "ticker_subset": to_scan},
                                          daemon=True, name="scan-reactive").start()
 
         except Exception as e:
             log.debug(f"[PRICE] {e}")
-        time.sleep(0.2) # High-frequency price polling (5Hz)
+        time.sleep(0.1)  # 10Hz — Finnhub ticks are picked up within 100ms
 
 
 # ── State snapshot ────────────────────────────────────────────────────────────
@@ -468,8 +484,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def _startup():
     loop = asyncio.get_running_loop()
 
-    # connect_data_client makes a blocking network handshake — run in executor so it
-    # doesn't freeze the uvicorn event loop during startup.
     def _connect_alpaca():
         try:
             STATE.data_client = _api.connect_data_client(STATE.cfg)
@@ -641,26 +655,16 @@ async def api_config_save(request: Request):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    
-    # Track last update to avoid overwhelming client, but allow fast price updates
-    last_push = 0
-    
+    last_snap_hash = None
     try:
         while True:
-            # Check if anything is "dirty" or if it's been at least 1s since last push
-            now = time.time()
-            
-            # We still want a regular heartbeat (1s), but we can push faster if prices are moving
-            # For now, let's keep it simple but efficient.
-            # To make it TRULY real-time, we would use an Event or Queue.
-            # Let's optimize the loop to 10Hz (0.1s) and only push if data changed.
-            
             snap = await asyncio.get_running_loop().run_in_executor(None, _snapshot)
-            await ws.send_json(snap)
-            
-            # Sleep until the next second-boundary for a consistent 1Hz UI update.
-            # If the user wants "Tick-by-Tick" visuals, we can reduce this sleep.
-            await asyncio.sleep(0.5) 
+            # Only transmit when something actually changed — avoids redundant serialisation
+            snap_hash = hash(str(snap))
+            if snap_hash != last_snap_hash:
+                await ws.send_json(snap)
+                last_snap_hash = snap_hash
+            await asyncio.sleep(0.1)   # 10Hz poll; only pushes on change
     except (WebSocketDisconnect, Exception):
         pass
 
