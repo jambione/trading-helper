@@ -74,6 +74,8 @@ async function _loadConfig() {
     _set('cfg-macd-signal',   c.macd_signal       ?? 9);
     _set('cfg-cm-rsi-len',    c.cm_rsi_length     ?? 14);
     _set('cfg-cm-rsi-os',     c.cm_rsi_oversold   ?? 30);
+    _set('cfg-tv-url',        c.tv_chart_url      ?? '');
+    _set('cfg-strategy',      c.strategy          ?? 'multiple_os');
   } catch (e) {
     console.error('[config] load failed', e);
   }
@@ -123,6 +125,8 @@ async function _save() {
     macd_signal:       _numVal('cfg-macd-signal'),
     cm_rsi_length:     _numVal('cfg-cm-rsi-len'),
     cm_rsi_oversold:   _numVal('cfg-cm-rsi-os'),
+    tv_chart_url:      _strVal('cfg-tv-url'),
+    strategy:          _strVal('cfg-strategy'),
   };
 
   const ak = _pwdVal('cfg-api-key');

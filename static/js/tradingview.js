@@ -8,7 +8,7 @@
  * Creates a new widget instance each time the symbol changes.
  */
 
-import { subscribe } from './store.js';
+import { subscribe, get } from './store.js';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
@@ -59,11 +59,21 @@ function _loadChart(symbol) {
 }
 
 function _createWidget(containerId, symbol) {
-  // eslint-disable-next-line no-new
-  new window.TradingView.widget({
+  const config = get('config') || {};
+  const chartUrl = config.tv_chart_url || '';
+  
+  // Extract layout ID if a full URL was provided
+  // e.g. https://www.tradingview.com/chart/x04Gfcu8/ -> x04Gfcu8
+  let watchlistId = undefined;
+  if (chartUrl) {
+    const parts = chartUrl.split('/');
+    watchlistId = parts.filter(p => p.length >= 6 && p.length <= 12 && p !== 'chart').pop();
+  }
+
+  const widgetOpts = {
     autosize:            true,
     symbol,
-    interval:            '5',
+    interval:            '1',
     timezone:            'America/New_York',
     theme:               'dark',
     style:               '1',
@@ -75,13 +85,22 @@ function _createWidget(containerId, symbol) {
     save_image:          false,
     withdateranges:      false,
     container_id:        containerId,
-    // Indicators that match the scanner's signal logic
-    studies: [
+  };
+
+  if (watchlistId) {
+    widgetOpts.watchlist = [symbol];
+    widgetOpts.chart = watchlistId;
+  } else {
+    // Only use default studies if NO custom layout is provided
+    widgetOpts.studies = [
       'Volume@tv-basicstudies',
       { id: 'RSI@tv-basicstudies',  inputs: { length: 2 } },
       'MACD@tv-basicstudies',
       'OBV@tv-basicstudies',
       'WilliamsR@tv-basicstudies',
-    ],
-  });
+    ];
+  }
+
+  // eslint-disable-next-line no-new
+  new window.TradingView.widget(widgetOpts);
 }

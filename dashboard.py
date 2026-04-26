@@ -24,6 +24,10 @@ from fastapi.staticfiles import StaticFiles
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from signals import compute_signals
 import alpaca_api as _api
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent / "transcription"))
+from workflows import workflow_add_wb
 from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
@@ -51,6 +55,21 @@ class _State:
         self.transcript_lines  = []   # in-memory only, never written to disk
         self.scan_ts           = ""
         self.scan_running      = False
+        self.bars_cache        = {}   # ticker -> pd.DataFrame
+        self.last_bar_fetch    = 0    # timestamp
+        self.dirty_tickers     = set() # tickers needing signal recalculation
+        self.api_call_count    = 0     # track Alpaca REST calls
+        self.api_reset_ts      = time.time()
+
+    def record_api_call(self, count: int = 1):
+        with self.lock:
+            now = time.time()
+            if now - self.api_reset_ts > 60:
+                self.api_call_count = 0
+                self.api_reset_ts = now
+            self.api_call_count += count
+            if self.api_call_count > 150: # Alarm if more than 150 calls/min
+                log.warning(f"[SAFETY] High API volume: {self.api_call_count} calls/min")
 
     @property
     def transcriber_running(self) -> bool:
@@ -96,22 +115,22 @@ def clear_ticker_log():
         STATE.tickers.clear()
 
 
-def add_ticker_to_log(ticker: str) -> bool:
-    """Add a single ticker to the watchlist. Returns True if already present or added OK."""
+def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
+    """Add a single ticker. Returns (ok, is_new) — is_new is False when already present."""
     ticker = ticker.upper()
     try:
         import json as _json
         tickers = load_tickers()
         if ticker in tickers:
-            return True
+            return True, False
         tickers = sorted(set(tickers + [ticker]))
         TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
         TICKER_LOG.write_text(_json.dumps(tickers, indent=2), encoding="utf-8")
         _ticker_cache["mtime"] = -1.0   # invalidate cache
-        return True
+        return True, True
     except Exception as e:
         log.error(f"[TICKER] Add {ticker} failed: {e}")
-        return False
+        return False, False
 
 
 # ── Transcription subprocess ──────────────────────────────────────────────────
@@ -218,8 +237,8 @@ def _signal_summary(row, cfg: dict) -> dict:
     }
 
 
-def run_scan():
-    tickers = load_tickers()
+def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
+    tickers = ticker_subset if ticker_subset else load_tickers()
     cfg     = STATE.cfg
     client  = STATE.data_client
 
@@ -232,13 +251,30 @@ def run_scan():
     with STATE.lock:
         STATE.scan_running = True
     try:
-        log.info(f"[SCAN] {len(tickers)} tickers…")
-        bars = _api.fetch_bars_batch(client, tickers, cfg)
+        ts_now = time.time()
+        # Only fetch new bars if forced or if cache is older than 5 minutes
+        with STATE.lock:
+            needs_fetch = force_fetch_bars or (ts_now - STATE.last_bar_fetch > 300)
+            bars = STATE.bars_cache
+
+        if needs_fetch:
+            all_tickers = load_tickers()
+            log.info(f"[SCAN] Fetching fresh bars for {len(all_tickers)} tickers…")
+            bars = _api.fetch_bars_batch(client, all_tickers, cfg)
+            STATE.record_api_call(1) # Batch fetch is 1 call
+            with STATE.lock:
+                STATE.bars_cache = bars
+                STATE.last_bar_fetch = ts_now
+        
         ts   = datetime.now(ET).strftime("%H:%M:%S")
 
-        # Compute signals WITHOUT holding STATE.lock — this is CPU-intensive pandas
-        # work that can take seconds for many tickers. Holding the lock here would
-        # starve _snapshot (called every second from the WebSocket loop).
+        # Get latest prices from Finnhub to inject into signal calculation
+        latest_prices = {}
+        if FINNHUB_STATE.connected:
+            with FINNHUB_STATE.lock:
+                latest_prices = {t: d["price"] for t in tickers if (d := FINNHUB_STATE.prices.get(t)) and d.get("price")}
+
+        # Compute signals WITHOUT holding STATE.lock
         computed: dict = {}
         for t in tickers:
             df = bars.get(t)
@@ -246,6 +282,19 @@ def run_scan():
                 computed[t] = None                # sentinel: no data
             else:
                 try:
+                    # Inject latest price as a synthetic last row if it's newer than the last bar
+                    lp = latest_prices.get(t)
+                    if lp:
+                        last_bar_ts = df.index[-1]
+                        now_et = datetime.now(ET)
+                        # Only inject if we don't already have a bar for this minute/period
+                        # or if the price is different enough to matter.
+                        # Simple approach: append a new row with the latest price.
+                        new_row = pd.DataFrame({
+                            "open": [lp], "high": [lp], "low": [lp], "close": [lp], "volume": [0]
+                        }, index=[now_et])
+                        df = pd.concat([df, new_row])
+
                     sig_df     = compute_signals(df, cfg)
                     computed[t] = _signal_summary(sig_df.iloc[-1], cfg)
                 except Exception as ex:
@@ -296,6 +345,7 @@ _known_tickers: set = set()
 
 def _price_loop():
     global _known_tickers
+    last_signal_update = 0
     while True:
         try:
             tickers = load_tickers()
@@ -307,7 +357,8 @@ def _price_loop():
                 log.info(f"[PRICE] New tickers {new} — triggering auto-scan")
                 if FINNHUB_STATE.connected:
                     _fh_subscribe(list(new))
-                threading.Thread(target=run_scan, daemon=True, name="scan-auto").start()
+                threading.Thread(target=run_scan, kwargs={"force_fetch_bars": True}, 
+                                 daemon=True, name="scan-auto").start()
             _known_tickers = current
 
             client = STATE.data_client
@@ -324,23 +375,55 @@ def _price_loop():
                                 finnhub_prices[t] = float(d["price"])
 
                 # Fallback: Alpaca REST for tickers not covered by Finnhub
-                alpaca_tickers = [t for t in tickers if t not in finnhub_prices]
+                # Optimization: Only poll Alpaca at high frequency if Finnhub is disconnected.
+                # If Finnhub IS connected, we only poll Alpaca for missing tickers every 5 seconds.
                 alpaca_prices: dict = {}
-                if alpaca_tickers:
+                alpaca_tickers = [t for t in tickers if t not in finnhub_prices]
+                
+                should_poll_alpaca = False
+                if not FINNHUB_STATE.connected:
+                    should_poll_alpaca = True # Polling at price_loop frequency (0.2s)
+                elif alpaca_tickers and (now % 5 < 0.25): # Polling missing tickers every ~5s
+                    should_poll_alpaca = True
+
+                if alpaca_tickers and should_poll_alpaca:
                     alpaca_prices = _api.get_latest_trade_prices(
                         client, alpaca_tickers, STATE.cfg
                     )
+                    STATE.record_api_call(1)
 
                 all_prices = {**alpaca_prices, **finnhub_prices}
                 with STATE.lock:
                     for t, p in all_prices.items():
+                        entry = STATE.tickers.get(t, {})
+                        old_p = entry.get("price")
+                        # If price changed significantly, mark as dirty
+                        if old_p is not None and abs(p - old_p) / old_p > 0.0001:
+                            STATE.dirty_tickers.add(t)
+                        
                         if t not in STATE.tickers:
                             STATE.tickers[t] = {}
+                            STATE.dirty_tickers.add(t)
+                        
                         STATE.tickers[t]["price"]    = round(p, 4)
                         STATE.tickers[t]["price_ts"] = ts
+                
+                # REACTIVE UPDATE: Trigger a light-weight scan for dirty tickers
+                now = time.time()
+                if not STATE.scan_running and (now - last_signal_update > 0.5):
+                    with STATE.lock:
+                        to_scan = list(STATE.dirty_tickers)
+                        STATE.dirty_tickers.clear()
+                    
+                    if to_scan:
+                        last_signal_update = now
+                        threading.Thread(target=run_scan, 
+                                         kwargs={"force_fetch_bars": False, "ticker_subset": to_scan},
+                                         daemon=True, name="scan-reactive").start()
+
         except Exception as e:
             log.debug(f"[PRICE] {e}")
-        time.sleep(3)
+        time.sleep(0.2) # High-frequency price polling (5Hz)
 
 
 # ── State snapshot ────────────────────────────────────────────────────────────
@@ -454,7 +537,10 @@ async def api_add_ticker(request: Request):
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
             return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
         loop = asyncio.get_running_loop()
-        ok   = await loop.run_in_executor(None, lambda: add_ticker_to_log(ticker))
+        ok, is_new = await loop.run_in_executor(None, lambda: add_ticker_to_log(ticker))
+        if ok and is_new:
+            threading.Thread(target=workflow_add_wb, args=(ticker,),
+                             daemon=True, name=f"wb-{ticker}").start()
         return JSONResponse({"ok": ok})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -528,11 +614,26 @@ async def api_config_save(request: Request):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
+    
+    # Track last update to avoid overwhelming client, but allow fast price updates
+    last_push = 0
+    
     try:
         while True:
+            # Check if anything is "dirty" or if it's been at least 1s since last push
+            now = time.time()
+            
+            # We still want a regular heartbeat (1s), but we can push faster if prices are moving
+            # For now, let's keep it simple but efficient.
+            # To make it TRULY real-time, we would use an Event or Queue.
+            # Let's optimize the loop to 10Hz (0.1s) and only push if data changed.
+            
             snap = await asyncio.get_running_loop().run_in_executor(None, _snapshot)
             await ws.send_json(snap)
-            await asyncio.sleep(1)
+            
+            # Sleep until the next second-boundary for a consistent 1Hz UI update.
+            # If the user wants "Tick-by-Tick" visuals, we can reduce this sleep.
+            await asyncio.sleep(0.5) 
     except (WebSocketDisconnect, Exception):
         pass
 

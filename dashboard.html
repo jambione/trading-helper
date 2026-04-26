@@ -203,6 +203,18 @@
 
     <!-- ── Tab: Data ─────────────────────────────── -->
     <div class="tab-panel hidden" data-tab-panel="data">
+      <div class="form-group">
+        <label for="cfg-strategy">Trading Strategy</label>
+        <select id="cfg-strategy">
+          <option value="multiple_os">Multiple Oversold (Vol + RSI-2 + %R)</option>
+          <option value="scoring">Weighted Scoring (Legacy)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="cfg-tv-url">TradingView Chart Layout URL/ID</label>
+        <input id="cfg-tv-url" type="text" placeholder="https://www.tradingview.com/chart/x04Gfcu8/" />
+        <span class="hint">Use your saved layout to see your indicators.</span>
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label for="cfg-timeframe">Bar Timeframe</label>

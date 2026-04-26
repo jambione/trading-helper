@@ -10,6 +10,7 @@ import { subscribe } from './store.js';
 let _box = null;                  // scrollable transcript container
 let _known = new Set();           // current watchlist symbols for highlighting
 let _lastLineCount = 0;           // track rendered lines for incremental updates
+let _lastLine = '';               // last rendered line text; detects sliding-window shifts
 
 export function init(panelEl) {
   _box = panelEl.querySelector('[data-transcript-box]');
@@ -31,22 +32,29 @@ function _render(lines) {
     if (_lastLineCount !== 0) {
       _box.innerHTML = '<span class="tx-placeholder">Waiting for transcription…</span>';
       _lastLineCount = 0;
+      _lastLine = '';
     }
     return;
   }
 
+  const tail = lines[lines.length - 1];
+
+  // No change at all — skip DOM work
+  if (tail === _lastLine && lines.length === _lastLineCount) return;
+
   const atBottom = _box.scrollHeight - _box.scrollTop - _box.clientHeight < 60;
 
-  if (_lastLineCount === 0 || lines.length < _lastLineCount) {
-    // Full re-render on first render or after a clear
-    _box.innerHTML = lines.map(_renderLine).join('');
-  } else if (lines.length > _lastLineCount) {
-    // Append only the new lines — no full DOM replace
+  if (lines.length > _lastLineCount && _lastLineCount > 0) {
+    // Pure growth: append only the new lines
     _box.insertAdjacentHTML('beforeend',
       lines.slice(_lastLineCount).map(_renderLine).join(''));
+  } else {
+    // First render, clear, count shrank, or sliding-window shift — full re-render
+    _box.innerHTML = lines.map(_renderLine).join('');
   }
 
   _lastLineCount = lines.length;
+  _lastLine = tail;
   if (atBottom) _box.scrollTop = _box.scrollHeight;
 }
 

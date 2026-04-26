@@ -58,6 +58,32 @@ def calc_rvol(df: pd.DataFrame, avg_daily_vol: int = 0) -> pd.Series:
     return df["volume"] / avg_vol.replace(0, np.nan)
 
 
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average True Range"""
+    tr1 = df["high"] - df["low"]
+    tr2 = abs(df["high"] - df["close"].shift(1))
+    tr3 = abs(df["low"] - df["close"].shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.ewm(alpha=1/period, adjust=False).mean()
+
+
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average Directional Index"""
+    df = df.copy()
+    df["up"] = df["high"].diff()
+    df["down"] = -df["low"].diff()
+    
+    df["plus_dm"] = np.where((df["up"] > df["down"]) & (df["up"] > 0), df["up"], 0)
+    df["minus_dm"] = np.where((df["down"] > df["up"]) & (df["down"] > 0), df["down"], 0)
+    
+    tr = atr(df, period)
+    df["plus_di"] = 100 * (df["plus_dm"].ewm(alpha=1/period, adjust=False).mean() / tr)
+    df["minus_di"] = 100 * (df["minus_dm"].ewm(alpha=1/period, adjust=False).mean() / tr)
+    
+    df["dx"] = 100 * (abs(df["plus_di"] - df["minus_di"]) / (df["plus_di"] + df["minus_di"]))
+    return df["dx"].ewm(alpha=1/period, adjust=False).mean()
+
+
 # ============================================================================
 # CM RSI 2 (Larry Connors RSI-2 Strategy - Lower)
 # Based on Pine Script by ChrisMoody
@@ -141,77 +167,61 @@ def compute_obv_oscillator(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
 def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """
-    %R Trend Exhaustion Logic:
+    %R Trend Exhaustion Logic (Updated for Multiple Oversold Support):
     - Uses dual %R: Fast (21) and Slow (112)
     - Overbought zone: %R >= -threshold
     - Oversold zone: %R <= -100 + threshold
     
-    ON DECK (Bull Trend Start):
-    - Entering overbought zone AND have been in overbought for > 1 bar
-    - This means: overbought NOW AND overbought 1 bar ago
-    
-    OFF DECK (Bull Trend Break):
-    - Was overbought, now NOT overbought (exiting the zone)
-    - This is the reversal signal
+    REWORKED: Now supports tracking "Multiple Oversold" indicators.
     """
     df = df.copy()
     
     threshold = cfg.get("rte_threshold", 20)
     
     # Calculate %R for fast (21) and slow (112) periods
-    s_pr = williams_pr(df["high"], df["low"], df["close"], 21)  # Fast
-    l_pr = williams_pr(df["high"], df["low"], df["close"], 112)  # Slow
+    s_pr = williams_pr(df["high"], df["low"], df["close"], 21)
+    l_pr = williams_pr(df["high"], df["low"], df["close"], 112)
     
-    # Apply smoothing (matching Pine script)
-    s_percentR = s_pr.ewm(span=7, adjust=False).mean()  # Fast smoothing
-    l_percentR = l_pr.ewm(span=3, adjust=False).mean()  # Slow smoothing
+    # Apply smoothing
+    s_percentR = s_pr.ewm(span=7, adjust=False).mean()
+    l_percentR = l_pr.ewm(span=3, adjust=False).mean()
     
     df["s_percentR"] = s_percentR
     df["l_percentR"] = l_percentR
     
     # Overbought/Oversold conditions
-    # Overbought: BOTH fast AND slow %R are in the overbought zone
     df["overbought"] = (s_percentR >= -threshold) & (l_percentR >= -threshold)
-    # Oversold: BOTH fast AND slow %R are in the oversold zone
-    df["oversold"] = (s_percentR <= -100 + threshold) & (l_percentR <= -100 + threshold)
-    
-    # Previous bar states
-    df["overbought_prev"] = df["overbought"].shift(1).fillna(False)
-    df["oversold_prev"] = df["oversold"].shift(1).fillna(False)
-    
-    # ON DECK = Bull Trend Start
-    # Condition: Currently overbought AND was overbought 1 bar ago (consecutive)
-    # This means the trend has been established (more than just a brief spike)
-    df["ob_trend_start"] = df["overbought"] & df["overbought_prev"]
-    
-    # OFF DECK = Bull Trend Break (Reversal)
-    # Condition: Was overbought but no longer is (exiting the zone)
-    df["ob_reversal"] = (~df["overbought"]) & df["overbought_prev"]
-    
-    # Same for bear side
-    df["os_trend_start"] = df["oversold"] & df["oversold_prev"]
-    df["os_reversal"] = (~df["oversold"]) & df["oversold_prev"]
-    
-    # Combined extreme condition for backward compatibility
-    side = cfg.get("rte_side", "red").lower()
-    if side == "red":
-        df["rte_extreme"] = df["overbought"]
-    else:
-        df["rte_extreme"] = df["oversold"]
-    
-    # Reversal flag for backward compatibility
-    df["rte_reversal"] = df["ob_reversal"] | df["os_reversal"]
+    df["oversold"]   = (s_percentR <= -100 + threshold) & (l_percentR <= -100 + threshold)
     
     # Track consecutive bars in zone
     df["ob_consecutive"] = df["overbought"].cumsum() - df["overbought"].cumsum().where(~df["overbought"]).ffill().fillna(0)
     df["os_consecutive"] = df["oversold"].cumsum() - df["oversold"].cumsum().where(~df["oversold"]).ffill().fillna(0)
     
-    # On deck with minimum consecutive bars
-    min_bars = cfg.get("rte_min_boxes", 2)  # Need at least 2 bars in zone
+    # "Multiple Oversold" Indicator tracking
+    # We define a signal when multiple oversold levels are hit
+    # e.g. s_percentR is deep OS, l_percentR is OS, and we've been here for N bars
+    min_bars = cfg.get("rte_min_boxes", 2)
+    df["signal_multiple_os"] = (
+        (s_percentR <= -100 + threshold) & 
+        (l_percentR <= -100 + threshold) & 
+        (df["os_consecutive"] >= min_bars)
+    )
+
+    # Legacy mappings
+    df["ob_trend_start"] = df["overbought"] & df["overbought"].shift(1).fillna(False)
+    df["ob_reversal"]    = (~df["overbought"]) & df["overbought"].shift(1).fillna(False)
+    df["os_trend_start"] = df["oversold"] & df["oversold"].shift(1).fillna(False)
+    df["os_reversal"]    = (~df["oversold"]) & df["oversold"].shift(1).fillna(False)
+    
+    side = cfg.get("rte_side", "blue").lower() # blue usually means oversold in this bot
+    if side == "blue":
+        df["rte_extreme"] = df["oversold"]
+    else:
+        df["rte_extreme"] = df["overbought"]
+    
+    df["rte_reversal"] = df["ob_reversal"] | df["os_reversal"]
     df["ob_on_deck"] = df["ob_trend_start"] & (df["ob_consecutive"] >= min_bars)
     df["os_on_deck"] = df["os_trend_start"] & (df["os_consecutive"] >= min_bars)
-    
-    # Final average %R for display
     df["rte_final"] = ((s_percentR + l_percentR) / 2).round(2)
     
     return df
@@ -268,36 +278,52 @@ def compute_macd(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
 def compute_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """
-    Main signal computation combining all three indicators:
-    1. CM RSI-2: approaching < 25 (price above 200 MA, below 5 MA)
-    2. OBV Oscillator: above zero AND rising
-    3. %R Trend Exhaustion: 
-       - ON DECK = bull trend start (consecutive overbought bars)
-       - OFF DECK = bull trend break (reversal from overbought)
+    Main signal computation (Reworked Strategy):
+    1. Volume Surge Indicator (Mandatory)
+    2. CM RSI 2 (Mandatory)
+    3. Multiple Oversold Indicators from Percent R Exhaustion (Mandatory)
     """
     df = df.copy()
     
-    # Compute all indicators
+    # Compute component indicators
     df = compute_cm_rsi_lower(df, cfg)
     df = compute_obv_oscillator(df, cfg)
     df = compute_percent_r_exhaustion(df, cfg)
     
-    # Volume surge (relaxed)
-    df["volume_surge"] = df["volume"] > (df["volume"].rolling(20).mean() * cfg.get("volume_surge_mult", 1.3))
+    # Helper indicators
+    df["adx"] = adx(df)
+    df["atr"] = atr(df)
+    df["rvol"] = calc_rvol(df)
     
-    # Individual indicator signals
-    df["signal_cm_rsi"] = df["cm_rsi_approaching"]
-    df["signal_obv"] = df["obv_trending_up"]
-    df["signal_on_deck"] = df["ob_on_deck"]  # ON DECK: Bull trend start
-    df["signal_off_deck"] = df["ob_reversal"]  # OFF DECK: Bull trend break
+    # 1. Volume surge (Configurable threshold)
+    vol_mult = float(cfg.get("volume_surge_mult", 1.5))
+    df["volume_surge"] = df["volume"] > (df["volume"].rolling(20).mean() * vol_mult)
     
-    # BUY signal: All three indicators agree
+    # 2. CM RSI 2 Bullish (UsesLarry Connors logic)
+    df["signal_cm_rsi"] = df["cm_rsi_bullish"]
+    
+    # 3. Multiple Oversold (Percent R logic)
+    df["signal_multiple_os"] = df["signal_multiple_os"]
+
+    # Main Strategy Logic: All 3 Must Align
+    # (Configurable behavior: we could move back to scoring if needed)
+    strategy = cfg.get("strategy", "multiple_os").lower()
+    
+    if strategy == "multiple_os":
+        buy_condition = (
+            df["volume_surge"] &
+            df["signal_cm_rsi"] &
+            df["signal_multiple_os"]
+        )
+    else:
+        # Fallback to scoring for flexibility
+        df["score"] = 0
+        df.loc[df["volume_surge"], "score"] += 3
+        df.loc[df["signal_cm_rsi"], "score"] += 3
+        df.loc[df["signal_multiple_os"], "score"] += 4
+        buy_condition = (df["score"] >= 7)
+
     df["signal"] = "HOLD"
-    buy_condition = (
-        df["signal_cm_rsi"] &      # CM RSI approaching < 25
-        df["signal_obv"] &         # OBV oscillator above zero and rising
-        df["signal_on_deck"]        # ON DECK: Bull trend established
-    )
     df.loc[buy_condition, "signal"] = "BUY"
     
     # Additional: OFF DECK signal (bull trend break = potential entry on pullback)

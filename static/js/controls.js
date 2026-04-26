@@ -6,7 +6,7 @@
  */
 
 import { api } from './api.js';
-import { get } from './store.js';
+import { get, selectTicker } from './store.js';
 
 export async function toggleTranscriber(btnEl) {
   const running = get('transcriber').running;
@@ -58,6 +58,7 @@ export async function addTicker(inputEl, btnEl) {
   try {
     await api.addTicker(ticker);
     if (inputEl) inputEl.value = '';
+    selectTicker(ticker);
   } catch (e) {
     console.error('[controls] addTicker', e);
   } finally {

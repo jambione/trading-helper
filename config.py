@@ -68,6 +68,7 @@ SAFE_CONFIG_KEYS = [
     "ema_short", "ema_long",
     "wr_length",
     "tv_chart_url",
+    "strategy",
     "device_index",
 ]
 

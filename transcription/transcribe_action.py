@@ -7,8 +7,10 @@ import re
 import threading
 from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
-from queue import Queue, Full
+from queue import Queue, Full, Empty
 from pathlib import Path
+
+from workflows import workflow_add_wb
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -141,11 +143,12 @@ except Exception:
     pass
 
 
-def log_ticker(ticker: str):
+def log_ticker(ticker: str) -> bool:
+    """Log a new ticker to the watchlist JSON. Returns True if it was newly added."""
     ticker = ticker.upper()
     with _log_lock:
         if ticker in _logged_tickers:
-            return
+            return False
         _logged_tickers.add(ticker)
         snapshot = sorted(_logged_tickers)
     try:
@@ -153,6 +156,25 @@ def log_ticker(ticker: str):
         print(f"[LOG] {ticker}")
     except Exception as e:
         print(f"[LOG] Could not write watchlist: {e}")
+    return True
+
+
+# Serialize Webull automation so rapid bursts don't spawn conflicting interactions.
+_wb_queue: Queue = Queue()
+
+
+def _wb_worker():
+    while True:
+        try:
+            ticker = _wb_queue.get(timeout=2.0)
+            try:
+                workflow_add_wb(ticker)
+            except Exception as e:
+                print(f"[WARN] Webull workflow failed for {ticker}: {e}", flush=True)
+            finally:
+                _wb_queue.task_done()
+        except Empty:
+            pass
 
 
 # ========================= CONFIG =========================
@@ -349,7 +371,8 @@ def transcription_worker():
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
             for ticker in extract_tickers(text):
-                log_ticker(ticker)
+                if log_ticker(ticker):
+                    _wb_queue.put(ticker)
 
         except Exception as e:
             msg = str(e).strip()
@@ -363,6 +386,7 @@ def transcription_worker():
 threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     threading.Thread(target=transcription_worker, daemon=True, name="transcription"),
+    threading.Thread(target=_wb_worker,           daemon=True, name="webull"),
 ]
 for t in threads:
     t.start()
