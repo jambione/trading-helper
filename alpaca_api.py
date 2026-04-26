@@ -62,6 +62,7 @@ def fetch_bars(data_client, ticker: str, cfg: dict) -> Optional[pd.DataFrame]:
             timeframe=tf,
             start=datetime.now(timezone.utc) - timedelta(days=10),
             limit=cfg.get("bar_count", 300),
+            extended_hours=True,
             **_get_feed_arg(cfg),
         )
         bars = data_client.get_stock_bars(req).df
@@ -101,6 +102,7 @@ def fetch_bars_batch(data_client, tickers: list, cfg: dict) -> dict:
             timeframe=tf,
             start=datetime.now(timezone.utc) - timedelta(days=10),
             limit=cfg.get("bar_count", 300),
+            extended_hours=True,
             **_get_feed_arg(cfg),
         )
         bars = data_client.get_stock_bars(req).df
