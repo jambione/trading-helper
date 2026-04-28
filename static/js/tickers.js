@@ -7,6 +7,7 @@
  */
 
 import { subscribe, selectTicker, get } from './store.js';
+import { api } from './api.js';
 
 let _rowsEl  = null;   // <div data-ticker-rows>
 let _countEl = null;   // <span data-ticker-count>
@@ -91,17 +92,47 @@ function _renderTable(rows) {
 
 function _createRow(row) {
   const el = document.createElement('div');
-  el.className = `ticker-row ${_rowClass(row.status)}`;
+  el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
+  el.querySelector('[data-wb-btn]').addEventListener('click', e => {
+    e.stopPropagation();
+    _addToWebull(e.currentTarget, row.ticker);
+  });
+  el.querySelector('[data-delete-btn]').addEventListener('click', e => {
+    e.stopPropagation();
+    _removeTicker(row.ticker);
+  });
   return el;
+}
+
+async function _removeTicker(ticker) {
+  try {
+    await api.removeTicker(ticker);
+  } catch (err) {
+    console.error('Failed to remove ticker', err);
+  }
+}
+
+async function _addToWebull(btn, ticker) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    await api.addToWebull(ticker);
+    btn.textContent = 'WB';
+  } catch {
+    btn.textContent = '!';
+    setTimeout(() => { btn.textContent = 'WB'; btn.disabled = false; }, 1500);
+    return;
+  }
+  btn.disabled = false;
 }
 
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
   // Status class on the row itself
-  el.className = `ticker-row ${_rowClass(row.status)}`;
+  el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
 
   // Price
   const priceEl = el.querySelector('[data-price]');
@@ -173,6 +204,10 @@ function _rowHTML(row) {
     <div class="cell-obv${row.obv_up ? ' obv-up' : ''}" data-obv>${row.obv_up ? '▲' : '—'}</div>
     <div class="cell-streak${(row.streak ?? 0) >= 1 ? ' streak-active' : ''}" data-streak>${streak}</div>
     <div class="status-badge ${cls}" data-badge>${label}</div>
+    <div class="cell-actions">
+      <button class="btn-wb" data-wb-btn title="Add to Webull watchlist">WB</button>
+      <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
+    </div>
   </div>`;
 }
 

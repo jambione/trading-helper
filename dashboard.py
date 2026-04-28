@@ -8,6 +8,7 @@ Ties together transcription, real-time prices, and signals.
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -30,15 +31,18 @@ import alpaca_api as _api
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from workflows import workflow_add_wb, workflow_add_wb_bulk
+from workflows import workflow_add_wb
 from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
     request_subscribe as _fh_subscribe,
+    fetch_realtime_quote as _fh_rest_quote,
 )
 
 ET                 = ZoneInfo("America/New_York")
 PORT               = 8888
+_TICKER_RE         = re.compile(r'\b([A-Z]{2,5})\b')
+_SPEECH_LINE_RE    = re.compile(r'^\[(\d{2}:\d{2}:\d{2})\] ')
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
 TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 
@@ -136,6 +140,30 @@ def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
     except Exception as e:
         log.error(f"[TICKER] Add {ticker} failed: {e}")
         return False, False
+
+
+def remove_ticker_from_log(ticker: str) -> bool:
+    """Remove a single ticker from the watchlist and internal state."""
+    ticker = ticker.upper()
+    try:
+        import json as _json
+        tickers = load_tickers()
+        if ticker not in tickers:
+            return True
+        tickers = [t for t in tickers if t != ticker]
+        TICKER_LOG.write_text(_json.dumps(tickers, indent=2), encoding="utf-8")
+        _ticker_cache["mtime"] = -1.0
+        with STATE.lock:
+            if ticker in STATE.tickers:
+                del STATE.tickers[ticker]
+            if ticker in STATE.bars_cache:
+                del STATE.bars_cache[ticker]
+            if ticker in STATE.last_calc_price:
+                del STATE.last_calc_price[ticker]
+        return True
+    except Exception as e:
+        log.error(f"[TICKER] Remove {ticker} failed: {e}")
+        return False
 
 
 # ── Transcription subprocess ──────────────────────────────────────────────────
@@ -386,10 +414,47 @@ def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
         _alpaca_fallback_running = False
 
 
+# Finnhub REST quote poll — fills prices during extended hours when WebSocket is idle.
+# Runs every 30s; only updates tickers not already covered by a live WebSocket price.
+_FINNHUB_REST_INTERVAL = 30   # seconds
+_finnhub_rest_running  = False
+
+
+def _finnhub_rest_poll_worker(api_key: str, tickers: list):
+    """Fetch Finnhub /quote for tickers with no live WebSocket price and cache result."""
+    global _finnhub_rest_running
+    try:
+        with FINNHUB_STATE.lock:
+            ws_has = {t for t in tickers if FINNHUB_STATE.prices.get(t, {}).get("price")}
+        need = [t for t in tickers if t not in ws_has]
+        # In pre-market/after-hours, WebSocket is often idle.
+        # If tickers have no price, or price is > 60s old, poll them via REST.
+        now = time.time()
+        with FINNHUB_STATE.lock:
+            stale = {t for t in tickers if (d := FINNHUB_STATE.prices.get(t)) and (now - d.get("ts_unix", 0) > 60)}
+        
+        to_poll = sorted(list(set(need) | stale))[:30] # cap per cycle to respect rate limits
+        if to_poll:
+            log.info(f"[PRICE] Extended hours REST poll for {len(to_poll)} tickers: {to_poll}")
+
+        for ticker in to_poll:
+            try:
+                q = _fh_rest_quote(api_key, ticker)
+                price = float(q.get("c", 0)) if q.get("ok") else 0
+                if price > 0:
+                    FINNHUB_STATE.update_price(ticker, price)
+                time.sleep(0.1) # small throttle
+            except Exception:
+                pass
+    finally:
+        _finnhub_rest_running = False
+
+
 def _price_loop():
-    global _known_tickers, _alpaca_fallback_running
-    last_signal_update = 0
-    last_alpaca_poll   = 0
+    global _known_tickers, _alpaca_fallback_running, _finnhub_rest_running
+    last_signal_update  = 0
+    last_alpaca_poll    = 0
+    last_fh_rest_poll   = 0
     while True:
         try:
             tickers = load_tickers()
@@ -419,6 +484,18 @@ def _price_loop():
                             if d and d.get("price"):
                                 finnhub_prices[t] = float(d["price"])
 
+                # Finnhub REST quote poll — supplements WebSocket during extended hours
+                # when no trades have streamed yet. 30s cadence, free-tier safe.
+                fh_key = STATE.cfg.get("finnhub_key", "")
+                if fh_key and tickers and not _finnhub_rest_running and (now - last_fh_rest_poll > _FINNHUB_REST_INTERVAL):
+                    last_fh_rest_poll     = now
+                    _finnhub_rest_running = True
+                    threading.Thread(
+                        target=_finnhub_rest_poll_worker,
+                        args=(fh_key, list(tickers)),
+                        daemon=True, name="fh-rest-poll",
+                    ).start()
+
                 # Fallback: Alpaca REST for tickers not covered by Finnhub.
                 # Runs in a background thread — never blocks this loop.
                 # Polls every 5s when Finnhub has gaps; every 2s when Finnhub is down.
@@ -433,24 +510,31 @@ def _price_loop():
                         daemon=True, name="alpaca-fallback",
                     ).start()
 
-                # Merge: Finnhub wins over cached Alpaca values
+                # Merge: Finnhub REST/WebSocket wins over cached Alpaca values
                 with _alpaca_cache_lock:
                     cached_alpaca = dict(_alpaca_price_cache)
-                all_prices = {**cached_alpaca, **finnhub_prices}
+                with FINNHUB_STATE.lock:
+                    fh_all = {t: float(d["price"]) for t, d in FINNHUB_STATE.prices.items() if d.get("price")}
+                all_prices = {**cached_alpaca, **fh_all}
 
                 with STATE.lock:
                     for t, p in all_prices.items():
                         if t not in tickers:
                             continue
-                        entry = STATE.tickers.get(t, {})
-                        old_p = entry.get("price")
-                        if old_p is not None and abs(p - old_p) / old_p > 0.0001:
-                            STATE.dirty_tickers.add(t)
                         if t not in STATE.tickers:
                             STATE.tickers[t] = {}
+                        
+                        entry = STATE.tickers[t]
+                        old_p = entry.get("price")
+                        
+                        # Mark as dirty if price changed (used for reactive signal recompute)
+                        if old_p is not None and abs(p - old_p) / old_p > 1e-7:
                             STATE.dirty_tickers.add(t)
-                        STATE.tickers[t]["price"]    = round(p, 4)
-                        STATE.tickers[t]["price_ts"] = ts
+                        elif old_p is None:
+                            STATE.dirty_tickers.add(t)
+                            
+                        entry["price"]    = round(p, 4)
+                        entry["price_ts"] = ts
 
                 # Reactive signal recompute — at most every 250ms
                 if not STATE.scan_running and (now - last_signal_update > 0.25):
@@ -468,24 +552,68 @@ def _price_loop():
         time.sleep(0.1)  # 10Hz — Finnhub ticks are picked up within 100ms
 
 
+# ── Mention detection ─────────────────────────────────────────────────────────
+
+def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0) -> dict:
+    """Return {ticker: rank} for up to 3 watchlist tickers spoken in the last
+    window_s seconds.  Rank 0 = most recently mentioned.
+
+    Only speech lines ([HH:MM:SS] ...) count — [LOG] lines mark freshly-added
+    tickers (not already on the list) and are excluded entirely."""
+    now = datetime.now()
+
+    # [LOG] TICKER lines are emitted only when a ticker is newly added.
+    recently_added: set[str] = set()
+    for line in tx_lines:
+        if line.startswith('[LOG] '):
+            sym = line[6:].strip()
+            if re.fullmatch(r'[A-Z]{2,5}', sym) and sym in ticker_set:
+                recently_added.add(sym)
+
+    seen: list[str] = []
+    for line in reversed(tx_lines):
+        m = _SPEECH_LINE_RE.match(line)
+        if not m:
+            continue
+        ts = m.group(1)
+        try:
+            line_time = now.replace(
+                hour=int(ts[0:2]), minute=int(ts[3:5]), second=int(ts[6:8]), microsecond=0
+            )
+            if (now - line_time).total_seconds() > window_s:
+                break  # lines are chronological; everything older can be skipped
+        except ValueError:
+            continue
+        for sym in _TICKER_RE.findall(line):
+            if sym in ticker_set and sym not in recently_added and sym not in seen:
+                seen.append(sym)
+                if len(seen) == 3:
+                    return {s: i for i, s in enumerate(seen)}
+
+    return {s: i for i, s in enumerate(seen)}
+
+
 # ── State snapshot ────────────────────────────────────────────────────────────
-
-_STATUS_ORDER = {"BUY": 0, "ON_DECK": 1, "WARMING": 2, "COLD": 3, "NO_DATA": 4, "ERROR": 5}
-
 
 def _snapshot() -> dict:
     tickers  = load_tickers()
     # Read transcript lines BEFORE acquiring STATE.lock — read_transcript_lines also
     # acquires STATE.lock, and threading.Lock is non-reentrant; nested acquisition deadlocks.
     tx_lines = read_transcript_lines(30)
+    mention_rank = _build_mention_rank(tx_lines, set(tickers))
+
     with STATE.lock:
         rows = []
         for t in tickers:
             d = dict(STATE.tickers.get(t, {}))
             d["ticker"] = t
+            d["mentioned"] = t in mention_rank
             rows.append(d)
-        rows.sort(key=lambda r: (_STATUS_ORDER.get(r.get("status", "NO_DATA"), 9),
-                                 -r.get("proximity", 0)))
+        rows.sort(key=lambda r: (
+            mention_rank.get(r["ticker"], len(mention_rank)),
+            -r.get("proximity", 0) if r["ticker"] not in mention_rank else 0,
+            (r.get("price") or float("inf")) if r["ticker"] not in mention_rank else 0,
+        ))
         return {
             "transcriber": {
                 "running": STATE.transcriber_running,
@@ -578,10 +706,35 @@ async def api_add_ticker(request: Request):
             return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
         loop = asyncio.get_running_loop()
         ok, is_new = await loop.run_in_executor(None, lambda: add_ticker_to_log(ticker))
-        if ok and is_new:
-            threading.Thread(target=workflow_add_wb, args=(ticker,),
-                             daemon=True, name=f"wb-{ticker}").start()
         return JSONResponse({"ok": ok})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/remove")
+async def api_remove_ticker(request: Request):
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker:
+            return JSONResponse({"ok": False, "error": "Missing ticker"}, status_code=400)
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(None, lambda: remove_ticker_from_log(ticker))
+        return JSONResponse({"ok": ok})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/add-wb")
+async def api_add_wb(request: Request):
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        threading.Thread(target=workflow_add_wb, args=(ticker,),
+                         daemon=True, name=f"wb-{ticker}").start()
+        return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
@@ -602,11 +755,6 @@ async def api_add_bulk(request: Request):
             ok, is_new = await loop.run_in_executor(None, lambda t=t: add_ticker_to_log(t))
             if ok and is_new:
                 added.append(t)
-        if added:
-            # Single thread processes the list sequentially — concurrent threads
-            # would interleave keystrokes in the Webull search box.
-            threading.Thread(target=workflow_add_wb_bulk, args=(added,),
-                             daemon=True, name="wb-bulk").start()
         return JSONResponse({"ok": True, "added": len(added), "tickers": added})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)

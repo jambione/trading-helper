@@ -45,6 +45,7 @@ class FinnhubState:
                 "price":     price,
                 "volume":    volume,
                 "timestamp": timestamp,
+                "ts_unix":   time.time(),
                 "updated":   datetime.now(ET).strftime("%H:%M:%S"),
             }
 

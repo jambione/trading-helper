@@ -7,10 +7,8 @@ import re
 import threading
 from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
-from queue import Queue, Full, Empty
+from queue import Queue, Full
 from pathlib import Path
-
-from workflows import workflow_add_wb
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -26,12 +24,14 @@ _NATO = {
 }
 
 _nato_word = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
-_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:[ \t]+{_nato_word}){{1,4}}\b")
+_NATO_SEP   = r"[ \t]*,?[ \t]*"   # optional comma between NATO words
+_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:{_NATO_SEP}{_nato_word}){{1,4}}\b")
 
 
 def normalize_transcript(text: str) -> str:
     def collapse_nato(m: re.Match) -> str:
-        letters = "".join(_NATO.get(w, "") for w in m.group(0).lower().split())
+        words = re.split(r'[\s,]+', m.group(0).lower())
+        letters = "".join(_NATO.get(w, "") for w in words if w)
         return letters if 2 <= len(letters) <= 5 else m.group(0)
 
     text = _NATO_PATTERN.sub(collapse_nato, text)
@@ -157,24 +157,6 @@ def log_ticker(ticker: str) -> bool:
     except Exception as e:
         print(f"[LOG] Could not write watchlist: {e}")
     return True
-
-
-# Serialize Webull automation so rapid bursts don't spawn conflicting interactions.
-_wb_queue: Queue = Queue()
-
-
-def _wb_worker():
-    while True:
-        try:
-            ticker = _wb_queue.get(timeout=2.0)
-            try:
-                workflow_add_wb(ticker)
-            except Exception as e:
-                print(f"[WARN] Webull workflow failed for {ticker}: {e}", flush=True)
-            finally:
-                _wb_queue.task_done()
-        except Empty:
-            pass
 
 
 # ========================= CONFIG =========================
@@ -371,8 +353,7 @@ def transcription_worker():
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
             for ticker in extract_tickers(text):
-                if log_ticker(ticker):
-                    _wb_queue.put(ticker)
+                log_ticker(ticker)
 
         except Exception as e:
             msg = str(e).strip()
@@ -386,7 +367,6 @@ def transcription_worker():
 threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     threading.Thread(target=transcription_worker, daemon=True, name="transcription"),
-    threading.Thread(target=_wb_worker,           daemon=True, name="webull"),
 ]
 for t in threads:
     t.start()

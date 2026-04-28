@@ -386,7 +386,7 @@ body {
 
 .table-cols {
   display: grid;
-  grid-template-columns: 68px 80px 1fr 58px 52px 38px 46px 80px;
+  grid-template-columns: 68px 80px 1fr 58px 52px 38px 46px 80px 38px;
   align-items: center;
 }
 
@@ -444,6 +444,10 @@ body {
 .row-buy:hover { background: rgba(0, 212, 160, 0.12); }
 .row-deck    { background: var(--deck-bg); }
 .row-deck:hover { background: rgba(61, 139, 255, 0.12); }
+
+/* Transcript-mention highlight: amber left accent, warm bg on non-signal rows */
+.row-mentioned { border-left: 3px solid var(--warming) !important; padding-left: 5px; }
+.row-mentioned:not(.row-buy):not(.row-deck) { background: var(--warming-bg); }
 
 /* Cells */
 .cell-ticker {
@@ -513,6 +517,7 @@ body {
   border-radius: var(--r-xs);
   border: 1px solid transparent;
   white-space: nowrap;
+  width: 72px; /* Fixed width to prevent jumping */
 }
 .badge-buy {
   color: var(--buy);
@@ -533,6 +538,45 @@ body {
 .badge-cold    { color: var(--cold-text); }
 .badge-nodata  { color: var(--text-muted); }
 .badge-error   { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border); }
+
+.cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Webull add button */
+.btn-wb, .btn-delete {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 2px 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+}
+.btn-wb:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-hi);
+}
+.btn-wb:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
 
 /* ── TradingView panel ──────────────────────────────────────── */
 .panel-tradingview { background: var(--surface); position: relative; }
