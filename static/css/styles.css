@@ -386,7 +386,7 @@ body {
 
 .table-cols {
   display: grid;
-  grid-template-columns: 68px 80px 1fr 58px 52px 38px 46px 80px 38px;
+  grid-template-columns: 60px 70px 54px 48px 1fr 52px 46px 32px 38px 68px 36px;
   align-items: center;
 }
 
@@ -464,6 +464,21 @@ body {
   tabular-nums: 1;
 }
 .cell-price.price-flash { animation: flash-price 0.6s ease-out; }
+
+.cell-chg {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+}
+.cell-chg.chg-pos { color: var(--buy); }
+.cell-chg.chg-neg { color: var(--danger); }
+
+.cell-vol {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.cell-vol.vol-high { color: var(--accent); }
 
 .cell-proximity {
   padding-right: 12px;

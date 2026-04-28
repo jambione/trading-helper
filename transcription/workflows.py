@@ -329,42 +329,19 @@ def _wb_add_one(hwnd: int, win, ticker: str) -> bool:
     Type one ticker into the already-focused Webull window and confirm with Enter.
     Caller is responsible for opening/focusing the window first.
     """
-    import time, numpy as np
+    import time
 
     # Ctrl+2 → Stocks tab
     _pyautogui.hotkey("ctrl", "2")
     time.sleep(0.5)
 
-    # Capture baseline for dropdown detection
-    try:
-        margin = 10
-        region = (win.left + margin, win.top + 40, win.width - margin * 2, min(300, win.height // 3))
-        baseline = np.array(_pyautogui.screenshot(region=region), dtype=np.int16)
-    except Exception:
-        baseline = None
-
-    # Type each letter directly into the Webull window's message queue
+    # Type each character directly into the window's message queue, then confirm
     for letter in ticker:
         _wb_post_char(hwnd, letter)
-        time.sleep(0.08)
-
-    # Poll for the dropdown (pixel change in the search region)
-    detected = False
-    if baseline is not None:
-        deadline = time.time() + 4.0
-        while time.time() < deadline:
-            time.sleep(0.1)
-            try:
-                current = np.array(_pyautogui.screenshot(region=region), dtype=np.int16)
-                if np.abs(current - baseline).mean() >= 3.0:
-                    detected = True
-                    break
-            except Exception:
-                break
-
-    time.sleep(0.15 if detected else 0.5)
+        time.sleep(0.05)
+    time.sleep(0.5)
     _wb_post_enter(hwnd)
-    print(f"   ✅ ADD_WB done for {ticker}" + ("" if detected else " (dropdown timeout — Enter sent anyway)"))
+    print(f"   ✅ ADD_WB done for {ticker}")
     return True
 
 
@@ -376,10 +353,6 @@ def workflow_add_wb(ticker: str, dry_run: bool = False) -> bool:
     wait for the search dropdown to appear, then send Enter.
     """
     ticker = ticker.upper()
-
-    if wb_watchlist_contains(ticker):
-        print(f"📊 ADD_WB skipped — {ticker} already in watchlist")
-        return True
 
     if not LIVE_MODE or dry_run:
         print(f"📊 [LOG] ADD_WB → {ticker}")

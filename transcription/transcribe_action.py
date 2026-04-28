@@ -78,6 +78,14 @@ _STOP_WORDS = {
     # months / days
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
     "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
+    # Additional noise words
+    "HEY", "HERE", "THANKS", "YEAH", "THAT", "THEIR", "THEM", "THERE", "THESE",
+    "THOSE", "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE", "WHICH", "WHERE",
+    "WHICH", "WHERE", "WHEN", "WHILE", "THESE", "THOSE", "THEIR", "THERE",
+    "HALT", "HALTED", "CUR", "UCI", "LPG", "RFX", "ROADS", "VWAP", "PRFS", 
+    "SNG", "SNDR", "BIYM", "ALERT", "SBL", "UT", "YIA", "BIO", "PPG", "WWW",
+    "WWW", "LEVELS", "LEVEL", "STOCKS", "STOCK", "PRICE", "PRICES", "VOLUME",
+    "BAGER", "ALERT", "LEVEL", "STOCKS", "PRICE", "MARKET", "TRADE", "SHARES",
 }
 
 # Spoken company names → ticker (Whisper capitalizes proper nouns)
@@ -107,6 +115,8 @@ _TICKER_RE = re.compile(r'\b([A-Z]{2,5})\b')
 _NAME_RE   = {name: re.compile(rf'\b{re.escape(name)}\b', re.I)
               for name in _NAME_TO_TICKER}
 
+_ticker_universe: set = set()   # populated at startup from Alpaca; empty = fallback mode
+
 
 def extract_tickers(text: str) -> list:
     found = []
@@ -115,9 +125,13 @@ def extract_tickers(text: str) -> list:
     # All-caps tokens — spoken as ticker letters or caught by normalize_transcript
     for m in _TICKER_RE.finditer(text):
         t = m.group(1)
-        if t not in _STOP_WORDS and t not in seen:
-            found.append(t)
-            seen.add(t)
+        if t in _STOP_WORDS or t in seen:
+            continue
+        # If the universe is loaded, only accept known valid US equity symbols
+        if _ticker_universe and t not in _ticker_universe:
+            continue
+        found.append(t)
+        seen.add(t)
 
     # Spoken company names
     lower = text.lower()
@@ -135,28 +149,112 @@ TICKER_LOG_FILE = Path(__file__).parent / "wb_watchlist.json"
 _log_lock       = threading.Lock()
 
 _logged_tickers: set = set()
+_log_file_mtime: float = -1.0
+
 try:
     _existing = json.loads(TICKER_LOG_FILE.read_text(encoding="utf-8"))
     if isinstance(_existing, list):
         _logged_tickers = {t.strip().upper() for t in _existing if isinstance(t, str) and t.strip()}
+    _log_file_mtime = TICKER_LOG_FILE.stat().st_mtime
 except Exception:
     pass
 
 
+def _sync_from_file():
+    """Re-read the watchlist if it changed on disk (e.g. cleared by the dashboard)."""
+    global _logged_tickers, _log_file_mtime
+    try:
+        mtime = TICKER_LOG_FILE.stat().st_mtime
+        if mtime == _log_file_mtime:
+            return
+        data = json.loads(TICKER_LOG_FILE.read_text(encoding="utf-8"))
+        new_set = {t.strip().upper() for t in data if isinstance(t, str) and t.strip()} if isinstance(data, list) else set()
+        print(f"[SYNC] File changed — was {sorted(_logged_tickers)}, now {sorted(new_set)}", flush=True)
+        _logged_tickers = new_set
+        _log_file_mtime = mtime
+    except Exception:
+        pass
+
+
 def log_ticker(ticker: str) -> bool:
     """Log a new ticker to the watchlist JSON. Returns True if it was newly added."""
+    global _log_file_mtime
     ticker = ticker.upper()
     with _log_lock:
+        # 1. Sync current state from disk to avoid overwriting changes from other processes
+        _sync_from_file()
+        
+        # 2. Skip if already in memory (which is now synced with disk)
         if ticker in _logged_tickers:
             return False
+        
+        # 3. Add to set and prepare snapshot
         _logged_tickers.add(ticker)
         snapshot = sorted(_logged_tickers)
+        
+        # 4. Write to disk immediately while holding the lock
+        try:
+            TICKER_LOG_FILE.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+            _log_file_mtime = TICKER_LOG_FILE.stat().st_mtime
+            print(f"[LOG] {ticker}", flush=True)
+            return True
+        except Exception as e:
+            print(f"[LOG] Could not write watchlist: {e}")
+            return False
+
+
+# ========================= TICKER UNIVERSE =========================
+# Fetched once from Alpaca at startup and cached for 24h.
+# extract_tickers() gates every candidate against this set, collapsing
+# false positives to near-zero — random words are not valid equity symbols.
+
+_UNIVERSE_FILE    = Path(__file__).parent / "ticker_universe.json"
+_UNIVERSE_MAX_AGE = 24 * 3600
+
+
+def _load_universe_cache() -> set:
     try:
-        TICKER_LOG_FILE.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
-        print(f"[LOG] {ticker}")
+        data = json.loads(_UNIVERSE_FILE.read_text(encoding="utf-8"))
+        if time.time() - data.get("ts", 0) < _UNIVERSE_MAX_AGE:
+            symbols = set(data["symbols"])
+            print(f"[UNIVERSE] {len(symbols)} symbols loaded from cache", flush=True)
+            return symbols
+    except Exception:
+        pass
+    return set()
+
+
+def _fetch_universe(api_key: str, secret_key: str) -> set:
+    if not api_key or not secret_key:
+        print("[UNIVERSE] No API credentials — skipping fetch", flush=True)
+        return set()
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import GetAssetsRequest
+        from alpaca.trading.enums import AssetClass
+        is_paper = api_key.startswith("PK")
+        client   = TradingClient(api_key, secret_key, paper=is_paper)
+        assets   = client.get_all_assets(GetAssetsRequest(asset_class=AssetClass.US_EQUITY))
+        symbols  = {
+            a.symbol for a in assets
+            if getattr(a, "tradable", False) and re.fullmatch(r"[A-Z]{1,5}", a.symbol)
+        }
+        _UNIVERSE_FILE.write_text(
+            json.dumps({"ts": time.time(), "symbols": sorted(symbols)}, indent=2),
+            encoding="utf-8",
+        )
+        print(f"[UNIVERSE] {len(symbols)} symbols fetched from Alpaca", flush=True)
+        return symbols
     except Exception as e:
-        print(f"[LOG] Could not write watchlist: {e}")
-    return True
+        print(f"[UNIVERSE] Fetch failed: {e}", flush=True)
+        return set()
+
+
+def _init_universe(api_key: str, secret_key: str) -> set:
+    universe = _load_universe_cache()
+    if not universe:
+        universe = _fetch_universe(api_key, secret_key)
+    return universe
 
 
 # ========================= CONFIG =========================
@@ -165,11 +263,21 @@ _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--device", type=int, default=None)
 _args, _ = _parser.parse_known_args()
 
-_cfg_file = Path(__file__).parent.parent / "bot_config.json"
-_saved_device = None
+_cfg_file     = Path(__file__).parent.parent / "bot_config.json"
+_secrets_file = Path(__file__).parent.parent / "secrets.json"
+_saved_device  = None
+_alpaca_key    = ""
+_alpaca_secret = ""
 if _cfg_file.exists():
     try:
         _saved_device = json.loads(_cfg_file.read_text()).get("device_index")
+    except Exception:
+        pass
+if _secrets_file.exists():
+    try:
+        _s = json.loads(_secrets_file.read_text())
+        _alpaca_key    = _s.get("api_key", "")
+        _alpaca_secret = _s.get("secret_key", "")
     except Exception:
         pass
 
@@ -193,9 +301,12 @@ READ_FRAMES     = int(SAMPLE_RATE * 0.5)
 RESAMPLE_UP   = 160
 RESAMPLE_DOWN = 441
 
-# Seeding Whisper with financial vocabulary is the single biggest accuracy lever.
-# It biases token probabilities toward these words before hearing anything.
-INITIAL_PROMPT = (
+# Load ticker universe (gates extract_tickers against known valid symbols)
+_ticker_universe = _init_universe(_alpaca_key, _alpaca_secret)
+
+# Build initial prompt seeded with the current watchlist so Whisper is primed
+# to recognise those specific symbols accurately.
+_PROMPT_BASE = (
     "CNBC financial news, stock market trading on NYSE and NASDAQ. "
     "Tickers: AAPL TSLA NVDA AMZN GOOGL MSFT META NFLX PLTR COIN HOOD "
     "UBER LYFT ABNB SNOW CRM ORCL INTC AMD QCOM AVGO MU SPY QQQ IWM "
@@ -204,6 +315,9 @@ INITIAL_PROMPT = (
     "F GM RIVN LCID PFE MRNA UNH HUM CI BRK JNJ AMGN GILD "
     "Earnings per share, price target, analyst upgrade, buy hold sell, "
     "market cap, S and P five hundred, Dow Jones, breakout, resistance."
+)
+INITIAL_PROMPT = _PROMPT_BASE + (
+    f" Watchlist: {' '.join(sorted(_logged_tickers))}." if _logged_tickers else ""
 )
 
 
@@ -352,8 +466,8 @@ def transcription_worker():
 
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
-            for ticker in extract_tickers(text):
-                log_ticker(ticker)
+            for t in extract_tickers(text):
+                log_ticker(t)
 
         except Exception as e:
             msg = str(e).strip()

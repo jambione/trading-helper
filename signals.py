@@ -213,12 +213,6 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df["os_trend_start"] = df["oversold"] & df["oversold"].shift(1).fillna(False)
     df["os_reversal"]    = (~df["oversold"]) & df["oversold"].shift(1).fillna(False)
     
-    side = cfg.get("rte_side", "blue").lower() # blue usually means oversold in this bot
-    if side == "blue":
-        df["rte_extreme"] = df["oversold"]
-    else:
-        df["rte_extreme"] = df["overbought"]
-    
     df["rte_reversal"] = df["ob_reversal"] | df["os_reversal"]
     df["ob_on_deck"] = df["ob_trend_start"] & (df["ob_consecutive"] >= min_bars)
     df["os_on_deck"] = df["os_trend_start"] & (df["os_consecutive"] >= min_bars)
@@ -291,7 +285,6 @@ def compute_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df = compute_percent_r_exhaustion(df, cfg)
     
     # Helper indicators
-    df["adx"] = adx(df)
     df["atr"] = atr(df)
     df["rvol"] = calc_rvol(df)
     

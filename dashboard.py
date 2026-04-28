@@ -105,6 +105,10 @@ def load_tickers() -> list:
         import json as _json
         data    = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
         tickers = [t.strip().upper() for t in data if isinstance(t, str) and t.strip()]
+        
+        # Stricter validation for tickers already in the list
+        tickers = [t for t in tickers if 2 <= len(t) <= 5 and t.isalpha()]
+        
         _ticker_cache["mtime"]   = mtime
         _ticker_cache["tickers"] = tickers
         return tickers
@@ -238,7 +242,7 @@ def stop_transcriber():
 
 # ── Signal computation ────────────────────────────────────────────────────────
 
-def _signal_summary(row, cfg: dict) -> dict:
+def _signal_summary(row, cfg: dict, day_open: float = None, day_vol: int = None, rvol: float = None) -> dict:
     rte_fast  = float(row.get("rte_fast",  -100))
     rte_slow  = float(row.get("rte_slow",  -100))
     streak    = int(row.get("rte_boxes_streak", 0))
@@ -268,6 +272,9 @@ def _signal_summary(row, cfg: dict) -> dict:
         "obv_up":    obv_up,
         "status":    status,
         "proximity": proximity,
+        "day_open":  round(day_open, 4) if day_open is not None else None,
+        "day_vol":   day_vol,
+        "rvol":      rvol,
     }
 
 
@@ -276,35 +283,69 @@ def _compute_ticker_signal(t: str, df: pd.DataFrame, lp: float, cfg: dict) -> tu
     if df is None or len(df) < 50:
         return t, None
     try:
+        # Extract day_open, day_vol, rvol from real bars BEFORE injecting synthetic row
+        day_open = None
+        day_vol  = None
+        rvol     = None
+        try:
+            if getattr(df.index, 'tz', None) is not None:
+                idx_dates = df.index.tz_convert(ET).date
+            else:
+                idx_dates = df.index.date
+            last_date = idx_dates[-1]
+            mask      = idx_dates == last_date
+            today_df  = df[mask]
+            if not today_df.empty:
+                day_open = float(today_df.iloc[0]["open"])
+                day_vol  = int(today_df["volume"].sum())
+        except Exception:
+            pass
+        if day_open is None:
+            day_open = float(df.iloc[-1]["open"])
+        try:
+            avg_vol  = float(df["volume"].rolling(20).mean().iloc[-1])
+            last_vol = float(df["volume"].iloc[-1])
+            rvol = round(last_vol / avg_vol, 2) if avg_vol > 0 else None
+        except Exception:
+            pass
+
         # Inject latest price as a synthetic last row
         if lp:
             now_et = datetime.now(ET)
-            # Faster way to append a single row to a DataFrame
             new_row_data = [[lp, lp, lp, lp, 0]]
             new_row_df = pd.DataFrame(new_row_data, columns=["open", "high", "low", "close", "volume"], index=[now_et])
             df = pd.concat([df, new_row_df])
 
         sig_df = compute_signals(df, cfg)
-        return t, _signal_summary(sig_df.iloc[-1], cfg)
+        return t, _signal_summary(sig_df.iloc[-1], cfg, day_open=day_open, day_vol=day_vol, rvol=rvol)
     except Exception as ex:
         log.debug(f"[SCAN] {t}: {ex}")
         return t, False
 
 
 def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
-    tickers = ticker_subset if ticker_subset else load_tickers()
+    if not _scan_lock.acquire(blocking=False):
+        return  # another scan in progress; drop this request
+
+    # Only scan tickers that are in the watchlist
+    watchlist_tickers = load_tickers()
+    watchlist_set = set(watchlist_tickers)
+    
+    if ticker_subset:
+        tickers = [t for t in ticker_subset if t in watchlist_set]
+    else:
+        tickers = list(watchlist_tickers)
+
     cfg     = STATE.cfg
     client  = STATE.data_client
-
-    if not tickers:
-        return
-    if client is None:
-        log.warning("[SCAN] No Alpaca client")
-        return
 
     with STATE.lock:
         STATE.scan_running = True
     try:
+        if not tickers or client is None:
+            if client is None and tickers:
+                log.warning("[SCAN] No Alpaca client")
+            return
         ts_now = time.time()
         # Only fetch new bars if forced or if cache is older than 5 minutes
         with STATE.lock:
@@ -375,6 +416,7 @@ def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
     finally:
         with STATE.lock:
             STATE.scan_running = False
+        _scan_lock.release()
 
 
 def _scan_loop():
@@ -394,7 +436,7 @@ def _scan_loop():
 
 # ── Price polling ─────────────────────────────────────────────────────────────
 
-_known_tickers: set = set()
+_scan_lock = threading.Lock()
 
 # Alpaca fallback runs in its own thread so it never blocks the price loop.
 _alpaca_price_cache: dict = {}          # last results from Alpaca fallback
@@ -451,24 +493,21 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
 
 
 def _price_loop():
-    global _known_tickers, _alpaca_fallback_running, _finnhub_rest_running
+    global _alpaca_fallback_running, _finnhub_rest_running
     last_signal_update  = 0
     last_alpaca_poll    = 0
     last_fh_rest_poll   = 0
+    _prev_tickers: set  = set(load_tickers())  # seed from file; avoids first-run flood
     while True:
         try:
             tickers = load_tickers()
             current = set(tickers)
 
-            # Auto-scan and subscribe Finnhub when new tickers appear
-            new = current - _known_tickers
-            if new and not STATE.scan_running:
-                log.info(f"[PRICE] New tickers {new} — triggering auto-scan")
-                if FINNHUB_STATE.connected:
-                    _fh_subscribe(list(new))
-                threading.Thread(target=run_scan, kwargs={"force_fetch_bars": True},
-                                 daemon=True, name="scan-auto").start()
-            _known_tickers = current
+            # Subscribe new tickers to Finnhub as they appear; periodic scan picks them up.
+            new = current - _prev_tickers
+            if new and FINNHUB_STATE.connected:
+                _fh_subscribe(list(new))
+            _prev_tickers = current
 
             client = STATE.data_client
             ts     = datetime.now(ET).strftime("%H:%M:%S")
@@ -608,6 +647,9 @@ def _snapshot() -> dict:
             d = dict(STATE.tickers.get(t, {}))
             d["ticker"] = t
             d["mentioned"] = t in mention_rank
+            price    = d.get("price")
+            day_open = d.get("day_open")
+            d["pct_change"] = round((price - day_open) / day_open * 100, 2) if (price and day_open and day_open > 0) else None
             rows.append(d)
         rows.sort(key=lambda r: (
             mention_rank.get(r["ticker"], len(mention_rank)),
@@ -828,15 +870,15 @@ async def api_config_save(request: Request):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    last_snap_hash = None
+    import json as _json
+    last_snap_str = None
     try:
         while True:
             snap = await asyncio.get_running_loop().run_in_executor(None, _snapshot)
-            # Only transmit when something actually changed — avoids redundant serialisation
-            snap_hash = hash(str(snap))
-            if snap_hash != last_snap_hash:
-                await ws.send_json(snap)
-                last_snap_hash = snap_hash
+            snap_str = _json.dumps(snap, sort_keys=True, default=str)
+            if snap_str != last_snap_str:
+                await ws.send_text(snap_str)
+                last_snap_str = snap_str
             await asyncio.sleep(0.1)   # 10Hz poll; only pushes on change
     except (WebSocketDisconnect, Exception):
         pass

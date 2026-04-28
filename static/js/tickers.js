@@ -138,6 +138,20 @@ function _updateRow(el, row) {
   const priceEl = el.querySelector('[data-price]');
   if (priceEl) priceEl.textContent = row.price != null ? `$${row.price.toFixed(2)}` : '—';
 
+  // Pct change from open
+  const chgEl = el.querySelector('[data-chg]');
+  if (chgEl) {
+    chgEl.textContent = _fmtChg(row.pct_change ?? null);
+    chgEl.className   = `cell-chg ${_chgClass(row.pct_change ?? null)}`;
+  }
+
+  // Volume (today's cumulative, colour-coded by rvol)
+  const volEl = el.querySelector('[data-vol]');
+  if (volEl) {
+    volEl.textContent = _fmtVol(row.day_vol);
+    volEl.className   = `cell-vol${(row.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}`;
+  }
+
   // Proximity bar
   const fill = el.querySelector('[data-prox-fill]');
   if (fill) {
@@ -182,17 +196,21 @@ function _updateRow(el, row) {
 // ── Row HTML template ──────────────────────────────────────────
 
 function _rowHTML(row) {
-  const price = row.price != null ? `$${row.price.toFixed(2)}` : '—';
-  const rte   = row.rte_fast != null ? row.rte_fast.toFixed(0) : '—';
-  const rsi   = row.cm_rsi  != null ? row.cm_rsi.toFixed(0)   : '—';
+  const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
+  const rte    = row.rte_fast != null ? row.rte_fast.toFixed(0) : '—';
+  const rsi    = row.cm_rsi  != null ? row.cm_rsi.toFixed(0)   : '—';
   const streak = row.streak  != null ? row.streak : '—';
-  const pct   = Math.round((row.proximity ?? 0) * 100);
-  const color = _proxColor(row.proximity ?? 0);
+  const pct    = Math.round((row.proximity ?? 0) * 100);
+  const color  = _proxColor(row.proximity ?? 0);
   const { cls, label } = _badgeTheme(row.status);
+  const chgCls = _chgClass(row.pct_change ?? null);
+  const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
   return `<div class="table-cols">
     <div class="cell-ticker">${row.ticker}</div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
+    <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
+    <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-proximity">
       <div class="proximity-track">
         <div class="proximity-fill" data-prox-fill style="width:${pct}%;background-color:${color}"></div>
@@ -243,4 +261,22 @@ function _proxColor(p) {
   if (p >= 0.8) return 'var(--deck)';
   if (p >= 0.5) return 'var(--warming)';
   return 'var(--cold)';
+}
+
+function _fmtChg(v) {
+  if (v == null) return '—';
+  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+
+function _chgClass(v) {
+  if (v == null) return '';
+  return v >= 0 ? 'chg-pos' : 'chg-neg';
+}
+
+function _fmtVol(v) {
+  if (v == null) return '—';
+  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return Math.round(v / 1e3) + 'K';
+  return String(v);
 }
