@@ -298,23 +298,19 @@ def compute_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     # 3. Multiple Oversold (Percent R logic)
     df["signal_multiple_os"] = df["signal_multiple_os"]
 
-    # Main Strategy Logic: All 3 Must Align
-    # (Configurable behavior: we could move back to scoring if needed)
+    # Two-tier logic:
+    # SETUP (ON_DECK): %R exhaustion — both fast and slow %R in oversold zone for rte_min_boxes bars
+    # ENTRY (BUY):    setup active AND RSI-2 approaching oversold (< cm_rsi_oversold) AND close > SMA(200)
     strategy = cfg.get("strategy", "multiple_os").lower()
-    
+
     if strategy == "multiple_os":
-        buy_condition = (
-            df["volume_surge"] &
-            df["signal_cm_rsi"] &
-            df["signal_multiple_os"]
-        )
+        buy_condition = df["signal_multiple_os"] & df["cm_rsi_approaching"]
     else:
-        # Fallback to scoring for flexibility
+        # Fallback scoring
         df["score"] = 0
-        df.loc[df["volume_surge"], "score"] += 3
-        df.loc[df["signal_cm_rsi"], "score"] += 3
-        df.loc[df["signal_multiple_os"], "score"] += 4
-        buy_condition = (df["score"] >= 7)
+        df.loc[df["signal_multiple_os"], "score"] += 5
+        df.loc[df["cm_rsi_approaching"],  "score"] += 5
+        buy_condition = (df["score"] >= 8)
 
     df["signal"] = "HOLD"
     df.loc[buy_condition, "signal"] = "BUY"
