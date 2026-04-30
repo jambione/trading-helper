@@ -31,7 +31,7 @@ import alpaca_api as _api
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from workflows import workflow_add_wb
+from workflows import workflow_add_wb, workflow_add_brave_tv, workflow_add_wb_and_tv
 from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
@@ -776,6 +776,36 @@ async def api_add_wb(request: Request):
             return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
         threading.Thread(target=workflow_add_wb, args=(ticker,),
                          daemon=True, name=f"wb-{ticker}").start()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/add-tv")
+async def api_add_tv(request: Request):
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        cfg = STATE.cfg
+        threading.Thread(target=workflow_add_brave_tv, args=(ticker, cfg),
+                         daemon=True, name=f"tv-{ticker}").start()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/add-wb-tv")
+async def api_add_wb_tv(request: Request):
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        cfg = STATE.cfg
+        threading.Thread(target=workflow_add_wb_and_tv, args=(ticker, cfg),
+                         daemon=True, name=f"wbtv-{ticker}").start()
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)

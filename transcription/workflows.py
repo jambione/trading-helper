@@ -489,6 +489,89 @@ def workflow_add_tv(ticker: str, dry_run: bool = False) -> bool:
     return True
 
 
+def _find_brave_window() -> int | None:
+    """Return HWND of the first visible Brave browser window, or None."""
+    hwnd_found = []
+
+    def cb(hwnd, _):
+        cls = ctypes.create_unicode_buffer(256)
+        _user32.GetClassNameW(hwnd, cls, 256)
+        if cls.value == "Chrome_WidgetWin_1":
+            title = ctypes.create_unicode_buffer(512)
+            _user32.GetWindowTextW(hwnd, title, 512)
+            if "Brave" in title.value and _user32.IsWindowVisible(hwnd):
+                hwnd_found.append(hwnd)
+                return 0  # stop enumeration
+        return 1
+
+    proc = _EnumWindowsProc(cb)
+    _user32.EnumWindows(proc, 0)
+    return hwnd_found[0] if hwnd_found else None
+
+
+def workflow_add_brave_tv(ticker: str, cfg: dict = None) -> bool:
+    """
+    Focus Brave, switch to the pinned TradingView tab, click the page body to
+    grab focus, type the ticker (opens TV symbol search), confirm with Enter,
+    then Alt+W to add to the watchlist.
+    """
+    import pyautogui as _pag
+
+    ticker = ticker.upper()
+    cfg = cfg or {}
+    tab_num = str(int(cfg.get("brave_tv_tab", 1)))
+
+    if not LIVE_MODE:
+        print(f"🌐 [LOG] ADD_BRAVE_TV → {ticker}")
+        return True
+
+    print(f"🌐 ADD_BRAVE_TV → {ticker}")
+    hwnd = _find_brave_window()
+    if not hwnd:
+        print("   ❌ ADD_BRAVE_TV failed — Brave browser window not found")
+        return False
+
+    # Bring Brave to front without resizing — SW_RESTORE (9) would un-maximize it,
+    # so use SW_SHOW (5) unless the window is actually minimized (IsIconic).
+    _SW_SHOW = 5
+    _user32.ShowWindow(hwnd, _SW_RESTORE if _user32.IsIconic(hwnd) else _SW_SHOW)
+    _time_mod.sleep(0.15)
+    _user32.SetForegroundWindow(hwnd)
+    _user32.BringWindowToTop(hwnd)
+    _time_mod.sleep(0.4)
+
+    # Switch to the pinned TradingView tab
+    _pag.hotkey("ctrl", tab_num)
+    _time_mod.sleep(0.4)
+
+    # Click center of the window to focus the page body (chart area)
+    left, top, w, h = _tv_get_rect(hwnd)
+    _pag.click(left + w // 2, top + h // 2)
+    _time_mod.sleep(0.2)
+
+    # Type ticker — TradingView opens symbol search on any keypress in the chart
+    for letter in ticker:
+        _pag.press(letter.lower())
+        _time_mod.sleep(0.05)
+
+    _time_mod.sleep(0.3)
+    _pag.press("enter")
+    _time_mod.sleep(0.2)
+
+    # Add to TradingView watchlist
+    _pag.hotkey("alt", "w")
+
+    print(f"   ✅ ADD_BRAVE_TV done for {ticker}")
+    return True
+
+
+def workflow_add_wb_and_tv(ticker: str, cfg: dict = None) -> bool:
+    """Add to Webull watchlist, then load ticker in Brave TradingView."""
+    wb_ok = workflow_add_wb(ticker)
+    tv_ok = workflow_add_brave_tv(ticker, cfg)
+    return wb_ok and tv_ok
+
+
 def workflow_buy(ticker: str, dry_run: bool = False) -> bool:
     if not LIVE_MODE or dry_run:
         print(f"💸 [LOG] BUY → {ticker}")

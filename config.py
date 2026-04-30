@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
 
     # ── TradingView ──────────────────────────────────────────
     "tv_chart_url": "https://www.tradingview.com/chart/",
+    "brave_tv_tab": 1,    # tab number (1-9) holding TradingView in Brave
 
     # Transcription
     "device_index": None,
@@ -70,6 +71,7 @@ SAFE_CONFIG_KEYS = [
     "ema_short", "ema_long",
     "wr_length",
     "tv_chart_url",
+    "brave_tv_tab",
     "strategy",
     "device_index",
 ]

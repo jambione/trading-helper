@@ -85,5 +85,7 @@ export const api = {
   addTicker:       ticker   => request('POST', '/api/tickers/add',      { ticker }),
   removeTicker:    ticker   => request('POST', '/api/tickers/remove',   { ticker }),
   addBulk:         tickers  => request('POST', '/api/tickers/add-bulk', { tickers }),
-  addToWebull:     ticker   => request('POST', '/api/tickers/add-wb',   { ticker }),
+  addToWebull:     ticker   => request('POST', '/api/tickers/add-wb',    { ticker }),
+  addToTV:         ticker   => request('POST', '/api/tickers/add-tv',    { ticker }),
+  addToWBAndTV:    ticker   => request('POST', '/api/tickers/add-wb-tv', { ticker }),
 };

@@ -386,7 +386,7 @@ body {
 
 .table-cols {
   display: grid;
-  grid-template-columns: 60px 70px 54px 48px 1fr 52px 46px 32px 38px 68px 36px;
+  grid-template-columns: 60px 70px 54px 48px 1fr 52px 46px 32px 38px 68px 44px;
   align-items: center;
 }
 
@@ -560,8 +560,8 @@ body {
   gap: 4px;
 }
 
-/* Webull add button */
-.btn-wb, .btn-delete {
+/* Action buttons */
+.btn-add, .btn-delete {
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 600;
@@ -578,11 +578,11 @@ body {
   justify-content: center;
   height: 18px;
 }
-.btn-wb:hover:not(:disabled) {
+.btn-add:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--border-hi);
 }
-.btn-wb:disabled {
+.btn-add:disabled {
   opacity: 0.4;
   cursor: default;
 }

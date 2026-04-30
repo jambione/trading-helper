@@ -96,9 +96,9 @@ function _createRow(row) {
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
-  el.querySelector('[data-wb-btn]').addEventListener('click', e => {
+  el.querySelector('[data-add-btn]').addEventListener('click', e => {
     e.stopPropagation();
-    _addToWebull(e.currentTarget, row.ticker);
+    _addToWBAndTV(e.currentTarget, row.ticker);
   });
   el.querySelector('[data-delete-btn]').addEventListener('click', e => {
     e.stopPropagation();
@@ -115,15 +115,15 @@ async function _removeTicker(ticker) {
   }
 }
 
-async function _addToWebull(btn, ticker) {
+async function _addToWBAndTV(btn, ticker) {
   btn.disabled = true;
   btn.textContent = '...';
   try {
-    await api.addToWebull(ticker);
-    btn.textContent = 'WB';
+    await api.addToWBAndTV(ticker);
+    btn.textContent = 'Add';
   } catch {
     btn.textContent = '!';
-    setTimeout(() => { btn.textContent = 'WB'; btn.disabled = false; }, 1500);
+    setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
     return;
   }
   btn.disabled = false;
@@ -223,7 +223,7 @@ function _rowHTML(row) {
     <div class="cell-streak${(row.streak ?? 0) >= 1 ? ' streak-active' : ''}" data-streak>${streak}</div>
     <div class="status-badge ${cls}" data-badge>${label}</div>
     <div class="cell-actions">
-      <button class="btn-wb" data-wb-btn title="Add to Webull watchlist">WB</button>
+      <button class="btn-add" data-add-btn title="Add to Webull + open in TradingView">Add</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
     </div>
   </div>`;
