@@ -1,43 +1,36 @@
 /**
  * scanner.js — Market Radar panel
  *
- * Connects to the trading-scanners backend WebSocket at localhost:8000/ws,
- * renders scanner alerts in a tabbed table, and lets the user add any alert
- * ticker to the helper watchlist via the +WL button.
+ * Connects to the trading-scanners backend WebSocket at localhost:8000/ws.
+ * Renders one card per scanner type in a responsive grid. Cards support
+ * drag-to-reorder; order is persisted to localStorage.
  */
 
-import { api } from './api.js';
+import { api } from './api.js?v=6';
 
 const SCANNER_WS_URL  = 'ws://localhost:8000/ws';
 const SCANNER_API_URL = 'http://localhost:8000';
+const ORDER_KEY       = 'ss:scanner-order';
 
 const SCANNER_COLORS = {
   gap:             '#38bdf8',
-  momentum_hod:    '#3d8bff',
+  momentum_hod:    '#60a5fa',
   volume_breakout: '#fb923c',
   price_spike:     '#facc15',
-  find_it_first:   '#a78bfa',
+  find_it_first:   '#c084fc',
   vwap_trend:      '#2dd4bf',
-};
-
-const SIGNAL_LABELS = {
-  gap:             'GAP',
-  momentum_hod:    'HOD',
-  volume_breakout: 'VOL BRK',
-  price_spike:     'SPIKE',
-  find_it_first:   'FIRST',
-  vwap_trend:      'VWAP',
 };
 
 let _ws             = null;
 let _reconnectTimer = null;
-let _allAlerts      = [];   // merged, sorted list across all scanners
+let _allScanners    = [];
 let _engineRunning  = false;
+let _draggedType    = null;
 
 // DOM refs
 let _dotEl    = null;
 let _pollEl   = null;
-let _rowsEl   = null;
+let _gridEl   = null;
 let _toggleEl = null;
 
 export function init(panelEl) {
@@ -45,7 +38,7 @@ export function init(panelEl) {
 
   _dotEl    = panelEl.querySelector('[data-scanner-dot]');
   _pollEl   = panelEl.querySelector('[data-scanner-poll]');
-  _rowsEl   = panelEl.querySelector('[data-scanner-rows]');
+  _gridEl   = panelEl.querySelector('[data-scanner-rows]');
   _toggleEl = panelEl.querySelector('[data-scanner-toggle]');
 
   _toggleEl?.addEventListener('click', _onToggle);
@@ -81,69 +74,167 @@ function _connect() {
 
 function _ingest(broadcast) {
   if (!Array.isArray(broadcast.scanners)) return;
+  _allScanners = _applyOrder(broadcast.scanners);
+  if (_pollEl) _pollEl.textContent = `#${broadcast.poll_count}`;
+  _renderCards();
+}
 
-  _allAlerts = broadcast.scanners
-    .flatMap(s => s.alerts)
-    .sort((a, b) => b.triggered_at.localeCompare(a.triggered_at));
+// ── Order persistence ──────────────────────────────────────────
 
-  if (_pollEl) _pollEl.textContent = `Poll #${broadcast.poll_count}`;
+function _loadOrder() {
+  try { return JSON.parse(localStorage.getItem(ORDER_KEY)) ?? []; }
+  catch { return []; }
+}
 
-  _renderRows();
+function _saveOrder(types) {
+  localStorage.setItem(ORDER_KEY, JSON.stringify(types));
+}
+
+function _applyOrder(scanners) {
+  const order = _loadOrder();
+  if (!order.length) return scanners;
+  return [...scanners].sort((a, b) => {
+    const ai = order.indexOf(a.scanner_type);
+    const bi = order.indexOf(b.scanner_type);
+    return (ai === -1 ? order.length : ai) - (bi === -1 ? order.length : bi);
+  });
 }
 
 // ── Rendering ──────────────────────────────────────────────────
 
-function _renderRows() {
-  if (!_rowsEl) return;
+function _renderCards() {
+  if (!_gridEl) return;
 
-  if (_allAlerts.length === 0) {
-    _rowsEl.innerHTML = '<div class="table-empty">No alerts</div>';
+  if (_allScanners.length === 0) {
+    _gridEl.innerHTML = '<div class="scanner-grid-empty">Waiting for scanner…</div>';
     return;
   }
 
-  _rowsEl.innerHTML = _allAlerts.map(a => {
-    const color = SCANNER_COLORS[a.scanner_type] ?? 'var(--text-dim)';
-    const t       = new Date(a.triggered_at);
-    const time    = t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    const chgCls  = a.change_pct >= 0 ? 'chg-pos' : 'chg-neg';
-    const chgSign = a.change_pct >= 0 ? '+' : '';
-    const vol     = _fmtVol(a.volume);
-    const float   = a.float_millions != null ? `${a.float_millions.toFixed(1)}M` : '—';
-    const rvol    = a.rvol != null ? `${a.rvol.toFixed(1)}x` : '—';
+  _gridEl.innerHTML = _allScanners.map(s => _cardHTML(s)).join('');
 
-    return `<div class="scanner-row">
-  <div class="scanner-cols">
-    <div class="cell-scanner-time">${time}</div>
-    <div class="cell-ticker">${a.ticker}</div>
-    <div class="cell-price">$${a.price.toFixed(2)}</div>
-    <div class="cell-chg ${chgCls}">${chgSign}${a.change_pct.toFixed(1)}%</div>
-    <div class="cell-vol">${vol}</div>
-    <div class="cell-scanner-float">${float}</div>
-    <div class="cell-scanner-rvol">${rvol}</div>
-    <div class="cell-scanner-signal" style="color:${color}">${SIGNAL_LABELS[a.scanner_type] ?? a.scanner_type}</div>
-    <div><button class="btn-add" data-wl="${a.ticker}">+WL</button></div>
-  </div>
-</div>`;
-  }).join('');
-
-  _rowsEl.querySelectorAll('[data-wl]').forEach(btn => {
-    btn.addEventListener('click', () => _addToWatchlist(btn.dataset.wl, btn));
+  _gridEl.querySelectorAll('[data-add-wl]').forEach(el => {
+    el.addEventListener('click', () => _addToWatchlist(el.dataset.addWl, el));
   });
+
+  _attachDrag();
 }
 
-async function _addToWatchlist(ticker, btn) {
-  btn.disabled    = true;
-  btn.textContent = '…';
+function _cardHTML(scanner) {
+  const hasAlerts = scanner.alerts.length > 0;
+  const sorted    = [...scanner.alerts].sort((a, b) => b.triggered_at.localeCompare(a.triggered_at));
+
+  const badgeCls  = hasAlerts ? 'scanner-card-badge--active' : '';
+  const body      = hasAlerts
+    ? `<table class="sct">
+        <thead><tr>
+          <th>Time</th>
+          <th>Ticker</th>
+          <th class="r">Price</th>
+          <th class="r">Chg%</th>
+          <th>Signal</th>
+          <th class="r">Float</th>
+        </tr></thead>
+        <tbody>${sorted.map(_rowHTML).join('')}</tbody>
+      </table>`
+    : '<div class="scanner-card-empty">no alerts</div>';
+
+  return `<div class="scanner-card" draggable="true" data-scanner-type="${scanner.scanner_type}">
+  <div class="scanner-card-header">
+    <span class="scanner-card-label">${scanner.label}</span>
+    <span class="scanner-card-badge ${badgeCls}">${scanner.alerts.length}</span>
+  </div>
+  <div class="scanner-card-body">${body}</div>
+</div>`;
+}
+
+function _rowHTML(a) {
+  const color    = SCANNER_COLORS[a.scanner_type] ?? 'var(--text-dim)';
+  const time     = _fmtTime(a.triggered_at);
+  const chgCls   = a.change_pct >= 0 ? 'chg-pos' : 'chg-neg';
+  const float    = a.float_millions != null ? `${a.float_millions.toFixed(1)}M` : '—';
+  const note     = a.note || a.scanner_type;
+
+  return `<tr>
+  <td class="sct-time">${time}</td>
+  <td class="sct-ticker sct-ticker--add" data-add-wl="${a.ticker}" title="Add to watchlist">${a.ticker}</td>
+  <td class="sct-num">$${a.price.toFixed(2)}</td>
+  <td class="sct-num cell-chg ${chgCls}">${Math.round(a.change_pct)}</td>
+  <td class="sct-signal" style="color:${color}">${note}</td>
+  <td class="sct-float">${float}</td>
+</tr>`;
+}
+
+async function _addToWatchlist(ticker, el) {
+  const orig = el.textContent;
+  el.style.pointerEvents = 'none';
+  el.textContent = '…';
   try {
     await api.addTicker(ticker);
-    btn.textContent = 'added';
+    el.textContent = '✓';
+    setTimeout(() => { el.textContent = orig; el.style.pointerEvents = ''; }, 1200);
   } catch {
-    btn.disabled    = false;
-    btn.textContent = '+WL';
+    el.textContent = orig;
+    el.style.pointerEvents = '';
   }
 }
 
-// ── Engine control ────────────────────────────────────────────
+// ── Drag-to-reorder ────────────────────────────────────────────
+
+function _attachDrag() {
+  const cards = [..._gridEl.querySelectorAll('.scanner-card')];
+
+  cards.forEach(card => {
+    const type = card.dataset.scannerType;
+
+    card.addEventListener('dragstart', e => {
+      _draggedType = type;
+      e.dataTransfer.effectAllowed = 'move';
+      // Defer class add so the ghost image captures the undimmed card
+      requestAnimationFrame(() => card.classList.add('scanner-card--dragging'));
+    });
+
+    card.addEventListener('dragend', () => {
+      _draggedType = null;
+      cards.forEach(c => {
+        c.classList.remove('scanner-card--dragging', 'scanner-card--drag-over');
+      });
+    });
+
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (type === _draggedType) return;
+      cards.forEach(c => c.classList.remove('scanner-card--drag-over'));
+      card.classList.add('scanner-card--drag-over');
+    });
+
+    card.addEventListener('dragleave', e => {
+      // Only clear if leaving the card entirely (not moving to a child)
+      if (!card.contains(e.relatedTarget)) {
+        card.classList.remove('scanner-card--drag-over');
+      }
+    });
+
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!_draggedType || _draggedType === type) return;
+
+      const fromIdx = _allScanners.findIndex(s => s.scanner_type === _draggedType);
+      const toIdx   = _allScanners.findIndex(s => s.scanner_type === type);
+      if (fromIdx === -1 || toIdx === -1) return;
+
+      const reordered = [..._allScanners];
+      const [moved]   = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+
+      _allScanners = reordered;
+      _saveOrder(reordered.map(s => s.scanner_type));
+      _renderCards();
+    });
+  });
+}
+
+// ── Engine control ─────────────────────────────────────────────
 
 async function _fetchRunningState() {
   try {
@@ -163,7 +254,6 @@ async function _onToggle() {
     const data = await res.json();
     _setEngineRunning(data.running ?? !_engineRunning);
   } catch {
-    // fall back to optimistic toggle
     _setEngineRunning(!_engineRunning);
   } finally {
     _toggleEl.disabled = false;
@@ -179,10 +269,12 @@ function _setEngineRunning(running) {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-function _fmtVol(v) {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000)     return `${Math.round(v / 1_000)}K`;
-  return String(v);
+function _fmtTime(iso) {
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+  } catch { return '—'; }
 }
 
 function _setDot(state) {

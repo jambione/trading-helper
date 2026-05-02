@@ -5,15 +5,15 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                           from './api.js';
-import { subscribe, set }                        from './store.js';
-import { init as initTranscription }             from './transcription.js';
-import { init as initTickers }                   from './tickers.js';
-import { init as initScanner }                   from './scanner.js';
-import { init as initConfig, open as openConfig }from './config.js';
-import { init as initResizer }                   from './resizer.js';
-import * as controls                             from './controls.js';
-import * as notifications                        from './notifications.js';
+import { connect, on }                           from './api.js?v=6';
+import { subscribe, set }                        from './store.js?v=6';
+import { init as initTranscription }             from './transcription.js?v=6';
+import { init as initTickers }                   from './tickers.js?v=6';
+import { init as initScanner }                   from './scanner.js?v=6';
+import { init as initConfig, open as openConfig }from './config.js?v=6';
+import { init as initResizer }                   from './resizer.js?v=6';
+import * as controls                             from './controls.js?v=6';
+import * as notifications                        from './notifications.js?v=6';
 
 document.addEventListener('DOMContentLoaded', () => {
 

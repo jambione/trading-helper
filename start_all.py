@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 import threading
-import webbrowser
 
 ROOT       = os.path.dirname(os.path.abspath(__file__))
 SCANNER_BE = os.path.normpath(os.path.join(ROOT, '..', 'trading-scanners', 'backend'))
@@ -54,8 +53,6 @@ def main() -> None:
     print('Signal Scanner  ->  http://localhost:8888')
     print('Scanner backend ->  http://localhost:8000')
     print('Press Ctrl+C to stop.\n')
-
-    threading.Timer(2.5, lambda: webbrowser.open('http://localhost:8888')).start()
 
     try:
         while True:

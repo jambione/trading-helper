@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal Scanner</title>
-  <link rel="stylesheet" href="/static/css/styles.css" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=6" />
 </head>
 <body>
 
@@ -61,82 +61,60 @@
 
   </section>
 
-  <!-- ── CENTER: Ticker Table ──────────────────────────── -->
-  <section data-panel="tickers" class="panel panel-tickers">
-
-    <div class="panel-header">
-      <div class="panel-header-left">
-        <span class="panel-title">Tickers</span>
-        <span data-ticker-count class="ticker-count"></span>
-      </div>
-      <div class="panel-header-right">
-        <button data-clear-watchlist-btn class="btn btn--ghost btn--danger btn--sm">✕ Clear Watchlist</button>
-      </div>
-    </div>
-
-    <!-- Column headers mirror .table-cols grid in CSS -->
-    <div class="table-header">
-      <div class="table-cols">
-        <div class="th">Ticker</div>
-        <div class="th">Price</div>
-        <div class="th">Chg%</div>
-        <div class="th">Vol</div>
-        <div class="th">Zone Proximity</div>
-        <div class="th">%R</div>
-        <div class="th">RSI-2</div>
-        <div class="th">OBV</div>
-        <div class="th">Streak</div>
-        <div class="th">Signal</div>
-        <div class="th"></div>
-      </div>
-    </div>
-
-    <div class="add-ticker-row">
-      <input id="add-ticker-input" type="text" placeholder="AAPL or paste: SMX - DKI - CMPX - NTLA"
-             autocomplete="off" spellcheck="false" />
-      <button data-add-ticker-btn class="btn btn--ghost btn--sm">+ Add</button>
-    </div>
-
-    <div data-ticker-rows class="ticker-rows">
-      <div class="table-empty">No tickers — start the transcriber and mention some stocks.</div>
-    </div>
-
-  </section>
-
-  <!-- ── RESIZER: drag handle between tickers and scanner ── -->
-  <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
-
-  <!-- ── RIGHT: Market Radar (scanner) ─────────────────── -->
+  <!-- ── CENTER: Market Radar (scanner) ────────────────── -->
   <section data-panel="scanner" class="panel panel-scanner">
 
     <div class="panel-header">
       <div class="panel-header-left">
         <span class="panel-title">Market Radar</span>
         <div data-scanner-dot class="ws-dot" title="Disconnected"></div>
+        <span data-scanner-poll class="tx-count"></span>
       </div>
       <div class="panel-header-right">
-        <span data-scanner-poll class="tx-count"></span>
         <button data-scanner-toggle class="btn btn--ghost btn--sm">Start Scanner</button>
       </div>
     </div>
 
-    <!-- Column headers -->
-    <div class="scanner-table-header">
-      <div class="scanner-cols">
-        <div class="th">Time</div>
+    <div data-scanner-rows class="scanner-card-grid">
+      <div class="scanner-grid-empty">Waiting for scanner…</div>
+    </div>
+
+  </section>
+
+  <!-- ── RESIZER: drag handle between scanner and watchlist ── -->
+  <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
+
+  <!-- ── RIGHT: Watchlist ───────────────────────────────── -->
+  <section data-panel="tickers" class="panel panel-watchlist">
+
+    <div class="panel-header">
+      <div class="panel-header-left">
+        <span class="panel-title">Watchlist</span>
+        <span data-ticker-count class="ticker-count"></span>
+      </div>
+      <div class="panel-header-right">
+        <button data-clear-watchlist-btn class="btn btn--ghost btn--danger btn--sm">✕ Clear</button>
+      </div>
+    </div>
+
+    <div class="watchlist-table-header">
+      <div class="watchlist-cols">
         <div class="th">Ticker</div>
         <div class="th">Price</div>
         <div class="th">Chg%</div>
         <div class="th">Vol</div>
-        <div class="th">Float</div>
-        <div class="th">RVol</div>
-        <div class="th">Signal</div>
         <div class="th"></div>
       </div>
     </div>
 
-    <div data-scanner-rows class="scanner-rows">
-      <div class="table-empty">Waiting for scanner…</div>
+    <div class="add-ticker-row">
+      <input id="add-ticker-input" type="text" placeholder="Add ticker…"
+             autocomplete="off" spellcheck="false" />
+      <button data-add-ticker-btn class="btn btn--ghost btn--sm">+</button>
+    </div>
+
+    <div data-ticker-rows class="watchlist-rows">
+      <div class="table-empty">No tickers yet.</div>
     </div>
 
   </section>
@@ -337,7 +315,7 @@
 </div><!-- /drawer-backdrop -->
 
 <!-- Module entry point -->
-<script type="module" src="/static/js/app.js"></script>
+<script type="module" src="/static/js/app.js?v=6"></script>
 
 </body>
 </html>

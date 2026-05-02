@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js';
-import { api } from './api.js';
+import { subscribe, selectTicker, get } from './store.js?v=6';
+import { api } from './api.js?v=6';
 
 let _rowsEl  = null;   // <div data-ticker-rows>
 let _countEl = null;   // <span data-ticker-count>
@@ -131,65 +131,21 @@ async function _addToWBAndTV(btn, ticker) {
 
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
-  // Status class on the row itself
   el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
 
-  // Price
   const priceEl = el.querySelector('[data-price]');
   if (priceEl) priceEl.textContent = row.price != null ? `$${row.price.toFixed(2)}` : '—';
 
-  // Pct change from open
   const chgEl = el.querySelector('[data-chg]');
   if (chgEl) {
     chgEl.textContent = _fmtChg(row.pct_change ?? null);
     chgEl.className   = `cell-chg ${_chgClass(row.pct_change ?? null)}`;
   }
 
-  // Volume (today's cumulative, colour-coded by rvol)
   const volEl = el.querySelector('[data-vol]');
   if (volEl) {
     volEl.textContent = _fmtVol(row.day_vol);
     volEl.className   = `cell-vol${(row.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}`;
-  }
-
-  // Proximity bar
-  const fill = el.querySelector('[data-prox-fill]');
-  if (fill) {
-    const pct = Math.round((row.proximity ?? 0) * 100);
-    fill.style.width = `${pct}%`;
-    fill.style.backgroundColor = _proxColor(row.proximity ?? 0);
-  }
-  const pctEl = el.querySelector('[data-prox-pct]');
-  if (pctEl) pctEl.textContent = `${Math.round((row.proximity ?? 0) * 100)}%`;
-
-  // %R fast
-  const rteEl = el.querySelector('[data-rte]');
-  if (rteEl) rteEl.textContent = row.rte_fast != null ? row.rte_fast.toFixed(0) : '—';
-
-  // RSI
-  const rsiEl = el.querySelector('[data-rsi]');
-  if (rsiEl) rsiEl.textContent = row.cm_rsi != null ? row.cm_rsi.toFixed(0) : '—';
-
-  // OBV
-  const obvEl = el.querySelector('[data-obv]');
-  if (obvEl) {
-    obvEl.textContent = row.obv_up ? '▲' : '—';
-    obvEl.className   = `cell-obv${row.obv_up ? ' obv-up' : ''}`;
-  }
-
-  // Streak
-  const strkEl = el.querySelector('[data-streak]');
-  if (strkEl) {
-    strkEl.textContent = row.streak ?? '—';
-    strkEl.className   = `cell-streak${(row.streak ?? 0) >= 1 ? ' streak-active' : ''}`;
-  }
-
-  // Badge
-  const badge = el.querySelector('[data-badge]');
-  if (badge) {
-    const t = _badgeTheme(row.status);
-    badge.className   = `status-badge ${t.cls}`;
-    badge.textContent = t.label;
   }
 }
 
@@ -197,31 +153,14 @@ function _updateRow(el, row) {
 
 function _rowHTML(row) {
   const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
-  const rte    = row.rte_fast != null ? row.rte_fast.toFixed(0) : '—';
-  const rsi    = row.cm_rsi  != null ? row.cm_rsi.toFixed(0)   : '—';
-  const streak = row.streak  != null ? row.streak : '—';
-  const pct    = Math.round((row.proximity ?? 0) * 100);
-  const color  = _proxColor(row.proximity ?? 0);
-  const { cls, label } = _badgeTheme(row.status);
   const chgCls = _chgClass(row.pct_change ?? null);
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
-  return `<div class="table-cols">
+  return `<div class="watchlist-cols">
     <div class="cell-ticker">${row.ticker}</div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
-    <div class="cell-proximity">
-      <div class="proximity-track">
-        <div class="proximity-fill" data-prox-fill style="width:${pct}%;background-color:${color}"></div>
-      </div>
-      <div class="proximity-pct" data-prox-pct>${pct}%</div>
-    </div>
-    <div class="cell-rte" data-rte>${rte}</div>
-    <div class="cell-rsi" data-rsi>${rsi}</div>
-    <div class="cell-obv${row.obv_up ? ' obv-up' : ''}" data-obv>${row.obv_up ? '▲' : '—'}</div>
-    <div class="cell-streak${(row.streak ?? 0) >= 1 ? ' streak-active' : ''}" data-streak>${streak}</div>
-    <div class="status-badge ${cls}" data-badge>${label}</div>
     <div class="cell-actions">
       <button class="btn-add" data-add-btn title="Add to Webull + open in TradingView">Add</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
@@ -244,24 +183,6 @@ function _rowClass(status) {
   return { BUY: 'row-buy', ON_DECK: 'row-deck' }[status] ?? '';
 }
 
-function _badgeTheme(status) {
-  const map = {
-    BUY:     { cls: 'badge-buy',    label: 'BUY' },
-    ON_DECK: { cls: 'badge-deck',   label: 'ON DECK' },
-    WARMING: { cls: 'badge-warm',   label: 'WARMING' },
-    COLD:    { cls: 'badge-cold',   label: 'COLD' },
-    NO_DATA: { cls: 'badge-nodata', label: 'NO DATA' },
-    ERROR:   { cls: 'badge-error',  label: 'ERROR' },
-  };
-  return map[status] ?? map.NO_DATA;
-}
-
-function _proxColor(p) {
-  if (p >= 1.0) return 'var(--buy)';
-  if (p >= 0.8) return 'var(--deck)';
-  if (p >= 0.5) return 'var(--warming)';
-  return 'var(--cold)';
-}
 
 function _fmtChg(v) {
   if (v == null) return '—';
