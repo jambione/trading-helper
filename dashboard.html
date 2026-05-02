@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal Scanner</title>
   <link rel="stylesheet" href="/static/css/styles.css" />
-  <!-- TradingView widget library — loaded once, used by tradingview.js -->
-  <script src="https://s3.tradingview.com/tv.js" defer></script>
 </head>
 <body>
 
@@ -105,25 +103,40 @@
 
   </section>
 
-  <!-- ── RESIZER: drag handle between tickers and chart ── -->
+  <!-- ── RESIZER: drag handle between tickers and scanner ── -->
   <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
 
-  <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
-  <section data-panel="tradingview" class="panel panel-tradingview">
+  <!-- ── RIGHT: Market Radar (scanner) ─────────────────── -->
+  <section data-panel="scanner" class="panel panel-scanner">
 
     <div class="panel-header">
-      <span class="panel-title">Chart</span>
-      <span data-tv-symbol class="tv-symbol-badge" style="display:none"></span>
+      <div class="panel-header-left">
+        <span class="panel-title">Market Radar</span>
+        <div data-scanner-dot class="ws-dot" title="Disconnected"></div>
+      </div>
+      <div class="panel-header-right">
+        <span data-scanner-poll class="tx-count"></span>
+        <button data-scanner-toggle class="btn btn--ghost btn--sm">Start Scanner</button>
+      </div>
     </div>
 
-    <div data-tv-placeholder class="tv-placeholder">
-      <div class="tv-placeholder-icon">📈</div>
-      <div class="tv-placeholder-text">Click any ticker to open chart</div>
-      <div class="tv-placeholder-sub">Powered by TradingView</div>
+    <!-- Column headers -->
+    <div class="scanner-table-header">
+      <div class="scanner-cols">
+        <div class="th">Time</div>
+        <div class="th">Ticker</div>
+        <div class="th">Price</div>
+        <div class="th">Chg%</div>
+        <div class="th">Vol</div>
+        <div class="th">Float</div>
+        <div class="th">RVol</div>
+        <div class="th">Signal</div>
+        <div class="th"></div>
+      </div>
     </div>
 
-    <div data-tv-widget class="tv-widget-wrap hidden">
-      <div id="tv_chart_container"></div>
+    <div data-scanner-rows class="scanner-rows">
+      <div class="table-empty">Waiting for scanner…</div>
     </div>
 
   </section>

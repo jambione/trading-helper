@@ -9,7 +9,7 @@ import { connect, on }                           from './api.js';
 import { subscribe, set }                        from './store.js';
 import { init as initTranscription }             from './transcription.js';
 import { init as initTickers }                   from './tickers.js';
-import { init as initTradingView }               from './tradingview.js';
+import { init as initScanner }                   from './scanner.js';
 import { init as initConfig, open as openConfig }from './config.js';
 import { init as initResizer }                   from './resizer.js';
 import * as controls                             from './controls.js';
@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Wrapped individually so one failure doesn't block the rest.
   try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
-  try { initTradingView(document.querySelector('[data-panel="tradingview"]')); }  catch (e) { console.error('[app] initTradingView', e); }
+  try { initScanner(document.querySelector('[data-panel="scanner"]')); }          catch (e) { console.error('[app] initScanner', e); }
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
   try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer')); } catch (e) { console.error('[app] initResizer', e); }
   notifications.init();
