@@ -20,7 +20,13 @@
       "Bash(python -c \"import ast; [print\\('OK', f\\) or ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['dashboard.py','alpaca_api.py','config.py']]\")",
       "Bash(echo \"exit:$?\")",
       "Bash(python -c \"import ast; files=['dashboard.py','alpaca_api.py','config.py']; [print\\('OK', f\\) for f in files if not ast.parse\\(open\\(f\\).read\\(\\)\\)]\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('dashboard.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('dashboard.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-helper\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\frontend\\\\src\\\\components\\\\\" -File | Select-Object -ExpandProperty Name)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\frontend\\\\src\\\\components\\\\AlertRow\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\backend\\\\\" -Recurse -File | Select-Object FullName)"
     ]
   }
 }
