@@ -83,14 +83,19 @@ function _renderLine(line) {
 
 /**
  * Bold any 2-5 uppercase-letter token that is in the live watchlist.
+ * Also highlights the "Big volume spike detected" alert phrase.
  * Runs on already-escaped HTML so it only matches text content.
  */
 function _highlight(html) {
-  return html.replace(/\b([A-Z]{2,5})\b/g, m =>
+  let result = html.replace(/\b([A-Z]{2,5})\b/g, m =>
     _known.has(m)
       ? `<strong class="tx-ticker">${m}</strong>`
       : m
   );
+  result = result.replace(/big volume spike detected/gi, m =>
+    `<span class="tx-keyword">${m}</span>`
+  );
+  return result;
 }
 
 function _esc(s) {

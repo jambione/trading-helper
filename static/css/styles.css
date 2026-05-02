@@ -369,8 +369,9 @@ body {
 .tx-error   { color: var(--danger); margin-bottom: 2px; }
 .tx-status  { color: var(--text-muted); font-style: italic; margin-bottom: 2px; }
 .tx-placeholder { color: var(--text-muted); font-style: italic; }
-.tx-ts      { color: var(--text-muted); margin-right: 5px; }
+.tx-ts      { color: var(--accent-dim); margin-right: 5px; font-weight: 500; }
 .tx-ticker  { color: var(--text-bright); font-weight: 600; background: var(--accent-glow); border-radius: 2px; padding: 0 2px; }
+.tx-keyword { color: #f5c842; background: rgba(245, 200, 66, 0.12); border-radius: 2px; padding: 0 2px; font-weight: 600; }
 
 /* ── Ticker table panel ─────────────────────────────────────── */
 .panel-tickers { background: var(--bg); }
