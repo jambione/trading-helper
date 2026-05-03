@@ -28,6 +28,9 @@ from fastapi.staticfiles import StaticFiles
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from signals import compute_signals
 import alpaca_api as _api
+from scanner_models import ScannerBroadcast
+from scanner_engine import ScannerEngine
+from scanner_data import ScannerDataClient
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent / "transcription"))
@@ -69,6 +72,8 @@ class _State:
         self.api_reset_ts      = time.time()
         self.executor          = ThreadPoolExecutor(max_workers=10)
         self.last_calc_price   = {}   # ticker -> last price used for signal calc
+        self.scanner_state     = None  # last ScannerBroadcast as dict
+        self.scanner_engine    = None  # ScannerEngine instance
 
     def record_api_call(self, count: int = 1):
         with self.lock:
@@ -666,7 +671,15 @@ def _snapshot() -> dict:
             "scan_running": STATE.scan_running,
             "scan_ts":      STATE.scan_ts,
             "config":       {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
+            "scanner":      STATE.scanner_state,
         }
+
+
+# ── Scanner engine ────────────────────────────────────────────────────────────
+
+async def _on_scanner_broadcast(broadcast: ScannerBroadcast):
+    with STATE.lock:
+        STATE.scanner_state = broadcast.model_dump()
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -698,6 +711,14 @@ async def _startup():
 
     threading.Thread(target=_scan_loop,  daemon=True, name="scan").start()
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
+
+    fh_key_for_scanner = STATE.cfg.get("finnhub_key", "")
+    scanner_data = ScannerDataClient(finnhub_key=fh_key_for_scanner)
+    engine = ScannerEngine(scanner_data, poll_interval=60)
+    with STATE.lock:
+        STATE.scanner_engine = engine
+    asyncio.create_task(engine.run(_on_scanner_broadcast))
+    log.info("[STARTUP] Scanner engine started")
 
 
 @app.get("/")
@@ -859,6 +880,37 @@ async def api_audio_devices():
 async def api_scan():
     threading.Thread(target=run_scan, daemon=True, name="scan-manual").start()
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/scanner/health")
+async def api_scanner_health():
+    with STATE.lock:
+        engine = STATE.scanner_engine
+    return JSONResponse({"running": engine.is_running if engine else False})
+
+
+@app.post("/api/scanner/start")
+async def api_scanner_start():
+    with STATE.lock:
+        engine = STATE.scanner_engine
+    if engine and engine.is_running:
+        return JSONResponse({"ok": True, "running": True})
+    fh_key = STATE.cfg.get("finnhub_key", "")
+    scanner_data = ScannerDataClient(finnhub_key=fh_key)
+    new_engine = ScannerEngine(scanner_data, poll_interval=60)
+    with STATE.lock:
+        STATE.scanner_engine = new_engine
+    asyncio.create_task(new_engine.run(_on_scanner_broadcast))
+    return JSONResponse({"ok": True, "running": True})
+
+
+@app.post("/api/scanner/stop")
+async def api_scanner_stop():
+    with STATE.lock:
+        engine = STATE.scanner_engine
+    if engine:
+        engine.stop()
+    return JSONResponse({"ok": True, "running": False})
 
 
 @app.get("/api/config")

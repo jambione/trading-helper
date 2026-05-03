@@ -605,7 +605,7 @@ body {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   grid-auto-rows: 1fr;
   gap: 8px;
   padding: 8px;
@@ -699,13 +699,19 @@ body {
   font-size: 11px;
 }
 
-/* Column widths — Time Ticker Price Chg% Signal Float */
-.sct th:nth-child(1) { width: 14%; }
-.sct th:nth-child(2) { width: 13%; }
-.sct th:nth-child(3) { width: 15%; }
-.sct th:nth-child(4) { width: 13%; }
-.sct th:nth-child(5) { width: auto; }
-.sct th:nth-child(6) { width: 13%; }
+/* Column widths — Time Ticker Price Chg% Signal Float (6-col)
+   JetBrains Mono 11px ≈ 6.6px/char + 10px cell padding; 340px card min.
+   Fixed cols sum to ~274px leaving ≥64px for Signal at minimum card width. */
+.sct th:nth-child(1) { width: 68px; }   /* Time  — HH:MM:SS (10px font = 8×6=58+10) */
+.sct th:nth-child(2) { width: 52px; }   /* Ticker — up to 5 chars + letter-spacing */
+.sct th:nth-child(3) { width: 58px; }   /* Price  — up to "$49.99" = 6×6.6+10 */
+.sct th:nth-child(4) { width: 52px; }   /* Chg%   — up to "-20.10" = 6×6.6+10 */
+.sct th:nth-child(5) { width: auto; }   /* Signal — absorbs remaining */
+.sct th:nth-child(6) { width: 44px; }   /* Float  — up to "12.3M" = 5×6.6+10 */
+
+/* Gap / Find It First have no Signal col — Float sits at position 5 */
+[data-scanner-type="gap"] .sct th:nth-child(5),
+[data-scanner-type="find_it_first"] .sct th:nth-child(5) { width: 44px; }
 
 .sct thead {
   position: sticky;
@@ -718,7 +724,7 @@ body {
   padding: 4px 5px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   border-bottom: 1px solid var(--border);

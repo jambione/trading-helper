@@ -1,16 +1,18 @@
 /**
  * scanner.js — Market Radar panel
  *
- * Connects to the trading-scanners backend WebSocket at localhost:8000/ws.
+ * Subscribes to the `scanners` store key, which is populated by the shared
+ * dashboard WebSocket (port 8888). No separate WebSocket connection needed.
  * Renders one card per scanner type in a responsive grid. Cards support
  * drag-to-reorder; order is persisted to localStorage.
  */
 
+import { subscribe } from './store.js?v=6';
 import { api } from './api.js?v=6';
 
-const SCANNER_WS_URL  = 'ws://localhost:8000/ws';
-const SCANNER_API_URL = 'http://localhost:8000';
-const ORDER_KEY       = 'ss:scanner-order';
+const ORDER_KEY = 'ss:scanner-order';
+
+const NO_SIGNAL_TYPES = new Set(['gap', 'find_it_first']);
 
 const SCANNER_COLORS = {
   gap:             '#38bdf8',
@@ -21,8 +23,6 @@ const SCANNER_COLORS = {
   vwap_trend:      '#2dd4bf',
 };
 
-let _ws             = null;
-let _reconnectTimer = null;
 let _allScanners    = [];
 let _engineRunning  = false;
 let _draggedType    = null;
@@ -43,39 +43,25 @@ export function init(panelEl) {
 
   _toggleEl?.addEventListener('click', _onToggle);
 
-  _connect();
+  // Subscribe to scanner broadcasts delivered via the shared dashboard WS snapshot
+  subscribe('scanners', broadcast => {
+    if (!broadcast) {
+      _setDot('off');
+      return;
+    }
+    _ingest(broadcast);
+  });
+
+  _fetchRunningState();
 }
 
-// ── WebSocket ──────────────────────────────────────────────────
-
-function _connect() {
-  if (_ws) { try { _ws.close(); } catch (_) {} }
-
-  _ws = new WebSocket(SCANNER_WS_URL);
-
-  _ws.onopen = () => {
-    _setDot('on');
-    clearTimeout(_reconnectTimer);
-    _fetchRunningState();
-  };
-
-  _ws.onmessage = ({ data }) => {
-    let msg;
-    try { msg = JSON.parse(data); } catch { return; }
-    _ingest(msg);
-  };
-
-  _ws.onclose = _ws.onerror = () => {
-    _setDot('off');
-    clearTimeout(_reconnectTimer);
-    _reconnectTimer = setTimeout(_connect, 3000);
-  };
-}
+// ── Ingest ─────────────────────────────────────────────────────
 
 function _ingest(broadcast) {
   if (!Array.isArray(broadcast.scanners)) return;
   _allScanners = _applyOrder(broadcast.scanners);
   if (_pollEl) _pollEl.textContent = `#${broadcast.poll_count}`;
+  _setDot('on');
   _renderCards();
 }
 
@@ -120,8 +106,9 @@ function _renderCards() {
 }
 
 function _cardHTML(scanner) {
-  const hasAlerts = scanner.alerts.length > 0;
-  const sorted    = [...scanner.alerts].sort((a, b) => b.triggered_at.localeCompare(a.triggered_at));
+  const hasAlerts  = scanner.alerts.length > 0;
+  const sorted     = [...scanner.alerts].sort((a, b) => b.triggered_at.localeCompare(a.triggered_at));
+  const showSignal = !NO_SIGNAL_TYPES.has(scanner.scanner_type);
 
   const badgeCls  = hasAlerts ? 'scanner-card-badge--active' : '';
   const body      = hasAlerts
@@ -131,10 +118,10 @@ function _cardHTML(scanner) {
           <th>Ticker</th>
           <th class="r">Price</th>
           <th class="r">Chg%</th>
-          <th>Signal</th>
+          ${showSignal ? '<th>Signal</th>' : ''}
           <th class="r">Float</th>
         </tr></thead>
-        <tbody>${sorted.map(_rowHTML).join('')}</tbody>
+        <tbody>${sorted.map(a => _rowHTML(a, showSignal)).join('')}</tbody>
       </table>`
     : '<div class="scanner-card-empty">no alerts</div>';
 
@@ -147,19 +134,19 @@ function _cardHTML(scanner) {
 </div>`;
 }
 
-function _rowHTML(a) {
+function _rowHTML(a, showSignal = true) {
   const color    = SCANNER_COLORS[a.scanner_type] ?? 'var(--text-dim)';
   const time     = _fmtTime(a.triggered_at);
   const chgCls   = a.change_pct >= 0 ? 'chg-pos' : 'chg-neg';
   const float    = a.float_millions != null ? `${a.float_millions.toFixed(1)}M` : '—';
-  const note     = a.note || a.scanner_type;
+  const note     = (a.note || a.scanner_type).replace(/^(vwap|HOD)\s+/i, '');
 
   return `<tr>
   <td class="sct-time">${time}</td>
   <td class="sct-ticker sct-ticker--add" data-add-wl="${a.ticker}" title="Add to watchlist">${a.ticker}</td>
   <td class="sct-num">$${a.price.toFixed(2)}</td>
-  <td class="sct-num cell-chg ${chgCls}">${Math.round(a.change_pct)}</td>
-  <td class="sct-signal" style="color:${color}">${note}</td>
+  <td class="sct-num cell-chg ${chgCls}">${a.change_pct.toFixed(2)}</td>
+  ${showSignal ? `<td class="sct-signal" style="color:${color}">${note}</td>` : ''}
   <td class="sct-float">${float}</td>
 </tr>`;
 }
@@ -189,7 +176,6 @@ function _attachDrag() {
     card.addEventListener('dragstart', e => {
       _draggedType = type;
       e.dataTransfer.effectAllowed = 'move';
-      // Defer class add so the ghost image captures the undimmed card
       requestAnimationFrame(() => card.classList.add('scanner-card--dragging'));
     });
 
@@ -209,7 +195,6 @@ function _attachDrag() {
     });
 
     card.addEventListener('dragleave', e => {
-      // Only clear if leaving the card entirely (not moving to a child)
       if (!card.contains(e.relatedTarget)) {
         card.classList.remove('scanner-card--drag-over');
       }
@@ -238,10 +223,10 @@ function _attachDrag() {
 
 async function _fetchRunningState() {
   try {
-    const res  = await fetch(`${SCANNER_API_URL}/health`);
+    const res  = await fetch('/api/scanner/health');
     const data = await res.json();
     _setEngineRunning(data.running ?? false);
-  } catch { /* scanner backend not reachable */ }
+  } catch { /* scanner not yet ready */ }
 }
 
 async function _onToggle() {
@@ -250,7 +235,7 @@ async function _onToggle() {
 
   const action = _engineRunning ? 'stop' : 'start';
   try {
-    const res  = await fetch(`${SCANNER_API_URL}/${action}`, { method: 'POST' });
+    const res  = await fetch(`/api/scanner/${action}`, { method: 'POST' });
     const data = await res.json();
     _setEngineRunning(data.running ?? !_engineRunning);
   } catch {

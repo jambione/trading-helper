@@ -68,6 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (snap.scan_ts)                    update.scan_ts      = snap.scan_ts;
     if (snap.config)                     update.config       = snap.config;
     if (snap.transcriber)                update.transcriber  = snap.transcriber;
+    if (snap.scanner      !== undefined) update.scanners     = snap.scanner;
     if (Object.keys(update).length)      set(update);
   });
 
