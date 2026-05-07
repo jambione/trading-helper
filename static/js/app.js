@@ -5,16 +5,16 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                           from './api.js?v=7';
-import { subscribe, set }                        from './store.js?v=7';
-import { init as initTranscription }             from './transcription.js?v=7';
-import { init as initTickers }                   from './tickers.js?v=7';
-import { init as initTradingView }               from './tradingview.js?v=7';
-import { init as initConfig, open as openConfig }from './config.js?v=7';
-import { init as initResizer }                   from './resizer.js?v=7';
-import * as controls                             from './controls.js?v=7';
-import * as notifications                        from './notifications.js?v=7';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=7';
+import { connect, on }                           from './api.js?v=8';
+import { subscribe, set }                        from './store.js?v=8';
+import { init as initTranscription }             from './transcription.js?v=8';
+import { init as initTickers }                   from './tickers.js?v=8';
+import { init as initTradingView }               from './tradingview.js?v=8';
+import { init as initConfig, open as openConfig }from './config.js?v=8';
+import { init as initResizer }                   from './resizer.js?v=8';
+import * as controls                             from './controls.js?v=8';
+import * as notifications                        from './notifications.js?v=8';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=8';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
