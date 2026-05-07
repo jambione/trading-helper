@@ -7,6 +7,7 @@
 
 import { api } from './api.js?v=7';
 import { get } from './store.js?v=7';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=7';
 
 let _backdrop = null;
 let _saveBtn  = null;
@@ -25,6 +26,9 @@ export function init(backdropEl) {
   backdropEl.querySelector('[data-close-btn]').addEventListener('click', close);
   backdropEl.addEventListener('click', e => { if (e.target === backdropEl) close(); });
 
+  // Logout
+  backdropEl.querySelector('[data-logout-btn]')?.addEventListener('click', logout);
+
   // Save
   _saveBtn.addEventListener('click', _save);
 
@@ -35,6 +39,7 @@ export function init(backdropEl) {
 
 export async function open() {
   _backdrop.classList.add('open');
+  _set('cfg-backend-url', getBackendUrl());
   await Promise.all([_loadConfig(), _loadAudioDevices()]);
 }
 
@@ -135,6 +140,10 @@ async function _save() {
   if (ak) body.api_key     = ak;
   if (sk) body.secret_key  = sk;
   if (fk) body.finnhub_key = fk;
+
+  // Backend URL is stored locally — not sent to the server
+  const backendUrl = _val('cfg-backend-url').trim();
+  setBackendUrl(backendUrl);
 
   // Drop undefined/null values that weren't touched
   Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);

@@ -22,8 +22,13 @@ from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse as _SJSONResponse
+
+from auth import check_credentials, create_token, verify_token
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from signals import compute_signals
@@ -688,6 +693,45 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+# ── Auth middleware ───────────────────────────────────────────────────────────
+
+_PUBLIC_PATHS   = {"/", "/login", "/auth/login"}
+_PUBLIC_PREFIX  = ("/static/",)
+
+
+class _AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        # Allow unauthenticated access to the login page, login endpoint, and static files
+        if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIX):
+            return await call_next(request)
+
+        # CORS preflight passes through; CORSMiddleware handles the response
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        auth  = request.headers.get("authorization", "")
+        token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+        if not token:
+            token = request.query_params.get("token", "")
+
+        if not verify_token(token):
+            return _SJSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+        return await call_next(request)
+
+
+# Middleware is applied outermost-last: CORS wraps AuthMiddleware wraps app
+app.add_middleware(_AuthMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+
 @app.on_event("startup")
 async def _startup():
     loop = asyncio.get_running_loop()
@@ -724,6 +768,24 @@ async def _startup():
 @app.get("/")
 async def root():
     return FileResponse("dashboard.html")
+
+
+@app.get("/login")
+async def login_page():
+    return FileResponse("login.html")
+
+
+@app.post("/auth/login")
+async def auth_login(request: Request):
+    try:
+        body     = await request.json()
+        username = str(body.get("username", "")).strip()
+        password = str(body.get("password", ""))
+        if not check_credentials(username, password):
+            return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
+        return JSONResponse({"ok": True, "token": create_token()})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @app.get("/api/state")
@@ -950,8 +1012,11 @@ async def api_config_save(request: Request):
 
 
 @app.websocket("/ws")
-async def ws_endpoint(ws: WebSocket):
+async def ws_endpoint(ws: WebSocket, token: str = ""):
     await ws.accept()
+    if not verify_token(token):
+        await ws.close(code=4001)
+        return
     import json as _json
     last_snap_str = None
     try:

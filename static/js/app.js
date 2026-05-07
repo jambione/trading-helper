@@ -14,8 +14,15 @@ import { init as initConfig, open as openConfig }from './config.js?v=7';
 import { init as initResizer }                   from './resizer.js?v=7';
 import * as controls                             from './controls.js?v=7';
 import * as notifications                        from './notifications.js?v=7';
+import { isAuthenticated, logout }               from './auth.js?v=7';
 
 document.addEventListener('DOMContentLoaded', () => {
+
+  // ── Auth gate ────────────────────────────────────────────────
+  if (!isAuthenticated()) {
+    window.location.href = '/login';
+    return;
+  }
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
@@ -32,11 +39,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const clrTxBtn  = document.querySelector('[data-clear-transcript-btn]');
   const settBtn   = document.querySelector('[data-settings-btn]');
   const notifBtn  = document.querySelector('[data-notif-btn]');
+  const logoutBtn = document.querySelector('[data-logout-btn]');
 
   txBtn    ?.addEventListener('click', () => controls.toggleTranscriber(txBtn));
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
+  logoutBtn?.addEventListener('click', logout);
 
   const addInput = document.getElementById('add-ticker-input');
   const addBtn   = document.querySelector('[data-add-ticker-btn]');
@@ -89,7 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
       lbl.className   = `tx-label${tx.running ? ' tx-label--on' : ''}`;
     }
 
-    // Only sync label when button is not mid-click (disabled = in-flight action)
     if (txBtn && !txBtn.disabled) {
       txBtn.textContent = tx.running ? 'Stop Transcription' : 'Start Transcription';
       txBtn.className   = `tx-btn ${tx.running ? 'tx-btn--stop' : 'tx-btn--start'}`;
