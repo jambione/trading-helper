@@ -13,9 +13,6 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-
-import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -31,11 +28,7 @@ from starlette.responses import JSONResponse as _SJSONResponse
 from auth import check_credentials, create_token, verify_token, is_auth_required
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
-from signals import compute_signals
 import alpaca_api as _api
-from scanner_models import ScannerBroadcast
-from scanner_engine import ScannerEngine
-from scanner_data import ScannerDataClient
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent / "transcription"))
@@ -62,33 +55,12 @@ log = logging.getLogger(__name__)
 
 class _State:
     def __init__(self):
-        self.lock              = threading.Lock()
-        self.cfg               = load_config()
-        self.data_client       = None
-        self.tickers: dict     = {}   # ticker → signal/price dict
-        self.transcriber       = None # subprocess.Popen or None
-        self.transcript_lines  = []   # in-memory only, never written to disk
-        self.scan_ts           = ""
-        self.scan_running      = False
-        self.bars_cache        = {}   # ticker -> pd.DataFrame
-        self.last_bar_fetch    = 0    # timestamp
-        self.dirty_tickers     = set() # tickers needing signal recalculation
-        self.api_call_count    = 0
-        self.api_reset_ts      = time.time()
-        self.executor          = ThreadPoolExecutor(max_workers=10)
-        self.last_calc_price   = {}   # ticker -> last price used for signal calc
-        self.scanner_state     = None  # last ScannerBroadcast as dict
-        self.scanner_engine    = None  # ScannerEngine instance
-
-    def record_api_call(self, count: int = 1):
-        with self.lock:
-            now = time.time()
-            if now - self.api_reset_ts > 60:
-                self.api_call_count = 0
-                self.api_reset_ts = now
-            self.api_call_count += count
-            if self.api_call_count > 150:
-                log.warning(f"[SAFETY] High API volume: {self.api_call_count} calls/min")
+        self.lock             = threading.Lock()
+        self.cfg              = load_config()
+        self.data_client      = None
+        self.tickers: dict    = {}   # ticker → {price, price_ts, day_open, pct_change}
+        self.transcriber      = None # subprocess.Popen or None
+        self.transcript_lines = []   # in-memory only, never written to disk
 
     @property
     def transcriber_running(self) -> bool:
@@ -170,10 +142,6 @@ def remove_ticker_from_log(ticker: str) -> bool:
         with STATE.lock:
             if ticker in STATE.tickers:
                 del STATE.tickers[ticker]
-            if ticker in STATE.bars_cache:
-                del STATE.bars_cache[ticker]
-            if ticker in STATE.last_calc_price:
-                del STATE.last_calc_price[ticker]
         return True
     except Exception as e:
         log.error(f"[TICKER] Remove {ticker} failed: {e}")
@@ -250,203 +218,7 @@ def stop_transcriber():
     log.info("[TX] Stopped")
 
 
-# ── Signal computation ────────────────────────────────────────────────────────
-
-def _signal_summary(row, cfg: dict, day_open: float = None, day_vol: int = None, rvol: float = None) -> dict:
-    rte_fast  = float(row.get("rte_fast",  -100))
-    rte_slow  = float(row.get("rte_slow",  -100))
-    streak    = int(row.get("rte_boxes_streak", 0))
-    cm_rsi    = float(row.get("cm_rsi",     50))
-    obv_up    = bool(row.get("obv_trending_up", False))
-    signal    = str(row.get("signal", "HOLD"))
-    threshold = int(cfg.get("rte_threshold", 20))
-    min_boxes = int(cfg.get("rte_min_boxes",  2))
-
-    if signal == "BUY":
-        status = "BUY"
-    elif streak >= min_boxes:
-        status = "ON_DECK"
-    elif rte_fast < -60:
-        status = "WARMING"
-    else:
-        status = "COLD"
-
-    # Proximity: 0 = far from oversold, 1 = deep in oversold zone
-    proximity = round(min(1.0, max(0.0, (-rte_fast - threshold) / max(1, 100 - threshold))), 3)
-
-    return {
-        "rte_fast":  round(rte_fast, 1),
-        "rte_slow":  round(rte_slow, 1),
-        "streak":    streak,
-        "cm_rsi":    round(cm_rsi, 1),
-        "obv_up":    obv_up,
-        "status":    status,
-        "proximity": proximity,
-        "day_open":  round(day_open, 4) if day_open is not None else None,
-        "day_vol":   day_vol,
-        "rvol":      rvol,
-    }
-
-
-def _compute_ticker_signal(t: str, df: pd.DataFrame, lp: float, cfg: dict) -> tuple[str, any]:
-    """Helper for parallel signal calculation."""
-    if df is None or len(df) < 50:
-        return t, None
-    try:
-        # Extract day_open, day_vol, rvol from real bars BEFORE injecting synthetic row
-        day_open = None
-        day_vol  = None
-        rvol     = None
-        try:
-            if getattr(df.index, 'tz', None) is not None:
-                idx_dates = df.index.tz_convert(ET).date
-            else:
-                idx_dates = df.index.date
-            last_date = idx_dates[-1]
-            mask      = idx_dates == last_date
-            today_df  = df[mask]
-            if not today_df.empty:
-                day_open = float(today_df.iloc[0]["open"])
-                day_vol  = int(today_df["volume"].sum())
-        except Exception:
-            pass
-        if day_open is None:
-            day_open = float(df.iloc[-1]["open"])
-        try:
-            avg_vol  = float(df["volume"].rolling(20).mean().iloc[-1])
-            last_vol = float(df["volume"].iloc[-1])
-            rvol = round(last_vol / avg_vol, 2) if avg_vol > 0 else None
-        except Exception:
-            pass
-
-        # Inject latest price as a synthetic last row
-        if lp:
-            now_et = datetime.now(ET)
-            new_row_data = [[lp, lp, lp, lp, 0]]
-            new_row_df = pd.DataFrame(new_row_data, columns=["open", "high", "low", "close", "volume"], index=[now_et])
-            df = pd.concat([df, new_row_df])
-
-        sig_df = compute_signals(df, cfg)
-        return t, _signal_summary(sig_df.iloc[-1], cfg, day_open=day_open, day_vol=day_vol, rvol=rvol)
-    except Exception as ex:
-        log.debug(f"[SCAN] {t}: {ex}")
-        return t, False
-
-
-def run_scan(force_fetch_bars: bool = False, ticker_subset: list = None):
-    if not _scan_lock.acquire(blocking=False):
-        return  # another scan in progress; drop this request
-
-    # Only scan tickers that are in the watchlist
-    watchlist_tickers = load_tickers()
-    watchlist_set = set(watchlist_tickers)
-    
-    if ticker_subset:
-        tickers = [t for t in ticker_subset if t in watchlist_set]
-    else:
-        tickers = list(watchlist_tickers)
-
-    cfg     = STATE.cfg
-    client  = STATE.data_client
-
-    with STATE.lock:
-        STATE.scan_running = True
-    try:
-        if not tickers or client is None:
-            if client is None and tickers:
-                log.warning("[SCAN] No Alpaca client")
-            return
-        ts_now = time.time()
-        # Only fetch new bars if forced or if cache is older than 5 minutes
-        with STATE.lock:
-            needs_fetch = force_fetch_bars or (ts_now - STATE.last_bar_fetch > 300)
-            bars = STATE.bars_cache
-
-        if needs_fetch:
-            all_tickers = load_tickers()
-            log.info(f"[SCAN] Fetching fresh bars for {len(all_tickers)} tickers…")
-            bars = _api.fetch_bars_batch(client, all_tickers, cfg)
-            STATE.record_api_call(1)
-            with STATE.lock:
-                STATE.bars_cache = bars
-                STATE.last_bar_fetch = ts_now
-        
-        ts   = datetime.now(ET).strftime("%H:%M:%S")
-
-        # Get latest prices from Finnhub to inject into signal calculation
-        latest_prices = {}
-        if FINNHUB_STATE.connected:
-            with FINNHUB_STATE.lock:
-                latest_prices = {t: d["price"] for t in tickers if (d := FINNHUB_STATE.prices.get(t)) and d.get("price")}
-
-        # Filter out tickers whose price hasn't changed enough since last calculation
-        to_calc = []
-        with STATE.lock:
-            for t in tickers:
-                lp = latest_prices.get(t)
-                last_lp = STATE.last_calc_price.get(t)
-                # If we have a price and it's basically the same as last time, skip
-                if lp and last_lp and abs(lp - last_lp) < 1e-6:
-                    continue
-                to_calc.append(t)
-                if lp:
-                    STATE.last_calc_price[t] = lp
-
-        if not to_calc:
-            return
-
-        # Compute signals in parallel WITHOUT holding STATE.lock
-        futures = [
-            STATE.executor.submit(_compute_ticker_signal, t, bars.get(t), latest_prices.get(t), cfg)
-            for t in to_calc
-        ]
-        
-        computed = {}
-        for future in futures:
-            t, result = future.result()
-            computed[t] = result
-        
-        with STATE.lock:
-            for t in tickers:
-                entry  = STATE.tickers.get(t, {})
-                result = computed.get(t)
-                if result is None:
-                    entry.update({"status": "NO_DATA", "proximity": 0,
-                                  "streak": 0, "rte_fast": -100, "rte_slow": -100,
-                                  "cm_rsi": 50, "obv_up": False})
-                elif result is False:
-                    entry["status"] = "ERROR"
-                else:
-                    entry.update(result)
-                entry["last_scan"] = ts
-                STATE.tickers[t]   = entry
-            STATE.scan_ts = ts
-
-        log.info(f"[SCAN] Done at {ts}")
-    finally:
-        with STATE.lock:
-            STATE.scan_running = False
-        _scan_lock.release()
-
-
-def _scan_loop():
-    time.sleep(2)   # let startup settle
-    while True:
-        try:
-            run_scan()
-        except Exception as e:
-            log.error(f"[SCAN] {e}")
-        # Sleep in 2-second increments so config interval changes take effect quickly
-        start = time.monotonic()
-        while True:
-            time.sleep(2)
-            if time.monotonic() - start >= STATE.cfg.get("scan_interval_sec", 60):
-                break
-
-
 # ── Price polling ─────────────────────────────────────────────────────────────
-
-_scan_lock = threading.Lock()
 
 # Alpaca fallback runs in its own thread so it never blocks the price loop.
 _alpaca_price_cache: dict = {}          # last results from Alpaca fallback
@@ -459,7 +231,6 @@ def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
     global _alpaca_fallback_running
     try:
         prices = _api.get_latest_trade_prices(client, tickers, cfg)
-        STATE.record_api_call(1)
         with _alpaca_cache_lock:
             _alpaca_price_cache.update(prices)
     finally:
@@ -492,10 +263,18 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
         for ticker in to_poll:
             try:
                 q = _fh_rest_quote(api_key, ticker)
-                price = float(q.get("c", 0)) if q.get("ok") else 0
+                if not q.get("ok"):
+                    time.sleep(0.1)
+                    continue
+                price = float(q.get("c", 0))
                 if price > 0:
                     FINNHUB_STATE.update_price(ticker, price)
-                time.sleep(0.1) # small throttle
+                    day_open = float(q.get("o", 0))
+                    if day_open > 0:
+                        with STATE.lock:
+                            entry = STATE.tickers.setdefault(ticker, {})
+                            entry["day_open"] = round(day_open, 4)
+                time.sleep(0.1)
             except Exception:
                 pass
     finally:
@@ -504,7 +283,6 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
 
 def _price_loop():
     global _alpaca_fallback_running, _finnhub_rest_running
-    last_signal_update  = 0
     last_alpaca_poll    = 0
     last_fh_rest_poll   = 0
     _prev_tickers: set  = set(load_tickers())  # seed from file; avoids first-run flood
@@ -570,31 +348,9 @@ def _price_loop():
                     for t, p in all_prices.items():
                         if t not in tickers:
                             continue
-                        if t not in STATE.tickers:
-                            STATE.tickers[t] = {}
-                        
-                        entry = STATE.tickers[t]
-                        old_p = entry.get("price")
-                        
-                        # Mark as dirty if price changed (used for reactive signal recompute)
-                        if old_p is not None and abs(p - old_p) / old_p > 1e-7:
-                            STATE.dirty_tickers.add(t)
-                        elif old_p is None:
-                            STATE.dirty_tickers.add(t)
-                            
+                        entry = STATE.tickers.setdefault(t, {})
                         entry["price"]    = round(p, 4)
                         entry["price_ts"] = ts
-
-                # Reactive signal recompute — at most every 250ms
-                if not STATE.scan_running and (now - last_signal_update > 0.25):
-                    with STATE.lock:
-                        to_scan = list(STATE.dirty_tickers)
-                        STATE.dirty_tickers.clear()
-                    if to_scan:
-                        last_signal_update = now
-                        threading.Thread(target=run_scan,
-                                         kwargs={"force_fetch_bars": False, "ticker_subset": to_scan},
-                                         daemon=True, name="scan-reactive").start()
 
         except Exception as e:
             log.debug(f"[PRICE] {e}")
@@ -663,7 +419,6 @@ def _snapshot() -> dict:
             rows.append(d)
         rows.sort(key=lambda r: (
             mention_rank.get(r["ticker"], len(mention_rank)),
-            -r.get("proximity", 0) if r["ticker"] not in mention_rank else 0,
             (r.get("price") or float("inf")) if r["ticker"] not in mention_rank else 0,
         ))
         return {
@@ -672,19 +427,9 @@ def _snapshot() -> dict:
                 "lines":   tx_lines,
                 "count":   len(tickers),
             },
-            "tickers":      rows,
-            "scan_running": STATE.scan_running,
-            "scan_ts":      STATE.scan_ts,
-            "config":       {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
-            "scanner":      STATE.scanner_state,
+            "tickers": rows,
+            "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
         }
-
-
-# ── Scanner engine ────────────────────────────────────────────────────────────
-
-async def _on_scanner_broadcast(broadcast: ScannerBroadcast):
-    with STATE.lock:
-        STATE.scanner_state = broadcast.model_dump()
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -757,16 +502,7 @@ async def _startup():
         except Exception as e:
             log.warning(f"[STARTUP] Finnhub unavailable: {e}")
 
-    threading.Thread(target=_scan_loop,  daemon=True, name="scan").start()
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
-
-    fh_key_for_scanner = STATE.cfg.get("finnhub_key", "")
-    scanner_data = ScannerDataClient(finnhub_key=fh_key_for_scanner)
-    engine = ScannerEngine(scanner_data, poll_interval=60)
-    with STATE.lock:
-        STATE.scanner_engine = engine
-    asyncio.create_task(engine.run(_on_scanner_broadcast))
-    log.info("[STARTUP] Scanner engine started")
 
 
 @app.get("/")
@@ -940,43 +676,6 @@ async def api_audio_devices():
             return {"ok": False, "error": str(e), "devices": []}
     result = await asyncio.get_running_loop().run_in_executor(None, _list)
     return JSONResponse(result)
-
-
-@app.post("/api/scan")
-async def api_scan():
-    threading.Thread(target=run_scan, daemon=True, name="scan-manual").start()
-    return JSONResponse({"ok": True})
-
-
-@app.get("/api/scanner/health")
-async def api_scanner_health():
-    with STATE.lock:
-        engine = STATE.scanner_engine
-    return JSONResponse({"running": engine.is_running if engine else False})
-
-
-@app.post("/api/scanner/start")
-async def api_scanner_start():
-    with STATE.lock:
-        engine = STATE.scanner_engine
-    if engine and engine.is_running:
-        return JSONResponse({"ok": True, "running": True})
-    fh_key = STATE.cfg.get("finnhub_key", "")
-    scanner_data = ScannerDataClient(finnhub_key=fh_key)
-    new_engine = ScannerEngine(scanner_data, poll_interval=60)
-    with STATE.lock:
-        STATE.scanner_engine = new_engine
-    asyncio.create_task(new_engine.run(_on_scanner_broadcast))
-    return JSONResponse({"ok": True, "running": True})
-
-
-@app.post("/api/scanner/stop")
-async def api_scanner_stop():
-    with STATE.lock:
-        engine = STATE.scanner_engine
-    if engine:
-        engine.stop()
-    return JSONResponse({"ok": True, "running": False})
 
 
 @app.get("/api/config")

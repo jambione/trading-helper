@@ -64,23 +64,12 @@ function _switchTab(tab) {
 async function _loadConfig() {
   try {
     const { config: c } = await api.getConfig();
-    _set('cfg-api-key',       c.api_key          ?? '');
-    _set('cfg-secret-key',    c.secret_key        ?? '');
-    _set('cfg-finnhub-key',   c.finnhub_key       ?? '');
-    _set('cfg-timeframe',     c.bar_timeframe     ?? '5Min');
-    _set('cfg-bar-count',     c.bar_count         ?? 300);
-    _set('cfg-scan-interval', c.scan_interval_sec ?? 60);
-    _set('cfg-rte-threshold', c.rte_threshold     ?? 20);
-    _set('cfg-rte-min-boxes', c.rte_min_boxes     ?? 2);
-    _set('cfg-obv-length',    c.obv_length        ?? 20);
-    _set('cfg-vol-surge',     c.volume_surge_mult ?? 1.5);
-    _set('cfg-macd-fast',     c.macd_fast         ?? 12);
-    _set('cfg-macd-slow',     c.macd_slow         ?? 26);
-    _set('cfg-macd-signal',   c.macd_signal       ?? 9);
-    _set('cfg-cm-rsi-len',    c.cm_rsi_length     ?? 14);
-    _set('cfg-cm-rsi-os',     c.cm_rsi_oversold   ?? 30);
-    _set('cfg-tv-url',        c.tv_chart_url      ?? '');
-    _set('cfg-strategy',      c.strategy          ?? 'multiple_os');
+    _set('cfg-api-key',     c.api_key      ?? '');
+    _set('cfg-secret-key',  c.secret_key   ?? '');
+    _set('cfg-finnhub-key', c.finnhub_key  ?? '');
+    _set('cfg-timeframe',   c.bar_timeframe ?? '1Min');
+    _set('cfg-bar-count',   c.bar_count    ?? 300);
+    _set('cfg-tv-url',      c.tv_chart_url ?? '');
   } catch (e) {
     console.error('[config] load failed', e);
   }
@@ -117,21 +106,10 @@ async function _loadAudioDevices() {
 
 async function _save() {
   const body = {
-    bar_timeframe:     _strVal('cfg-timeframe'),
-    bar_count:         _numVal('cfg-bar-count'),
-    scan_interval_sec: _numVal('cfg-scan-interval'),
-    device_index:      _deviceVal('cfg-device-index'),
-    rte_threshold:     _numVal('cfg-rte-threshold'),
-    rte_min_boxes:     _numVal('cfg-rte-min-boxes'),
-    obv_length:        _numVal('cfg-obv-length'),
-    volume_surge_mult: _numVal('cfg-vol-surge'),
-    macd_fast:         _numVal('cfg-macd-fast'),
-    macd_slow:         _numVal('cfg-macd-slow'),
-    macd_signal:       _numVal('cfg-macd-signal'),
-    cm_rsi_length:     _numVal('cfg-cm-rsi-len'),
-    cm_rsi_oversold:   _numVal('cfg-cm-rsi-os'),
-    tv_chart_url:      _strVal('cfg-tv-url'),
-    strategy:          _strVal('cfg-strategy'),
+    bar_timeframe: _strVal('cfg-timeframe'),
+    bar_count:     _numVal('cfg-bar-count'),
+    device_index:  _deviceVal('cfg-device-index'),
+    tv_chart_url:  _strVal('cfg-tv-url'),
   };
 
   const ak = _pwdVal('cfg-api-key');

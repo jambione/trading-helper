@@ -24,7 +24,7 @@
   </div>
 
   <div class="hdr-actions">
-    <button data-notif-btn class="btn btn--ghost" title="Click to enable BUY signal alerts">🔔 Alerts</button>
+    <button data-notif-btn class="btn btn--ghost" title="Click to enable price alerts">🔔 Alerts</button>
     <button data-settings-btn class="btn btn--ghost">⚙ Settings</button>
   </div>
 
@@ -165,7 +165,6 @@
   <div class="tab-bar">
     <button class="tab-btn tab-btn--active" data-tab-btn="api">API Keys</button>
     <button class="tab-btn" data-tab-btn="data">Data</button>
-    <button class="tab-btn" data-tab-btn="signals">Signals</button>
     <button class="tab-btn" data-tab-btn="audio">Audio</button>
     <button class="tab-btn" data-tab-btn="connection">Connection</button>
   </div>
@@ -191,13 +190,6 @@
     <!-- ── Tab: Data ─────────────────────────────── -->
     <div class="tab-panel hidden" data-tab-panel="data">
       <div class="form-group">
-        <label for="cfg-strategy">Trading Strategy</label>
-        <select id="cfg-strategy">
-          <option value="multiple_os">Multiple Oversold (Vol + RSI-2 + %R)</option>
-          <option value="scoring">Weighted Scoring (Legacy)</option>
-        </select>
-      </div>
-      <div class="form-group">
         <label for="cfg-tv-url">TradingView Chart Layout URL/ID</label>
         <input id="cfg-tv-url" type="text" placeholder="https://www.tradingview.com/chart/x04Gfcu8/" />
         <span class="hint">Use your saved layout to see your indicators.</span>
@@ -218,63 +210,6 @@
           <input id="cfg-bar-count" type="number" min="50" max="1000" />
         </div>
       </div>
-    </div>
-
-    <!-- ── Tab: Signals ──────────────────────────── -->
-    <div class="tab-panel hidden" data-tab-panel="signals">
-
-      <div class="form-section">%R Trend Exhaustion (On Deck)</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="cfg-rte-threshold">OB Zone Edge <span class="hint">default 20</span></label>
-          <input id="cfg-rte-threshold" type="number" min="5" max="50" />
-        </div>
-        <div class="form-group">
-          <label for="cfg-rte-min-boxes">Min Bars in Zone <span class="hint">default 2</span></label>
-          <input id="cfg-rte-min-boxes" type="number" min="1" max="10" />
-        </div>
-      </div>
-
-      <div class="form-section">OBV Oscillator</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="cfg-obv-length">OBV EMA Length</label>
-          <input id="cfg-obv-length" type="number" min="5" max="100" />
-        </div>
-        <div class="form-group">
-          <label for="cfg-vol-surge">Volume Surge ×</label>
-          <input id="cfg-vol-surge" type="number" step="0.1" min="1" max="10" />
-        </div>
-      </div>
-
-      <div class="form-section">CM RSI-2</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="cfg-cm-rsi-len">RSI Period</label>
-          <input id="cfg-cm-rsi-len" type="number" min="2" max="30" />
-        </div>
-        <div class="form-group">
-          <label for="cfg-cm-rsi-os">Oversold Level</label>
-          <input id="cfg-cm-rsi-os" type="number" min="5" max="50" />
-        </div>
-      </div>
-
-      <div class="form-section">MACD</div>
-      <div class="form-row form-row-3">
-        <div class="form-group">
-          <label for="cfg-macd-fast">Fast</label>
-          <input id="cfg-macd-fast" type="number" min="3" max="50" />
-        </div>
-        <div class="form-group">
-          <label for="cfg-macd-slow">Slow</label>
-          <input id="cfg-macd-slow" type="number" min="5" max="100" />
-        </div>
-        <div class="form-group">
-          <label for="cfg-macd-signal">Signal</label>
-          <input id="cfg-macd-signal" type="number" min="3" max="30" />
-        </div>
-      </div>
-
     </div>
 
     <!-- ── Tab: Audio ────────────────────────────── -->

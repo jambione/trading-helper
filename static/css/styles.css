@@ -163,23 +163,6 @@ body {
 .ws-dot--on  { background: var(--accent); animation: pulse-dot 2.5s ease-in-out infinite; }
 .ws-dot--off { background: var(--danger); }
 
-/* Scan status pill */
-.scan-pill {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  padding: 3px 10px;
-  border-radius: var(--r-xs);
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-.scan-pill--scanning {
-  color: var(--warming);
-  border-color: var(--warming-border);
-  background: var(--warming-bg);
-  animation: pulse-dot 1.2s ease-in-out infinite;
-}
-
 /* ── Buttons ─────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -442,15 +425,8 @@ body {
   border-color: var(--border-hi);
 }
 
-/* Row status tints */
-.row-buy     { background: var(--buy-bg); }
-.row-buy:hover { background: rgba(0, 212, 160, 0.12); }
-.row-deck    { background: var(--deck-bg); }
-.row-deck:hover { background: rgba(61, 139, 255, 0.12); }
-
-/* Transcript-mention highlight: amber left accent, warm bg on non-signal rows */
-.row-mentioned { border-left: 3px solid var(--warming) !important; padding-left: 5px; }
-.row-mentioned:not(.row-buy):not(.row-deck) { background: var(--warming-bg); }
+/* Transcript-mention highlight */
+.row-mentioned { border-left: 3px solid var(--warming) !important; padding-left: 5px; background: var(--warming-bg); }
 
 /* Cells */
 .cell-ticker {
@@ -482,80 +458,6 @@ body {
   color: var(--text-dim);
 }
 .cell-vol.vol-high { color: var(--accent); }
-
-.cell-proximity {
-  padding-right: 12px;
-}
-.proximity-track {
-  height: 4px;
-  background: var(--border);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.proximity-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.9s ease, background-color 0.6s ease;
-}
-.proximity-pct {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-.cell-rte, .cell-rsi {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-}
-.cell-obv {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.cell-obv.obv-up { color: var(--accent); }
-.cell-streak {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.cell-streak.streak-active { color: var(--warming); }
-
-/* Signal badges */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  padding: 3px 7px;
-  border-radius: var(--r-xs);
-  border: 1px solid transparent;
-  white-space: nowrap;
-  width: 72px; /* Fixed width to prevent jumping */
-}
-.badge-buy {
-  color: var(--buy);
-  background: var(--buy-bg);
-  border-color: var(--buy-border);
-  animation: glow-buy 2.5s ease-in-out infinite;
-}
-.badge-deck {
-  color: var(--deck);
-  background: var(--deck-bg);
-  border-color: var(--deck-border);
-}
-.badge-warm {
-  color: var(--warming);
-  background: var(--warming-bg);
-  border-color: var(--warming-border);
-}
-.badge-cold    { color: var(--cold-text); }
-.badge-nodata  { color: var(--text-muted); }
-.badge-error   { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border); }
 
 .cell-actions {
   display: flex;

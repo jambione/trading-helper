@@ -61,7 +61,7 @@ function _renderTable(rows) {
     if (!rendered.has(sym)) el.remove();
   });
 
-  // Re-order DOM to match server sort order (BUY → ON_DECK → …)
+  // Re-order DOM to match server sort order (mentioned → alphabetical)
   const ordered = rows.map(r => r.ticker);
   const children = [..._rowsEl.querySelectorAll('[data-row]')];
   const needsReorder = children.some((el, i) => el.dataset.row !== ordered[i]);
@@ -92,7 +92,7 @@ function _renderTable(rows) {
 
 function _createRow(row) {
   const el = document.createElement('div');
-  el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
+  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`;
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
@@ -131,7 +131,7 @@ async function _addToWBAndTV(btn, ticker) {
 
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
-  el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
+  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`;
 
   const priceEl = el.querySelector('[data-price]');
   if (priceEl) priceEl.textContent = row.price != null ? `$${row.price.toFixed(2)}` : '—';
@@ -178,11 +178,6 @@ function _highlightSelected(ticker) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-
-function _rowClass(status) {
-  return { BUY: 'row-buy', ON_DECK: 'row-deck' }[status] ?? '';
-}
-
 
 function _fmtChg(v) {
   if (v == null) return '—';
