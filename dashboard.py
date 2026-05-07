@@ -192,6 +192,38 @@ def remove_ticker_from_log(ticker: str) -> bool:
         return False
 
 
+def refresh_ticker_timestamps(tickers: list[str]):
+    """Reset 'added' to now for highlighted tickers, restarting their 15-min expiry clock.
+
+    Only writes the file when at least one entry is > 30 s stale, so a ticker
+    that stays highlighted for its full 30-second mention window causes at most
+    one file write rather than one per 10 Hz tick.
+    """
+    if not tickers:
+        return
+    import json as _json
+    load_tickers()   # ensure cache is fresh
+    entries  = list(_ticker_cache["entries"])
+    now_ts   = time.time()
+    now_iso  = datetime.now(ET).isoformat(timespec="seconds")
+    refresh  = set(tickers)
+    changed  = False
+    for e in entries:
+        if e["ticker"] not in refresh:
+            continue
+        try:
+            age = now_ts - datetime.fromisoformat(e["added"]).timestamp()
+        except Exception:
+            age = 9999
+        if age > 30:
+            e["added"] = now_iso
+            changed = True
+    if changed:
+        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+        _ticker_cache.update(mtime=-1.0, entries=entries,
+                             tickers=[e["ticker"] for e in entries])
+
+
 # ── Transcription subprocess ──────────────────────────────────────────────────
 
 _MAX_TRANSCRIPT_LINES = 200
@@ -438,6 +470,8 @@ def _snapshot() -> dict:
     # acquires STATE.lock, and threading.Lock is non-reentrant; nested acquisition deadlocks.
     tx_lines = read_transcript_lines(30)
     mention_rank = _build_mention_rank(tx_lines, set(tickers))
+    if mention_rank:
+        refresh_ticker_timestamps(list(mention_rank.keys()))
 
     with STATE.lock:
         rows = []
