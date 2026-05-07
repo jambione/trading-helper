@@ -219,8 +219,8 @@ body {
 .main-grid {
   flex: 1;
   display: grid;
-  /* transcript | scanner | resizer | watchlist */
-  grid-template-columns: 180px 1fr 6px 250px;
+  /* transcript | watchlist | resizer | chart */
+  grid-template-columns: 180px 250px 6px 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
   gap: 0;
@@ -596,161 +596,32 @@ body {
   background: var(--danger-bg);
 }
 
-/* ── Scanner panel ──────────────────────────────────────────── */
-.panel-scanner { background: var(--bg); }
+/* ── TradingView panel ──────────────────────────────────────── */
+.panel-tradingview { background: var(--bg); }
 
-/* Card grid fills the panel body — equal-height rows, cards scroll internally */
-.scanner-card-grid {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  grid-auto-rows: 1fr;
-  gap: 8px;
-  padding: 8px;
-}
-
-.scanner-grid-empty {
-  grid-column: 1 / -1;
+.tv-symbol-badge {
+  font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 48px 20px;
-  font-style: italic;
-}
-
-/* Individual scanner type card */
-.scanner-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  animation: fade-in 0.2s ease;
-}
-
-.scanner-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  cursor: grab;
-}
-.scanner-card-header:active { cursor: grabbing; }
-
-.scanner-card--dragging {
-  opacity: 0.35;
-}
-.scanner-card--drag-over {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent-border);
-  background: var(--card-hi);
-}
-
-.scanner-card-label {
-  font-size: 11px;
   font-weight: 600;
   color: var(--text-bright);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.scanner-card-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 99px;
-  background: var(--border);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-.scanner-card-badge--active {
-  background: rgba(61, 139, 255, 0.18);
-  color: var(--deck);
-}
-
-.scanner-card-body {
+.tv-placeholder {
   flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.scanner-card-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 36px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
   font-style: italic;
 }
 
-/* Table inside each card */
-.sct {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-/* Column widths — Time Ticker Price Chg% Signal Float (6-col)
-   JetBrains Mono 11px ≈ 6.6px/char + 10px cell padding; 340px card min.
-   Fixed cols sum to ~274px leaving ≥64px for Signal at minimum card width. */
-.sct th:nth-child(1) { width: 68px; }   /* Time  — HH:MM:SS (10px font = 8×6=58+10) */
-.sct th:nth-child(2) { width: 52px; }   /* Ticker — up to 5 chars + letter-spacing */
-.sct th:nth-child(3) { width: 58px; }   /* Price  — up to "$49.99" = 6×6.6+10 */
-.sct th:nth-child(4) { width: 52px; }   /* Chg%   — up to "-20.10" = 6×6.6+10 */
-.sct th:nth-child(5) { width: auto; }   /* Signal — absorbs remaining */
-.sct th:nth-child(6) { width: 44px; }   /* Float  — up to "12.3M" = 5×6.6+10 */
-
-/* Gap / Find It First have no Signal col — Float sits at position 5 */
-[data-scanner-type="gap"] .sct th:nth-child(5),
-[data-scanner-type="find_it_first"] .sct th:nth-child(5) { width: 44px; }
-
-.sct thead {
-  position: sticky;
-  top: 0;
-  background: var(--card);
-  z-index: 1;
-}
-
-.sct th {
-  padding: 4px 5px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  text-align: left;
+.tv-widget-wrap {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
-.sct th.r { text-align: right; }
-
-.sct td {
-  padding: 3px 5px;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sct tr:last-child td { border-bottom: none; }
-.sct tbody tr:hover td { background: rgba(255,255,255,0.03); }
-
-.sct-time   { color: var(--text-bright); font-size: 10px; }
-.sct-ticker { color: var(--text-bright); font-weight: 600; letter-spacing: 0.04em; }
-.sct-ticker--add { cursor: pointer; }
-.sct-ticker--add:hover { color: var(--accent); }
-.sct-num    { text-align: right; color: var(--text); }
-.sct-float  { text-align: right; color: var(--text-dim); }
-.sct-signal { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; }
 
 /* ── Status bar ─────────────────────────────────────────────── */
 .status-bar {

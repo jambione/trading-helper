@@ -6,7 +6,7 @@
  * Also auto-selects the ticker in TradingView on first BUY transition.
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=6';
+import { subscribe, selectTicker, get } from './store.js?v=7';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');

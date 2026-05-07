@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal Scanner</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=6" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=7" />
+  <script src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
 
@@ -20,11 +21,9 @@
   </div>
 
   <div class="hdr-center">
-    <span data-scan-pill class="scan-pill">No scan yet</span>
   </div>
 
   <div class="hdr-actions">
-    <button data-scan-btn class="btn btn--ghost">↺ Scan Now</button>
     <button data-notif-btn class="btn btn--ghost" title="Click to enable BUY signal alerts">🔔 Alerts</button>
     <button data-settings-btn class="btn btn--ghost">⚙ Settings</button>
   </div>
@@ -61,30 +60,7 @@
 
   </section>
 
-  <!-- ── CENTER: Market Radar (scanner) ────────────────── -->
-  <section data-panel="scanner" class="panel panel-scanner">
-
-    <div class="panel-header">
-      <div class="panel-header-left">
-        <span class="panel-title">Market Radar</span>
-        <div data-scanner-dot class="ws-dot" title="Disconnected"></div>
-        <span data-scanner-poll class="tx-count"></span>
-      </div>
-      <div class="panel-header-right">
-        <button data-scanner-toggle class="btn btn--ghost btn--sm">Start Scanner</button>
-      </div>
-    </div>
-
-    <div data-scanner-rows class="scanner-card-grid">
-      <div class="scanner-grid-empty">Waiting for scanner…</div>
-    </div>
-
-  </section>
-
-  <!-- ── RESIZER: drag handle between scanner and watchlist ── -->
-  <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
-
-  <!-- ── RIGHT: Watchlist ───────────────────────────────── -->
+  <!-- ── CENTER: Watchlist ──────────────────────────────── -->
   <section data-panel="tickers" class="panel panel-watchlist">
 
     <div class="panel-header">
@@ -119,6 +95,29 @@
 
   </section>
 
+  <!-- ── RESIZER: drag handle between watchlist and chart ── -->
+  <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
+
+  <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
+  <section data-panel="tradingview" class="panel panel-tradingview">
+
+    <div class="panel-header">
+      <div class="panel-header-left">
+        <span class="panel-title">Chart</span>
+        <span data-tv-symbol class="tv-symbol-badge" style="display:none"></span>
+      </div>
+    </div>
+
+    <div data-tv-placeholder class="tv-placeholder">
+      <span>Select a ticker to load chart</span>
+    </div>
+
+    <div data-tv-widget class="tv-widget-wrap hidden">
+      <div id="tv_chart_container" style="height:100%;width:100%;"></div>
+    </div>
+
+  </section>
+
 </main>
 
 <!-- ═══════════════════════════════════════════════════════════
@@ -130,13 +129,6 @@
     <span class="status-item">
       <span class="status-label">WS</span>
       <span data-ws-dot class="ws-dot ws-dot--sm" title="WebSocket"></span>
-    </span>
-
-    <span class="status-divider">|</span>
-
-    <span class="status-item">
-      <span class="status-label">Last scan</span>
-      <span data-statusbar-scan class="status-value">—</span>
     </span>
 
     <span class="status-divider">|</span>
@@ -225,10 +217,6 @@
           <input id="cfg-bar-count" type="number" min="50" max="1000" />
         </div>
       </div>
-      <div class="form-group">
-        <label for="cfg-scan-interval">Scan Interval (seconds)</label>
-        <input id="cfg-scan-interval" type="number" min="10" max="3600" />
-      </div>
     </div>
 
     <!-- ── Tab: Signals ──────────────────────────── -->
@@ -315,7 +303,7 @@
 </div><!-- /drawer-backdrop -->
 
 <!-- Module entry point -->
-<script type="module" src="/static/js/app.js?v=6"></script>
+<script type="module" src="/static/js/app.js?v=7"></script>
 
 </body>
 </html>
