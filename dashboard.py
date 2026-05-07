@@ -361,20 +361,8 @@ def _price_loop():
 
 def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0) -> dict:
     """Return {ticker: rank} for up to 3 watchlist tickers spoken in the last
-    window_s seconds.  Rank 0 = most recently mentioned.
-
-    Only speech lines ([HH:MM:SS] ...) count — [LOG] lines mark freshly-added
-    tickers (not already on the list) and are excluded entirely."""
+    window_s seconds.  Rank 0 = most recently mentioned."""
     now = datetime.now()
-
-    # [LOG] TICKER lines are emitted only when a ticker is newly added.
-    recently_added: set[str] = set()
-    for line in tx_lines:
-        if line.startswith('[LOG] '):
-            sym = line[6:].strip()
-            if re.fullmatch(r'[A-Z]{2,5}', sym) and sym in ticker_set:
-                recently_added.add(sym)
-
     seen: list[str] = []
     for line in reversed(tx_lines):
         m = _SPEECH_LINE_RE.match(line)
@@ -390,7 +378,7 @@ def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0)
         except ValueError:
             continue
         for sym in _TICKER_RE.findall(line):
-            if sym in ticker_set and sym not in recently_added and sym not in seen:
+            if sym in ticker_set and sym not in seen:
                 seen.append(sym)
                 if len(seen) == 3:
                     return {s: i for i, s in enumerate(seen)}
