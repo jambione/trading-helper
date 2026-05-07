@@ -9,6 +9,7 @@ from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
 from queue import Queue, Full
 from pathlib import Path
+from difflib import SequenceMatcher
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -25,27 +26,75 @@ _NATO = {
 
 _nato_word = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
 _NATO_SEP   = r"[ \t]*,?[ \t]*"   # optional comma between NATO words
-_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:{_NATO_SEP}{_nato_word}){{1,4}}\b")
+# Allow unlimited NATO words (will be deduplicated in collapse_nato)
+_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:{_NATO_SEP}{_nato_word})*\b")
+# Pattern to match space/comma-separated single capital letters (e.g., "E L P W")
+_SINGLE_LETTERS_PATTERN = re.compile(r'\b[A-Z](?:[ \t,]+[A-Z])+\b')
+
+
+def _deduplicate_ticker(ticker: str) -> str:
+    """
+    Handle repeated ticker sequences. E.g., "ELPWELPW" → "ELPW".
+    Detects if the ticker is a pattern repeated 2+ times and collapses it.
+    """
+    if len(ticker) < 4 or len(ticker) > 10:
+        return ticker
+    
+    # Try divisors from 2 to 5 (for tickers of 2-5 chars repeated 2-5 times)
+    for divisor in range(2, min(6, len(ticker) // 2 + 1)):  # max 5 repetitions
+        if len(ticker) % divisor == 0:
+            segment_len = len(ticker) // divisor
+            # Only consider if segment would be a valid ticker (2-5 chars)
+            if not (2 <= segment_len <= 5):
+                continue
+                
+            segment = ticker[:segment_len]
+            # Check if entire string is this segment repeated
+            if all(ticker[i*segment_len:(i+1)*segment_len] == segment 
+                   for i in range(divisor)):
+                return segment
+    
+    return ticker
 
 
 def normalize_transcript(text: str) -> str:
+    # 1. Collapse NATO alphabet sequences (including repeated ones)
     def collapse_nato(m: re.Match) -> str:
         words = re.split(r'[\s,]+', m.group(0).lower())
         letters = "".join(_NATO.get(w, "") for w in words if w)
+        # Deduplicate if the same ticker was spoken multiple times
+        letters = _deduplicate_ticker(letters)
         return letters if 2 <= len(letters) <= 5 else m.group(0)
 
     text = _NATO_PATTERN.sub(collapse_nato, text)
 
+    # 2. Collapse space/comma-separated single letters (e.g., "E L P W" → "ELPW")
+    # Apply repeatedly to handle multiple sequences
+    def collapse_single_letters(m: re.Match) -> str:
+        letters = re.sub(r'[\s,]+', '', m.group(0).upper())
+        # Deduplicate repeated patterns
+        letters = _deduplicate_ticker(letters)
+        return letters if 2 <= len(letters) <= 5 else m.group(0)
+    
+    # Keep applying until no more matches (handles multiple sequences)
+    prev_text = None
+    while prev_text != text:
+        prev_text = text
+        text = _SINGLE_LETTERS_PATTERN.sub(collapse_single_letters, text)
+
+    # 3. Collapse dot-separated letters (e.g., "E.L.P.W" → "ELPW")
     def collapse_dots(m: re.Match) -> str:
         letters = m.group(0).replace(".", "").upper()
-        return letters if 3 <= len(letters) <= 5 else m.group(0)
+        return letters if 2 <= len(letters) <= 5 else m.group(0)
 
-    text = re.sub(r'(?<!\w)(?:[A-Za-z]\.){2,5}', collapse_dots, text)
+    text = re.sub(r'(?<!\w)(?:[A-Za-z]\.)+(?:[A-Za-z])', collapse_dots, text)
 
+    # 4. Collapse hyphen-separated letters (e.g., "E-L-P-W" → "ELPW")
     def collapse_hyphens(m: re.Match) -> str:
-        return m.group(0).replace("-", "").upper()
+        letters = m.group(0).replace("-", "").upper()
+        return letters if 2 <= len(letters) <= 5 else m.group(0)
 
-    text = re.sub(r'(?<!\w)(?:[A-Za-z]-){2,4}[A-Za-z](?!\w)', collapse_hyphens, text)
+    text = re.sub(r'(?<!\w)(?:[A-Za-z]-)+[A-Za-z](?!\w)', collapse_hyphens, text)
 
     return text
 
@@ -118,6 +167,35 @@ _NAME_RE   = {name: re.compile(rf'\b{re.escape(name)}\b', re.I)
 _ticker_universe: set = set()   # populated at startup from Alpaca; empty = fallback mode
 
 
+def _find_close_ticker_match(candidate: str, universe: set, threshold: float = 0.80) -> str:
+    """
+    Try fuzzy match if candidate isn't in universe.
+    Returns the matched ticker or the candidate unchanged.
+    
+    For 4-5 char tickers, threshold of 0.80 means:
+    - 1 char different is acceptable (e.g., "ELPP" → "ELPW" for 4-char: 3/4 = 0.75, skip)
+    - But very close matches (80%+) could catch transposition errors
+    """
+    if candidate in universe or len(candidate) < 2:
+        return candidate
+    
+    best_match = None
+    best_ratio = threshold
+    
+    for symbol in universe:
+        if len(symbol) == len(candidate):
+            ratio = SequenceMatcher(None, candidate, symbol).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_match = symbol
+    
+    if best_match:
+        print(f"[FUZZY] '{candidate}' → '{best_match}' (ratio: {best_ratio:.2f})", flush=True)
+        return best_match
+    
+    return candidate
+
+
 def extract_tickers(text: str) -> list:
     found = []
     seen  = set()
@@ -127,9 +205,15 @@ def extract_tickers(text: str) -> list:
         t = m.group(1)
         if t in _STOP_WORDS or t in seen:
             continue
-        # If the universe is loaded, only accept known valid US equity symbols
-        if _ticker_universe and t not in _ticker_universe:
-            continue
+        
+        # If the universe is loaded, validate against it with fuzzy fallback
+        if _ticker_universe:
+            if t not in _ticker_universe:
+                # Try fuzzy match before rejecting
+                t = _find_close_ticker_match(t, _ticker_universe)
+                if t not in _ticker_universe:
+                    continue
+        
         found.append(t)
         seen.add(t)
 
