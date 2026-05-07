@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _SJSONResponse
 
-from auth import check_credentials, create_token, verify_token
+from auth import check_credentials, create_token, verify_token, is_auth_required
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from signals import compute_signals
@@ -695,12 +695,16 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
-_PUBLIC_PATHS   = {"/", "/login", "/auth/login"}
+_PUBLIC_PATHS   = {"/", "/login", "/auth/login", "/api/meta"}
 _PUBLIC_PREFIX  = ("/static/",)
 
 
 class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Auth is opt-in — disabled by default for local use
+        if not is_auth_required():
+            return await call_next(request)
+
         path = request.url.path
 
         # Allow unauthenticated access to the login page, login endpoint, and static files
@@ -1011,10 +1015,15 @@ async def api_config_save(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
+@app.get("/api/meta")
+async def api_meta():
+    return JSONResponse({"auth_required": is_auth_required()})
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, token: str = ""):
     await ws.accept()
-    if not verify_token(token):
+    if is_auth_required() and not verify_token(token):
         await ws.close(code=4001)
         return
     import json as _json

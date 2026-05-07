@@ -14,12 +14,24 @@ import { init as initConfig, open as openConfig }from './config.js?v=7';
 import { init as initResizer }                   from './resizer.js?v=7';
 import * as controls                             from './controls.js?v=7';
 import * as notifications                        from './notifications.js?v=7';
-import { isAuthenticated, logout }               from './auth.js?v=7';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=7';
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Auth gate ────────────────────────────────────────────────
-  if (!isAuthenticated()) {
+  // Ask the backend whether auth is required before enforcing a login redirect.
+  // Defaults to requiring auth if the meta endpoint is unreachable.
+  let authRequired = true;
+  try {
+    const res  = await fetch(getBackendUrl() + '/api/meta');
+    const meta = await res.json();
+    authRequired = meta.auth_required ?? true;
+  } catch {
+    // Backend unreachable — fall through and let the WS reconnect handle it
+    authRequired = isAuthenticated() ? false : true;
+  }
+
+  if (authRequired && !isAuthenticated()) {
     window.location.href = '/login';
     return;
   }

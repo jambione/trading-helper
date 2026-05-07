@@ -6,12 +6,15 @@ Credentials are read (in priority order) from:
   2. Environment variables: DASHBOARD_USER, DASHBOARD_PASS, JWT_SECRET
   3. Hardcoded defaults (local dev only — change before exposing publicly)
 
-Add to secrets.json to set credentials:
+Auth is DISABLED by default (require_auth = false).
+To enable, add to secrets.json:
   {
+    "require_auth":   true,
     "dashboard_user": "yourname",
     "dashboard_pass": "yourpassword",
     "jwt_secret":     "a-long-random-string"
   }
+Or set environment variable REQUIRE_AUTH=true.
 """
 
 import base64
@@ -100,3 +103,13 @@ def check_credentials(username: str, password: str) -> bool:
         hmac.compare_digest(username.encode(), _dashboard_user().encode()) and
         hmac.compare_digest(password.encode(), _dashboard_pass().encode())
     )
+
+
+def is_auth_required() -> bool:
+    """Returns True only when explicitly enabled via secrets.json or REQUIRE_AUTH env var."""
+    val = _load_secrets().get("require_auth")
+    if val is None:
+        val = os.getenv("REQUIRE_AUTH", "false")
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() in ("true", "1", "yes")

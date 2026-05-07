@@ -56,16 +56,15 @@ Edit `secrets.json`:
 
 ```json
 {
-  "api_key":        "your-alpaca-api-key",
-  "secret_key":     "your-alpaca-secret-key",
-  "finnhub_key":    "your-finnhub-api-key",
-  "dashboard_user": "admin",
-  "dashboard_pass": "choose-a-strong-password",
-  "jwt_secret":     "a-long-random-string-at-least-32-chars"
+  "api_key":     "your-alpaca-api-key",
+  "secret_key":  "your-alpaca-secret-key",
+  "finnhub_key": "your-finnhub-api-key"
 }
 ```
 
 > `secrets.json` is never committed to git. Keep it out of any repo you push to.
+
+**Login is disabled by default.** You can open `http://localhost:8888` without a password. No `require_auth`, `dashboard_user`, `dashboard_pass`, or `jwt_secret` fields are needed for local use.
 
 ### 2. Start the server
 
@@ -80,17 +79,9 @@ Signal Scanner  —  http://localhost:8888
 Ctrl+C to stop
 ```
 
-### 3. Log in
+### 3. Open the dashboard
 
-Open `http://localhost:8888` in your browser. You will be redirected to the login page.
-
-| Field | Value |
-|-------|-------|
-| Backend URL | `http://localhost:8888` (auto-filled) |
-| Username | value of `dashboard_user` in `secrets.json` (default: `admin`) |
-| Password | value of `dashboard_pass` in `secrets.json` (default: `changeme`) |
-
-Click **Sign In**. The token is saved in your browser's localStorage and is valid for 24 hours.
+Open `http://localhost:8888` in your browser. The dashboard loads directly — no login required when running locally.
 
 ---
 
@@ -235,6 +226,8 @@ Select the audio input device for transcription. Devices marked `⟳ LOOPBACK` c
 
 This section covers how to make the dashboard accessible from anywhere while keeping all data processing local.
 
+> **Enable login before exposing the backend publicly.** Add `"require_auth": true` (plus `dashboard_user`, `dashboard_pass`, and `jwt_secret`) to `secrets.json` before starting `cloudflared`.
+
 ### Step 1 — Install cloudflared
 
 ```bash
@@ -301,14 +294,28 @@ All API calls and the WebSocket will go to your tunnel URL. The frontend is stat
 
 ## Credentials and Security
 
+Login is **disabled by default**. The dashboard is open to anyone who can reach the server.
+
+To enable login (required before exposing the backend via Cloudflare Tunnel):
+
+```json
+{
+  "require_auth":   true,
+  "dashboard_user": "yourname",
+  "dashboard_pass": "a-strong-password",
+  "jwt_secret":     "a-long-random-string-at-least-32-chars"
+}
+```
+
+Or use environment variables: `REQUIRE_AUTH=true`, `DASHBOARD_USER`, `DASHBOARD_PASS`, `JWT_SECRET`.
+
 | What | Where | Notes |
 |------|-------|-------|
-| Dashboard login | `secrets.json` keys `dashboard_user` / `dashboard_pass` | Or env vars `DASHBOARD_USER` / `DASHBOARD_PASS` |
+| Auth on/off | `secrets.json` key `require_auth` | `false` = no login (local default). `true` = login required. |
+| Dashboard login | `secrets.json` keys `dashboard_user` / `dashboard_pass` | Only used when `require_auth` is `true` |
 | JWT signing secret | `secrets.json` key `jwt_secret` | Use a random 32+ character string. Rotating this invalidates all active sessions. |
 | Alpaca / Finnhub keys | `secrets.json` (same file) | Never committed to git |
 | Session token | Browser localStorage | Auto-expires after 24 hours |
-
-**On the default credentials**: The dev defaults (`admin` / `changeme`) work for local-only use. You must set a real password in `secrets.json` before exposing the backend via Cloudflare Tunnel or any public URL.
 
 ---
 
