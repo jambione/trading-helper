@@ -20,15 +20,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Auth gate ────────────────────────────────────────────────
   // Ask the backend whether auth is required before enforcing a login redirect.
-  // Defaults to requiring auth if the meta endpoint is unreachable.
-  let authRequired = true;
+  // On localhost the backend always runs locally — never require auth if the
+  // hostname is localhost/127.0.0.1 regardless of fetch outcome.
+  const _isLocal = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+  let authRequired = false;
   try {
     const res  = await fetch(getBackendUrl() + '/api/meta');
     const meta = await res.json();
-    authRequired = meta.auth_required ?? true;
+    authRequired = _isLocal ? false : (meta.auth_required ?? false);
   } catch {
-    // Backend unreachable — fall through and let the WS reconnect handle it
-    authRequired = isAuthenticated() ? false : true;
+    // Backend unreachable — localhost is always open; remote requires a token
+    authRequired = _isLocal ? false : !isAuthenticated();
   }
 
   if (authRequired && !isAuthenticated()) {
@@ -36,7 +38,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // In hosted mode (auth required) the transcript panel is hidden
+  // Hosted mode: auth is required, so transcript is a local-only feature
   if (authRequired) document.body.classList.add('hosted');
 
   // ── Initialize UI components ─────────────────────────────────
