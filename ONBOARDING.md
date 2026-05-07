@@ -144,13 +144,20 @@ Loads a TradingView widget for the selected ticker. Uses your saved chart layout
 
 ## The Watchlist File
 
-Tickers are persisted to `transcription/wb_watchlist.json` — a plain JSON array:
+Tickers are persisted to `transcription/wb_watchlist.json` — a JSON array of timestamped objects:
 
 ```json
-["AAPL", "NVDA", "TSLA"]
+[
+  {"ticker": "AAPL", "added": "2026-05-07T09:30:00-04:00"},
+  {"ticker": "NVDA", "added": "2026-05-07T09:31:15-04:00"}
+]
 ```
 
-The backend polls this file every 100 ms and broadcasts changes over the WebSocket. You can edit this file directly from any text editor or script on your machine and the dashboard will update within a fraction of a second.
+**Auto-purge:** entries whose `added` timestamp is 15 minutes old or older are automatically removed from the file the next time the backend reads it (within 100 ms of expiry).
+
+**Adding entries from external tools:** write an object with `ticker` and `added` (ISO 8601 with timezone). The old plain-string format is still accepted and migrated automatically on first read — those entries are treated as just-added and will expire 15 minutes later.
+
+The backend polls this file every 100 ms by file mtime and broadcasts changes over the WebSocket. You can edit it directly from any text editor or script and the dashboard will update within a fraction of a second.
 
 This is the primary integration point for the local → hosted split: your local tooling writes to this file; the dashboard reads from it in real time.
 

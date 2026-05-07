@@ -70,29 +70,74 @@ STATE = _State()
 
 
 # ── Ticker log ────────────────────────────────────────────────────────────────
+# File format: [{"ticker": "AAPL", "added": "2026-05-07T09:30:00-04:00"}, ...]
+# Backward-compat: plain strings are migrated to objects on first read.
 
-_ticker_cache: dict = {"mtime": -1.0, "tickers": []}
+TICKER_MAX_AGE = 15 * 60  # seconds — entries older than this are auto-purged
+
+_ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
 
 
 def load_tickers() -> list:
-    """Read the watchlist JSON file, caching by mtime to avoid constant disk I/O."""
+    """Read watchlist, purge entries ≥ 15 min old, return list of ticker strings.
+
+    Writes the file back whenever entries are purged or the format is migrated,
+    so the on-disk file is always up-to-date. Caches by mtime to keep I/O cheap
+    at the 10 Hz poll rate used by the price loop.
+    """
     if not TICKER_LOG.exists():
-        _ticker_cache["mtime"]   = -1.0
-        _ticker_cache["tickers"] = []
+        _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
         return []
     try:
+        import json as _json
         mtime = TICKER_LOG.stat().st_mtime
         if mtime == _ticker_cache["mtime"]:
             return list(_ticker_cache["tickers"])
-        import json as _json
-        data    = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
-        tickers = [t.strip().upper() for t in data if isinstance(t, str) and t.strip()]
-        
-        # Stricter validation for tickers already in the list
-        tickers = [t for t in tickers if 2 <= len(t) <= 5 and t.isalpha()]
-        
-        _ticker_cache["mtime"]   = mtime
-        _ticker_cache["tickers"] = tickers
+
+        raw = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            return []
+
+        now_ts  = time.time()
+        now_iso = datetime.now(ET).isoformat(timespec="seconds")
+        cutoff  = now_ts - TICKER_MAX_AGE
+
+        kept    = []
+        changed = False   # True if any entry was purged or migrated from old format
+
+        for item in raw:
+            if isinstance(item, str):
+                t, added = item.strip().upper(), now_iso
+                changed = True          # migrate plain string → object
+            elif isinstance(item, dict):
+                t     = str(item.get("ticker", "")).strip().upper()
+                added = item.get("added", now_iso)
+            else:
+                changed = True
+                continue
+
+            if not (2 <= len(t) <= 5 and t.isalpha()):
+                changed = True
+                continue
+
+            try:
+                added_ts = datetime.fromisoformat(added).timestamp()
+            except Exception:
+                added_ts = now_ts       # unparseable → treat as fresh
+
+            if added_ts >= cutoff:
+                kept.append({"ticker": t, "added": added})
+            else:
+                changed = True
+                log.debug(f"[TICKER] Purged stale {t}")
+
+        if changed:
+            TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
+            TICKER_LOG.write_text(_json.dumps(kept, indent=2), encoding="utf-8")
+            mtime = TICKER_LOG.stat().st_mtime
+
+        tickers = [e["ticker"] for e in kept]
+        _ticker_cache.update(mtime=mtime, tickers=tickers, entries=kept)
         return tickers
     except Exception:
         return []
@@ -102,8 +147,7 @@ def clear_ticker_log():
     try:
         import json as _json
         TICKER_LOG.write_text(_json.dumps([]), encoding="utf-8")
-        _ticker_cache["mtime"]   = -1.0
-        _ticker_cache["tickers"] = []
+        _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
     except Exception:
         pass
     with STATE.lock:
@@ -115,13 +159,14 @@ def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
     ticker = ticker.upper()
     try:
         import json as _json
-        tickers = load_tickers()
-        if ticker in tickers:
+        load_tickers()   # refresh cache + purge stale
+        if ticker in _ticker_cache["tickers"]:
             return True, False
-        tickers = sorted(set(tickers + [ticker]))
+        now_iso = datetime.now(ET).isoformat(timespec="seconds")
+        entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
         TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        TICKER_LOG.write_text(_json.dumps(tickers, indent=2), encoding="utf-8")
-        _ticker_cache["mtime"] = -1.0   # invalidate cache
+        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+        _ticker_cache["mtime"] = -1.0   # force re-read on next load
         return True, True
     except Exception as e:
         log.error(f"[TICKER] Add {ticker} failed: {e}")
@@ -133,15 +178,14 @@ def remove_ticker_from_log(ticker: str) -> bool:
     ticker = ticker.upper()
     try:
         import json as _json
-        tickers = load_tickers()
-        if ticker not in tickers:
+        load_tickers()   # refresh cache + purge stale
+        if ticker not in _ticker_cache["tickers"]:
             return True
-        tickers = [t for t in tickers if t != ticker]
-        TICKER_LOG.write_text(_json.dumps(tickers, indent=2), encoding="utf-8")
+        entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
+        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
         _ticker_cache["mtime"] = -1.0
         with STATE.lock:
-            if ticker in STATE.tickers:
-                del STATE.tickers[ticker]
+            STATE.tickers.pop(ticker, None)
         return True
     except Exception as e:
         log.error(f"[TICKER] Remove {ticker} failed: {e}")
@@ -361,20 +405,8 @@ def _price_loop():
 
 def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0) -> dict:
     """Return {ticker: rank} for up to 3 watchlist tickers spoken in the last
-    window_s seconds.  Rank 0 = most recently mentioned.
-
-    Only speech lines ([HH:MM:SS] ...) count — [LOG] lines mark freshly-added
-    tickers (not already on the list) and are excluded entirely."""
+    window_s seconds.  Rank 0 = most recently mentioned."""
     now = datetime.now()
-
-    # [LOG] TICKER lines are emitted only when a ticker is newly added.
-    recently_added: set[str] = set()
-    for line in tx_lines:
-        if line.startswith('[LOG] '):
-            sym = line[6:].strip()
-            if re.fullmatch(r'[A-Z]{2,5}', sym) and sym in ticker_set:
-                recently_added.add(sym)
-
     seen: list[str] = []
     for line in reversed(tx_lines):
         m = _SPEECH_LINE_RE.match(line)
@@ -390,7 +422,7 @@ def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0)
         except ValueError:
             continue
         for sym in _TICKER_RE.findall(line):
-            if sym in ticker_set and sym not in recently_added and sym not in seen:
+            if sym in ticker_set and sym not in seen:
                 seen.append(sym)
                 if len(seen) == 3:
                     return {s: i for i, s in enumerate(seen)}
