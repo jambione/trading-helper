@@ -121,4 +121,5 @@ export const api = {
   addToWebull:     ticker   => request('POST', '/api/tickers/add-wb',    { ticker }),
   addToTV:         ticker   => request('POST', '/api/tickers/add-tv',    { ticker }),
   addToWBAndTV:    ticker   => request('POST', '/api/tickers/add-wb-tv', { ticker }),
+  loginLog:        ()       => request('GET',  '/api/login-log'),
 };

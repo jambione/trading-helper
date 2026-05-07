@@ -57,6 +57,7 @@ function _switchTab(tab) {
   _backdrop.querySelectorAll('[data-tab-panel]').forEach(panel =>
     panel.classList.toggle('hidden', panel.dataset.tabPanel !== tab)
   );
+  if (tab === 'history') _loadLoginHistory();
 }
 
 // ── Load config ────────────────────────────────────────────────
@@ -167,4 +168,48 @@ function _deviceVal(id) { const v = _val(id); return v !== '' ? +v : null; }
 
 function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Login history ──────────────────────────────────────────────
+
+async function _loadLoginHistory() {
+  const el = _backdrop.querySelector('[data-login-history]');
+  if (!el) return;
+  el.innerHTML = '<div class="login-history-empty">Loading…</div>';
+  try {
+    const { entries = [] } = await api.loginLog();
+    if (!entries.length) {
+      el.innerHTML = '<div class="login-history-empty">No login events recorded yet.</div>';
+      return;
+    }
+    el.innerHTML = entries.map(e => {
+      const loc  = e.location;
+      const locStr = loc
+        ? [loc.city, loc.region, loc.country].filter(Boolean).join(', ') || e.ip
+        : e.ip;
+      const ts   = e.timestamp ? e.timestamp.replace('T', ' ').slice(0, 19) : '—';
+      const ok   = e.success !== false;
+      return `<div class="login-entry${ok ? '' : ' login-entry--fail'}">
+        <div class="login-entry-row">
+          <span class="login-badge${ok ? '' : ' login-badge--fail'}">${ok ? 'OK' : 'FAIL'}</span>
+          <span class="login-user">${_esc(e.username || '—')}</span>
+          <span class="login-ts">${_esc(ts)}</span>
+        </div>
+        <div class="login-entry-row login-entry-meta">
+          <span class="login-loc">${_esc(locStr)}</span>
+          <span class="login-ua" title="${_esc(e.user_agent || '')}">${_esc(_shortUa(e.user_agent || ''))}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = '<div class="login-history-empty">Failed to load history.</div>';
+  }
+}
+
+function _shortUa(ua) {
+  if (!ua) return '';
+  const m = ua.match(/\(([^)]+)\)/);
+  const os = m ? m[1].split(';')[0].trim() : '';
+  const browser = ua.match(/(Chrome|Firefox|Safari|Edge|OPR)\/[\d.]+/)?.[0] ?? '';
+  return [browser, os].filter(Boolean).join(' · ') || ua.slice(0, 40);
 }

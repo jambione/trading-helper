@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _SJSONResponse
 
 from auth import check_credentials, create_token, verify_token, is_auth_required
+from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 import alpaca_api as _api
@@ -587,7 +588,20 @@ async def auth_login(request: Request):
         body     = await request.json()
         username = str(body.get("username", "")).strip()
         password = str(body.get("password", ""))
-        if not check_credentials(username, password):
+
+        # Prefer Cloudflare real-IP header; fall back to X-Forwarded-For, then direct peer
+        ip = (
+            request.headers.get("CF-Connecting-IP")
+            or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown")
+        )
+        ua = request.headers.get("user-agent", "")
+
+        ok = check_credentials(username, password)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: record_login(username, ip, ua, success=ok))
+
+        if not ok:
             return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
         return JSONResponse({"ok": True, "token": create_token()})
     except Exception as e:
@@ -783,6 +797,13 @@ async def api_config_save(request: Request):
 @app.get("/api/meta")
 async def api_meta():
     return JSONResponse({"auth_required": is_auth_required()})
+
+
+@app.get("/api/login-log")
+async def api_login_log():
+    loop    = asyncio.get_running_loop()
+    entries = await loop.run_in_executor(None, get_login_log)
+    return JSONResponse({"entries": entries})
 
 
 @app.websocket("/ws")
