@@ -36,13 +36,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
+  // In hosted mode (auth required) the transcript panel is hidden
+  if (authRequired) document.body.classList.add('hosted');
+
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
+  if (!authRequired) {
+    try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
+  }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initTradingView(document.querySelector('[data-panel="tradingview"]')); }  catch (e) { console.error('[app] initTradingView', e); }
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
-  try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer')); } catch (e) { console.error('[app] initResizer', e); }
+  try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer'), { hosted: authRequired }); } catch (e) { console.error('[app] initResizer', e); }
   notifications.init();
 
   // ── Wire button actions ──────────────────────────────────────
