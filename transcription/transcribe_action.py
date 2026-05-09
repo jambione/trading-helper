@@ -372,6 +372,19 @@ if _secrets_file.exists():
 
 DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
+# Validate that the saved device index actually exists on this system.
+# A Windows device index stored in bot_config.json will be invalid on Mac.
+if DEVICE_INDEX is not None:
+    _tmp_p = pyaudio.PyAudio()
+    _valid_indices = [
+        i for i in range(_tmp_p.get_device_count())
+        if _tmp_p.get_device_info_by_index(i)["maxInputChannels"] > 0
+    ]
+    _tmp_p.terminate()
+    if DEVICE_INDEX not in _valid_indices:
+        print(f"[WARN] Saved device index {DEVICE_INDEX} not found on this system — resetting to auto-detect.")
+        DEVICE_INDEX = None
+
 # small.en is English-only: same size as small but faster and more accurate for English
 WHISPER_MODEL     = "small.en"
 WHISPER_BEAM_SIZE = 3
