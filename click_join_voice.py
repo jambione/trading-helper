@@ -60,7 +60,7 @@ def click_join_voice():
     content_start = win['x'] + win['w'] * sidebar_frac
     content_cx    = content_start + (win['w'] * (1 - sidebar_frac)) / 2
     btn_x = int(content_cx)
-    btn_y = int(win['y'] + win['h'] * btn_y_frac)
+    btn_y = int(win['y'] + win['h'] * btn_y_frac) + 20  # +20px correction
 
     print(f"  Targeting Join Voice at ({btn_x}, {btn_y}) ...")
     pyautogui.moveTo(btn_x, btn_y, duration=0.4)
