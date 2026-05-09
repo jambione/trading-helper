@@ -45,7 +45,11 @@ def main() -> None:
     finally:
         if helper.poll() is None:
             helper.terminate()
-        helper.wait()
+        try:
+            helper.wait(timeout=5)
+        except (KeyboardInterrupt, subprocess.TimeoutExpired):
+            helper.kill()
+            helper.wait()
 
 
 if __name__ == '__main__':
