@@ -386,13 +386,13 @@ if DEVICE_INDEX is not None:
         DEVICE_INDEX = None
 
 # small.en is English-only: same size as small but faster and more accurate for English
-WHISPER_MODEL     = "small.en"
-WHISPER_BEAM_SIZE = 3
+WHISPER_MODEL     = "medium.en"
+WHISPER_BEAM_SIZE = 5
 
 SAMPLE_RATE       = 44100
 TARGET_SR         = 16000
-CHUNK_DURATION    = 3.0    # shorter chunks = lower latency (was 4.5)
-OVERLAP           = 0.7    # enough overlap to catch words split at chunk boundary
+CHUNK_DURATION    = 5.0    # 5s gives model more context per pass
+OVERLAP           = 1.0    # 1s overlap prevents words being cut at boundaries
 SILENCE_THRESHOLD = 0.009
 
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
@@ -572,7 +572,7 @@ def transcription_worker():
                 beam_size=WHISPER_BEAM_SIZE,
                 temperature=0.0,
                 condition_on_previous_text=False,
-                no_speech_threshold=0.35,
+                no_speech_threshold=0.5,
                 **_TRANSCRIBE_EXTRAS,
             )
             text = " ".join(s.text.strip() for s in segments).strip()
