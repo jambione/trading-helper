@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 workflows.py — Trading workflow actions for transcribe_action.py.
 Imported by both the main script and test_workflows.py.
