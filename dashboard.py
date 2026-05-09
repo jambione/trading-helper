@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -16,6 +17,28 @@ import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+
+def _free_port(port: int):
+    """Kill any process bound to the given port before we start."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True,
+        )
+        pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+        for pid in pids:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if pids:
+            time.sleep(0.5)
+    except Exception:
+        pass
+
+
+_free_port(8888)
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -739,8 +762,11 @@ async def api_add_bulk(request: Request):
 async def api_audio_devices():
     def _list():
         try:
-            import pyaudiowpatch as pyaudio
-            p = pyaudio.PyAudio()
+            if sys.platform == "win32":
+                import pyaudiowpatch as _pa_mod
+            else:
+                import pyaudio as _pa_mod
+            p = _pa_mod.PyAudio()
             devices = []
             for i in range(p.get_device_count()):
                 dev = p.get_device_info_by_index(i)

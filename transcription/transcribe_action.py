@@ -1,6 +1,11 @@
 import argparse
 import json
-import pyaudiowpatch as pyaudio
+import sys as _sys
+# pyaudiowpatch provides WASAPI loopback on Windows; fall back to standard pyaudio elsewhere
+if _sys.platform == "win32":
+    import pyaudiowpatch as pyaudio
+else:
+    import pyaudio
 import numpy as np
 import time
 import re
@@ -460,18 +465,33 @@ for i in range(p.get_device_count()):
         print(f"  {i:2d}: {dev['name']}{tag}")
 
 if DEVICE_INDEX is None:
-    try:
-        choice = input("\nEnter device index (press Enter for default): ").strip()
-        DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
-    except Exception:
-        DEVICE_INDEX = p.get_default_input_device_info()["index"]
+    if _sys.platform == "darwin":
+        # Prefer BlackHole loopback device for system audio capture on macOS
+        for i in range(p.get_device_count()):
+            dev = p.get_device_info_by_index(i)
+            if dev["maxInputChannels"] > 0 and "blackhole" in dev["name"].lower():
+                DEVICE_INDEX = i
+                print(f"Auto-selected BlackHole device {i}: {dev['name']}")
+                break
+        if DEVICE_INDEX is None:
+            print("\nNo BlackHole device found. Install it with: brew install blackhole-2ch")
+            print("Then set your system audio output to a Multi-Output Device that includes BlackHole.")
+    if DEVICE_INDEX is None:
+        try:
+            choice = input("\nEnter device index (press Enter for default): ").strip()
+            DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
+        except Exception:
+            DEVICE_INDEX = p.get_default_input_device_info()["index"]
 
 print(f"Using audio device index: {DEVICE_INDEX}")
+
+_dev_info = p.get_device_info_by_index(DEVICE_INDEX)
+_channels = min(2, int(_dev_info["maxInputChannels"]))
 
 try:
     stream = p.open(
         format=pyaudio.paFloat32,
-        channels=2,
+        channels=_channels,
         rate=SAMPLE_RATE,
         input=True,
         input_device_index=DEVICE_INDEX,
@@ -500,7 +520,7 @@ def audio_capture():
         try:
             data  = stream.read(READ_FRAMES, exception_on_overflow=False)
             raw   = np.frombuffer(data, dtype=np.float32)
-            mono  = raw.reshape(-1, 2).mean(axis=1)
+            mono  = raw.reshape(-1, _channels).mean(axis=1)
 
             if np.sqrt(np.mean(mono ** 2)) < SILENCE_THRESHOLD:
                 continue
