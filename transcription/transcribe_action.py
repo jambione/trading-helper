@@ -55,13 +55,13 @@ except Exception as _e:
 # noisereduce estimates background noise from the first 0.5s of each chunk
 # and subtracts it — helps with hiss, hum, and fan noise from loopback audio.
 # Install:  pip install noisereduce
-_USE_NOISEREDUCE = False
+_USE_NOISEREDUCE = False   # disabled — CNBC loopback is already clean; noisereduce
+                           # corrupts ticker consonants (TSLA→TLA, NVDA→NDA) because
+                           # the "quiet" reference window always contains speech harmonics
 try:
     import noisereduce as _nr
-    _USE_NOISEREDUCE = True
-    print("[AUDIO] noisereduce loaded — noise suppression active", flush=True)
 except ImportError:
-    print("[AUDIO] noisereduce not installed — skipping noise suppression  (pip install noisereduce to improve)", flush=True)
+    pass
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -294,10 +294,12 @@ _MISHEAR_MAP = {
     "googl":  "GOOGL", "goog":   "GOOG",
     # Robinhood
     "hud":    "HOOD",  "hood":   "HOOD",
-    # Nvidia
+    # Nvidia — truncated variants
     "envidia":"NVDA",  "vidia":  "NVDA",  "invidia": "NVDA",
-    # Tesla
+    "nda":    "NVDA",  "nvda":   "NVDA",  "nvia":    "NVDA",
+    # Tesla — also catches truncated Whisper output when leading phoneme is dropped
     "tesler": "TSLA",  "tesla":  "TSLA",
+    "tla":    "TSLA",  "tsla":   "TSLA",
     # Palantir
     "palanteer": "PLTR", "palantir": "PLTR", "palantar": "PLTR", "palanter": "PLTR",
     # Apple
@@ -306,6 +308,20 @@ _MISHEAR_MAP = {
     "amazin": "AMZN",  "amazons":"AMZN",
     # Strategy / MicroStrategy
     "microstrategy": "MSTR", "micro strategy": "MSTR", "strategy": "MSTR",
+    # Microsoft truncations
+    "msf":    "MSFT",  "mst":    "MSFT",  "msft":   "MSFT",
+    # AAPL truncations
+    "apl":    "AAPL",  "aap":    "AAPL",
+    # AMZN truncations
+    "amz":    "AMZN",  "azn":    "AMZN",
+    # META truncations
+    "met":    "META",
+    # GOOGL truncations
+    "goo":    "GOOGL", "gogl":   "GOOGL",
+    # PLTR truncations
+    "plt":    "PLTR",  "ltr":    "PLTR",
+    # AMD truncations
+    "amd":    "AMD",
     # Coinbase
     "coinbase": "COIN",
     # SoundHound
@@ -526,15 +542,15 @@ if DEVICE_INDEX is not None:
 
 # small.en is English-only: same size as small but faster and more accurate for English
 # MLX uses HuggingFace MLX-community models; faster-whisper uses its own format
-WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo-q4"  # 4-bit quantized: ~40% less memory, same accuracy as full-precision turbo
+WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo"  # confirmed HF repo; use whisper-large-v3-turbo-4bit for lower memory if available
 WHISPER_MODEL_CPU = "small.en"   # fallback for non-Apple-Silicon / before MLX installed
 WHISPER_MODEL     = WHISPER_MODEL_MLX if _USE_MLX else WHISPER_MODEL_CPU
 WHISPER_BEAM_SIZE = 5      # Higher beam = better accuracy (3 was too fast/greedy)
 
 SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
 TARGET_SR         = 16000
-CHUNK_DURATION    = 3.5    # 3.5s balances accuracy vs latency — advance is only 3s
-OVERLAP           = 0.5    # 0.5s overlap catches words split at chunk boundary
+CHUNK_DURATION    = 4.0    # 4s gives Whisper a full sentence with room for boundary tickers
+OVERLAP           = 1.0    # 1s overlap — tickers at chunk edges appear in both chunks
 SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
 GAIN_TARGET_RMS   = 0.12   # adaptive gain targets this RMS level (Whisper likes ~0.1-0.15)
 GAIN_MAX          = 20.0   # never amplify more than 20× — prevents noise explosion
