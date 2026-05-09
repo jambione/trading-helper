@@ -698,25 +698,32 @@ def _suppress_stderr():
 
 
 def _init_asr():
-    """Initialise whichever ASR engine is available and warm it up."""
+    """
+    Initialise the best available ASR engine, cascading through fallbacks:
+      Parakeet-MLX → MLX Whisper → faster-whisper (CPU)
+    Each stage only runs if the previous one is unavailable or failed to load.
+    """
     global _parakeet_model, _whisper_cpu
 
+    # ── Stage 1: Parakeet ────────────────────────────────────────────────────
     if _USE_PARAKEET:
-        print(f"Loading Parakeet '{PARAKEET_MODEL}'...", flush=True)
-        try:
-            _parakeet_model = _parakeet_mod.from_pretrained(PARAKEET_MODEL)
-            # Warm up: run a silent probe so the first real chunk is fast
-            _probe_mx = _mx.zeros((1, int(_parakeet_model.preprocessor_config.sample_rate * 0.5)),
-                                  dtype=_mx.bfloat16)
-            _mel = _parakeet_get_logmel(_probe_mx[0], _parakeet_model.preprocessor_config)
-            _parakeet_model.generate(_mel)
-            print(f"Parakeet ready — sample rate: {_parakeet_model.preprocessor_config.sample_rate}Hz",
-                  flush=True)
-        except Exception as e:
-            print(f"[WARN] Parakeet load failed ({e}) — falling back to MLX Whisper", flush=True)
-            _parakeet_model = None
-        return
+        for _model_id in (PARAKEET_MODEL, PARAKEET_MODEL.replace("-v3", "-v2")):
+            print(f"Loading Parakeet '{_model_id}'...", flush=True)
+            try:
+                _parakeet_model = _parakeet_mod.from_pretrained(_model_id)
+                _probe_mx = _mx.zeros(int(_parakeet_model.preprocessor_config.sample_rate * 0.5),
+                                      dtype=_mx.bfloat16)
+                _mel = _parakeet_get_logmel(_probe_mx, _parakeet_model.preprocessor_config)
+                _parakeet_model.generate(_mel)
+                print(f"Parakeet ready ({_model_id}) — "
+                      f"SR: {_parakeet_model.preprocessor_config.sample_rate}Hz", flush=True)
+                return   # success — done
+            except Exception as e:
+                print(f"[WARN] Parakeet '{_model_id}' failed ({e})", flush=True)
+                _parakeet_model = None
+        print("[WARN] All Parakeet models failed — falling back to MLX Whisper", flush=True)
 
+    # ── Stage 2: MLX Whisper ─────────────────────────────────────────────────
     if _USE_MLX:
         print(f"Loading MLX Whisper '{WHISPER_MODEL}'...", flush=True)
         try:
@@ -725,19 +732,19 @@ def _init_asr():
                 _mlx_whisper.transcribe(_probe, path_or_hf_repo=WHISPER_MODEL,
                                         language="en", verbose=False)
             print("MLX Whisper ready.", flush=True)
+            return   # success
         except Exception as e:
-            print(f"[WARN] MLX Whisper load failed ({e}) — falling back to CPU", flush=True)
-        return
+            print(f"[WARN] MLX Whisper failed ({e}) — falling back to CPU", flush=True)
 
-    # CPU fallback
+    # ── Stage 3: faster-whisper CPU ──────────────────────────────────────────
     try:
         import ctranslate2 as _ct2
         hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
     except Exception:
         hw = "cpu"
     ct = "float16" if hw == "cuda" else "int8"
-    print(f"Loading Whisper '{WHISPER_MODEL}' on {hw} ({ct})...", flush=True)
-    _whisper_cpu = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+    print(f"Loading Whisper '{WHISPER_MODEL_CPU}' on {hw} ({ct})...", flush=True)
+    _whisper_cpu = WhisperModel(WHISPER_MODEL_CPU, device=hw, compute_type=ct)
     print(f"Whisper ready on {hw}.", flush=True)
 
 _init_asr()
@@ -1052,12 +1059,12 @@ def transcription_worker():
             _t_w = time.perf_counter()
             with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
                 if _USE_PARAKEET and _parakeet_model is not None:
-                    # Parakeet: convert numpy float32 → MLX bfloat16 → log-mel → generate
+                    # Parakeet: numpy float32 → MLX bfloat16 → log-mel → generate
                     _audio_mx = _mx.array(chunk).astype(_mx.bfloat16)
                     _mel      = _parakeet_get_logmel(_audio_mx, _parakeet_model.preprocessor_config)
                     _result   = _parakeet_model.generate(_mel)[0]
                     text      = _result.text
-                elif _USE_MLX:
+                elif _USE_MLX or (_USE_PARAKEET and _parakeet_model is None):
                     with _suppress_stderr():
                         result = _mlx_whisper.transcribe(
                             chunk,
