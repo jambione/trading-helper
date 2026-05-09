@@ -223,7 +223,7 @@ body.hosted .btn-delete              { display: none; }
   #ticker-tv-resizer { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
   .watchlist-cols {
-    grid-template-columns: 56px 64px 54px 1fr;
+    grid-template-columns: 1fr 76px 64px 52px;
   }
   .cell-ticker { font-size: 15px; }
   .cell-price  { font-size: 14px; }
@@ -236,7 +236,7 @@ body.mobile [data-panel="transcript"]  { display: none !important; }
 body.mobile [data-panel="tradingview"] { display: none !important; }
 body.mobile #ticker-tv-resizer         { display: none !important; }
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
-body.mobile .watchlist-cols { grid-template-columns: 56px 64px 54px 1fr; }
+body.mobile .watchlist-cols { grid-template-columns: 1fr 76px 64px 52px; }
 body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
@@ -413,7 +413,7 @@ body.mobile .cell-chg    { font-size: 13px; }
 
 .watchlist-cols {
   display: grid;
-  grid-template-columns: 40px 52px 44px 30px 1fr;
+  grid-template-columns: 1fr 70px 58px 48px auto;
   align-items: center;
 }
 
