@@ -207,6 +207,21 @@ body.hosted [data-tab-btn="audio"]      { display: none; }
 body.hosted [data-settings-btn]         { display: none; }
 /* Collapse the transcript column so watchlist + chart fill the full width */
 body.hosted .main-grid               { grid-template-columns: 250px 6px 1fr; }
+/* Hide watchlist edit controls on hosted (read-only view) */
+body.hosted .add-ticker-row          { display: none; }
+body.hosted [data-clear-watchlist-btn] { display: none; }
+body.hosted .btn-add                 { display: none; }
+body.hosted .btn-delete              { display: none; }
+
+/* ── Mobile — hide chart, expand watchlist to full width ────── */
+@media (max-width: 700px) {
+  body.hosted .main-grid,
+  .main-grid {
+    grid-template-columns: 1fr !important;
+  }
+  [data-panel="tradingview"] { display: none; }
+  #ticker-tv-resizer         { display: none; }
+}
 
 /* ── Main grid layout ───────────────────────────────────────── */
 .main-grid {
