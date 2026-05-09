@@ -1,64 +1,42 @@
 #!/usr/bin/env python3
 """
-click_join_voice.py
-Finds and clicks the Discord "Join Voice" button using macOS Vision OCR.
-Reads actual text rendered on screen — no coordinates or templates needed.
+click_join_voice.py — click Discord "Join Voice" using Quartz window detection.
 """
-import subprocess, sys, time, os, tempfile
+import subprocess, sys, time
 import pyautogui
 
 pyautogui.FAILSAFE = False
 
-def ocr_find_text(search_text):
-    """Use macOS Vision framework (built-in) to find text on screen and return (x, y)."""
-    script = f'''
-import Vision, Quartz, objc, sys
-from Foundation import NSURL
-from PIL import ImageGrab
-import tempfile, os
-
-# Take screenshot
-img = ImageGrab.grab()
-tmp = tempfile.mktemp(suffix=".png")
-img.save(tmp)
-W, H = img.size
-
-url   = NSURL.fileURLWithPath_(tmp)
-src   = Quartz.CGImageSourceCreateWithURL(url, None)
-cgimg = Quartz.CGImageSourceCreateImageAtIndex(src, 0, None)
-
-hits = []
-
-def handler(req, err):
-    for obs in req.results():
-        for cand in obs.topCandidates_(1):
-            if "{search_text}".lower() in cand.string().lower():
-                bb = obs.boundingBox()  # normalized, origin bottom-left
-                cx = int((bb.origin.x + bb.size.width  / 2) * W)
-                cy = int((1 - bb.origin.y - bb.size.height / 2) * H)
-                hits.append((cx, cy))
-
-req = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(handler)
-req.setRecognitionLevel_(1)
-h   = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cgimg, {{}})
-h.performRequests_error_([req], None)
-os.unlink(tmp)
-
-if hits:
-    print(hits[0][0], hits[0][1])
-else:
-    print("NOT_FOUND")
-'''
-    result = subprocess.run(
-        ['python3', '-c', script],
-        capture_output=True, text=True
-    )
-    output = result.stdout.strip()
-    if output and output != 'NOT_FOUND':
-        parts = output.split()
-        if len(parts) == 2:
-            return int(parts[0]), int(parts[1])
-    return None
+def get_discord_window():
+    """Use Quartz CGWindowList to find Discord's main window bounds."""
+    try:
+        from Quartz import (CGWindowListCopyWindowInfo,
+                            kCGWindowListOptionOnScreenOnly,
+                            kCGNullWindowID)
+        wins = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly,
+                                         kCGNullWindowID)
+        best = None
+        for w in wins:
+            owner = str(w.get('kCGWindowOwnerName', ''))
+            if 'Discord' not in owner:
+                continue
+            bounds = w.get('kCGWindowBounds', {})
+            width  = bounds.get('Width', 0)
+            height = bounds.get('Height', 0)
+            # Grab the largest Discord window (main app, not helpers)
+            if best is None or (width * height) > (best['w'] * best['h']):
+                best = {
+                    'x': bounds.get('X', 0),
+                    'y': bounds.get('Y', 0),
+                    'w': width,
+                    'h': height,
+                    'name': owner,
+                    'title': w.get('kCGWindowName', ''),
+                }
+        return best
+    except Exception as e:
+        print(f"  [Quartz error] {e}")
+        return None
 
 def click_join_voice():
     print("  Activating Discord...")
@@ -66,46 +44,30 @@ def click_join_voice():
                    capture_output=True)
     time.sleep(2)
 
-    # ── Strategy 1: macOS Vision OCR ──────────────────────────────────────────
-    print("  Searching screen for 'Join Voice' text (Vision OCR)...")
-    hit = ocr_find_text("Join Voice")
-    if hit:
-        x, y = hit
-        print(f"  Found at ({x}, {y}) — clicking...")
-        pyautogui.moveTo(x, y, duration=0.3)
-        pyautogui.click()
-        print("  ✓ Clicked.")
-        return True
+    win = get_discord_window()
+    if not win:
+        print("  ✗ Could not find Discord window via Quartz.")
+        sys.exit(1)
 
-    # ── Strategy 2: window-relative coordinates ────────────────────────────────
-    print("  OCR failed — trying window-relative coordinates...")
-    bounds_script = '''
-    tell application "System Events"
-        tell process "Discord"
-            set b to bounds of front window
-            return ((item 1 of b) as string) & "," & ((item 2 of b) as string) & "," & ((item 3 of b) as string) & "," & ((item 4 of b) as string)
-        end tell
-    end tell
-    '''
-    res = subprocess.run(['osascript', '-e', bounds_script],
-                         capture_output=True, text=True)
-    if res.returncode == 0:
-        parts = [int(v.strip()) for v in res.stdout.strip().split(',')]
-        left, top, right, bottom = parts
-        w = right - left
-        h = bottom - top
-        sidebar = w * 0.27
-        cx = int(left + sidebar + (w - sidebar) / 2)
-        cy = int(top  + h * 0.72)
-        print(f"  Window {w}x{h} → clicking ({cx},{cy})...")
-        pyautogui.moveTo(cx, cy, duration=0.3)
-        pyautogui.click()
-        print("  ✓ Clicked.")
-        return True
+    print(f"  Found: '{win['name']}' / '{win['title']}'  {win['w']}x{win['h']} @ ({win['x']},{win['y']})")
 
-    print("  ✗ Could not locate Join Voice button.")
-    return False
+    # Discord layout (dark mode, standard):
+    #   Left sidebar (server list + channel list): ~27% of total width
+    #   "Join Voice" button: centred in content area, ~72% down
+    sidebar_frac = 0.27
+    btn_y_frac   = 0.72
+
+    content_start = win['x'] + win['w'] * sidebar_frac
+    content_cx    = content_start + (win['w'] * (1 - sidebar_frac)) / 2
+    btn_x = int(content_cx)
+    btn_y = int(win['y'] + win['h'] * btn_y_frac)
+
+    print(f"  Targeting Join Voice at ({btn_x}, {btn_y}) ...")
+    pyautogui.moveTo(btn_x, btn_y, duration=0.4)
+    time.sleep(0.2)
+    pyautogui.click()
+    print("  ✓ Clicked.")
+    return True
 
 if __name__ == '__main__':
-    ok = click_join_voice()
-    sys.exit(0 if ok else 1)
+    click_join_voice()
