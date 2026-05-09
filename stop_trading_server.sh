@@ -18,4 +18,9 @@ pkill -SIGKILL -f "dashboard.py"
 pkill -SIGKILL -f "caffeinate.*start_all"
 pkill -SIGKILL -f "cloudflared"
 
+# Kill Discord
+osascript -e 'tell application "Discord" to quit' 2>/dev/null
+sleep 2
+pkill -x Discord 2>/dev/null || true
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Trading server stopped" >> "$LOG"
