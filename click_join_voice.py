@@ -39,10 +39,15 @@ def get_discord_window():
         return None
 
 def click_join_voice():
+    DISCORD_URL = "discord://discord.com/channels/822849028395892788/822849029393612804"
+    print("  Navigating to Stock Scanners & Alerts channel...")
+    subprocess.run(['open', DISCORD_URL])
+    time.sleep(4)  # wait for Discord to navigate to the channel
+
     print("  Activating Discord...")
     subprocess.run(['osascript', '-e', 'tell application "Discord" to activate'],
                    capture_output=True)
-    time.sleep(2)
+    time.sleep(1)
 
     win = get_discord_window()
     if not win:

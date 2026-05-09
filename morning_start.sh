@@ -7,7 +7,6 @@
 
 REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 BACKEND="http://localhost:8888"
-DISCORD_URL="discord://discord.com/channels/822849028395892788/822849029393612804"
 
 echo ""
 echo "========================================"
