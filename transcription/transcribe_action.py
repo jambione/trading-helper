@@ -1,7 +1,6 @@
 import argparse
 import json
 import os as _os
-import resource
 import sys as _sys
 # pyaudiowpatch provides WASAPI loopback on Windows; fall back to standard pyaudio elsewhere
 if _sys.platform == "win32":
@@ -373,10 +372,10 @@ if DEVICE_INDEX is not None:
 
 # Model config
 if _USE_MLX:
-    WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+    WHISPER_MODEL = "mlx-community/whisper-medium.en-mlx-4bit"  # English-only, 4-bit quantized
 else:
-    WHISPER_MODEL = "small.en"
-WHISPER_BEAM_SIZE = 3
+    WHISPER_MODEL = "medium.en"   # more accurate than small.en
+WHISPER_BEAM_SIZE = 5             # higher beam = more accurate (slower on CPU)
 
 # Audio config — Mac uses BlackHole at 48kHz; Windows uses WASAPI loopback at 44.1kHz
 if _sys.platform == "darwin":
@@ -395,8 +394,8 @@ else:
     GAIN_MAX          = None
 
 TARGET_SR       = 16000
-CHUNK_DURATION  = 4.0
-OVERLAP         = 1.0
+CHUNK_DURATION  = 6.0   # longer window = more context for Whisper = better accuracy
+OVERLAP         = 1.5   # 1.5s overlap prevents words from being cut at chunk edges
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES
@@ -603,21 +602,6 @@ def audio_capture():
 
 # ========================= WORKER: TRANSCRIPTION =========================
 
-def _is_hallucination(text: str) -> bool:
-    """Detect Whisper hallucination loops — same phrase repeated 4+ times."""
-    words = text.split()
-    if len(words) < 8:
-        return False
-    for n in (2, 3, 4):
-        for i in range(len(words) - n):
-            phrase = tuple(words[i:i + n])
-            count  = sum(1 for j in range(len(words) - n + 1)
-                         if tuple(words[j:j + n]) == phrase)
-            if count >= 4:
-                return True
-    return False
-
-
 def transcription_worker():
     while running.is_set():
         try:
@@ -634,9 +618,10 @@ def transcription_worker():
                             path_or_hf_repo=WHISPER_MODEL,
                             language="en",
                             initial_prompt=INITIAL_PROMPT,
-                            temperature=0.0,
-                            no_speech_threshold=0.3,
-                            condition_on_previous_text=False,
+                            temperature=0.0,          # deterministic — no random sampling
+                            no_speech_threshold=0.4,  # skip silent/music segments
+                            compression_ratio_threshold=2.0,  # skip garbled output
+                            condition_on_previous_text=False, # no context bleed between chunks
                             verbose=False,
                         )
                     text = result.get("text", "").strip()
@@ -645,11 +630,12 @@ def transcription_worker():
                         chunk,
                         language="en",
                         initial_prompt=INITIAL_PROMPT,
-                        vad_filter=True,
-                        beam_size=WHISPER_BEAM_SIZE,
-                        temperature=0.0,
+                        vad_filter=True,              # built-in silence detection
+                        beam_size=WHISPER_BEAM_SIZE,  # 5-beam for accuracy
+                        temperature=0.0,              # deterministic
                         condition_on_previous_text=False,
-                        no_speech_threshold=0.35,
+                        no_speech_threshold=0.4,
+                        compression_ratio_threshold=2.0,
                         **_TRANSCRIBE_EXTRAS,
                     )
                     text = " ".join(s.text.strip() for s in segments).strip()
@@ -658,10 +644,7 @@ def transcription_worker():
 
             text = normalize_transcript(text)
 
-            if not text or len(text.split()) < 3:
-                continue
-
-            if _is_hallucination(text):
+            if not text or len(text.split()) < 2:
                 continue
 
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
