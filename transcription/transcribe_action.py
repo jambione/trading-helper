@@ -33,6 +33,37 @@ if not _USE_MLX:
     print("[ENGINE] Using faster-whisper (CPU)", flush=True)
 
 
+# ── Silero VAD (optional) ─────────────────────────────────────────────────────
+# More accurate than simple RMS — distinguishes speech from music/noise.
+# Install:  pip install silero-vad
+# Falls back to RMS threshold silently if not installed.
+_USE_SILERO_VAD   = False
+_silero_vad_model = None
+_silero_get_ts    = None   # get_speech_timestamps function
+try:
+    from silero_vad import load_silero_vad, get_speech_timestamps as _silero_get_ts
+    _silero_vad_model = load_silero_vad()
+    _USE_SILERO_VAD   = True
+    print("[VAD] Silero VAD loaded — speech detection active", flush=True)
+except ImportError:
+    print("[VAD] silero-vad not installed — using RMS threshold  (pip install silero-vad to improve)", flush=True)
+except Exception as _e:
+    print(f"[VAD] Silero VAD load failed ({_e}) — using RMS threshold", flush=True)
+
+
+# ── Noise suppression (optional) ─────────────────────────────────────────────
+# noisereduce estimates background noise from the first 0.5s of each chunk
+# and subtracts it — helps with hiss, hum, and fan noise from loopback audio.
+# Install:  pip install noisereduce
+_USE_NOISEREDUCE = False
+try:
+    import noisereduce as _nr
+    _USE_NOISEREDUCE = True
+    print("[AUDIO] noisereduce loaded — noise suppression active", flush=True)
+except ImportError:
+    print("[AUDIO] noisereduce not installed — skipping noise suppression  (pip install noisereduce to improve)", flush=True)
+
+
 # ========================= TRANSCRIPT NORMALIZATION =========================
 
 _NATO = {
@@ -495,7 +526,7 @@ if DEVICE_INDEX is not None:
 
 # small.en is English-only: same size as small but faster and more accurate for English
 # MLX uses HuggingFace MLX-community models; faster-whisper uses its own format
-WHISPER_MODEL_MLX = "mlx-community/whisper-medium.en-mlx"  # medium.en for better accuracy on Apple Silicon
+WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo-q4"  # 4-bit quantized: ~40% less memory, same accuracy as full-precision turbo
 WHISPER_MODEL_CPU = "small.en"   # fallback for non-Apple-Silicon / before MLX installed
 WHISPER_MODEL     = WHISPER_MODEL_MLX if _USE_MLX else WHISPER_MODEL_CPU
 WHISPER_BEAM_SIZE = 5      # Higher beam = better accuracy (3 was too fast/greedy)
@@ -505,7 +536,8 @@ TARGET_SR         = 16000
 CHUNK_DURATION    = 6.0    # 6s gives Whisper a full sentence — critical for ticker accuracy
 OVERLAP           = 1.0    # 1s overlap catches words split at chunk boundary
 SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
-GAIN_FACTOR       = 8.0    # Boost BlackHole signal before sending to Whisper
+GAIN_TARGET_RMS   = 0.12   # adaptive gain targets this RMS level (Whisper likes ~0.1-0.15)
+GAIN_MAX          = 20.0   # never amplify more than 20× — prevents noise explosion
 
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
@@ -721,10 +753,62 @@ except OSError as e:
     raise SystemExit(1)
 
 
+# ========================= AUDIO HELPERS =========================
+
+def _apply_adaptive_gain(mono: np.ndarray) -> np.ndarray:
+    """
+    Optionally denoise, then scale audio to GAIN_TARGET_RMS and hard-limit.
+    Better than a fixed multiplier because BlackHole levels vary with system volume.
+    """
+    # Optional noise suppression: estimate noise floor from the first 0.5s
+    if _USE_NOISEREDUCE:
+        try:
+            noise_sample_len = min(int(TARGET_SR * 0.5), len(mono))
+            mono = _nr.reduce_noise(
+                y=mono,
+                sr=TARGET_SR,
+                y_noise=mono[:noise_sample_len],
+                stationary=False,
+                prop_decrease=0.75,   # aggressive but not total — preserves speech
+            )
+        except Exception:
+            pass
+
+    rms = float(np.sqrt(np.mean(mono ** 2)))
+    if rms < 1e-8:
+        return mono
+    gain = min(GAIN_TARGET_RMS / rms, GAIN_MAX)
+    out  = mono * gain
+    peak = float(np.max(np.abs(out)))
+    if peak > 1.0:
+        out = out / peak
+    return out
+
+
+def _chunk_has_speech(chunk: np.ndarray) -> bool:
+    """
+    Return True if the chunk contains actual speech.
+    Uses Silero VAD when available; falls back to RMS check.
+    """
+    if _USE_SILERO_VAD and _silero_vad_model is not None and _silero_get_ts is not None:
+        try:
+            import torch as _torch
+            tensor = _torch.from_numpy(chunk)
+            ts = _silero_get_ts(tensor, _silero_vad_model,
+                                sampling_rate=TARGET_SR,
+                                min_speech_duration_ms=150)
+            return len(ts) > 0
+        except Exception:
+            pass  # fall through to RMS
+    # RMS fallback — chunk is already gain-adjusted so 0.02 is a reasonable floor
+    return float(np.sqrt(np.mean(chunk ** 2))) > 0.02
+
+
 # ========================= SHARED STATE =========================
 
-audio_queue = Queue(maxsize=20)
-running     = threading.Event()
+audio_queue  = Queue(maxsize=20)
+ticker_queue = Queue(maxsize=200)   # transcription thread puts tickers here; logger thread writes to disk
+running      = threading.Event()
 running.set()
 
 
@@ -745,11 +829,8 @@ def audio_capture():
             if np.sqrt(np.mean(mono ** 2)) < SILENCE_THRESHOLD:
                 continue
 
-            # Boost quiet loopback signal then normalize to prevent clipping distortion
-            mono = mono * GAIN_FACTOR
-            peak = np.max(np.abs(mono))
-            if peak > 1.0:
-                mono = mono / peak
+            # Adaptive gain: scale to target RMS then hard-limit
+            mono = _apply_adaptive_gain(mono)
 
             resampled = resample_poly(mono, RESAMPLE_UP, RESAMPLE_DOWN)
             local_buf = np.concatenate((local_buf, resampled))
@@ -789,6 +870,66 @@ def resource_monitor(interval=300):
 
 # ========================= WORKER: TRANSCRIPTION =========================
 
+# ========================= WORKER: TICKER LOGGER =========================
+
+def ticker_logger_worker():
+    """
+    Dedicated thread that drains ticker_queue and writes to disk.
+    Keeps disk I/O off the transcription hot path.
+    """
+    while running.is_set():
+        try:
+            ticker = ticker_queue.get(timeout=0.5)
+            if ticker is None:
+                break
+            log_ticker(ticker)
+        except Exception:
+            pass
+
+
+# ========================= OLLAMA LLM POST-PROCESSING =========================
+# Optional: runs a local LLM to fix garbled tickers/numbers after Whisper.
+# Requires Ollama running locally: https://ollama.com
+# Model must be pulled first, e.g.:  ollama pull llama3.2:1b
+# Set to "" to disable entirely.
+
+_OLLAMA_MODEL = "llama3.2:1b"    # fast on Apple Silicon; llama3.2:3b for more accuracy
+_OLLAMA_URL   = "http://localhost:11434/api/generate"
+_OLLAMA_SYSTEM = (
+    "You are a financial transcript corrector. The input is raw speech-to-text from CNBC. "
+    "Fix garbled stock ticker symbols (e.g. 'P S O' → 'PLTR', 'envidia' → 'NVDA'), "
+    "correct prices and numbers, keep all other words exactly as-is. "
+    "Output ONLY the corrected transcript — no explanations, no extra text."
+)
+
+def _llm_correct(text: str) -> str:
+    """
+    Run Ollama to clean up Whisper's output — catches garbles the mishear map missed.
+    Returns the original text unchanged if Ollama is not running or exceeds timeout.
+    Only called when text is long enough to be worth the round-trip.
+    """
+    if not _OLLAMA_MODEL or len(text.split()) < 5:
+        return text
+    try:
+        import urllib.request as _ur
+        payload = json.dumps({
+            "model":  _OLLAMA_MODEL,
+            "system": _OLLAMA_SYSTEM,
+            "prompt": text,
+            "stream": False,
+            "options": {"temperature": 0, "num_predict": 300},
+        }).encode()
+        req = _ur.Request(
+            _OLLAMA_URL, data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with _ur.urlopen(req, timeout=2) as resp:
+            corrected = json.loads(resp.read()).get("response", "").strip()
+            return corrected if corrected else text
+    except Exception:
+        return text   # Ollama not running or too slow — silently fall back
+
+
 def _is_hallucination(text: str) -> bool:
     """Detect Whisper hallucination loops — same short phrase repeated 4+ times."""
     words = text.split()
@@ -812,6 +953,10 @@ def transcription_worker():
             chunk = audio_queue.get(timeout=1.0)
             if chunk is None:
                 break
+
+            # Silero VAD: skip chunks with no real speech (saves a Whisper call)
+            if not _chunk_has_speech(chunk):
+                continue
 
             with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
                 if _USE_MLX:
@@ -849,10 +994,17 @@ def transcription_worker():
             if _is_hallucination(text):
                 continue
 
+            # Ollama post-processing: fix garbled tickers Whisper + mishear map couldn't catch
+            text = _llm_correct(text)
+
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
+            # Hand off to ticker logger thread — non-blocking so Whisper isn't stalled by disk I/O
             for t in extract_tickers(text):
-                log_ticker(t)
+                try:
+                    ticker_queue.put_nowait(t)
+                except Full:
+                    pass
 
         except Exception as e:
             msg = str(e).strip()
@@ -866,6 +1018,7 @@ def transcription_worker():
 threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     threading.Thread(target=transcription_worker, daemon=True, name="transcription-1"),
+    threading.Thread(target=ticker_logger_worker, daemon=True, name="ticker-logger"),
     threading.Thread(target=resource_monitor,     daemon=True, name="monitor"),
 ]
 for t in threads:
@@ -880,10 +1033,11 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down...")
     running.clear()
-    try:
-        audio_queue.put_nowait(None)
-    except Full:
-        pass
+    for q in (audio_queue, ticker_queue):
+        try:
+            q.put_nowait(None)
+        except Full:
+            pass
 
 stream.stop_stream()
 stream.close()
