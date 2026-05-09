@@ -17,71 +17,21 @@ from queue import Queue, Full
 from pathlib import Path
 
 # ── Engine selection ──────────────────────────────────────────────────────────
-# Import ALL available engines upfront so fallbacks always have their classes ready.
-# Priority at runtime: Parakeet-MLX > MLX Whisper > faster-whisper (CPU)
+# On macOS: try MLX Whisper (Apple Silicon GPU) first, fall back to faster-whisper.
+# On Windows/Linux: faster-whisper only.
 
-_USE_PARAKEET     = False
-_USE_MLX          = False
-_parakeet_mod     = None
-_mlx_whisper      = None
-_mx               = None
-_parakeet_get_logmel = None
-
+_USE_MLX = False
 if _sys.platform == "darwin":
-    # Parakeet (fastest — requires Python 3.10+ and parakeet-mlx)
-    try:
-        import parakeet_mlx as _parakeet_mod
-        import mlx.core as _mx
-        from parakeet_mlx.audio import get_logmel as _parakeet_get_logmel
-        _USE_PARAKEET = True
-        print("[ENGINE] Parakeet-MLX available", flush=True)
-    except ImportError:
-        pass
-
-    # MLX Whisper (good fallback — always try to import on macOS)
     try:
         import mlx_whisper as _mlx_whisper
         _USE_MLX = True
-        print("[ENGINE] MLX Whisper available", flush=True)
+        print("[ENGINE] MLX Whisper — Apple Silicon GPU/Neural Engine", flush=True)
     except ImportError:
         pass
 
-# faster-whisper CPU — always import as final fallback
-try:
+if not _USE_MLX:
     from faster_whisper import WhisperModel
-except ImportError:
-    WhisperModel = None  # type: ignore
-
-
-# ── Silero VAD (optional) ─────────────────────────────────────────────────────
-# More accurate than simple RMS — distinguishes speech from music/noise.
-# Install:  pip install silero-vad
-# Falls back to RMS threshold silently if not installed.
-_USE_SILERO_VAD   = False
-_silero_vad_model = None
-_silero_get_ts    = None   # get_speech_timestamps function
-try:
-    from silero_vad import load_silero_vad, get_speech_timestamps as _silero_get_ts
-    _silero_vad_model = load_silero_vad()
-    _USE_SILERO_VAD   = True
-    print("[VAD] Silero VAD loaded — speech detection active", flush=True)
-except ImportError:
-    print("[VAD] silero-vad not installed — using RMS threshold  (pip install silero-vad to improve)", flush=True)
-except Exception as _e:
-    print(f"[VAD] Silero VAD load failed ({_e}) — using RMS threshold", flush=True)
-
-
-# ── Noise suppression (optional) ─────────────────────────────────────────────
-# noisereduce estimates background noise from the first 0.5s of each chunk
-# and subtracts it — helps with hiss, hum, and fan noise from loopback audio.
-# Install:  pip install noisereduce
-_USE_NOISEREDUCE = False   # disabled — CNBC loopback is already clean; noisereduce
-                           # corrupts ticker consonants (TSLA→TLA, NVDA→NDA) because
-                           # the "quiet" reference window always contains speech harmonics
-try:
-    import noisereduce as _nr
-except ImportError:
-    pass
+    print("[ENGINE] faster-whisper (CPU)", flush=True)
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -97,86 +47,34 @@ _NATO = {
 }
 
 _nato_word = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
-_NATO_SEP   = r"[ \t]*,?[ \t]*"   # optional comma between NATO words
-# Allow unlimited NATO words (will be deduplicated in collapse_nato)
-_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:{_NATO_SEP}{_nato_word})*\b")
-# Pattern to match space/comma-separated single capital letters (e.g., "E L P W")
-_SINGLE_LETTERS_PATTERN = re.compile(r'\b[A-Z](?:[ \t,]+[A-Z])+\b')
-
-
-def _deduplicate_ticker(ticker: str) -> str:
-    """
-    Handle repeated ticker sequences. E.g., "ELPWELPW" → "ELPW".
-    Detects if the ticker is a pattern repeated 2+ times and collapses it.
-    """
-    if len(ticker) < 4 or len(ticker) > 10:
-        return ticker
-    
-    # Try divisors from 2 to 5 (for tickers of 2-5 chars repeated 2-5 times)
-    for divisor in range(2, min(6, len(ticker) // 2 + 1)):  # max 5 repetitions
-        if len(ticker) % divisor == 0:
-            segment_len = len(ticker) // divisor
-            # Only consider if segment would be a valid ticker (2-5 chars)
-            if not (2 <= segment_len <= 5):
-                continue
-                
-            segment = ticker[:segment_len]
-            # Check if entire string is this segment repeated
-            if all(ticker[i*segment_len:(i+1)*segment_len] == segment 
-                   for i in range(divisor)):
-                return segment
-    
-    return ticker
+_NATO_SEP   = r"[ \t]*,?[ \t]*"
+_NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:{_NATO_SEP}{_nato_word}){{1,4}}\b")
 
 
 def normalize_transcript(text: str) -> str:
-    # 1. Collapse NATO alphabet sequences (including repeated ones)
     def collapse_nato(m: re.Match) -> str:
         words = re.split(r'[\s,]+', m.group(0).lower())
         letters = "".join(_NATO.get(w, "") for w in words if w)
-        # Deduplicate if the same ticker was spoken multiple times
-        letters = _deduplicate_ticker(letters)
         return letters if 2 <= len(letters) <= 5 else m.group(0)
 
     text = _NATO_PATTERN.sub(collapse_nato, text)
 
-    # 2. Collapse space/comma-separated single letters (e.g., "E L P W" → "ELPW")
-    # Apply repeatedly to handle multiple sequences
-    def collapse_single_letters(m: re.Match) -> str:
-        letters = re.sub(r'[\s,]+', '', m.group(0).upper())
-        # Deduplicate repeated patterns
-        letters = _deduplicate_ticker(letters)
-        return letters if 2 <= len(letters) <= 5 else m.group(0)
-    
-    # Keep applying until no more matches (handles multiple sequences)
-    prev_text = None
-    while prev_text != text:
-        prev_text = text
-        text = _SINGLE_LETTERS_PATTERN.sub(collapse_single_letters, text)
-
-    # 3. Collapse dot-separated letters (e.g., "E.L.P.W" → "ELPW")
     def collapse_dots(m: re.Match) -> str:
         letters = m.group(0).replace(".", "").upper()
-        return letters if 2 <= len(letters) <= 5 else m.group(0)
+        return letters if 3 <= len(letters) <= 5 else m.group(0)
 
-    text = re.sub(r'(?<!\w)(?:[A-Za-z]\.)+(?:[A-Za-z])', collapse_dots, text)
+    text = re.sub(r'(?<!\w)(?:[A-Za-z]\.){2,5}', collapse_dots, text)
 
-    # 4. Collapse hyphen-separated letters (e.g., "E-L-P-W" → "ELPW")
     def collapse_hyphens(m: re.Match) -> str:
-        letters = m.group(0).replace("-", "").upper()
-        return letters if 2 <= len(letters) <= 5 else m.group(0)
+        return m.group(0).replace("-", "").upper()
 
-    text = re.sub(r'(?<!\w)(?:[A-Za-z]-)+[A-Za-z](?!\w)', collapse_hyphens, text)
+    text = re.sub(r'(?<!\w)(?:[A-Za-z]-){2,4}[A-Za-z](?!\w)', collapse_hyphens, text)
 
     return text
 
 
 # ========================= TICKER EXTRACTION =========================
 
-# Uppercase tokens Whisper produces that are not stock tickers.
-# NOTE: Do NOT add real tickers here (e.g. COST, OPEN, REAL) — the Alpaca
-# universe check handles false positives; these stop words are only for
-# common English words that would never be valid tickers.
 _STOP_WORDS = {
     "A", "I", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "IF", "IN", "IS",
     "IT", "ME", "MY", "NO", "OF", "OK", "ON", "OR", "SO", "TO", "UP", "US",
@@ -184,18 +82,17 @@ _STOP_WORDS = {
     "HAS", "HIM", "HIS", "HOW", "HER", "ITS", "NEW", "NOT", "NOW", "OLD",
     "ONE", "OUR", "OUT", "SAY", "SEE", "THE", "TOO", "TWO", "WAS", "WHO",
     "WHY", "YET", "YOU", "ALL", "ANY", "LET", "PUT", "RUN", "SET", "ADD",
-    "HIT", "TRY", "USE", "WAY", "DAY", "MAY", "OWN", "ASK", "ACT",
+    "BUY", "HIT", "TRY", "USE", "WAY", "DAY", "MAY", "OWN", "ASK", "ACT",
     "ALSO", "BACK", "BEEN", "CALL", "COME", "DOES", "DOWN", "EACH", "EVEN",
     "FROM", "GIVE", "GOOD", "HAVE", "HERE", "HIGH", "HOLD", "INTO", "JUST",
-    "KEEP", "KNOW", "LAST", "LIKE", "LONG", "LOOK", "MADE", "MAKE",
+    "KEEP", "KNOW", "LAST", "LIKE", "LIVE", "LONG", "LOOK", "MADE", "MAKE",
     "MANY", "MORE", "MOST", "MOVE", "MUCH", "MUST", "NEXT", "ONLY",
     "OVER", "PAST", "SAME", "SELL", "SHOW", "SIDE", "SOME",
     "STOP", "SUCH", "TAKE", "THAN", "THAT", "THEM", "THEN", "THEY", "THIS",
     "TIME", "VERY", "WANT", "WELL", "WHAT", "WHEN", "WILL", "WITH", "WORK",
     "YOUR", "SAID", "SAYS", "TOLD", "TELL", "TALK", "WENT", "GOES", "BOTH",
     "ONCE", "UPON", "SOON", "EVER", "YEAR", "WEEK", "DAYS", "LETS", "PUTS",
-    "LIVE", "BUY",
-    # financial/market terms that are NOT tickers
+    # financial/market terms that aren't tickers
     "ETF", "IPO", "CEO", "CFO", "COO", "CTO", "SEC", "FDA", "FED", "GDP",
     "CPI", "EPS", "ATH", "ATL", "RSI", "SMA", "EMA", "MACD", "BEAR", "BULL",
     "CALL", "PUTS", "SPAC", "REIT", "BOND", "DEBT", "CASH", "RATE", "RISK",
@@ -203,7 +100,7 @@ _STOP_WORDS = {
     # months / days
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
     "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
-    # Noise / Whisper hallucination artifacts
+    # noise / hallucination artifacts
     "HEY", "THANKS", "YEAH", "THEIR", "THERE", "THESE", "THOSE",
     "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE", "WHICH", "WHERE", "WHILE",
     "HALT", "HALTED", "ALERT", "LEVELS", "LEVEL", "STOCKS", "STOCK",
@@ -212,33 +109,27 @@ _STOP_WORDS = {
     "BIYM", "SBL", "YIA", "PPG", "WWW", "BAGER",
 }
 
-# Spoken company names → ticker (Whisper capitalizes proper nouns).
-# Add any name a trader would say out loud that maps to a ticker.
 _NAME_TO_TICKER = {
     # Big Tech
     "apple": "AAPL", "tesla": "TSLA", "nvidia": "NVDA", "amazon": "AMZN",
     "google": "GOOGL", "alphabet": "GOOGL", "microsoft": "MSFT",
     "meta": "META", "facebook": "META", "netflix": "NFLX",
-    # Semiconductors
+    # Semis
     "amd": "AMD", "intel": "INTC", "qualcomm": "QCOM", "broadcom": "AVGO",
     "micron": "MU", "arm": "ARM", "arm holdings": "ARM",
-    "applied materials": "AMAT", "lam research": "LRCX", "klac": "KLAC",
-    "taiwan semi": "TSM", "tsmc": "TSM", "marvell": "MRVL",
-    "super micro": "SMCI", "supermicro": "SMCI",
+    "applied materials": "AMAT", "taiwan semi": "TSM", "tsmc": "TSM",
+    "marvell": "MRVL", "super micro": "SMCI", "supermicro": "SMCI",
     # Software / Cloud
     "salesforce": "CRM", "oracle": "ORCL", "snowflake": "SNOW",
     "shopify": "SHOP", "zoom": "ZM", "datadog": "DDOG", "cloudflare": "NET",
     "crowdstrike": "CRWD", "palo alto": "PANW", "fortinet": "FTNT",
     "servicenow": "NOW", "workday": "WDAY", "mongodb": "MDB",
-    "confluent": "CFLT", "elastic": "ESTC", "gitlab": "GTLB",
-    "twilio": "TWLO", "okta": "OKTA", "docusign": "DOCU",
-    "hubspot": "HUBS", "asana": "ASAN", "bill.com": "BILL",
     # Fintech / Payments
     "visa": "V", "mastercard": "MA", "paypal": "PYPL", "square": "SQ",
-    "block": "SQ", "affirm": "AFRM", "sofi": "SOFI", "nu bank": "NU",
-    "nubank": "NU", "robinhood": "HOOD", "coinbase": "COIN",
-    "microstrategy": "MSTR", "strategy": "MSTR",
-    # Banks / Finance
+    "block": "SQ", "affirm": "AFRM", "sofi": "SOFI",
+    "robinhood": "HOOD", "robin hood": "HOOD", "coinbase": "COIN",
+    "microstrategy": "MSTR", "micro strategy": "MSTR", "strategy": "MSTR",
+    # Banks
     "jpmorgan": "JPM", "jp morgan": "JPM", "goldman": "GS",
     "goldman sachs": "GS", "morgan stanley": "MS",
     "bank of america": "BAC", "wells fargo": "WFC", "citigroup": "C",
@@ -246,141 +137,75 @@ _NAME_TO_TICKER = {
     # EV / Autos
     "ford": "F", "general motors": "GM", "gm": "GM",
     "rivian": "RIVN", "lucid": "LCID", "nio": "NIO",
-    "li auto": "LI", "xpeng": "XPEV",
-    # Crypto-adjacent
-    "coinbase": "COIN", "riot": "RIOT", "marathon": "MARA",
-    "marathon digital": "MARA", "cleanspark": "CLSK",
-    # Retail / Consumer
-    "walmart": "WMT", "target": "TGT", "costco": "COST",
-    "home depot": "HD", "lowes": "LOW", "lowe's": "LOW",
-    "amazon": "AMZN", "chewy": "CHWY", "wayfair": "W",
-    "carvana": "CVNA", "carmax": "KMX",
-    # Media / Entertainment
-    "disney": "DIS", "comcast": "CMCSA", "warner": "WBD",
-    "paramount": "PARA", "spotify": "SPOT", "netflix": "NFLX",
-    "roblox": "RBLX", "unity": "U",
-    # Telecom
-    "verizon": "VZ", "at&t": "T", "att": "T", "t-mobile": "TMUS",
-    # Healthcare / Pharma / Biotech
+    # Healthcare
     "pfizer": "PFE", "moderna": "MRNA", "johnson": "JNJ",
-    "johnson and johnson": "JNJ", "abbvie": "ABBV", "merck": "MRK",
-    "eli lilly": "LLY", "lilly": "LLY", "novo nordisk": "NVO",
-    "amgen": "AMGN", "gilead": "GILD", "regeneron": "REGN",
-    "biogen": "BIIB", "vertex": "VRTX", "illumina": "ILMN",
-    "unitedhealth": "UNH", "humana": "HUM", "cigna": "CI",
-    "hims": "HIMS", "hims and hers": "HIMS",
+    "abbvie": "ABBV", "merck": "MRK", "eli lilly": "LLY", "lilly": "LLY",
+    "novo nordisk": "NVO", "amgen": "AMGN", "gilead": "GILD",
+    "regeneron": "REGN", "vertex": "VRTX", "unitedhealth": "UNH",
+    "humana": "HUM", "cigna": "CI", "hims": "HIMS",
     # Energy
     "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP",
     "halliburton": "HAL", "schlumberger": "SLB",
-    "plug power": "PLUG", "plug": "PLUG", "bloom energy": "BE",
-    # Aerospace / Defense
-    "boeing": "BA", "lockheed": "LMT", "raytheon": "RTX",
-    "northrop": "NOC", "l3harris": "LHX", "spacex": "SPCE",
-    # Meme / Retail favorites
+    # Defense
+    "boeing": "BA", "lockheed": "LMT", "raytheon": "RTX", "northrop": "NOC",
+    # Retail / Consumer
+    "walmart": "WMT", "target": "TGT", "costco": "COST",
+    "home depot": "HD", "amazon": "AMZN",
+    # Media / Entertainment
+    "disney": "DIS", "comcast": "CMCSA", "warner": "WBD",
+    "paramount": "PARA", "spotify": "SPOT", "netflix": "NFLX",
+    "roblox": "RBLX",
+    # Telecom
+    "verizon": "VZ", "at&t": "T", "att": "T", "t-mobile": "TMUS",
+    # Meme / Momentum
     "gamestop": "GME", "game stop": "GME", "amc": "AMC",
-    "amc entertainment": "AMC", "blackberry": "BB",
-    "bed bath": "BBBY", "beyond meat": "BYND",
-    # Travel / Hospitality
-    "airbnb": "ABNB", "booking": "BKNG", "expedia": "EXPE",
-    "uber": "UBER", "lyft": "LYFT", "doordash": "DASH",
-    "delta": "DAL", "united airlines": "UAL", "southwest": "LUV",
-    "royal caribbean": "RCL", "carnival": "CCL",
-    # ETFs / Indices (commonly spoken by name)
-    "spy": "SPY", "s and p": "SPY", "s&p": "SPY",
-    "qqq": "QQQ", "cubes": "QQQ", "nasdaq etf": "QQQ",
-    "iwm": "IWM", "russell": "IWM",
-    "dia": "DIA", "dow etf": "DIA",
-    "xlf": "XLF", "xle": "XLE", "xlk": "XLK", "xli": "XLI",
-    "arc innovation": "ARKK", "ark": "ARKK",
-    # Other commonly mentioned
     "palantir": "PLTR", "berkshire": "BRK",
-    "draft kings": "DKNG", "draftkings": "DKNG",
-    "toast": "TOST", "bumble": "BMBL", "match": "MTCH",
-    "pinterest": "PINS", "snap": "SNAP",
-    "joby": "JOBY", "joby aviation": "JOBY",
-    "rocket": "RKT", "rocket companies": "RKT",
-    "soun": "SOUN", "soundhound": "SOUN",
+    "draftkings": "DKNG", "draft kings": "DKNG",
+    "soundhound": "SOUN", "sound hound": "SOUN",
+    # Travel
+    "airbnb": "ABNB", "uber": "UBER", "lyft": "LYFT", "doordash": "DASH",
+    # ETFs
+    "spy": "SPY", "qqq": "QQQ", "iwm": "IWM",
 }
 
-_TICKER_RE = re.compile(r'\b([A-Za-z]{2,5})\b')  # case-insensitive — uppercase after match
+# Case-insensitive: catches "coin", "rivn", "lcid" etc. spoken in lowercase
+_TICKER_RE = re.compile(r'\b([A-Za-z]{2,5})\b')
 _NAME_RE   = {name: re.compile(rf'\b{re.escape(name)}\b', re.I)
               for name in _NAME_TO_TICKER}
 
-# Whisper sometimes mishears tickers as similar-sounding nonsense words.
-# Map those known misrecognitions directly to the correct ticker.
+# Known Whisper misrecognitions → correct ticker
 _MISHEAR_MAP = {
-    # Google / Alphabet
     "gugsel": "GOOGL", "guggle": "GOOGL", "gugle": "GOOGL", "googel": "GOOGL",
-    "googl":  "GOOGL", "goog":   "GOOG",
-    # Robinhood
-    "hud":    "HOOD",  "hood":   "HOOD",
-    # Nvidia — truncated variants
-    "envidia":"NVDA",  "vidia":  "NVDA",  "invidia": "NVDA",
-    "nda":    "NVDA",  "nvda":   "NVDA",  "nvia":    "NVDA",
-    # Tesla — also catches truncated Whisper output when leading phoneme is dropped
-    "tesler": "TSLA",  "tesla":  "TSLA",
-    "tla":    "TSLA",  "tsla":   "TSLA",
-    # Palantir
-    "palanteer": "PLTR", "palantir": "PLTR", "palantar": "PLTR", "palanter": "PLTR",
-    # Apple
-    "appal":  "AAPL",  "apples": "AAPL",  "aple": "AAPL",
-    # Amazon
-    "amazin": "AMZN",  "amazons":"AMZN",
-    # Strategy / MicroStrategy
-    "microstrategy": "MSTR", "micro strategy": "MSTR", "strategy": "MSTR",
-    # Microsoft truncations
-    "msf":    "MSFT",  "mst":    "MSFT",  "msft":   "MSFT",
-    # AAPL truncations
-    "apl":    "AAPL",  "aap":    "AAPL",
-    # AMZN truncations
-    "amz":    "AMZN",  "azn":    "AMZN",
-    # META truncations
-    "met":    "META",
-    # GOOGL truncations
-    "goo":    "GOOGL", "gogl":   "GOOGL",
-    # PLTR truncations
-    "plt":    "PLTR",  "ltr":    "PLTR",
-    # AMD truncations
-    "amd":    "AMD",
-    # Coinbase
-    "coinbase": "COIN",
-    # SoundHound
-    "soundhound": "SOUN", "sound hound": "SOUN",
-    # Palantir variants Whisper medium.en sometimes produces
-    "pltr":   "PLTR",
-    # Super Micro
+    "hud": "HOOD",
+    "envidia": "NVDA", "vidia": "NVDA", "invidia": "NVDA",
+    "nda": "NVDA", "nvia": "NVDA",
+    "tesler": "TSLA", "tla": "TSLA",
+    "palanteer": "PLTR", "palantir": "PLTR", "palantar": "PLTR",
+    "plt": "PLTR", "ltr": "PLTR",
+    "appal": "AAPL", "apples": "AAPL", "apl": "AAPL",
+    "amazin": "AMZN", "amazons": "AMZN", "amz": "AMZN",
+    "microstrategy": "MSTR", "micro strategy": "MSTR",
     "supermicro": "SMCI", "super micro": "SMCI",
-    # Rivian
-    "rivien": "RIVN",  "rivian": "RIVN",
-    # Lucid
-    "lucid":  "LCID",
-    # Affirm
-    "affirm": "AFRM",
-    # SoFi
-    "sofi":   "SOFI",
-    # DraftKings
-    "draftkings": "DKNG", "draft kings": "DKNG",
-    # Snowflake
-    "snowflake": "SNOW",
-    # CrowdStrike
+    "rivien": "RIVN",
     "crowdstrike": "CRWD", "crowd strike": "CRWD",
-    # Palo Alto
     "palo alto": "PANW",
-    # Cloudflare
     "cloudflare": "NET",
-    # Robinhood full name
-    "robinhood": "HOOD", "robin hood": "HOOD",
+    "snowflake": "SNOW",
+    "coinbase": "COIN",
+    "soundhound": "SOUN", "sound hound": "SOUN",
+    "draftkings": "DKNG", "draft kings": "DKNG",
+    "msf": "MSFT", "mst": "MSFT",
 }
 _MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
 
-_ticker_universe: set = set()   # populated at startup from Alpaca; empty = fallback mode
+_ticker_universe: set = set()
 
 
 def extract_tickers(text: str) -> list:
     found = []
     seen  = set()
 
-    # All tokens 2-5 chars — uppercase before checking so "coin" → COIN, "rivn" → RIVN
+    # 2-5 char tokens, uppercase after match (catches lowercase like "coin" → COIN)
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
         if t in _STOP_WORDS or t in seen:
@@ -390,14 +215,15 @@ def extract_tickers(text: str) -> list:
         found.append(t)
         seen.add(t)
 
-    # Spoken company names — catches names Whisper spells out
     lower = text.lower()
+
+    # Spoken company names
     for name, ticker in _NAME_TO_TICKER.items():
         if ticker not in seen and _NAME_RE[name].search(lower):
             found.append(ticker)
             seen.add(ticker)
 
-    # Whisper misrecognitions — known phonetic substitutions
+    # Whisper misrecognitions
     for mishear, ticker in _MISHEAR_MAP.items():
         if ticker not in seen and _MISHEAR_RE[mishear].search(lower):
             found.append(ticker)
@@ -410,7 +236,6 @@ def extract_tickers(text: str) -> list:
 
 TICKER_LOG_FILE = Path(__file__).parent / "wb_watchlist.json"
 _log_lock       = threading.Lock()
-
 _logged_tickers: set = set()
 _log_file_mtime: float = -1.0
 
@@ -424,7 +249,6 @@ except Exception:
 
 
 def _sync_from_file():
-    """Re-read the watchlist if it changed on disk (e.g. cleared by the dashboard)."""
     global _logged_tickers, _log_file_mtime
     try:
         mtime = TICKER_LOG_FILE.stat().st_mtime
@@ -432,7 +256,6 @@ def _sync_from_file():
             return
         data = json.loads(TICKER_LOG_FILE.read_text(encoding="utf-8"))
         new_set = {t.strip().upper() for t in data if isinstance(t, str) and t.strip()} if isinstance(data, list) else set()
-        print(f"[SYNC] File changed — was {sorted(_logged_tickers)}, now {sorted(new_set)}", flush=True)
         _logged_tickers = new_set
         _log_file_mtime = mtime
     except Exception:
@@ -440,22 +263,14 @@ def _sync_from_file():
 
 
 def log_ticker(ticker: str) -> bool:
-    """Log a new ticker to the watchlist JSON. Returns True if it was newly added."""
     global _log_file_mtime
     ticker = ticker.upper()
     with _log_lock:
-        # 1. Sync current state from disk to avoid overwriting changes from other processes
         _sync_from_file()
-        
-        # 2. Skip if already in memory (which is now synced with disk)
         if ticker in _logged_tickers:
             return False
-        
-        # 3. Add to set and prepare snapshot
         _logged_tickers.add(ticker)
         snapshot = sorted(_logged_tickers)
-        
-        # 4. Write to disk immediately while holding the lock
         try:
             TICKER_LOG_FILE.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
             _log_file_mtime = TICKER_LOG_FILE.stat().st_mtime
@@ -467,9 +282,6 @@ def log_ticker(ticker: str) -> bool:
 
 
 # ========================= TICKER UNIVERSE =========================
-# Fetched once from Alpaca at startup and cached for 24h.
-# extract_tickers() gates every candidate against this set, collapsing
-# false positives to near-zero — random words are not valid equity symbols.
 
 _UNIVERSE_FILE    = Path(__file__).parent / "ticker_universe.json"
 _UNIVERSE_MAX_AGE = 24 * 3600
@@ -528,9 +340,11 @@ _args, _ = _parser.parse_known_args()
 
 _cfg_file     = Path(__file__).parent.parent / "bot_config.json"
 _secrets_file = Path(__file__).parent.parent / "secrets.json"
-_saved_device  = None
-_alpaca_key    = ""
+_saved_device = None
+_alpaca_key   = ""
 _alpaca_secret = ""
+_finnhub_key  = ""
+
 if _cfg_file.exists():
     try:
         _saved_device = json.loads(_cfg_file.read_text()).get("device_index")
@@ -543,140 +357,80 @@ if _secrets_file.exists():
         _alpaca_secret = _s.get("secret_key", "")
         _finnhub_key   = _s.get("finnhub_key", "")
     except Exception:
-        _finnhub_key = ""
+        pass
 
 DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
-# Validate that the saved device index actually exists on this system.
-# A Windows device index stored in bot_config.json will be invalid on Mac.
+# Mac: validate saved device index (Windows index won't exist on Mac)
 if DEVICE_INDEX is not None:
     _tmp_p = pyaudio.PyAudio()
-    _valid_indices = [
-        i for i in range(_tmp_p.get_device_count())
-        if _tmp_p.get_device_info_by_index(i)["maxInputChannels"] > 0
-    ]
+    _valid  = [i for i in range(_tmp_p.get_device_count())
+               if _tmp_p.get_device_info_by_index(i)["maxInputChannels"] > 0]
     _tmp_p.terminate()
-    if DEVICE_INDEX not in _valid_indices:
-        print(f"[WARN] Saved device index {DEVICE_INDEX} not found on this system — resetting to auto-detect.")
+    if DEVICE_INDEX not in _valid:
+        print(f"[WARN] Saved device {DEVICE_INDEX} not found — resetting to auto-detect.")
         DEVICE_INDEX = None
 
-# small.en is English-only: same size as small but faster and more accurate for English
-# MLX uses HuggingFace MLX-community models; faster-whisper uses its own format
-PARAKEET_MODEL    = "mlx-community/parakeet-tdt-0.6b-v3"   # fastest; v3 is current best
-WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo"  # fallback when Parakeet unavailable
-WHISPER_MODEL_CPU = "small.en"   # fallback for non-Apple-Silicon
-WHISPER_MODEL     = WHISPER_MODEL_MLX if _USE_MLX else WHISPER_MODEL_CPU
-WHISPER_BEAM_SIZE = 5
+# Model config
+if _USE_MLX:
+    WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+else:
+    WHISPER_MODEL = "small.en"
+WHISPER_BEAM_SIZE = 3
 
-SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
-TARGET_SR         = 16000
-CHUNK_DURATION    = 4.0    # 4s gives Whisper a full sentence with room for boundary tickers
-OVERLAP           = 1.0    # 1s overlap — tickers at chunk edges appear in both chunks
-SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
-GAIN_TARGET_RMS   = 0.12   # adaptive gain targets this RMS level (Whisper likes ~0.1-0.15)
-GAIN_MAX          = 20.0   # never amplify more than 20× — prevents noise explosion
+# Audio config — Mac uses BlackHole at 48kHz; Windows uses WASAPI loopback at 44.1kHz
+if _sys.platform == "darwin":
+    SAMPLE_RATE       = 48000   # BlackHole hardware rate
+    RESAMPLE_UP       = 1       # 48000 → 16000 is exactly 3:1
+    RESAMPLE_DOWN     = 3
+    SILENCE_THRESHOLD = 0.0005  # BlackHole loopback is quiet (~0.001 RMS)
+    GAIN_TARGET_RMS   = 0.12    # adaptive gain target
+    GAIN_MAX          = 20.0
+else:
+    SAMPLE_RATE       = 44100
+    RESAMPLE_UP       = 160
+    RESAMPLE_DOWN     = 441
+    SILENCE_THRESHOLD = 0.009
+    GAIN_TARGET_RMS   = None    # no gain adjustment on Windows
+    GAIN_MAX          = None
 
+TARGET_SR       = 16000
+CHUNK_DURATION  = 4.0
+OVERLAP         = 1.0
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES
-READ_FRAMES     = int(SAMPLE_RATE * 0.5)  # Stable buffer size — prevents crackling
+READ_FRAMES     = int(SAMPLE_RATE * 0.5)
 
-RESAMPLE_UP   = 1    # 48000 → 16000 is exactly 3:1 — clean integer ratio
-RESAMPLE_DOWN = 3
-
-# Load ticker universe (gates extract_tickers against known valid symbols)
 _ticker_universe = _init_universe(_alpaca_key, _alpaca_secret)
 
-
-def _fetch_finnhub_trending(finnhub_key: str, max_tickers: int = 25) -> list:
-    """
-    Fetch today's most-mentioned tickers from Finnhub market news.
-    Called once at startup — uses stdlib only, 5s timeout, fails silently.
-    """
-    if not finnhub_key:
-        return []
-    try:
-        import urllib.request
-        url = f"https://finnhub.io/api/v1/news?category=general&token={finnhub_key}"
-        req = urllib.request.Request(url, headers={"User-Agent": "trading-helper/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            articles = json.loads(resp.read().decode())
-        counts: dict = {}
-        for article in articles:
-            related = article.get("related", "") or ""
-            for t in related.split(","):
-                t = t.strip().upper()
-                if t and re.fullmatch(r"[A-Z]{1,5}", t):
-                    counts[t] = counts.get(t, 0) + 1
-        trending = sorted(counts, key=lambda x: counts[x], reverse=True)[:max_tickers]
-        if trending:
-            print(f"[FINNHUB] Trending today: {' '.join(trending)}", flush=True)
-        return trending
-    except Exception as e:
-        print(f"[FINNHUB] Skipping trending fetch: {e}", flush=True)
-        return []
-
-
-_finnhub_trending = _fetch_finnhub_trending(_finnhub_key)
-
-# Build initial prompt — priority order:
-#   1. Base financial context (always present)
-#   2. Finnhub trending tickers for today (dynamic, fetched at startup)
-#   3. Current watchlist (tickers already seen this session)
 _PROMPT_BASE = (
     "CNBC financial news. NYSE NASDAQ stock tickers: "
-    # Mega-cap tech
-    "AAPL MSFT NVDA AMZN GOOGL GOOG META NFLX TSLA ORCL IBM "
-    # Semis
-    "AMD INTC QCOM AVGO MU AMAT LRCX KLAC TSM ARM MRVL SMCI "
-    # Cloud / SaaS
-    "CRM SNOW SHOP ZM DDOG CRWD PANW NET OKTA TWLO HUBS WDAY NOW MDB "
-    # Fintech / Crypto
+    "AAPL MSFT NVDA AMZN GOOGL META NFLX TSLA ORCL "
+    "AMD INTC QCOM AVGO MU AMAT TSM ARM MRVL SMCI "
+    "CRM SNOW SHOP ZM DDOG CRWD PANW NET WDAY NOW MDB "
     "V MA PYPL SQ HOOD COIN AFRM SOFI MSTR "
-    # Banks
-    "JPM GS MS BAC WFC C SCHW BLK "
-    # ETFs
-    "SPY QQQ IWM DIA XLF XLE XLK ARKK "
-    # Retail / Consumer
-    "WMT TGT COST HD LOW AMZN CHWY CVNA "
-    # Media / Entertainment
-    "DIS CMCSA WBD PARA SPOT RBLX "
-    # EV / Autos
-    "F GM RIVN LCID NIO XPEV "
-    # Healthcare / Biotech
-    "PFE MRNA UNH LLY NVO JNJ ABBV MRK AMGN GILD REGN VRTX BIIB "
-    # Energy
-    "XOM CVX COP HAL SLB "
-    # Defense
-    "BA LMT RTX NOC "
-    # Telecom
-    "VZ T TMUS "
-    # Meme / Retail
-    "GME AMC BBBY "
-    # High-vol momentum names
-    "PLTR UBER LYFT ABNB DASH DKNG SOUN JOBY RKT SMCI MSTR "
-    # Options / trading terms
-    "calls puts earnings price target breakout resistance support "
-    "moving average VWAP short squeeze gamma squeeze."
+    "JPM GS MS BAC WFC C SCHW "
+    "SPY QQQ IWM XLF XLE XLK "
+    "WMT TGT COST HD DIS CMCSA SPOT RBLX "
+    "F GM RIVN LCID NIO "
+    "PFE MRNA UNH LLY JNJ ABBV MRK AMGN GILD REGN VRTX "
+    "XOM CVX COP BA LMT RTX VZ T TMUS "
+    "GME AMC PLTR UBER LYFT ABNB DASH DKNG SOUN MSTR "
+    "calls puts earnings price target breakout resistance support."
 )
 INITIAL_PROMPT = _PROMPT_BASE
-if _finnhub_trending:
-    INITIAL_PROMPT += f" Trending: {' '.join(_finnhub_trending)}."
 if _logged_tickers:
     INITIAL_PROMPT += f" Watchlist: {' '.join(sorted(_logged_tickers))}."
 
 
 # ========================= MODEL INIT =========================
 
-_whisper_cpu     = None   # faster-whisper model (CPU fallback)
-_parakeet_model  = None   # Parakeet model instance
-
 import contextlib as _contextlib
 
 @_contextlib.contextmanager
 def _suppress_stderr():
-    """Redirect stderr to /dev/null — silences tqdm progress bars from mlx_whisper."""
-    # Setup: try to redirect stderr; if it fails, proceed without suppression
+    """Silence tqdm progress bars from mlx_whisper."""
     old_stderr = None
     try:
         devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
@@ -684,8 +438,7 @@ def _suppress_stderr():
         _os.dup2(devnull_fd, 2)
         _os.close(devnull_fd)
     except Exception:
-        pass  # fd tricks failed — yield without suppression
-    # Single yield point — no yield inside except, so throw() always stops the generator
+        pass
     try:
         yield
     finally:
@@ -697,33 +450,10 @@ def _suppress_stderr():
                 pass
 
 
-def _init_asr():
-    """
-    Initialise the best available ASR engine, cascading through fallbacks:
-      Parakeet-MLX → MLX Whisper → faster-whisper (CPU)
-    Each stage only runs if the previous one is unavailable or failed to load.
-    """
-    global _parakeet_model, _whisper_cpu
+whisper = None  # faster-whisper model object (None when using MLX)
 
-    # ── Stage 1: Parakeet ────────────────────────────────────────────────────
-    if _USE_PARAKEET:
-        for _model_id in (PARAKEET_MODEL, PARAKEET_MODEL.replace("-v3", "-v2")):
-            print(f"Loading Parakeet '{_model_id}'...", flush=True)
-            try:
-                _parakeet_model = _parakeet_mod.from_pretrained(_model_id)
-                _probe_mx = _mx.zeros(int(_parakeet_model.preprocessor_config.sample_rate * 0.5),
-                                      dtype=_mx.bfloat16)
-                _mel = _parakeet_get_logmel(_probe_mx, _parakeet_model.preprocessor_config)
-                _parakeet_model.generate(_mel)
-                print(f"Parakeet ready ({_model_id}) — "
-                      f"SR: {_parakeet_model.preprocessor_config.sample_rate}Hz", flush=True)
-                return   # success — done
-            except Exception as e:
-                print(f"[WARN] Parakeet '{_model_id}' failed ({e})", flush=True)
-                _parakeet_model = None
-        print("[WARN] All Parakeet models failed — falling back to MLX Whisper", flush=True)
-
-    # ── Stage 2: MLX Whisper ─────────────────────────────────────────────────
+def _init_whisper():
+    global whisper
     if _USE_MLX:
         print(f"Loading MLX Whisper '{WHISPER_MODEL}'...", flush=True)
         try:
@@ -732,37 +462,40 @@ def _init_asr():
                 _mlx_whisper.transcribe(_probe, path_or_hf_repo=WHISPER_MODEL,
                                         language="en", verbose=False)
             print("MLX Whisper ready.", flush=True)
-            return   # success
         except Exception as e:
-            print(f"[WARN] MLX Whisper failed ({e}) — falling back to CPU", flush=True)
+            print(f"[WARN] MLX Whisper failed ({e})", flush=True)
+        return
 
-    # ── Stage 3: faster-whisper CPU ──────────────────────────────────────────
-    if WhisperModel is None:
-        print("[ERROR] No ASR engine available — install mlx-whisper or faster-whisper", flush=True)
-        raise SystemExit(1)
     try:
         import ctranslate2 as _ct2
         hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
     except Exception:
         hw = "cpu"
     ct = "float16" if hw == "cuda" else "int8"
-    print(f"Loading Whisper '{WHISPER_MODEL_CPU}' on {hw} ({ct})...", flush=True)
-    _whisper_cpu = WhisperModel(WHISPER_MODEL_CPU, device=hw, compute_type=ct)
+    print(f"Loading Whisper '{WHISPER_MODEL}' on {hw} ({ct})...", flush=True)
+    whisper = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+    if hw == "cuda":
+        try:
+            _probe = np.zeros(1600, dtype=np.float32)
+            list(whisper.transcribe(_probe, beam_size=1)[0])
+            print("CUDA verified.", flush=True)
+        except Exception as e:
+            print(f"[WARN] CUDA unavailable ({e}) — falling back to CPU int8", flush=True)
+            whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
     print(f"Whisper ready on {hw}.", flush=True)
 
-_init_asr()
+_init_whisper()
 
-# Detect optional faster-whisper params (CPU path only)
 import inspect as _inspect
 _TRANSCRIBE_EXTRAS: dict = {}
-if not _USE_PARAKEET and not _USE_MLX and _whisper_cpu:
+if not _USE_MLX and whisper:
     try:
-        _sig = _inspect.signature(_whisper_cpu.transcribe)
+        _sig = _inspect.signature(whisper.transcribe)
         if "repetition_penalty" in _sig.parameters:
             _TRANSCRIBE_EXTRAS["repetition_penalty"] = 1.1
     except Exception:
         pass
-print(f"[INFO] engine extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
+print(f"[INFO] extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
 
 
 # ========================= AUDIO SETUP =========================
@@ -778,7 +511,6 @@ for i in range(p.get_device_count()):
 
 if DEVICE_INDEX is None:
     if _sys.platform == "darwin":
-        # Prefer BlackHole loopback device for system audio capture on macOS
         for i in range(p.get_device_count()):
             dev = p.get_device_info_by_index(i)
             if dev["maxInputChannels"] > 0 and "blackhole" in dev["name"].lower():
@@ -786,8 +518,7 @@ if DEVICE_INDEX is None:
                 print(f"Auto-selected BlackHole device {i}: {dev['name']}")
                 break
         if DEVICE_INDEX is None:
-            print("\nNo BlackHole device found. Install it with: brew install blackhole-2ch")
-            print("Then set your system audio output to a Multi-Output Device that includes BlackHole.")
+            print("No BlackHole device found. Install: brew install blackhole-2ch")
     if DEVICE_INDEX is None:
         try:
             choice = input("\nEnter device index (press Enter for default): ").strip()
@@ -816,13 +547,19 @@ except OSError as e:
     raise SystemExit(1)
 
 
+# ========================= SHARED STATE =========================
+
+audio_queue = Queue(maxsize=12)
+running     = threading.Event()
+running.set()
+
+
 # ========================= AUDIO HELPERS =========================
 
-def _apply_adaptive_gain(mono: np.ndarray) -> np.ndarray:
-    """
-    Optionally denoise, then scale audio to GAIN_TARGET_RMS and hard-limit.
-    Better than a fixed multiplier because BlackHole levels vary with system volume.
-    """
+def _apply_gain(mono: np.ndarray) -> np.ndarray:
+    """Mac only: scale to GAIN_TARGET_RMS then hard-limit to prevent clipping."""
+    if GAIN_TARGET_RMS is None:
+        return mono
     rms = float(np.sqrt(np.mean(mono ** 2)))
     if rms < 1e-8:
         return mono
@@ -834,38 +571,7 @@ def _apply_adaptive_gain(mono: np.ndarray) -> np.ndarray:
     return out
 
 
-def _chunk_has_speech(chunk: np.ndarray) -> bool:
-    """
-    Return True if the chunk contains actual speech.
-    Uses Silero VAD when available; falls back to RMS check.
-    """
-    if _USE_SILERO_VAD and _silero_vad_model is not None and _silero_get_ts is not None:
-        try:
-            import torch as _torch
-            tensor = _torch.from_numpy(chunk)
-            ts = _silero_get_ts(tensor, _silero_vad_model,
-                                sampling_rate=TARGET_SR,
-                                min_speech_duration_ms=150)
-            return len(ts) > 0
-        except Exception:
-            pass  # fall through to RMS
-    # RMS fallback — chunk is already gain-adjusted so 0.02 is a reasonable floor
-    return float(np.sqrt(np.mean(chunk ** 2))) > 0.02
-
-
-# ========================= SHARED STATE =========================
-
-audio_queue  = Queue(maxsize=20)
-ticker_queue = Queue(maxsize=200)   # transcription → ticker logger (disk writes)
-ollama_queue = Queue(maxsize=10)    # transcription → ollama worker (async LLM correction)
-running      = threading.Event()
-running.set()
-
-
 # ========================= WORKER: AUDIO CAPTURE =========================
-
-MAX_BUF_SAMPLES = int(TARGET_SR * 20)   # hard cap: never hold more than 20s of audio
-
 
 def audio_capture():
     local_buf = np.empty(0, dtype=np.float32)
@@ -879,21 +585,12 @@ def audio_capture():
             if np.sqrt(np.mean(mono ** 2)) < SILENCE_THRESHOLD:
                 continue
 
-            # Adaptive gain: scale to target RMS then hard-limit
-            mono = _apply_adaptive_gain(mono)
-
+            mono = _apply_gain(mono)
             resampled = resample_poly(mono, RESAMPLE_UP, RESAMPLE_DOWN)
             local_buf = np.concatenate((local_buf, resampled))
 
-            # Safety cap: if buffer grows too large, drop the oldest audio
-            if len(local_buf) > MAX_BUF_SAMPLES:
-                print("[WARN] Audio buffer too large — dropping old audio", flush=True)
-                local_buf = local_buf[-CHUNK_SAMPLES:].copy()
-
             while len(local_buf) >= CHUNK_SAMPLES:
                 chunk     = local_buf[:CHUNK_SAMPLES].copy()
-                # .copy() forces a new allocation so the slice doesn't keep the
-                # old large array alive in memory (numpy view leak prevention)
                 local_buf = local_buf[ADVANCE_SAMPLES:].copy()
                 try:
                     audio_queue.put_nowait(chunk)
@@ -904,109 +601,10 @@ def audio_capture():
             time.sleep(0.05)
 
 
-# ========================= WORKER: RESOURCE MONITOR =========================
-
-def resource_monitor(interval=300):
-    """Print memory usage every 5 minutes so leaks are visible in the log."""
-    while running.is_set():
-        for _ in range(interval * 5):   # check running every 0.2s
-            if not running.is_set():
-                return
-            time.sleep(0.2)
-        mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
-        q_depth = audio_queue.qsize()
-        print(f"[RESOURCE] Memory: {mem_mb:.0f} MB | Queue depth: {q_depth}", flush=True)
-
-
 # ========================= WORKER: TRANSCRIPTION =========================
 
-# ========================= WORKER: TICKER LOGGER =========================
-
-def ticker_logger_worker():
-    """
-    Dedicated thread that drains ticker_queue and writes to disk.
-    Keeps disk I/O off the transcription hot path.
-    """
-    while running.is_set():
-        try:
-            ticker = ticker_queue.get(timeout=0.5)
-            if ticker is None:
-                break
-            log_ticker(ticker)
-        except Exception:
-            pass
-
-
-# ========================= WORKER: OLLAMA ASYNC CORRECTOR =========================
-
-def ollama_worker():
-    """
-    Runs Ollama LLM correction in a background thread — never blocks Whisper.
-    Picks up text from ollama_queue, corrects it, and logs any NEW tickers found
-    that the raw Whisper extraction missed.
-    """
-    while running.is_set():
-        try:
-            text = ollama_queue.get(timeout=1.0)
-            if text is None:
-                break
-            corrected = _llm_correct(text)
-            if corrected and corrected != text:
-                # Log any tickers the LLM found that raw extraction missed
-                for t in extract_tickers(corrected):
-                    try:
-                        ticker_queue.put_nowait(t)
-                    except Full:
-                        pass
-        except Exception:
-            pass
-
-
-# ========================= OLLAMA LLM POST-PROCESSING =========================
-# Optional: runs a local LLM to fix garbled tickers/numbers after Whisper.
-# Requires Ollama running locally: https://ollama.com
-# Model must be pulled first, e.g.:  ollama pull llama3.2:1b
-# Set to "" to disable entirely.
-
-_OLLAMA_MODEL = "llama3.2:1b"    # fast on Apple Silicon; llama3.2:3b for more accuracy
-_OLLAMA_URL   = "http://localhost:11434/api/generate"
-_OLLAMA_SYSTEM = (
-    "You are a financial transcript corrector. The input is raw speech-to-text from CNBC. "
-    "Fix garbled stock ticker symbols (e.g. 'P S O' → 'PLTR', 'envidia' → 'NVDA'), "
-    "correct prices and numbers, keep all other words exactly as-is. "
-    "Output ONLY the corrected transcript — no explanations, no extra text."
-)
-
-def _llm_correct(text: str) -> str:
-    """
-    Run Ollama to clean up Whisper's output — catches garbles the mishear map missed.
-    Returns the original text unchanged if Ollama is not running or exceeds timeout.
-    Only called when text is long enough to be worth the round-trip.
-    """
-    if not _OLLAMA_MODEL or len(text.split()) < 5:
-        return text
-    try:
-        import urllib.request as _ur
-        payload = json.dumps({
-            "model":  _OLLAMA_MODEL,
-            "system": _OLLAMA_SYSTEM,
-            "prompt": text,
-            "stream": False,
-            "options": {"temperature": 0, "num_predict": 300},
-        }).encode()
-        req = _ur.Request(
-            _OLLAMA_URL, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        with _ur.urlopen(req, timeout=2) as resp:
-            corrected = json.loads(resp.read()).get("response", "").strip()
-            return corrected if corrected else text
-    except Exception:
-        return text   # Ollama not running or too slow — silently fall back
-
-
 def _is_hallucination(text: str) -> bool:
-    """Detect Whisper hallucination loops — same short phrase repeated 4+ times."""
+    """Detect Whisper hallucination loops — same phrase repeated 4+ times."""
     words = text.split()
     if len(words) < 8:
         return False
@@ -1021,53 +619,15 @@ def _is_hallucination(text: str) -> bool:
 
 
 def transcription_worker():
-    # audio_capture already produces correctly-windowed CHUNK_SAMPLES chunks;
-    # process each one directly rather than re-sliding over accumulated audio.
     while running.is_set():
         try:
             chunk = audio_queue.get(timeout=1.0)
             if chunk is None:
                 break
 
-            # Silero VAD: skip chunks with no real speech (saves a Whisper call)
-            if not _chunk_has_speech(chunk):
-                continue
-
-            # Noise suppression — one call per chunk at correct 16kHz sample rate.
-            # IMPORTANT: use the quietest 0.3s window as the noise reference, NOT the
-            # chunk start — using the start caused leading syllables of tickers to be
-            # treated as "noise" and subtracted, losing the first character.
-            if _USE_NOISEREDUCE:
-                try:
-                    _t_nr = time.perf_counter()
-                    _win = int(TARGET_SR * 0.3)   # 0.3s window = 4800 samples
-                    if len(chunk) >= _win * 3:
-                        # Score every non-overlapping window by RMS; pick the quietest
-                        _n_wins = len(chunk) // _win
-                        _rms = [float(np.sqrt(np.mean(chunk[i*_win:(i+1)*_win]**2)))
-                                for i in range(_n_wins)]
-                        _qi  = int(np.argmin(_rms))
-                        _noise_ref = chunk[_qi*_win:(_qi+1)*_win]
-                    else:
-                        _noise_ref = chunk[:_win]
-                    chunk = _nr.reduce_noise(
-                        y=chunk, sr=TARGET_SR,
-                        y_noise=_noise_ref,
-                        stationary=False, prop_decrease=0.75,
-                    )
-                    print(f"[TIME] noisereduce: {(time.perf_counter()-_t_nr)*1000:.0f}ms", flush=True)
-                except Exception:
-                    pass
-
-            _t_w = time.perf_counter()
+            _t = time.perf_counter()
             with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
-                if _USE_PARAKEET and _parakeet_model is not None:
-                    # Parakeet: numpy float32 → MLX bfloat16 → log-mel → generate
-                    _audio_mx = _mx.array(chunk).astype(_mx.bfloat16)
-                    _mel      = _parakeet_get_logmel(_audio_mx, _parakeet_model.preprocessor_config)
-                    _result   = _parakeet_model.generate(_mel)[0]
-                    text      = _result.text
-                elif _USE_MLX or (_USE_PARAKEET and _parakeet_model is None):
+                if _USE_MLX:
                     with _suppress_stderr():
                         result = _mlx_whisper.transcribe(
                             chunk,
@@ -1081,7 +641,7 @@ def transcription_worker():
                         )
                     text = result.get("text", "").strip()
                 else:
-                    segments, _ = _whisper_cpu.transcribe(
+                    segments, _ = whisper.transcribe(
                         chunk,
                         language="en",
                         initial_prompt=INITIAL_PROMPT,
@@ -1093,8 +653,8 @@ def transcription_worker():
                         **_TRANSCRIBE_EXTRAS,
                     )
                     text = " ".join(s.text.strip() for s in segments).strip()
-            _engine = "parakeet" if _USE_PARAKEET else ("mlx-whisper" if _USE_MLX else "cpu-whisper")
-            print(f"[TIME] {_engine}: {(time.perf_counter()-_t_w)*1000:.0f}ms", flush=True)
+
+            print(f"[TIME] {(time.perf_counter()-_t)*1000:.0f}ms", flush=True)
 
             text = normalize_transcript(text)
 
@@ -1106,19 +666,8 @@ def transcription_worker():
 
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
-            # Extract tickers immediately from raw Whisper output (fast path — no Ollama delay)
             for t in extract_tickers(text):
-                try:
-                    ticker_queue.put_nowait(t)
-                except Full:
-                    pass
-
-            # Ollama runs asynchronously — may find additional tickers Whisper garbled
-            # Does NOT block the transcription thread; any extra tickers appear ~1-2s later
-            try:
-                ollama_queue.put_nowait(text)
-            except Full:
-                pass
+                log_ticker(t)
 
         except Exception as e:
             msg = str(e).strip()
@@ -1131,10 +680,7 @@ def transcription_worker():
 
 threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
-    threading.Thread(target=transcription_worker, daemon=True, name="transcription-1"),
-    threading.Thread(target=ticker_logger_worker, daemon=True, name="ticker-logger"),
-    threading.Thread(target=ollama_worker,        daemon=True, name="ollama"),
-    threading.Thread(target=resource_monitor,     daemon=True, name="monitor"),
+    threading.Thread(target=transcription_worker, daemon=True, name="transcription"),
 ]
 for t in threads:
     t.start()
@@ -1148,11 +694,10 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down...")
     running.clear()
-    for q in (audio_queue, ticker_queue, ollama_queue):
-        try:
-            q.put_nowait(None)
-        except Full:
-            pass
+    try:
+        audio_queue.put_nowait(None)
+    except Full:
+        pass
 
 stream.stop_stream()
 stream.close()
