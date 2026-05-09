@@ -15,7 +15,6 @@ from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
 from queue import Queue, Full
 from pathlib import Path
-from difflib import SequenceMatcher
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -107,7 +106,10 @@ def normalize_transcript(text: str) -> str:
 
 # ========================= TICKER EXTRACTION =========================
 
-# Uppercase tokens Whisper produces that are not stock tickers
+# Uppercase tokens Whisper produces that are not stock tickers.
+# NOTE: Do NOT add real tickers here (e.g. COST, OPEN, REAL) — the Alpaca
+# universe check handles false positives; these stop words are only for
+# common English words that would never be valid tickers.
 _STOP_WORDS = {
     "A", "I", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "IF", "IN", "IS",
     "IT", "ME", "MY", "NO", "OF", "OK", "ON", "OR", "SO", "TO", "UP", "US",
@@ -115,118 +117,169 @@ _STOP_WORDS = {
     "HAS", "HIM", "HIS", "HOW", "HER", "ITS", "NEW", "NOT", "NOW", "OLD",
     "ONE", "OUR", "OUT", "SAY", "SEE", "THE", "TOO", "TWO", "WAS", "WHO",
     "WHY", "YET", "YOU", "ALL", "ANY", "LET", "PUT", "RUN", "SET", "ADD",
-    "BUY", "HIT", "TRY", "USE", "WAY", "DAY", "MAY", "OWN", "ASK", "ACT",
+    "HIT", "TRY", "USE", "WAY", "DAY", "MAY", "OWN", "ASK", "ACT",
     "ALSO", "BACK", "BEEN", "CALL", "COME", "DOES", "DOWN", "EACH", "EVEN",
     "FROM", "GIVE", "GOOD", "HAVE", "HERE", "HIGH", "HOLD", "INTO", "JUST",
-    "KEEP", "KNOW", "LAST", "LIKE", "LIVE", "LONG", "LOOK", "MADE", "MAKE",
-    "MANY", "MORE", "MOST", "MOVE", "MUCH", "MUST", "NEXT", "ONLY", "OPEN",
-    "OVER", "PAST", "PLAY", "REAL", "SAME", "SELL", "SHOW", "SIDE", "SOME",
+    "KEEP", "KNOW", "LAST", "LIKE", "LONG", "LOOK", "MADE", "MAKE",
+    "MANY", "MORE", "MOST", "MOVE", "MUCH", "MUST", "NEXT", "ONLY",
+    "OVER", "PAST", "SAME", "SELL", "SHOW", "SIDE", "SOME",
     "STOP", "SUCH", "TAKE", "THAN", "THAT", "THEM", "THEN", "THEY", "THIS",
     "TIME", "VERY", "WANT", "WELL", "WHAT", "WHEN", "WILL", "WITH", "WORK",
     "YOUR", "SAID", "SAYS", "TOLD", "TELL", "TALK", "WENT", "GOES", "BOTH",
     "ONCE", "UPON", "SOON", "EVER", "YEAR", "WEEK", "DAYS", "LETS", "PUTS",
-    # financial/market terms that aren't tickers
+    "LIVE", "BUY",
+    # financial/market terms that are NOT tickers
     "ETF", "IPO", "CEO", "CFO", "COO", "CTO", "SEC", "FDA", "FED", "GDP",
     "CPI", "EPS", "ATH", "ATL", "RSI", "SMA", "EMA", "MACD", "BEAR", "BULL",
     "CALL", "PUTS", "SPAC", "REIT", "BOND", "DEBT", "CASH", "RATE", "RISK",
-    "LOSS", "GAIN", "NEWS", "CNBC", "NYSE", "NASDAQ",
+    "LOSS", "GAIN", "NEWS", "CNBC", "NYSE", "NASDAQ", "VWAP",
     # months / days
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
     "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
-    # Additional noise words
-    "HEY", "HERE", "THANKS", "YEAH", "THAT", "THEIR", "THEM", "THERE", "THESE",
-    "THOSE", "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE", "WHICH", "WHERE",
-    "WHICH", "WHERE", "WHEN", "WHILE", "THESE", "THOSE", "THEIR", "THERE",
-    "HALT", "HALTED", "CUR", "UCI", "LPG", "RFX", "ROADS", "VWAP", "PRFS", 
-    "SNG", "SNDR", "BIYM", "ALERT", "SBL", "UT", "YIA", "BIO", "PPG", "WWW",
-    "WWW", "LEVELS", "LEVEL", "STOCKS", "STOCK", "PRICE", "PRICES", "VOLUME",
-    "BAGER", "ALERT", "LEVEL", "STOCKS", "PRICE", "MARKET", "TRADE", "SHARES",
+    # Noise / Whisper hallucination artifacts
+    "HEY", "THANKS", "YEAH", "THEIR", "THERE", "THESE", "THOSE",
+    "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE", "WHICH", "WHERE", "WHILE",
+    "HALT", "HALTED", "ALERT", "LEVELS", "LEVEL", "STOCKS", "STOCK",
+    "PRICE", "PRICES", "VOLUME", "MARKET", "TRADE", "SHARES",
+    "CUR", "UCI", "LPG", "RFX", "ROADS", "PRFS", "SNG", "SNDR",
+    "BIYM", "SBL", "YIA", "PPG", "WWW", "BAGER",
 }
 
-# Spoken company names → ticker (Whisper capitalizes proper nouns)
+# Spoken company names → ticker (Whisper capitalizes proper nouns).
+# Add any name a trader would say out loud that maps to a ticker.
 _NAME_TO_TICKER = {
+    # Big Tech
     "apple": "AAPL", "tesla": "TSLA", "nvidia": "NVDA", "amazon": "AMZN",
     "google": "GOOGL", "alphabet": "GOOGL", "microsoft": "MSFT",
     "meta": "META", "facebook": "META", "netflix": "NFLX",
-    "palantir": "PLTR", "coinbase": "COIN", "robinhood": "HOOD",
-    "uber": "UBER", "lyft": "LYFT", "airbnb": "ABNB", "snowflake": "SNOW",
-    "salesforce": "CRM", "oracle": "ORCL", "intel": "INTC", "amd": "AMD",
-    "qualcomm": "QCOM", "broadcom": "AVGO", "micron": "MU",
-    "jpmorgan": "JPM", "goldman": "GS", "morgan stanley": "MS",
-    "bank of america": "BAC", "wells fargo": "WFC", "citigroup": "C",
+    # Semiconductors
+    "amd": "AMD", "intel": "INTC", "qualcomm": "QCOM", "broadcom": "AVGO",
+    "micron": "MU", "arm": "ARM", "arm holdings": "ARM",
+    "applied materials": "AMAT", "lam research": "LRCX", "klac": "KLAC",
+    "taiwan semi": "TSM", "tsmc": "TSM", "marvell": "MRVL",
+    "super micro": "SMCI", "supermicro": "SMCI",
+    # Software / Cloud
+    "salesforce": "CRM", "oracle": "ORCL", "snowflake": "SNOW",
+    "shopify": "SHOP", "zoom": "ZM", "datadog": "DDOG", "cloudflare": "NET",
+    "crowdstrike": "CRWD", "palo alto": "PANW", "fortinet": "FTNT",
+    "servicenow": "NOW", "workday": "WDAY", "mongodb": "MDB",
+    "confluent": "CFLT", "elastic": "ESTC", "gitlab": "GTLB",
+    "twilio": "TWLO", "okta": "OKTA", "docusign": "DOCU",
+    "hubspot": "HUBS", "asana": "ASAN", "bill.com": "BILL",
+    # Fintech / Payments
     "visa": "V", "mastercard": "MA", "paypal": "PYPL", "square": "SQ",
-    "shopify": "SHOP", "zoom": "ZM", "spotify": "SPOT", "pinterest": "PINS",
-    "snap": "SNAP", "twitter": "X", "discord": "DSCO",
-    "berkshire": "BRK", "johnson": "JNJ", "pfizer": "PFE", "moderna": "MRNA",
+    "block": "SQ", "affirm": "AFRM", "sofi": "SOFI", "nu bank": "NU",
+    "nubank": "NU", "robinhood": "HOOD", "coinbase": "COIN",
+    "microstrategy": "MSTR", "strategy": "MSTR",
+    # Banks / Finance
+    "jpmorgan": "JPM", "jp morgan": "JPM", "goldman": "GS",
+    "goldman sachs": "GS", "morgan stanley": "MS",
+    "bank of america": "BAC", "wells fargo": "WFC", "citigroup": "C",
+    "citi": "C", "schwab": "SCHW", "blackrock": "BLK",
+    # EV / Autos
+    "ford": "F", "general motors": "GM", "gm": "GM",
+    "rivian": "RIVN", "lucid": "LCID", "nio": "NIO",
+    "li auto": "LI", "xpeng": "XPEV",
+    # Crypto-adjacent
+    "coinbase": "COIN", "riot": "RIOT", "marathon": "MARA",
+    "marathon digital": "MARA", "cleanspark": "CLSK",
+    # Retail / Consumer
+    "walmart": "WMT", "target": "TGT", "costco": "COST",
+    "home depot": "HD", "lowes": "LOW", "lowe's": "LOW",
+    "amazon": "AMZN", "chewy": "CHWY", "wayfair": "W",
+    "carvana": "CVNA", "carmax": "KMX",
+    # Media / Entertainment
+    "disney": "DIS", "comcast": "CMCSA", "warner": "WBD",
+    "paramount": "PARA", "spotify": "SPOT", "netflix": "NFLX",
+    "roblox": "RBLX", "unity": "U",
+    # Telecom
+    "verizon": "VZ", "at&t": "T", "att": "T", "t-mobile": "TMUS",
+    # Healthcare / Pharma / Biotech
+    "pfizer": "PFE", "moderna": "MRNA", "johnson": "JNJ",
+    "johnson and johnson": "JNJ", "abbvie": "ABBV", "merck": "MRK",
+    "eli lilly": "LLY", "lilly": "LLY", "novo nordisk": "NVO",
+    "amgen": "AMGN", "gilead": "GILD", "regeneron": "REGN",
+    "biogen": "BIIB", "vertex": "VRTX", "illumina": "ILMN",
     "unitedhealth": "UNH", "humana": "HUM", "cigna": "CI",
+    "hims": "HIMS", "hims and hers": "HIMS",
+    # Energy
     "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP",
+    "halliburton": "HAL", "schlumberger": "SLB",
+    "plug power": "PLUG", "plug": "PLUG", "bloom energy": "BE",
+    # Aerospace / Defense
     "boeing": "BA", "lockheed": "LMT", "raytheon": "RTX",
-    "walmart": "WMT", "target": "TGT", "costco": "COST", "home depot": "HD",
-    "disney": "DIS", "comcast": "CMCSA", "verizon": "VZ", "att": "T",
-    "ford": "F", "general motors": "GM", "rivian": "RIVN", "lucid": "LCID",
+    "northrop": "NOC", "l3harris": "LHX", "spacex": "SPCE",
+    # Meme / Retail favorites
+    "gamestop": "GME", "game stop": "GME", "amc": "AMC",
+    "amc entertainment": "AMC", "blackberry": "BB",
+    "bed bath": "BBBY", "beyond meat": "BYND",
+    # Travel / Hospitality
+    "airbnb": "ABNB", "booking": "BKNG", "expedia": "EXPE",
+    "uber": "UBER", "lyft": "LYFT", "doordash": "DASH",
+    "delta": "DAL", "united airlines": "UAL", "southwest": "LUV",
+    "royal caribbean": "RCL", "carnival": "CCL",
+    # ETFs / Indices (commonly spoken by name)
+    "spy": "SPY", "s and p": "SPY", "s&p": "SPY",
+    "qqq": "QQQ", "cubes": "QQQ", "nasdaq etf": "QQQ",
+    "iwm": "IWM", "russell": "IWM",
+    "dia": "DIA", "dow etf": "DIA",
+    "xlf": "XLF", "xle": "XLE", "xlk": "XLK", "xli": "XLI",
+    "arc innovation": "ARKK", "ark": "ARKK",
+    # Other commonly mentioned
+    "palantir": "PLTR", "berkshire": "BRK",
+    "draft kings": "DKNG", "draftkings": "DKNG",
+    "toast": "TOST", "bumble": "BMBL", "match": "MTCH",
+    "pinterest": "PINS", "snap": "SNAP",
+    "joby": "JOBY", "joby aviation": "JOBY",
+    "rocket": "RKT", "rocket companies": "RKT",
+    "soun": "SOUN", "soundhound": "SOUN",
 }
 
-_TICKER_RE = re.compile(r'\b([A-Z]{2,5})\b')
+_TICKER_RE = re.compile(r'\b([A-Za-z]{2,5})\b')  # case-insensitive — uppercase after match
 _NAME_RE   = {name: re.compile(rf'\b{re.escape(name)}\b', re.I)
               for name in _NAME_TO_TICKER}
 
+# Whisper sometimes mishears tickers as similar-sounding nonsense words.
+# Map those known misrecognitions directly to the correct ticker.
+_MISHEAR_MAP = {
+    "gugsel": "GOOGL", "guggle": "GOOGL", "gugle": "GOOGL", "googel": "GOOGL",
+    "hud":    "HOOD",  "hood":   "HOOD",
+    "envidia":"NVDA",  "vidia":  "NVDA",
+    "tesler": "TSLA",  "tesla":  "TSLA",
+    "palanteer": "PLTR", "palantir": "PLTR",
+    "appal":  "AAPL",  "apples": "AAPL",
+    "amazin": "AMZN",  "amazons":"AMZN",
+    "microstrategy": "MSTR", "micro strategy": "MSTR",
+}
+_MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
+
 _ticker_universe: set = set()   # populated at startup from Alpaca; empty = fallback mode
-
-
-def _find_close_ticker_match(candidate: str, universe: set, threshold: float = 0.80) -> str:
-    """
-    Try fuzzy match if candidate isn't in universe.
-    Returns the matched ticker or the candidate unchanged.
-    
-    For 4-5 char tickers, threshold of 0.80 means:
-    - 1 char different is acceptable (e.g., "ELPP" → "ELPW" for 4-char: 3/4 = 0.75, skip)
-    - But very close matches (80%+) could catch transposition errors
-    """
-    if candidate in universe or len(candidate) < 2:
-        return candidate
-    
-    best_match = None
-    best_ratio = threshold
-    
-    for symbol in universe:
-        if len(symbol) == len(candidate):
-            ratio = SequenceMatcher(None, candidate, symbol).ratio()
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_match = symbol
-    
-    if best_match:
-        print(f"[FUZZY] '{candidate}' → '{best_match}' (ratio: {best_ratio:.2f})", flush=True)
-        return best_match
-    
-    return candidate
 
 
 def extract_tickers(text: str) -> list:
     found = []
     seen  = set()
 
-    # All-caps tokens — spoken as ticker letters or caught by normalize_transcript
+    # All tokens 2-5 chars — uppercase before checking so "coin" → COIN, "rivn" → RIVN
     for m in _TICKER_RE.finditer(text):
-        t = m.group(1)
+        t = m.group(1).upper()
         if t in _STOP_WORDS or t in seen:
             continue
-        
-        # If the universe is loaded, validate against it with fuzzy fallback
-        if _ticker_universe:
-            if t not in _ticker_universe:
-                # Try fuzzy match before rejecting
-                t = _find_close_ticker_match(t, _ticker_universe)
-                if t not in _ticker_universe:
-                    continue
-        
+        if _ticker_universe and t not in _ticker_universe:
+            continue
         found.append(t)
         seen.add(t)
 
-    # Spoken company names
+    # Spoken company names — catches names Whisper spells out
     lower = text.lower()
     for name, ticker in _NAME_TO_TICKER.items():
         if ticker not in seen and _NAME_RE[name].search(lower):
+            found.append(ticker)
+            seen.add(ticker)
+
+    # Whisper misrecognitions — known phonetic substitutions
+    for mishear, ticker in _MISHEAR_MAP.items():
+        if ticker not in seen and _MISHEAR_RE[mishear].search(lower):
             found.append(ticker)
             seen.add(ticker)
 
@@ -368,8 +421,9 @@ if _secrets_file.exists():
         _s = json.loads(_secrets_file.read_text())
         _alpaca_key    = _s.get("api_key", "")
         _alpaca_secret = _s.get("secret_key", "")
+        _finnhub_key   = _s.get("finnhub_key", "")
     except Exception:
-        pass
+        _finnhub_key = ""
 
 DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
@@ -387,13 +441,13 @@ if DEVICE_INDEX is not None:
         DEVICE_INDEX = None
 
 # small.en is English-only: same size as small but faster and more accurate for English
-WHISPER_MODEL     = "Systran/faster-whisper-small.en"
-WHISPER_BEAM_SIZE = 1      # greedy decoding — fastest possible, accurate enough for financial terms
+WHISPER_MODEL     = "Systran/faster-distil-whisper-medium.en"
+WHISPER_BEAM_SIZE = 3
 
 SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
 TARGET_SR         = 16000
-CHUNK_DURATION    = 1.5    # 1.5s — sweet spot for small model speed vs accuracy
-OVERLAP           = 0.2    # slight overlap to avoid cutting words
+CHUNK_DURATION    = 3.0    # 3s gives Whisper a full phrase — critical for accuracy
+OVERLAP           = 0.5    # 0.5s overlap catches words split at chunk boundary
 SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
 GAIN_FACTOR       = 8.0    # Boost BlackHole signal before sending to Whisper
 
@@ -408,8 +462,42 @@ RESAMPLE_DOWN = 3
 # Load ticker universe (gates extract_tickers against known valid symbols)
 _ticker_universe = _init_universe(_alpaca_key, _alpaca_secret)
 
-# Build initial prompt seeded with the current watchlist so Whisper is primed
-# to recognise those specific symbols accurately.
+
+def _fetch_finnhub_trending(finnhub_key: str, max_tickers: int = 25) -> list:
+    """
+    Fetch today's most-mentioned tickers from Finnhub market news.
+    Called once at startup — uses stdlib only, 5s timeout, fails silently.
+    """
+    if not finnhub_key:
+        return []
+    try:
+        import urllib.request
+        url = f"https://finnhub.io/api/v1/news?category=general&token={finnhub_key}"
+        req = urllib.request.Request(url, headers={"User-Agent": "trading-helper/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            articles = json.loads(resp.read().decode())
+        counts: dict = {}
+        for article in articles:
+            related = article.get("related", "") or ""
+            for t in related.split(","):
+                t = t.strip().upper()
+                if t and re.fullmatch(r"[A-Z]{1,5}", t):
+                    counts[t] = counts.get(t, 0) + 1
+        trending = sorted(counts, key=lambda x: counts[x], reverse=True)[:max_tickers]
+        if trending:
+            print(f"[FINNHUB] Trending today: {' '.join(trending)}", flush=True)
+        return trending
+    except Exception as e:
+        print(f"[FINNHUB] Skipping trending fetch: {e}", flush=True)
+        return []
+
+
+_finnhub_trending = _fetch_finnhub_trending(_finnhub_key)
+
+# Build initial prompt — priority order:
+#   1. Base financial context (always present)
+#   2. Finnhub trending tickers for today (dynamic, fetched at startup)
+#   3. Current watchlist (tickers already seen this session)
 _PROMPT_BASE = (
     "CNBC financial news, stock market trading on NYSE and NASDAQ. "
     "Tickers: AAPL TSLA NVDA AMZN GOOGL MSFT META NFLX PLTR COIN HOOD "
@@ -420,9 +508,11 @@ _PROMPT_BASE = (
     "Earnings per share, price target, analyst upgrade, buy hold sell, "
     "market cap, S and P five hundred, Dow Jones, breakout, resistance."
 )
-INITIAL_PROMPT = _PROMPT_BASE + (
-    f" Watchlist: {' '.join(sorted(_logged_tickers))}." if _logged_tickers else ""
-)
+INITIAL_PROMPT = _PROMPT_BASE
+if _finnhub_trending:
+    INITIAL_PROMPT += f" Trending: {' '.join(_finnhub_trending)}."
+if _logged_tickers:
+    INITIAL_PROMPT += f" Watchlist: {' '.join(sorted(_logged_tickers))}."
 
 
 # ========================= MODEL INIT =========================
@@ -587,6 +677,21 @@ def resource_monitor(interval=300):
 
 # ========================= WORKER: TRANSCRIPTION =========================
 
+def _is_hallucination(text: str) -> bool:
+    """Detect Whisper hallucination loops — same short phrase repeated 4+ times."""
+    words = text.split()
+    if len(words) < 8:
+        return False
+    for n in (2, 3, 4):
+        for i in range(len(words) - n):
+            phrase = tuple(words[i:i + n])
+            count  = sum(1 for j in range(len(words) - n + 1)
+                         if tuple(words[j:j + n]) == phrase)
+            if count >= 4:
+                return True
+    return False
+
+
 def transcription_worker():
     # audio_capture already produces correctly-windowed CHUNK_SAMPLES chunks;
     # process each one directly rather than re-sliding over accumulated audio.
@@ -600,18 +705,22 @@ def transcription_worker():
                 segments, _ = whisper.transcribe(
                     chunk,
                     language="en",
-                    vad_filter=False,
+                    initial_prompt=INITIAL_PROMPT,
+                    vad_filter=True,
                     beam_size=WHISPER_BEAM_SIZE,
                     temperature=0.0,
-                    without_timestamps=True,
-                    no_speech_threshold=0.15,
+                    condition_on_previous_text=False,
+                    no_speech_threshold=0.35,
                     **_TRANSCRIBE_EXTRAS,
                 )
             segs = list(segments)
             text = " ".join(s.text.strip() for s in segs).strip()
             text = normalize_transcript(text)
 
-            if not text or len(text.split()) < 2:
+            if not text or len(text.split()) < 3:
+                continue
+
+            if _is_hallucination(text):
                 continue
 
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)

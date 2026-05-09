@@ -1,14 +1,17 @@
 [
-  {
-    "ticker": "AM",
-    "added": "2026-05-09T13:46:14-04:00"
-  },
-  {
-    "ticker": "GOOGL",
-    "added": "2026-05-09T13:46:14-04:00"
-  },
-  {
-    "ticker": "PN",
-    "added": "2026-05-09T13:46:14-04:00"
-  }
+  "AAPL",
+  "AMD",
+  "AMZN",
+  "AP",
+  "BRO",
+  "COP",
+  "FIVE",
+  "GOOGL",
+  "MCI",
+  "NVDA",
+  "PLTR",
+  "PSO",
+  "SEV",
+  "TSLA",
+  "TV"
 ]
