@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # morning_start.sh
 # Automates the morning trading setup:
-#   1. Switch Mac audio output to Multi-Output Device
-#   2. Open Discord → Stock Scanners & Alerts and click Join Voice
-#   3. Start transcription via the dashboard API
+#   1. Start backend server if not already running
+#   2. Switch Mac audio output to Multi-Output Device
+#   3. Open Discord → Stock Scanners & Alerts and click Join Voice
+#   4. Start transcription via the dashboard API
 
 REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 BACKEND="http://localhost:8888"
@@ -14,8 +15,29 @@ echo "  Brasfield Trading — Morning Setup"
 echo "========================================"
 echo ""
 
-# ── 1. Switch audio output to Multi-Output Device ─────────────────────────────
-echo "[1/3] Switching audio to Multi-Output Device..."
+# ── 1. Start backend if not running ───────────────────────────────────────────
+echo "[1/4] Checking backend server..."
+if curl -s "$BACKEND/api/meta" > /dev/null 2>&1; then
+    echo "      ✓ Server already running."
+else
+    echo "      Server not running — starting it now..."
+    osascript -e "tell application \"Terminal\" to do script \"bash $REPO/run_trading_server.sh\""
+    echo "      Waiting up to 30s for server to come up..."
+    for i in $(seq 1 30); do
+        sleep 1
+        if curl -s "$BACKEND/api/meta" > /dev/null 2>&1; then
+            echo "      ✓ Server is up (${i}s)."
+            break
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "      ✗ Server did not start in time. Check Terminal for errors."
+            exit 1
+        fi
+    done
+fi
+
+# ── 2. Switch audio output to Multi-Output Device ─────────────────────────────
+echo "[2/4] Switching audio to Multi-Output Device..."
 if ! command -v SwitchAudioSource &>/dev/null; then
     echo "      Installing SwitchAudioSource (one-time)..."
     brew install switchaudio-osx
@@ -24,49 +46,26 @@ SwitchAudioSource -s "Multi-Output Device" 2>/dev/null \
     && echo "      ✓ Audio output set to Multi-Output Device." \
     || echo "      ⚠ Could not switch audio — check Audio MIDI Setup."
 
-# ── 2. Open Discord and click Join Voice ──────────────────────────────────────
-echo "[2/3] Opening Discord → Stock Scanners & Alerts..."
-open "$DISCORD_URL"
-echo "      Waiting 10s for Discord to load..."
-sleep 10
+# ── 3. Open Discord → right channel and click Join Voice ──────────────────────
+echo "[3/4] Opening Discord → Stock Scanners & Alerts and clicking Join Voice..."
+python3 "$REPO/click_join_voice.py" \
+    && echo "      ✓ Joined voice channel." \
+    || echo "      ⚠ Could not auto-click — please click Join Voice manually."
 
-echo "      Clicking 'Join Voice'..."
-osascript << 'APPLESCRIPT'
-tell application "Discord" to activate
-delay 2
-tell application "System Events"
-    tell process "Discord"
-        -- look for the Join Voice button and click it
-        set btns to every button of window 1 whose name contains "Join Voice"
-        if (count of btns) > 0 then
-            click item 1 of btns
-        else
-            -- fallback: search deeper in UI tree
-            set allBtns to every UI element of window 1 whose description contains "Join Voice"
-            if (count of allBtns) > 0 then
-                click item 1 of allBtns
-            end if
-        end if
-    end tell
-end tell
-APPLESCRIPT
-
-echo "      ✓ Join Voice clicked (or already in channel)."
-
-# ── 3. Start transcription ────────────────────────────────────────────────────
-echo "[3/3] Starting transcription..."
-sleep 3
+# ── 4. Start transcription ────────────────────────────────────────────────────
+echo "[4/4] Starting transcription..."
+sleep 2
 RESPONSE=$(curl -s -X POST "$BACKEND/api/transcriber/start" 2>/dev/null)
 if echo "$RESPONSE" | grep -q '"running":true'; then
     echo "      ✓ Transcription started."
 elif echo "$RESPONSE" | grep -q '"running"'; then
     echo "      ⚠ Response: $RESPONSE"
 else
-    echo "      ✗ Could not reach backend at $BACKEND — is the server running?"
+    echo "      ✗ Could not reach backend at $BACKEND"
 fi
 
 echo ""
 echo "========================================"
-echo "  Setup complete! Dashboard: $BACKEND"
+echo "  Setup complete!  Dashboard → $BACKEND"
 echo "========================================"
 echo ""
