@@ -206,7 +206,7 @@ body.hosted .status-audio-section       { display: none; }
 body.hosted [data-tab-btn="audio"]      { display: none; }
 body.hosted [data-settings-btn]         { display: none; }
 /* Collapse the transcript column so watchlist + chart fill the full width */
-body.hosted .main-grid               { grid-template-columns: 250px 6px 1fr; }
+body.hosted .main-grid               { grid-template-columns: 210px 6px 1fr; }
 /* Hide watchlist edit controls on hosted (read-only view) */
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
@@ -228,7 +228,7 @@ body.hosted .btn-delete              { display: none; }
   flex: 1;
   display: grid;
   /* transcript | watchlist | resizer | chart */
-  grid-template-columns: 180px 250px 6px 1fr;
+  grid-template-columns: 180px 210px 6px 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
   gap: 0;
@@ -442,7 +442,7 @@ body.hosted .btn-delete              { display: none; }
   border: 1px solid transparent;
 }
 .ticker-row .table-cols { padding: 7px 0; }
-.ticker-row .watchlist-cols { padding: 2px 0; }
+.ticker-row .watchlist-cols { padding: 9px 0; }
 .watchlist-rows .ticker-row { margin-bottom: 1px; }
 .ticker-row:hover { background: var(--card); }
 .ticker-row--selected {
