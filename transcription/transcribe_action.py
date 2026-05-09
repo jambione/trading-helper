@@ -970,14 +970,26 @@ def transcription_worker():
             if not _chunk_has_speech(chunk):
                 continue
 
-            # Noise suppression — one call per chunk at correct 16kHz sample rate
+            # Noise suppression — one call per chunk at correct 16kHz sample rate.
+            # IMPORTANT: use the quietest 0.3s window as the noise reference, NOT the
+            # chunk start — using the start caused leading syllables of tickers to be
+            # treated as "noise" and subtracted, losing the first character.
             if _USE_NOISEREDUCE:
                 try:
                     _t_nr = time.perf_counter()
-                    noise_len = min(int(TARGET_SR * 0.4), len(chunk))
+                    _win = int(TARGET_SR * 0.3)   # 0.3s window = 4800 samples
+                    if len(chunk) >= _win * 3:
+                        # Score every non-overlapping window by RMS; pick the quietest
+                        _n_wins = len(chunk) // _win
+                        _rms = [float(np.sqrt(np.mean(chunk[i*_win:(i+1)*_win]**2)))
+                                for i in range(_n_wins)]
+                        _qi  = int(np.argmin(_rms))
+                        _noise_ref = chunk[_qi*_win:(_qi+1)*_win]
+                    else:
+                        _noise_ref = chunk[:_win]
                     chunk = _nr.reduce_noise(
                         y=chunk, sr=TARGET_SR,
-                        y_noise=chunk[:noise_len],
+                        y_noise=_noise_ref,
                         stationary=False, prop_decrease=0.75,
                     )
                     print(f"[TIME] noisereduce: {(time.perf_counter()-_t_nr)*1000:.0f}ms", flush=True)
