@@ -17,40 +17,40 @@ from queue import Queue, Full
 from pathlib import Path
 
 # ── Engine selection ──────────────────────────────────────────────────────────
-# Priority: Parakeet-MLX > MLX Whisper > faster-whisper (CPU)
-#
-# Parakeet-TDT: NVIDIA's CTC/TDT model ported to MLX — 2-5× faster than Whisper
-# large-turbo with excellent English accuracy and zero hallucinations.
-# Install:  pip install parakeet-mlx
-#
-# MLX Whisper: supports initial_prompt (ticker vocabulary priming) — good fallback.
-# faster-whisper: CPU fallback for non-Apple-Silicon.
+# Import ALL available engines upfront so fallbacks always have their classes ready.
+# Priority at runtime: Parakeet-MLX > MLX Whisper > faster-whisper (CPU)
 
-_USE_PARAKEET = False
-_parakeet_mod = None   # parakeet_mlx module reference (set at import time)
+_USE_PARAKEET     = False
+_USE_MLX          = False
+_parakeet_mod     = None
+_mlx_whisper      = None
+_mx               = None
+_parakeet_get_logmel = None
+
 if _sys.platform == "darwin":
+    # Parakeet (fastest — requires Python 3.10+ and parakeet-mlx)
     try:
         import parakeet_mlx as _parakeet_mod
         import mlx.core as _mx
         from parakeet_mlx.audio import get_logmel as _parakeet_get_logmel
         _USE_PARAKEET = True
-        print("[ENGINE] Parakeet-MLX detected — fastest Apple Silicon ASR", flush=True)
+        print("[ENGINE] Parakeet-MLX available", flush=True)
     except ImportError:
         pass
 
-_USE_MLX = False
-if not _USE_PARAKEET:
+    # MLX Whisper (good fallback — always try to import on macOS)
     try:
-        if _sys.platform == "darwin":
-            import mlx_whisper as _mlx_whisper
-            _USE_MLX = True
-            print("[ENGINE] MLX Whisper — Apple Silicon GPU/Neural Engine", flush=True)
+        import mlx_whisper as _mlx_whisper
+        _USE_MLX = True
+        print("[ENGINE] MLX Whisper available", flush=True)
     except ImportError:
         pass
 
-if not _USE_PARAKEET and not _USE_MLX:
+# faster-whisper CPU — always import as final fallback
+try:
     from faster_whisper import WhisperModel
-    print("[ENGINE] faster-whisper (CPU fallback)", flush=True)
+except ImportError:
+    WhisperModel = None  # type: ignore
 
 
 # ── Silero VAD (optional) ─────────────────────────────────────────────────────
@@ -737,6 +737,9 @@ def _init_asr():
             print(f"[WARN] MLX Whisper failed ({e}) — falling back to CPU", flush=True)
 
     # ── Stage 3: faster-whisper CPU ──────────────────────────────────────────
+    if WhisperModel is None:
+        print("[ERROR] No ASR engine available — install mlx-whisper or faster-whisper", flush=True)
+        raise SystemExit(1)
     try:
         import ctranslate2 as _ct2
         hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
