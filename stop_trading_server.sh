@@ -16,5 +16,6 @@ sleep 3
 pkill -SIGKILL -f "start_all.py"
 pkill -SIGKILL -f "dashboard.py"
 pkill -SIGKILL -f "caffeinate.*start_all"
+pkill -SIGKILL -f "cloudflared"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Trading server stopped" >> "$LOG"

@@ -198,12 +198,15 @@ body {
 .btn--icon { padding: 4px 8px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* ── Hosted mode — transcript column hidden ─────────────────── */
+/* ── Hosted mode — transcript column + settings hidden ──────── */
 body.hosted [data-panel="transcript"]   { display: none; }
 body.hosted [data-tx-btn]               { display: none; }
 body.hosted [data-clear-transcript-btn] { display: none; }
 body.hosted .status-audio-section       { display: none; }
 body.hosted [data-tab-btn="audio"]      { display: none; }
+body.hosted [data-settings-btn]         { display: none; }
+/* Collapse the transcript column so watchlist + chart fill the full width */
+body.hosted .main-grid               { grid-template-columns: 250px 6px 1fr; }
 
 /* ── Main grid layout ───────────────────────────────────────── */
 .main-grid {
