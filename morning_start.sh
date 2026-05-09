@@ -5,6 +5,7 @@
 #   2. Open Discord → Stock Scanners & Alerts and click Join Voice
 #   3. Start transcription via the dashboard API
 
+REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 BACKEND="http://localhost:8888"
 DISCORD_URL="discord://discord.com/channels/822849028395892788/822849029393612804"
 
