@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=13';
-import { api } from './api.js?v=13';
+import { subscribe, selectTicker, get } from './store.js?v=16';
+import { api } from './api.js?v=16';
 
 let _rowsEl  = null;   // <div data-ticker-rows>
 let _countEl = null;   // <span data-ticker-count>

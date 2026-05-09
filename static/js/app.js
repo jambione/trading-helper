@@ -5,16 +5,16 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                           from './api.js?v=13';
-import { subscribe, set }                        from './store.js?v=13';
-import { init as initTranscription }             from './transcription.js?v=13';
-import { init as initTickers }                   from './tickers.js?v=13';
-import { init as initTradingView }               from './tradingview.js?v=13';
-import { init as initConfig, open as openConfig }from './config.js?v=13';
-import { init as initResizer }                   from './resizer.js?v=13';
-import * as controls                             from './controls.js?v=13';
-import * as notifications                        from './notifications.js?v=13';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=13';
+import { connect, on }                           from './api.js?v=16';
+import { subscribe, set }                        from './store.js?v=16';
+import { init as initTranscription }             from './transcription.js?v=16';
+import { init as initTickers }                   from './tickers.js?v=16';
+import { init as initTradingView }               from './tradingview.js?v=16';
+import { init as initConfig, open as openConfig }from './config.js?v=16';
+import { init as initResizer }                   from './resizer.js?v=16';
+import * as controls                             from './controls.js?v=16';
+import * as notifications                        from './notifications.js?v=16';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=16';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -22,7 +22,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Ask the backend whether auth is required before enforcing a login redirect.
   // On localhost the backend always runs locally — never require auth if the
   // hostname is localhost/127.0.0.1 regardless of fetch outcome.
-  const _isLocal = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+  const _isLocal  = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+  const _isMobile = document.body.classList.contains('mobile');
   let authRequired = false;
   try {
     const res  = await fetch(getBackendUrl() + '/api/meta');
@@ -48,7 +49,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
-  try { initTradingView(document.querySelector('[data-panel="tradingview"]')); }  catch (e) { console.error('[app] initTradingView', e); }
+  if (!_isMobile) {
+    try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
+  }
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
   try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer'), { hosted: !_isLocal }); } catch (e) { console.error('[app] initResizer', e); }
   notifications.init();

@@ -213,15 +213,33 @@ body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
 body.hosted .btn-delete              { display: none; }
 
-/* ── Mobile — hide chart, expand watchlist to full width ────── */
+/* ── Mobile — full-width watchlist, no chart ───────────────── */
 @media (max-width: 700px) {
-  body.hosted .main-grid,
   .main-grid {
     grid-template-columns: 1fr !important;
   }
-  [data-panel="tradingview"] { display: none; }
-  #ticker-tv-resizer         { display: none; }
+  [data-panel="transcript"],
+  [data-panel="tradingview"],
+  #ticker-tv-resizer { display: none !important; }
+  .ticker-row .watchlist-cols { padding: 14px 0; }
+  .watchlist-cols {
+    grid-template-columns: 56px 64px 54px 1fr;
+  }
+  .cell-ticker { font-size: 15px; }
+  .cell-price  { font-size: 14px; }
+  .cell-chg    { font-size: 13px; }
 }
+
+/* body.mobile mirrors the media query for cases where JS detects mobile by UA */
+body.mobile .main-grid                 { grid-template-columns: 1fr !important; }
+body.mobile [data-panel="transcript"]  { display: none !important; }
+body.mobile [data-panel="tradingview"] { display: none !important; }
+body.mobile #ticker-tv-resizer         { display: none !important; }
+body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
+body.mobile .watchlist-cols { grid-template-columns: 56px 64px 54px 1fr; }
+body.mobile .cell-ticker { font-size: 15px; }
+body.mobile .cell-price  { font-size: 14px; }
+body.mobile .cell-chg    { font-size: 13px; }
 
 /* ── Main grid layout ───────────────────────────────────────── */
 .main-grid {
