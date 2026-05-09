@@ -17,20 +17,40 @@ from queue import Queue, Full
 from pathlib import Path
 
 # ── Engine selection ──────────────────────────────────────────────────────────
-# MLX runs on Apple Silicon GPU/Neural Engine — 5-10× faster than CPU Whisper.
-# Falls back to faster-whisper on Windows or Intel Macs.
-_USE_MLX = False
-try:
-    if _sys.platform == "darwin":
-        import mlx_whisper as _mlx_whisper
-        _USE_MLX = True
-        print("[ENGINE] MLX Whisper detected — using Apple Silicon GPU/Neural Engine", flush=True)
-except ImportError:
-    pass
+# Priority: Parakeet-MLX > MLX Whisper > faster-whisper (CPU)
+#
+# Parakeet-TDT: NVIDIA's CTC/TDT model ported to MLX — 2-5× faster than Whisper
+# large-turbo with excellent English accuracy and zero hallucinations.
+# Install:  pip install parakeet-mlx
+#
+# MLX Whisper: supports initial_prompt (ticker vocabulary priming) — good fallback.
+# faster-whisper: CPU fallback for non-Apple-Silicon.
 
-if not _USE_MLX:
+_USE_PARAKEET = False
+_parakeet_mod = None   # parakeet_mlx module reference (set at import time)
+if _sys.platform == "darwin":
+    try:
+        import parakeet_mlx as _parakeet_mod
+        import mlx.core as _mx
+        from parakeet_mlx.audio import get_logmel as _parakeet_get_logmel
+        _USE_PARAKEET = True
+        print("[ENGINE] Parakeet-MLX detected — fastest Apple Silicon ASR", flush=True)
+    except ImportError:
+        pass
+
+_USE_MLX = False
+if not _USE_PARAKEET:
+    try:
+        if _sys.platform == "darwin":
+            import mlx_whisper as _mlx_whisper
+            _USE_MLX = True
+            print("[ENGINE] MLX Whisper — Apple Silicon GPU/Neural Engine", flush=True)
+    except ImportError:
+        pass
+
+if not _USE_PARAKEET and not _USE_MLX:
     from faster_whisper import WhisperModel
-    print("[ENGINE] Using faster-whisper (CPU)", flush=True)
+    print("[ENGINE] faster-whisper (CPU fallback)", flush=True)
 
 
 # ── Silero VAD (optional) ─────────────────────────────────────────────────────
@@ -542,10 +562,11 @@ if DEVICE_INDEX is not None:
 
 # small.en is English-only: same size as small but faster and more accurate for English
 # MLX uses HuggingFace MLX-community models; faster-whisper uses its own format
-WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo"  # confirmed HF repo; use whisper-large-v3-turbo-4bit for lower memory if available
-WHISPER_MODEL_CPU = "small.en"   # fallback for non-Apple-Silicon / before MLX installed
+PARAKEET_MODEL    = "mlx-community/parakeet-tdt-0.6b-v3"   # fastest; v3 is current best
+WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo"  # fallback when Parakeet unavailable
+WHISPER_MODEL_CPU = "small.en"   # fallback for non-Apple-Silicon
 WHISPER_MODEL     = WHISPER_MODEL_MLX if _USE_MLX else WHISPER_MODEL_CPU
-WHISPER_BEAM_SIZE = 5      # Higher beam = better accuracy (3 was too fast/greedy)
+WHISPER_BEAM_SIZE = 5
 
 SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
 TARGET_SR         = 16000
@@ -647,7 +668,8 @@ if _logged_tickers:
 
 # ========================= MODEL INIT =========================
 
-_whisper_cpu = None   # faster-whisper model (CPU fallback only)
+_whisper_cpu     = None   # faster-whisper model (CPU fallback)
+_parakeet_model  = None   # Parakeet model instance
 
 import contextlib as _contextlib
 
@@ -675,47 +697,62 @@ def _suppress_stderr():
                 pass
 
 
-def _init_whisper():
+def _init_asr():
+    """Initialise whichever ASR engine is available and warm it up."""
+    global _parakeet_model, _whisper_cpu
+
+    if _USE_PARAKEET:
+        print(f"Loading Parakeet '{PARAKEET_MODEL}'...", flush=True)
+        try:
+            _parakeet_model = _parakeet_mod.from_pretrained(PARAKEET_MODEL)
+            # Warm up: run a silent probe so the first real chunk is fast
+            _probe_mx = _mx.zeros((1, int(_parakeet_model.preprocessor_config.sample_rate * 0.5)),
+                                  dtype=_mx.bfloat16)
+            _mel = _parakeet_get_logmel(_probe_mx[0], _parakeet_model.preprocessor_config)
+            _parakeet_model.generate(_mel)
+            print(f"Parakeet ready — sample rate: {_parakeet_model.preprocessor_config.sample_rate}Hz",
+                  flush=True)
+        except Exception as e:
+            print(f"[WARN] Parakeet load failed ({e}) — falling back to MLX Whisper", flush=True)
+            _parakeet_model = None
+        return
+
     if _USE_MLX:
-        # MLX loads the model on first transcribe call and caches it internally.
-        # Warm it up now with a silent probe so the first real chunk isn't slow.
-        print(f"Loading MLX Whisper '{WHISPER_MODEL}' (Apple Silicon)...", flush=True)
+        print(f"Loading MLX Whisper '{WHISPER_MODEL}'...", flush=True)
         try:
             _probe = np.zeros(1600, dtype=np.float32)
             with _suppress_stderr():
                 _mlx_whisper.transcribe(_probe, path_or_hf_repo=WHISPER_MODEL,
                                         language="en", verbose=False)
-            print("MLX Whisper ready (GPU/Neural Engine).", flush=True)
+            print("MLX Whisper ready.", flush=True)
         except Exception as e:
-            print(f"[WARN] MLX model load failed ({e}) — falling back to small.en CPU", flush=True)
-            from faster_whisper import WhisperModel as _FW
-            return _FW("small.en", device="cpu", compute_type="int8")
-        return None   # MLX is stateless — no model object needed
-    else:
-        try:
-            import ctranslate2 as _ct2
-            hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
-        except Exception:
-            hw = "cpu"
-        ct = "float16" if hw == "cuda" else "int8"
-        print(f"Loading Whisper '{WHISPER_MODEL}' on {hw} ({ct})...", flush=True)
-        m = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
-        print(f"Whisper ready on {hw}.", flush=True)
-        return m
+            print(f"[WARN] MLX Whisper load failed ({e}) — falling back to CPU", flush=True)
+        return
 
-_whisper_cpu = _init_whisper()
+    # CPU fallback
+    try:
+        import ctranslate2 as _ct2
+        hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
+    except Exception:
+        hw = "cpu"
+    ct = "float16" if hw == "cuda" else "int8"
+    print(f"Loading Whisper '{WHISPER_MODEL}' on {hw} ({ct})...", flush=True)
+    _whisper_cpu = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+    print(f"Whisper ready on {hw}.", flush=True)
+
+_init_asr()
 
 # Detect optional faster-whisper params (CPU path only)
 import inspect as _inspect
 _TRANSCRIBE_EXTRAS: dict = {}
-if not _USE_MLX and _whisper_cpu:
+if not _USE_PARAKEET and not _USE_MLX and _whisper_cpu:
     try:
         _sig = _inspect.signature(_whisper_cpu.transcribe)
         if "repetition_penalty" in _sig.parameters:
             _TRANSCRIBE_EXTRAS["repetition_penalty"] = 1.1
     except Exception:
         pass
-print(f"[INFO] extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
+print(f"[INFO] engine extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
 
 
 # ========================= AUDIO SETUP =========================
@@ -1014,7 +1051,13 @@ def transcription_worker():
 
             _t_w = time.perf_counter()
             with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
-                if _USE_MLX:
+                if _USE_PARAKEET and _parakeet_model is not None:
+                    # Parakeet: convert numpy float32 → MLX bfloat16 → log-mel → generate
+                    _audio_mx = _mx.array(chunk).astype(_mx.bfloat16)
+                    _mel      = _parakeet_get_logmel(_audio_mx, _parakeet_model.preprocessor_config)
+                    _result   = _parakeet_model.generate(_mel)[0]
+                    text      = _result.text
+                elif _USE_MLX:
                     with _suppress_stderr():
                         result = _mlx_whisper.transcribe(
                             chunk,
@@ -1040,7 +1083,8 @@ def transcription_worker():
                         **_TRANSCRIBE_EXTRAS,
                     )
                     text = " ".join(s.text.strip() for s in segments).strip()
-            print(f"[TIME] whisper: {(time.perf_counter()-_t_w)*1000:.0f}ms", flush=True)
+            _engine = "parakeet" if _USE_PARAKEET else ("mlx-whisper" if _USE_MLX else "cpu-whisper")
+            print(f"[TIME] {_engine}: {(time.perf_counter()-_t_w)*1000:.0f}ms", flush=True)
 
             text = normalize_transcript(text)
 
