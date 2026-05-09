@@ -533,8 +533,8 @@ WHISPER_BEAM_SIZE = 5      # Higher beam = better accuracy (3 was too fast/greed
 
 SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
 TARGET_SR         = 16000
-CHUNK_DURATION    = 6.0    # 6s gives Whisper a full sentence — critical for ticker accuracy
-OVERLAP           = 1.0    # 1s overlap catches words split at chunk boundary
+CHUNK_DURATION    = 3.5    # 3.5s balances accuracy vs latency — advance is only 3s
+OVERLAP           = 0.5    # 0.5s overlap catches words split at chunk boundary
 SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
 GAIN_TARGET_RMS   = 0.12   # adaptive gain targets this RMS level (Whisper likes ~0.1-0.15)
 GAIN_MAX          = 20.0   # never amplify more than 20× — prevents noise explosion
@@ -760,20 +760,6 @@ def _apply_adaptive_gain(mono: np.ndarray) -> np.ndarray:
     Optionally denoise, then scale audio to GAIN_TARGET_RMS and hard-limit.
     Better than a fixed multiplier because BlackHole levels vary with system volume.
     """
-    # Optional noise suppression: estimate noise floor from the first 0.5s
-    if _USE_NOISEREDUCE:
-        try:
-            noise_sample_len = min(int(TARGET_SR * 0.5), len(mono))
-            mono = _nr.reduce_noise(
-                y=mono,
-                sr=TARGET_SR,
-                y_noise=mono[:noise_sample_len],
-                stationary=False,
-                prop_decrease=0.75,   # aggressive but not total — preserves speech
-            )
-        except Exception:
-            pass
-
     rms = float(np.sqrt(np.mean(mono ** 2)))
     if rms < 1e-8:
         return mono
@@ -807,7 +793,8 @@ def _chunk_has_speech(chunk: np.ndarray) -> bool:
 # ========================= SHARED STATE =========================
 
 audio_queue  = Queue(maxsize=20)
-ticker_queue = Queue(maxsize=200)   # transcription thread puts tickers here; logger thread writes to disk
+ticker_queue = Queue(maxsize=200)   # transcription → ticker logger (disk writes)
+ollama_queue = Queue(maxsize=10)    # transcription → ollama worker (async LLM correction)
 running      = threading.Event()
 running.set()
 
@@ -887,6 +874,31 @@ def ticker_logger_worker():
             pass
 
 
+# ========================= WORKER: OLLAMA ASYNC CORRECTOR =========================
+
+def ollama_worker():
+    """
+    Runs Ollama LLM correction in a background thread — never blocks Whisper.
+    Picks up text from ollama_queue, corrects it, and logs any NEW tickers found
+    that the raw Whisper extraction missed.
+    """
+    while running.is_set():
+        try:
+            text = ollama_queue.get(timeout=1.0)
+            if text is None:
+                break
+            corrected = _llm_correct(text)
+            if corrected and corrected != text:
+                # Log any tickers the LLM found that raw extraction missed
+                for t in extract_tickers(corrected):
+                    try:
+                        ticker_queue.put_nowait(t)
+                    except Full:
+                        pass
+        except Exception:
+            pass
+
+
 # ========================= OLLAMA LLM POST-PROCESSING =========================
 # Optional: runs a local LLM to fix garbled tickers/numbers after Whisper.
 # Requires Ollama running locally: https://ollama.com
@@ -958,6 +970,21 @@ def transcription_worker():
             if not _chunk_has_speech(chunk):
                 continue
 
+            # Noise suppression — one call per chunk at correct 16kHz sample rate
+            if _USE_NOISEREDUCE:
+                try:
+                    _t_nr = time.perf_counter()
+                    noise_len = min(int(TARGET_SR * 0.4), len(chunk))
+                    chunk = _nr.reduce_noise(
+                        y=chunk, sr=TARGET_SR,
+                        y_noise=chunk[:noise_len],
+                        stationary=False, prop_decrease=0.75,
+                    )
+                    print(f"[TIME] noisereduce: {(time.perf_counter()-_t_nr)*1000:.0f}ms", flush=True)
+                except Exception:
+                    pass
+
+            _t_w = time.perf_counter()
             with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
                 if _USE_MLX:
                     with _suppress_stderr():
@@ -970,7 +997,6 @@ def transcription_worker():
                             no_speech_threshold=0.3,
                             condition_on_previous_text=False,
                             verbose=False,
-                            # beam_size not yet supported by mlx_whisper — uses greedy decoding
                         )
                     text = result.get("text", "").strip()
                 else:
@@ -986,6 +1012,8 @@ def transcription_worker():
                         **_TRANSCRIBE_EXTRAS,
                     )
                     text = " ".join(s.text.strip() for s in segments).strip()
+            print(f"[TIME] whisper: {(time.perf_counter()-_t_w)*1000:.0f}ms", flush=True)
+
             text = normalize_transcript(text)
 
             if not text or len(text.split()) < 3:
@@ -994,17 +1022,21 @@ def transcription_worker():
             if _is_hallucination(text):
                 continue
 
-            # Ollama post-processing: fix garbled tickers Whisper + mishear map couldn't catch
-            text = _llm_correct(text)
-
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
 
-            # Hand off to ticker logger thread — non-blocking so Whisper isn't stalled by disk I/O
+            # Extract tickers immediately from raw Whisper output (fast path — no Ollama delay)
             for t in extract_tickers(text):
                 try:
                     ticker_queue.put_nowait(t)
                 except Full:
                     pass
+
+            # Ollama runs asynchronously — may find additional tickers Whisper garbled
+            # Does NOT block the transcription thread; any extra tickers appear ~1-2s later
+            try:
+                ollama_queue.put_nowait(text)
+            except Full:
+                pass
 
         except Exception as e:
             msg = str(e).strip()
@@ -1019,6 +1051,7 @@ threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     threading.Thread(target=transcription_worker, daemon=True, name="transcription-1"),
     threading.Thread(target=ticker_logger_worker, daemon=True, name="ticker-logger"),
+    threading.Thread(target=ollama_worker,        daemon=True, name="ollama"),
     threading.Thread(target=resource_monitor,     daemon=True, name="monitor"),
 ]
 for t in threads:
@@ -1033,7 +1066,7 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down...")
     running.clear()
-    for q in (audio_queue, ticker_queue):
+    for q in (audio_queue, ticker_queue, ollama_queue):
         try:
             q.put_nowait(None)
         except Full:
