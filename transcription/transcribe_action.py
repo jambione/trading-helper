@@ -1,5 +1,6 @@
 import argparse
 import json
+import resource
 import sys as _sys
 # pyaudiowpatch provides WASAPI loopback on Windows; fall back to standard pyaudio elsewhere
 if _sys.platform == "win32":
@@ -386,22 +387,23 @@ if DEVICE_INDEX is not None:
         DEVICE_INDEX = None
 
 # small.en is English-only: same size as small but faster and more accurate for English
-WHISPER_MODEL     = "medium.en"
-WHISPER_BEAM_SIZE = 5
+WHISPER_MODEL     = "Systran/faster-whisper-small.en"
+WHISPER_BEAM_SIZE = 1      # greedy decoding — fastest possible, accurate enough for financial terms
 
-SAMPLE_RATE       = 44100
+SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
 TARGET_SR         = 16000
-CHUNK_DURATION    = 5.0    # 5s gives model more context per pass
-OVERLAP           = 1.0    # 1s overlap prevents words being cut at boundaries
-SILENCE_THRESHOLD = 0.009
+CHUNK_DURATION    = 1.5    # 1.5s — sweet spot for small model speed vs accuracy
+OVERLAP           = 0.2    # slight overlap to avoid cutting words
+SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
+GAIN_FACTOR       = 8.0    # Boost BlackHole signal before sending to Whisper
 
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES
-READ_FRAMES     = int(SAMPLE_RATE * 0.5)
+READ_FRAMES     = int(SAMPLE_RATE * 0.5)  # Stable buffer size — prevents crackling
 
-RESAMPLE_UP   = 160
-RESAMPLE_DOWN = 441
+RESAMPLE_UP   = 1    # 48000 → 16000 is exactly 3:1 — clean integer ratio
+RESAMPLE_DOWN = 3
 
 # Load ticker universe (gates extract_tickers against known valid symbols)
 _ticker_universe = _init_universe(_alpaca_key, _alpaca_secret)
@@ -519,12 +521,15 @@ except OSError as e:
 
 # ========================= SHARED STATE =========================
 
-audio_queue = Queue(maxsize=12)
+audio_queue = Queue(maxsize=20)
 running     = threading.Event()
 running.set()
 
 
 # ========================= WORKER: AUDIO CAPTURE =========================
+
+MAX_BUF_SAMPLES = int(TARGET_SR * 20)   # hard cap: never hold more than 20s of audio
+
 
 def audio_capture():
     local_buf = np.empty(0, dtype=np.float32)
@@ -538,12 +543,25 @@ def audio_capture():
             if np.sqrt(np.mean(mono ** 2)) < SILENCE_THRESHOLD:
                 continue
 
+            # Boost quiet loopback signal then normalize to prevent clipping distortion
+            mono = mono * GAIN_FACTOR
+            peak = np.max(np.abs(mono))
+            if peak > 1.0:
+                mono = mono / peak
+
             resampled = resample_poly(mono, RESAMPLE_UP, RESAMPLE_DOWN)
             local_buf = np.concatenate((local_buf, resampled))
 
+            # Safety cap: if buffer grows too large, drop the oldest audio
+            if len(local_buf) > MAX_BUF_SAMPLES:
+                print("[WARN] Audio buffer too large — dropping old audio", flush=True)
+                local_buf = local_buf[-CHUNK_SAMPLES:].copy()
+
             while len(local_buf) >= CHUNK_SAMPLES:
                 chunk     = local_buf[:CHUNK_SAMPLES].copy()
-                local_buf = local_buf[ADVANCE_SAMPLES:]
+                # .copy() forces a new allocation so the slice doesn't keep the
+                # old large array alive in memory (numpy view leak prevention)
+                local_buf = local_buf[ADVANCE_SAMPLES:].copy()
                 try:
                     audio_queue.put_nowait(chunk)
                 except Full:
@@ -551,6 +569,20 @@ def audio_capture():
 
         except Exception:
             time.sleep(0.05)
+
+
+# ========================= WORKER: RESOURCE MONITOR =========================
+
+def resource_monitor(interval=300):
+    """Print memory usage every 5 minutes so leaks are visible in the log."""
+    while running.is_set():
+        for _ in range(interval * 5):   # check running every 0.2s
+            if not running.is_set():
+                return
+            time.sleep(0.2)
+        mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        q_depth = audio_queue.qsize()
+        print(f"[RESOURCE] Memory: {mem_mb:.0f} MB | Queue depth: {q_depth}", flush=True)
 
 
 # ========================= WORKER: TRANSCRIPTION =========================
@@ -564,21 +596,22 @@ def transcription_worker():
             if chunk is None:
                 break
 
-            segments, _ = whisper.transcribe(
-                chunk,
-                language="en",
-                initial_prompt=INITIAL_PROMPT,
-                vad_filter=True,
-                beam_size=WHISPER_BEAM_SIZE,
-                temperature=0.0,
-                condition_on_previous_text=False,
-                no_speech_threshold=0.5,
-                **_TRANSCRIBE_EXTRAS,
-            )
-            text = " ".join(s.text.strip() for s in segments).strip()
+            with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
+                segments, _ = whisper.transcribe(
+                    chunk,
+                    language="en",
+                    vad_filter=False,
+                    beam_size=WHISPER_BEAM_SIZE,
+                    temperature=0.0,
+                    without_timestamps=True,
+                    no_speech_threshold=0.15,
+                    **_TRANSCRIBE_EXTRAS,
+                )
+            segs = list(segments)
+            text = " ".join(s.text.strip() for s in segs).strip()
             text = normalize_transcript(text)
 
-            if not text or len(text.split()) < 3:
+            if not text or len(text.split()) < 2:
                 continue
 
             print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
@@ -597,7 +630,8 @@ def transcription_worker():
 
 threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
-    threading.Thread(target=transcription_worker, daemon=True, name="transcription"),
+    threading.Thread(target=transcription_worker, daemon=True, name="transcription-1"),
+    threading.Thread(target=resource_monitor,     daemon=True, name="monitor"),
 ]
 for t in threads:
     t.start()
