@@ -1,5 +1,6 @@
 import argparse
 import json
+import os as _os
 import resource
 import sys as _sys
 # pyaudiowpatch provides WASAPI loopback on Windows; fall back to standard pyaudio elsewhere
@@ -11,10 +12,25 @@ import numpy as np
 import time
 import re
 import threading
-from faster_whisper import WhisperModel
 from scipy.signal import resample_poly
 from queue import Queue, Full
 from pathlib import Path
+
+# ── Engine selection ──────────────────────────────────────────────────────────
+# MLX runs on Apple Silicon GPU/Neural Engine — 5-10× faster than CPU Whisper.
+# Falls back to faster-whisper on Windows or Intel Macs.
+_USE_MLX = False
+try:
+    if _sys.platform == "darwin":
+        import mlx_whisper as _mlx_whisper
+        _USE_MLX = True
+        print("[ENGINE] MLX Whisper detected — using Apple Silicon GPU/Neural Engine", flush=True)
+except ImportError:
+    pass
+
+if not _USE_MLX:
+    from faster_whisper import WhisperModel
+    print("[ENGINE] Using faster-whisper (CPU)", flush=True)
 
 
 # ========================= TRANSCRIPT NORMALIZATION =========================
@@ -242,14 +258,51 @@ _NAME_RE   = {name: re.compile(rf'\b{re.escape(name)}\b', re.I)
 # Whisper sometimes mishears tickers as similar-sounding nonsense words.
 # Map those known misrecognitions directly to the correct ticker.
 _MISHEAR_MAP = {
+    # Google / Alphabet
     "gugsel": "GOOGL", "guggle": "GOOGL", "gugle": "GOOGL", "googel": "GOOGL",
+    "googl":  "GOOGL", "goog":   "GOOG",
+    # Robinhood
     "hud":    "HOOD",  "hood":   "HOOD",
-    "envidia":"NVDA",  "vidia":  "NVDA",
+    # Nvidia
+    "envidia":"NVDA",  "vidia":  "NVDA",  "invidia": "NVDA",
+    # Tesla
     "tesler": "TSLA",  "tesla":  "TSLA",
-    "palanteer": "PLTR", "palantir": "PLTR",
-    "appal":  "AAPL",  "apples": "AAPL",
+    # Palantir
+    "palanteer": "PLTR", "palantir": "PLTR", "palantar": "PLTR", "palanter": "PLTR",
+    # Apple
+    "appal":  "AAPL",  "apples": "AAPL",  "aple": "AAPL",
+    # Amazon
     "amazin": "AMZN",  "amazons":"AMZN",
-    "microstrategy": "MSTR", "micro strategy": "MSTR",
+    # Strategy / MicroStrategy
+    "microstrategy": "MSTR", "micro strategy": "MSTR", "strategy": "MSTR",
+    # Coinbase
+    "coinbase": "COIN",
+    # SoundHound
+    "soundhound": "SOUN", "sound hound": "SOUN",
+    # Palantir variants Whisper medium.en sometimes produces
+    "pltr":   "PLTR",
+    # Super Micro
+    "supermicro": "SMCI", "super micro": "SMCI",
+    # Rivian
+    "rivien": "RIVN",  "rivian": "RIVN",
+    # Lucid
+    "lucid":  "LCID",
+    # Affirm
+    "affirm": "AFRM",
+    # SoFi
+    "sofi":   "SOFI",
+    # DraftKings
+    "draftkings": "DKNG", "draft kings": "DKNG",
+    # Snowflake
+    "snowflake": "SNOW",
+    # CrowdStrike
+    "crowdstrike": "CRWD", "crowd strike": "CRWD",
+    # Palo Alto
+    "palo alto": "PANW",
+    # Cloudflare
+    "cloudflare": "NET",
+    # Robinhood full name
+    "robinhood": "HOOD", "robin hood": "HOOD",
 }
 _MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
 
@@ -441,13 +494,16 @@ if DEVICE_INDEX is not None:
         DEVICE_INDEX = None
 
 # small.en is English-only: same size as small but faster and more accurate for English
-WHISPER_MODEL     = "Systran/faster-distil-whisper-medium.en"
-WHISPER_BEAM_SIZE = 3
+# MLX uses HuggingFace MLX-community models; faster-whisper uses its own format
+WHISPER_MODEL_MLX = "mlx-community/whisper-medium.en-mlx"  # medium.en for better accuracy on Apple Silicon
+WHISPER_MODEL_CPU = "small.en"   # fallback for non-Apple-Silicon / before MLX installed
+WHISPER_MODEL     = WHISPER_MODEL_MLX if _USE_MLX else WHISPER_MODEL_CPU
+WHISPER_BEAM_SIZE = 5      # Higher beam = better accuracy (3 was too fast/greedy)
 
 SAMPLE_RATE       = 48000  # Match BlackHole's actual hardware rate (set in Audio MIDI Setup)
 TARGET_SR         = 16000
-CHUNK_DURATION    = 3.0    # 3s gives Whisper a full phrase — critical for accuracy
-OVERLAP           = 0.5    # 0.5s overlap catches words split at chunk boundary
+CHUNK_DURATION    = 6.0    # 6s gives Whisper a full sentence — critical for ticker accuracy
+OVERLAP           = 1.0    # 1s overlap catches words split at chunk boundary
 SILENCE_THRESHOLD = 0.0005  # BlackHole loopback signal is quiet (~0.001 RMS)
 GAIN_FACTOR       = 8.0    # Boost BlackHole signal before sending to Whisper
 
@@ -499,14 +555,40 @@ _finnhub_trending = _fetch_finnhub_trending(_finnhub_key)
 #   2. Finnhub trending tickers for today (dynamic, fetched at startup)
 #   3. Current watchlist (tickers already seen this session)
 _PROMPT_BASE = (
-    "CNBC financial news, stock market trading on NYSE and NASDAQ. "
-    "Tickers: AAPL TSLA NVDA AMZN GOOGL MSFT META NFLX PLTR COIN HOOD "
-    "UBER LYFT ABNB SNOW CRM ORCL INTC AMD QCOM AVGO MU SPY QQQ IWM "
-    "JPM GS MS BAC WFC C V MA PYPL SQ SHOP ZM SPOT PINS SNAP "
-    "XOM CVX COP BA LMT RTX WMT TGT COST HD DIS CMCSA VZ T "
-    "F GM RIVN LCID PFE MRNA UNH HUM CI BRK JNJ AMGN GILD "
-    "Earnings per share, price target, analyst upgrade, buy hold sell, "
-    "market cap, S and P five hundred, Dow Jones, breakout, resistance."
+    "CNBC financial news. NYSE NASDAQ stock tickers: "
+    # Mega-cap tech
+    "AAPL MSFT NVDA AMZN GOOGL GOOG META NFLX TSLA ORCL IBM "
+    # Semis
+    "AMD INTC QCOM AVGO MU AMAT LRCX KLAC TSM ARM MRVL SMCI "
+    # Cloud / SaaS
+    "CRM SNOW SHOP ZM DDOG CRWD PANW NET OKTA TWLO HUBS WDAY NOW MDB "
+    # Fintech / Crypto
+    "V MA PYPL SQ HOOD COIN AFRM SOFI MSTR "
+    # Banks
+    "JPM GS MS BAC WFC C SCHW BLK "
+    # ETFs
+    "SPY QQQ IWM DIA XLF XLE XLK ARKK "
+    # Retail / Consumer
+    "WMT TGT COST HD LOW AMZN CHWY CVNA "
+    # Media / Entertainment
+    "DIS CMCSA WBD PARA SPOT RBLX "
+    # EV / Autos
+    "F GM RIVN LCID NIO XPEV "
+    # Healthcare / Biotech
+    "PFE MRNA UNH LLY NVO JNJ ABBV MRK AMGN GILD REGN VRTX BIIB "
+    # Energy
+    "XOM CVX COP HAL SLB "
+    # Defense
+    "BA LMT RTX NOC "
+    # Telecom
+    "VZ T TMUS "
+    # Meme / Retail
+    "GME AMC BBBY "
+    # High-vol momentum names
+    "PLTR UBER LYFT ABNB DASH DKNG SOUN JOBY RKT SMCI MSTR "
+    # Options / trading terms
+    "calls puts earnings price target breakout resistance support "
+    "moving average VWAP short squeeze gamma squeeze."
 )
 INITIAL_PROMPT = _PROMPT_BASE
 if _finnhub_trending:
@@ -517,45 +599,75 @@ if _logged_tickers:
 
 # ========================= MODEL INIT =========================
 
-def _init_whisper():
-    """Load model on GPU if available and working, otherwise CPU int8."""
+_whisper_cpu = None   # faster-whisper model (CPU fallback only)
+
+import contextlib as _contextlib
+
+@_contextlib.contextmanager
+def _suppress_stderr():
+    """Redirect stderr to /dev/null — silences tqdm progress bars from mlx_whisper."""
+    # Setup: try to redirect stderr; if it fails, proceed without suppression
+    old_stderr = None
     try:
-        import ctranslate2 as _ct2
-        hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
+        devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
+        old_stderr = _os.dup(2)
+        _os.dup2(devnull_fd, 2)
+        _os.close(devnull_fd)
     except Exception:
-        hw = "cpu"
-    ct = "float16" if hw == "cuda" else "int8"
+        pass  # fd tricks failed — yield without suppression
+    # Single yield point — no yield inside except, so throw() always stops the generator
+    try:
+        yield
+    finally:
+        if old_stderr is not None:
+            try:
+                _os.dup2(old_stderr, 2)
+                _os.close(old_stderr)
+            except Exception:
+                pass
 
-    print(f"Loading Whisper '{WHISPER_MODEL}' model on {hw} ({ct})...", flush=True)
-    m = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
 
-    if hw == "cuda":
-        # Force CUDA kernels to load now — catches missing DLLs (cublas, etc.) before
-        # the capture loop starts, so we can fall back cleanly instead of error-looping.
+def _init_whisper():
+    if _USE_MLX:
+        # MLX loads the model on first transcribe call and caches it internally.
+        # Warm it up now with a silent probe so the first real chunk isn't slow.
+        print(f"Loading MLX Whisper '{WHISPER_MODEL}' (Apple Silicon)...", flush=True)
         try:
             _probe = np.zeros(1600, dtype=np.float32)
-            list(m.transcribe(_probe, beam_size=1)[0])
-            print(f"CUDA verified.", flush=True)
+            with _suppress_stderr():
+                _mlx_whisper.transcribe(_probe, path_or_hf_repo=WHISPER_MODEL,
+                                        language="en", verbose=False)
+            print("MLX Whisper ready (GPU/Neural Engine).", flush=True)
         except Exception as e:
-            print(f"[WARN] CUDA unavailable ({e}) — falling back to CPU int8", flush=True)
-            hw, ct = "cpu", "int8"
-            m = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+            print(f"[WARN] MLX model load failed ({e}) — falling back to small.en CPU", flush=True)
+            from faster_whisper import WhisperModel as _FW
+            return _FW("small.en", device="cpu", compute_type="int8")
+        return None   # MLX is stateless — no model object needed
+    else:
+        try:
+            import ctranslate2 as _ct2
+            hw = "cuda" if _ct2.get_cuda_device_count() > 0 else "cpu"
+        except Exception:
+            hw = "cpu"
+        ct = "float16" if hw == "cuda" else "int8"
+        print(f"Loading Whisper '{WHISPER_MODEL}' on {hw} ({ct})...", flush=True)
+        m = WhisperModel(WHISPER_MODEL, device=hw, compute_type=ct)
+        print(f"Whisper ready on {hw}.", flush=True)
+        return m
 
-    print(f"Whisper ready on {hw}.", flush=True)
-    return m
+_whisper_cpu = _init_whisper()
 
-whisper = _init_whisper()
-
-# Detect which optional params the installed faster-whisper version supports
+# Detect optional faster-whisper params (CPU path only)
 import inspect as _inspect
 _TRANSCRIBE_EXTRAS: dict = {}
-try:
-    _sig = _inspect.signature(whisper.transcribe)
-    if "repetition_penalty" in _sig.parameters:
-        _TRANSCRIBE_EXTRAS["repetition_penalty"] = 1.1
-except Exception:
-    pass
-print(f"[INFO] faster-whisper extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
+if not _USE_MLX and _whisper_cpu:
+    try:
+        _sig = _inspect.signature(_whisper_cpu.transcribe)
+        if "repetition_penalty" in _sig.parameters:
+            _TRANSCRIBE_EXTRAS["repetition_penalty"] = 1.1
+    except Exception:
+        pass
+print(f"[INFO] extras: {list(_TRANSCRIBE_EXTRAS) or 'none'}", flush=True)
 
 
 # ========================= AUDIO SETUP =========================
@@ -702,19 +814,33 @@ def transcription_worker():
                 break
 
             with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
-                segments, _ = whisper.transcribe(
-                    chunk,
-                    language="en",
-                    initial_prompt=INITIAL_PROMPT,
-                    vad_filter=True,
-                    beam_size=WHISPER_BEAM_SIZE,
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    no_speech_threshold=0.35,
-                    **_TRANSCRIBE_EXTRAS,
-                )
-            segs = list(segments)
-            text = " ".join(s.text.strip() for s in segs).strip()
+                if _USE_MLX:
+                    with _suppress_stderr():
+                        result = _mlx_whisper.transcribe(
+                            chunk,
+                            path_or_hf_repo=WHISPER_MODEL,
+                            language="en",
+                            initial_prompt=INITIAL_PROMPT,
+                            temperature=0.0,
+                            no_speech_threshold=0.3,
+                            condition_on_previous_text=False,
+                            verbose=False,
+                            # beam_size not yet supported by mlx_whisper — uses greedy decoding
+                        )
+                    text = result.get("text", "").strip()
+                else:
+                    segments, _ = _whisper_cpu.transcribe(
+                        chunk,
+                        language="en",
+                        initial_prompt=INITIAL_PROMPT,
+                        vad_filter=True,
+                        beam_size=WHISPER_BEAM_SIZE,
+                        temperature=0.0,
+                        condition_on_previous_text=False,
+                        no_speech_threshold=0.35,
+                        **_TRANSCRIBE_EXTRAS,
+                    )
+                    text = " ".join(s.text.strip() for s in segments).strip()
             text = normalize_transcript(text)
 
             if not text or len(text.split()) < 3:
