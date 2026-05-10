@@ -175,33 +175,58 @@ def workflow_add_wb(ticker: str) -> bool:
     return True
 
 
-# ── TradingView: find Brave window ────────────────────────────────────────────
+# ── TradingView: find browser window (Brave or Chrome) ───────────────────────
 
-def _find_brave_hwnd() -> int | None:
-    """Return HWND of the first visible Brave browser window."""
-    hwnd_found = []
+def _find_browser_hwnd() -> tuple[int | None, str]:
+    """
+    Return (HWND, browser_name) of the first visible Brave or Chrome window.
+    Checks window class Chrome_WidgetWin_1 — shared by both browsers.
+    Brave windows end with '- Brave'; Chrome windows end with '- Google Chrome'.
+    Falls back to any visible Chrome_WidgetWin_1 window if neither matches.
+    """
+    brave_hwnd  = None
+    chrome_hwnd = None
+    any_hwnd    = None
 
     def cb(hwnd, _):
+        nonlocal brave_hwnd, chrome_hwnd, any_hwnd
+        if not _user32.IsWindowVisible(hwnd):
+            return 1
         cls = ctypes.create_unicode_buffer(256)
         _user32.GetClassNameW(hwnd, cls, 256)
-        if cls.value == "Chrome_WidgetWin_1":
-            title = ctypes.create_unicode_buffer(512)
-            _user32.GetWindowTextW(hwnd, title, 512)
-            if "Brave" in title.value and _user32.IsWindowVisible(hwnd):
-                hwnd_found.append(hwnd)
-                return 0  # stop
+        if cls.value != "Chrome_WidgetWin_1":
+            return 1
+        n = _user32.GetWindowTextLengthW(hwnd)
+        if n == 0:
+            return 1
+        title = ctypes.create_unicode_buffer(n + 1)
+        _user32.GetWindowTextW(hwnd, title, n + 1)
+        t = title.value
+        if any_hwnd is None:
+            any_hwnd = hwnd
+        if "Brave" in t and brave_hwnd is None:
+            brave_hwnd = hwnd
+        if "Google Chrome" in t and chrome_hwnd is None:
+            chrome_hwnd = hwnd
         return 1
 
     proc = _EnumWindowsProc(cb)
     _user32.EnumWindows(proc, 0)
-    return hwnd_found[0] if hwnd_found else None
+
+    if brave_hwnd:
+        return brave_hwnd, "Brave"
+    if chrome_hwnd:
+        return chrome_hwnd, "Chrome"
+    if any_hwnd:
+        return any_hwnd, "browser"
+    return None, ""
 
 
 # ── TradingView workflow ──────────────────────────────────────────────────────
 
 def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     """
-    Focus Brave, switch to the pinned TradingView tab (Ctrl+tab_num),
+    Focus Brave/Chrome, switch to the pinned TradingView tab (Ctrl+tab_num),
     click the chart area, type the ticker, press Enter to load the symbol,
     then Alt+W to add to the TradingView watchlist.
     """
@@ -212,35 +237,37 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
         return True
 
     print(f"  🌐 ADD_TV → {ticker}")
-    hwnd = _find_brave_hwnd()
+    hwnd, browser = _find_browser_hwnd()
     if not hwnd:
-        print("  ❌ ADD_TV failed — Brave browser window not found")
+        print("  ❌ ADD_TV failed — no Brave/Chrome window found")
         return False
 
-    # Bring Brave to front (SW_SHOW keeps maximised state; SW_RESTORE if minimised)
+    print(f"  Found: {browser}")
+
+    # Bring browser to front
     _user32.ShowWindow(hwnd, _SW_RESTORE if _user32.IsIconic(hwnd) else _SW_SHOW)
-    time.sleep(0.15)
+    time.sleep(0.2)
     _user32.SetForegroundWindow(hwnd)
     _user32.BringWindowToTop(hwnd)
-    time.sleep(0.4)
+    time.sleep(0.6)   # wait for window to be fully focused
 
     # Switch to pinned TradingView tab
     _pag.hotkey("ctrl", str(tab_num))
-    time.sleep(0.4)
+    time.sleep(0.6)   # wait for tab to load/switch
 
     # Click center of chart to grab keyboard focus
     left, top, w, h = _get_rect(hwnd)
     _pag.click(left + w // 2, top + h // 2)
-    time.sleep(0.2)
+    time.sleep(0.3)
 
     # Type ticker — TradingView opens symbol search on any keypress
     for letter in ticker:
         _pag.press(letter.lower())
         time.sleep(0.05)
 
+    time.sleep(0.4)
+    _pag.press("enter")      # confirm symbol
     time.sleep(0.3)
-    _pag.press("enter")    # confirm symbol
-    time.sleep(0.2)
 
     _pag.hotkey("alt", "w")  # add to TradingView watchlist
 
