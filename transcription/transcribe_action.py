@@ -73,11 +73,11 @@ else:
     GAIN_MAX          = None
 
 TARGET_SR       = 16000
-CHUNK_DURATION  = 2.0    # 2s chunks → results every ~1.5s (was 3s → every 2.5s)
-OVERLAP         = 0.5    # keep 0.5s overlap so words aren't cut at chunk edges
+CHUNK_DURATION  = 3.0    # 3s gives Whisper enough sentence context for accuracy
+OVERLAP         = 0.5    # 0.5s overlap so words aren't cut at chunk edges
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
-ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per chunk
+ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 2.5s of new audio per chunk
 READ_FRAMES     = int(SAMPLE_RATE * 0.10)   # read 100ms at a time — fills buffer faster
 
 
