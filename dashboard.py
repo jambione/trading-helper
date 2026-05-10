@@ -70,6 +70,7 @@ _TICKER_RE         = re.compile(r'\b([A-Z]{2,5})\b')
 _SPEECH_LINE_RE    = re.compile(r'^\[(\d{2}:\d{2}:\d{2})\] ')
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
 TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
+NEWS_FILE          = Path("news.json")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -94,6 +95,29 @@ class _State:
         return self.transcriber is not None and self.transcriber.poll() is None
 
 STATE = _State()
+
+
+# ── News ─────────────────────────────────────────────────────────────────────
+
+_news_cache: dict = {"mtime": -1.0, "items": []}
+
+def load_news() -> list:
+    """Read news.json, cache by mtime. Returns list of news item dicts."""
+    try:
+        if not NEWS_FILE.exists():
+            return []
+        mtime = NEWS_FILE.stat().st_mtime
+        if mtime == _news_cache["mtime"]:
+            return _news_cache["items"]
+        import json as _json
+        items = _json.loads(NEWS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(items, list):
+            items = []
+        _news_cache.update(mtime=mtime, items=items)
+        return items
+    except Exception as e:
+        log.warning(f"[NEWS] Failed to load news.json: {e}")
+        return []
 
 
 # ── Mention tracking ──────────────────────────────────────────────────────────
@@ -518,6 +542,7 @@ def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0)
 
 def _snapshot() -> dict:
     tickers  = load_tickers()
+    news     = load_news()
     # Read transcript lines BEFORE acquiring STATE.lock — read_transcript_lines also
     # acquires STATE.lock, and threading.Lock is non-reentrant; nested acquisition deadlocks.
     tx_lines = read_transcript_lines(30)
@@ -556,6 +581,7 @@ def _snapshot() -> dict:
                 "count":   len(tickers),
             },
             "tickers": rows,
+            "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
         }
 
@@ -674,6 +700,11 @@ async def api_state():
     loop = asyncio.get_running_loop()
     snap = await loop.run_in_executor(None, _snapshot)
     return JSONResponse(snap)
+
+
+@app.get("/api/news")
+async def api_news():
+    return JSONResponse({"items": load_news()})
 
 
 @app.post("/api/transcriber/start")

@@ -5,16 +5,17 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                           from './api.js?v=19';
-import { subscribe, set }                        from './store.js?v=19';
-import { init as initTranscription }             from './transcription.js?v=19';
-import { init as initTickers }                   from './tickers.js?v=19';
-import { init as initTradingView }               from './tradingview.js?v=19';
-import { init as initConfig, open as openConfig }from './config.js?v=19';
-import { init as initResizer }                   from './resizer.js?v=19';
-import * as controls                             from './controls.js?v=19';
-import * as notifications                        from './notifications.js?v=19';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=19';
+import { connect, on }                           from './api.js?v=20';
+import { subscribe, set }                        from './store.js?v=20';
+import { init as initTranscription }             from './transcription.js?v=20';
+import { init as initTickers }                   from './tickers.js?v=20';
+import { init as initTradingView }               from './tradingview.js?v=20';
+import { init as initConfig, open as openConfig }from './config.js?v=20';
+import { init as initResizer }                   from './resizer.js?v=20';
+import * as controls                             from './controls.js?v=20';
+import * as notifications                        from './notifications.js?v=20';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=20';
+import { init as initNews }                      from './news.js?v=20';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -49,6 +50,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
+  try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
   }
@@ -96,6 +98,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.tickers      !== undefined) update.tickers      = snap.tickers;
     if (snap.config)                     update.config       = snap.config;
     if (snap.transcriber)                update.transcriber  = snap.transcriber;
+    if (snap.news         !== undefined) update.news         = snap.news;
     if (Object.keys(update).length)      set(update);
   });
 

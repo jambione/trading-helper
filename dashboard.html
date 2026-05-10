@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="Trading" />
   <meta name="theme-color" content="#090f1d" />
 
-  <link rel="stylesheet" href="/static/css/styles.css?v=19" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=20" />
   <script src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
@@ -80,13 +80,15 @@
 
     <div class="panel-header">
       <div class="panel-header-left">
-        <span class="panel-title">Watchlist</span>
+        <span class="panel-title">Momentum Stocks</span>
         <span data-ticker-count class="ticker-count"></span>
       </div>
       <div class="panel-header-right">
         <button data-clear-watchlist-btn class="btn btn--ghost btn--danger btn--sm">✕ Clear</button>
       </div>
     </div>
+
+    <div data-news class="news-feed hidden"></div>
 
     <div class="watchlist-table-header">
       <div class="watchlist-cols">
@@ -302,7 +304,7 @@
       .catch(e => console.warn('[sw] registration failed', e));
   }
 </script>
-<script type="module" src="/static/js/app.js?v=19"></script>
+<script type="module" src="/static/js/app.js?v=20"></script>
 
 </body>
 </html>
