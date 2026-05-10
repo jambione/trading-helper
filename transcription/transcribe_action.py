@@ -73,12 +73,12 @@ else:
     GAIN_MAX          = None
 
 TARGET_SR       = 16000
-CHUNK_DURATION  = 3.0    # seconds per Whisper inference — short = lower latency
-OVERLAP         = 0.5    # seconds of overlap to avoid cutting words at chunk edges
+CHUNK_DURATION  = 2.0    # 2s chunks → results every ~1.5s (was 3s → every 2.5s)
+OVERLAP         = 0.5    # keep 0.5s overlap so words aren't cut at chunk edges
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
-ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES
-READ_FRAMES     = int(SAMPLE_RATE * 0.25)   # read 250ms at a time
+ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per chunk
+READ_FRAMES     = int(SAMPLE_RATE * 0.10)   # read 100ms at a time — fills buffer faster
 
 
 # =============================================================================
