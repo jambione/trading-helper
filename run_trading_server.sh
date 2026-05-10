@@ -7,8 +7,30 @@
 REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 LOG="$REPO/server.log"
 TUNNEL_LOG="$REPO/tunnel.log"
-PYTHON="$(which python3)"
 CF="$(which cloudflared)"
+
+# ── Find a Python that has uvicorn installed ──────────────────────────────────
+# Homebrew updates can silently change which python3 is on PATH, losing packages.
+# Try common locations in order; fall back to whichever python3 is on PATH.
+PYTHON=""
+for candidate in \
+    /usr/local/bin/python3 \
+    /opt/homebrew/bin/python3 \
+    "$(which python3 2>/dev/null)"; do
+    if [ -x "$candidate" ] && "$candidate" -c "import uvicorn" 2>/dev/null; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    # No Python with uvicorn found — install it into whichever python3 is on PATH
+    PYTHON="$(which python3)"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] uvicorn missing — installing now..." >> "$LOG"
+    "$PYTHON" -m pip install --quiet uvicorn fastapi --break-system-packages >> "$LOG" 2>&1 \
+        || "$PYTHON" -m pip install --quiet uvicorn fastapi --user >> "$LOG" 2>&1
+fi
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using Python: $PYTHON" >> "$LOG"
 
 echo "" >> "$LOG"
 echo "======================================" >> "$LOG"
