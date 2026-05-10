@@ -5,6 +5,17 @@
 
 LOG="/Users/jonathanbrasfield/repo/trading-helper/trading-helper/server.log"
 
+# Guard: only run if it's actually between 10:30–11:30 AM.
+# launchd replays "missed" jobs when the Mac wakes up, which would kill
+# the server seconds after startup. This check prevents that.
+HOUR=$(date +%H)
+MIN=$(date +%M)
+TOTAL_MIN=$((HOUR * 60 + MIN))
+if [ "$TOTAL_MIN" -lt 630 ] || [ "$TOTAL_MIN" -gt 690 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Stop job fired outside 10:30-11:30 AM window (${HOUR}:${MIN}) — skipping." >> "$LOG"
+    exit 0
+fi
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Stopping trading server (scheduled 11 AM shutdown)" >> "$LOG"
 
 # Kill the processes by name — order matters: kill the parent first
