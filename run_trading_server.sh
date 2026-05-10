@@ -8,31 +8,43 @@ REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 LOG="$REPO/server.log"
 TUNNEL_LOG="$REPO/tunnel.log"
 CF="$(which cloudflared)"
-
-# ── Find Python — prefer project venv (Python 3.12 + mlx_whisper) ─────────────
 VENV="$REPO/venv"
 
-if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "import uvicorn, pandas" 2>/dev/null; then
-    # Project venv exists and has the required packages — use it
-    PYTHON="$VENV/bin/python"
-else
-    # Venv missing or incomplete — try to create/repair it with Python 3.12
-    PY312=""
-    for candidate in /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
-        if [ -x "$candidate" ]; then PY312="$candidate"; break; fi
-    done
+# ── Find Python 3.12 ──────────────────────────────────────────────────────────
+PY312=""
+for candidate in /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
+    if [ -x "$candidate" ]; then PY312="$candidate"; break; fi
+done
 
-    if [ -n "$PY312" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Building venv with $PY312 ..." >> "$LOG"
-        "$PY312" -m venv "$VENV" >> "$LOG" 2>&1
+# ── Ensure venv exists and has all packages ───────────────────────────────────
+# Always use venv/bin/python3.12 (not the generic 'python' symlink) to avoid
+# version confusion when the venv directory already exists from a prior run.
+
+if [ -n "$PY312" ]; then
+    # Check if venv is healthy: correct Python version + required packages
+    VENV_OK=false
+    if [ -x "$VENV/bin/python3.12" ] && "$VENV/bin/python3.12" -c "import uvicorn, pandas, fastapi" 2>/dev/null; then
+        VENV_OK=true
+    fi
+
+    if [ "$VENV_OK" = false ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Creating/repairing venv with $PY312 ..." >> "$LOG"
+        # --clear guarantees a clean slate even if the directory already exists
+        "$PY312" -m venv --clear "$VENV" >> "$LOG" 2>&1
+        "$VENV/bin/pip" install --quiet --upgrade pip >> "$LOG" 2>&1
         "$VENV/bin/pip" install --quiet -r "$REPO/requirements.txt" >> "$LOG" 2>&1
         "$VENV/bin/pip" install --quiet mlx-whisper >> "$LOG" 2>&1
-        PYTHON="$VENV/bin/python"
-    else
-        # No Python 3.12 — fall back to whatever is on PATH
-        PYTHON="$(which python3)"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Python 3.12 not found. MLX Whisper unavailable." >> "$LOG"
+
+        # Verify it worked
+        if ! "$VENV/bin/python3.12" -c "import uvicorn, pandas" 2>/dev/null; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: venv setup failed — check requirements." >> "$LOG"
+        fi
     fi
+
+    PYTHON="$VENV/bin/python3.12"
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Python 3.12 not found. Install with: brew install python@3.12" >> "$LOG"
+    PYTHON="$(which python3)"
 fi
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using Python: $PYTHON ($("$PYTHON" --version 2>&1))" >> "$LOG"
@@ -43,7 +55,6 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting trading server" >> "$LOG"
 echo "======================================" >> "$LOG"
 
 # ── Start Cloudflare named tunnel in background ───────────────────────────────
-# Named tunnel gives a permanent URL: https://trading.jbrasfield.com
 echo "" > "$TUNNEL_LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting Cloudflare tunnel (trading.jbrasfield.com)..." >> "$TUNNEL_LOG"
 "$CF" tunnel --config ~/.cloudflared/config.yml run trading-helper >> "$TUNNEL_LOG" 2>&1 &
