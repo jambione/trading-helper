@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=18';
-import { api } from './api.js?v=18';
+import { subscribe, selectTicker, get } from './store.js?v=19';
+import { api } from './api.js?v=19';
 
 let _rowsEl  = null;   // <div data-ticker-rows>
 let _countEl = null;   // <span data-ticker-count>
@@ -151,7 +151,26 @@ async function _addToWBAndTV(btn, ticker) {
 
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
-  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`;
+  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}${row.mention_burst ? ' row-burst' : ''}`;
+
+  // Update mention badge
+  const tickerCell = el.querySelector('.cell-ticker');
+  if (tickerCell) {
+    let badge = tickerCell.querySelector('.mention-badge');
+    const w = row.mention_window ?? 0;
+    if (w > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'mention-badge';
+        tickerCell.appendChild(badge);
+      }
+      badge.textContent = String(w);
+      badge.title       = `${row.mention_count ?? 0} today`;
+      badge.className   = `mention-badge${row.mention_burst ? ' mentions-burst' : ' mentions-active'}`;
+    } else if (badge) {
+      badge.remove();
+    }
+  }
 
   const priceEl = el.querySelector('[data-price]');
   if (priceEl) priceEl.textContent = row.price != null ? `$${row.price.toFixed(2)}` : '—';
@@ -176,8 +195,15 @@ function _rowHTML(row) {
   const chgCls = _chgClass(row.pct_change ?? null);
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
+  const mentionCls = row.mention_burst  ? ' mentions-burst'
+                   : (row.mention_window ?? 0) > 0 ? ' mentions-active' : '';
+  const mentionTxt = (row.mention_window ?? 0) > 0 ? `${row.mention_window}` : '';
+
   return `<div class="watchlist-cols">
-    <div class="cell-ticker">${row.ticker}</div>
+    <div class="cell-ticker">
+      ${row.ticker}
+      ${mentionTxt ? `<span class="mention-badge${mentionCls}" title="${row.mention_count ?? 0} today">${mentionTxt}</span>` : ''}
+    </div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>

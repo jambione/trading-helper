@@ -85,12 +85,36 @@ class _State:
         self.tickers: dict    = {}   # ticker → {price, price_ts, day_open, pct_change}
         self.transcriber      = None # subprocess.Popen or None
         self.transcript_lines = []   # in-memory only, never written to disk
+        # Mention tracking — resets on server restart (fresh each trading day)
+        self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
+        self.mention_daily: dict = {}  # ticker → int  daily total count
 
     @property
     def transcriber_running(self) -> bool:
         return self.transcriber is not None and self.transcriber.poll() is None
 
 STATE = _State()
+
+
+# ── Mention tracking ──────────────────────────────────────────────────────────
+
+def _track_mention(ticker: str):
+    """Record a mention for ticker. Must be called while holding STATE.lock."""
+    now       = time.time()
+    window    = float(STATE.cfg.get("mention_alert_window", 10))
+    ts        = STATE.mention_ts.setdefault(ticker, [])
+    ts.append(now)
+    # Prune timestamps outside the rolling window
+    STATE.mention_ts[ticker] = [t for t in ts if now - t <= window]
+    STATE.mention_daily[ticker] = STATE.mention_daily.get(ticker, 0) + 1
+
+
+def _mention_window_count(ticker: str) -> int:
+    """Current mention count within the rolling window. Thread-safe read."""
+    now    = time.time()
+    window = float(STATE.cfg.get("mention_alert_window", 10))
+    ts     = STATE.mention_ts.get(ticker, [])
+    return sum(1 for t in ts if now - t <= window)
 
 
 # ── Ticker log ────────────────────────────────────────────────────────────────
@@ -176,6 +200,8 @@ def clear_ticker_log():
         pass
     with STATE.lock:
         STATE.tickers.clear()
+        STATE.mention_ts.clear()
+        STATE.mention_daily.clear()
 
 
 def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
@@ -210,6 +236,8 @@ def remove_ticker_from_log(ticker: str) -> bool:
         _ticker_cache["mtime"] = -1.0
         with STATE.lock:
             STATE.tickers.pop(ticker, None)
+            STATE.mention_ts.pop(ticker, None)
+            STATE.mention_daily.pop(ticker, None)
         return True
     except Exception as e:
         log.error(f"[TICKER] Remove {ticker} failed: {e}")
@@ -498,6 +526,9 @@ def _snapshot() -> dict:
         refresh_ticker_timestamps(list(mention_rank.keys()))
 
     with STATE.lock:
+        now_ts    = time.time()
+        threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
+        m_window  = float(STATE.cfg.get("mention_alert_window", 10))
         rows = []
         for t in tickers:
             d = dict(STATE.tickers.get(t, {}))
@@ -506,6 +537,13 @@ def _snapshot() -> dict:
             price    = d.get("price")
             day_open = d.get("day_open")
             d["pct_change"] = round((price - day_open) / day_open * 100, 2) if (price and day_open and day_open > 0) else None
+            # Mention counts — prune stale timestamps in-place
+            ts = STATE.mention_ts.get(t, [])
+            ts = [tm for tm in ts if now_ts - tm <= m_window]
+            STATE.mention_ts[t] = ts
+            d["mention_count"]  = STATE.mention_daily.get(t, 0)
+            d["mention_window"] = len(ts)
+            d["mention_burst"]  = len(ts) >= threshold
             rows.append(d)
         rows.sort(key=lambda r: (
             mention_rank.get(r["ticker"], len(mention_rank)),
@@ -674,6 +712,9 @@ async def api_add_ticker(request: Request):
             return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
         loop = asyncio.get_running_loop()
         ok, is_new = await loop.run_in_executor(None, lambda: add_ticker_to_log(ticker))
+        # Track every mention (whether ticker is new or already in watchlist)
+        with STATE.lock:
+            _track_mention(ticker)
         return JSONResponse({"ok": ok})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)

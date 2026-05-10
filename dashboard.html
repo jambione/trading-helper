@@ -2,9 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Brasfield Trading</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=18" />
+
+  <!-- PWA / iOS Home Screen support -->
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Trading" />
+  <meta name="theme-color" content="#090f1d" />
+
+  <link rel="stylesheet" href="/static/css/styles.css?v=19" />
   <script src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
@@ -218,6 +227,19 @@
           <input id="cfg-bar-count" type="number" min="50" max="1000" />
         </div>
       </div>
+
+      <div class="form-section-label">Mention Burst Alerts</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-mention-threshold">Mentions to Alert</label>
+          <input id="cfg-mention-threshold" type="number" min="2" max="50" placeholder="5" />
+          <span class="hint">Triggers alert when reached within the window.</span>
+        </div>
+        <div class="form-group">
+          <label for="cfg-mention-window">Window (seconds)</label>
+          <input id="cfg-mention-window" type="number" min="3" max="120" placeholder="10" />
+        </div>
+      </div>
     </div>
 
     <!-- ── Tab: Audio ────────────────────────────── -->
@@ -273,7 +295,14 @@
 </div><!-- /drawer-backdrop -->
 
 <!-- Module entry point -->
-<script type="module" src="/static/js/app.js?v=18"></script>
+<!-- Service worker registration (PWA / iOS alerts) -->
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/sw.js')
+      .catch(e => console.warn('[sw] registration failed', e));
+  }
+</script>
+<script type="module" src="/static/js/app.js?v=19"></script>
 
 </body>
 </html>

@@ -5,9 +5,9 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=18';
-import { get } from './store.js?v=18';
-import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=18';
+import { api } from './api.js?v=19';
+import { get } from './store.js?v=19';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=19';
 
 let _backdrop = null;
 let _saveBtn  = null;
@@ -65,12 +65,14 @@ function _switchTab(tab) {
 async function _loadConfig() {
   try {
     const { config: c } = await api.getConfig();
-    _set('cfg-api-key',     c.api_key      ?? '');
-    _set('cfg-secret-key',  c.secret_key   ?? '');
-    _set('cfg-finnhub-key', c.finnhub_key  ?? '');
-    _set('cfg-timeframe',   c.bar_timeframe ?? '1Min');
-    _set('cfg-bar-count',   c.bar_count    ?? 300);
-    _set('cfg-tv-url',      c.tv_chart_url ?? '');
+    _set('cfg-api-key',            c.api_key                ?? '');
+    _set('cfg-secret-key',         c.secret_key             ?? '');
+    _set('cfg-finnhub-key',        c.finnhub_key            ?? '');
+    _set('cfg-timeframe',          c.bar_timeframe          ?? '1Min');
+    _set('cfg-bar-count',          c.bar_count              ?? 300);
+    _set('cfg-tv-url',             c.tv_chart_url           ?? '');
+    _set('cfg-mention-threshold',  c.mention_alert_threshold ?? 5);
+    _set('cfg-mention-window',     c.mention_alert_window    ?? 10);
   } catch (e) {
     console.error('[config] load failed', e);
   }
@@ -107,10 +109,12 @@ async function _loadAudioDevices() {
 
 async function _save() {
   const body = {
-    bar_timeframe: _strVal('cfg-timeframe'),
-    bar_count:     _numVal('cfg-bar-count'),
-    device_index:  _deviceVal('cfg-device-index'),
-    tv_chart_url:  _strVal('cfg-tv-url'),
+    bar_timeframe:            _strVal('cfg-timeframe'),
+    bar_count:                _numVal('cfg-bar-count'),
+    device_index:             _deviceVal('cfg-device-index'),
+    tv_chart_url:             _strVal('cfg-tv-url'),
+    mention_alert_threshold:  _numVal('cfg-mention-threshold'),
+    mention_alert_window:     _numVal('cfg-mention-window'),
   };
 
   const ak = _pwdVal('cfg-api-key');

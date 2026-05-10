@@ -55,6 +55,10 @@ DEFAULT_CONFIG = {
 
     # Transcription
     "device_index": None,
+
+    # ── Mention burst alerts ─────────────────────────────────
+    "mention_alert_threshold": 5,   # mentions within window to trigger alert
+    "mention_alert_window":    10,  # rolling window in seconds
 }
 
 # Keys the dashboard API is allowed to update
@@ -74,6 +78,8 @@ SAFE_CONFIG_KEYS = [
     "brave_tv_tab",
     "strategy",
     "device_index",
+    "mention_alert_threshold",
+    "mention_alert_window",
 ]
 
 

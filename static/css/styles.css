@@ -471,6 +471,27 @@ body.mobile .cell-chg    { font-size: 13px; }
 
 /* Transcript-mention highlight */
 .row-mentioned { border-left: 3px solid var(--warming) !important; padding-left: 5px; background: var(--warming-bg); }
+.row-burst     { border-left: 3px solid var(--danger)  !important; padding-left: 5px; background: rgba(255,60,60,0.06); animation: burst-pulse 1s ease-in-out 3; }
+
+@keyframes burst-pulse {
+  0%,100% { background: rgba(255,60,60,0.06); }
+  50%      { background: rgba(255,60,60,0.18); }
+}
+
+/* Mention badge — appears on ticker name when mentions > 0 in window */
+.mention-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.mention-badge.mentions-active { background: rgba(255,180,0,0.18); color: #f0a500; }
+.mention-badge.mentions-burst  { background: rgba(255,60,60,0.22);  color: #ff4444; animation: burst-pulse 1s ease-in-out 3; }
 
 /* Cells */
 .cell-ticker {
