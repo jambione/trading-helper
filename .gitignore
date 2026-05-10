@@ -5,4 +5,5 @@ __pycache__/
 debug.log
 *.log
 transcription/__pycache__/
+venv/
 .venv/
