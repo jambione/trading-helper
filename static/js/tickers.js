@@ -119,14 +119,18 @@ async function _addToWBAndTV(btn, ticker) {
   btn.disabled = true;
   btn.textContent = '...';
   try {
-    await api.addToWBAndTV(ticker);
-    btn.textContent = 'Add';
+    // Step 1: save ticker to server watchlist
+    await api.addTicker(ticker);
+    // Step 2: open TradingView with the symbol in a named window — reuses
+    // the same tab on repeated clicks so the browser doesn't spawn a new
+    // window for every ticker.
+    window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}`, 'tradingview_window');
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
   } catch {
     btn.textContent = '!';
     setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
-    return;
   }
-  btn.disabled = false;
 }
 
 /** Surgical update — only touch the cells that can change between scans. */
