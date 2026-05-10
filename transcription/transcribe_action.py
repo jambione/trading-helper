@@ -437,7 +437,7 @@ except OSError as e:
 # SHARED STATE
 # =============================================================================
 
-_audio_queue = Queue(maxsize=8)
+_audio_queue = Queue(maxsize=16)  # larger buffer for 2 parallel workers
 _running     = threading.Event()
 _running.set()
 
@@ -619,16 +619,19 @@ def transcription_worker():
 # START
 # =============================================================================
 
+_N_WORKERS = 2   # parallel transcription workers — Metal/GPU handles concurrent inference
+
 _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
-    threading.Thread(target=transcription_worker, daemon=True, name="transcription"),
+    *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
+      for i in range(_N_WORKERS)],
 ]
 for t in _threads:
     t.start()
 
 engine = f"MLX Whisper ({MLX_MODEL})" if _USE_MLX else f"faster-whisper ({CPU_MODEL})"
 print(f"\nListening — engine: {engine}")
-print(f"Chunk: {CHUNK_DURATION}s  Overlap: {OVERLAP}s  SR: {SAMPLE_RATE}Hz → {TARGET_SR}Hz")
+print(f"Chunk: {CHUNK_DURATION}s  Overlap: {OVERLAP}s  Workers: {_N_WORKERS}  SR: {SAMPLE_RATE}Hz → {TARGET_SR}Hz")
 print("Press Ctrl+C to stop.\n")
 
 try:
@@ -637,10 +640,12 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down ...")
     _running.clear()
-    try:
-        _audio_queue.put_nowait(None)
-    except Full:
-        pass
+    # Send one None per worker so each unblocks from queue.get()
+    for _ in range(_N_WORKERS):
+        try:
+            _audio_queue.put_nowait(None)
+        except Full:
+            pass
 
 stream.stop_stream()
 stream.close()
