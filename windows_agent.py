@@ -253,11 +253,16 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
 
     # Switch to pinned TradingView tab
     _pag.hotkey("ctrl", str(tab_num))
-    time.sleep(0.6)   # wait for tab to load/switch
+    time.sleep(0.6)   # wait for tab to switch
 
-    # Click center of chart to grab keyboard focus
+    # Ctrl+1 leaves the URL bar focused — press Escape to return focus to the page
+    _pag.press("escape")
+    time.sleep(0.2)
+
+    # Click in the content area (skip the browser toolbar ~90px from top)
     left, top, w, h = _get_rect(hwnd)
-    _pag.click(left + w // 2, top + h // 2)
+    toolbar_h = 90
+    _pag.click(left + w // 2, top + toolbar_h + (h - toolbar_h) // 2)
     time.sleep(0.3)
 
     # Type ticker — TradingView opens symbol search on any keypress
