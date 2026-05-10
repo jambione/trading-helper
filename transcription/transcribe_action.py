@@ -171,6 +171,8 @@ _STOP_WORDS = {
     # Filler / noise
     "HEY", "YEAH", "OKAY", "WELL", "LIKE", "JUST", "SAID",
     "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE",
+    # Common false positives seen in output
+    "END", "NEW", "PER", "DL", "AT", "UP", "DOWN",
 }
 
 # Company name → ticker (spoken names on air)
@@ -220,7 +222,7 @@ _MISHEAR_MAP = {
     "nda": "NVDA", "nvia": "NVDA",
     "tesler": "TSLA", "tla": "TSLA",
     "palanteer": "PLTR", "palantar": "PLTR", "plt": "PLTR",
-    "appal": "AAPL", "apples": "AAPL", "apl": "AAPL",
+    "appal": "AAPL", "apples": "AAPL", "apl": "AAPL", "appl": "AAPL",
     "amazin": "AMZN", "amazons": "AMZN", "amz": "AMZN",
     "gugsel": "GOOGL", "guggle": "GOOGL", "googel": "GOOGL",
     "hud": "HOOD",
