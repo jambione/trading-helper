@@ -212,6 +212,7 @@ body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
 body.hosted .btn-delete              { display: none; }
+body.hosted.user-jmb .btn-add       { display: inline-flex; }
 
 /* ── Mobile — full-width watchlist, no chart ───────────────── */
 @media (max-width: 700px) {

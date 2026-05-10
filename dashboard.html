@@ -10,7 +10,8 @@
 <body>
 <!-- Apply hosted/mobile classes instantly (before paint) to prevent layout flash -->
 <script>
-  if(!['localhost','127.0.0.1',''].includes(location.hostname)&&new URLSearchParams(location.search).get('user')!=='jmb')document.body.classList.add('hosted');
+  if(!['localhost','127.0.0.1',''].includes(location.hostname))document.body.classList.add('hosted');
+  if(new URLSearchParams(location.search).get('user')==='jmb')document.body.classList.add('user-jmb');
   if(window.innerWidth<=700||/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent))document.body.classList.add('mobile');
 </script>
 

@@ -41,8 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Hosted mode: transcript + settings are localhost-only features.
   // Use _isLocal directly so this works regardless of auth settings.
-  const _isJmb = new URLSearchParams(location.search).get('user') === 'jmb';
-  if (!_isLocal && !_isJmb) document.body.classList.add('hosted');
+  if (!_isLocal) document.body.classList.add('hosted');
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
