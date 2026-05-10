@@ -196,8 +196,8 @@ function _rowHTML(row) {
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
   const mentionCls = row.mention_burst  ? ' mentions-burst'
-                   : (row.mention_window ?? 0) > 0 ? ' mentions-active' : '';
-  const mentionTxt = (row.mention_window ?? 0) > 0 ? `${row.mention_window}` : '';
+                   : (row.mention_window ?? 0) > 1 ? ' mentions-active' : '';
+  const mentionTxt = (row.mention_window ?? 0) > 1 ? `${row.mention_window}` : '';
 
   return `<div class="watchlist-cols">
     <div class="cell-ticker">
