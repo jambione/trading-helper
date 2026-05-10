@@ -2,11 +2,11 @@
 windows_agent.py — Local Windows agent for Webull Desktop automation.
 
 Run this on your Windows machine:
-    python windows_agent.py
+    python windows_agent.py   (or double-click windows_agent.bat)
 
 Listens on http://localhost:8889
-The trading dashboard's Add button will POST to this agent to automate
-Webull Desktop locally — no server-side automation needed.
+The trading dashboard's Add button POSTs here to automate Webull Desktop
+locally — no server-side automation needed.
 
 Endpoints:
     POST /add-wb        {"ticker": "NVDA"}   → add to Webull watchlist
@@ -15,156 +15,18 @@ Endpoints:
 
 from __future__ import annotations
 
-import ctypes
 import json
+import os
 import sys
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
-# ── Platform guard ────────────────────────────────────────────────────────────
-_IS_WINDOWS = sys.platform == "win32"
+# ── Import workflow from transcription/workflows.py ───────────────────────────
+# Add the transcription folder to the path so we can import workflows directly.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "transcription"))
 
-# ── Win32 constants ───────────────────────────────────────────────────────────
-WM_KEYDOWN = 0x0100
-WM_KEYUP   = 0x0101
-WM_CHAR    = 0x0102
-VK_RETURN  = 0x0D
-VK_CONTROL = 0x11
-VK_2       = 0x32
-
-WB_WINDOW  = "Webull Desktop"
-WB_LAUNCH  = r"C:\Program Files (x86)\Webull Desktop\Webull Desktop.exe"
-LAUNCH_TIMEOUT = 20
-
-if _IS_WINDOWS:
-    _user32      = ctypes.windll.user32
-    _PostMessage = ctypes.windll.user32.PostMessageW
-
-    _EnumWindowsProc = ctypes.WINFUNCTYPE(
-        ctypes.c_int, ctypes.c_size_t, ctypes.c_size_t
-    )
-
-
-# ── Window helpers ─────────────────────────────────────────────────────────────
-
-def _find_window(fragment: str) -> int | None:
-    """Return HWND of first visible window whose title contains fragment."""
-    if not _IS_WINDOWS:
-        return None
-    frag  = fragment.lower()
-    found = []
-
-    def cb(hwnd, _):
-        if not _user32.IsWindowVisible(hwnd):
-            return 1
-        n = _user32.GetWindowTextLengthW(hwnd)
-        if n == 0:
-            return 1
-        buf = ctypes.create_unicode_buffer(n + 1)
-        _user32.GetWindowTextW(hwnd, buf, n + 1)
-        if frag in buf.value.lower():
-            found.append(hwnd)
-            return 0  # stop
-        return 1
-
-    proc = _EnumWindowsProc(cb)
-    _user32.EnumWindows(proc, 0)
-    return found[0] if found else None
-
-
-def _focus_window(hwnd: int):
-    _user32.ShowWindow(hwnd, 9)   # SW_RESTORE
-    time.sleep(0.15)
-    _user32.SetForegroundWindow(hwnd)
-    _user32.BringWindowToTop(hwnd)
-    time.sleep(0.35)
-
-
-def _ensure_webull_open() -> int | None:
-    """Return focused Webull HWND, launching if needed."""
-    hwnd = _find_window(WB_WINDOW)
-    if hwnd:
-        _focus_window(hwnd)
-        return hwnd
-
-    print(f"  🚀 Launching Webull Desktop...")
-    import subprocess, os
-    try:
-        path = os.path.expandvars(WB_LAUNCH)
-        if os.path.isfile(path):
-            subprocess.Popen([path])
-        else:
-            subprocess.Popen(WB_LAUNCH, shell=True)
-    except Exception as e:
-        print(f"  ❌ Launch failed: {e}")
-        return None
-
-    deadline = time.time() + LAUNCH_TIMEOUT
-    while time.time() < deadline:
-        hwnd = _find_window(WB_WINDOW)
-        if hwnd:
-            time.sleep(1.5)
-            _focus_window(hwnd)
-            return hwnd
-        time.sleep(0.5)
-
-    print("  ❌ Webull did not appear — timed out")
-    return None
-
-
-# ── Keystroke helpers ─────────────────────────────────────────────────────────
-
-def _post_char(hwnd: int, char: str):
-    _PostMessage(hwnd, WM_CHAR, ord(char.upper()), 0)
-
-def _post_ctrl2(hwnd: int):
-    _PostMessage(hwnd, WM_KEYDOWN, VK_CONTROL, 0)
-    _PostMessage(hwnd, WM_KEYDOWN, VK_2, 0)
-    _PostMessage(hwnd, WM_KEYUP,   VK_2, 0)
-    _PostMessage(hwnd, WM_KEYUP,   VK_CONTROL, 0)
-
-def _post_enter(hwnd: int):
-    _PostMessage(hwnd, WM_KEYDOWN, VK_RETURN, 0)
-    _PostMessage(hwnd, WM_KEYUP,   VK_RETURN, 0)
-
-
-# ── Core automation ───────────────────────────────────────────────────────────
-
-def add_to_webull(ticker: str) -> tuple[bool, str]:
-    """
-    Add ticker to Webull Desktop watchlist.
-    Returns (success, message).
-    """
-    ticker = ticker.upper().strip()
-
-    if not ticker or not ticker.isalpha() or len(ticker) > 8:
-        return False, f"Invalid ticker: {ticker!r}"
-
-    if not _IS_WINDOWS:
-        print(f"  [DRY RUN] Would add {ticker} to Webull (not Windows)")
-        return True, f"dry-run: {ticker}"
-
-    hwnd = _ensure_webull_open()
-    if not hwnd:
-        return False, "Could not open Webull Desktop"
-
-    time.sleep(0.4)
-
-    # Ctrl+2 → Stocks tab
-    _post_ctrl2(hwnd)
-    time.sleep(0.5)
-
-    # Type ticker letter-by-letter directly into message queue
-    for letter in ticker:
-        _post_char(hwnd, letter)
-        time.sleep(0.05)
-
-    time.sleep(0.5)
-    _post_enter(hwnd)
-
-    print(f"  ✅ Added {ticker} to Webull")
-    return True, f"added: {ticker}"
+from workflows import workflow_add_wb   # noqa: E402  (import after sys.path tweak)
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -187,14 +49,17 @@ class AgentHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
-            self._json(200, {"ok": True, "platform": sys.platform, "agent": "windows_agent"})
+            self._json(200, {
+                "ok":       True,
+                "platform": sys.platform,
+                "agent":    "windows_agent",
+            })
         else:
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
         path = urlparse(self.path).path
 
-        # Read body
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b""
         try:
@@ -208,8 +73,10 @@ class AgentHandler(BaseHTTPRequestHandler):
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
-            ok, msg = add_to_webull(ticker)
-            self._json(200 if ok else 500, {"ok": ok, "msg": msg, "ticker": ticker})
+
+            print(f"  → add-wb: {ticker}")
+            ok = workflow_add_wb(ticker)
+            self._json(200 if ok else 500, {"ok": ok, "ticker": ticker})
 
         else:
             self._json(404, {"error": "not found"})
@@ -229,7 +96,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 PORT = 8889
 
 if __name__ == "__main__":
-    if not _IS_WINDOWS:
+    if sys.platform != "win32":
         print("⚠️  WARNING: Not running on Windows — Webull automation will be dry-run only.")
     server = HTTPServer(("127.0.0.1", PORT), AgentHandler)
     print(f"✅ Windows local agent running on http://localhost:{PORT}")
