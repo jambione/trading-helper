@@ -121,10 +121,27 @@ async function _addToWBAndTV(btn, ticker) {
   try {
     // Step 1: save ticker to server watchlist
     await api.addTicker(ticker);
-    // Step 2: open TradingView with the symbol in a named window — reuses
+
+    // Step 2: try local Windows agent for Webull Desktop automation.
+    // The agent runs on the user's Windows machine at localhost:8889.
+    // If it's not running we skip silently — TradingView still opens.
+    try {
+      const resp = await fetch('http://localhost:8889/add-wb', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ticker }),
+        signal:  AbortSignal.timeout(3000),
+      });
+      if (!resp.ok) console.warn('[add-wb] agent returned', resp.status);
+    } catch {
+      // Agent not running — that's fine, just skip Webull step
+    }
+
+    // Step 3: open TradingView with the symbol in a named window — reuses
     // the same tab on repeated clicks so the browser doesn't spawn a new
     // window for every ticker.
     window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}`, 'tradingview_window');
+
     btn.textContent = '✓';
     setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
   } catch {
