@@ -135,6 +135,64 @@ def normalize_transcript(text: str) -> str:
 
 
 # =============================================================================
+# VALID TICKER LIST  (NASDAQ + NYSE, refreshed weekly from nasdaqtrader.com)
+# =============================================================================
+
+_TICKER_CACHE_FILE = Path(__file__).parent.parent / "valid_tickers.txt"
+_TICKER_CACHE_DAYS = 7
+
+
+def _load_valid_tickers() -> set:
+    """Return ~10k valid US ticker symbols from NASDAQ Trader.
+    Downloads on first run (or after cache expires), then reads from local file.
+    Falls back to empty set on any error so the transcriber still works offline."""
+
+    def _fetch() -> set:
+        import urllib.request as _ur
+        tickers = set()
+        sources = [
+            ("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+             lambda line: line.split("|")[0].strip()),
+            ("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+             lambda line: line.split("|")[0].strip()),
+        ]
+        for url, extract in sources:
+            try:
+                req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with _ur.urlopen(req, timeout=10) as r:
+                    for raw in r.read().decode("utf-8", errors="ignore").splitlines():
+                        sym = extract(raw)
+                        if (sym and sym.isalpha() and 1 <= len(sym) <= 5
+                                and sym not in ("Symbol", "ACTSymbol")):
+                            tickers.add(sym.upper())
+            except Exception as e:
+                print(f"[TICKERS] Warning: could not fetch {url}: {e}", flush=True)
+        return tickers
+
+    try:
+        if _TICKER_CACHE_FILE.exists():
+            age_days = (time.time() - _TICKER_CACHE_FILE.stat().st_mtime) / 86400
+            if age_days < _TICKER_CACHE_DAYS:
+                syms = set(_TICKER_CACHE_FILE.read_text().split())
+                if syms:
+                    print(f"[TICKERS] Loaded {len(syms):,} valid tickers from cache "
+                          f"({age_days:.1f}d old).", flush=True)
+                    return syms
+        print("[TICKERS] Downloading ticker list from NASDAQ Trader…", flush=True)
+        tickers = _fetch()
+        if tickers:
+            _TICKER_CACHE_FILE.write_text("\n".join(sorted(tickers)))
+            print(f"[TICKERS] Downloaded and cached {len(tickers):,} tickers.", flush=True)
+        return tickers
+    except Exception as e:
+        print(f"[TICKERS] Could not load ticker list: {e}", flush=True)
+        return set()
+
+
+_VALID_TICKERS: set = _load_valid_tickers()
+
+
+# =============================================================================
 # TICKER EXTRACTION
 # =============================================================================
 
@@ -249,7 +307,12 @@ def extract_tickers(text: str) -> list:
     # 1. Token scan — catches explicit uppercase tickers like AAPL, TSLA
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
-        if t not in _STOP_WORDS and t not in seen:
+        # Primary filter: NASDAQ/NYSE list when available; fall back to stop words
+        if _VALID_TICKERS:
+            valid = t in _VALID_TICKERS
+        else:
+            valid = t not in _STOP_WORDS
+        if valid and t not in seen:
             found.append(t)
             seen.add(t)
 
