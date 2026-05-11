@@ -764,13 +764,19 @@ def transcription_worker():
             ms = (time.perf_counter() - t0) * 1000
 
             # Hallucination guard — Whisper echoes the initial prompt on quiet audio.
-            # Pattern 1: single token looping  ("AGNT AGNT AGNT …")
-            # Pattern 2: prompt echo — chunk is mostly 2-5 char ALL-CAPS ticker tokens
+            # Pattern 1: single token looping  ("AGNT AGNT AGNT AGNT AGNT AGNT …")
+            #   Threshold >6 — a host legitimately saying a ticker 3-4 times is NOT a loop.
+            #   Real Whisper loops produce 10-20+ repetitions of the same token.
+            # Pattern 2: prompt echo — many *different* ALL-CAPS ticker tokens (full list echoed)
+            #   Requires >=10 words AND >=5 distinct uppercase tokens AND >70% ticker-shaped.
             if text:
-                _words = text.split()
-                _is_loop = max((_words.count(w) for w in set(_words)), default=0) > 3
+                _words  = text.split()
+                _is_loop = max((_words.count(w) for w in set(_words)), default=0) > 6
                 _upper   = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
-                _is_echo = len(_words) >= 4 and len(_upper) / len(_words) > 0.60
+                _unique_upper = len(set(_upper))
+                _is_echo = (len(_words) >= 10
+                            and _unique_upper >= 5
+                            and len(_upper) / len(_words) > 0.70)
                 if _is_loop or _is_echo:
                     print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
                     continue
