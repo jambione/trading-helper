@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
-click_join_voice.py — click Discord "Join Voice" then "Watch Stream".
+click_join_voice.py — navigate to a Discord channel, click Join Voice, click Watch Stream.
+
+Usage:
+    python3 click_join_voice.py                         # default morning channel
+    python3 click_join_voice.py --channel 1132389452510142465   # switch channel
 """
-import subprocess, sys, time
+import argparse, subprocess, sys, time
 import pyautogui
 
 pyautogui.FAILSAFE = False
+
+SERVER_ID          = "822849028395892788"
+MORNING_CHANNEL_ID = "822849029393612804"   # Stock Scanners & Alerts (4 AM)
+DAY_CHANNEL_ID     = "1132389452510142465"  # 7:15 AM channel switch
 
 
 def get_discord_window():
@@ -40,9 +48,9 @@ def get_discord_window():
         return None
 
 
-def click_join_voice():
-    DISCORD_URL = "discord://discord.com/channels/822849028395892788/822849029393612804"
-    print("  Navigating to Stock Scanners & Alerts channel...")
+def click_join_voice(channel_id: str = MORNING_CHANNEL_ID):
+    DISCORD_URL = f"discord://discord.com/channels/{SERVER_ID}/{channel_id}"
+    print(f"  Navigating to channel {channel_id}...")
     subprocess.run(['open', DISCORD_URL])
     time.sleep(4)  # wait for Discord to navigate to the channel
 
@@ -110,4 +118,8 @@ def click_watch_stream(win=None):
 
 
 if __name__ == '__main__':
-    click_join_voice()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--channel', default=MORNING_CHANNEL_ID,
+                        help='Discord channel ID to join (default: morning channel)')
+    args = parser.parse_args()
+    click_join_voice(channel_id=args.channel)
