@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=22';
-import { api } from './api.js?v=22';
+import { subscribe, selectTicker, get } from './store.js?v=23';
+import { api } from './api.js?v=23';
 
 let _rowsEl  = null;   // <div data-ticker-rows>
 let _countEl = null;   // <span data-ticker-count>
@@ -72,17 +72,18 @@ function _renderTable(rows) {
     });
   }
 
-  // $20 price divider — separates >$20 stocks (top) from ≤$20 (bottom)
+  // $20 price divider — rows are sorted smallest price first among un-mentioned,
+  // so the divider sits just before the first un-mentioned stock whose price crosses above $20.
   _rowsEl.querySelector('[data-price-divider]')?.remove();
-  const aboveCount = rows.filter(r => r.mentioned || (r.price != null && r.price > 20)).length;
-  const firstBelow = rows.find(r => !r.mentioned && (r.price == null || r.price <= 20));
-  if (aboveCount > 0 && firstBelow) {
-    const belowEl = _rowsEl.querySelector(`[data-row="${firstBelow.ticker}"]`);
-    if (belowEl) {
+  const firstAbove20 = rows.find(r => !r.mentioned && r.price != null && r.price > 20);
+  const hasBelow20   = rows.some(r => !r.mentioned && (r.price == null || r.price <= 20));
+  if (firstAbove20 && hasBelow20) {
+    const aboveEl = _rowsEl.querySelector(`[data-row="${firstAbove20.ticker}"]`);
+    if (aboveEl) {
       const divider = document.createElement('div');
       divider.className = 'price-divider';
       divider.setAttribute('data-price-divider', '');
-      _rowsEl.insertBefore(divider, belowEl);
+      _rowsEl.insertBefore(divider, aboveEl);
     }
   }
 

@@ -5,17 +5,17 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                           from './api.js?v=21';
-import { subscribe, set }                        from './store.js?v=21';
-import { init as initTranscription }             from './transcription.js?v=21';
-import { init as initTickers }                   from './tickers.js?v=21';
-import { init as initTradingView }               from './tradingview.js?v=21';
-import { init as initConfig, open as openConfig }from './config.js?v=21';
-import { init as initResizer }                   from './resizer.js?v=21';
-import * as controls                             from './controls.js?v=21';
-import * as notifications                        from './notifications.js?v=21';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=21';
-import { init as initNews }                      from './news.js?v=21';
+import { connect, on }                           from './api.js?v=23';
+import { subscribe, set }                        from './store.js?v=23';
+import { init as initTranscription }             from './transcription.js?v=23';
+import { init as initTickers }                   from './tickers.js?v=23';
+import { init as initTradingView }               from './tradingview.js?v=23';
+import { init as initConfig, open as openConfig }from './config.js?v=23';
+import { init as initResizer }                   from './resizer.js?v=23';
+import * as controls                             from './controls.js?v=23';
+import * as notifications                        from './notifications.js?v=23';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=23';
+import { init as initNews }                      from './news.js?v=23';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
