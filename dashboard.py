@@ -570,10 +570,12 @@ def _snapshot() -> dict:
             d["mention_window"] = len(ts)
             d["mention_burst"]  = len(ts) >= threshold
             rows.append(d)
-        rows.sort(key=lambda r: (
-            mention_rank.get(r["ticker"], len(mention_rank)),
-            (r.get("price") or float("inf")) if r["ticker"] not in mention_rank else 0,
-        ))
+        def _row_sort_key(r):
+            in_mention = r["ticker"] in mention_rank
+            rank  = mention_rank.get(r["ticker"], 999)
+            price = r["price"] if r.get("price") is not None else float("inf")
+            return (0 if in_mention else 1, rank, price)
+        rows.sort(key=_row_sort_key)
         return {
             "transcriber": {
                 "running": STATE.transcriber_running,
@@ -919,7 +921,7 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
             if snap_str != last_snap_str:
                 await ws.send_text(snap_str)
                 last_snap_str = snap_str
-            await asyncio.sleep(0.1)   # 10Hz poll; only pushes on change
+            await asyncio.sleep(0.5)   # 2Hz poll; only pushes on change
     except (WebSocketDisconnect, Exception):
         pass
 
