@@ -8,7 +8,7 @@
  * Creates a new widget instance each time the symbol changes.
  */
 
-import { subscribe, get } from './store.js?v=25';
+import { subscribe, get } from './store.js?v=26';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
@@ -22,7 +22,10 @@ export function init(panelEl) {
   _widgetWrap  = panelEl.querySelector('[data-tv-widget]');
   _symbolEl    = panelEl.querySelector('[data-tv-symbol]');
 
+  console.log('[tv] init — panel:', !!panelEl, 'placeholder:', !!_placeholder, 'wrap:', !!_widgetWrap);
+
   subscribe('selectedTicker', ticker => {
+    console.log('[tv] selectedTicker →', ticker, '(current:', _current, ')');
     if (ticker && ticker !== _current) {
       _current = ticker;
       _loadChart(ticker);
@@ -33,6 +36,8 @@ export function init(panelEl) {
 // ── Chart loading ──────────────────────────────────────────────
 
 function _loadChart(symbol) {
+  console.log('[tv] _loadChart', symbol, '— window.TradingView:', !!window.TradingView);
+
   if (_symbolEl) {
     _symbolEl.textContent   = symbol;
     _symbolEl.style.display = '';
@@ -40,7 +45,7 @@ function _loadChart(symbol) {
   if (_placeholder) _placeholder.classList.add('hidden');
   if (_widgetWrap)  _widgetWrap.classList.remove('hidden');
 
-  // Clear previous widget (remove all children + reset id)
+  // Clear previous widget
   const containerId = 'tv_chart_container';
   const container = document.getElementById(containerId);
   if (container) container.innerHTML = '';
@@ -48,27 +53,37 @@ function _loadChart(symbol) {
   if (window.TradingView) {
     _createWidget(containerId, symbol);
   } else {
-    // tv.js hasn't finished loading yet — poll briefly
+    console.warn('[tv] tv.js not ready — polling…');
+    let waited = 0;
     const poll = setInterval(() => {
+      waited += 100;
       if (window.TradingView) {
         clearInterval(poll);
+        console.log('[tv] tv.js ready after', waited, 'ms');
         _createWidget(containerId, symbol);
+      } else if (waited >= 10000) {
+        clearInterval(poll);
+        console.error('[tv] tv.js failed to load after 10s — check network');
+        if (container) container.innerHTML =
+          '<div style="color:#ff6b6b;padding:20px;font-size:13px;">Chart failed to load.<br>Check your internet connection.</div>';
       }
     }, 100);
   }
 }
 
 function _createWidget(containerId, symbol) {
-  const config = get('config') || {};
+  const config   = get('config') || {};
   const chartUrl = config.tv_chart_url || '';
-  
-  // Extract layout ID if a full URL was provided
+
+  // Extract layout ID from a full TradingView URL
   // e.g. https://www.tradingview.com/chart/x04Gfcu8/ -> x04Gfcu8
-  let watchlistId = undefined;
+  let layoutId = undefined;
   if (chartUrl) {
     const parts = chartUrl.split('/');
-    watchlistId = parts.filter(p => p.length >= 6 && p.length <= 12 && p !== 'chart').pop();
+    layoutId = parts.filter(p => p.length >= 6 && p.length <= 12 && p !== 'chart').pop();
   }
+
+  console.log('[tv] _createWidget', symbol, '— layoutId:', layoutId || '(none)');
 
   const widgetOpts = {
     autosize:            true,
@@ -83,24 +98,26 @@ function _createWidget(containerId, symbol) {
     hide_side_toolbar:   false,
     allow_symbol_change: true,
     save_image:          false,
-    withdateranges:      false,
     container_id:        containerId,
   };
 
-  if (watchlistId) {
+  if (layoutId) {
     widgetOpts.watchlist = [symbol];
-    widgetOpts.chart = watchlistId;
+    widgetOpts.chart     = layoutId;
   } else {
-    // Only use default studies if NO custom layout is provided
     widgetOpts.studies = [
       'Volume@tv-basicstudies',
-      { id: 'RSI@tv-basicstudies',  inputs: { length: 2 } },
+      { id: 'RSI@tv-basicstudies', inputs: { length: 2 } },
       'MACD@tv-basicstudies',
       'OBV@tv-basicstudies',
       'WilliamsR@tv-basicstudies',
     ];
   }
 
-  // eslint-disable-next-line no-new
-  new window.TradingView.widget(widgetOpts);
+  try {
+    new window.TradingView.widget(widgetOpts);
+    console.log('[tv] widget created for', symbol);
+  } catch (err) {
+    console.error('[tv] widget creation failed:', err);
+  }
 }
