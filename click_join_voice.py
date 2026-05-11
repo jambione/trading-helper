@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-click_join_voice.py — click Discord "Join Voice" using Quartz window detection.
+click_join_voice.py — click Discord "Join Voice" then "Watch Stream".
 """
 import subprocess, sys, time
 import pyautogui
 
 pyautogui.FAILSAFE = False
+
 
 def get_discord_window():
     """Use Quartz CGWindowList to find Discord's main window bounds."""
@@ -37,6 +38,7 @@ def get_discord_window():
     except Exception as e:
         print(f"  [Quartz error] {e}")
         return None
+
 
 def click_join_voice():
     DISCORD_URL = "discord://discord.com/channels/822849028395892788/822849029393612804"
@@ -71,8 +73,41 @@ def click_join_voice():
     pyautogui.moveTo(btn_x, btn_y, duration=0.4)
     time.sleep(0.2)
     pyautogui.click()
-    print("  ✓ Clicked.")
+    print("  ✓ Clicked Join Voice.")
+
+    # After joining, click Watch Stream
+    click_watch_stream(win)
     return True
+
+
+def click_watch_stream(win=None):
+    """Click the Watch Stream button using the same Quartz approach as Join Voice."""
+    print("  Waiting for Watch Stream button to appear...")
+    time.sleep(3)  # Discord takes a moment to show the stream panel
+
+    if not win:
+        win = get_discord_window()
+    if not win:
+        print("  ✗ Could not find Discord window via Quartz.")
+        return False
+
+    print(f"  Found: '{win['name']}'  {win['w']}x{win['h']} @ ({win['x']},{win['y']})")
+
+    # "Watch Stream" appears as an overlay on the first video tile (top-left).
+    # The tile grid starts just right of the sidebar; the first tile centre is
+    # at sidebar + 1/6 of the remaining content width, ~26% down the window.
+    sidebar_frac = 0.27
+    content_w    = win['w'] * (1 - sidebar_frac)
+    btn_x = int(win['x'] + win['w'] * sidebar_frac + content_w / 6)
+    btn_y = int(win['y'] + win['h'] * 0.26)
+
+    print(f"  Targeting Watch Stream at ({btn_x}, {btn_y}) ...")
+    pyautogui.moveTo(btn_x, btn_y, duration=0.4)
+    time.sleep(0.2)
+    pyautogui.click()
+    print("  ✓ Clicked Watch Stream.")
+    return True
+
 
 if __name__ == '__main__':
     click_join_voice()

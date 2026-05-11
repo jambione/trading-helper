@@ -7,7 +7,14 @@
 REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 LOG="$REPO/server.log"
 TUNNEL_LOG="$REPO/tunnel.log"
-CF="$(which cloudflared)"
+# Hardcode common Homebrew paths — 'which' fails in launchd (no Homebrew PATH)
+CF=""
+for candidate in /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared; do
+    if [ -x "$candidate" ]; then CF="$candidate"; break; fi
+done
+if [ -z "$CF" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: cloudflared not found — tunnel will not start" >> "$LOG"
+fi
 VENV="$REPO/venv"
 
 # ── Find Python 3.12 ──────────────────────────────────────────────────────────
@@ -56,9 +63,14 @@ echo "======================================" >> "$LOG"
 
 # ── Start Cloudflare named tunnel in background ───────────────────────────────
 echo "" > "$TUNNEL_LOG"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting Cloudflare tunnel (trading.jbrasfield.com)..." >> "$TUNNEL_LOG"
-"$CF" tunnel --config ~/.cloudflared/config.yml run trading-helper >> "$TUNNEL_LOG" 2>&1 &
-CF_PID=$!
+if [ -n "$CF" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting Cloudflare tunnel (trading.jbrasfield.com)..." >> "$TUNNEL_LOG"
+    "$CF" tunnel --config ~/.cloudflared/config.yml run trading-helper >> "$TUNNEL_LOG" 2>&1 &
+    CF_PID=$!
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipping tunnel — cloudflared not found." >> "$TUNNEL_LOG"
+    CF_PID=""
+fi
 
 sleep 5
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Public URL: https://trading.jbrasfield.com" >> "$LOG"
@@ -68,6 +80,8 @@ caffeinate -si "$PYTHON" "$REPO/start_all.py" >> "$LOG" 2>&1
 
 # ── Server exited — clean up tunnel ──────────────────────────────────────────
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Trading server exited — stopping tunnel" >> "$LOG"
-kill "$CF_PID" 2>/dev/null
-wait "$CF_PID" 2>/dev/null
+if [ -n "$CF_PID" ]; then
+    kill "$CF_PID" 2>/dev/null
+    wait "$CF_PID" 2>/dev/null
+fi
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Done." >> "$LOG"
