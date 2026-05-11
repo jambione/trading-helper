@@ -921,7 +921,7 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
             if snap_str != last_snap_str:
                 await ws.send_text(snap_str)
                 last_snap_str = snap_str
-            await asyncio.sleep(0.5)   # 2Hz poll; only pushes on change
+            await asyncio.sleep(0.25)  # 4Hz poll; only pushes on actual change
     except (WebSocketDisconnect, Exception):
         pass
 
