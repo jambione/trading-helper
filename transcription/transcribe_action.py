@@ -15,8 +15,6 @@ import re
 import time
 import threading
 import contextlib
-import urllib.request
-import urllib.error
 from pathlib import Path
 from queue import Queue, Full
 
@@ -140,73 +138,6 @@ def normalize_transcript(text: str) -> str:
 # TICKER EXTRACTION
 # =============================================================================
 
-# =============================================================================
-# VALID TICKER LIST  (NASDAQ + NYSE, refreshed weekly from nasdaqtrader.com)
-# =============================================================================
-
-_TICKER_CACHE_FILE = Path(__file__).parent.parent / "valid_tickers.txt"
-_TICKER_CACHE_DAYS = 7   # re-download after this many days
-
-def _load_valid_tickers() -> set:
-    """Return a set of ~10k valid US ticker symbols.
-    Downloads from NASDAQ Trader on first run (or after cache expires),
-    then reads from local cache file.  Falls back to empty set on any error
-    so the transcriber still works without internet access."""
-
-    def _fetch() -> set:
-        import urllib.request as _ur
-        tickers = set()
-        sources = [
-            # NASDAQ-listed: Symbol|Name|...  (header + footer lines skipped)
-            ("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
-             lambda line: line.split("|")[0].strip()),
-            # Other exchanges: ACT Symbol|Name|Exchange|...
-            ("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
-             lambda line: line.split("|")[0].strip()),
-        ]
-        for url, extract in sources:
-            try:
-                req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with _ur.urlopen(req, timeout=10) as r:
-                    for raw in r.read().decode("utf-8", errors="ignore").splitlines():
-                        sym = extract(raw)
-                        # Skip header, footer ("File Creation Time"), blank, test issues
-                        if (sym and sym.isalpha() and 1 <= len(sym) <= 5
-                                and sym != "Symbol" and sym != "ACTSymbol"):
-                            tickers.add(sym.upper())
-            except Exception as e:
-                print(f"[TICKERS] Warning: could not fetch {url}: {e}", flush=True)
-        return tickers
-
-    # Use cache if fresh enough
-    try:
-        if _TICKER_CACHE_FILE.exists():
-            age_days = (time.time() - _TICKER_CACHE_FILE.stat().st_mtime) / 86400
-            if age_days < _TICKER_CACHE_DAYS:
-                syms = set(_TICKER_CACHE_FILE.read_text().split())
-                if syms:
-                    print(f"[TICKERS] Loaded {len(syms):,} valid tickers from cache "
-                          f"({age_days:.1f}d old).", flush=True)
-                    return syms
-    except Exception:
-        pass
-
-    # Download fresh
-    print("[TICKERS] Downloading ticker list from NASDAQ Trader ...", flush=True)
-    tickers = _fetch()
-    if tickers:
-        try:
-            _TICKER_CACHE_FILE.write_text("\n".join(sorted(tickers)))
-        except Exception:
-            pass
-        print(f"[TICKERS] Downloaded {len(tickers):,} valid tickers.", flush=True)
-    else:
-        print("[TICKERS] Download failed — running without ticker validation.", flush=True)
-    return tickers
-
-_VALID_TICKERS: set = _load_valid_tickers()
-
-
 _STOP_WORDS = {
     # Common English
     "A", "I", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "IF", "IN", "IS",
@@ -240,8 +171,6 @@ _STOP_WORDS = {
     # Filler / noise
     "HEY", "YEAH", "OKAY", "WELL", "LIKE", "JUST", "SAID",
     "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE",
-    # Common false positives seen in output
-    "END", "NEW", "PER", "DL", "AT", "UP", "DOWN",
 }
 
 # Company name → ticker (spoken names on air)
@@ -285,13 +214,13 @@ _NAME_TO_TICKER = {
     "airbnb": "ABNB", "uber": "UBER", "lyft": "LYFT", "doordash": "DASH",
 }
 
-# Known Whisper mishears → correct ticker (always applied)
+# Known Whisper mishears → correct ticker
 _MISHEAR_MAP = {
     "envidia": "NVDA", "vidia": "NVDA", "invidia": "NVDA",
     "nda": "NVDA", "nvia": "NVDA",
     "tesler": "TSLA", "tla": "TSLA",
     "palanteer": "PLTR", "palantar": "PLTR", "plt": "PLTR",
-    "appal": "AAPL", "apples": "AAPL", "apl": "AAPL", "appl": "AAPL",
+    "appal": "AAPL", "apples": "AAPL", "apl": "AAPL",
     "amazin": "AMZN", "amazons": "AMZN", "amz": "AMZN",
     "gugsel": "GOOGL", "guggle": "GOOGL", "googel": "GOOGL",
     "hud": "HOOD",
@@ -308,93 +237,33 @@ _MISHEAR_MAP = {
     "cloudflare": "NET",
 }
 
-# Common English words Whisper prefers over the real ticker spelling.
-# These only apply when financial context words are present in the same sentence
-# — avoids false positives when the word is used literally.
-_CONTEXT_MISHEAR_MAP = {
-    "click":  "CLIK",   # Whisper writes "Click. Click." instead of CLIK
-}
-
-_TICKER_RE          = re.compile(r'\b([A-Za-z]{2,5})\b')
-_DOLLAR_TICK_RE     = re.compile(r'\$([A-Za-z]{1,5})\b')   # $AAPL, $TSLA
-_NAME_RE            = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
-_MISHEAR_RE         = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
-_CTX_MISHEAR_RE     = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _CONTEXT_MISHEAR_MAP}
-
-# Financial context words — a 2-5 letter token gets a confidence boost when one
-# of these appears nearby in the same sentence.
-_CONTEXT_BOOST = re.compile(
-    r'\b(stock|ticker|symbol|shares?|calls?|puts?|trade|trading|buying|selling|'
-    r'watching|looking at|play|position|breakout|momentum|squeeze|chart|price|'
-    r'target|alert|mention|setup|move|runner|mover|halted?|catalyst)\b',
-    re.I
-)
+_TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
+_NAME_RE    = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
+_MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
 
 
-def _is_valid(ticker: str) -> bool:
-    """Accept ticker if it passes the appropriate filter.
-
-    When the NASDAQ/NYSE list is loaded: check against that list — it's the
-    ground truth and far more accurate than the stop-word blocklist.
-    When the list is unavailable (download failed): fall back to stop words.
-    """
-    if _VALID_TICKERS:
-        return ticker in _VALID_TICKERS
-    # Fallback: stop-word filter only
-    return ticker not in _STOP_WORDS
-
-
-def extract_tickers(text: str) -> list[tuple[str, bool]]:
-    """Return list of (ticker, high_confidence) tuples.
-    high_confidence=True  → dollar-sign prefix, company name, mishear correction
-                            (bypass repetition gate; send immediately)
-    high_confidence=False → plain token scan result
-                            (must appear in ≥2 chunks within the gate window)
-    """
+def extract_tickers(text: str) -> list:
     found, seen = [], set()
     lower = text.lower()
-    has_context = bool(_CONTEXT_BOOST.search(text))
 
-    # 0. Dollar-sign prefix — highest confidence ($AAPL, $TSLA)
-    for m in _DOLLAR_TICK_RE.finditer(text):
-        t = m.group(1).upper()
-        if t not in seen and _is_valid(t):
-            found.append((t, True))
-            seen.add(t)
-
-    # 1. Token scan — plain uppercase words; low confidence until seen twice
+    # 1. Token scan — catches explicit uppercase tickers like AAPL, TSLA
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
-        if t in seen:
-            continue
-        if not _VALID_TICKERS and t in _STOP_WORDS:
-            continue
-        all_caps = m.group(1) == m.group(1).upper()
-        if len(t) <= 3 and not all_caps and not has_context:
-            continue
-        if _is_valid(t):
-            found.append((t, False))
+        if t not in _STOP_WORDS and t not in seen:
+            found.append(t)
             seen.add(t)
 
-    # 2. Company name scan — always high confidence
+    # 2. Company name scan — catches "nvidia", "tesla", "apple" spoken naturally
     for name, ticker in _NAME_TO_TICKER.items():
         if ticker not in seen and _NAME_RE[name].search(lower):
-            found.append((ticker, True))
+            found.append(ticker)
             seen.add(ticker)
 
-    # 3. Mishear correction — always high confidence
+    # 3. Mishear correction — catches Whisper-specific garbles
     for mishear, ticker in _MISHEAR_MAP.items():
         if ticker not in seen and _MISHEAR_RE[mishear].search(lower):
-            found.append((ticker, True))
+            found.append(ticker)
             seen.add(ticker)
-
-    # 4. Context-gated mishear — common words that are also tickers (e.g. "click" → CLIK)
-    #    Only fires when financial context is present so literal uses are ignored.
-    if has_context:
-        for mishear, ticker in _CONTEXT_MISHEAR_MAP.items():
-            if ticker not in seen and _CTX_MISHEAR_RE[mishear].search(lower):
-                found.append((ticker, False))   # still needs gate (2 hits) as safety
-                seen.add(ticker)
 
     return found
 
@@ -418,7 +287,6 @@ INITIAL_PROMPT = (
     "PFE MRNA UNH LLY JNJ ABBV MRK AMGN GILD REGN VRTX "
     "XOM CVX COP BA LMT RTX VZ T TMUS "
     "GME AMC PLTR UBER LYFT ABNB DASH DKNG SOUN "
-    "CLIK ENSC GCTS DGXX ZBAO CCTG AGNT "
     "calls puts earnings price target breakout resistance."
 )
 
@@ -573,9 +441,8 @@ _audio_queue = Queue(maxsize=16)  # larger buffer for 2 parallel workers
 _running     = threading.Event()
 _running.set()
 
-# Per-ticker rate limit — stores last-sent timestamp; prevents flooding from
-# overlapping audio chunks while still sending every distinct mention.
-_session_tickers: dict = {}   # ticker → monotonic timestamp of last send
+# Session-level dedup — don't spam the dashboard with the same ticker repeatedly
+_session_tickers: set = set()
 _session_lock = threading.Lock()
 
 
@@ -587,28 +454,23 @@ _DASHBOARD_URL = "http://localhost:8888"
 
 
 def _send_ticker(ticker: str):
-    """POST ticker to dashboard every time it's mentioned (for mention burst tracking).
-    The server handles dedup for watchlist adds — we just keep sending mentions."""
+    """POST ticker to dashboard. Falls back to writing the file if API is down."""
     ticker = ticker.upper()
-
-    # Rate-limit per ticker: don't send more than once every 2s for the same ticker
-    # (avoids flooding from overlapping 1.5s audio chunks saying the same word).
-    now = time.monotonic()
     with _session_lock:
-        last = _session_tickers.get(ticker, 0)
-        if now - last < 2.0:
+        if ticker in _session_tickers:
             return
-        _session_tickers[ticker] = now
+        _session_tickers.add(ticker)
 
     try:
+        import urllib.request as _req
         body    = json.dumps({"ticker": ticker}).encode()
-        request = urllib.request.Request(
+        request = _req.Request(
             f"{_DASHBOARD_URL}/api/tickers/add",
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=2) as resp:
+        with _req.urlopen(request, timeout=2) as resp:
             result = json.loads(resp.read())
             label  = "" if result.get("is_new", True) else "  (already listed)"
             print(f"  → {ticker}{label}", flush=True)
@@ -634,114 +496,6 @@ def _fallback_write(ticker: str, reason: str):
         print(f"  → {ticker}  (file write — API: {reason})", flush=True)
     except Exception as e2:
         print(f"  → {ticker}  (could not save: {e2})", flush=True)
-
-
-# =============================================================================
-# 1. DYNAMIC WHISPER PROMPT  — injects current watchlist into each transcription
-# =============================================================================
-# Seeding Whisper with the tickers being actively discussed in the session
-# dramatically improves recognition of small-cap / unfamiliar symbols.
-
-_dynamic_prompt      = INITIAL_PROMPT   # updated every 30s by _prompt_refresher
-_dynamic_prompt_lock = threading.Lock()
-
-
-def _prompt_refresher():
-    """Background thread: fetch current watchlist and rebuild the Whisper prompt."""
-    global _dynamic_prompt
-    while _running.is_set():
-        time.sleep(10)
-        try:
-            with urllib.request.urlopen(
-                    f"{_DASHBOARD_URL}/api/state", timeout=3) as r:
-                state   = json.loads(r.read())
-            tickers = [row["ticker"] for row in state.get("tickers", [])]
-            if tickers:
-                extra = " ".join(tickers)
-                with _dynamic_prompt_lock:
-                    _dynamic_prompt = f"{INITIAL_PROMPT} {extra}"
-        except Exception:
-            pass   # keep using last-known prompt on any error
-
-
-# =============================================================================
-# 2. MULTI-CHUNK REPETITION GATE  — require ≥2 mentions before reporting
-# =============================================================================
-# A word must appear in at least GATE_MIN_HITS audio chunks within GATE_WINDOW
-# seconds to be accepted.  High-confidence extractions (dollar-sign, company
-# name, mishear) bypass the gate entirely and are reported immediately.
-
-GATE_WINDOW   = 35   # seconds
-GATE_MIN_HITS = 2    # minimum chunk appearances required
-
-_gate_buf  : dict = {}   # ticker → list[monotonic timestamps]
-_gate_lock         = threading.Lock()
-
-
-def _passes_gate(ticker: str, high_conf: bool) -> bool:
-    """Return True if ticker should be forwarded to _send_ticker."""
-    if high_conf:
-        return True
-    now = time.monotonic()
-    with _gate_lock:
-        buf = _gate_buf.setdefault(ticker, [])
-        buf.append(now)
-        _gate_buf[ticker] = [t for t in buf if now - t <= GATE_WINDOW]
-        return len(_gate_buf[ticker]) >= GATE_MIN_HITS
-
-
-# =============================================================================
-# 3. PRICE VALIDATION  — reject tickers with no Alpaca market data
-# =============================================================================
-# The first time a ticker passes the gate, a background thread checks whether
-# Alpaca returns live price data for it.  If not (delisted / not a stock),
-# the ticker is added to a session blocklist and silently dropped thereafter.
-# Validation is non-blocking: the first accepted mention goes through while
-# the check runs in the background; subsequent mentions respect the result.
-
-_price_validated : dict = {}   # ticker → True (valid) | False (invalid)
-_price_lock               = threading.Lock()
-_ALPACA_SNAP = "https://data.alpaca.markets/v2/stocks/{}/snapshot"
-
-
-def _validate_price_bg(ticker: str):
-    """Run in a daemon thread — validate ticker against Alpaca and cache result."""
-    if not _alpaca_key:
-        return   # no API key → skip validation
-    try:
-        req = urllib.request.Request(
-            _ALPACA_SNAP.format(ticker),
-            headers={
-                "APCA-API-KEY-ID":     _alpaca_key,
-                "APCA-API-SECRET-KEY": _alpaca_secret,
-            },
-        )
-        with urllib.request.urlopen(req, timeout=3) as r:
-            valid = r.status == 200
-    except urllib.error.HTTPError as e:
-        valid = e.code not in (422, 404)   # 422/404 → symbol unknown to Alpaca
-    except Exception:
-        valid = True   # network error → assume valid; don't lose real tickers
-
-    with _price_lock:
-        _price_validated[ticker] = valid
-    if not valid:
-        print(f"  [PRICE] Dropped {ticker} — no Alpaca data", flush=True)
-
-
-def _price_ok(ticker: str) -> bool:
-    """Return False only when we have a confirmed negative result for this ticker."""
-    with _price_lock:
-        result = _price_validated.get(ticker)
-        if result is None:
-            # First time we've seen this ticker — kick off background validation
-            # and optimistically allow this first mention through.
-            _price_validated[ticker] = True   # tentatively valid
-            t = threading.Thread(target=_validate_price_bg, args=(ticker,),
-                                 daemon=True, name=f"price-{ticker}")
-            t.start()
-            return True
-        return result
 
 
 # =============================================================================
@@ -813,10 +567,6 @@ def transcription_worker():
 
             t0 = time.perf_counter()
 
-            # Grab the latest prompt (updated every 30s with current watchlist)
-            with _dynamic_prompt_lock:
-                prompt = _dynamic_prompt
-
             with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
                 if _USE_MLX:
                     with _suppress_stderr():
@@ -824,7 +574,7 @@ def transcription_worker():
                             chunk,
                             path_or_hf_repo=MLX_MODEL,
                             language="en",
-                            initial_prompt=prompt,
+                            initial_prompt=INITIAL_PROMPT,
                             temperature=0.0,
                             no_speech_threshold=0.4,
                             compression_ratio_threshold=2.0,
@@ -836,7 +586,7 @@ def transcription_worker():
                     segs, _ = _fw_model.transcribe(
                         chunk,
                         language="en",
-                        initial_prompt=prompt,
+                        initial_prompt=INITIAL_PROMPT,
                         beam_size=CPU_BEAM,
                         temperature=0.0,
                         vad_filter=True,
@@ -849,7 +599,7 @@ def transcription_worker():
             ms = (time.perf_counter() - t0) * 1000
 
             # Hallucination guard — Whisper echoes the initial prompt on quiet audio.
-            # Pattern 1: single token repeating  ("AGNT AGNT AGNT …")
+            # Pattern 1: single token looping  ("AGNT AGNT AGNT …")
             # Pattern 2: prompt echo — chunk is mostly 2-5 char ALL-CAPS ticker tokens
             if text:
                 _words = text.split()
@@ -866,15 +616,10 @@ def transcription_worker():
                 continue
 
             text = normalize_transcript(text)
+            tickers = extract_tickers(text)
 
-            for ticker, high_conf in extract_tickers(text):
-                # Gate 1: repetition — low-confidence tokens need ≥2 chunk hits
-                if not _passes_gate(ticker, high_conf):
-                    continue
-                # Gate 2: price — drop tickers Alpaca doesn't recognise
-                if not _price_ok(ticker):
-                    continue
-                _send_ticker(ticker)
+            for t in tickers:
+                _send_ticker(t)
 
         except Exception as e:
             msg = str(e).strip()
@@ -891,7 +636,6 @@ _N_WORKERS = 2   # parallel transcription workers — Metal/GPU handles concurre
 
 _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
-    threading.Thread(target=_prompt_refresher,    daemon=True, name="prompt-refresh"),
     *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
       for i in range(_N_WORKERS)],
 ]
