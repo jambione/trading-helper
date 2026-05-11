@@ -15,6 +15,8 @@ import re
 import time
 import threading
 import contextlib
+import urllib.request
+import urllib.error
 from pathlib import Path
 from queue import Queue, Full
 
@@ -334,7 +336,13 @@ def _is_valid(ticker: str) -> bool:
     return ticker not in _STOP_WORDS
 
 
-def extract_tickers(text: str) -> list:
+def extract_tickers(text: str) -> list[tuple[str, bool]]:
+    """Return list of (ticker, high_confidence) tuples.
+    high_confidence=True  → dollar-sign prefix, company name, mishear correction
+                            (bypass repetition gate; send immediately)
+    high_confidence=False → plain token scan result
+                            (must appear in ≥2 chunks within the gate window)
+    """
     found, seen = [], set()
     lower = text.lower()
     has_context = bool(_CONTEXT_BOOST.search(text))
@@ -343,35 +351,33 @@ def extract_tickers(text: str) -> list:
     for m in _DOLLAR_TICK_RE.finditer(text):
         t = m.group(1).upper()
         if t not in seen and _is_valid(t):
-            found.append(t)
+            found.append((t, True))
             seen.add(t)
 
-    # 1. Token scan — catches explicit uppercase tickers like AAPL, TSLA
+    # 1. Token scan — plain uppercase words; low confidence until seen twice
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
         if t in seen:
             continue
-        # When using stop-word fallback (no ticker list), apply stop-word filter here
         if not _VALID_TICKERS and t in _STOP_WORDS:
             continue
-        # Require all-caps OR financial context for short (2-3 char) tokens
         all_caps = m.group(1) == m.group(1).upper()
         if len(t) <= 3 and not all_caps and not has_context:
             continue
         if _is_valid(t):
-            found.append(t)
+            found.append((t, False))
             seen.add(t)
 
-    # 2. Company name scan — always trusted regardless of ticker list
+    # 2. Company name scan — always high confidence
     for name, ticker in _NAME_TO_TICKER.items():
         if ticker not in seen and _NAME_RE[name].search(lower):
-            found.append(ticker)
+            found.append((ticker, True))
             seen.add(ticker)
 
-    # 3. Mishear correction — always trusted regardless of ticker list
+    # 3. Mishear correction — always high confidence
     for mishear, ticker in _MISHEAR_MAP.items():
         if ticker not in seen and _MISHEAR_RE[mishear].search(lower):
-            found.append(ticker)
+            found.append((ticker, True))
             seen.add(ticker)
 
     return found
@@ -578,15 +584,14 @@ def _send_ticker(ticker: str):
         _session_tickers[ticker] = now
 
     try:
-        import urllib.request as _req
         body    = json.dumps({"ticker": ticker}).encode()
-        request = _req.Request(
+        request = urllib.request.Request(
             f"{_DASHBOARD_URL}/api/tickers/add",
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with _req.urlopen(request, timeout=2) as resp:
+        with urllib.request.urlopen(request, timeout=2) as resp:
             result = json.loads(resp.read())
             label  = "" if result.get("is_new", True) else "  (already listed)"
             print(f"  → {ticker}{label}", flush=True)
@@ -612,6 +617,114 @@ def _fallback_write(ticker: str, reason: str):
         print(f"  → {ticker}  (file write — API: {reason})", flush=True)
     except Exception as e2:
         print(f"  → {ticker}  (could not save: {e2})", flush=True)
+
+
+# =============================================================================
+# 1. DYNAMIC WHISPER PROMPT  — injects current watchlist into each transcription
+# =============================================================================
+# Seeding Whisper with the tickers being actively discussed in the session
+# dramatically improves recognition of small-cap / unfamiliar symbols.
+
+_dynamic_prompt      = INITIAL_PROMPT   # updated every 30s by _prompt_refresher
+_dynamic_prompt_lock = threading.Lock()
+
+
+def _prompt_refresher():
+    """Background thread: fetch current watchlist and rebuild the Whisper prompt."""
+    global _dynamic_prompt
+    while _running.is_set():
+        time.sleep(30)
+        try:
+            with urllib.request.urlopen(
+                    f"{_DASHBOARD_URL}/api/state", timeout=3) as r:
+                state   = json.loads(r.read())
+            tickers = [row["ticker"] for row in state.get("tickers", [])]
+            if tickers:
+                extra = " ".join(tickers)
+                with _dynamic_prompt_lock:
+                    _dynamic_prompt = f"{INITIAL_PROMPT} {extra}"
+        except Exception:
+            pass   # keep using last-known prompt on any error
+
+
+# =============================================================================
+# 2. MULTI-CHUNK REPETITION GATE  — require ≥2 mentions before reporting
+# =============================================================================
+# A word must appear in at least GATE_MIN_HITS audio chunks within GATE_WINDOW
+# seconds to be accepted.  High-confidence extractions (dollar-sign, company
+# name, mishear) bypass the gate entirely and are reported immediately.
+
+GATE_WINDOW   = 35   # seconds
+GATE_MIN_HITS = 2    # minimum chunk appearances required
+
+_gate_buf  : dict = {}   # ticker → list[monotonic timestamps]
+_gate_lock         = threading.Lock()
+
+
+def _passes_gate(ticker: str, high_conf: bool) -> bool:
+    """Return True if ticker should be forwarded to _send_ticker."""
+    if high_conf:
+        return True
+    now = time.monotonic()
+    with _gate_lock:
+        buf = _gate_buf.setdefault(ticker, [])
+        buf.append(now)
+        _gate_buf[ticker] = [t for t in buf if now - t <= GATE_WINDOW]
+        return len(_gate_buf[ticker]) >= GATE_MIN_HITS
+
+
+# =============================================================================
+# 3. PRICE VALIDATION  — reject tickers with no Alpaca market data
+# =============================================================================
+# The first time a ticker passes the gate, a background thread checks whether
+# Alpaca returns live price data for it.  If not (delisted / not a stock),
+# the ticker is added to a session blocklist and silently dropped thereafter.
+# Validation is non-blocking: the first accepted mention goes through while
+# the check runs in the background; subsequent mentions respect the result.
+
+_price_validated : dict = {}   # ticker → True (valid) | False (invalid)
+_price_lock               = threading.Lock()
+_ALPACA_SNAP = "https://data.alpaca.markets/v2/stocks/{}/snapshot"
+
+
+def _validate_price_bg(ticker: str):
+    """Run in a daemon thread — validate ticker against Alpaca and cache result."""
+    if not _alpaca_key:
+        return   # no API key → skip validation
+    try:
+        req = urllib.request.Request(
+            _ALPACA_SNAP.format(ticker),
+            headers={
+                "APCA-API-KEY-ID":     _alpaca_key,
+                "APCA-API-SECRET-KEY": _alpaca_secret,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=3) as r:
+            valid = r.status == 200
+    except urllib.error.HTTPError as e:
+        valid = e.code not in (422, 404)   # 422/404 → symbol unknown to Alpaca
+    except Exception:
+        valid = True   # network error → assume valid; don't lose real tickers
+
+    with _price_lock:
+        _price_validated[ticker] = valid
+    if not valid:
+        print(f"  [PRICE] Dropped {ticker} — no Alpaca data", flush=True)
+
+
+def _price_ok(ticker: str) -> bool:
+    """Return False only when we have a confirmed negative result for this ticker."""
+    with _price_lock:
+        result = _price_validated.get(ticker)
+        if result is None:
+            # First time we've seen this ticker — kick off background validation
+            # and optimistically allow this first mention through.
+            _price_validated[ticker] = True   # tentatively valid
+            t = threading.Thread(target=_validate_price_bg, args=(ticker,),
+                                 daemon=True, name=f"price-{ticker}")
+            t.start()
+            return True
+        return result
 
 
 # =============================================================================
@@ -683,6 +796,10 @@ def transcription_worker():
 
             t0 = time.perf_counter()
 
+            # Grab the latest prompt (updated every 30s with current watchlist)
+            with _dynamic_prompt_lock:
+                prompt = _dynamic_prompt
+
             with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
                 if _USE_MLX:
                     with _suppress_stderr():
@@ -690,7 +807,7 @@ def transcription_worker():
                             chunk,
                             path_or_hf_repo=MLX_MODEL,
                             language="en",
-                            initial_prompt=INITIAL_PROMPT,
+                            initial_prompt=prompt,
                             temperature=0.0,
                             no_speech_threshold=0.4,
                             compression_ratio_threshold=2.0,
@@ -702,7 +819,7 @@ def transcription_worker():
                     segs, _ = _fw_model.transcribe(
                         chunk,
                         language="en",
-                        initial_prompt=INITIAL_PROMPT,
+                        initial_prompt=prompt,
                         beam_size=CPU_BEAM,
                         temperature=0.0,
                         vad_filter=True,
@@ -719,10 +836,15 @@ def transcription_worker():
                 continue
 
             text = normalize_transcript(text)
-            tickers = extract_tickers(text)
 
-            for t in tickers:
-                _send_ticker(t)
+            for ticker, high_conf in extract_tickers(text):
+                # Gate 1: repetition — low-confidence tokens need ≥2 chunk hits
+                if not _passes_gate(ticker, high_conf):
+                    continue
+                # Gate 2: price — drop tickers Alpaca doesn't recognise
+                if not _price_ok(ticker):
+                    continue
+                _send_ticker(ticker)
 
         except Exception as e:
             msg = str(e).strip()
@@ -739,6 +861,7 @@ _N_WORKERS = 2   # parallel transcription workers — Metal/GPU handles concurre
 
 _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
+    threading.Thread(target=_prompt_refresher,    daemon=True, name="prompt-refresh"),
     *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
       for i in range(_N_WORKERS)],
 ]
