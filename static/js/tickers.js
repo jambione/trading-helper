@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=21';
-import { api } from './api.js?v=21';
+import { subscribe, selectTicker, get } from './store.js?v=22';
+import { api } from './api.js?v=22';
 
 let _rowsEl  = null;   // <div data-ticker-rows>
 let _countEl = null;   // <span data-ticker-count>
@@ -32,7 +32,7 @@ function _renderTable(rows) {
   }
 
   if (!rows.length) {
-    _rowsEl.innerHTML = '<div class="table-empty">No tickers — start the transcriber and mention some stocks.</div>';
+    _rowsEl.innerHTML = '';
     _prevPrices = {};
     return;
   }
