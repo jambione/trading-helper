@@ -847,6 +847,19 @@ def transcription_worker():
                     text = " ".join(s.text.strip() for s in segs).strip()
 
             ms = (time.perf_counter() - t0) * 1000
+
+            # Hallucination guard — Whisper echoes the initial prompt on quiet audio.
+            # Pattern 1: single token repeating  ("AGNT AGNT AGNT …")
+            # Pattern 2: prompt echo — chunk is mostly 2-5 char ALL-CAPS ticker tokens
+            if text:
+                _words = text.split()
+                _is_loop = max((_words.count(w) for w in set(_words)), default=0) > 3
+                _upper   = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
+                _is_echo = len(_words) >= 4 and len(_upper) / len(_words) > 0.60
+                if _is_loop or _is_echo:
+                    print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
+                    continue
+
             print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
 
             if not text or len(text.split()) < 2:
