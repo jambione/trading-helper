@@ -76,7 +76,7 @@ else:
 
 TARGET_SR       = 16000
 CHUNK_DURATION  = 3.0    # 3s window — enough sentence context for accuracy
-OVERLAP         = 1.5    # large overlap: slide every 1.5s instead of 2.5s
+OVERLAP         = 2.5    # slide every 0.5s — much lower latency
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per result
@@ -672,7 +672,7 @@ def _prompt_refresher():
 # name, mishear) bypass the gate entirely and are reported immediately.
 
 GATE_WINDOW   = 35   # seconds
-GATE_MIN_HITS = 2    # minimum chunk appearances required
+GATE_MIN_HITS = 1    # NASDAQ list is the primary quality filter; report on first mention
 
 _gate_buf  : dict = {}   # ticker → list[monotonic timestamps]
 _gate_lock         = threading.Lock()
