@@ -8,7 +8,7 @@
  * Creates a new widget instance each time the symbol changes.
  */
 
-import { subscribe, get } from './store.js?v=26';
+import { subscribe, get } from './store.js?v=27';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
@@ -72,18 +72,7 @@ function _loadChart(symbol) {
 }
 
 function _createWidget(containerId, symbol) {
-  const config   = get('config') || {};
-  const chartUrl = config.tv_chart_url || '';
-
-  // Extract layout ID from a full TradingView URL
-  // e.g. https://www.tradingview.com/chart/x04Gfcu8/ -> x04Gfcu8
-  let layoutId = undefined;
-  if (chartUrl) {
-    const parts = chartUrl.split('/');
-    layoutId = parts.filter(p => p.length >= 6 && p.length <= 12 && p !== 'chart').pop();
-  }
-
-  console.log('[tv] _createWidget', symbol, '— layoutId:', layoutId || '(none)');
+  console.log('[tv] _createWidget', symbol);
 
   const widgetOpts = {
     autosize:            true,
@@ -101,18 +90,11 @@ function _createWidget(containerId, symbol) {
     container_id:        containerId,
   };
 
-  if (layoutId) {
-    widgetOpts.watchlist = [symbol];
-    widgetOpts.chart     = layoutId;
-  } else {
-    widgetOpts.studies = [
-      'Volume@tv-basicstudies',
-      { id: 'RSI@tv-basicstudies', inputs: { length: 2 } },
-      'MACD@tv-basicstudies',
-      'OBV@tv-basicstudies',
-      'WilliamsR@tv-basicstudies',
-    ];
-  }
+  widgetOpts.studies = [
+    'MACD@tv-basicstudies',
+    'Volume@tv-basicstudies',
+    'VWAP@tv-basicstudies',
+  ];
 
   try {
     new window.TradingView.widget(widgetOpts);
