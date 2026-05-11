@@ -322,10 +322,16 @@ _CONTEXT_BOOST = re.compile(
 
 
 def _is_valid(ticker: str) -> bool:
-    """Accept ticker if it's in the downloaded list, or if we have no list (fallback)."""
-    if not _VALID_TICKERS:
-        return ticker not in _STOP_WORDS   # no list — fall back to stop-word filter only
-    return ticker in _VALID_TICKERS
+    """Accept ticker if it passes the appropriate filter.
+
+    When the NASDAQ/NYSE list is loaded: check against that list — it's the
+    ground truth and far more accurate than the stop-word blocklist.
+    When the list is unavailable (download failed): fall back to stop words.
+    """
+    if _VALID_TICKERS:
+        return ticker in _VALID_TICKERS
+    # Fallback: stop-word filter only
+    return ticker not in _STOP_WORDS
 
 
 def extract_tickers(text: str) -> list:
@@ -343,9 +349,12 @@ def extract_tickers(text: str) -> list:
     # 1. Token scan — catches explicit uppercase tickers like AAPL, TSLA
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
-        if t in seen or t in _STOP_WORDS:
+        if t in seen:
             continue
-        # Require all-caps OR financial context present for short (2-3 char) tokens
+        # When using stop-word fallback (no ticker list), apply stop-word filter here
+        if not _VALID_TICKERS and t in _STOP_WORDS:
+            continue
+        # Require all-caps OR financial context for short (2-3 char) tokens
         all_caps = m.group(1) == m.group(1).upper()
         if len(t) <= 3 and not all_caps and not has_context:
             continue
