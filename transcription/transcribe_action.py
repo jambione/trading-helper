@@ -378,44 +378,49 @@ _NAME_RE    = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TIC
 _MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
 
 
-def extract_tickers(text: str) -> list:
-    found, seen = [], set()
-    lower = text.lower()
+def extract_tickers(text: str) -> dict:
+    """Return {ticker: mention_count} for this chunk.
+    Counts every occurrence in the token scan (e.g. 'MNTS MNTS MNTS' → {'MNTS': 3}).
+    Company-name and mishear matches always contribute 1.
+    """
+    counts: dict[str, int] = {}
+    seen   = set()           # unique candidates for validation + dedup of name/mishear paths
+    lower  = text.lower()
 
-    # 1. Token scan — build candidate list, then classify via Ollama or NASDAQ list
+    # 1. Token scan — count raw occurrences, then validate unique candidates
     candidates = []
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
-        if t not in _STOP_WORDS and t not in seen:
-            candidates.append(t)
-            seen.add(t)
+        if t not in _STOP_WORDS:
+            counts[t] = counts.get(t, 0) + 1   # count every occurrence
+            if t not in seen:
+                candidates.append(t)
+                seen.add(t)
 
     if candidates:
         if _ollama_ok:
-            # LLM path: context-aware, eliminates false positives like WELL/OPEN/MOVE
             confirmed = _ollama_classify(candidates, text)
         elif _VALID_TICKERS:
-            # Fallback: NASDAQ/NYSE list check
             confirmed = [t for t in candidates if t in _VALID_TICKERS]
         else:
-            # Last resort: trust stop-word filter alone
             confirmed = candidates
-        for t in confirmed:
-            found.append(t)
+        # Drop any raw counts for tokens that failed validation
+        confirmed_set = set(confirmed)
+        counts = {t: c for t, c in counts.items() if t in confirmed_set}
 
-    # 2. Company name scan — catches "nvidia", "tesla", "apple" spoken naturally
+    # 2. Company name scan — 1 mention each
     for name, ticker in _NAME_TO_TICKER.items():
         if ticker not in seen and _NAME_RE[name].search(lower):
-            found.append(ticker)
+            counts[ticker] = counts.get(ticker, 0) + 1
             seen.add(ticker)
 
-    # 3. Mishear correction — catches Whisper-specific garbles
+    # 3. Mishear correction — 1 mention each
     for mishear, ticker in _MISHEAR_MAP.items():
         if ticker not in seen and _MISHEAR_RE[mishear].search(lower):
-            found.append(ticker)
+            counts[ticker] = counts.get(ticker, 0) + 1
             seen.add(ticker)
 
-    return found
+    return counts
 
 
 # =============================================================================
@@ -618,30 +623,39 @@ _session_lock = threading.Lock()
 _DASHBOARD_URL = "http://localhost:8888"
 
 
-def _send_ticker(ticker: str):
-    """POST ticker to dashboard. Falls back to writing the file if API is down."""
+def _send_ticker(ticker: str, count: int = 1):
+    """POST ticker to dashboard.
+    First occurrence: adds to watchlist (/api/tickers/add).
+    Subsequent occurrences: records mention count (/api/tickers/mention).
+    Falls back to writing the file if API is down.
+    """
     ticker = ticker.upper()
     with _session_lock:
-        if ticker in _session_tickers:
-            return
-        _session_tickers.add(ticker)
+        is_new = ticker not in _session_tickers
+        if is_new:
+            _session_tickers.add(ticker)
 
     try:
         import urllib.request as _req
-        body    = json.dumps({"ticker": ticker}).encode()
-        request = _req.Request(
-            f"{_DASHBOARD_URL}/api/tickers/add",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with _req.urlopen(request, timeout=2) as resp:
+        if is_new:
+            # First time this session — add to watchlist (also records mention × count)
+            body     = json.dumps({"ticker": ticker, "count": count}).encode()
+            endpoint = f"{_DASHBOARD_URL}/api/tickers/add"
+        else:
+            # Already on watchlist — just record the mention count
+            body     = json.dumps({"ticker": ticker, "count": count}).encode()
+            endpoint = f"{_DASHBOARD_URL}/api/tickers/mention"
+
+        req = _req.Request(endpoint, data=body,
+                           headers={"Content-Type": "application/json"}, method="POST")
+        with _req.urlopen(req, timeout=2) as resp:
             result = json.loads(resp.read())
-            label  = "" if result.get("is_new", True) else "  (already listed)"
-            print(f"  → {ticker}{label}", flush=True)
+            if is_new:
+                label = "" if result.get("is_new", True) else "  (already listed)"
+                print(f"  → {ticker}{label}", flush=True)
     except Exception as e:
-        # Dashboard not running — write directly in dashboard's timestamped format
-        _fallback_write(ticker, str(e))
+        if is_new:
+            _fallback_write(ticker, str(e))
 
 
 def _fallback_write(ticker: str, reason: str):
@@ -787,10 +801,10 @@ def transcription_worker():
                 continue
 
             text = normalize_transcript(text)
-            tickers = extract_tickers(text)
+            tickers = extract_tickers(text)   # {ticker: count}
 
-            for t in tickers:
-                _send_ticker(t)
+            for t, cnt in tickers.items():
+                _send_ticker(t, cnt)
 
         except Exception as e:
             msg = str(e).strip()

@@ -741,14 +741,33 @@ async def api_add_ticker(request: Request):
     try:
         body   = await request.json()
         ticker = str(body.get("ticker", "")).strip().upper()
+        count  = max(1, int(body.get("count", 1)))
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
             return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
         loop = asyncio.get_running_loop()
         ok, is_new = await loop.run_in_executor(None, lambda: add_ticker_to_log(ticker))
-        # Track every mention (whether ticker is new or already in watchlist)
+        # Record all mentions in this chunk
         with STATE.lock:
-            _track_mention(ticker)
-        return JSONResponse({"ok": ok})
+            for _ in range(count):
+                _track_mention(ticker)
+        return JSONResponse({"ok": ok, "is_new": is_new})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/mention")
+async def api_mention_ticker(request: Request):
+    """Record mention counts for a ticker already on the watchlist (no watchlist change)."""
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        count  = max(1, int(body.get("count", 1)))
+        if not ticker:
+            return JSONResponse({"ok": False, "error": "Missing ticker"}, status_code=400)
+        with STATE.lock:
+            for _ in range(count):
+                _track_mention(ticker)
+        return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
