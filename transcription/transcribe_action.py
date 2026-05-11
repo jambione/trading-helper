@@ -76,7 +76,7 @@ else:
 
 TARGET_SR       = 16000
 CHUNK_DURATION  = 3.0    # 3s window — enough sentence context for accuracy
-OVERLAP         = 2.5    # slide every 0.5s — much lower latency
+OVERLAP         = 1.5    # large overlap: slide every 1.5s instead of 2.5s
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per result
@@ -569,7 +569,7 @@ except OSError as e:
 # SHARED STATE
 # =============================================================================
 
-_audio_queue = Queue(maxsize=6)   # small buffer — drop stale chunks if worker falls behind
+_audio_queue = Queue(maxsize=16)  # larger buffer for 2 parallel workers
 _running     = threading.Event()
 _running.set()
 
@@ -647,26 +647,19 @@ _dynamic_prompt_lock = threading.Lock()
 
 
 def _prompt_refresher():
-    """Background thread: fetch currently MENTIONED tickers (≤5) and add them to prompt.
-    Only tickers actively being discussed are injected — injecting the full watchlist
-    causes Whisper to echo all tickers back as hallucinations on quiet audio."""
+    """Background thread: fetch current watchlist and rebuild the Whisper prompt."""
     global _dynamic_prompt
     while _running.is_set():
         time.sleep(10)
         try:
             with urllib.request.urlopen(
                     f"{_DASHBOARD_URL}/api/state", timeout=3) as r:
-                state = json.loads(r.read())
-            # Only use tickers with active mentions in the last 30s window
-            active = [row["ticker"] for row in state.get("tickers", [])
-                      if row.get("mentioned") or (row.get("mention_window") or 0) > 0]
-            if active:
-                extra = " ".join(active[:5])   # cap at 5 to limit prompt-echo risk
+                state   = json.loads(r.read())
+            tickers = [row["ticker"] for row in state.get("tickers", [])]
+            if tickers:
+                extra = " ".join(tickers)
                 with _dynamic_prompt_lock:
                     _dynamic_prompt = f"{INITIAL_PROMPT} {extra}"
-            else:
-                with _dynamic_prompt_lock:
-                    _dynamic_prompt = INITIAL_PROMPT
         except Exception:
             pass   # keep using last-known prompt on any error
 
@@ -679,7 +672,7 @@ def _prompt_refresher():
 # name, mishear) bypass the gate entirely and are reported immediately.
 
 GATE_WINDOW   = 35   # seconds
-GATE_MIN_HITS = 1    # NASDAQ list is the primary quality filter; report on first mention
+GATE_MIN_HITS = 2    # minimum chunk appearances required
 
 _gate_buf  : dict = {}   # ticker → list[monotonic timestamps]
 _gate_lock         = threading.Lock()
@@ -833,7 +826,7 @@ def transcription_worker():
                             language="en",
                             initial_prompt=prompt,
                             temperature=0.0,
-                            no_speech_threshold=0.6,
+                            no_speech_threshold=0.4,
                             compression_ratio_threshold=2.0,
                             condition_on_previous_text=False,
                             verbose=False,
@@ -847,29 +840,13 @@ def transcription_worker():
                         beam_size=CPU_BEAM,
                         temperature=0.0,
                         vad_filter=True,
-                        no_speech_threshold=0.6,
+                        no_speech_threshold=0.4,
                         compression_ratio_threshold=2.0,
                         condition_on_previous_text=False,
                     )
                     text = " ".join(s.text.strip() for s in segs).strip()
 
             ms = (time.perf_counter() - t0) * 1000
-
-            # Hallucination guard — two patterns Whisper produces on quiet/silent audio:
-            #   1. Single-word loop:  "AGNT AGNT AGNT AGNT …"
-            #   2. Prompt echo:       "AGNT CCTG DRTS KIDZ NG ODYS …" (all-caps ticker list)
-            if text:
-                _words = text.split()
-                _wset  = set(_words)
-                # Pattern 1: any single token repeats more than 3 times
-                _is_loop = _words and max(_words.count(w) for w in _wset) > 3
-                # Pattern 2: >60% of tokens are 2-5 char ALL-CAPS (prompt-echo ticker list)
-                _upper = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
-                _is_echo = len(_words) >= 4 and len(_upper) / len(_words) > 0.60
-                if _is_loop or _is_echo:
-                    print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [HALLUCINATION SKIPPED] {text[:80]}", flush=True)
-                    continue
-
             print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
 
             if not text or len(text.split()) < 2:
@@ -897,7 +874,7 @@ def transcription_worker():
 # START
 # =============================================================================
 
-_N_WORKERS = 1   # single worker — Neural Engine serializes anyway; two workers contend and slow each other down
+_N_WORKERS = 2   # parallel transcription workers — Metal/GPU handles concurrent inference
 
 _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
