@@ -285,7 +285,7 @@ _NAME_TO_TICKER = {
     "airbnb": "ABNB", "uber": "UBER", "lyft": "LYFT", "doordash": "DASH",
 }
 
-# Known Whisper mishears → correct ticker
+# Known Whisper mishears → correct ticker (always applied)
 _MISHEAR_MAP = {
     "envidia": "NVDA", "vidia": "NVDA", "invidia": "NVDA",
     "nda": "NVDA", "nvia": "NVDA",
@@ -308,10 +308,18 @@ _MISHEAR_MAP = {
     "cloudflare": "NET",
 }
 
-_TICKER_RE      = re.compile(r'\b([A-Za-z]{2,5})\b')
-_DOLLAR_TICK_RE = re.compile(r'\$([A-Za-z]{1,5})\b')   # $AAPL, $TSLA
-_NAME_RE        = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
-_MISHEAR_RE     = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
+# Common English words Whisper prefers over the real ticker spelling.
+# These only apply when financial context words are present in the same sentence
+# — avoids false positives when the word is used literally.
+_CONTEXT_MISHEAR_MAP = {
+    "click":  "CLIK",   # Whisper writes "Click. Click." instead of CLIK
+}
+
+_TICKER_RE          = re.compile(r'\b([A-Za-z]{2,5})\b')
+_DOLLAR_TICK_RE     = re.compile(r'\$([A-Za-z]{1,5})\b')   # $AAPL, $TSLA
+_NAME_RE            = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
+_MISHEAR_RE         = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
+_CTX_MISHEAR_RE     = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _CONTEXT_MISHEAR_MAP}
 
 # Financial context words — a 2-5 letter token gets a confidence boost when one
 # of these appears nearby in the same sentence.
@@ -380,6 +388,14 @@ def extract_tickers(text: str) -> list[tuple[str, bool]]:
             found.append((ticker, True))
             seen.add(ticker)
 
+    # 4. Context-gated mishear — common words that are also tickers (e.g. "click" → CLIK)
+    #    Only fires when financial context is present so literal uses are ignored.
+    if has_context:
+        for mishear, ticker in _CONTEXT_MISHEAR_MAP.items():
+            if ticker not in seen and _CTX_MISHEAR_RE[mishear].search(lower):
+                found.append((ticker, False))   # still needs gate (2 hits) as safety
+                seen.add(ticker)
+
     return found
 
 
@@ -402,6 +418,7 @@ INITIAL_PROMPT = (
     "PFE MRNA UNH LLY JNJ ABBV MRK AMGN GILD REGN VRTX "
     "XOM CVX COP BA LMT RTX VZ T TMUS "
     "GME AMC PLTR UBER LYFT ABNB DASH DKNG SOUN "
+    "CLIK ENSC GCTS DGXX ZBAO CCTG AGNT "
     "calls puts earnings price target breakout resistance."
 )
 
@@ -633,7 +650,7 @@ def _prompt_refresher():
     """Background thread: fetch current watchlist and rebuild the Whisper prompt."""
     global _dynamic_prompt
     while _running.is_set():
-        time.sleep(30)
+        time.sleep(10)
         try:
             with urllib.request.urlopen(
                     f"{_DASHBOARD_URL}/api/state", timeout=3) as r:
