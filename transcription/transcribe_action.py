@@ -397,20 +397,35 @@ for i in range(p.get_device_count()):
         bh  = " ← BLACKHOLE" if "blackhole" in dev["name"].lower() else ""
         print(f"  {i:2d}: {dev['name']}{tag}{bh}")
 
-if DEVICE_INDEX is None:
-    if _sys.platform == "darwin":
-        for i in range(p.get_device_count()):
-            dev = p.get_device_info_by_index(i)
-            if dev["maxInputChannels"] > 0 and "blackhole" in dev["name"].lower():
-                DEVICE_INDEX = i
-                print(f"\nAuto-selected BlackHole device {i}: {dev['name']}")
+if _sys.platform == "darwin":
+    # On Mac, ALWAYS use a loopback device — never a microphone.
+    # Scan for BlackHole (preferred) or any device with "loopback" in the name.
+    # Ignore any saved device_index that doesn't match a loopback source.
+    _loopback_keywords = ("blackhole", "loopback", "multi-output")
+    _loopback_idx = None
+    for i in range(p.get_device_count()):
+        dev = p.get_device_info_by_index(i)
+        name_lower = dev["name"].lower()
+        if dev["maxInputChannels"] > 0 and any(k in name_lower for k in _loopback_keywords):
+            _loopback_idx = i
+            if "blackhole" in name_lower:   # prefer BlackHole over generic loopback
                 break
-    if DEVICE_INDEX is None:
-        try:
-            choice = input("\nEnter device index (Enter = default): ").strip()
-            DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
-        except Exception:
-            DEVICE_INDEX = p.get_default_input_device_info()["index"]
+    if _loopback_idx is not None:
+        if DEVICE_INDEX != _loopback_idx:
+            print(f"\n[AUDIO] Overriding device {DEVICE_INDEX} → loopback device {_loopback_idx}: "
+                  f"{p.get_device_info_by_index(_loopback_idx)['name']}")
+        DEVICE_INDEX = _loopback_idx
+    else:
+        print("[ERROR] No BlackHole or loopback device found on Mac.")
+        print("  Install BlackHole 2ch and set up a Multi-Output Device in Audio MIDI Setup.")
+        p.terminate()
+        raise SystemExit(1)
+elif DEVICE_INDEX is None:
+    try:
+        choice = input("\nEnter device index (Enter = default): ").strip()
+        DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
+    except Exception:
+        DEVICE_INDEX = p.get_default_input_device_info()["index"]
 
 print(f"Using device: {DEVICE_INDEX}", flush=True)
 
