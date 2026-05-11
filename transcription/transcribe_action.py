@@ -826,7 +826,7 @@ def transcription_worker():
                             language="en",
                             initial_prompt=prompt,
                             temperature=0.0,
-                            no_speech_threshold=0.4,
+                            no_speech_threshold=0.6,
                             compression_ratio_threshold=2.0,
                             condition_on_previous_text=False,
                             verbose=False,
@@ -840,13 +840,22 @@ def transcription_worker():
                         beam_size=CPU_BEAM,
                         temperature=0.0,
                         vad_filter=True,
-                        no_speech_threshold=0.4,
+                        no_speech_threshold=0.6,
                         compression_ratio_threshold=2.0,
                         condition_on_previous_text=False,
                     )
                     text = " ".join(s.text.strip() for s in segs).strip()
 
             ms = (time.perf_counter() - t0) * 1000
+
+            # Hallucination guard — Whisper loops prompt tokens on silence/quiet audio.
+            # If any single token appears > 3 times in a chunk, treat as hallucination.
+            if text:
+                _words = text.split()
+                if _words and max(_words.count(w) for w in set(_words)) > 3:
+                    print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [HALLUCINATION SKIPPED] {text[:60]}", flush=True)
+                    continue
+
             print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
 
             if not text or len(text.split()) < 2:
