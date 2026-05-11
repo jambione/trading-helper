@@ -15,6 +15,7 @@ import re
 import time
 import threading
 import contextlib
+import urllib.request
 from pathlib import Path
 from queue import Queue, Full
 
@@ -193,6 +194,83 @@ _VALID_TICKERS: set = _load_valid_tickers()
 
 
 # =============================================================================
+# OLLAMA LOCAL LLM — context-aware ticker classification
+# =============================================================================
+# qwen2.5:0.5b is ~400 MB and runs at 300-500 t/s on Apple Silicon M1.
+# Install:  brew install ollama && ollama pull qwen2.5:0.5b
+# The LLM receives only the short candidate list (≤10 words), not the full
+# transcript, so round-trips are consistently under 150ms.
+
+OLLAMA_MODEL   = "qwen2.5:0.5b"
+OLLAMA_URL     = "http://localhost:11434/api/generate"
+OLLAMA_TIMEOUT = 0.35          # 350ms hard cap — fall back to NASDAQ list if slower
+
+_ollama_ok      = None         # None = not yet checked, True/False after first ping
+_ollama_fail_ts = 0.0          # timestamp of last failure — back-off 30s before retrying
+
+
+def _ping_ollama() -> bool:
+    """Check once if Ollama is reachable and the model is available."""
+    global _ollama_ok
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1.0) as r:
+            tags = json.loads(r.read())
+        models = [m["name"].split(":")[0] for m in tags.get("models", [])]
+        _ollama_ok = OLLAMA_MODEL.split(":")[0] in models
+        if not _ollama_ok:
+            print(f"[OLLAMA] Model '{OLLAMA_MODEL}' not found. "
+                  f"Run: ollama pull {OLLAMA_MODEL}", flush=True)
+    except Exception:
+        _ollama_ok = False
+    status = "ready" if _ollama_ok else "not available"
+    print(f"[OLLAMA] {status}", flush=True)
+    return _ollama_ok
+
+
+def _ollama_classify(candidates: list[str], context: str) -> list[str]:
+    """Ask Ollama which candidate tokens are real US stock tickers given context.
+    Returns confirmed list, or [] on timeout / error."""
+    global _ollama_fail_ts
+    if not candidates:
+        return []
+    # Back-off: if Ollama failed recently, skip for 30s
+    if time.monotonic() - _ollama_fail_ts < 30:
+        return []
+
+    words = " ".join(candidates)
+    prompt = (
+        f'Transcript: "{context}"\n'
+        f'Candidates: {words}\n'
+        f'Which candidates are US stock ticker symbols actually being discussed? '
+        f'Reply with only the valid tickers space-separated, or NONE.'
+    )
+    payload = {
+        "model":   OLLAMA_MODEL,
+        "prompt":  prompt,
+        "stream":  False,
+        "options": {"num_predict": 20, "temperature": 0, "num_ctx": 128},
+    }
+    try:
+        req = urllib.request.Request(
+            OLLAMA_URL,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as r:
+            response = json.loads(r.read()).get("response", "").strip().upper()
+        if not response or response == "NONE":
+            return []
+        tokens = re.findall(r'\b[A-Z]{2,5}\b', response)
+        # Only return candidates the model confirmed (don't let it invent new ones)
+        candidate_set = set(candidates)
+        return [t for t in tokens if t in candidate_set]
+    except Exception:
+        _ollama_fail_ts = time.monotonic()
+        return []
+
+
+# =============================================================================
 # TICKER EXTRACTION
 # =============================================================================
 
@@ -304,17 +382,26 @@ def extract_tickers(text: str) -> list:
     found, seen = [], set()
     lower = text.lower()
 
-    # 1. Token scan — catches explicit uppercase tickers like AAPL, TSLA
+    # 1. Token scan — build candidate list, then classify via Ollama or NASDAQ list
+    candidates = []
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
-        # Primary filter: NASDAQ/NYSE list when available; fall back to stop words
-        if _VALID_TICKERS:
-            valid = t in _VALID_TICKERS
-        else:
-            valid = t not in _STOP_WORDS
-        if valid and t not in seen:
-            found.append(t)
+        if t not in _STOP_WORDS and t not in seen:
+            candidates.append(t)
             seen.add(t)
+
+    if candidates:
+        if _ollama_ok:
+            # LLM path: context-aware, eliminates false positives like WELL/OPEN/MOVE
+            confirmed = _ollama_classify(candidates, text)
+        elif _VALID_TICKERS:
+            # Fallback: NASDAQ/NYSE list check
+            confirmed = [t for t in candidates if t in _VALID_TICKERS]
+        else:
+            # Last resort: trust stop-word filter alone
+            confirmed = candidates
+        for t in confirmed:
+            found.append(t)
 
     # 2. Company name scan — catches "nvidia", "tesla", "apple" spoken naturally
     for name, ticker in _NAME_TO_TICKER.items():
@@ -720,8 +807,12 @@ _threads = [
 for t in _threads:
     t.start()
 
+# Check Ollama availability once at startup (non-blocking — result cached in _ollama_ok)
+_ping_ollama()
+
 engine = f"MLX Whisper ({MLX_MODEL})" if _USE_MLX else f"faster-whisper ({CPU_MODEL})"
-print(f"\nListening — engine: {engine}")
+ticker_engine = f"Ollama ({OLLAMA_MODEL})" if _ollama_ok else ("NASDAQ list" if _VALID_TICKERS else "stop-word filter")
+print(f"\nListening — ASR: {engine}  |  Ticker classifier: {ticker_engine}")
 print(f"Chunk: {CHUNK_DURATION}s  Overlap: {OVERLAP}s  Workers: {_N_WORKERS}  SR: {SAMPLE_RATE}Hz → {TARGET_SR}Hz")
 print("Press Ctrl+C to stop.\n")
 
