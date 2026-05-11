@@ -138,6 +138,73 @@ def normalize_transcript(text: str) -> str:
 # TICKER EXTRACTION
 # =============================================================================
 
+# =============================================================================
+# VALID TICKER LIST  (NASDAQ + NYSE, refreshed weekly from nasdaqtrader.com)
+# =============================================================================
+
+_TICKER_CACHE_FILE = Path(__file__).parent.parent / "valid_tickers.txt"
+_TICKER_CACHE_DAYS = 7   # re-download after this many days
+
+def _load_valid_tickers() -> set:
+    """Return a set of ~10k valid US ticker symbols.
+    Downloads from NASDAQ Trader on first run (or after cache expires),
+    then reads from local cache file.  Falls back to empty set on any error
+    so the transcriber still works without internet access."""
+
+    def _fetch() -> set:
+        import urllib.request as _ur
+        tickers = set()
+        sources = [
+            # NASDAQ-listed: Symbol|Name|...  (header + footer lines skipped)
+            ("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+             lambda line: line.split("|")[0].strip()),
+            # Other exchanges: ACT Symbol|Name|Exchange|...
+            ("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+             lambda line: line.split("|")[0].strip()),
+        ]
+        for url, extract in sources:
+            try:
+                req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with _ur.urlopen(req, timeout=10) as r:
+                    for raw in r.read().decode("utf-8", errors="ignore").splitlines():
+                        sym = extract(raw)
+                        # Skip header, footer ("File Creation Time"), blank, test issues
+                        if (sym and sym.isalpha() and 1 <= len(sym) <= 5
+                                and sym != "Symbol" and sym != "ACTSymbol"):
+                            tickers.add(sym.upper())
+            except Exception as e:
+                print(f"[TICKERS] Warning: could not fetch {url}: {e}", flush=True)
+        return tickers
+
+    # Use cache if fresh enough
+    try:
+        if _TICKER_CACHE_FILE.exists():
+            age_days = (time.time() - _TICKER_CACHE_FILE.stat().st_mtime) / 86400
+            if age_days < _TICKER_CACHE_DAYS:
+                syms = set(_TICKER_CACHE_FILE.read_text().split())
+                if syms:
+                    print(f"[TICKERS] Loaded {len(syms):,} valid tickers from cache "
+                          f"({age_days:.1f}d old).", flush=True)
+                    return syms
+    except Exception:
+        pass
+
+    # Download fresh
+    print("[TICKERS] Downloading ticker list from NASDAQ Trader ...", flush=True)
+    tickers = _fetch()
+    if tickers:
+        try:
+            _TICKER_CACHE_FILE.write_text("\n".join(sorted(tickers)))
+        except Exception:
+            pass
+        print(f"[TICKERS] Downloaded {len(tickers):,} valid tickers.", flush=True)
+    else:
+        print("[TICKERS] Download failed — running without ticker validation.", flush=True)
+    return tickers
+
+_VALID_TICKERS: set = _load_valid_tickers()
+
+
 _STOP_WORDS = {
     # Common English
     "A", "I", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "IF", "IN", "IS",
@@ -239,29 +306,60 @@ _MISHEAR_MAP = {
     "cloudflare": "NET",
 }
 
-_TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
-_NAME_RE    = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
-_MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
+_TICKER_RE      = re.compile(r'\b([A-Za-z]{2,5})\b')
+_DOLLAR_TICK_RE = re.compile(r'\$([A-Za-z]{1,5})\b')   # $AAPL, $TSLA
+_NAME_RE        = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
+_MISHEAR_RE     = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
+
+# Financial context words — a 2-5 letter token gets a confidence boost when one
+# of these appears nearby in the same sentence.
+_CONTEXT_BOOST = re.compile(
+    r'\b(stock|ticker|symbol|shares?|calls?|puts?|trade|trading|buying|selling|'
+    r'watching|looking at|play|position|breakout|momentum|squeeze|chart|price|'
+    r'target|alert|mention|setup|move|runner|mover|halted?|catalyst)\b',
+    re.I
+)
+
+
+def _is_valid(ticker: str) -> bool:
+    """Accept ticker if it's in the downloaded list, or if we have no list (fallback)."""
+    if not _VALID_TICKERS:
+        return ticker not in _STOP_WORDS   # no list — fall back to stop-word filter only
+    return ticker in _VALID_TICKERS
 
 
 def extract_tickers(text: str) -> list:
     found, seen = [], set()
     lower = text.lower()
+    has_context = bool(_CONTEXT_BOOST.search(text))
+
+    # 0. Dollar-sign prefix — highest confidence ($AAPL, $TSLA)
+    for m in _DOLLAR_TICK_RE.finditer(text):
+        t = m.group(1).upper()
+        if t not in seen and _is_valid(t):
+            found.append(t)
+            seen.add(t)
 
     # 1. Token scan — catches explicit uppercase tickers like AAPL, TSLA
     for m in _TICKER_RE.finditer(text):
         t = m.group(1).upper()
-        if t not in _STOP_WORDS and t not in seen:
+        if t in seen or t in _STOP_WORDS:
+            continue
+        # Require all-caps OR financial context present for short (2-3 char) tokens
+        all_caps = m.group(1) == m.group(1).upper()
+        if len(t) <= 3 and not all_caps and not has_context:
+            continue
+        if _is_valid(t):
             found.append(t)
             seen.add(t)
 
-    # 2. Company name scan — catches "nvidia", "tesla", "apple" spoken naturally
+    # 2. Company name scan — always trusted regardless of ticker list
     for name, ticker in _NAME_TO_TICKER.items():
         if ticker not in seen and _NAME_RE[name].search(lower):
             found.append(ticker)
             seen.add(ticker)
 
-    # 3. Mishear correction — catches Whisper-specific garbles
+    # 3. Mishear correction — always trusted regardless of ticker list
     for mishear, ticker in _MISHEAR_MAP.items():
         if ticker not in seen and _MISHEAR_RE[mishear].search(lower):
             found.append(ticker)
@@ -443,8 +541,9 @@ _audio_queue = Queue(maxsize=16)  # larger buffer for 2 parallel workers
 _running     = threading.Event()
 _running.set()
 
-# Session-level dedup — don't spam the dashboard with the same ticker repeatedly
-_session_tickers: set = set()
+# Per-ticker rate limit — stores last-sent timestamp; prevents flooding from
+# overlapping audio chunks while still sending every distinct mention.
+_session_tickers: dict = {}   # ticker → monotonic timestamp of last send
 _session_lock = threading.Lock()
 
 
@@ -456,12 +555,18 @@ _DASHBOARD_URL = "http://localhost:8888"
 
 
 def _send_ticker(ticker: str):
-    """POST ticker to dashboard. Falls back to writing the file if API is down."""
+    """POST ticker to dashboard every time it's mentioned (for mention burst tracking).
+    The server handles dedup for watchlist adds — we just keep sending mentions."""
     ticker = ticker.upper()
+
+    # Rate-limit per ticker: don't send more than once every 2s for the same ticker
+    # (avoids flooding from overlapping 1.5s audio chunks saying the same word).
+    now = time.monotonic()
     with _session_lock:
-        if ticker in _session_tickers:
+        last = _session_tickers.get(ticker, 0)
+        if now - last < 2.0:
             return
-        _session_tickers.add(ticker)
+        _session_tickers[ticker] = now
 
     try:
         import urllib.request as _req
