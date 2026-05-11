@@ -572,7 +572,8 @@ def _snapshot() -> dict:
             rows.append(d)
         rows.sort(key=lambda r: (
             mention_rank.get(r["ticker"], len(mention_rank)),
-            (r.get("price") or float("inf")) if r["ticker"] not in mention_rank else 0,
+            0 if r["ticker"] in mention_rank else (0 if (r.get("price") or 0) > 20 else 1),
+            r["ticker"],
         ))
         return {
             "transcriber": {
