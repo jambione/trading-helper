@@ -379,12 +379,16 @@ class TickerState:
         self.last_price: Optional[float] = None
         self.bars_fetched: bool          = False    # True after first successful bar pull
 
-        # fetch_offset_s staggers the first bar fetch so all new tickers
-        # don't hammer Alpaca at the same moment
-        self.last_bar_fetch: float = time.time() - BAR_REFRESH + fetch_offset_s
-        # e.g. offset=0  → fetches immediately
-        #      offset=10 → fetches in 10 s
-        #      offset=20 → fetches in 20 s
+        # First fetch: stagger so tickers added together don't all hit Alpaca at once.
+        # fetch_offset_s=0 → fetches immediately, =5 → waits 5 s, =10 → waits 10 s
+        self.last_bar_fetch: float  = time.time() - BAR_REFRESH + fetch_offset_s
+
+        # After the first fetch we switch to minute-boundary alignment:
+        # fetch ~5 s after each clock minute closes, offset by fetch_offset_s so
+        # tickers stagger across the minute (ticker #0 at :05, #1 at :10, etc.)
+        # last_bar_minute tracks which clock-minute we last fetched for.
+        # -1 means "never fetched" — first fetch uses the stagger timer above.
+        self.last_bar_minute: int   = -1
 
         self.check_count: int = 0   # increments every second — used in log output
 
@@ -670,27 +674,55 @@ class SignalEngine:
     def _refresh_bars(self, ts: TickerState):
         """
         Fetch fresh bars for one ticker if it's due.
-        Rate-limited by last_bar_fetch + BAR_REFRESH.
+
+        First fetch  — uses the stagger timer (fetch_offset_s after being added)
+                       so a newly mentioned ticker gets bar data quickly.
+
+        Subsequent   — aligned to clock-minute boundaries.  A new 1-minute bar
+                       closes at :00 of every minute; we wait an extra 5 s for
+                       Alpaca to have it ready, then add fetch_offset_s so each
+                       ticker fires at a slightly different second (spreads the
+                       Alpaca load).  Result: indicators are never more than
+                       ~65 s stale, and every second check now sees fresh data
+                       right after each bar closes.
         """
         now = time.time()
-        if now - ts.last_bar_fetch < BAR_REFRESH:
-            return   # not due yet
+        dt  = datetime.now(timezone.utc)
+        current_minute   = int(now // 60)               # ever-increasing minute counter
+        secs_past_minute = dt.second + dt.microsecond / 1_000_000  # 0–59.999
 
-        print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars from Alpaca…")
+        if ts.last_bar_minute == -1:
+            # ── First fetch: respect the stagger timer ────────────────────
+            if now - ts.last_bar_fetch < BAR_REFRESH:
+                return
+        else:
+            # ── Subsequent fetches: wait for next minute boundary ─────────
+            # Fire 5 s into the new minute + this ticker's stagger offset.
+            # E.g. stagger=0 → fires at :05, stagger=5 → :10, stagger=10 → :15
+            fire_at = 5 + ts.fetch_offset_s
+            if current_minute <= ts.last_bar_minute:
+                return   # same minute we already fetched — nothing new yet
+            if secs_past_minute < fire_at:
+                return   # new minute opened but our stagger slot hasn't arrived
+
+        print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars  "
+              f"(minute={current_minute} secs={secs_past_minute:.1f})")
         df = fetch_bars(ts.ticker, self.api_key, self.secret_key)
+
+        # Always mark the minute so we don't retry this same minute on failure
+        ts.last_bar_fetch  = now
+        ts.last_bar_minute = current_minute
 
         if df is None or len(df) < MACD_SLOW + MACD_SIG + 5:
             print(f"  [{ticker_tag(ts.ticker)}] ⚠️  not enough bars "
                   f"({len(df) if df is not None else 0} received, "
                   f"need {MACD_SLOW + MACD_SIG + 5})")
-            ts.last_bar_fetch = now
             return
 
         try:
             rsi_val, hist_val = compute_indicators(df)
         except Exception as e:
             print(f"  [{ticker_tag(ts.ticker)}] ❌ indicator error: {e}")
-            ts.last_bar_fetch = now
             return
 
         # Prefer Finnhub live price; fall back to last dashboard poll value,
@@ -702,8 +734,7 @@ class SignalEngine:
         if fh_price is not None:
             ts.last_price = fh_price   # keep in sync
 
-        ts.last_bar_fetch = now
-        ts.bars_fetched   = True
+        ts.bars_fetched = True
 
         print(
             f"  [{ticker_tag(ts.ticker)}] 📊 bars loaded  "
