@@ -8,31 +8,49 @@ histogram momentum to fire buy/sell signals.
 
 HOW IT WORKS
 ────────────
-1. Every second, polls the dashboard's /api/state for the live ticker
-   list and their current prices.
+1. Every 5 s (DASHBOARD_POLL_INTERVAL), polls the dashboard's /api/state
+   to detect newly highlighted tickers.  Price data from the dashboard
+   is used only as a fallback — real-time prices come from Finnhub.
+
 2. Any ticker with `mentioned = true` (highlighted row on dashboard)
-   is added to the active watchlist (capped at MAX_ACTIVE_TICKERS).
-3. Every second, logs each active ticker's proximity to the buy signal.
-4. Every 60 s, fetches 100 × 1-Min bars from Alpaca for each active
+   is added to the active watchlist (capped at MAX_ACTIVE_TICKERS) AND
+   immediately subscribed to the Finnhub WebSocket for live prices.
+
+3. Finnhub WebSocket provides real-time trade prices during market hours
+   (free tier, up to 50 symbols).  get_latest_price() is called each
+   second to keep last_price current — no extra network round-trips.
+
+4. Every second, logs each active ticker's proximity to the buy signal.
+
+5. Every 60 s, fetches 200 × 1-Min bars from Alpaca for each active
    ticker and recomputes RSI(14) + MACD(12, 26, 9).
    Bar fetches are STAGGERED — one ticker every BAR_STAGGER seconds so
    they never all fire at once.
-5. Expiry:
+
+6. Expiry:
      • 3 min  (EXPIRY_COLD)   — ticker never showed a positive histogram
      • 10 min (EXPIRY_WARM)   — ticker showed positive hist at least once
        (we give it more time since it came close to a signal)
-6. MACD histogram momentum rules (per ticker):
+
+7. MACD histogram momentum rules (per ticker):
      • Area growing  → hist positive AND rising  → safe to BUY
      • Area shrinking → hist was growing, now falling → time to SELL
-7. Logs every BUY and SELL to signal_log.json (and prints to console).
+
+8. Logs every BUY and SELL to signal_log.json (and prints to console).
+
+PRICE DATA PRIORITY
+───────────────────
+  1. Finnhub WebSocket  (real-time, market hours, ≤50 symbols, free)
+  2. Dashboard /api/state price field  (fallback — updated ~1s by server)
 
 EFFICIENCY NOTES
 ────────────────
-  • One dashboard HTTP request per second total (not per ticker).
+  • Dashboard HTTP request only every 5 s (not every second).
+  • Finnhub price reads are pure in-memory dict lookups — no I/O.
   • Alpaca bar fetches are rate-limited to BAR_REFRESH seconds per ticker
     AND staggered so they don't all fire in the same second.
-  • Active list is capped at MAX_ACTIVE_TICKERS (default 20).
-  • Every-second proximity checks are pure in-memory — no I/O.
+  • Active list is capped at MAX_ACTIVE_TICKERS (default 20, also
+    Finnhub free-tier sub limit is 50 — well within range).
 
 RUN
 ───
@@ -42,6 +60,7 @@ RUN
 CONFIG (signal_engine.env or env vars)
 ───────────────────────────────────────
     DASHBOARD_URL / DASHBOARD_USER / DASHBOARD_PASS
+    FINNHUB_API_KEY
     ALPACA_API_KEY / ALPACA_SECRET_KEY
     See signal_engine.env for all tunable values.
 """
@@ -63,6 +82,14 @@ import requests
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from signals import rsi as calc_rsi, compute_macd
+
+# ── Import Finnhub WebSocket stream ───────────────────────────────────────────
+from finnhub_stream import (
+    start_finnhub_stream,
+    request_subscribe,
+    get_latest_price,
+    FINNHUB_STATE,
+)
 
 # ── Load signal_engine.env ────────────────────────────────────────────────────
 def _load_env_file(path: Path):
@@ -95,7 +122,8 @@ DASHBOARD_URL  = os.getenv("DASHBOARD_URL",  "https://trading.jbrasfield.com")
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
 
-POLL_INTERVAL  = int(os.getenv("POLL_INTERVAL",  "1"))   # seconds between dashboard polls
+POLL_INTERVAL          = int(os.getenv("POLL_INTERVAL",          "1"))   # main loop cadence (seconds)
+DASHBOARD_POLL_INTERVAL = int(os.getenv("DASHBOARD_POLL_INTERVAL", "5"))  # how often to hit /api/state
 
 BAR_REFRESH    = int(os.getenv("BAR_REFRESH",    "60"))  # seconds between Alpaca bar re-fetches
 BAR_STAGGER    = int(os.getenv("BAR_STAGGER",    "5"))   # seconds between each ticker's first fetch
@@ -146,6 +174,30 @@ def _load_alpaca_credentials() -> tuple[str, str]:
             "       Bar fetching will be skipped until credentials are set."
         )
     return api_key, secret_key
+
+
+def _load_finnhub_key() -> str:
+    """
+    Load the Finnhub API key.
+    Priority: FINNHUB_API_KEY env var → secrets.json 'finnhub_key' field.
+    Returns empty string if not found (Finnhub stream will be skipped).
+    """
+    key = os.getenv("FINNHUB_API_KEY", "")
+    if not key:
+        secrets_path = _HERE / "secrets.json"
+        if secrets_path.exists():
+            try:
+                s   = json.loads(secrets_path.read_text())
+                key = s.get("finnhub_key", "")
+            except Exception as e:
+                print(f"[CFG] Could not read secrets.json for Finnhub key: {e}")
+    if not key:
+        print(
+            "[CFG] WARNING: FINNHUB_API_KEY not set.\n"
+            "       Real-time prices will fall back to dashboard poll values.\n"
+            "       Set FINNHUB_API_KEY in signal_engine.env to enable the stream."
+        )
+    return key
 
 
 # ── Dashboard authentication ──────────────────────────────────────────────────
@@ -480,10 +532,19 @@ class SignalEngine:
 
     def __init__(self):
         self.api_key, self.secret_key = _load_alpaca_credentials()
+        self.finnhub_key: str = _load_finnhub_key()
+
         self._token: Optional[str] = None
         self.active: dict[str, TickerState] = {}       # sym → TickerState
         self._known_mentioned: set[str] = set()        # ever-seen mentioned syms
         self._stagger_index: int = 0                   # increments per added ticker
+        self._last_poll_time: float = 0.0              # last time we hit /api/state
+
+        # Start the Finnhub WebSocket in a background thread.
+        # It will subscribe to tickers as they are added to the active list.
+        if self.finnhub_key:
+            start_finnhub_stream(self.finnhub_key, tickers=[])
+            print("[FH] Finnhub WebSocket stream started — subscribing tickers as they appear")
 
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
@@ -495,7 +556,12 @@ class SignalEngine:
     # ── Dashboard polling ─────────────────────────────────────────────────────
 
     def _poll_dashboard(self) -> Optional[dict]:
-        """Single GET /api/state — retries once after a 401 re-login."""
+        """
+        Single GET /api/state — retries once after a 401 re-login.
+        Called at most every DASHBOARD_POLL_INTERVAL seconds (default 5 s).
+        Its only job now is detecting newly mentioned tickers; real-time
+        prices come from the Finnhub WebSocket instead.
+        """
         for attempt in range(2):
             try:
                 resp = requests.get(
@@ -521,8 +587,8 @@ class SignalEngine:
     def _ingest_state(self, state: dict):
         """
         Process one dashboard snapshot.
-        - Update prices for already-active tickers (cheap, always runs).
-        - Add newly mentioned tickers (only when list has room).
+        - Use dashboard price as a fallback ONLY if Finnhub has no reading yet.
+        - Add newly mentioned tickers and immediately subscribe them to Finnhub.
         """
         for row in state.get("tickers", []):
             sym   = row.get("ticker", "")
@@ -530,9 +596,12 @@ class SignalEngine:
             if not sym:
                 continue
 
-            # Always keep prices fresh for tracked tickers
+            # Use dashboard price as a fallback if Finnhub hasn't seen a trade yet
             if sym in self.active and price is not None:
-                self.active[sym].last_price = float(price)
+                fh_price = get_latest_price(sym)
+                if fh_price is None:
+                    # No Finnhub reading yet — use dashboard value as seed
+                    self.active[sym].last_price = float(price)
 
             # Add newly mentioned tickers
             if row.get("mentioned") and sym not in self._known_mentioned:
@@ -557,6 +626,12 @@ class SignalEngine:
                     f"\n  ➕ ADDED {sym}  "
                     f"(bar fetch in ~{offset}s | expiry {expiry_tag} if no signal)\n"
                 )
+
+                # Subscribe to Finnhub WebSocket for real-time trade prices
+                if self.finnhub_key:
+                    request_subscribe([sym])
+                    fh_status = "✓ subscribed to Finnhub" if FINNHUB_STATE.connected else "⏳ queued (stream connecting)"
+                    print(f"  [FH]  {sym} — {fh_status}")
 
     # ── Bar refresh ───────────────────────────────────────────────────────────
 
@@ -586,14 +661,23 @@ class SignalEngine:
             ts.last_bar_fetch = now
             return
 
-        price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
+        # Prefer Finnhub live price; fall back to last dashboard poll value,
+        # then finally the last bar's close price.
+        fh_price = get_latest_price(ts.ticker)
+        price    = fh_price if fh_price is not None else (
+                   ts.last_price if ts.last_price is not None else
+                   float(df["close"].iloc[-1]))
+        if fh_price is not None:
+            ts.last_price = fh_price   # keep in sync
+
         ts.last_bar_fetch = now
         ts.bars_fetched   = True
 
         print(
             f"  [{ticker_tag(ts.ticker)}] 📊 bars loaded  "
             f"RSI={rsi_val:.1f}  hist={hist_val:+.4f}  "
-            f"price={price:.2f}  bars={len(df)}"
+            f"price={price:.2f} {'[FH]' if fh_price is not None else '[dash]'}  "
+            f"bars={len(df)}"
         )
 
         ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val)
@@ -603,8 +687,13 @@ class SignalEngine:
     def _check_proximity(self, ts: TickerState):
         """
         Log one line per ticker per second showing how close it is to a signal.
-        Pure in-memory — no network calls.
+        Price refresh from Finnhub is a pure in-memory dict read — no I/O.
         """
+        # Pull the freshest Finnhub price (dict lookup, no network)
+        fh_price = get_latest_price(ts.ticker)
+        if fh_price is not None:
+            ts.last_price = fh_price
+
         ts.check_count += 1
         print(ts.proximity_summary())
 
@@ -638,7 +727,10 @@ class SignalEngine:
         print("  Signal Engine — RSI + MACD Momentum")
         print(f"  Dashboard     : {DASHBOARD_URL}")
         print(f"  Auth user     : {DASHBOARD_USER or '(none)'}")
+        print(f"  Finnhub key   : {'✓ loaded — WebSocket active' if self.finnhub_key else '✗ missing — using dashboard prices'}")
         print(f"  Alpaca key    : {'✓ loaded' if self.api_key else '✗ missing'}")
+        print(f"  Loop cadence  : every {POLL_INTERVAL}s")
+        print(f"  Dashboard poll: every {DASHBOARD_POLL_INTERVAL}s (new ticker detection only)")
         print(f"  Bar refresh   : every {BAR_REFRESH}s (staggered {BAR_STAGGER}s apart)")
         print(f"  Expiry cold   : {EXPIRY_COLD}s (no positive hist seen)")
         print(f"  Expiry warm   : {EXPIRY_WARM}s (positive hist seen at least once)")
@@ -653,14 +745,20 @@ class SignalEngine:
             try:
                 cycle_start = time.time()
 
-                # 1. One dashboard request per cycle — updates prices + detects new tickers
-                state = self._poll_dashboard()
-                if state:
-                    self._ingest_state(state)
+                # 1. Poll the dashboard only every DASHBOARD_POLL_INTERVAL seconds.
+                #    Its sole purpose here is detecting newly highlighted tickers.
+                #    Real-time prices come from Finnhub WebSocket.
+                now = time.time()
+                if now - self._last_poll_time >= DASHBOARD_POLL_INTERVAL:
+                    state = self._poll_dashboard()
+                    if state:
+                        self._ingest_state(state)
+                    self._last_poll_time = time.time()
 
                 # 2. For each active ticker:
-                #      a) refresh bars if due (rate-limited, staggered)
-                #      b) log proximity to signal (every second, in-memory)
+                #      a) update last_price from Finnhub WebSocket (in-memory)
+                #      b) refresh bars if due (rate-limited, staggered)
+                #      c) log proximity to signal (every second, in-memory)
                 for ts in list(self.active.values()):
                     self._refresh_bars(ts)
                     self._check_proximity(ts)
