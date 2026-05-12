@@ -17,5 +17,25 @@
     "macd_hist": 0.15,
     "time": "2026-05-12T00:44:16Z",
     "buy_time": "2026-05-12T00:44:16Z"
+  },
+  {
+    "action": "BUY",
+    "ticker": "IONZ",
+    "price": 3.75,
+    "rsi": 44.39,
+    "macd_hist": 0.006621,
+    "time": "2026-05-12T15:16:22Z"
+  },
+  {
+    "action": "SELL",
+    "ticker": "IONZ",
+    "price": 3.77,
+    "buy_price": 3.75,
+    "pnl_pct": 0.53,
+    "rsi": 44.39,
+    "reason": "TAKE PROFIT",
+    "macd_hist": 0.006621,
+    "time": "2026-05-12T15:17:22Z",
+    "buy_time": "2026-05-12T15:16:22Z"
   }
 ]

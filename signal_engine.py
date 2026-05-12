@@ -148,6 +148,9 @@ MACD_SLOW      = int(os.getenv("MACD_SLOW",    "26"))
 MACD_SIG       = int(os.getenv("MACD_SIG",     "9"))
 RSI_BUY_MAX    = int(os.getenv("RSI_BUY_MAX",  "70"))
 
+STOP_LOSS      = float(os.getenv("STOP_LOSS",   "0.0"))   # % e.g. 1.0
+TAKE_PROFIT    = float(os.getenv("TAKE_PROFIT", "0.0"))   # % e.g. 2.0
+
 LOG_FILE       = _HERE / "signal_log.json"
 
 ALPACA_BASE_URL = "https://data.alpaca.markets"
@@ -331,16 +334,16 @@ def log_buy(ticker: str, price: float, rsi: float, hist: float):
     print(f"  {'='*56}\n")
 
 def log_sell(ticker: str, price: float, buy_price: float,
-             rsi: float, hist: float, buy_time: str):
+             rsi: float, hist: float, buy_time: str, reason: str = "reversal"):
     ts  = _now_iso()
     pnl = round((price - buy_price) / buy_price * 100, 2)
     _append_log({"action": "SELL", "ticker": ticker,
                  "price": round(price, 4), "buy_price": round(buy_price, 4),
-                 "pnl_pct": pnl, "rsi": round(rsi, 2),
+                 "pnl_pct": pnl, "rsi": round(rsi, 2), "reason": reason,
                  "macd_hist": round(hist, 6), "time": ts, "buy_time": buy_time})
     sign = "+" if pnl >= 0 else ""
     print(f"\n  {'='*56}")
-    print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  hist={hist:+.4f}  [{ts}]")
+    print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  [{reason}]  hist={hist:+.4f}  [{ts}]")
     print(f"  {'='*56}\n")
 
 
@@ -439,7 +442,8 @@ class TickerState:
 
         # Overall status
         if self.in_position:
-            status = "📈 IN POSITION — watching for SELL"
+            pnl = (price - self.buy_price) / self.buy_price * 100
+            status = f"📈 IN POSITION — P&L: {pnl:+.2f}%"
         elif growing and rsi_ok:
             status = "🔥 BUY ZONE — signal imminent"
         elif growing and not rsi_ok:
@@ -471,6 +475,33 @@ class TickerState:
         if hist > 0:
             self.ever_positive_hist = True
 
+        # ── Stop-loss / take-profit check ─────────────────────────────────────
+        if self.in_position and self.buy_price is not None:
+            pnl_pct = (price - self.buy_price) / self.buy_price * 100
+            
+            reason = None
+            if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
+                reason = "STOP LOSS"
+            elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
+                reason = "TAKE PROFIT"
+            
+            if reason:
+                log_sell(
+                    ticker    = self.ticker,
+                    price     = price,
+                    buy_price = self.buy_price,
+                    rsi       = rsi,
+                    hist      = hist,
+                    buy_time  = self.buy_time,
+                    reason    = reason
+                )
+                self.in_position  = False
+                self.buy_price    = None
+                self.buy_time     = None
+                self.hist_growing = False
+                self.prev_hist    = hist
+                return
+
         prev = self.prev_hist
 
         if prev is not None:
@@ -495,6 +526,7 @@ class TickerState:
                         rsi       = rsi,
                         hist      = hist,
                         buy_time  = self.buy_time,
+                        reason    = "reversal"
                     )
                     self.in_position = False
                     self.buy_price   = None
@@ -693,6 +725,33 @@ class SignalEngine:
         fh_price = get_latest_price(ts.ticker)
         if fh_price is not None:
             ts.last_price = fh_price
+            
+            # Since we have a real-time price update, check SL/TP immediately
+            # rather than waiting for the next bar refresh (which is every 60s).
+            if ts.in_position and ts.buy_price is not None:
+                pnl_pct = (fh_price - ts.buy_price) / ts.buy_price * 100
+                
+                reason = None
+                if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
+                    reason = "STOP LOSS (RT)"
+                elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
+                    reason = "TAKE PROFIT (RT)"
+                    
+                if reason:
+                    # We use last_rsi and last_hist from the last bar fetch
+                    log_sell(
+                        ticker    = ts.ticker,
+                        price     = fh_price,
+                        buy_price = ts.buy_price,
+                        rsi       = ts.last_rsi or 0,
+                        hist      = ts.last_hist or 0,
+                        buy_time  = ts.buy_time,
+                        reason    = reason
+                    )
+                    ts.in_position  = False
+                    ts.buy_price    = None
+                    ts.buy_time     = None
+                    ts.hist_growing = False
 
         ts.check_count += 1
         print(ts.proximity_summary())
