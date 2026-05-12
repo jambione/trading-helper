@@ -2,14 +2,14 @@
 """
 signal_engine.py — Automated RSI + MACD Signal Engine
 
-Polls the local dashboard for highlighted (mentioned) tickers, fetches
+Polls the dashboard for highlighted (mentioned) tickers, fetches
 historical bars from Alpaca for indicator warmup, then tracks MACD
 histogram momentum to fire buy/sell signals.
 
 HOW IT WORKS
 ────────────
-1. Every second, polls http://localhost:8888/api/state for the live
-   ticker list and their current prices.
+1. Every second, polls the dashboard's /api/state for the live ticker
+   list and their current prices.
 2. Any ticker with `mentioned = true` (highlighted row on dashboard)
    is added to the active watchlist with a timestamp.
 3. Tickers expire after 10 minutes if no position has been taken.
@@ -24,14 +24,24 @@ RUN
 ───
     python signal_engine.py
 
-    Reads credentials from the same secrets.json / bot_config.json that
-    the dashboard uses (in the same directory).  You can also override
-    with environment variables:
-        ALPACA_API_KEY   ALPACA_SECRET_KEY
+    The easiest way to configure it is via environment variables:
+
+        DASHBOARD_URL   https://trading.jbrasfield.com   (no trailing slash)
+        DASHBOARD_USER  your dashboard login username
+        DASHBOARD_PASS  your dashboard login password
+        ALPACA_API_KEY  your Alpaca API key
+        ALPACA_SECRET_KEY  your Alpaca secret key
+
+    Alternatively, edit the CONFIG DEFAULTS section below.
+
+    Alpaca credentials are also read from secrets.json in the same
+    directory (the file the dashboard writes when you hit Save Settings).
 
 CONFIG TWEAKS  (edit the DEFAULTS section below)
 ─────────────
-    DASHBOARD_URL      — where your dashboard is running
+    DASHBOARD_URL      — dashboard address (no trailing slash)
+    DASHBOARD_USER     — dashboard login username
+    DASHBOARD_PASS     — dashboard login password
     POLL_INTERVAL      — seconds between price/state polls (default 1)
     BAR_REFRESH        — seconds between Alpaca bar fetches (default 60)
     TICKER_EXPIRY      — seconds before an un-acted ticker is dropped (default 600)
@@ -60,9 +70,18 @@ _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from signals import rsi as calc_rsi, compute_macd   # our custom indicator math
 
-# ── Configuration — edit these to tune the engine ─────────────────────────────
+# ── Configuration — edit these or set via environment variables ────────────────
 
-DASHBOARD_URL  = "http://localhost:8888"  # address of the running dashboard
+# Dashboard address — set DASHBOARD_URL env var, or edit this line directly.
+# No trailing slash.  Examples:
+#   http://localhost:8888          (local)
+#   https://trading.jbrasfield.com (remote / hosted)
+DASHBOARD_URL  = os.getenv("DASHBOARD_URL",  "https://trading.jbrasfield.com")
+
+# Dashboard login credentials — the same username/password you use in the browser.
+# Set via env vars (recommended) or edit below.
+DASHBOARD_USER = os.getenv("DASHBOARD_USER", "")
+DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
 
 POLL_INTERVAL  = 1     # how often (seconds) we ask the dashboard for new prices
                        # and check for newly highlighted tickers
@@ -95,7 +114,7 @@ ALPACA_TRADE_URL = "https://paper-api.alpaca.markets"  # trading (paper by defau
 
 # ── Credential loading ────────────────────────────────────────────────────────
 
-def _load_credentials() -> tuple[str, str]:
+def _load_alpaca_credentials() -> tuple[str, str]:
     """
     Return (api_key, secret_key) for Alpaca.
 
@@ -104,10 +123,9 @@ def _load_credentials() -> tuple[str, str]:
       2. secrets.json in the same folder (written by the dashboard's
          Settings → Save Settings workflow)
 
-    If neither source has credentials, we print a warning and continue.
-    Bar fetching will simply be skipped until credentials appear.
+    If neither source has credentials we print a warning and continue.
+    Bar fetching will be skipped until credentials appear.
     """
-    # Check env vars first — useful for CI or Docker setups
     api_key    = os.getenv("ALPACA_API_KEY", "")
     secret_key = os.getenv("ALPACA_SECRET_KEY", "")
 
@@ -116,7 +134,6 @@ def _load_credentials() -> tuple[str, str]:
     if secrets_path.exists():
         try:
             s = json.loads(secrets_path.read_text())
-            # Only overwrite if env var was empty
             api_key    = api_key    or s.get("api_key", "")
             secret_key = secret_key or s.get("secret_key", "")
         except Exception as e:
@@ -130,6 +147,39 @@ def _load_credentials() -> tuple[str, str]:
             "       Bar fetching will be skipped until credentials are set."
         )
     return api_key, secret_key
+
+
+# ── Dashboard authentication ──────────────────────────────────────────────────
+
+def _dashboard_login(user: str, password: str) -> Optional[str]:
+    """
+    POST to /auth/login and return the Bearer token string, or None on failure.
+
+    The dashboard uses JWT tokens.  We get one at startup and attach it to
+    every subsequent request via the Authorization header.  If a request
+    ever returns 401 (token expired), the engine will automatically re-login.
+    """
+    if not user or not password:
+        # Auth might not be enabled on this dashboard instance — try without.
+        return None
+
+    try:
+        resp = requests.post(
+            f"{DASHBOARD_URL}/auth/login",
+            json={"username": user, "password": password},
+            timeout=10,
+        )
+        data = resp.json()
+        if resp.status_code == 200 and data.get("ok"):
+            token = data.get("token", "")
+            print(f"[AUTH] Logged in as '{user}' ✓")
+            return token
+        else:
+            print(f"[AUTH] Login failed: {data.get('error', resp.status_code)}")
+            return None
+    except Exception as e:
+        print(f"[AUTH] Login error: {e}")
+        return None
 
 
 # ── Alpaca bar fetching ───────────────────────────────────────────────────────
@@ -155,7 +205,7 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
     url = f"{ALPACA_BASE_URL}/v2/stocks/{symbol}/bars"
     params = {
         "timeframe": timeframe,   # e.g. "1Min"
-        "limit":     count,       # how many bars to return (most recent first)
+        "limit":     count,       # how many bars to return
         "feed":      "iex",       # IEX feed is included in the free Alpaca tier
         "sort":      "asc",       # oldest-first so our DataFrames are in order
     }
@@ -181,7 +231,6 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
             "v": "volume",
             "t": "time",
         })
-        # Ensure numeric types — Alpaca sometimes returns strings
         for col in ("open", "high", "low", "close", "volume"):
             df[col] = df[col].astype(float)
 
@@ -202,18 +251,16 @@ def compute_indicators(df: pd.DataFrame) -> tuple[float, float]:
     RSI (Relative Strength Index):
         Measures how overbought or oversold a stock is on a 0–100 scale.
         Below 30 = oversold (potential bounce), above 70 = overbought
-        (potential pullback).  We use it here as a safety filter — we
-        won't buy if RSI is already above RSI_BUY_MAX.
+        (potential pullback).  We use it as a safety filter — we won't
+        buy if RSI is already above RSI_BUY_MAX.
 
     MACD histogram:
         MACD line = EMA(12) − EMA(26) of the close price.
         Signal line = EMA(9) of the MACD line.
         Histogram = MACD line − signal line.
 
-        When the histogram is positive and rising, the fast EMA is pulling
-        further above the slow EMA — momentum is accelerating upward.
-        When it starts falling again, momentum is fading — that's our cue
-        to sell.
+        When the histogram is positive and rising, momentum is accelerating
+        upward.  When it starts falling, momentum is fading — time to sell.
 
     Returns:
         (rsi_value, macd_hist_value)  — both are floats for the last bar.
@@ -226,8 +273,8 @@ def compute_indicators(df: pd.DataFrame) -> tuple[float, float]:
     df = compute_macd(df, cfg)   # adds macd_line, macd_signal_line, macd_hist columns
 
     rsi_series = calc_rsi(df["close"], RSI_PERIOD)
-    rsi_val    = float(rsi_series.iloc[-1])    # most recent bar's RSI
-    hist_val   = float(df["macd_hist"].iloc[-1])  # most recent bar's histogram
+    rsi_val    = float(rsi_series.iloc[-1])
+    hist_val   = float(df["macd_hist"].iloc[-1])
     return rsi_val, hist_val
 
 
@@ -262,8 +309,8 @@ def log_buy(ticker: str, price: float, rsi: float, hist: float):
         "action":    "BUY",
         "ticker":    ticker,
         "price":     round(price, 4),
-        "rsi":       round(rsi,   2),    # RSI at time of buy (should be < RSI_BUY_MAX)
-        "macd_hist": round(hist, 6),     # histogram value that triggered the buy
+        "rsi":       round(rsi,   2),
+        "macd_hist": round(hist, 6),
         "time":      ts,
     }
     _append_log(entry)
@@ -274,18 +321,17 @@ def log_sell(ticker: str, price: float, buy_price: float,
              rsi: float, hist: float, buy_time: str):
     """Record a SELL signal — includes P&L % vs the buy price."""
     ts  = _now_iso()
-    # Simple percentage return: (exit − entry) / entry × 100
     pnl = round((price - buy_price) / buy_price * 100, 2)
     entry = {
         "action":    "SELL",
         "ticker":    ticker,
         "price":     round(price,     4),
         "buy_price": round(buy_price, 4),
-        "pnl_pct":   pnl,                # positive = profit, negative = loss
+        "pnl_pct":   pnl,
         "rsi":       round(rsi,  2),
-        "macd_hist": round(hist, 6),     # histogram value that triggered the sell
+        "macd_hist": round(hist, 6),
         "time":      ts,
-        "buy_time":  buy_time,           # when we entered the position
+        "buy_time":  buy_time,
     }
     _append_log(entry)
     sign = "+" if pnl >= 0 else ""
@@ -316,7 +362,7 @@ class TickerState:
         self.buy_time:  Optional[str]   = None
 
         # MACD momentum tracking
-        self.prev_hist:    Optional[float] = None  # histogram value from last evaluation
+        self.prev_hist:    Optional[float] = None  # histogram from last evaluation
         self.hist_growing: bool            = False # True while histogram is positive & rising
 
         # Latest market data (updated each poll cycle)
@@ -326,9 +372,9 @@ class TickerState:
 
     def is_expired(self) -> bool:
         """
-        Returns True if we've been watching this ticker for longer than
-        TICKER_EXPIRY without taking a position.  Positions are never expired
-        — we hold until the SELL signal fires.
+        Returns True if we've been watching this ticker longer than
+        TICKER_EXPIRY without taking a position.  Positions are never
+        expired — we hold until the SELL signal fires.
         """
         return (not self.in_position) and (time.time() - self.added_ts > TICKER_EXPIRY)
 
@@ -336,46 +382,30 @@ class TickerState:
         """
         Core momentum logic — called after each bar refresh.
 
-        The MACD histogram represents the distance between the fast EMA line
-        and the signal line.  We watch how that distance is changing:
-
           Histogram positive AND rising:
-            The fast line is above the signal line and still pulling away.
-            This is an accelerating uptrend — safe zone to enter a position.
+            Fast line above signal line and pulling away — accelerating uptrend.
             → set hist_growing = True
             → fire BUY if not already in a position and RSI is acceptable
 
           Histogram was growing, now falling:
-            The fast line is still above the signal line BUT it's heading
-            back toward it.  Momentum is fading.  This is the exit signal.
+            Fast line still above signal line but heading back toward it.
+            Momentum fading — exit signal.
             → fire SELL if we're in a position
             → reset hist_growing = False
-
-        We always store the current histogram value as prev_hist so the
-        next call can detect which direction things are moving.
         """
         self.last_price = price
         self.last_rsi   = rsi
 
-        prev = self.prev_hist  # histogram from the previous evaluation cycle
+        prev = self.prev_hist
 
         if prev is not None:
-            # ── Detect growing histogram ───────────────────────────────────
-            # Both conditions must be true:
-            #   hist > 0     → fast line is above signal line (bullish)
-            #   hist > prev  → gap is widening (momentum accelerating)
+            # Histogram growing: positive and larger than last bar
             if hist > 0 and hist > prev:
                 self.hist_growing = True
 
-            # ── Detect reversal (shrinking after growing) ──────────────────
-            # hist < prev means the histogram bar is shorter than last time —
-            # the fast line is heading back toward the signal line.
-            # We only care about this reversal if the area WAS growing;
-            # a histogram that's been negative and declining is just a
-            # downtrend, not a reversal of an upswing we rode.
+            # Reversal: was growing, now shrinking
             elif self.hist_growing and hist < prev:
                 if self.in_position:
-                    # ── SELL ──────────────────────────────────────────────
                     log_sell(
                         ticker    = self.ticker,
                         price     = price,
@@ -384,21 +414,12 @@ class TickerState:
                         hist      = hist,
                         buy_time  = self.buy_time,
                     )
-                    # Clear position tracking
                     self.in_position = False
                     self.buy_price   = None
                     self.buy_time    = None
-
-                # Reset the growing flag — we'll need a fresh growing phase
-                # before we can consider buying again
                 self.hist_growing = False
 
-        # ── BUY check ─────────────────────────────────────────────────────
-        # All four conditions must be met simultaneously:
-        #   hist_growing  → we're in an accelerating upswing
-        #   not in_position → we don't already own the stock
-        #   rsi < RSI_BUY_MAX → stock isn't already overbought
-        #   price > 0     → sanity check — we have a valid price
+        # BUY conditions: growing momentum + not already in + RSI not overbought
         if (
             self.hist_growing
             and not self.in_position
@@ -415,7 +436,6 @@ class TickerState:
             self.buy_price   = price
             self.buy_time    = _now_iso()
 
-        # Save current histogram so next call can compare direction
         self.prev_hist = hist
 
 
@@ -424,6 +444,7 @@ class TickerState:
 class SignalEngine:
     """
     Orchestrates the polling loop:
+      - Logs into the dashboard at startup (if credentials are configured)
       - Fetches dashboard state every POLL_INTERVAL seconds
       - Builds and maintains the active ticker list from highlighted rows
       - Refreshes bars + indicators every BAR_REFRESH seconds per ticker
@@ -431,7 +452,11 @@ class SignalEngine:
     """
 
     def __init__(self):
-        self.api_key, self.secret_key = _load_credentials()
+        self.api_key, self.secret_key = _load_alpaca_credentials()
+
+        # Dashboard auth token — None means either auth is disabled or
+        # we haven't logged in yet.  Set at startup, refreshed on 401.
+        self._token: Optional[str] = None
 
         # sym → TickerState for every ticker we're currently watching
         self.active: dict[str, TickerState] = {}
@@ -440,35 +465,62 @@ class SignalEngine:
         # create duplicate TickerState objects on every poll cycle
         self._known_mentioned: set[str] = set()
 
+    def _auth_headers(self) -> dict:
+        """Return HTTP headers including the Bearer token if we have one."""
+        if self._token:
+            return {"Authorization": f"Bearer {self._token}"}
+        return {}
+
+    def _ensure_logged_in(self):
+        """Log in to the dashboard if we have credentials and no token yet."""
+        if not self._token and DASHBOARD_USER and DASHBOARD_PASS:
+            self._token = _dashboard_login(DASHBOARD_USER, DASHBOARD_PASS)
+
     # ── Dashboard polling ─────────────────────────────────────────────────────
 
     def _poll_dashboard(self) -> Optional[dict]:
         """
-        GET /api/state from the local dashboard server.
+        GET /api/state from the dashboard server.
 
-        The dashboard exposes a full JSON snapshot every time this endpoint
-        is hit — ticker list with prices, mention counts, and highlighted
-        status.  We use it for two things:
-          1. Real-time price updates (so we don't need a separate data feed)
-          2. Detecting which tickers just got highlighted on the screen
-        Returns the parsed JSON dict, or None if the dashboard is unreachable.
+        Attaches the Bearer token so the request is authorised.
+        If the server returns 401 (token expired), automatically re-logs
+        in and retries once.
+
+        Returns the parsed JSON dict, or None if unreachable.
         """
-        try:
-            resp = requests.get(f"{DASHBOARD_URL}/api/state", timeout=3)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            # Dashboard might be starting up or temporarily unreachable — just
-            # skip this cycle and try again next second
-            return None
+        for attempt in range(2):   # up to 2 tries (second try after re-login)
+            try:
+                resp = requests.get(
+                    f"{DASHBOARD_URL}/api/state",
+                    headers=self._auth_headers(),
+                    timeout=5,
+                )
+
+                if resp.status_code == 401:
+                    # Token expired or not set — try to log in and retry
+                    print("[AUTH] 401 received — re-authenticating…")
+                    self._token = _dashboard_login(DASHBOARD_USER, DASHBOARD_PASS)
+                    continue   # retry with new token
+
+                resp.raise_for_status()
+                return resp.json()
+
+            except requests.exceptions.ConnectionError:
+                if attempt == 0:
+                    print(f"[POLL] Cannot reach {DASHBOARD_URL} — retrying…")
+                return None
+            except Exception as e:
+                print(f"[POLL] Error: {e}")
+                return None
+
+        return None   # both attempts failed
 
     def _ingest_state(self, state: dict):
         """
         Process one snapshot from the dashboard.
 
         For each ticker row in the snapshot:
-          • If it's in our active list, update its last-known price so that
-            when the next signal fires we use the freshest price available.
+          • Update its last-known price if it's already in our active list.
           • If it's marked 'mentioned' (highlighted on the dashboard) and
             we haven't seen it before, add it to the active list.
         """
@@ -476,18 +528,18 @@ class SignalEngine:
 
         for row in tickers:
             sym       = row.get("ticker", "")
-            price     = row.get("price")      # may be None if market is closed
-            mentioned = row.get("mentioned", False)  # True = highlighted row
+            price     = row.get("price")
+            mentioned = row.get("mentioned", False)
 
             if not sym:
-                continue   # skip malformed rows
+                continue
 
             # Keep price current for already-tracked tickers
             if sym in self.active and price is not None:
                 self.active[sym].last_price = float(price)
 
-            # A ticker becomes "mentioned" the first time it's called out on air
-            # (the transcription engine sets this flag).  Add it once.
+            # 'mentioned' = ticker was spoken in the last 30 s of transcript.
+            # We add it once and keep watching even after the mention window passes.
             if mentioned and sym not in self._known_mentioned:
                 self._known_mentioned.add(sym)
                 if sym not in self.active:
@@ -505,24 +557,18 @@ class SignalEngine:
         If this ticker is due for a bar refresh, pull fresh data from Alpaca,
         recompute RSI + MACD, and pass the results to update_momentum().
 
-        We rate-limit bar fetches to BAR_REFRESH seconds (default 60) per
-        ticker to avoid hammering the Alpaca API — prices don't change that
-        dramatically minute-to-minute.  The real-time price from the dashboard
-        poll is what we actually use for entry/exit pricing; bars are just for
-        the indicator math.
+        Rate-limited to BAR_REFRESH seconds per ticker to avoid hammering
+        the Alpaca API.
         """
         now = time.time()
-
-        # Skip if we fetched less than BAR_REFRESH seconds ago
         if now - ts.last_bar_fetch < BAR_REFRESH:
-            return
+            return   # not due yet
 
         df = fetch_bars(ts.ticker, self.api_key, self.secret_key)
 
-        # Need at least MACD_SLOW + MACD_SIG + a few extra bars for the
-        # indicators to be stable (26 + 9 + 5 = 40 minimum)
+        # Need at least MACD_SLOW + MACD_SIG + a few extra bars for stability
         if df is None or len(df) < MACD_SLOW + MACD_SIG + 5:
-            ts.last_bar_fetch = now   # mark as attempted so we back off
+            ts.last_bar_fetch = now
             return
 
         try:
@@ -532,8 +578,7 @@ class SignalEngine:
             ts.last_bar_fetch = now
             return
 
-        # Prefer the live price from the dashboard poll; fall back to the
-        # closing price of the most recent bar if we don't have one yet
+        # Prefer live price from dashboard; fall back to last bar's close
         price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
 
         ts.last_bar_fetch = now
@@ -544,15 +589,13 @@ class SignalEngine:
     def _expire_tickers(self):
         """
         Remove tickers that have been in the active list longer than
-        TICKER_EXPIRY without triggering a BUY.  Tickers with open
-        positions are never expired — we hold until the SELL signal fires.
+        TICKER_EXPIRY without triggering a BUY.  Open positions are
+        never expired — we hold until the SELL signal fires.
         """
         expired = [sym for sym, ts in self.active.items() if ts.is_expired()]
         for sym in expired:
             print(f"  ⏰ Expired {sym}  (no position taken within {TICKER_EXPIRY // 60} min)")
             del self.active[sym]
-            # Remove from known_mentioned so if it gets highlighted again
-            # later in the session it will be re-added fresh
             self._known_mentioned.discard(sym)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -571,10 +614,15 @@ class SignalEngine:
         print("=" * 60)
         print("  Signal Engine — RSI + MACD Momentum")
         print(f"  Dashboard : {DASHBOARD_URL}")
+        print(f"  Auth user : {DASHBOARD_USER or '(none — auth may be disabled)'}")
         print(f"  Log file  : {LOG_FILE}")
         print(f"  Expiry    : {TICKER_EXPIRY // 60} min  |  Bar refresh: {BAR_REFRESH}s")
         print(f"  Alpaca key: {'✓ loaded' if self.api_key else '✗ missing'}")
         print("=" * 60)
+
+        # Log in before the first poll
+        self._ensure_logged_in()
+
         print("  Waiting for highlighted tickers on dashboard…\n")
 
         while True:
@@ -585,7 +633,6 @@ class SignalEngine:
                     self._ingest_state(state)
 
                 # Step 3: evaluate signals for all active tickers
-                # list() snapshot so we can safely mutate self.active inside the loop
                 for ts in list(self.active.values()):
                     self._refresh_ticker(ts)
 
@@ -598,7 +645,6 @@ class SignalEngine:
                 print("\n  Stopped by user.")
                 break
             except Exception as e:
-                # Catch-all so a transient network error doesn't kill the engine
                 print(f"[ENGINE] Unexpected error: {e}")
                 time.sleep(POLL_INTERVAL)
 
