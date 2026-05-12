@@ -565,6 +565,10 @@ def run_setup():
     """
     Interactive setup wizard — run once to log in and save tokens.
     After setup, the agent can restart without MFA codes.
+
+    Webull has several MFA methods and the automatic trigger is not always
+    reliable.  This wizard tries each method in order and falls back to a
+    manual token entry if all else fails.
     """
     print("=" * 60)
     print("  Webull Agent — First-Time Setup")
@@ -573,30 +577,101 @@ def run_setup():
     print("  This will log you into Webull and save your session tokens")
     print(f"  to {TOKENS_FILE.name} so the agent can run unattended.\n")
 
-    email = WEBULL_EMAIL or input("  Webull email: ").strip()
-    password = WEBULL_PASS or input("  Webull password: ").strip()
-    pin   = WEBULL_PIN   or input("  6-digit trading PIN: ").strip()
-
     try:
         from webull import webull as _webull
     except ImportError:
-        print("\n❌  Run:  pip install webull  then try again.")
+        print("❌  Run:  pip install webull  then try again.")
         return
+
+    email    = WEBULL_EMAIL or input("  Webull email address : ").strip()
+    password = WEBULL_PASS  or input("  Webull password      : ").strip()
+    pin      = WEBULL_PIN   or input("  6-digit trading PIN  : ").strip()
 
     wb = _webull()
 
-    print(f"\n  Requesting MFA code for {email}…")
-    wb.get_mfa(email)
-    mfa = input("  Enter the code Webull sent you: ").strip()
+    # ── Step 1: Request MFA code ───────────────────────────────────────────────
+    # Webull offers email and SMS MFA.  Try to trigger it automatically;
+    # if that fails, instruct the user to trigger it manually via the app.
+    print("\n  Choose how to receive your MFA code:")
+    print("    1. Email  (code sent to your email address)")
+    print("    2. SMS    (code sent to your phone — need phone number)")
+    print("    3. Skip   (I'll open the Webull app to get the code)")
+    choice = input("  Choice [1/2/3]: ").strip()
 
+    mfa_sent = False
+    if choice == "1":
+        try:
+            print(f"  Requesting email MFA code for {email}…")
+            wb.get_mfa(email)
+            mfa_sent = True
+            print("  ✓  Code sent — check your email inbox.")
+        except Exception as e:
+            print(f"  ⚠️  Email MFA trigger failed ({e})")
+            print("      Try option 3 — open the Webull app and it will send a code.")
+
+    elif choice == "2":
+        phone = input("  Phone number (e.g. +12125551234): ").strip()
+        try:
+            print(f"  Requesting SMS MFA code for {phone}…")
+            wb.get_mfa(phone)
+            mfa_sent = True
+            print("  ✓  Code sent — check your SMS.")
+        except Exception as e:
+            print(f"  ⚠️  SMS MFA trigger failed ({e})")
+
+    if not mfa_sent and choice != "3":
+        print("\n  Falling back — please open the Webull app or browser")
+        print("  and attempt a login so Webull sends you a verification code.")
+
+    mfa = input("\n  Enter the MFA / verification code: ").strip()
+
+    # ── Step 2: Login ──────────────────────────────────────────────────────────
     print("  Logging in…")
-    result = wb.login(username=email, password=password,
-                      device_name=WEBULL_DEVICE, mfa=mfa)
+    result = None
+    error  = None
+    try:
+        result = wb.login(
+            username    = email,
+            password    = password,
+            device_name = WEBULL_DEVICE,
+            mfa         = mfa,
+        )
+    except Exception as e:
+        error = str(e)
 
-    if not result or result.get("accessToken") is None:
-        print(f"\n❌  Login failed: {result}")
+    if result and result.get("accessToken"):
+        _finish_setup(wb, email, pin)
         return
 
+    # ── Step 3: Fallback — manual token entry ──────────────────────────────────
+    print(f"\n  ⚠️  Automatic login failed{': ' + error if error else ''}.")
+    print()
+    print("  MANUAL TOKEN FALLBACK")
+    print("  ─────────────────────")
+    print("  You can extract tokens directly from the Webull web app:")
+    print("  1. Open https://app.webull.com in Chrome")
+    print("  2. Log in normally")
+    print("  3. Press F12 → Application tab → Local Storage → app.webull.com")
+    print("  4. Copy the values for: access_token, refresh_token,")
+    print("     token_expire, and uuid")
+    print()
+    use_manual = input("  Enter tokens manually? [y/N]: ").strip().lower()
+    if use_manual == "y":
+        tokens = {
+            "access_token":  input("  access_token  : ").strip(),
+            "refresh_token": input("  refresh_token : ").strip(),
+            "token_expire":  input("  token_expire  : ").strip(),
+            "uuid":          input("  uuid          : ").strip(),
+        }
+        TOKENS_FILE.write_text(json.dumps(tokens, indent=2))
+        print(f"\n  ✓  Tokens saved to {TOKENS_FILE.name}")
+        print("  Run the agent with:  python webull_agent.py")
+    else:
+        print("\n  Setup cancelled.  Check your credentials and try again.")
+
+
+def _finish_setup(wb, email: str, pin: str):
+    """Save tokens and print next steps after a successful login."""
     tokens = {
         "access_token":  wb._access_token,
         "refresh_token": wb._refresh_token,
@@ -608,13 +683,13 @@ def run_setup():
     print(f"\n  ✓  Logged in successfully!")
     print(f"  ✓  Tokens saved to {TOKENS_FILE.name}")
     print()
-    print("  Now update webull_agent.env:")
+    print("  Make sure webull_agent.env has:")
     print(f"    WEBULL_EMAIL={email}")
     print(f"    WEBULL_PASS=<your password>")
     print(f"    WEBULL_TRADING_PIN={pin}")
     print(f"    ENABLED=false   ← change to true when ready to trade")
     print()
-    print("  Run the agent with:  python webull_agent.py")
+    print("  Run the agent:  python webull_agent.py")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
