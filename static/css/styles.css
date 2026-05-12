@@ -184,8 +184,12 @@ body {
 }
 @media (max-width: 700px) {
   .donate-label { display: none; }
+  .donate-bar { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
+  .donate-pill { flex-shrink: 0; }
 }
 body.mobile .donate-label { display: none; }
+body.mobile .donate-bar { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
+body.mobile .donate-pill { flex-shrink: 0; }
 
 .hdr-actions {
   display: flex;
