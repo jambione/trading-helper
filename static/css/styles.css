@@ -659,6 +659,30 @@ body.mobile .cell-chg    { font-size: 13px; }
   overflow: hidden;
 }
 
+/* ── Suggestion bar ─────────────────────────────────────────── */
+.suggestion-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.suggestion-bar input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  color: var(--text-bright);
+  font-size: 12px;
+  padding: 5px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.suggestion-bar input:focus { border-color: var(--accent); }
+.suggestion-bar input::placeholder { color: var(--text-muted); }
+
 /* ── Status bar ─────────────────────────────────────────────── */
 .status-bar {
   height: var(--statusbar-h);
@@ -816,6 +840,33 @@ body.mobile .cell-chg    { font-size: 13px; }
 /* ── Login history ───────────────────────────────────────────── */
 .login-history { display: flex; flex-direction: column; gap: 6px; }
 .login-history-empty { color: var(--text-muted); font-size: 12px; padding: 8px 0; }
+
+/* ── Suggestions list (Settings → Feedback) ──────────────────── */
+.suggestions-list { display: flex; flex-direction: column; gap: 8px; }
+.suggestions-empty { color: var(--text); font-size: 12px; padding: 8px 0; }
+.suggestion-card {
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r-xs);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestion-msg {
+  font-size: 13px;
+  color: #ffffff;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.suggestion-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.suggestion-ts { color: var(--accent); }
 .login-entry {
   background: var(--card);
   border: 1px solid var(--border);
