@@ -681,7 +681,7 @@ body.mobile .cell-chg    { font-size: 13px; }
   transition: border-color 0.15s;
 }
 .suggestion-bar input:focus { border-color: var(--accent); }
-.suggestion-bar input::placeholder { color: var(--text-muted); }
+.suggestion-bar input::placeholder { color: #ffffff; }
 
 /* ── Status bar ─────────────────────────────────────────────── */
 .status-bar {
