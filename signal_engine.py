@@ -88,6 +88,9 @@ _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from signals import rsi as calc_rsi, compute_macd
 
+# ── Import Alpaca trader module (optional — activated by TRADER_MODE) ─────────
+import alpaca_trader
+
 # ── Import Finnhub WebSocket stream ───────────────────────────────────────────
 from finnhub_stream import (
     start_finnhub_stream,
@@ -155,6 +158,14 @@ RSI_BUY_MAX    = int(os.getenv("RSI_BUY_MAX",  "70"))
 
 STOP_LOSS      = float(os.getenv("STOP_LOSS",   "0.0"))   # % e.g. 1.0
 TAKE_PROFIT    = float(os.getenv("TAKE_PROFIT", "0.0"))   # % e.g. 2.0
+
+# ── Trader mode ───────────────────────────────────────────────────────────────
+# Controls whether the signal engine places orders or just logs signals.
+#   off   — log signals only, no orders (default, safe)
+#   paper — paper trade via Alpaca ($100k fake money, same API keys)
+#   live  — real money via Alpaca (test on paper first!)
+TRADER_MODE   = os.getenv("TRADER_MODE",   "off").lower().strip()
+TRADE_AMOUNT  = float(os.getenv("TRADE_AMOUNT", "500"))   # $ per BUY signal
 
 LOG_FILE       = _HERE / "signal_log.json"
 
@@ -337,6 +348,9 @@ def log_buy(ticker: str, price: float, rsi: float, hist: float):
     print(f"\n  {'='*56}")
     print(f"  🟢 BUY  {ticker}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]")
     print(f"  {'='*56}\n")
+    # Forward to Alpaca trader if enabled (off / paper / live)
+    alpaca_trader.buy(ticker=ticker, price=price, rsi=rsi, hist=hist)
+
 
 def log_sell(ticker: str, price: float, buy_price: float,
              rsi: float, hist: float, buy_time: str, reason: str = "reversal"):
@@ -350,6 +364,9 @@ def log_sell(ticker: str, price: float, buy_price: float,
     print(f"\n  {'='*56}")
     print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  [{reason}]  hist={hist:+.4f}  [{ts}]")
     print(f"  {'='*56}\n")
+    # Forward to Alpaca trader if enabled
+    alpaca_trader.sell(ticker=ticker, price=price, rsi=rsi, hist=hist,
+                       buy_price=buy_price)
 
 
 # ── Per-ticker state ──────────────────────────────────────────────────────────
@@ -586,6 +603,14 @@ class SignalEngine:
         self._known_mentioned: set[str] = set()        # ever-seen mentioned syms
         self._stagger_index: int = 0                   # increments per added ticker
         self._last_poll_time: float = 0.0              # last time we hit /api/state
+
+        # Initialise Alpaca trader (off / paper / live — set by TRADER_MODE)
+        alpaca_trader.init(
+            mode         = TRADER_MODE,
+            api_key      = self.api_key,
+            secret_key   = self.secret_key,
+            trade_amount = TRADE_AMOUNT,
+        )
 
         # Start the Finnhub WebSocket in a background thread.
         # It will subscribe to tickers as they are added to the active list.
@@ -857,6 +882,8 @@ class SignalEngine:
         print(f"  Auth user     : {DASHBOARD_USER or '(none)'}")
         print(f"  Finnhub key   : {'✓ loaded — WebSocket active' if self.finnhub_key else '✗ missing — using dashboard prices'}")
         print(f"  Alpaca key    : {'✓ loaded' if self.api_key else '✗ missing'}")
+        trader_label = {"off": "off — log only", "paper": "PAPER trading", "live": "⚠️  LIVE trading"}.get(TRADER_MODE, TRADER_MODE)
+        print(f"  Trader mode   : {trader_label}  (${TRADE_AMOUNT:.0f}/trade)")
         print(f"  Loop cadence  : every {POLL_INTERVAL}s")
         print(f"  Dashboard poll: every {DASHBOARD_POLL_INTERVAL}s (new ticker detection only)")
         print(f"  Bar refresh   : every {BAR_REFRESH}s (staggered {BAR_STAGGER}s apart)")
