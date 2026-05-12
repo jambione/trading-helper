@@ -110,7 +110,8 @@ EXPIRY_WARM    = int(os.getenv("EXPIRY_WARM",    "600"))   # 10 min — showed p
 
 MAX_ACTIVE_TICKERS = int(os.getenv("MAX_ACTIVE_TICKERS", "20"))  # hard cap on active list
 
-BAR_COUNT      = int(os.getenv("BAR_COUNT",  "100"))
+BAR_COUNT          = int(os.getenv("BAR_COUNT",         "200"))  # max bars to fetch
+BAR_LOOKBACK_DAYS  = int(os.getenv("BAR_LOOKBACK_DAYS",  "5"))   # calendar days back to start from
 BAR_TIMEFRAME  = os.getenv("BAR_TIMEFRAME",  "1Min")
 
 RSI_PERIOD     = int(os.getenv("RSI_PERIOD",   "14"))
@@ -176,30 +177,67 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
                count: int = BAR_COUNT,
                timeframe: str = BAR_TIMEFRAME) -> Optional[pd.DataFrame]:
     """
-    Download recent OHLCV bars from Alpaca.
-    Returns a DataFrame(open, high, low, close, volume) or None on error.
+    Download recent OHLCV bars from Alpaca going back BAR_LOOKBACK_DAYS
+    calendar days.  Using a start date instead of relying on limit alone
+    ensures we always get bars from multiple sessions — critical for tickers
+    that are thinly traded or when the market has only been open a few minutes.
+
+    Strategy:
+      1. Try the IEX feed first (free tier).
+      2. If IEX returns fewer bars than we need for warmup, retry with the
+         SIP feed (broader coverage, also available on free paper accounts).
     """
     if not api_key or not secret_key:
         return None
-    url = f"{ALPACA_BASE_URL}/v2/stocks/{symbol}/bars"
-    params  = {"timeframe": timeframe, "limit": count, "feed": "iex", "sort": "asc"}
+
     headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        resp.raise_for_status()
-        bars = resp.json().get("bars", [])
-        if not bars:
-            return None
-        df = pd.DataFrame(bars).rename(columns={
-            "o": "open", "h": "high", "l": "low",
-            "c": "close", "v": "volume", "t": "time",
-        })
-        for col in ("open", "high", "low", "close", "volume"):
-            df[col] = df[col].astype(float)
-        return df.reset_index(drop=True)
-    except Exception as e:
-        print(f"[BARS] {symbol}: fetch failed — {e}")
-        return None
+    url     = f"{ALPACA_BASE_URL}/v2/stocks/{symbol}/bars"
+
+    # Go back BAR_LOOKBACK_DAYS calendar days — covers weekends + holidays
+    from datetime import datetime, timedelta, timezone as _tz
+    start_dt = (datetime.now(_tz.utc) - timedelta(days=BAR_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    min_needed = MACD_SLOW + MACD_SIG + 5   # 40 bars minimum for stable MACD
+
+    for feed in ("iex", "sip"):
+        params = {
+            "timeframe": timeframe,
+            "start":     start_dt,   # fetch from N days ago, not just today
+            "limit":     count,
+            "feed":      feed,
+            "sort":      "asc",
+        }
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            resp.raise_for_status()
+            bars = resp.json().get("bars", [])
+
+            if not bars:
+                print(f"  [BARS] {symbol}: no bars on {feed} feed (start={start_dt[:10]})")
+                continue
+
+            df = pd.DataFrame(bars).rename(columns={
+                "o": "open", "h": "high", "l": "low",
+                "c": "close", "v": "volume", "t": "time",
+            })
+            for col in ("open", "high", "low", "close", "volume"):
+                df[col] = df[col].astype(float)
+            df = df.reset_index(drop=True)
+
+            if len(df) >= min_needed:
+                print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓")
+                return df
+
+            # Not enough yet — try the next feed
+            print(f"  [BARS] {symbol}: only {len(df)} bars on {feed} "
+                  f"(need {min_needed}) — trying next feed…")
+
+        except Exception as e:
+            print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
+
+    print(f"  [BARS] {symbol}: ❌ could not get {min_needed} bars on any feed "
+          f"(lookback={BAR_LOOKBACK_DAYS}d) — skipping this cycle")
+    return None
 
 
 # ── Indicator computation ─────────────────────────────────────────────────────
