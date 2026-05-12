@@ -74,7 +74,7 @@ def _load_env_file(path: Path):
     """Read KEY=VALUE lines from an env file into os.environ (shell wins)."""
     if not path.exists():
         return
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for raw_line in f:
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -525,7 +525,7 @@ def save_csv(all_results: list[dict], out_path: Path):
         "total_dollar_pnl", "avg_hold_bars", "best_trade", "worst_trade",
         "max_consec_losses",
     ]
-    with open(summary_path, "w", newline="") as f:
+    with open(summary_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=summary_cols)
         writer.writeheader()
         for r in all_results:
@@ -539,7 +539,7 @@ def save_csv(all_results: list[dict], out_path: Path):
         "buy_time", "sell_time", "buy_price", "sell_price",
         "pnl_pct", "hold_bars", "reason", "win",
     ]
-    with open(trades_path, "w", newline="") as f:
+    with open(trades_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=trade_cols)
         writer.writeheader()
         for r in all_results:

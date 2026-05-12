@@ -108,7 +108,7 @@ def _load_env_file(path: Path):
     if not path.exists():
         return
     loaded = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for raw_line in f:
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -330,7 +330,7 @@ def _now_iso() -> str:
 def _load_log() -> list:
     if LOG_FILE.exists():
         try:
-            return json.loads(LOG_FILE.read_text())
+            return json.loads(LOG_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
     return []
@@ -338,7 +338,7 @@ def _load_log() -> list:
 def _append_log(entry: dict):
     entries = _load_log()
     entries.append(entry)
-    LOG_FILE.write_text(json.dumps(entries, indent=2))
+    LOG_FILE.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 def log_buy(ticker: str, price: float, rsi: float, hist: float):
     ts = _now_iso()
@@ -383,6 +383,7 @@ class TickerState:
 
     def __init__(self, ticker: str, fetch_offset_s: float = 0):
         self.ticker      = ticker
+        self.fetch_offset_s = fetch_offset_s
         self.added_ts    = time.time()
         self.in_position = False
 

@@ -1,0 +1,51 @@
+[
+  {
+    "action": "BUY",
+    "ticker": "NFLX",
+    "price": 88.71,
+    "rsi": 43.75,
+    "macd_hist": 0.022024,
+    "trader_mode": "paper",
+    "trade_amount": 500.0,
+    "time": "2026-05-12T17:01:05Z",
+    "order_id": "5d2fafb4-a0ee-4435-aff4-21fe6e6bcde0",
+    "order_status": "OrderStatus.PENDING_NEW"
+  },
+  {
+    "action": "SELL_SKIPPED",
+    "ticker": "NFLX",
+    "price": 88.7,
+    "rsi": 40.24,
+    "macd_hist": 0.019794,
+    "trader_mode": "paper",
+    "trade_amount": 500.0,
+    "time": "2026-05-12T17:02:05Z",
+    "note": "no open Alpaca position"
+  },
+  {
+    "action": "BUY",
+    "ticker": "USA",
+    "price": 5.72,
+    "rsi": 28.13,
+    "macd_hist": 0.001431,
+    "trader_mode": "paper",
+    "trade_amount": 500.0,
+    "time": "2026-05-12T18:01:05Z",
+    "order_id": "c531261e-4a88-4b44-9266-9d596d5a1aa9",
+    "order_status": "OrderStatus.PENDING_NEW"
+  },
+  {
+    "action": "SELL",
+    "ticker": "USA",
+    "price": 5.72,
+    "rsi": 28.15,
+    "macd_hist": 0.00143,
+    "trader_mode": "paper",
+    "trade_amount": 500.0,
+    "time": "2026-05-12T18:36:06Z",
+    "buy_price": 5.72,
+    "qty": 87.565674255,
+    "order_id": "40baef8d-1a5a-485c-9164-fa9e6980030e",
+    "order_status": "OrderStatus.PENDING_NEW"
+  }
+]

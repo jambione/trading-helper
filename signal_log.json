@@ -37,5 +37,45 @@
     "macd_hist": 0.006621,
     "time": "2026-05-12T15:17:22Z",
     "buy_time": "2026-05-12T15:16:22Z"
+  },
+  {
+    "action": "BUY",
+    "ticker": "NFLX",
+    "price": 88.71,
+    "rsi": 43.75,
+    "macd_hist": 0.022024,
+    "time": "2026-05-12T17:01:05Z"
+  },
+  {
+    "action": "SELL",
+    "ticker": "NFLX",
+    "price": 88.7,
+    "buy_price": 88.71,
+    "pnl_pct": -0.01,
+    "rsi": 40.24,
+    "reason": "reversal",
+    "macd_hist": 0.019794,
+    "time": "2026-05-12T17:02:05Z",
+    "buy_time": "2026-05-12T17:01:05Z"
+  },
+  {
+    "action": "BUY",
+    "ticker": "USA",
+    "price": 5.72,
+    "rsi": 28.13,
+    "macd_hist": 0.001431,
+    "time": "2026-05-12T18:01:05Z"
+  },
+  {
+    "action": "SELL",
+    "ticker": "USA",
+    "price": 5.72,
+    "buy_price": 5.72,
+    "pnl_pct": 0.0,
+    "rsi": 28.15,
+    "reason": "reversal",
+    "macd_hist": 0.00143,
+    "time": "2026-05-12T18:36:05Z",
+    "buy_time": "2026-05-12T18:01:05Z"
   }
 ]
