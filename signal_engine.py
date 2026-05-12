@@ -11,43 +11,39 @@ HOW IT WORKS
 1. Every second, polls the dashboard's /api/state for the live ticker
    list and their current prices.
 2. Any ticker with `mentioned = true` (highlighted row on dashboard)
-   is added to the active watchlist with a timestamp.
-3. Tickers expire after 10 minutes if no position has been taken.
+   is added to the active watchlist (capped at MAX_ACTIVE_TICKERS).
+3. Every second, logs each active ticker's proximity to the buy signal.
 4. Every 60 s, fetches 100 × 1-Min bars from Alpaca for each active
    ticker and recomputes RSI(14) + MACD(12, 26, 9).
-5. MACD histogram momentum rules (per ticker):
-     • Area growing  → histogram positive AND rising  → safe to BUY
-     • Area shrinking → histogram was growing, now falling → time to SELL
-6. Logs every BUY and SELL to signal_log.json (and prints to console).
+   Bar fetches are STAGGERED — one ticker every BAR_STAGGER seconds so
+   they never all fire at once.
+5. Expiry:
+     • 3 min  (EXPIRY_COLD)   — ticker never showed a positive histogram
+     • 10 min (EXPIRY_WARM)   — ticker showed positive hist at least once
+       (we give it more time since it came close to a signal)
+6. MACD histogram momentum rules (per ticker):
+     • Area growing  → hist positive AND rising  → safe to BUY
+     • Area shrinking → hist was growing, now falling → time to SELL
+7. Logs every BUY and SELL to signal_log.json (and prints to console).
+
+EFFICIENCY NOTES
+────────────────
+  • One dashboard HTTP request per second total (not per ticker).
+  • Alpaca bar fetches are rate-limited to BAR_REFRESH seconds per ticker
+    AND staggered so they don't all fire in the same second.
+  • Active list is capped at MAX_ACTIVE_TICKERS (default 20).
+  • Every-second proximity checks are pure in-memory — no I/O.
 
 RUN
 ───
     python signal_engine.py
+    (reads signal_engine.env automatically)
 
-    The easiest way to configure it is via environment variables:
-
-        DASHBOARD_URL   https://trading.jbrasfield.com   (no trailing slash)
-        DASHBOARD_USER  your dashboard login username
-        DASHBOARD_PASS  your dashboard login password
-        ALPACA_API_KEY  your Alpaca API key
-        ALPACA_SECRET_KEY  your Alpaca secret key
-
-    Alternatively, edit the CONFIG DEFAULTS section below.
-
-    Alpaca credentials are also read from secrets.json in the same
-    directory (the file the dashboard writes when you hit Save Settings).
-
-CONFIG TWEAKS  (edit the DEFAULTS section below)
-─────────────
-    DASHBOARD_URL      — dashboard address (no trailing slash)
-    DASHBOARD_USER     — dashboard login username
-    DASHBOARD_PASS     — dashboard login password
-    POLL_INTERVAL      — seconds between price/state polls (default 1)
-    BAR_REFRESH        — seconds between Alpaca bar fetches (default 60)
-    TICKER_EXPIRY      — seconds before an un-acted ticker is dropped (default 600)
-    RSI_PERIOD         — RSI lookback (default 14)
-    MACD_FAST/SLOW/SIG — MACD parameters (default 12/26/9)
-    RSI_BUY_MAX        — max RSI to allow a buy (default 70)
+CONFIG (signal_engine.env or env vars)
+───────────────────────────────────────
+    DASHBOARD_URL / DASHBOARD_USER / DASHBOARD_PASS
+    ALPACA_API_KEY / ALPACA_SECRET_KEY
+    See signal_engine.env for all tunable values.
 """
 
 from __future__ import annotations
@@ -64,35 +60,27 @@ import pandas as pd
 import requests
 
 # ── Import our own signal library ─────────────────────────────────────────────
-# _HERE resolves to the folder this file lives in (the trading-helper directory).
-# We add it to sys.path so Python can find signals.py in the same folder.
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from signals import rsi as calc_rsi, compute_macd   # our custom indicator math
+from signals import rsi as calc_rsi, compute_macd
 
 # ── Load signal_engine.env ────────────────────────────────────────────────────
-# If signal_engine.env exists in the same folder, we load it before reading
-# any configuration.  This lets you keep all settings in one place without
-# having to set shell environment variables manually.
-#
-# Format: KEY=VALUE  (one per line, # for comments, blank lines ignored)
-# Values from the env file are only applied if the variable isn't already
-# set in the shell environment — shell env always wins.
 def _load_env_file(path: Path):
+    """
+    Parse KEY=VALUE lines from an env file and inject into os.environ.
+    Shell environment always wins — we only set keys that aren't already set.
+    """
     if not path.exists():
         return
     loaded = []
     with open(path) as f:
         for raw_line in f:
             line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue   # skip blank lines and comments
-            if "=" not in line:
-                continue   # skip malformed lines
+            if not line or line.startswith("#") or "=" not in line:
+                continue
             key, _, value = line.partition("=")
-            key   = key.strip()
+            key = key.strip()
             value = value.strip()
-            # Shell environment takes priority — don't overwrite existing vars
             if key and key not in os.environ:
                 os.environ[key] = value
                 loaded.append(key)
@@ -101,66 +89,46 @@ def _load_env_file(path: Path):
 
 _load_env_file(_HERE / "signal_engine.env")
 
-# ── Configuration — edit these or set via environment variables ────────────────
+# ── Configuration ─────────────────────────────────────────────────────────────
 
-# Dashboard address — set DASHBOARD_URL env var, or edit this line directly.
-# No trailing slash.  Examples:
-#   http://localhost:8888          (local)
-#   https://trading.jbrasfield.com (remote / hosted)
 DASHBOARD_URL  = os.getenv("DASHBOARD_URL",  "https://trading.jbrasfield.com")
-
-# Dashboard login credentials — the same username/password you use in the browser.
-# Set via env vars (recommended) or edit below.
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
 
-POLL_INTERVAL  = 1     # how often (seconds) we ask the dashboard for new prices
-                       # and check for newly highlighted tickers
+POLL_INTERVAL  = int(os.getenv("POLL_INTERVAL",  "1"))   # seconds between dashboard polls
 
-BAR_REFRESH    = 60    # how often (seconds) we pull fresh price bars from Alpaca
-                       # and recompute RSI / MACD for each active ticker
+BAR_REFRESH    = int(os.getenv("BAR_REFRESH",    "60"))  # seconds between Alpaca bar re-fetches
+BAR_STAGGER    = int(os.getenv("BAR_STAGGER",    "5"))   # seconds between each ticker's first fetch
+                                                          # prevents all tickers fetching at t=0
 
-TICKER_EXPIRY  = 600   # 10 minutes — if we added a ticker but never took a
-                       # position, we drop it to keep the list focused
+# Expiry: tickers with no bar data or a histogram that never went positive
+# are dropped after EXPIRY_COLD seconds (3 min).  Once a ticker has shown
+# a positive histogram at least once we extend it to EXPIRY_WARM (10 min)
+# since it came close and deserves more watch time.
+EXPIRY_COLD    = int(os.getenv("EXPIRY_COLD",    "180"))   # 3 min — never warmed up
+EXPIRY_WARM    = int(os.getenv("EXPIRY_WARM",    "600"))   # 10 min — showed positive hist
 
-BAR_COUNT      = 100   # number of 1-minute bars to fetch per ticker.
-                       # MACD(12,26,9) needs at least 35 bars to be meaningful;
-                       # 100 gives a comfortable warmup period.
+MAX_ACTIVE_TICKERS = int(os.getenv("MAX_ACTIVE_TICKERS", "20"))  # hard cap on active list
 
-BAR_TIMEFRAME  = "1Min"   # Alpaca bar timeframe string
+BAR_COUNT      = int(os.getenv("BAR_COUNT",  "100"))
+BAR_TIMEFRAME  = os.getenv("BAR_TIMEFRAME",  "1Min")
 
-RSI_PERIOD     = 14    # standard RSI lookback period (Wilder's original)
-MACD_FAST      = 12    # MACD fast EMA period
-MACD_SLOW      = 26    # MACD slow EMA period
-MACD_SIG       = 9     # MACD signal line (EMA of the MACD line)
+RSI_PERIOD     = int(os.getenv("RSI_PERIOD",   "14"))
+MACD_FAST      = int(os.getenv("MACD_FAST",    "12"))
+MACD_SLOW      = int(os.getenv("MACD_SLOW",    "26"))
+MACD_SIG       = int(os.getenv("MACD_SIG",     "9"))
+RSI_BUY_MAX    = int(os.getenv("RSI_BUY_MAX",  "70"))
 
-RSI_BUY_MAX    = 70    # refuse to buy if RSI is above this — stock is overbought
+LOG_FILE       = _HERE / "signal_log.json"
 
-LOG_FILE       = _HERE / "signal_log.json"   # where buy/sell events are saved
-
-# Alpaca REST endpoints
-ALPACA_BASE_URL  = "https://data.alpaca.markets"      # market data (bars)
-ALPACA_TRADE_URL = "https://paper-api.alpaca.markets"  # trading (paper by default)
+ALPACA_BASE_URL = "https://data.alpaca.markets"
 
 
 # ── Credential loading ────────────────────────────────────────────────────────
 
 def _load_alpaca_credentials() -> tuple[str, str]:
-    """
-    Return (api_key, secret_key) for Alpaca.
-
-    Priority order:
-      1. Environment variables  ALPACA_API_KEY / ALPACA_SECRET_KEY
-      2. secrets.json in the same folder (written by the dashboard's
-         Settings → Save Settings workflow)
-
-    If neither source has credentials we print a warning and continue.
-    Bar fetching will be skipped until credentials appear.
-    """
     api_key    = os.getenv("ALPACA_API_KEY", "")
     secret_key = os.getenv("ALPACA_SECRET_KEY", "")
-
-    # Fall back to the shared secrets file the dashboard also uses
     secrets_path = _HERE / "secrets.json"
     if secrets_path.exists():
         try:
@@ -169,12 +137,11 @@ def _load_alpaca_credentials() -> tuple[str, str]:
             secret_key = secret_key or s.get("secret_key", "")
         except Exception as e:
             print(f"[CFG] Could not read secrets.json: {e}")
-
     if not api_key or not secret_key:
         print(
             "[CFG] WARNING: Alpaca credentials not found.\n"
-            "       Set ALPACA_API_KEY / ALPACA_SECRET_KEY env vars,\n"
-            "       or save them via the dashboard Settings → API Keys tab.\n"
+            "       Set ALPACA_API_KEY / ALPACA_SECRET_KEY in signal_engine.env\n"
+            "       or via the dashboard Settings → API Keys tab.\n"
             "       Bar fetching will be skipped until credentials are set."
         )
     return api_key, secret_key
@@ -183,17 +150,9 @@ def _load_alpaca_credentials() -> tuple[str, str]:
 # ── Dashboard authentication ──────────────────────────────────────────────────
 
 def _dashboard_login(user: str, password: str) -> Optional[str]:
-    """
-    POST to /auth/login and return the Bearer token string, or None on failure.
-
-    The dashboard uses JWT tokens.  We get one at startup and attach it to
-    every subsequent request via the Authorization header.  If a request
-    ever returns 401 (token expired), the engine will automatically re-login.
-    """
+    """POST /auth/login and return the Bearer token, or None on failure."""
     if not user or not password:
-        # Auth might not be enabled on this dashboard instance — try without.
         return None
-
     try:
         resp = requests.post(
             f"{DASHBOARD_URL}/auth/login",
@@ -202,12 +161,10 @@ def _dashboard_login(user: str, password: str) -> Optional[str]:
         )
         data = resp.json()
         if resp.status_code == 200 and data.get("ok"):
-            token = data.get("token", "")
             print(f"[AUTH] Logged in as '{user}' ✓")
-            return token
-        else:
-            print(f"[AUTH] Login failed: {data.get('error', resp.status_code)}")
-            return None
+            return data.get("token", "")
+        print(f"[AUTH] Login failed: {data.get('error', resp.status_code)}")
+        return None
     except Exception as e:
         print(f"[AUTH] Login error: {e}")
         return None
@@ -219,54 +176,27 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
                count: int = BAR_COUNT,
                timeframe: str = BAR_TIMEFRAME) -> Optional[pd.DataFrame]:
     """
-    Download recent price bars (candlesticks) from Alpaca's market data API.
-
-    A "bar" is one row of OHLCV data: Open, High, Low, Close, Volume for a
-    given time bucket (here 1 minute).  We need these historical bars so that
-    RSI and MACD have enough data to produce meaningful numbers — the first
-    ~35 bars are the "warmup" period where the indicators stabilise.
-
-    Returns a pandas DataFrame with columns:
-        open, high, low, close, volume
-    or None if the request failed or returned no data.
+    Download recent OHLCV bars from Alpaca.
+    Returns a DataFrame(open, high, low, close, volume) or None on error.
     """
     if not api_key or not secret_key:
-        return None   # no point trying — we'd get a 403
-
+        return None
     url = f"{ALPACA_BASE_URL}/v2/stocks/{symbol}/bars"
-    params = {
-        "timeframe": timeframe,   # e.g. "1Min"
-        "limit":     count,       # how many bars to return
-        "feed":      "iex",       # IEX feed is included in the free Alpaca tier
-        "sort":      "asc",       # oldest-first so our DataFrames are in order
-    }
-    headers = {
-        "APCA-API-KEY-ID":     api_key,
-        "APCA-API-SECRET-KEY": secret_key,
-    }
+    params  = {"timeframe": timeframe, "limit": count, "feed": "iex", "sort": "asc"}
+    headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
     try:
         resp = requests.get(url, params=params, headers=headers, timeout=10)
-        resp.raise_for_status()   # raises if HTTP status is 4xx / 5xx
-
+        resp.raise_for_status()
         bars = resp.json().get("bars", [])
         if not bars:
-            return None   # market may be closed or symbol not recognised
-
-        # Alpaca returns single-letter column names; rename them to be readable
-        df = pd.DataFrame(bars)
-        df = df.rename(columns={
-            "o": "open",
-            "h": "high",
-            "l": "low",
-            "c": "close",
-            "v": "volume",
-            "t": "time",
+            return None
+        df = pd.DataFrame(bars).rename(columns={
+            "o": "open", "h": "high", "l": "low",
+            "c": "close", "v": "volume", "t": "time",
         })
         for col in ("open", "high", "low", "close", "volume"):
             df[col] = df[col].astype(float)
-
         return df.reset_index(drop=True)
-
     except Exception as e:
         print(f"[BARS] {symbol}: fetch failed — {e}")
         return None
@@ -275,49 +205,20 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 # ── Indicator computation ─────────────────────────────────────────────────────
 
 def compute_indicators(df: pd.DataFrame) -> tuple[float, float]:
-    """
-    Compute RSI and MACD histogram on a bar DataFrame and return the
-    latest values.
-
-    RSI (Relative Strength Index):
-        Measures how overbought or oversold a stock is on a 0–100 scale.
-        Below 30 = oversold (potential bounce), above 70 = overbought
-        (potential pullback).  We use it as a safety filter — we won't
-        buy if RSI is already above RSI_BUY_MAX.
-
-    MACD histogram:
-        MACD line = EMA(12) − EMA(26) of the close price.
-        Signal line = EMA(9) of the MACD line.
-        Histogram = MACD line − signal line.
-
-        When the histogram is positive and rising, momentum is accelerating
-        upward.  When it starts falling, momentum is fading — time to sell.
-
-    Returns:
-        (rsi_value, macd_hist_value)  — both are floats for the last bar.
-    """
-    cfg = {
-        "macd_fast":   MACD_FAST,   # 12
-        "macd_slow":   MACD_SLOW,   # 26
-        "macd_signal": MACD_SIG,    # 9
-    }
-    df = compute_macd(df, cfg)   # adds macd_line, macd_signal_line, macd_hist columns
-
-    rsi_series = calc_rsi(df["close"], RSI_PERIOD)
-    rsi_val    = float(rsi_series.iloc[-1])
-    hist_val   = float(df["macd_hist"].iloc[-1])
+    """Run RSI and MACD on a bar DataFrame. Returns (rsi, macd_hist) for last bar."""
+    cfg = {"macd_fast": MACD_FAST, "macd_slow": MACD_SLOW, "macd_signal": MACD_SIG}
+    df  = compute_macd(df, cfg)
+    rsi_val  = float(calc_rsi(df["close"], RSI_PERIOD).iloc[-1])
+    hist_val = float(df["macd_hist"].iloc[-1])
     return rsi_val, hist_val
 
 
 # ── Trade logging ─────────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
-    """Current UTC time as an ISO-8601 string, e.g. '2025-06-01T14:32:00Z'."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
 def _load_log() -> list:
-    """Read the existing signal log (list of buy/sell dicts) or return []."""
     if LOG_FILE.exists():
         try:
             return json.loads(LOG_FILE.read_text())
@@ -325,117 +226,177 @@ def _load_log() -> list:
             pass
     return []
 
-
 def _append_log(entry: dict):
-    """Append one entry to signal_log.json, creating the file if needed."""
     entries = _load_log()
     entries.append(entry)
     LOG_FILE.write_text(json.dumps(entries, indent=2))
 
-
 def log_buy(ticker: str, price: float, rsi: float, hist: float):
-    """Record a BUY signal — writes to signal_log.json and prints to console."""
     ts = _now_iso()
-    entry = {
-        "action":    "BUY",
-        "ticker":    ticker,
-        "price":     round(price, 4),
-        "rsi":       round(rsi,   2),
-        "macd_hist": round(hist, 6),
-        "time":      ts,
-    }
-    _append_log(entry)
-    print(f"  🟢 BUY  {ticker:6s}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]")
-
+    _append_log({"action": "BUY", "ticker": ticker,
+                 "price": round(price, 4), "rsi": round(rsi, 2),
+                 "macd_hist": round(hist, 6), "time": ts})
+    print(f"\n  {'='*56}")
+    print(f"  🟢 BUY  {ticker}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]")
+    print(f"  {'='*56}\n")
 
 def log_sell(ticker: str, price: float, buy_price: float,
              rsi: float, hist: float, buy_time: str):
-    """Record a SELL signal — includes P&L % vs the buy price."""
     ts  = _now_iso()
     pnl = round((price - buy_price) / buy_price * 100, 2)
-    entry = {
-        "action":    "SELL",
-        "ticker":    ticker,
-        "price":     round(price,     4),
-        "buy_price": round(buy_price, 4),
-        "pnl_pct":   pnl,
-        "rsi":       round(rsi,  2),
-        "macd_hist": round(hist, 6),
-        "time":      ts,
-        "buy_time":  buy_time,
-    }
-    _append_log(entry)
+    _append_log({"action": "SELL", "ticker": ticker,
+                 "price": round(price, 4), "buy_price": round(buy_price, 4),
+                 "pnl_pct": pnl, "rsi": round(rsi, 2),
+                 "macd_hist": round(hist, 6), "time": ts, "buy_time": buy_time})
     sign = "+" if pnl >= 0 else ""
-    print(f"  🔴 SELL {ticker:6s}  ${price:.2f}  P&L={sign}{pnl}%  hist={hist:+.4f}  [{ts}]")
+    print(f"\n  {'='*56}")
+    print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  hist={hist:+.4f}  [{ts}]")
+    print(f"  {'='*56}\n")
 
 
 # ── Per-ticker state ──────────────────────────────────────────────────────────
 
 class TickerState:
     """
-    Tracks everything the engine needs to know about one active ticker.
+    All state tracked for one active ticker.
 
-    Lifecycle:
-        created when the ticker first gets highlighted on the dashboard
-        → bars fetched and indicators computed every BAR_REFRESH seconds
-        → BUY fired when MACD histogram is positive and growing
-        → SELL fired when histogram reverses (was growing, now shrinking)
-        → expired and removed if TICKER_EXPIRY seconds pass with no position
+    Expiry rules:
+      • Never saw a positive histogram (EXPIRY_COLD = 3 min) — probably not moving
+      • Saw positive histogram at least once (EXPIRY_WARM = 10 min) — came close, give it time
+      • In a position — never expires, held until SELL fires
     """
 
-    def __init__(self, ticker: str):
+    def __init__(self, ticker: str, fetch_offset_s: float = 0):
         self.ticker      = ticker
-        self.added_ts    = time.time()   # wall-clock timestamp when added
-        self.in_position = False         # True after a BUY, False after a SELL
+        self.added_ts    = time.time()
+        self.in_position = False
 
-        # Position tracking — populated when we BUY
+        # Position data
         self.buy_price: Optional[float] = None
         self.buy_time:  Optional[str]   = None
 
         # MACD momentum tracking
-        self.prev_hist:    Optional[float] = None  # histogram from last evaluation
-        self.hist_growing: bool            = False # True while histogram is positive & rising
+        self.prev_hist:    Optional[float] = None
+        self.hist_growing: bool            = False
+        self.ever_positive_hist: bool      = False  # True once hist > 0 is ever seen
 
-        # Latest market data (updated each poll cycle)
+        # Latest indicator values — updated on each bar refresh
         self.last_rsi:   Optional[float] = None
+        self.last_hist:  Optional[float] = None     # most recent histogram value
         self.last_price: Optional[float] = None
-        self.last_bar_fetch: float       = 0.0    # epoch time of last Alpaca bar pull
+        self.bars_fetched: bool          = False    # True after first successful bar pull
+
+        # fetch_offset_s staggers the first bar fetch so all new tickers
+        # don't hammer Alpaca at the same moment
+        self.last_bar_fetch: float = time.time() - BAR_REFRESH + fetch_offset_s
+        # e.g. offset=0  → fetches immediately
+        #      offset=10 → fetches in 10 s
+        #      offset=20 → fetches in 20 s
+
+        self.check_count: int = 0   # increments every second — used in log output
+
+    def expiry_seconds(self) -> int:
+        """How long this ticker is allowed to live without a position."""
+        return EXPIRY_WARM if self.ever_positive_hist else EXPIRY_COLD
+
+    def age_s(self) -> float:
+        """Seconds since this ticker was added."""
+        return time.time() - self.added_ts
+
+    def time_left_s(self) -> float:
+        """Seconds remaining before expiry (if no position)."""
+        return max(0.0, self.expiry_seconds() - self.age_s())
 
     def is_expired(self) -> bool:
+        if self.in_position:
+            return False   # never expire an open position
+        return self.age_s() > self.expiry_seconds()
+
+    def proximity_summary(self) -> str:
         """
-        Returns True if we've been watching this ticker longer than
-        TICKER_EXPIRY without taking a position.  Positions are never
-        expired — we hold until the SELL signal fires.
+        One-line human-readable summary of how close this ticker is to a BUY signal.
+        Printed every second so you can watch conditions converge in real time.
         """
-        return (not self.in_position) and (time.time() - self.added_ts > TICKER_EXPIRY)
+        age   = self.age_s()
+        left  = self.time_left_s()
+        check = self.check_count
+
+        # ── Not yet loaded ─────────────────────────────────────────────────────
+        if not self.bars_fetched:
+            next_fetch = max(0, BAR_REFRESH - (time.time() - self.last_bar_fetch))
+            return (
+                f"  [{ticker_tag(self.ticker)}] ⏳ waiting for first bar fetch "
+                f"(in ~{next_fetch:.0f}s)  age={age:.0f}s  ttl={left:.0f}s  #{check}"
+            )
+
+        rsi  = self.last_rsi
+        hist = self.last_hist
+        price = self.last_price
+
+        # ── Build condition check marks ────────────────────────────────────────
+        rsi_ok   = rsi  is not None and rsi  < RSI_BUY_MAX
+        hist_pos = hist is not None and hist > 0
+        growing  = self.hist_growing
+
+        rsi_str  = f"RSI={rsi:.1f}"   if rsi  is not None else "RSI=?"
+        hist_str = f"hist={hist:+.4f}" if hist is not None else "hist=?"
+        price_str = f"${price:.2f}" if price is not None else "$?"
+
+        # Condition indicators
+        rsi_tag  = "✓" if rsi_ok   else f"✗(need<{RSI_BUY_MAX})"
+        hist_tag = "✓pos" if hist_pos else "✗neg"
+        grow_tag = "✓growing🔥" if growing else ("→flat" if hist_pos else "↓")
+
+        # Overall status
+        if self.in_position:
+            status = "📈 IN POSITION — watching for SELL"
+        elif growing and rsi_ok:
+            status = "🔥 BUY ZONE — signal imminent"
+        elif growing and not rsi_ok:
+            status = "⚠️  growing but RSI overbought — holding off"
+        elif hist_pos and not growing:
+            status = "👀 hist positive — watching for growth"
+        elif self.ever_positive_hist:
+            status = "↩️  retreated — was positive, now negative"
+        else:
+            status = "😴 no signal yet"
+
+        return (
+            f"  [{ticker_tag(self.ticker)}] {price_str}  "
+            f"{rsi_str} {rsi_tag}  "
+            f"{hist_str} {hist_tag} {grow_tag}  "
+            f"age={age:.0f}s ttl={left:.0f}s  "
+            f"#{check}  {status}"
+        )
 
     def update_momentum(self, hist: float, price: float, rsi: float):
         """
-        Core momentum logic — called after each bar refresh.
-
-          Histogram positive AND rising:
-            Fast line above signal line and pulling away — accelerating uptrend.
-            → set hist_growing = True
-            → fire BUY if not already in a position and RSI is acceptable
-
-          Histogram was growing, now falling:
-            Fast line still above signal line but heading back toward it.
-            Momentum fading — exit signal.
-            → fire SELL if we're in a position
-            → reset hist_growing = False
+        Apply one indicator reading — check for BUY/SELL signals and update state.
+        Called by _refresh_ticker() after each bar fetch.
         """
         self.last_price = price
         self.last_rsi   = rsi
+        self.last_hist  = hist
+
+        if hist > 0:
+            self.ever_positive_hist = True
 
         prev = self.prev_hist
 
         if prev is not None:
-            # Histogram growing: positive and larger than last bar
+            # Histogram growing: positive and larger than last read
             if hist > 0 and hist > prev:
+                if not self.hist_growing:
+                    print(f"  [{ticker_tag(self.ticker)}] 📈 histogram started GROWING"
+                          f"  hist={hist:+.4f} (was {prev:+.4f})"
+                          f"  RSI={rsi:.1f}  price={price:.2f}")
                 self.hist_growing = True
 
             # Reversal: was growing, now shrinking
             elif self.hist_growing and hist < prev:
+                print(f"  [{ticker_tag(self.ticker)}] 📉 histogram REVERSING"
+                      f"  hist={hist:+.4f} (was {prev:+.4f})"
+                      f"  RSI={rsi:.1f}  price={price:.2f}")
                 if self.in_position:
                     log_sell(
                         ticker    = self.ticker,
@@ -450,19 +411,9 @@ class TickerState:
                     self.buy_time    = None
                 self.hist_growing = False
 
-        # BUY conditions: growing momentum + not already in + RSI not overbought
-        if (
-            self.hist_growing
-            and not self.in_position
-            and rsi < RSI_BUY_MAX
-            and price > 0
-        ):
-            log_buy(
-                ticker = self.ticker,
-                price  = price,
-                rsi    = rsi,
-                hist   = hist,
-            )
+        # BUY check
+        if self.hist_growing and not self.in_position and rsi < RSI_BUY_MAX and price > 0:
+            log_buy(ticker=self.ticker, price=price, rsi=rsi, hist=hist)
             self.in_position = True
             self.buy_price   = price
             self.buy_time    = _now_iso()
@@ -470,207 +421,225 @@ class TickerState:
         self.prev_hist = hist
 
 
+def ticker_tag(sym: str) -> str:
+    """Fixed-width ticker label for aligned log output."""
+    return sym.ljust(6)
+
+
 # ── Main engine ───────────────────────────────────────────────────────────────
 
 class SignalEngine:
     """
-    Orchestrates the polling loop:
-      - Logs into the dashboard at startup (if credentials are configured)
-      - Fetches dashboard state every POLL_INTERVAL seconds
-      - Builds and maintains the active ticker list from highlighted rows
-      - Refreshes bars + indicators every BAR_REFRESH seconds per ticker
-      - Retires expired tickers
+    Main loop.
+
+    Efficiency design:
+      • One dashboard HTTP call per second (never per ticker).
+      • Alpaca bar fetches: max one per BAR_REFRESH seconds per ticker,
+        staggered so they spread out over time.
+      • Every-second proximity checks are pure in-memory comparisons.
+      • Active list hard-capped at MAX_ACTIVE_TICKERS.
     """
 
     def __init__(self):
         self.api_key, self.secret_key = _load_alpaca_credentials()
-
-        # Dashboard auth token — None means either auth is disabled or
-        # we haven't logged in yet.  Set at startup, refreshed on 401.
         self._token: Optional[str] = None
-
-        # sym → TickerState for every ticker we're currently watching
-        self.active: dict[str, TickerState] = {}
-
-        # Tracks which mentioned tickers we've already added so we don't
-        # create duplicate TickerState objects on every poll cycle
-        self._known_mentioned: set[str] = set()
+        self.active: dict[str, TickerState] = {}       # sym → TickerState
+        self._known_mentioned: set[str] = set()        # ever-seen mentioned syms
+        self._stagger_index: int = 0                   # increments per added ticker
 
     def _auth_headers(self) -> dict:
-        """Return HTTP headers including the Bearer token if we have one."""
-        if self._token:
-            return {"Authorization": f"Bearer {self._token}"}
-        return {}
+        return {"Authorization": f"Bearer {self._token}"} if self._token else {}
 
     def _ensure_logged_in(self):
-        """Log in to the dashboard if we have credentials and no token yet."""
         if not self._token and DASHBOARD_USER and DASHBOARD_PASS:
             self._token = _dashboard_login(DASHBOARD_USER, DASHBOARD_PASS)
 
     # ── Dashboard polling ─────────────────────────────────────────────────────
 
     def _poll_dashboard(self) -> Optional[dict]:
-        """
-        GET /api/state from the dashboard server.
-
-        Attaches the Bearer token so the request is authorised.
-        If the server returns 401 (token expired), automatically re-logs
-        in and retries once.
-
-        Returns the parsed JSON dict, or None if unreachable.
-        """
-        for attempt in range(2):   # up to 2 tries (second try after re-login)
+        """Single GET /api/state — retries once after a 401 re-login."""
+        for attempt in range(2):
             try:
                 resp = requests.get(
                     f"{DASHBOARD_URL}/api/state",
                     headers=self._auth_headers(),
                     timeout=5,
                 )
-
                 if resp.status_code == 401:
-                    # Token expired or not set — try to log in and retry
-                    print("[AUTH] 401 received — re-authenticating…")
+                    print("[AUTH] 401 — re-authenticating…")
                     self._token = _dashboard_login(DASHBOARD_USER, DASHBOARD_PASS)
-                    continue   # retry with new token
-
+                    continue
                 resp.raise_for_status()
                 return resp.json()
-
             except requests.exceptions.ConnectionError:
                 if attempt == 0:
-                    print(f"[POLL] Cannot reach {DASHBOARD_URL} — retrying…")
+                    print(f"[POLL] Cannot reach {DASHBOARD_URL}")
                 return None
             except Exception as e:
                 print(f"[POLL] Error: {e}")
                 return None
-
-        return None   # both attempts failed
+        return None
 
     def _ingest_state(self, state: dict):
         """
-        Process one snapshot from the dashboard.
-
-        For each ticker row in the snapshot:
-          • Update its last-known price if it's already in our active list.
-          • If it's marked 'mentioned' (highlighted on the dashboard) and
-            we haven't seen it before, add it to the active list.
+        Process one dashboard snapshot.
+        - Update prices for already-active tickers (cheap, always runs).
+        - Add newly mentioned tickers (only when list has room).
         """
-        tickers = state.get("tickers", [])
-
-        for row in tickers:
-            sym       = row.get("ticker", "")
-            price     = row.get("price")
-            mentioned = row.get("mentioned", False)
-
+        for row in state.get("tickers", []):
+            sym   = row.get("ticker", "")
+            price = row.get("price")
             if not sym:
                 continue
 
-            # Keep price current for already-tracked tickers
+            # Always keep prices fresh for tracked tickers
             if sym in self.active and price is not None:
                 self.active[sym].last_price = float(price)
 
-            # 'mentioned' = ticker was spoken in the last 30 s of transcript.
-            # We add it once and keep watching even after the mention window passes.
-            if mentioned and sym not in self._known_mentioned:
+            # Add newly mentioned tickers
+            if row.get("mentioned") and sym not in self._known_mentioned:
                 self._known_mentioned.add(sym)
-                if sym not in self.active:
-                    self.active[sym] = TickerState(sym)
-                    age_mins = TICKER_EXPIRY // 60
-                    print(
-                        f"  ➕ Added  {sym}  to active list "
-                        f"(expires in {age_mins} min if no position)"
-                    )
+                if sym in self.active:
+                    continue  # already tracking
 
-    # ── Bar refresh + signal evaluation ──────────────────────────────────────
+                if len(self.active) >= MAX_ACTIVE_TICKERS:
+                    print(f"  [ENGINE] ⚠️  active list full ({MAX_ACTIVE_TICKERS}) "
+                          f"— skipping {sym}")
+                    continue
 
-    def _refresh_ticker(self, ts: TickerState):
+                # Stagger bar fetches: ticker #0 fetches now, #1 in BAR_STAGGER s,
+                # #2 in 2×BAR_STAGGER s, etc.  Prevents a burst of Alpaca calls
+                # when several tickers are mentioned close together.
+                offset = self._stagger_index * BAR_STAGGER
+                self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
+
+                self.active[sym] = TickerState(sym, fetch_offset_s=offset)
+                expiry_tag = "3min" if not self.active[sym].ever_positive_hist else "10min"
+                print(
+                    f"\n  ➕ ADDED {sym}  "
+                    f"(bar fetch in ~{offset}s | expiry {expiry_tag} if no signal)\n"
+                )
+
+    # ── Bar refresh ───────────────────────────────────────────────────────────
+
+    def _refresh_bars(self, ts: TickerState):
         """
-        If this ticker is due for a bar refresh, pull fresh data from Alpaca,
-        recompute RSI + MACD, and pass the results to update_momentum().
-
-        Rate-limited to BAR_REFRESH seconds per ticker to avoid hammering
-        the Alpaca API.
+        Fetch fresh bars for one ticker if it's due.
+        Rate-limited by last_bar_fetch + BAR_REFRESH.
         """
         now = time.time()
         if now - ts.last_bar_fetch < BAR_REFRESH:
             return   # not due yet
 
+        print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars from Alpaca…")
         df = fetch_bars(ts.ticker, self.api_key, self.secret_key)
 
-        # Need at least MACD_SLOW + MACD_SIG + a few extra bars for stability
         if df is None or len(df) < MACD_SLOW + MACD_SIG + 5:
+            print(f"  [{ticker_tag(ts.ticker)}] ⚠️  not enough bars "
+                  f"({len(df) if df is not None else 0} received, "
+                  f"need {MACD_SLOW + MACD_SIG + 5})")
             ts.last_bar_fetch = now
             return
 
         try:
             rsi_val, hist_val = compute_indicators(df)
         except Exception as e:
-            print(f"[SIG] {ts.ticker}: indicator error — {e}")
+            print(f"  [{ticker_tag(ts.ticker)}] ❌ indicator error: {e}")
             ts.last_bar_fetch = now
             return
 
-        # Prefer live price from dashboard; fall back to last bar's close
         price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
-
         ts.last_bar_fetch = now
+        ts.bars_fetched   = True
+
+        print(
+            f"  [{ticker_tag(ts.ticker)}] 📊 bars loaded  "
+            f"RSI={rsi_val:.1f}  hist={hist_val:+.4f}  "
+            f"price={price:.2f}  bars={len(df)}"
+        )
+
         ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val)
 
-    # ── Expiry cleanup ────────────────────────────────────────────────────────
+    # ── Every-second proximity check ──────────────────────────────────────────
+
+    def _check_proximity(self, ts: TickerState):
+        """
+        Log one line per ticker per second showing how close it is to a signal.
+        Pure in-memory — no network calls.
+        """
+        ts.check_count += 1
+        print(ts.proximity_summary())
+
+    # ── Expiry ────────────────────────────────────────────────────────────────
 
     def _expire_tickers(self):
         """
-        Remove tickers that have been in the active list longer than
-        TICKER_EXPIRY without triggering a BUY.  Open positions are
-        never expired — we hold until the SELL signal fires.
+        Drop tickers that have been watched too long with no signal.
+        Tickers with open positions are never dropped.
         """
         expired = [sym for sym, ts in self.active.items() if ts.is_expired()]
         for sym in expired:
-            print(f"  ⏰ Expired {sym}  (no position taken within {TICKER_EXPIRY // 60} min)")
+            ts = self.active[sym]
+            reason = (
+                "never showed positive histogram (cold)"
+                if not ts.ever_positive_hist
+                else "histogram retreated before signal fired (warm)"
+            )
+            print(
+                f"\n  ⏰ EXPIRED {sym}  "
+                f"({ts.age_s():.0f}s watched | {reason})\n"
+            )
             del self.active[sym]
+            # Allow re-adding if the ticker gets mentioned again later
             self._known_mentioned.discard(sym)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self):
-        """
-        Start the engine.  Runs forever until Ctrl-C.
-
-        Each iteration (every POLL_INTERVAL seconds):
-          1. Poll the dashboard for the latest ticker state + prices
-          2. Add any newly highlighted tickers to the active list
-          3. For each active ticker, check if bars need refreshing and
-             evaluate buy/sell signals
-          4. Drop tickers that have expired without a position
-        """
         print("=" * 60)
         print("  Signal Engine — RSI + MACD Momentum")
-        print(f"  Dashboard : {DASHBOARD_URL}")
-        print(f"  Auth user : {DASHBOARD_USER or '(none — auth may be disabled)'}")
-        print(f"  Log file  : {LOG_FILE}")
-        print(f"  Expiry    : {TICKER_EXPIRY // 60} min  |  Bar refresh: {BAR_REFRESH}s")
-        print(f"  Alpaca key: {'✓ loaded' if self.api_key else '✗ missing'}")
+        print(f"  Dashboard     : {DASHBOARD_URL}")
+        print(f"  Auth user     : {DASHBOARD_USER or '(none)'}")
+        print(f"  Alpaca key    : {'✓ loaded' if self.api_key else '✗ missing'}")
+        print(f"  Bar refresh   : every {BAR_REFRESH}s (staggered {BAR_STAGGER}s apart)")
+        print(f"  Expiry cold   : {EXPIRY_COLD}s (no positive hist seen)")
+        print(f"  Expiry warm   : {EXPIRY_WARM}s (positive hist seen at least once)")
+        print(f"  Max tickers   : {MAX_ACTIVE_TICKERS}")
+        print(f"  Log file      : {LOG_FILE}")
         print("=" * 60)
 
-        # Log in before the first poll
         self._ensure_logged_in()
-
-        print("  Waiting for highlighted tickers on dashboard…\n")
+        print("  Watching dashboard for highlighted tickers…\n")
 
         while True:
             try:
-                # Step 1 + 2: get dashboard snapshot, update active list
+                cycle_start = time.time()
+
+                # 1. One dashboard request per cycle — updates prices + detects new tickers
                 state = self._poll_dashboard()
                 if state:
                     self._ingest_state(state)
 
-                # Step 3: evaluate signals for all active tickers
+                # 2. For each active ticker:
+                #      a) refresh bars if due (rate-limited, staggered)
+                #      b) log proximity to signal (every second, in-memory)
                 for ts in list(self.active.values()):
-                    self._refresh_ticker(ts)
+                    self._refresh_bars(ts)
+                    self._check_proximity(ts)
 
-                # Step 4: retire stale tickers
+                # 3. Drop expired tickers
                 self._expire_tickers()
 
-                time.sleep(POLL_INTERVAL)
+                # 4. Sleep for the remainder of POLL_INTERVAL so we don't
+                #    drift — if the above took 0.3 s we sleep 0.7 s.
+                elapsed = time.time() - cycle_start
+                sleep_for = max(0, POLL_INTERVAL - elapsed)
+                if sleep_for < 0.05:
+                    # Cycle took longer than POLL_INTERVAL — log a warning
+                    # so you know the per-second cadence is slipping
+                    print(f"  [ENGINE] ⚠️  cycle took {elapsed:.2f}s "
+                          f"(>{POLL_INTERVAL}s) — consider raising POLL_INTERVAL")
+                time.sleep(sleep_for)
 
             except KeyboardInterrupt:
                 print("\n  Stopped by user.")
