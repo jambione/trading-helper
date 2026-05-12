@@ -5,17 +5,17 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on }                           from './api.js?v=27';
-import { subscribe, set }                        from './store.js?v=27';
-import { init as initTranscription }             from './transcription.js?v=27';
-import { init as initTickers }                   from './tickers.js?v=27';
-import { init as initTradingView }               from './tradingview.js?v=27';
-import { init as initConfig, open as openConfig }from './config.js?v=27';
-import { init as initResizer }                   from './resizer.js?v=27';
-import * as controls                             from './controls.js?v=27';
-import * as notifications                        from './notifications.js?v=27';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=27';
-import { init as initNews }                      from './news.js?v=27';
+import { connect, on, api }                      from './api.js?v=28';
+import { subscribe, set }                        from './store.js?v=28';
+import { init as initTranscription }             from './transcription.js?v=28';
+import { init as initTickers }                   from './tickers.js?v=28';
+import { init as initTradingView }               from './tradingview.js?v=28';
+import { init as initConfig, open as openConfig }from './config.js?v=28';
+import { init as initResizer }                   from './resizer.js?v=28';
+import * as controls                             from './controls.js?v=28';
+import * as notifications                        from './notifications.js?v=28';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=28';
+import { init as initNews }                      from './news.js?v=28';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -83,6 +83,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.target.value = e.target.value.toUpperCase();
     e.target.setSelectionRange(pos, pos);
   });
+
+  // ── Suggestion bar ───────────────────────────────────────────
+  const suggInput = document.getElementById('suggestion-input');
+  const suggBtn   = document.getElementById('suggestion-btn');
+  const _submitSuggestion = async () => {
+    const msg = suggInput?.value.trim();
+    if (!msg) return;
+    suggBtn.disabled = true;
+    suggBtn.textContent = '…';
+    try {
+      await api.addSuggestion(msg);
+      suggInput.value    = '';
+      suggBtn.textContent = 'Sent ✓';
+      setTimeout(() => { suggBtn.textContent = 'Send'; suggBtn.disabled = false; }, 2000);
+    } catch {
+      suggBtn.textContent = 'Error';
+      setTimeout(() => { suggBtn.textContent = 'Send'; suggBtn.disabled = false; }, 2000);
+    }
+  };
+  suggBtn  ?.addEventListener('click', _submitSuggestion);
+  suggInput?.addEventListener('keydown', e => { if (e.key === 'Enter') _submitSuggestion(); });
 
   notifBtn?.addEventListener('click', async () => {
     const granted = await notifications.requestPermission();

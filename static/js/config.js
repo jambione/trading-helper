@@ -5,9 +5,9 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=27';
-import { get } from './store.js?v=27';
-import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=27';
+import { api } from './api.js?v=28';
+import { get } from './store.js?v=28';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=28';
 
 let _backdrop = null;
 let _saveBtn  = null;
@@ -57,7 +57,7 @@ function _switchTab(tab) {
   _backdrop.querySelectorAll('[data-tab-panel]').forEach(panel =>
     panel.classList.toggle('hidden', panel.dataset.tabPanel !== tab)
   );
-  if (tab === 'history') _loadLoginHistory();
+  if (tab === 'history') _loadSuggestions();
 }
 
 // ── Load config ────────────────────────────────────────────────
@@ -174,39 +174,35 @@ function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ── Login history ──────────────────────────────────────────────
+// ── Feedback / Suggestions ─────────────────────────────────────
 
-async function _loadLoginHistory() {
-  const el = _backdrop.querySelector('[data-login-history]');
+async function _loadSuggestions() {
+  const el = _backdrop.querySelector('[data-suggestions]');
   if (!el) return;
-  el.innerHTML = '<div class="login-history-empty">Loading…</div>';
+  el.innerHTML = '<div class="suggestions-empty">Loading…</div>';
   try {
-    const { entries = [] } = await api.loginLog();
-    if (!entries.length) {
-      el.innerHTML = '<div class="login-history-empty">No login events recorded yet.</div>';
+    const { suggestions = [] } = await api.getSuggestions();
+    if (!suggestions.length) {
+      el.innerHTML = '<div class="suggestions-empty">No suggestions yet.</div>';
       return;
     }
-    el.innerHTML = entries.map(e => {
-      const loc  = e.location;
-      const locStr = loc
-        ? [loc.city, loc.region, loc.country].filter(Boolean).join(', ') || e.ip
-        : e.ip;
-      const ts   = e.timestamp ? e.timestamp.replace('T', ' ').slice(0, 19) : '—';
-      const ok   = e.success !== false;
-      return `<div class="login-entry${ok ? '' : ' login-entry--fail'}">
-        <div class="login-entry-row">
-          <span class="login-badge${ok ? '' : ' login-badge--fail'}">${ok ? 'OK' : 'FAIL'}</span>
-          <span class="login-user">${_esc(e.username || '—')}</span>
-          <span class="login-ts">${_esc(ts)}</span>
-        </div>
-        <div class="login-entry-row login-entry-meta">
-          <span class="login-loc">${_esc(locStr)}</span>
-          <span class="login-ua" title="${_esc(e.user_agent || '')}">${_esc(_shortUa(e.user_agent || ''))}</span>
+    // Newest first
+    const sorted = [...suggestions].reverse();
+    el.innerHTML = sorted.map(s => {
+      const ts  = s.timestamp ? s.timestamp.replace('T', ' ').slice(0, 19) : '—';
+      const ua  = _shortUa(s.user_agent || '');
+      const ip  = s.ip || '—';
+      return `<div class="suggestion-card">
+        <div class="suggestion-msg">${_esc(s.message)}</div>
+        <div class="suggestion-meta">
+          <span class="suggestion-ts">${_esc(ts)}</span>
+          <span>${_esc(ip)}</span>
+          <span>${_esc(ua)}</span>
         </div>
       </div>`;
     }).join('');
   } catch {
-    el.innerHTML = '<div class="login-history-empty">Failed to load history.</div>';
+    el.innerHTML = '<div class="suggestions-empty">Failed to load suggestions.</div>';
   }
 }
 

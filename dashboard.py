@@ -71,6 +71,7 @@ _SPEECH_LINE_RE    = re.compile(r'^\[(\d{2}:\d{2}:\d{2})\] ')
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
 TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 NEWS_FILE          = Path("news.json")
+SUGGESTIONS_FILE   = Path("suggestions.json")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -118,6 +119,33 @@ def load_news() -> list:
     except Exception as e:
         log.warning(f"[NEWS] Failed to load news.json: {e}")
         return []
+
+
+# ── Suggestions ──────────────────────────────────────────────────────────────
+
+def load_suggestions() -> list:
+    try:
+        if not SUGGESTIONS_FILE.exists():
+            return []
+        import json as _json
+        data = _json.loads(SUGGESTIONS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        log.warning(f"[SUGGESTIONS] load failed: {e}")
+        return []
+
+
+def save_suggestion(message: str, ip: str, ua: str):
+    import json as _json
+    from datetime import datetime, timezone
+    items = load_suggestions()
+    items.append({
+        "timestamp":  datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "message":    message,
+        "ip":         ip,
+        "user_agent": ua,
+    })
+    SUGGESTIONS_FILE.write_text(_json.dumps(items, indent=2), encoding="utf-8")
 
 
 # ── Mention tracking ──────────────────────────────────────────────────────────
@@ -923,6 +951,34 @@ async def api_login_log():
     loop    = asyncio.get_running_loop()
     entries = await loop.run_in_executor(None, get_login_log)
     return JSONResponse({"entries": entries})
+
+
+@app.post("/api/suggestions")
+async def api_add_suggestion(request: Request):
+    try:
+        body    = await request.json()
+        message = str(body.get("message", "")).strip()
+        if not message:
+            return JSONResponse({"ok": False, "error": "Empty message"}, status_code=400)
+        ip = (
+            request.headers.get("CF-Connecting-IP")
+            or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown")
+        )
+        ua   = request.headers.get("user-agent", "")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: save_suggestion(message, ip, ua))
+        log.info(f"[SUGGESTION] from {ip}: {message[:60]}")
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.get("/api/suggestions")
+async def api_get_suggestions():
+    loop  = asyncio.get_running_loop()
+    items = await loop.run_in_executor(None, load_suggestions)
+    return JSONResponse({"suggestions": items})
 
 
 @app.websocket("/ws")
