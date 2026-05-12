@@ -999,6 +999,8 @@ class SignalEngine:
         # ── 3. Recompute indicators using live price as forming-bar close ──────
         # Inject the current price into the last bar of the cached DataFrame
         # and recompute RSI + MACD so the proximity log shows live values.
+        # For HOT tickers we also run the full momentum/BUY check on the live
+        # values — no waiting up to 60 s for the next confirmed bar to close.
         if ts.cached_df is not None and ts.last_price is not None:
             try:
                 df_live = ts.cached_df.copy()
@@ -1006,6 +1008,18 @@ class SignalEngine:
                 rsi_live, hist_live = compute_indicators(df_live)
                 ts.last_rsi  = rsi_live
                 ts.last_hist = hist_live
+
+                # Hot tickers get real-time momentum checks so the BUY fires
+                # the moment MACD starts growing — not up to a minute later.
+                # Normal tickers still wait for confirmed bar closes to avoid
+                # false signals from mid-candle histogram fluctuations.
+                if ts.is_hot and ts.bars_fetched:
+                    ts.update_momentum(
+                        hist  = hist_live,
+                        price = ts.last_price,
+                        rsi   = rsi_live,
+                    )
+
             except Exception:
                 pass   # keep last known values if recompute fails
 
