@@ -5,17 +5,18 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=28';
-import { subscribe, set }                        from './store.js?v=28';
-import { init as initTranscription }             from './transcription.js?v=28';
-import { init as initTickers }                   from './tickers.js?v=28';
-import { init as initTradingView }               from './tradingview.js?v=28';
-import { init as initConfig, open as openConfig }from './config.js?v=28';
-import { init as initResizer }                   from './resizer.js?v=28';
-import * as controls                             from './controls.js?v=28';
-import * as notifications                        from './notifications.js?v=28';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=28';
-import { init as initNews }                      from './news.js?v=28';
+import { connect, on, api }                      from './api.js?v=29';
+import { subscribe, set }                        from './store.js?v=29';
+import { init as initTranscription }             from './transcription.js?v=29';
+import { init as initTickers }                   from './tickers.js?v=29';
+import { init as initTradingView }               from './tradingview.js?v=29';
+import { init as initConfig, open as openConfig }from './config.js?v=29';
+import { init as initResizer }                   from './resizer.js?v=29';
+import * as controls                             from './controls.js?v=29';
+import * as notifications                        from './notifications.js?v=29';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=29';
+import { init as initNews }                      from './news.js?v=29';
+import { init as initLeaderboard }               from './leaderboard.js?v=29';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -51,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
+  try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
   }

@@ -90,6 +90,14 @@ class _State:
         # Mention tracking — resets on server restart (fresh each trading day)
         self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
         self.mention_daily: dict = {}  # ticker → int  daily total count
+        # Daily reset tracking — clears mention_daily at market open & close
+        import datetime as _dt
+        self.mention_reset_date: str  = str(_dt.date.today())
+        self.mention_market_opened: bool = False  # True once 9:30 AM reset fired today
+        # Daily reset tracking — resets mention_daily at market open & close
+        from datetime import date as _date
+        self.mention_reset_date: str  = str(_date.today())  # last reset date
+        self.mention_market_opened: bool = False  # True once 9:30 reset fired today
 
     @property
     def transcriber_running(self) -> bool:
@@ -665,6 +673,49 @@ app.add_middleware(
 )
 
 
+
+def _mention_reset_worker():
+    """
+    Background thread — resets daily mention counts at:
+      • 9:30 AM ET  (market open  — clears overnight/pre-market noise)
+      • 4:05 PM ET  (market close — clean slate for after-hours)
+      • Any date change (safety net for servers that run overnight)
+    """
+    import datetime as _dt
+    ET = ZoneInfo("America/New_York")
+    while True:
+        try:
+            now   = _dt.datetime.now(ET)
+            today = str(now.date())
+            hhmm  = now.hour * 100 + now.minute
+
+            with STATE.lock:
+                # New calendar day — reset the open flag so 9:30 fires again
+                if STATE.mention_reset_date != today:
+                    STATE.mention_reset_date    = today
+                    STATE.mention_market_opened = False
+                    STATE.mention_daily.clear()
+                    STATE.mention_ts.clear()
+                    log.info("[MENTIONS] Daily reset — new calendar day")
+
+                # 9:30 AM ET — market open
+                elif hhmm == 930 and not STATE.mention_market_opened:
+                    STATE.mention_market_opened = True
+                    STATE.mention_daily.clear()
+                    STATE.mention_ts.clear()
+                    log.info("[MENTIONS] Daily reset — market open (9:30 AM ET)")
+
+                # 4:05 PM ET — market close (5 min buffer after 4:00)
+                elif hhmm == 1605:
+                    STATE.mention_daily.clear()
+                    STATE.mention_ts.clear()
+                    log.info("[MENTIONS] Daily reset — market close (4:05 PM ET)")
+
+        except Exception as e:
+            log.warning(f"[MENTIONS] reset worker error: {e}")
+
+        time.sleep(30)   # check every 30 s — cheap, no need for tighter loop
+
 @app.on_event("startup")
 async def _startup():
     loop = asyncio.get_running_loop()
@@ -687,6 +738,7 @@ async def _startup():
             log.warning(f"[STARTUP] Finnhub unavailable: {e}")
 
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
+    threading.Thread(target=_mention_reset_worker, daemon=True, name="mention-reset").start()
 
 
 @app.get("/")

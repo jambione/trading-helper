@@ -683,6 +683,78 @@ body.mobile .cell-chg    { font-size: 13px; }
 .suggestion-bar input:focus { border-color: var(--accent); }
 .suggestion-bar input::placeholder { color: #ffffff; }
 
+
+/* ── Leaderboard bar ────────────────────────────────────────── */
+.leaderboard-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border-hi);
+  flex-shrink: 0;
+  overflow: hidden;
+  min-height: 32px;
+}
+.lb-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.lb-items {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  overflow: hidden;
+}
+.lb-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.lb-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 2px 8px 2px 6px;
+  white-space: nowrap;
+  transition: border-color 0.2s;
+}
+.lb-item--burst {
+  border-color: var(--accent);
+  box-shadow: 0 0 6px rgba(0, 168, 255, 0.25);
+}
+.lb-medal {
+  font-size: 12px;
+  line-height: 1;
+}
+.lb-rank-num {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  min-width: 10px;
+  text-align: center;
+}
+.lb-ticker {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: 0.04em;
+}
+.lb-count {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
 /* ── Status bar ─────────────────────────────────────────────── */
 .status-bar {
   height: var(--statusbar-h);

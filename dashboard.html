@@ -48,6 +48,17 @@
 <!-- ═══════════════════════════════════════════════════════════
      MAIN  —  3-column panel grid
 ════════════════════════════════════════════════════════════════ -->
+
+<!-- ═══════════════════════════════════════════════════════════
+     LEADERBOARD BAR  —  today's top mentions
+════════════════════════════════════════════════════════════════ -->
+<div class="leaderboard-bar">
+  <span class="lb-label">Today</span>
+  <div data-leaderboard class="lb-items">
+    <span class="lb-empty">No mentions yet today</span>
+  </div>
+</div>
+
 <main class="main-grid">
 
   <!-- ── LEFT: Live Transcript ─────────────────────────── -->
@@ -312,7 +323,7 @@
       .catch(e => console.warn('[sw] registration failed', e));
   }
 </script>
-<script type="module" src="/static/js/app.js?v=28"></script>
+<script type="module" src="/static/js/app.js?v=29"></script>
 
 </body>
 </html>
