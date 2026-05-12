@@ -707,6 +707,7 @@ body.mobile .cell-chg    { font-size: 13px; }
 }
 .lb-items {
   display: flex;
+  flex-wrap: nowrap;          /* always a single row */
   align-items: center;
   gap: 6px;
   flex: 1;
@@ -719,6 +720,7 @@ body.mobile .cell-chg    { font-size: 13px; }
 }
 .lb-item {
   display: flex;
+  flex-shrink: 0;             /* never squish or wrap */
   align-items: center;
   gap: 5px;
   background: var(--surface);
