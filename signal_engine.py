@@ -21,11 +21,16 @@ HOW IT WORKS
    second to keep last_price current — no extra network round-trips.
 
 4. Every second, logs each active ticker's proximity to the buy signal.
+   RSI and MACD histogram are recomputed each second by injecting the
+   live Finnhub price as the forming bar's close into the cached bar
+   DataFrame — so indicators reflect real-time price movement rather
+   than being frozen until the next closed bar arrives.
 
-5. Every 60 s, fetches 200 × 1-Min bars from Alpaca for each active
-   ticker and recomputes RSI(14) + MACD(12, 26, 9).
-   Bar fetches are STAGGERED — one ticker every BAR_STAGGER seconds so
-   they never all fire at once.
+5. Once per clock minute (aligned to the minute boundary + stagger),
+   fetches up to 200 × 1-Min bars from Alpaca per active ticker.
+   The freshly closed bar locks in confirmed RSI/MACD values and runs
+   the BUY/SELL signal check.  Bar fetches are staggered so tickers
+   don't all hit Alpaca at the same second.
 
 6. Expiry:
      • 3 min  (EXPIRY_COLD)   — ticker never showed a positive histogram
@@ -392,6 +397,12 @@ class TickerState:
 
         self.check_count: int = 0   # increments every second — used in log output
 
+        # Cached bar DataFrame (last 100 bars) — kept in memory between Alpaca fetches.
+        # _check_proximity injects the live Finnhub price as the last bar's close
+        # each second and recomputes RSI + MACD, so indicator values update in
+        # real time instead of only once per minute.
+        self.cached_df: Optional[pd.DataFrame] = None
+
     def expiry_seconds(self) -> int:
         """How long this ticker is allowed to live without a position."""
         return EXPIRY_WARM if self.ever_positive_hist else EXPIRY_COLD
@@ -736,6 +747,10 @@ class SignalEngine:
 
         ts.bars_fetched = True
 
+        # Cache the last 100 bars — enough for stable MACD (3× the slow period).
+        # _check_proximity will inject the live price into this cache every second.
+        ts.cached_df = df.iloc[-100:].copy().reset_index(drop=True)
+
         print(
             f"  [{ticker_tag(ts.ticker)}] 📊 bars loaded  "
             f"RSI={rsi_val:.1f}  hist={hist_val:+.4f}  "
@@ -743,33 +758,43 @@ class SignalEngine:
             f"bars={len(df)}"
         )
 
+        # Signal check on the freshly closed bar
         ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val)
 
     # ── Every-second proximity check ──────────────────────────────────────────
 
     def _check_proximity(self, ts: TickerState):
         """
-        Log one line per ticker per second showing how close it is to a signal.
-        Price refresh from Finnhub is a pure in-memory dict read — no I/O.
+        Every second:
+          1. Pull the latest Finnhub price (pure in-memory dict read — no I/O).
+          2. Check stop-loss / take-profit against the live price immediately.
+          3. If we have cached bars, inject the live price as the last bar's
+             close and recompute RSI + MACD — giving per-second indicator
+             updates rather than waiting for the next closed bar.
+          4. Log the proximity summary.
+
+        NOTE: BUY/SELL momentum signals are NOT fired here — only on confirmed
+        closed bars in _refresh_bars.  This prevents the forming bar's
+        fluctuating histogram from triggering false signals mid-minute.
         """
-        # Pull the freshest Finnhub price (dict lookup, no network)
+        # ── 1. Refresh price from Finnhub ─────────────────────────────────────
         fh_price = get_latest_price(ts.ticker)
         if fh_price is not None:
             ts.last_price = fh_price
-            
-            # Since we have a real-time price update, check SL/TP immediately
-            # rather than waiting for the next bar refresh (which is every 60s).
+
+            # ── 2. Real-time stop-loss / take-profit check ─────────────────────
+            # Check SL/TP on every tick so we don't have to wait up to a minute
+            # for the next bar fetch to exit a losing or winning position.
             if ts.in_position and ts.buy_price is not None:
                 pnl_pct = (fh_price - ts.buy_price) / ts.buy_price * 100
-                
+
                 reason = None
                 if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
                     reason = "STOP LOSS (RT)"
                 elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
                     reason = "TAKE PROFIT (RT)"
-                    
+
                 if reason:
-                    # We use last_rsi and last_hist from the last bar fetch
                     log_sell(
                         ticker    = ts.ticker,
                         price     = fh_price,
@@ -777,12 +802,25 @@ class SignalEngine:
                         rsi       = ts.last_rsi or 0,
                         hist      = ts.last_hist or 0,
                         buy_time  = ts.buy_time,
-                        reason    = reason
+                        reason    = reason,
                     )
                     ts.in_position  = False
                     ts.buy_price    = None
                     ts.buy_time     = None
                     ts.hist_growing = False
+
+        # ── 3. Recompute indicators using live price as forming-bar close ──────
+        # Inject the current price into the last bar of the cached DataFrame
+        # and recompute RSI + MACD so the proximity log shows live values.
+        if ts.cached_df is not None and ts.last_price is not None:
+            try:
+                df_live = ts.cached_df.copy()
+                df_live.at[df_live.index[-1], "close"] = ts.last_price
+                rsi_live, hist_live = compute_indicators(df_live)
+                ts.last_rsi  = rsi_live
+                ts.last_hist = hist_live
+            except Exception:
+                pass   # keep last known values if recompute fails
 
         ts.check_count += 1
         print(ts.proximity_summary())
