@@ -183,9 +183,37 @@ body {
   background: rgba(255, 196, 57, 0.07);
 }
 @media (max-width: 700px) {
+  .hdr {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 12px;
+    row-gap: 6px;
+  }
+  .hdr-brand  { flex: 1; min-width: 0; }
+  .hdr-actions { flex-shrink: 0; }
+  .hdr-center {
+    order: 3;
+    flex: 0 0 100%;
+    justify-content: flex-start;
+    padding-bottom: 4px;
+  }
   .donate-label { display: none; }
   .donate-bar { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
   .donate-pill { flex-shrink: 0; }
+}
+body.mobile .hdr {
+  flex-wrap: wrap;
+  height: auto;
+  padding: 8px 12px;
+  row-gap: 6px;
+}
+body.mobile .hdr-brand  { flex: 1; min-width: 0; }
+body.mobile .hdr-actions { flex-shrink: 0; }
+body.mobile .hdr-center {
+  order: 3;
+  flex: 0 0 100%;
+  justify-content: flex-start;
+  padding-bottom: 4px;
 }
 body.mobile .donate-label { display: none; }
 body.mobile .donate-bar { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
