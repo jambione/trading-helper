@@ -156,6 +156,20 @@ MACD_SLOW      = int(os.getenv("MACD_SLOW",    "26"))
 MACD_SIG       = int(os.getenv("MACD_SIG",     "9"))
 RSI_BUY_MAX    = int(os.getenv("RSI_BUY_MAX",  "70"))
 
+# ── Priority mention system ───────────────────────────────────────────────────
+# When a ticker accumulates >= PRIORITY_MENTIONS new chat mentions within
+# PRIORITY_WINDOW_SECONDS it is marked "hot" and the RSI filter is bypassed —
+# MACD momentum alone is enough to trigger a BUY.  The crowd is piling in;
+# waiting for RSI to cool down means missing the move.
+# Set PRIORITY_MENTIONS=0 to disable the system entirely.
+PRIORITY_MENTIONS       = int(os.getenv("PRIORITY_MENTIONS",       "5"))
+PRIORITY_WINDOW_SECONDS = int(os.getenv("PRIORITY_WINDOW_SECONDS", "10"))
+
+# Exit a position when RSI rises above this level (overbought exit).
+# Applies to ALL positions — priority or normal — so we always respect the
+# overbought condition on the way out.  Set to 0 to disable.
+RSI_SELL_OVERBOUGHT     = int(os.getenv("RSI_SELL_OVERBOUGHT",     "0"))
+
 STOP_LOSS      = float(os.getenv("STOP_LOSS",   "0.0"))   # % e.g. 1.0
 TAKE_PROFIT    = float(os.getenv("TAKE_PROFIT", "0.0"))   # % e.g. 2.0
 
@@ -340,14 +354,24 @@ def _append_log(entry: dict):
     entries.append(entry)
     LOG_FILE.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
-def log_buy(ticker: str, price: float, rsi: float, hist: float):
-    ts = _now_iso()
-    _append_log({"action": "BUY", "ticker": ticker,
-                 "price": round(price, 4), "rsi": round(rsi, 2),
-                 "macd_hist": round(hist, 6), "time": ts})
-    print(f"\n  {'='*56}")
-    print(f"  🟢 BUY  {ticker}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]")
-    print(f"  {'='*56}\n")
+def log_buy(ticker: str, price: float, rsi: float, hist: float,
+            priority: bool = False, mention_velocity: int = 0):
+    """
+    Log a BUY signal to signal_log.json and the console.
+    priority=True means the RSI filter was bypassed because the ticker was hot.
+    """
+    ts    = _now_iso()
+    entry = {"action": "BUY", "ticker": ticker,
+             "price": round(price, 4), "rsi": round(rsi, 2),
+             "macd_hist": round(hist, 6), "time": ts}
+    if priority:
+        entry["priority"]         = True
+        entry["mention_velocity"] = mention_velocity
+    _append_log(entry)
+    prio_tag = f"  🔥 PRIORITY — velocity={mention_velocity}/10s" if priority else ""
+    print(f"\n  {'='*60}")
+    print(f"  🟢 BUY  {ticker}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]{prio_tag}")
+    print(f"  {'='*60}\n")
     # Forward to Alpaca trader if enabled (off / paper / live)
     alpaca_trader.buy(ticker=ticker, price=price, rsi=rsi, hist=hist)
 
@@ -361,9 +385,9 @@ def log_sell(ticker: str, price: float, buy_price: float,
                  "pnl_pct": pnl, "rsi": round(rsi, 2), "reason": reason,
                  "macd_hist": round(hist, 6), "time": ts, "buy_time": buy_time})
     sign = "+" if pnl >= 0 else ""
-    print(f"\n  {'='*56}")
+    print(f"\n  {'='*60}")
     print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  [{reason}]  hist={hist:+.4f}  [{ts}]")
-    print(f"  {'='*56}\n")
+    print(f"  {'='*60}\n")
     # Forward to Alpaca trader if enabled
     alpaca_trader.sell(ticker=ticker, price=price, rsi=rsi, hist=hist,
                        buy_price=buy_price)
@@ -421,6 +445,25 @@ class TickerState:
         # real time instead of only once per minute.
         self.cached_df: Optional[pd.DataFrame] = None
 
+        # ── Priority mention tracking ─────────────────────────────────────────
+        # The dashboard is polled every DASHBOARD_POLL_INTERVAL seconds.
+        # Each poll where this ticker is "mentioned" records an entry here.
+        # When the rolling sum inside PRIORITY_WINDOW_SECONDS reaches
+        # PRIORITY_MENTIONS the ticker is marked "hot" and the RSI filter is
+        # bypassed — MACD growing alone is enough to fire a BUY.
+        #
+        # mention_history : list of (timestamp, count) — raw mention increments
+        # mention_velocity: sum of counts in the current rolling window
+        # is_hot          : True when velocity >= PRIORITY_MENTIONS
+        # priority_buy    : True if the open position was entered as a hot buy
+        # _last_raw_count : last numeric "mentions" value seen from dashboard
+        #                   (used to compute deltas if the API returns a total)
+        self.mention_history: list    = []   # [(float, int), ...]
+        self.mention_velocity: int    = 0
+        self.is_hot: bool             = False
+        self.priority_buy: bool       = False
+        self._last_raw_count: int     = 0
+
     def expiry_seconds(self) -> int:
         """How long this ticker is allowed to live without a position."""
         return EXPIRY_WARM if self.ever_positive_hist else EXPIRY_COLD
@@ -437,6 +480,39 @@ class TickerState:
         if self.in_position:
             return False   # never expire an open position
         return self.age_s() > self.expiry_seconds()
+
+    def update_mention_velocity(self, count: int = 1):
+        """
+        Record `count` new mention(s) at the current time, prune the rolling
+        window, and refresh mention_velocity + is_hot.
+
+        Called every DASHBOARD_POLL_INTERVAL seconds by _ingest_state() for any
+        ticker that is currently "mentioned" on the dashboard.
+
+        If the dashboard returns a cumulative numeric count (e.g. row["mentions"]),
+        pass the delta (new_count − last_count) so bursts inside one poll period
+        are captured correctly.  If only a boolean is available, pass count=1.
+        """
+        now = time.time()
+        self.mention_history.append((now, count))
+
+        # Prune entries older than the rolling window
+        cutoff = now - PRIORITY_WINDOW_SECONDS
+        self.mention_history = [(t, c) for t, c in self.mention_history if t >= cutoff]
+
+        self.mention_velocity = sum(c for _, c in self.mention_history)
+
+        was_hot   = self.is_hot
+        self.is_hot = (PRIORITY_MENTIONS > 0 and
+                       self.mention_velocity >= PRIORITY_MENTIONS)
+
+        # Print a one-time alert when the ticker first goes hot
+        if self.is_hot and not was_hot:
+            print(
+                f"\n  [{self.ticker:<6}] 🔥🔥 TICKER IS HOT — "
+                f"{self.mention_velocity} mentions in {PRIORITY_WINDOW_SECONDS}s "
+                f"(threshold={PRIORITY_MENTIONS}) — RSI filter BYPASSED on BUY\n"
+            )
 
     def proximity_summary(self) -> str:
         """
@@ -464,29 +540,37 @@ class TickerState:
         hist_pos = hist is not None and hist > 0
         growing  = self.hist_growing
 
-        rsi_str  = f"RSI={rsi:.1f}"   if rsi  is not None else "RSI=?"
-        hist_str = f"hist={hist:+.4f}" if hist is not None else "hist=?"
-        price_str = f"${price:.2f}" if price is not None else "$?"
+        rsi_str  = f"RSI={rsi:.1f}"    if rsi   is not None else "RSI=?"
+        hist_str = f"hist={hist:+.4f}" if hist  is not None else "hist=?"
+        price_str = f"${price:.2f}"    if price is not None else "$?"
 
         # Condition indicators
-        rsi_tag  = "✓" if rsi_ok   else f"✗(need<{RSI_BUY_MAX})"
+        # If ticker is hot, RSI limit is bypassed — show it
+        if self.is_hot and not rsi_ok:
+            rsi_tag = f"🔥BYPASSED(hot vel={self.mention_velocity})"
+        else:
+            rsi_tag = "✓" if rsi_ok else f"✗(need<{RSI_BUY_MAX})"
         hist_tag = "✓pos" if hist_pos else "✗neg"
         grow_tag = "✓growing🔥" if growing else ("→flat" if hist_pos else "↓")
+
+        # Hot indicator shown in tag when velocity >= threshold
+        hot_str  = f" 🔥HOT(vel={self.mention_velocity})" if self.is_hot else ""
 
         # Overall status
         if self.in_position:
             pnl = (price - self.buy_price) / self.buy_price * 100
-            status = f"📈 IN POSITION — P&L: {pnl:+.2f}%"
-        elif growing and rsi_ok:
-            status = "🔥 BUY ZONE — signal imminent"
-        elif growing and not rsi_ok:
+            prio_tag = " [PRIORITY]" if self.priority_buy else ""
+            status = f"📈 IN POSITION — P&L: {pnl:+.2f}%{prio_tag}"
+        elif growing and (rsi_ok or self.is_hot):
+            status = f"🔥 BUY ZONE — signal imminent{hot_str}"
+        elif growing and not rsi_ok and not self.is_hot:
             status = "⚠️  growing but RSI overbought — holding off"
         elif hist_pos and not growing:
             status = "👀 hist positive — watching for growth"
         elif self.ever_positive_hist:
             status = "↩️  retreated — was positive, now negative"
         else:
-            status = "😴 no signal yet"
+            status = f"😴 no signal yet{hot_str}"
 
         return (
             f"  [{ticker_tag(self.ticker)}] {price_str}  "
@@ -511,13 +595,13 @@ class TickerState:
         # ── Stop-loss / take-profit check ─────────────────────────────────────
         if self.in_position and self.buy_price is not None:
             pnl_pct = (price - self.buy_price) / self.buy_price * 100
-            
+
             reason = None
             if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
                 reason = "STOP LOSS"
             elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
                 reason = "TAKE PROFIT"
-            
+
             if reason:
                 log_sell(
                     ticker    = self.ticker,
@@ -526,14 +610,37 @@ class TickerState:
                     rsi       = rsi,
                     hist      = hist,
                     buy_time  = self.buy_time,
-                    reason    = reason
+                    reason    = reason,
                 )
                 self.in_position  = False
                 self.buy_price    = None
                 self.buy_time     = None
                 self.hist_growing = False
+                self.priority_buy = False
                 self.prev_hist    = hist
                 return
+
+        # ── RSI overbought exit (on confirmed bar close) ───────────────────────
+        # Sells any open position — priority or normal — when RSI rises above
+        # RSI_SELL_OVERBOUGHT.  This mirrors the per-second check in
+        # _check_proximity, but fires on the cleaner confirmed-bar RSI value.
+        if RSI_SELL_OVERBOUGHT > 0 and self.in_position and rsi >= RSI_SELL_OVERBOUGHT:
+            log_sell(
+                ticker    = self.ticker,
+                price     = price,
+                buy_price = self.buy_price,
+                rsi       = rsi,
+                hist      = hist,
+                buy_time  = self.buy_time,
+                reason    = f"RSI overbought ({rsi:.1f} >= {RSI_SELL_OVERBOUGHT})",
+            )
+            self.in_position  = False
+            self.buy_price    = None
+            self.buy_time     = None
+            self.hist_growing = False
+            self.priority_buy = False
+            self.prev_hist    = hist
+            return
 
         prev = self.prev_hist
 
@@ -559,19 +666,32 @@ class TickerState:
                         rsi       = rsi,
                         hist      = hist,
                         buy_time  = self.buy_time,
-                        reason    = "reversal"
+                        reason    = "reversal",
                     )
                     self.in_position = False
                     self.buy_price   = None
                     self.buy_time    = None
+                    self.priority_buy = False
                 self.hist_growing = False
 
-        # BUY check
-        if self.hist_growing and not self.in_position and rsi < RSI_BUY_MAX and price > 0:
-            log_buy(ticker=self.ticker, price=price, rsi=rsi, hist=hist)
-            self.in_position = True
-            self.buy_price   = price
-            self.buy_time    = _now_iso()
+        # ── BUY check ─────────────────────────────────────────────────────────
+        # Normal path  : MACD growing + RSI below overbought threshold
+        # Priority path: MACD growing + ticker is HOT (RSI filter bypassed)
+        # The crowd is already moving — waiting on RSI means missing the trade.
+        rsi_ok_for_buy = (rsi < RSI_BUY_MAX) or self.is_hot
+        if self.hist_growing and not self.in_position and rsi_ok_for_buy and price > 0:
+            log_buy(
+                ticker           = self.ticker,
+                price            = price,
+                rsi              = rsi,
+                hist             = hist,
+                priority         = self.is_hot,
+                mention_velocity = self.mention_velocity,
+            )
+            self.in_position  = True
+            self.buy_price    = price
+            self.buy_time     = _now_iso()
+            self.priority_buy = self.is_hot   # record how we entered
 
         self.prev_hist = hist
 
@@ -675,6 +795,23 @@ class SignalEngine:
                 if fh_price is None:
                     # No Finnhub reading yet — use dashboard value as seed
                     self.active[sym].last_price = float(price)
+
+            # ── Mention velocity tracking ─────────────────────────────────────
+            # Every time the dashboard says this ticker is mentioned, record it.
+            # If the API returns a cumulative numeric count (row["mentions"]), we
+            # use the delta since last poll to capture sub-poll bursts.
+            # If only a boolean is available we count each poll as 1 mention.
+            if sym in self.active and row.get("mentioned"):
+                ts = self.active[sym]
+                raw_count = row.get("mentions") or row.get("mention_count")
+                if isinstance(raw_count, (int, float)) and raw_count > 0:
+                    delta = int(raw_count) - ts._last_raw_count
+                    ts._last_raw_count = int(raw_count)
+                    if delta > 0:
+                        ts.update_mention_velocity(delta)
+                else:
+                    # Boolean "mentioned" only — each 5-second poll counts as 1
+                    ts.update_mention_velocity(1)
 
             # Add newly mentioned tickers
             if row.get("mentioned") and sym not in self._known_mentioned:
@@ -834,6 +971,30 @@ class SignalEngine:
                     ts.buy_price    = None
                     ts.buy_time     = None
                     ts.hist_growing = False
+                    ts.priority_buy = False
+
+            # ── Real-time RSI overbought exit ─────────────────────────────────
+            # Check the live RSI every second so we exit overbought positions
+            # immediately rather than waiting for the next confirmed bar.
+            # Applies to ALL positions — priority or normal.
+            if (RSI_SELL_OVERBOUGHT > 0
+                    and ts.in_position
+                    and ts.last_rsi is not None
+                    and ts.last_rsi >= RSI_SELL_OVERBOUGHT):
+                log_sell(
+                    ticker    = ts.ticker,
+                    price     = fh_price,
+                    buy_price = ts.buy_price,
+                    rsi       = ts.last_rsi,
+                    hist      = ts.last_hist or 0,
+                    buy_time  = ts.buy_time,
+                    reason    = f"RSI overbought RT ({ts.last_rsi:.1f} >= {RSI_SELL_OVERBOUGHT})",
+                )
+                ts.in_position  = False
+                ts.buy_price    = None
+                ts.buy_time     = None
+                ts.hist_growing = False
+                ts.priority_buy = False
 
         # ── 3. Recompute indicators using live price as forming-bar close ──────
         # Inject the current price into the last bar of the cached DataFrame
@@ -891,6 +1052,15 @@ class SignalEngine:
         print(f"  Expiry cold   : {EXPIRY_COLD}s (no positive hist seen)")
         print(f"  Expiry warm   : {EXPIRY_WARM}s (positive hist seen at least once)")
         print(f"  Max tickers   : {MAX_ACTIVE_TICKERS}")
+        print(f"  RSI buy max   : {RSI_BUY_MAX}  (bypassed when ticker is hot)")
+        if PRIORITY_MENTIONS > 0:
+            print(f"  Priority BUY  : {PRIORITY_MENTIONS}+ mentions in {PRIORITY_WINDOW_SECONDS}s → RSI filter OFF")
+        else:
+            print(f"  Priority BUY  : disabled (PRIORITY_MENTIONS=0)")
+        if RSI_SELL_OVERBOUGHT > 0:
+            print(f"  RSI sell      : exit position when RSI >= {RSI_SELL_OVERBOUGHT}")
+        else:
+            print(f"  RSI sell      : disabled (RSI_SELL_OVERBOUGHT=0)")
         print(f"  Log file      : {LOG_FILE}")
         print("=" * 60)
 
