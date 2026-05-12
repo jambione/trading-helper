@@ -145,6 +145,32 @@ body {
   min-width: 0;
 }
 
+/* ── Donation link ───────────────────────────────────────────── */
+.donate-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  white-space: nowrap;
+}
+.donate-link:hover {
+  color: #ffdd88;
+  border-color: rgba(255, 210, 80, 0.3);
+  background: rgba(255, 210, 80, 0.06);
+}
+@media (max-width: 700px) {
+  .donate-text { display: none; }
+  .donate-link { font-size: 16px; padding: 4px 8px; }
+}
+body.mobile .donate-text { display: none; }
+body.mobile .donate-link { font-size: 16px; padding: 4px 8px; }
+
 .hdr-actions {
   display: flex;
   align-items: center;
