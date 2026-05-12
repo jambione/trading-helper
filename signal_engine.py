@@ -70,6 +70,37 @@ _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from signals import rsi as calc_rsi, compute_macd   # our custom indicator math
 
+# ── Load signal_engine.env ────────────────────────────────────────────────────
+# If signal_engine.env exists in the same folder, we load it before reading
+# any configuration.  This lets you keep all settings in one place without
+# having to set shell environment variables manually.
+#
+# Format: KEY=VALUE  (one per line, # for comments, blank lines ignored)
+# Values from the env file are only applied if the variable isn't already
+# set in the shell environment — shell env always wins.
+def _load_env_file(path: Path):
+    if not path.exists():
+        return
+    loaded = []
+    with open(path) as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue   # skip blank lines and comments
+            if "=" not in line:
+                continue   # skip malformed lines
+            key, _, value = line.partition("=")
+            key   = key.strip()
+            value = value.strip()
+            # Shell environment takes priority — don't overwrite existing vars
+            if key and key not in os.environ:
+                os.environ[key] = value
+                loaded.append(key)
+    if loaded:
+        print(f"[ENV] Loaded {len(loaded)} setting(s) from signal_engine.env")
+
+_load_env_file(_HERE / "signal_engine.env")
+
 # ── Configuration — edit these or set via environment variables ────────────────
 
 # Dashboard address — set DASHBOARD_URL env var, or edit this line directly.
