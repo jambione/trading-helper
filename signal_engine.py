@@ -72,6 +72,8 @@ CONFIG (signal_engine.env or env vars)
 
 from __future__ import annotations
 
+__version__ = "1.7"
+
 import json
 import os
 import sys
@@ -86,7 +88,11 @@ import requests
 # ── Import our own signal library ─────────────────────────────────────────────
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from signals import rsi as calc_rsi, compute_macd
+from signals import (
+    rsi as calc_rsi, compute_macd,
+    compute_cm_rsi_lower, compute_obv_oscillator,
+    calc_rvol, vwap_calc, atr as calc_atr,
+)
 
 # ── Import Alpaca trader module (optional — activated by TRADER_MODE) ─────────
 import alpaca_trader
@@ -164,22 +170,57 @@ RSI_BUY_MAX    = int(os.getenv("RSI_BUY_MAX",  "70"))
 # Set PRIORITY_MENTIONS=0 to disable the system entirely.
 PRIORITY_MENTIONS       = int(os.getenv("PRIORITY_MENTIONS",       "5"))
 PRIORITY_WINDOW_SECONDS = int(os.getenv("PRIORITY_WINDOW_SECONDS", "10"))
+# How long (seconds) a ticker that went hot but cooled off stays on the list
+# before being dropped.  Keeps the list clean when the crowd moves on.
+EXPIRY_COOLED           = int(os.getenv("EXPIRY_COOLED",           "60"))
 
 # Exit a position when RSI rises above this level (overbought exit).
 # Applies to ALL positions — priority or normal — so we always respect the
 # overbought condition on the way out.  Set to 0 to disable.
 RSI_SELL_OVERBOUGHT     = int(os.getenv("RSI_SELL_OVERBOUGHT",     "0"))
 
-STOP_LOSS      = float(os.getenv("STOP_LOSS",   "0.0"))   # % e.g. 1.0
-TAKE_PROFIT    = float(os.getenv("TAKE_PROFIT", "0.0"))   # % e.g. 2.0
+STOP_LOSS      = float(os.getenv("STOP_LOSS",   "0.0"))   # % e.g. 1.0  (fixed, used when dynamic mode is off)
+TAKE_PROFIT    = float(os.getenv("TAKE_PROFIT", "0.0"))   # % e.g. 2.0  (fixed, used when dynamic mode is off)
+
+# ── Dynamic stop / take-profit ─────────────────────────────────────────────────
+# DYNAMIC_EXIT=atr   — stop = buy_price - ATR_MULT × ATR
+#                       take = buy_price + ATR_MULT × ATR
+# DYNAMIC_EXIT=vwap  — stop = VWAP at buy time (sell if price falls below VWAP)
+#                       take = buy_price + ATR_MULT × ATR above VWAP entry
+# DYNAMIC_EXIT=off   — use fixed STOP_LOSS / TAKE_PROFIT percentages (default)
+DYNAMIC_EXIT   = os.getenv("DYNAMIC_EXIT", "off").lower().strip()
+ATR_MULT_STOP  = float(os.getenv("ATR_MULT_STOP",  "1.5"))  # ATR multiples for stop
+ATR_MULT_TAKE  = float(os.getenv("ATR_MULT_TAKE",  "2.0"))  # ATR multiples for take-profit
+
+# Minimum seconds to hold a position before a MACD reversal sell can fire.
+# Prevents buying and immediately selling on a one-tick histogram dip.
+# Stop-loss and take-profit still fire immediately regardless of this setting.
+MIN_HOLD_SECONDS     = int(os.getenv("MIN_HOLD_SECONDS",     "60"))  # normal tickers
+HOT_MIN_HOLD_SECONDS = int(os.getenv("HOT_MIN_HOLD_SECONDS", "30"))  # hot tickers — moves are faster
+# Require this many consecutive growing histogram bars before a BUY fires.
+# 1 = original behaviour (single bar).  2 = two consecutive bars required (recommended).
+HIST_CONFIRM_BARS    = int(os.getenv("HIST_CONFIRM_BARS",    "2"))
+# Max total dollar exposure across ALL open positions (0 = no cap)
+MAX_TOTAL_EXPOSURE   = float(os.getenv("MAX_TOTAL_EXPOSURE", "0"))
 
 # ── Trader mode ───────────────────────────────────────────────────────────────
 # Controls whether the signal engine places orders or just logs signals.
 #   off   — log signals only, no orders (default, safe)
 #   paper — paper trade via Alpaca ($100k fake money, same API keys)
 #   live  — real money via Alpaca (test on paper first!)
-TRADER_MODE   = os.getenv("TRADER_MODE",   "off").lower().strip()
-TRADE_AMOUNT  = float(os.getenv("TRADE_AMOUNT", "500"))   # $ per BUY signal
+TRADER_MODE      = os.getenv("TRADER_MODE",   "off").lower().strip()
+TRADE_AMOUNT     = float(os.getenv("TRADE_AMOUNT", "500"))   # $ per BUY signal
+MAX_PRICE        = float(os.getenv("MAX_PRICE", "0"))         # skip BUY if price > this (0 = no limit)
+EXTENDED_HOURS   = os.getenv("EXTENDED_HOURS", "false").lower() in ("true", "1", "yes")  # premarket/afterhours orders
+
+# ── Buy signal filters (all off by default) ───────────────────────────────────
+BUY_FILTER_VWAP    = os.getenv("BUY_FILTER_VWAP",    "false").lower() in ("true","1","yes")
+BUY_FILTER_OBV     = os.getenv("BUY_FILTER_OBV",     "false").lower() in ("true","1","yes")
+BUY_FILTER_CM_RSI  = os.getenv("BUY_FILTER_CM_RSI",  "false").lower() in ("true","1","yes")
+BUY_FILTER_RVOL    = os.getenv("BUY_FILTER_RVOL",    "false").lower() in ("true","1","yes")
+RVOL_MIN           = float(os.getenv("RVOL_MIN", "3.0"))   # relative volume threshold
+# Time stop: force-sell after this many minutes in position (0 = disabled)
+MAX_HOLD_MINUTES   = int(os.getenv("MAX_HOLD_MINUTES", "0"))
 
 LOG_FILE       = _HERE / "signal_log.json"
 
@@ -327,13 +368,46 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 
 # ── Indicator computation ─────────────────────────────────────────────────────
 
-def compute_indicators(df: pd.DataFrame) -> tuple[float, float]:
-    """Run RSI and MACD on a bar DataFrame. Returns (rsi, macd_hist) for last bar."""
+def compute_indicators(df: pd.DataFrame) -> tuple[float, float, float, float, float, bool, bool]:
+    """Returns (rsi, macd_hist, atr_val, vwap_val, rvol, cm_rsi_ok, obv_ok)"""
     cfg = {"macd_fast": MACD_FAST, "macd_slow": MACD_SLOW, "macd_signal": MACD_SIG}
-    df  = compute_macd(df, cfg)
+    df       = compute_macd(df, cfg)
     rsi_val  = float(calc_rsi(df["close"], RSI_PERIOD).iloc[-1])
     hist_val = float(df["macd_hist"].iloc[-1])
-    return rsi_val, hist_val
+
+    # ATR — needs high/low/close; falls back gracefully if columns missing
+    try:
+        atr_val = float(calc_atr(df, period=14).iloc[-1])
+    except Exception:
+        atr_val = 0.0
+
+    # VWAP — needs high/low/close/volume and a datetime index
+    try:
+        vwap_val = float(vwap_calc(df).iloc[-1])
+    except Exception:
+        vwap_val = 0.0
+
+    # RVOL
+    try:
+        rvol = float(calc_rvol(df).iloc[-1])
+    except Exception:
+        rvol = 1.0
+
+    # CM RSI approaching oversold
+    try:
+        df_cm = compute_cm_rsi_lower(df, {"cm_rsi_oversold": 25})
+        cm_rsi_ok = bool(df_cm["cm_rsi_approaching"].iloc[-1])
+    except Exception:
+        cm_rsi_ok = True  # fail open — don't block buys if indicator errors
+
+    # OBV oscillator trending up
+    try:
+        df_obv = compute_obv_oscillator(df, {"obv_length": 20})
+        obv_ok = bool(df_obv["obv_trending_up"].iloc[-1])
+    except Exception:
+        obv_ok = True  # fail open
+
+    return rsi_val, hist_val, atr_val, vwap_val, rvol, cm_rsi_ok, obv_ok
 
 
 # ── Trade logging ─────────────────────────────────────────────────────────────
@@ -355,7 +429,9 @@ def _append_log(entry: dict):
     LOG_FILE.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 def log_buy(ticker: str, price: float, rsi: float, hist: float,
-            priority: bool = False, mention_velocity: int = 0):
+            priority: bool = False, mention_velocity: int = 0,
+            atr: float = None, vwap: float = None,
+            rvol: float = None, cm_rsi_ok: bool = None, obv_ok: bool = None):
     """
     Log a BUY signal to signal_log.json and the console.
     priority=True means the RSI filter was bypassed because the ticker was hot.
@@ -367,6 +443,16 @@ def log_buy(ticker: str, price: float, rsi: float, hist: float,
     if priority:
         entry["priority"]         = True
         entry["mention_velocity"] = mention_velocity
+    if atr is not None:
+        entry["atr"] = round(atr, 6)
+    if vwap is not None:
+        entry["vwap"] = round(vwap, 4)
+    if rvol is not None:
+        entry["rvol"] = round(rvol, 2)
+    if cm_rsi_ok is not None:
+        entry["cm_rsi_ok"] = cm_rsi_ok
+    if obv_ok is not None:
+        entry["obv_ok"] = obv_ok
     _append_log(entry)
     prio_tag = f"  🔥 PRIORITY — velocity={mention_velocity}/10s" if priority else ""
     print(f"\n  {'='*60}")
@@ -377,13 +463,17 @@ def log_buy(ticker: str, price: float, rsi: float, hist: float,
 
 
 def log_sell(ticker: str, price: float, buy_price: float,
-             rsi: float, hist: float, buy_time: str, reason: str = "reversal"):
+             rsi: float, hist: float, buy_time: str, reason: str = "reversal",
+             hold_minutes: float = None):
     ts  = _now_iso()
     pnl = round((price - buy_price) / buy_price * 100, 2)
-    _append_log({"action": "SELL", "ticker": ticker,
-                 "price": round(price, 4), "buy_price": round(buy_price, 4),
-                 "pnl_pct": pnl, "rsi": round(rsi, 2), "reason": reason,
-                 "macd_hist": round(hist, 6), "time": ts, "buy_time": buy_time})
+    entry = {"action": "SELL", "ticker": ticker,
+             "price": round(price, 4), "buy_price": round(buy_price, 4),
+             "pnl_pct": pnl, "rsi": round(rsi, 2), "reason": reason,
+             "macd_hist": round(hist, 6), "time": ts, "buy_time": buy_time}
+    if hold_minutes is not None:
+        entry["hold_minutes"] = hold_minutes
+    _append_log(entry)
     sign = "+" if pnl >= 0 else ""
     print(f"\n  {'='*60}")
     print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  [{reason}]  hist={hist:+.4f}  [{ts}]")
@@ -463,6 +553,26 @@ class TickerState:
         self.is_hot: bool             = False
         self.priority_buy: bool       = False
         self._last_raw_count: int     = 0
+        self.went_hot: bool             = False  # True once this ticker was ever hot
+        self.cooled_at: Optional[float] = None  # timestamp when it last lost hotness
+        self.buy_time_ts: Optional[float] = None  # time.time() of last BUY (for min hold)
+
+        # Live indicator values — updated each bar fetch / proximity check
+        self.last_atr:  Optional[float] = None
+        self.last_vwap: Optional[float] = None
+
+        # Dynamic exit levels — set at BUY time, cleared on sell
+        self.dyn_stop:  Optional[float] = None  # price to trigger stop-loss
+        self.dyn_take:  Optional[float] = None  # price to trigger take-profit
+        self.high_since_buy: Optional[float] = None  # highest price since entry (for trailing stop)
+
+        # Consecutive growing histogram bar counter — BUY requires HIST_CONFIRM_BARS
+        self.hist_grow_count: int = 0
+
+        # Buy confirmation indicators — updated each bar fetch
+        self.last_rvol:       Optional[float] = None
+        self.last_cm_rsi_ok:  bool            = False  # CM RSI approaching oversold
+        self.last_obv_ok:     bool            = False  # OBV oscillator trending up
 
     def expiry_seconds(self) -> int:
         """How long this ticker is allowed to live without a position."""
@@ -479,7 +589,35 @@ class TickerState:
     def is_expired(self) -> bool:
         if self.in_position:
             return False   # never expire an open position
+        # Hot ticker that cooled off — drop it after EXPIRY_COOLED seconds
+        if self.cooled_at is not None:
+            return (time.time() - self.cooled_at) > EXPIRY_COOLED
         return self.age_s() > self.expiry_seconds()
+
+    def decay_mentions(self):
+        """
+        Prune stale mention history and recalculate is_hot / cooled_at
+        without recording a new mention.  Called every poll cycle so that
+        tickers which stopped being mentioned (e.g. SPY) eventually cool off
+        even if no new mention events arrive to trigger update_mention_velocity.
+        """
+        now    = time.time()
+        cutoff = now - PRIORITY_WINDOW_SECONDS
+        self.mention_history = [(t, c) for t, c in self.mention_history if t >= cutoff]
+        self.mention_velocity = sum(c for _, c in self.mention_history)
+
+        was_hot   = self.is_hot
+        self.is_hot = (PRIORITY_MENTIONS > 0 and
+                       self.mention_velocity >= PRIORITY_MENTIONS)
+
+        if was_hot and not self.is_hot and not self.in_position and self.cooled_at is None:
+            self.cooled_at = now
+            print(
+                f"\n  [{self.ticker:<6}] 🧊 COOLED OFF — "
+                f"mentions expired from window "
+                f"(velocity={self.mention_velocity} < threshold={PRIORITY_MENTIONS}) — "
+                f"dropping in {EXPIRY_COOLED}s if no BUY\n"
+            )
 
     def update_mention_velocity(self, count: int = 1):
         """
@@ -508,10 +646,22 @@ class TickerState:
 
         # Print a one-time alert when the ticker first goes hot
         if self.is_hot and not was_hot:
+            self.went_hot  = True
+            self.cooled_at = None   # reset any previous cool-off timer
             print(
                 f"\n  [{self.ticker:<6}] 🔥🔥 TICKER IS HOT — "
                 f"{self.mention_velocity} mentions in {PRIORITY_WINDOW_SECONDS}s "
                 f"(threshold={PRIORITY_MENTIONS}) — RSI filter BYPASSED on BUY\n"
+            )
+
+        # Detect cool-off: was hot, now below threshold — start the drop timer
+        if was_hot and not self.is_hot and not self.in_position:
+            self.cooled_at = time.time()
+            print(
+                f"\n  [{self.ticker:<6}] 🧊 COOLED OFF — "
+                f"velocity dropped to {self.mention_velocity} "
+                f"(below threshold={PRIORITY_MENTIONS}) — "
+                f"dropping in {EXPIRY_COOLED}s if no BUY\n"
             )
 
     def proximity_summary(self) -> str:
@@ -580,10 +730,12 @@ class TickerState:
             f"#{check}  {status}"
         )
 
-    def update_momentum(self, hist: float, price: float, rsi: float):
+    def update_momentum(self, hist: float, price: float, rsi: float,
+                        open_positions: int = 0):
         """
         Apply one indicator reading — check for BUY/SELL signals and update state.
         Called by _refresh_ticker() after each bar fetch.
+        open_positions: total number of currently open positions (for exposure cap).
         """
         self.last_price = price
         self.last_rsi   = rsi
@@ -592,29 +744,88 @@ class TickerState:
         if hist > 0:
             self.ever_positive_hist = True
 
+        # ── Time stop ─────────────────────────────────────────────────────────
+        if (MAX_HOLD_MINUTES > 0
+                and self.in_position
+                and self.buy_time_ts is not None
+                and (time.time() - self.buy_time_ts) >= MAX_HOLD_MINUTES * 60):
+            hold_min = (time.time() - self.buy_time_ts) / 60
+            log_sell(
+                ticker       = self.ticker,
+                price        = price,
+                buy_price    = self.buy_price,
+                rsi          = rsi,
+                hist         = hist,
+                buy_time     = self.buy_time,
+                reason       = f"time_stop ({hold_min:.1f}min >= {MAX_HOLD_MINUTES}min)",
+                hold_minutes = round(hold_min, 1),
+            )
+            self.in_position  = False
+            self.buy_price    = None
+            self.buy_time     = None
+            self.buy_time_ts  = None
+            self.dyn_stop     = None
+            self.dyn_take     = None
+            self.hist_growing = False
+            self.priority_buy = False
+            self.prev_hist    = hist
+            return
+
+        # ── ATR trailing stop — move stop up as price rises ───────────────────
+        # Only active in ATR dynamic mode.  Each bar, if price made a new high
+        # since entry, ratchet the stop up to (new_high - ATR_MULT_STOP × ATR).
+        # The stop only ever moves up — never down.
+        if (self.in_position
+                and DYNAMIC_EXIT == "atr"
+                and self.last_atr and self.last_atr > 0
+                and self.dyn_stop is not None):
+            if self.high_since_buy is None or price > self.high_since_buy:
+                self.high_since_buy = price
+                new_trail = price - ATR_MULT_STOP * self.last_atr
+                if new_trail > self.dyn_stop:
+                    self.dyn_stop = new_trail
+                    print(f"  [{ticker_tag(self.ticker)}] 📐 trail stop raised → "
+                          f"${self.dyn_stop:.3f}  (high=${self.high_since_buy:.3f})")
+
         # ── Stop-loss / take-profit check ─────────────────────────────────────
         if self.in_position and self.buy_price is not None:
             pnl_pct = (price - self.buy_price) / self.buy_price * 100
 
             reason = None
-            if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
-                reason = "STOP LOSS"
-            elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
-                reason = "TAKE PROFIT"
+            if DYNAMIC_EXIT in ("atr", "vwap") and self.dyn_stop is not None:
+                # Dynamic mode — check absolute price levels set at entry
+                if price <= self.dyn_stop:
+                    reason = (f"DYNAMIC STOP ({DYNAMIC_EXIT.upper()}) "
+                              f"${price:.3f} ≤ ${self.dyn_stop:.3f}")
+                elif self.dyn_take is not None and price >= self.dyn_take:
+                    reason = (f"DYNAMIC TAKE ({DYNAMIC_EXIT.upper()}) "
+                              f"${price:.3f} ≥ ${self.dyn_take:.3f}")
+            else:
+                # Fixed % mode (legacy)
+                if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
+                    reason = "STOP LOSS"
+                elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
+                    reason = "TAKE PROFIT"
 
             if reason:
+                hold_minutes = round((time.time() - self.buy_time_ts) / 60, 1) if self.buy_time_ts else None
                 log_sell(
-                    ticker    = self.ticker,
-                    price     = price,
-                    buy_price = self.buy_price,
-                    rsi       = rsi,
-                    hist      = hist,
-                    buy_time  = self.buy_time,
-                    reason    = reason,
+                    ticker       = self.ticker,
+                    price        = price,
+                    buy_price    = self.buy_price,
+                    rsi          = rsi,
+                    hist         = hist,
+                    buy_time     = self.buy_time,
+                    reason       = reason,
+                    hold_minutes = hold_minutes,
                 )
                 self.in_position  = False
                 self.buy_price    = None
                 self.buy_time     = None
+                self.buy_time_ts  = None
+                self.dyn_stop     = None
+                self.dyn_take     = None
+                self.high_since_buy = None
                 self.hist_growing = False
                 self.priority_buy = False
                 self.prev_hist    = hist
@@ -625,18 +836,21 @@ class TickerState:
         # RSI_SELL_OVERBOUGHT.  This mirrors the per-second check in
         # _check_proximity, but fires on the cleaner confirmed-bar RSI value.
         if RSI_SELL_OVERBOUGHT > 0 and self.in_position and rsi >= RSI_SELL_OVERBOUGHT:
+            hold_minutes = round((time.time() - self.buy_time_ts) / 60, 1) if self.buy_time_ts else None
             log_sell(
-                ticker    = self.ticker,
-                price     = price,
-                buy_price = self.buy_price,
-                rsi       = rsi,
-                hist      = hist,
-                buy_time  = self.buy_time,
-                reason    = f"RSI overbought ({rsi:.1f} >= {RSI_SELL_OVERBOUGHT})",
+                ticker       = self.ticker,
+                price        = price,
+                buy_price    = self.buy_price,
+                rsi          = rsi,
+                hist         = hist,
+                buy_time     = self.buy_time,
+                reason       = f"RSI overbought ({rsi:.1f} >= {RSI_SELL_OVERBOUGHT})",
+                hold_minutes = hold_minutes,
             )
             self.in_position  = False
             self.buy_price    = None
             self.buy_time     = None
+            self.buy_time_ts  = None
             self.hist_growing = False
             self.priority_buy = False
             self.prev_hist    = hist
@@ -645,41 +859,107 @@ class TickerState:
         prev = self.prev_hist
 
         if prev is not None:
-            # Histogram growing: positive and larger than last read
             if hist > 0 and hist > prev:
-                if not self.hist_growing:
-                    print(f"  [{ticker_tag(self.ticker)}] 📈 histogram started GROWING"
-                          f"  hist={hist:+.4f} (was {prev:+.4f})"
+                # ── Histogram growing ──────────────────────────────────────────
+                self.hist_grow_count = min(self.hist_grow_count + 1, HIST_CONFIRM_BARS + 1)
+                if self.hist_grow_count >= HIST_CONFIRM_BARS and not self.hist_growing:
+                    print(f"  [{ticker_tag(self.ticker)}] 📈 histogram CONFIRMED GROWING"
+                          f"  ({self.hist_grow_count} bars)  hist={hist:+.4f}"
                           f"  RSI={rsi:.1f}  price={price:.2f}")
-                self.hist_growing = True
+                    self.hist_growing = True
+                elif self.hist_grow_count < HIST_CONFIRM_BARS:
+                    print(f"  [{ticker_tag(self.ticker)}] 📈 histogram growing "
+                          f"({self.hist_grow_count}/{HIST_CONFIRM_BARS} bars)  "
+                          f"hist={hist:+.4f} — waiting for confirmation")
 
-            # Reversal: was growing, now shrinking
-            elif self.hist_growing and hist < prev:
-                print(f"  [{ticker_tag(self.ticker)}] 📉 histogram REVERSING"
-                      f"  hist={hist:+.4f} (was {prev:+.4f})"
-                      f"  RSI={rsi:.1f}  price={price:.2f}")
-                if self.in_position:
-                    log_sell(
-                        ticker    = self.ticker,
-                        price     = price,
-                        buy_price = self.buy_price,
-                        rsi       = rsi,
-                        hist      = hist,
-                        buy_time  = self.buy_time,
-                        reason    = "reversal",
+            elif hist <= 0 or hist < prev:
+                # ── Histogram negative or shrinking ───────────────────────────
+                if self.hist_growing:
+                    # Was confirmed growing — check for reversal sell
+                    min_hold = HOT_MIN_HOLD_SECONDS if self.priority_buy else MIN_HOLD_SECONDS
+                    hold_s = (time.time() - self.buy_time_ts) if self.buy_time_ts else None
+                    still_in_hold = (
+                        self.in_position
+                        and hold_s is not None
+                        and hold_s < min_hold
                     )
-                    self.in_position = False
-                    self.buy_price   = None
-                    self.buy_time    = None
-                    self.priority_buy = False
-                self.hist_growing = False
+                    if still_in_hold:
+                        print(f"  [{ticker_tag(self.ticker)}] 📉 histogram reversing "
+                              f"but holding — only {hold_s:.0f}s in position "
+                              f"(min hold={min_hold}s{'🔥' if self.priority_buy else ''})")
+                    else:
+                        print(f"  [{ticker_tag(self.ticker)}] 📉 histogram REVERSING"
+                              f"  hist={hist:+.4f} (was {prev:+.4f})"
+                              f"  RSI={rsi:.1f}  price={price:.2f}")
+                        if self.in_position:
+                            hold_minutes = round((time.time() - self.buy_time_ts) / 60, 1) if self.buy_time_ts else None
+                            log_sell(
+                                ticker       = self.ticker,
+                                price        = price,
+                                buy_price    = self.buy_price,
+                                rsi          = rsi,
+                                hist         = hist,
+                                buy_time     = self.buy_time,
+                                reason       = "reversal",
+                                hold_minutes = hold_minutes,
+                            )
+                            self.in_position  = False
+                            self.buy_price    = None
+                            self.buy_time     = None
+                            self.buy_time_ts  = None
+                            self.priority_buy = False
+                        self.dyn_stop        = None
+                        self.dyn_take        = None
+                        self.high_since_buy  = None
+                        self.hist_growing    = False
+                        self.hist_grow_count = 0
+                else:
+                    # Not yet confirmed — just reset the counter
+                    self.hist_grow_count = 0
 
         # ── BUY check ─────────────────────────────────────────────────────────
         # Normal path  : MACD growing + RSI below overbought threshold
         # Priority path: MACD growing + ticker is HOT (RSI filter bypassed)
         # The crowd is already moving — waiting on RSI means missing the trade.
         rsi_ok_for_buy = (rsi < RSI_BUY_MAX) or self.is_hot
-        if self.hist_growing and not self.in_position and rsi_ok_for_buy and price > 0:
+        price_ok       = price > 0 and (MAX_PRICE <= 0 or price <= MAX_PRICE)
+        if not price_ok and MAX_PRICE > 0 and self.hist_growing and not self.in_position:
+            print(f"  [{ticker_tag(self.ticker)}] ⛔ skipping BUY — "
+                  f"${price:.2f} exceeds MAX_PRICE=${MAX_PRICE:.2f}")
+
+        # Portfolio exposure cap — don't open another position if we're at the limit
+        exposure_ok = True
+        if MAX_TOTAL_EXPOSURE > 0 and not self.in_position:
+            deployed = open_positions * TRADE_AMOUNT
+            if deployed >= MAX_TOTAL_EXPOSURE:
+                exposure_ok = False
+                if self.hist_growing and price_ok:
+                    print(f"  [{ticker_tag(self.ticker)}] 💰 skipping BUY — "
+                          f"exposure cap reached (${deployed:.0f} / ${MAX_TOTAL_EXPOSURE:.0f})")
+
+        # Optional confirmation filters — bypassed entirely for HOT tickers.
+        # Hot tickers have already earned their pass through the mention surge —
+        # requiring OBV/CM RSI/RVOL confirmation on top of that would negate
+        # the whole point of the priority system.  RSI is also bypassed above.
+        if self.is_hot:
+            filters_ok = True
+        else:
+            filter_reasons = []
+            if BUY_FILTER_VWAP and self.last_vwap and self.last_vwap > 0:
+                if price <= self.last_vwap:
+                    filter_reasons.append(f"price ${price:.2f} ≤ VWAP ${self.last_vwap:.2f}")
+            if BUY_FILTER_OBV and not self.last_obv_ok:
+                filter_reasons.append("OBV not trending up")
+            if BUY_FILTER_CM_RSI and not self.last_cm_rsi_ok:
+                filter_reasons.append("CM RSI not approaching oversold")
+            if BUY_FILTER_RVOL and (self.last_rvol is None or self.last_rvol < RVOL_MIN):
+                rvol_str = f"{self.last_rvol:.1f}x" if self.last_rvol else "unknown"
+                filter_reasons.append(f"RVOL {rvol_str} < {RVOL_MIN}x")
+            filters_ok = len(filter_reasons) == 0
+            if not filters_ok:
+                print(f"  [{ticker_tag(self.ticker)}] 🚫 BUY filtered — {', '.join(filter_reasons)}")
+
+        if self.hist_growing and not self.in_position and rsi_ok_for_buy and price_ok and filters_ok and exposure_ok:
             log_buy(
                 ticker           = self.ticker,
                 price            = price,
@@ -687,11 +967,32 @@ class TickerState:
                 hist             = hist,
                 priority         = self.is_hot,
                 mention_velocity = self.mention_velocity,
+                atr              = self.last_atr,
+                vwap             = self.last_vwap,
+                rvol             = self.last_rvol,
             )
             self.in_position  = True
             self.buy_price    = price
             self.buy_time     = _now_iso()
+            self.buy_time_ts  = time.time()
             self.priority_buy = self.is_hot   # record how we entered
+
+            # Compute dynamic exit levels at the moment of entry
+            self.dyn_stop = None
+            self.dyn_take = None
+            if DYNAMIC_EXIT == "atr" and self.last_atr and self.last_atr > 0:
+                self.dyn_stop = price - ATR_MULT_STOP * self.last_atr
+                self.dyn_take = price + ATR_MULT_TAKE * self.last_atr
+                print(f"  [{ticker_tag(self.ticker)}] 📐 ATR exits — "
+                      f"stop=${self.dyn_stop:.3f}  take=${self.dyn_take:.3f}  "
+                      f"(ATR={self.last_atr:.4f})")
+            elif DYNAMIC_EXIT == "vwap" and self.last_vwap and self.last_vwap > 0:
+                self.dyn_stop = self.last_vwap   # exit if price drops below VWAP
+                self.dyn_take = (price + ATR_MULT_TAKE * self.last_atr
+                                 if self.last_atr and self.last_atr > 0 else None)
+                tp_str = f"  take=${self.dyn_take:.3f}" if self.dyn_take else ""
+                print(f"  [{ticker_tag(self.ticker)}] 📐 VWAP exits — "
+                      f"stop=VWAP@${self.dyn_stop:.3f}{tp_str}")
 
         self.prev_hist = hist
 
@@ -727,10 +1028,11 @@ class SignalEngine:
 
         # Initialise Alpaca trader (off / paper / live — set by TRADER_MODE)
         alpaca_trader.init(
-            mode         = TRADER_MODE,
-            api_key      = self.api_key,
-            secret_key   = self.secret_key,
-            trade_amount = TRADE_AMOUNT,
+            mode           = TRADER_MODE,
+            api_key        = self.api_key,
+            secret_key     = self.secret_key,
+            trade_amount   = TRADE_AMOUNT,
+            extended_hours = EXTENDED_HOURS,
         )
 
         # Start the Finnhub WebSocket in a background thread.
@@ -783,6 +1085,12 @@ class SignalEngine:
         - Use dashboard price as a fallback ONLY if Finnhub has no reading yet.
         - Add newly mentioned tickers and immediately subscribe them to Finnhub.
         """
+        # Decay mention windows for ALL active tickers on every poll cycle.
+        # This ensures tickers that stopped being mentioned (e.g. SPY) cool off
+        # even if no new mention event ever arrives to trigger update_mention_velocity.
+        for ts in list(self.active.values()):
+            ts.decay_mentions()
+
         for row in state.get("tickers", []):
             sym   = row.get("ticker", "")
             price = row.get("price")
@@ -894,10 +1202,16 @@ class SignalEngine:
             return
 
         try:
-            rsi_val, hist_val = compute_indicators(df)
+            rsi_val, hist_val, atr_val, vwap_val, rvol_val, cm_rsi_ok_val, obv_ok_val = compute_indicators(df)
         except Exception as e:
             print(f"  [{ticker_tag(ts.ticker)}] ❌ indicator error: {e}")
             return
+
+        ts.last_atr      = atr_val  if atr_val  > 0 else ts.last_atr
+        ts.last_vwap     = vwap_val if vwap_val > 0 else ts.last_vwap
+        ts.last_rvol     = rvol_val
+        ts.last_cm_rsi_ok = cm_rsi_ok_val
+        ts.last_obv_ok   = obv_ok_val
 
         # Prefer Finnhub live price; fall back to last dashboard poll value,
         # then finally the last bar's close price.
@@ -922,7 +1236,9 @@ class SignalEngine:
         )
 
         # Signal check on the freshly closed bar
-        ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val)
+        open_pos = sum(1 for t in self.active.values() if t.in_position)
+        ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val,
+                           open_positions=open_pos)
 
     # ── Every-second proximity check ──────────────────────────────────────────
 
@@ -948,14 +1264,24 @@ class SignalEngine:
             # ── 2. Real-time stop-loss / take-profit check ─────────────────────
             # Check SL/TP on every tick so we don't have to wait up to a minute
             # for the next bar fetch to exit a losing or winning position.
+            # Dynamic (ATR/VWAP) exit levels are checked here too — they were
+            # previously only checked on bar closes, causing up to 60s of slippage.
             if ts.in_position and ts.buy_price is not None:
                 pnl_pct = (fh_price - ts.buy_price) / ts.buy_price * 100
 
                 reason = None
-                if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
-                    reason = "STOP LOSS (RT)"
-                elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
-                    reason = "TAKE PROFIT (RT)"
+                if DYNAMIC_EXIT in ("atr", "vwap") and ts.dyn_stop is not None:
+                    if fh_price <= ts.dyn_stop:
+                        reason = (f"DYNAMIC STOP ({DYNAMIC_EXIT.upper()}) RT "
+                                  f"${fh_price:.3f} ≤ ${ts.dyn_stop:.3f}")
+                    elif ts.dyn_take is not None and fh_price >= ts.dyn_take:
+                        reason = (f"DYNAMIC TAKE ({DYNAMIC_EXIT.upper()}) RT "
+                                  f"${fh_price:.3f} ≥ ${ts.dyn_take:.3f}")
+                else:
+                    if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
+                        reason = "STOP LOSS (RT)"
+                    elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
+                        reason = "TAKE PROFIT (RT)"
 
                 if reason:
                     log_sell(
@@ -967,11 +1293,15 @@ class SignalEngine:
                         buy_time  = ts.buy_time,
                         reason    = reason,
                     )
-                    ts.in_position  = False
-                    ts.buy_price    = None
-                    ts.buy_time     = None
-                    ts.hist_growing = False
-                    ts.priority_buy = False
+                    ts.in_position   = False
+                    ts.buy_price     = None
+                    ts.buy_time      = None
+                    ts.buy_time_ts   = None
+                    ts.dyn_stop      = None
+                    ts.dyn_take      = None
+                    ts.high_since_buy = None
+                    ts.hist_growing  = False
+                    ts.priority_buy  = False
 
             # ── Real-time RSI overbought exit ─────────────────────────────────
             # Check the live RSI every second so we exit overbought positions
@@ -1005,19 +1335,26 @@ class SignalEngine:
             try:
                 df_live = ts.cached_df.copy()
                 df_live.at[df_live.index[-1], "close"] = ts.last_price
-                rsi_live, hist_live = compute_indicators(df_live)
-                ts.last_rsi  = rsi_live
-                ts.last_hist = hist_live
+                rsi_live, hist_live, atr_live, vwap_live, rvol_live, cm_rsi_live, obv_live = compute_indicators(df_live)
+                ts.last_rsi       = rsi_live
+                ts.last_hist      = hist_live
+                if atr_live  > 0: ts.last_atr  = atr_live
+                if vwap_live > 0: ts.last_vwap = vwap_live
+                ts.last_rvol      = rvol_live
+                ts.last_cm_rsi_ok = cm_rsi_live
+                ts.last_obv_ok    = obv_live
 
                 # Hot tickers get real-time momentum checks so the BUY fires
                 # the moment MACD starts growing — not up to a minute later.
                 # Normal tickers still wait for confirmed bar closes to avoid
                 # false signals from mid-candle histogram fluctuations.
                 if ts.is_hot and ts.bars_fetched:
+                    open_pos = sum(1 for t in self.active.values() if t.in_position)
                     ts.update_momentum(
-                        hist  = hist_live,
-                        price = ts.last_price,
-                        rsi   = rsi_live,
+                        hist           = hist_live,
+                        price          = ts.last_price,
+                        rsi            = rsi_live,
+                        open_positions = open_pos,
                     )
 
             except Exception:
@@ -1036,11 +1373,12 @@ class SignalEngine:
         expired = [sym for sym, ts in self.active.items() if ts.is_expired()]
         for sym in expired:
             ts = self.active[sym]
-            reason = (
-                "never showed positive histogram (cold)"
-                if not ts.ever_positive_hist
-                else "histogram retreated before signal fired (warm)"
-            )
+            if ts.cooled_at is not None:
+                reason = "went hot but crowd moved on — cooled off with no BUY"
+            elif not ts.ever_positive_hist:
+                reason = "never showed positive histogram (cold)"
+            else:
+                reason = "histogram retreated before signal fired (warm)"
             print(
                 f"\n  ⏰ EXPIRED {sym}  "
                 f"({ts.age_s():.0f}s watched | {reason})\n"
