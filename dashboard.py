@@ -632,7 +632,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
-_PUBLIC_PATHS   = {"/", "/login", "/auth/login", "/api/meta"}
+_PUBLIC_PATHS   = {"/", "/login", "/auth/login", "/api/meta", "/api/pnl"}
 _PUBLIC_PREFIX  = ("/static/",)
 
 

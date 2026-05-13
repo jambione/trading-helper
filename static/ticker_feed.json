@@ -1,5 +1,19 @@
 [
-  { "type": "info",  "text": "All suggestions are informational only, not financial advice." },
-  { "type": "tip",   "text": "7am is when momentum starts picking up, and tapers off at 10am" },
-  { "type": "info",  "text": "SpaceX IPO coming soon!" }
+  {
+    "type": "info",
+    "text": "All suggestions are informational only, not financial advice."
+  },
+  {
+    "type": "tip",
+    "text": "7am is when momentum starts picking up, and tapers off at 10am"
+  },
+  { "type": "alert", "text": "SpaceX IPO coming soon!" },
+  {
+    "type": "tip",
+    "text": "SHORT SQUEEZE WATCH: HTCO - OPTX - MOBX - OMDA - SST"
+  },
+  {
+    "type": "info",
+    "text": "Stocks listed are real-time momentum stocks that are moving right now!"
+  }
 ]
