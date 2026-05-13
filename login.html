@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal Scanner — Login</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
   <link rel="stylesheet" href="/static/css/styles.css?v=8" />
   <style>
     .login-wrap {
@@ -26,16 +27,8 @@
     .login-brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      justify-content: center;
       margin-bottom: 32px;
-    }
-    .login-brand-icon  { font-size: 22px; color: var(--accent); }
-    .login-brand-title {
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--text-bright);
     }
 
     .login-fields { display: flex; flex-direction: column; gap: 16px; }
@@ -80,8 +73,7 @@
   <div class="login-card">
 
     <div class="login-brand">
-      <span class="login-brand-icon">◈</span>
-      <span class="login-brand-title">Signal Scanner</span>
+      <img src="/static/icons/logo.png" class="login-logo-img" alt="Brasfield Trading">
     </div>
 
     <div class="login-fields">
