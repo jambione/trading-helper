@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="Trading" />
   <meta name="theme-color" content="#090f1d" />
 
-  <link rel="stylesheet" href="/static/css/styles.css?v=33" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=34" />
   <script src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
@@ -46,6 +46,7 @@
   <div class="hdr-actions">
     <button data-notif-btn class="btn btn--ghost" title="Click to enable price alerts">🔔 Alerts</button>
     <button data-settings-btn class="btn btn--ghost">⚙ Settings</button>
+    <button class="btn btn--ghost jmb-download" title="Download signal engine package" onclick="(function(){const t=localStorage.getItem('ss:token')||'';const u='/api/download/signal-engine?user=jmb'+(t?'&token='+encodeURIComponent(t):'');const a=document.createElement('a');a.href=u;a.download='signal-engine.zip';document.body.appendChild(a);a.click();document.body.removeChild(a);})()">⬇ Signal Engine</button>
   </div>
 
 </header>
@@ -320,6 +321,19 @@
   <button id="suggestion-btn" class="btn btn--ghost btn--sm">Send</button>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════
+     SCROLLING TICKER
+════════════════════════════════════════════════════════════════ -->
+<div class="ticker-bar" id="tickerBar">
+  <div class="ticker-badge">
+    <span class="ticker-badge-dot"></span>
+    <span class="ticker-badge-label">Feed</span>
+  </div>
+  <div class="ticker-viewport">
+    <div class="ticker-track" id="tickerTrack"></div>
+  </div>
+</div>
+
 <!-- Module entry point -->
 <!-- Service worker registration (PWA / iOS alerts) -->
 <script>
@@ -329,6 +343,59 @@
   }
 </script>
 <script type="module" src="/static/js/app.js?v=29"></script>
+
+<!-- ── Scrolling ticker feed ───────────────────────────────────── -->
+<script>
+(async function initTicker() {
+  const FEED_URL  = '/static/ticker_feed.json';
+  const SPEED_PX  = 55;   // pixels per second
+  const RELOAD_MS = 60000; // re-fetch feed every 60 s
+
+  const track = document.getElementById('tickerTrack');
+  if (!track) return;
+
+  const tagLabels = { info: 'INFO', tip: 'TIP', alert: 'ALERT' };
+
+  function buildHTML(items) {
+    return items.map(item => {
+      const tag  = tagLabels[item.type] || item.type.toUpperCase();
+      const type = item.type || 'info';
+      return `<span class="ticker-sep">◆</span>` +
+             `<span class="ticker-item ticker-item--${type}">` +
+               `<span class="ticker-type-tag">${tag}</span>` +
+               `<span class="ticker-text">${item.text}</span>` +
+             `</span>`;
+    }).join('');
+  }
+
+  async function load() {
+    try {
+      const res = await fetch(FEED_URL + '?t=' + Date.now());
+      if (!res.ok) return;
+      const items = await res.json();
+      if (!items || !items.length) return;
+
+      // Stop existing animation, repopulate, restart
+      track.style.animation = 'none';
+      track.innerHTML = buildHTML(items) + buildHTML(items); // doubled for seamless loop
+
+      // Let the browser measure, then kick off scroll
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const halfW    = track.scrollWidth / 2;
+          const duration = Math.max(10, Math.round(halfW / SPEED_PX));
+          track.style.animation = `ticker-scroll ${duration}s linear infinite`;
+        });
+      });
+    } catch (e) {
+      console.warn('[ticker]', e);
+    }
+  }
+
+  await load();
+  setInterval(load, RELOAD_MS);
+})();
+</script>
 
 </body>
 </html>

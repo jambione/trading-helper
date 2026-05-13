@@ -287,6 +287,8 @@ body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
 body.hosted .btn-delete              { display: none; }
 body.hosted.user-jmb .btn-add       { display: inline-flex; }
+.jmb-download                        { display: none; }
+body.user-jmb .jmb-download          { display: inline-flex; }
 
 /* ── Mobile — full-width watchlist, no chart ───────────────── */
 @media (max-width: 700px) {
@@ -1102,3 +1104,162 @@ body.mobile .lb-item:nth-child(n+4) { display: none; }
 /* ── Utility ─────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLLING TICKER BAR
+═══════════════════════════════════════════════════════════════ */
+.ticker-bar {
+  height: 36px;
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(180deg, #0b1525 0%, var(--surface) 100%);
+  border-top: 1px solid var(--border-hi);
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
+}
+
+/* fade-out mask on right edge */
+.ticker-bar::after {
+  content: '';
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 60px;
+  background: linear-gradient(to right, transparent, var(--surface));
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── Left badge ─────────────────────────────────────────────── */
+.ticker-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 0 16px;
+  border-right: 1px solid var(--border-hi);
+  background: rgba(0, 212, 160, 0.04);
+  flex-shrink: 0;
+  z-index: 3;
+  position: relative;
+}
+.ticker-badge::after {
+  content: '';
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 30px;
+  background: linear-gradient(to right, rgba(0,212,160,0.04), transparent);
+  pointer-events: none;
+}
+.ticker-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: ticker-pulse 2.2s ease-in-out infinite;
+}
+.ticker-badge-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  user-select: none;
+}
+@keyframes ticker-pulse {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 6px 1px var(--accent); }
+  50%       { opacity: 0.3; box-shadow: none; }
+}
+
+/* ── Scrolling viewport ─────────────────────────────────────── */
+.ticker-viewport {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0px,
+    black 32px,
+    black calc(100% - 64px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0px,
+    black 32px,
+    black calc(100% - 64px),
+    transparent 100%
+  );
+}
+.ticker-track {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  will-change: transform;
+}
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* ── Individual items ───────────────────────────────────────── */
+.ticker-sep {
+  color: var(--border-hi);
+  font-size: 9px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 20px;
+}
+.ticker-type-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.ticker-text {
+  font-size: 12px;
+  font-family: var(--font-ui);
+  letter-spacing: 0.012em;
+}
+
+/* ── INFO ── cool blue ──────────────────────────────────────── */
+.ticker-item--info .ticker-type-tag {
+  background: rgba(61, 139, 255, 0.14);
+  color: #5aaff7;
+  border: 1px solid rgba(61, 139, 255, 0.28);
+}
+.ticker-item--info .ticker-text { color: #6ba8f0; }
+
+/* ── TIP ── teal/green ──────────────────────────────────────── */
+.ticker-item--tip .ticker-type-tag {
+  background: rgba(0, 212, 160, 0.12);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}
+.ticker-item--tip .ticker-text { color: #5dcfb5; }
+
+/* ── ALERT ── hot orange ────────────────────────────────────── */
+.ticker-item--alert .ticker-type-tag {
+  background: rgba(255, 170, 48, 0.12);
+  color: var(--warming);
+  border: 1px solid var(--warming-border);
+  animation: ticker-alert-glow 1.5s ease-in-out infinite;
+}
+.ticker-item--alert .ticker-text { color: #e8a848; }
+@keyframes ticker-alert-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(255,170,48,0.3); }
+  50%       { box-shadow: 0 0 12px rgba(255,170,48,0.6); }
+}
