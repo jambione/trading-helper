@@ -746,6 +746,11 @@ async def root():
     return FileResponse("dashboard.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("favicon.ico")
+
+
 @app.get("/login")
 async def login_page():
     return FileResponse("login.html")

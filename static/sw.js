@@ -11,23 +11,23 @@
  * Cache is versioned — bump CACHE_VERSION when static assets change.
  */
 
-const CACHE_VERSION = 'v19';
+const CACHE_VERSION = 'v21';
 const CACHE_NAME    = `trading-${CACHE_VERSION}`;
 
 const APP_SHELL = [
-  '/dashboard',
-  '/static/css/styles.css?v=19',
-  '/static/js/app.js?v=19',
-  '/static/js/tickers.js?v=19',
-  '/static/js/notifications.js?v=19',
-  '/static/js/tradingview.js?v=19',
-  '/static/js/store.js?v=19',
-  '/static/js/api.js?v=19',
-  '/static/js/auth.js?v=19',
-  '/static/js/controls.js?v=19',
-  '/static/js/config.js?v=19',
-  '/static/js/resizer.js?v=19',
-  '/static/js/transcription.js?v=19',
+  '/',
+  '/static/css/styles.css',
+  '/static/js/app.js',
+  '/static/js/tickers.js',
+  '/static/js/notifications.js',
+  '/static/js/tradingview.js',
+  '/static/js/store.js',
+  '/static/js/api.js',
+  '/static/js/auth.js',
+  '/static/js/controls.js',
+  '/static/js/config.js',
+  '/static/js/resizer.js',
+  '/static/js/transcription.js',
   '/static/manifest.json',
 ];
 

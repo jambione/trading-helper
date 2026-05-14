@@ -2,7 +2,7 @@
   "name": "Brasfield Trading",
   "short_name": "Trading",
   "description": "Live trading signal scanner and watchlist",
-  "start_url": "/dashboard",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#090f1d",
   "theme_color": "#090f1d",
