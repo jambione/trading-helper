@@ -244,10 +244,11 @@ async function _addToWBAndTV(btn, ticker) {
              *    where the agent is running on the same machine as the dashboard server.
              */
             try {
-                console.log(`[agent] Trying direct local call: http://localhost:8889${path}`);
+                console.log(`[agent] Trying direct local call: http://127.0.0.1:8889${path}`);
                 // Note: PNA (Private Network Access) headers in windows_agent.py are required
                 // for this fetch to succeed when the dashboard is hosted on HTTPS.
-                const resp = await fetch(`http://localhost:8889${path}`, {
+                // Using 127.0.0.1 instead of 'localhost' is more explicit for PNA.
+                const resp = await fetch(`http://127.0.0.1:8889${path}`, {
                     method: "POST",
                     headers,
                     body,
