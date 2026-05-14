@@ -230,29 +230,38 @@ async function _addToWBAndTV(btn, ticker) {
         // Step 1: save ticker to server watchlist
         await api.addTicker(ticker);
 
-        // Steps 2 & 3: call the local Windows agent for Webull and TradingView.
-        // The agent runs on localhost:8889 — if it's not running, skip silently.
+        // Steps 2 & 3: call the local Windows agent via dashboard proxy.
+        // The remote dashboard calls /api/agent/add-wb and /api/agent/add-tv,
+        // which proxy to the local agent at localhost:8889.
         const _agentPost = async (endpoint) => {
             try {
-                const resp = await fetch(`http://localhost:8889${endpoint}`, {
+                const resp = await fetch(endpoint, {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        // Signal Private Network Access requirement for remote HTTPS origin
-                        "Access-Control-Request-Private-Network": "true",
-                    },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ ticker }),
                     signal: AbortSignal.timeout(5000),
                 });
                 if (!resp.ok)
                     console.warn(`[agent] ${endpoint} returned`, resp.status);
-            } catch {
-                // Agent not running — skip silently
+            } catch (err) {
+                // Agent unavailable — log but continue
+                console.warn(`[agent] ${endpoint} failed:`, err.message);
             }
         };
 
-        await _agentPost("/add-wb"); // Webull Desktop: Ctrl+2, type ticker, Enter
-        await _agentPost("/add-tv"); // Brave TradingView: pinned tab, type, Enter, Alt+W
+        // For remote dashboards, use the server proxy endpoints
+        const isRemote = !["localhost", "127.0.0.1", ""].includes(
+            location.hostname,
+        );
+        if (isRemote) {
+            // Remote dashboard — use proxy endpoints
+            await _agentPost("/api/agent/add-wb");
+            await _agentPost("/api/agent/add-tv");
+        } else {
+            // Local dashboard — can call Windows agent directly
+            await _agentPost("http://localhost:8889/add-wb");
+            await _agentPost("http://localhost:8889/add-tv");
+        }
 
         btn.textContent = "✓";
         setTimeout(() => {
