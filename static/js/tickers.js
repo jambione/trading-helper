@@ -230,38 +230,51 @@ async function _addToWBAndTV(btn, ticker) {
         // Step 1: save ticker to server watchlist
         await api.addTicker(ticker);
 
-        // Steps 2 & 3: call the local Windows agent via dashboard proxy.
-        // The remote dashboard calls /api/agent/add-wb and /api/agent/add-tv,
-        // which proxy to the local agent at localhost:8889.
-        const _agentPost = async (endpoint) => {
+        // Steps 2 & 3: call the Windows agent for local GUI automation.
+        const _agentPost = async (path) => {
+            const body = JSON.stringify({ ticker });
+            const headers = { "Content-Type": "application/json" };
+
+            /**
+             * Strategy:
+             * 1. Try local agent directly from browser first. This is preferred for GUI
+             *    automation (Webull/TradingView Desktop) as it targets the machine the
+             *    user is actually sitting at.
+             * 2. If that fails (or is blocked), try the server proxy. This handles cases
+             *    where the agent is running on the same machine as the dashboard server.
+             */
             try {
-                const resp = await fetch(endpoint, {
+                console.log(`[agent] Trying direct local call: http://localhost:8889${path}`);
+                // Note: PNA (Private Network Access) headers in windows_agent.py are required
+                // for this fetch to succeed when the dashboard is hosted on HTTPS.
+                const resp = await fetch(`http://localhost:8889${path}`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ticker }),
+                    headers,
+                    body,
+                    signal: AbortSignal.timeout(2000),
+                });
+                if (resp.ok) return true;
+            } catch (err) {
+                console.warn(`[agent] Direct local call failed, trying proxy: ${err.message}`);
+            }
+
+            try {
+                // Fallback to server-side proxy
+                const resp = await fetch(`/api/agent${path}`, {
+                    method: "POST",
+                    headers,
+                    body,
                     signal: AbortSignal.timeout(5000),
                 });
-                if (!resp.ok)
-                    console.warn(`[agent] ${endpoint} returned`, resp.status);
+                return resp.ok;
             } catch (err) {
-                // Agent unavailable — log but continue
-                console.warn(`[agent] ${endpoint} failed:`, err.message);
+                console.warn(`[agent] Proxy call failed: ${err.message}`);
+                return false;
             }
         };
 
-        // For remote dashboards, use the server proxy endpoints
-        const isRemote = !["localhost", "127.0.0.1", ""].includes(
-            location.hostname,
-        );
-        if (isRemote) {
-            // Remote dashboard — use proxy endpoints
-            await _agentPost("/api/agent/add-wb");
-            await _agentPost("/api/agent/add-tv");
-        } else {
-            // Local dashboard — can call Windows agent directly
-            await _agentPost("http://localhost:8889/add-wb");
-            await _agentPost("http://localhost:8889/add-tv");
-        }
+        await _agentPost("/add-wb");
+        await _agentPost("/add-tv");
 
         btn.textContent = "✓";
         setTimeout(() => {

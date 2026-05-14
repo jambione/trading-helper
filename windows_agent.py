@@ -288,9 +288,17 @@ class AgentHandler(BaseHTTPRequestHandler):
         print(f"[{self.address_string()}] {fmt % args}")
 
     def _cors(self):
+        """
+        Add CORS and Private Network Access (PNA) headers.
+        PNA headers are required for secure origins (HTTPS) to access local loopback (HTTP).
+        """
         self.send_header("Access-Control-Allow-Origin",  "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Access-Control-Allow-Private-Network")
+        # Required handshake for Chrome/Brave PNA policy
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        # Cache the preflight for 24h to improve performance
+        self.send_header("Access-Control-Max-Age", "86400")
 
     def do_OPTIONS(self):
         self.send_response(204)
