@@ -10,10 +10,18 @@
   { "type": "alert", "text": "SpaceX IPO coming soon!" },
   {
     "type": "tip",
-    "text": "SHORT SQUEEZE WATCH: HTCO - OPTX - MOBX - OMDA - SST"
+    "text": "SHORT SQUEEZE WATCH: LNKS - MNTS - LTRN"
   },
   {
     "type": "info",
     "text": "Stocks listed are real-time momentum stocks that are moving right now!"
+  },
+  {
+    "type": "alert",
+    "text": "Cerebras (CBRS) IPO today  — usually around 11am"
+  },
+  {
+    "type": "info",
+    "text": "Since our beginng we have suggestion a 300% returns, yesterday 825% on TDIC.  Lests see what we suggest today!"
   }
 ]

@@ -1033,6 +1033,42 @@ async def api_get_suggestions():
     return JSONResponse({"suggestions": items})
 
 
+# ── Windows Agent proxy (forward requests from remote dashboard to local agent) ──
+
+@app.post("/api/agent/add-wb")
+async def api_agent_add_wb(request: Request):
+    """Proxy to Windows agent for adding ticker to Webull watchlist."""
+    try:
+        body = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker:
+            return JSONResponse({"ok": False, "error": "missing ticker"}, status_code=400)
+        
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post("http://localhost:8889/add-wb", json={"ticker": ticker})
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/agent/add-tv")
+async def api_agent_add_tv(request: Request):
+    """Proxy to Windows agent for adding ticker to TradingView watchlist."""
+    try:
+        body = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker:
+            return JSONResponse({"ok": False, "error": "missing ticker"}, status_code=400)
+        
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post("http://localhost:8889/add-tv", json={"ticker": ticker})
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, token: str = ""):
     await ws.accept()
