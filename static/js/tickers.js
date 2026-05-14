@@ -207,9 +207,10 @@ async function _addToWBAndTV(btn, ticker) {
 
     // Steps 2 & 3: call the local Windows agent for Webull and TradingView.
     // The agent runs on localhost:8889 — if it's not running, skip silently.
+    // Use 127.0.0.1 instead of localhost for more consistent Private Network Access behavior.
     const _agentPost = async (endpoint) => {
       try {
-        const resp = await fetch(`http://localhost:8889${endpoint}`, {
+        const resp = await fetch(`http://127.0.0.1:8889${endpoint}`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ ticker }),

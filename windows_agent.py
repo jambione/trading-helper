@@ -292,11 +292,15 @@ class AgentHandler(BaseHTTPRequestHandler):
         Add CORS and Private Network Access (PNA) headers.
         PNA headers are required for secure origins (HTTPS) to access local loopback (HTTP).
         """
-        # Echo the origin if possible, otherwise allow all
-        origin = self.headers.get("Origin", "*")
-        self.send_header("Access-Control-Allow-Origin", origin)
+        origin = self.headers.get("Origin")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Access-Control-Request-Private-Network")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
         # Required handshake for Chrome/Brave PNA policy
         self.send_header("Access-Control-Allow-Private-Network", "true")
         # Cache the preflight to improve performance
@@ -304,8 +308,9 @@ class AgentHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         """Handle CORS/PNA preflight request."""
-        self.send_response(200)
+        self.send_response(204)  # 'No Content' is preferred for OPTIONS
         self._cors()
+        self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -365,7 +370,8 @@ if __name__ == "__main__":
     if not _IS_WINDOWS:
         print("⚠️  WARNING: Not running on Windows — automation will be dry-run only.")
     print(f"  Brave TradingView tab: Ctrl+{BRAVE_TV_TAB}  (set BRAVE_TV_TAB env var to change)")
-    server = HTTPServer(("127.0.0.1", PORT), AgentHandler)
+    # Listen on 0.0.0.0 to handle both localhost and 127.0.0.1 / IPv6 resolution issues
+    server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
     print(f"✅ Windows local agent running on http://localhost:{PORT}")
     print(f"   POST /add-wb  {{\"ticker\": \"NVDA\"}}  → Webull Desktop")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Ctrl+{BRAVE_TV_TAB}, Alt+W)")
