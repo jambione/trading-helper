@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=34" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=35" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -83,7 +83,7 @@
                     🔔 Alerts
                 </button>
                 <button data-settings-btn class="btn btn--ghost">
-                    ⚙ Settings
+                    ⚙ Settings<span id="feedback-badge" class="feedback-badge" hidden></span>
                 </button>
                 <button
                     class="btn btn--ghost jmb-download"
@@ -504,7 +504,7 @@
         <div class="ticker-bar" id="tickerBar">
             <div class="ticker-badge">
                 <span class="ticker-badge-dot"></span>
-                <span class="ticker-badge-label">Feed</span>
+                <time id="tickerClock" class="ticker-badge-label" datetime=""></time>
             </div>
             <div class="ticker-viewport">
                 <div class="ticker-track" id="tickerTrack"></div>
@@ -520,7 +520,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=29"></script>
+        <script type="module" src="/static/js/app.js?v=30"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
@@ -580,6 +580,26 @@
 
                 await load();
                 setInterval(load, RELOAD_MS);
+            })();
+        </script>
+
+        <!-- ── Bottom-bar clock ───────────────────────────────────────── -->
+        <script>
+            (function () {
+                const el = document.getElementById("tickerClock");
+                if (!el) return;
+                function tick() {
+                    const now = new Date();
+                    let h = now.getHours();
+                    const ampm = h >= 12 ? "PM" : "AM";
+                    h = h % 12 || 12;
+                    const mm = String(now.getMinutes()).padStart(2, "0");
+                    const ss = String(now.getSeconds()).padStart(2, "0");
+                    el.textContent = `${h}:${mm}:${ss} ${ampm}`;
+                    el.setAttribute("datetime", now.toISOString());
+                }
+                tick();
+                setInterval(tick, 1000);
             })();
         </script>
     </body>

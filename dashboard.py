@@ -545,6 +545,41 @@ def _price_loop():
         time.sleep(0.1)  # 10Hz — Finnhub ticks are picked up within 100ms
 
 
+# ── Day-volume polling ────────────────────────────────────────────────────────
+
+def _vol_loop():
+    """Fetch day volume + relative volume for watchlist tickers via yfinance.
+    Runs every 60 seconds in a background thread and writes into STATE.tickers
+    so the values flow through to the /api/state response automatically.
+    """
+    while True:
+        try:
+            tickers = load_tickers()
+            if tickers:
+                import yfinance as yf
+                tks = yf.Tickers(" ".join(tickers))
+                vol_data: dict = {}
+                for sym in tickers:
+                    try:
+                        fi = tks.tickers[sym].fast_info
+                        day_vol = int(getattr(fi, "last_volume", 0) or 0)
+                        avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
+                        if day_vol > 0:
+                            vol_data[sym] = {
+                                "day_vol": day_vol,
+                                "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
+                            }
+                    except Exception:
+                        pass
+                with STATE.lock:
+                    for sym, vd in vol_data.items():
+                        STATE.tickers.setdefault(sym, {}).update(vd)
+                log.debug(f"[VOL] updated volume for {len(vol_data)}/{len(tickers)} tickers")
+        except Exception as e:
+            log.debug(f"[VOL] {e}")
+        time.sleep(60)
+
+
 # ── Mention detection ─────────────────────────────────────────────────────────
 
 def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0) -> dict:
@@ -738,6 +773,7 @@ async def _startup():
             log.warning(f"[STARTUP] Finnhub unavailable: {e}")
 
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
+    threading.Thread(target=_vol_loop, daemon=True, name="vol").start()
     threading.Thread(target=_mention_reset_worker, daemon=True, name="mention-reset").start()
 
 

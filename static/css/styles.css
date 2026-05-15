@@ -582,6 +582,22 @@ body.mobile .cell-chg    { font-size: 13px; }
 .mention-badge.mentions-active { background: rgba(255,180,0,0.18); color: #f0a500; }
 .mention-badge.mentions-burst  { background: rgba(255,60,60,0.22);  color: #ff4444; animation: burst-pulse 1s ease-in-out 3; }
 
+/* Feedback badge on Settings button */
+.feedback-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.5;
+  vertical-align: middle;
+  background: #e03535;
+  color: #fff;
+  pointer-events: none;
+}
+.feedback-badge[hidden] { display: none; }
+
 /* ── $20 price divider ──────────────────────────────────────── */
 .price-divider {
   height: 1px;
@@ -682,7 +698,7 @@ body.mobile .cell-chg    { font-size: 13px; }
 }
 
 /* Action buttons */
-.btn-add, .btn-delete {
+.btn-add, .btn-copy, .btn-delete {
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 600;
@@ -699,11 +715,19 @@ body.mobile .cell-chg    { font-size: 13px; }
   justify-content: center;
   height: 18px;
 }
+.btn-copy {
+  color: #ffffff !important;
+}
 .btn-add:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--border-hi);
 }
-.btn-add:disabled {
+.btn-copy:hover:not(:disabled) {
+  color: #ffffff;
+  border-color: var(--border-hi);
+}
+.btn-add:disabled,
+.btn-copy:disabled {
   opacity: 0.4;
   cursor: default;
 }

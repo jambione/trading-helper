@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=29';
-import { api } from './api.js?v=29';
+import { subscribe, selectTicker, get } from './store.js?v=30';
+import { api } from './api.js?v=30';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -179,9 +179,9 @@ function _createRow(row) {
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
-  el.querySelector('[data-add-btn]').addEventListener('click', e => {
+  el.querySelector('[data-copy-btn]').addEventListener('click', e => {
     e.stopPropagation();
-    _addToWBAndTV(e.currentTarget, row.ticker);
+    _copyTicker(e.currentTarget, row.ticker);
   });
   el.querySelector('[data-delete-btn]').addEventListener('click', e => {
     e.stopPropagation();
@@ -195,6 +195,17 @@ async function _removeTicker(ticker) {
     await api.removeTicker(ticker);
   } catch (err) {
     console.error('Failed to remove ticker', err);
+  }
+}
+
+async function _copyTicker(btn, ticker) {
+  try {
+    await navigator.clipboard.writeText(ticker);
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  } catch {
+    btn.textContent = '!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
   }
 }
 
@@ -292,7 +303,7 @@ function _rowHTML(row) {
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-actions">
-      <button class="btn-add" data-add-btn title="Add to Webull + open in TradingView">Add</button>
+      <button class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
     </div>
   </div>`;

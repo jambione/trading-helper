@@ -6,7 +6,7 @@
  * Edit news.json on the server — changes appear within seconds.
  */
 
-import { subscribe } from './store.js?v=29';
+import { subscribe } from './store.js?v=30';
 
 let _containerEl = null;
 

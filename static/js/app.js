@@ -5,18 +5,18 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=29';
-import { subscribe, set }                        from './store.js?v=29';
-import { init as initTranscription }             from './transcription.js?v=29';
-import { init as initTickers }                   from './tickers.js?v=29';
-import { init as initTradingView }               from './tradingview.js?v=29';
-import { init as initConfig, open as openConfig }from './config.js?v=29';
-import { init as initResizer }                   from './resizer.js?v=29';
-import * as controls                             from './controls.js?v=29';
-import * as notifications                        from './notifications.js?v=29';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=29';
-import { init as initNews }                      from './news.js?v=29';
-import { init as initLeaderboard }               from './leaderboard.js?v=29';
+import { connect, on, api }                      from './api.js?v=30';
+import { subscribe, set }                        from './store.js?v=30';
+import { init as initTranscription }             from './transcription.js?v=30';
+import { init as initTickers }                   from './tickers.js?v=30';
+import { init as initTradingView }               from './tradingview.js?v=30';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=30';
+import { init as initResizer }                   from './resizer.js?v=30';
+import * as controls                             from './controls.js?v=30';
+import * as notifications                        from './notifications.js?v=30';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=30';
+import { init as initNews }                      from './news.js?v=30';
+import { init as initLeaderboard }               from './leaderboard.js?v=30';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -86,6 +86,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.target.setSelectionRange(pos, pos);
   });
 
+  // ── Feedback badge — check on startup ───────────────────────
+  try {
+    const { suggestions = [] } = await api.getSuggestions();
+    updateFeedbackBadge(suggestions.length);
+  } catch { /* non-fatal */ }
+
   // ── Suggestion bar ───────────────────────────────────────────
   const suggInput = document.getElementById('suggestion-input');
   const suggBtn   = document.getElementById('suggestion-btn');
@@ -98,6 +104,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       await api.addSuggestion(msg);
       suggInput.value    = '';
       suggBtn.textContent = 'Sent ✓';
+      // Re-check count so the badge reflects the new submission
+      try {
+        const { suggestions = [] } = await api.getSuggestions();
+        updateFeedbackBadge(suggestions.length);
+      } catch { /* non-fatal */ }
       setTimeout(() => { suggBtn.textContent = 'Send'; suggBtn.disabled = false; }, 2000);
     } catch {
       suggBtn.textContent = 'Error';

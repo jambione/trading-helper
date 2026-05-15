@@ -5,13 +5,28 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=29';
-import { get } from './store.js?v=29';
-import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=29';
+import { api } from './api.js?v=30';
+import { get } from './store.js?v=30';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=30';
 
 let _backdrop = null;
 let _saveBtn  = null;
 let _activeTab = 'api';
+
+const _SEEN_KEY = 'ss:feedback-seen';
+
+export function updateFeedbackBadge(total) {
+  const seen   = parseInt(localStorage.getItem(_SEEN_KEY) || '0', 10);
+  const unread = Math.max(0, total - seen);
+  const badge  = document.getElementById('feedback-badge');
+  if (!badge) return;
+  if (unread > 0) {
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+}
 
 export function init(backdropEl) {
   _backdrop = backdropEl;
@@ -184,6 +199,9 @@ async function _loadSuggestions() {
     const { suggestions = [] } = await api.getSuggestions();
     if (!suggestions.length) {
       el.innerHTML = '<div class="suggestions-empty">No suggestions yet.</div>';
+      // Still mark as seen (0 total)
+      localStorage.setItem(_SEEN_KEY, '0');
+      updateFeedbackBadge(0);
       return;
     }
     // Newest first
@@ -201,6 +219,9 @@ async function _loadSuggestions() {
         </div>
       </div>`;
     }).join('');
+    // Mark all currently loaded suggestions as seen — clears the badge
+    localStorage.setItem(_SEEN_KEY, String(suggestions.length));
+    updateFeedbackBadge(suggestions.length);
   } catch {
     el.innerHTML = '<div class="suggestions-empty">Failed to load suggestions.</div>';
   }
