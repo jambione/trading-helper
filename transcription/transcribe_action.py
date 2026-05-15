@@ -112,9 +112,45 @@ _nato_word    = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
 _NATO_SEP     = r"[ \t]*,?[ \t]*"
 _NATO_PATTERN = re.compile(rf"(?i)\b{_nato_word}(?:{_NATO_SEP}{_nato_word}){{1,4}}\b")
 
+# English alphabet letter-name phonetics — how TTS voices pronounce individual letters.
+# e.g. "en vee dee ay" → NVDA, "tee es el ay" → TSLA, "em ess ef tee" → MSFT
+_LETTER_NAMES = {
+    "ay":      "A", "bee":    "B", "cee":    "C", "see":   "C",
+    "dee":     "D", "ee":     "E", "ef":     "F", "eff":   "F",
+    "gee":     "G", "jee":    "G", "aitch":  "H", "haitch":"H",
+    "eye":     "I", "jay":    "J", "kay":    "K", "el":    "L",
+    "em":      "M", "en":     "N", "oh":     "O", "pee":   "P",
+    "cue":     "Q", "queue":  "Q", "ar":     "R", "arr":   "R",
+    "ess":     "S", "es":     "S", "tee":    "T", "you":   "U",
+    "vee":     "V", "ex":     "X", "wye":    "Y", "why":   "Y",
+    "zee":     "Z", "zed":    "Z",
+}
+_letter_name_word    = "(?:" + "|".join(re.escape(w) for w in _LETTER_NAMES) + ")"
+_LETTER_NAME_SEP     = r"[ \t]*[.\-,]?[ \t]*"   # space, period, dash, or comma between names
+_LETTER_NAME_PATTERN = re.compile(
+    rf"(?i)\b{_letter_name_word}(?:{_LETTER_NAME_SEP}{_letter_name_word}){{1,4}}\b"
+)
+
 
 def normalize_transcript(text: str) -> str:
-    """Collapse NATO phonetics, dot-notation, and hyphen-spelling into ticker candidates."""
+    """Collapse NATO phonetics, letter-name phonetics, dot-notation, hyphen-spelling,
+    and space-separated letters into ticker candidates.
+
+    Handles all five forms a computer TTS voice uses to spell out tickers:
+      N-V-D-A                    → NVDA  (hyphen-separated)
+      N.V.D.A.                   → NVDA  (dot-separated)
+      November Victor Delta Alpha → NVDA  (NATO phonetics)
+      N V D A                    → NVDA  (space-separated single letters)
+      en vee dee ay              → NVDA  (English letter-name phonetics ← TTS default)
+    """
+    # Letter-name phonetics — run FIRST so "en vee dee ay" → NVDA before other passes
+    def collapse_letter_names(m):
+        words   = re.split(r'[\s]+', m.group(0).lower())
+        letters = "".join(_LETTER_NAMES.get(w, "") for w in words if w)
+        return letters if 2 <= len(letters) <= 5 else m.group(0)
+
+    text = _LETTER_NAME_PATTERN.sub(collapse_letter_names, text)
+
     def collapse_nato(m):
         words   = re.split(r'[\s,]+', m.group(0).lower())
         letters = "".join(_NATO.get(w, "") for w in words if w)
@@ -132,6 +168,21 @@ def normalize_transcript(text: str) -> str:
         return m.group(0).replace("-", "").upper()
 
     text = re.sub(r'(?<!\w)(?:[A-Za-z]-){2,4}[A-Za-z](?!\w)', collapse_hyphens, text)
+
+    # Space-separated single letters: "N V D A" → "NVDA"
+    # The computer TTS reads each letter individually with a pause between them.
+    # Whisper transcribes this as 2-5 consecutive single-letter tokens separated by spaces.
+    # Negative lookbehind/ahead prevents matching inside normal words.
+    def collapse_spaced_letters(m):
+        letters = re.sub(r'\s+', '', m.group(0)).upper()
+        return letters if 2 <= len(letters) <= 5 else m.group(0)
+
+    text = re.sub(
+        r'(?<![A-Za-z])([A-Za-z])(?: ([A-Za-z])){1,4}(?![A-Za-z])',
+        collapse_spaced_letters,
+        text,
+    )
+
     return text
 
 
@@ -442,6 +493,8 @@ INITIAL_PROMPT = (
     "PFE MRNA UNH LLY JNJ ABBV MRK AMGN GILD REGN VRTX "
     "XOM CVX COP BA LMT RTX VZ T TMUS "
     "GME AMC PLTR UBER LYFT ABNB DASH DKNG SOUN "
+    "Tickers are sometimes spelled letter by letter: "
+    "N V D A, A A P L, A M Z N, M S F T, T S L A. "
     "calls puts earnings price target breakout resistance."
 )
 
@@ -756,7 +809,7 @@ def transcription_worker():
                             initial_prompt=INITIAL_PROMPT,
                             temperature=0.0,
                             no_speech_threshold=0.4,
-                            compression_ratio_threshold=2.0,
+                            compression_ratio_threshold=2.4,
                             condition_on_previous_text=False,
                             verbose=False,
                         )
@@ -770,7 +823,7 @@ def transcription_worker():
                         temperature=0.0,
                         vad_filter=True,
                         no_speech_threshold=0.4,
-                        compression_ratio_threshold=2.0,
+                        compression_ratio_threshold=2.4,
                         condition_on_previous_text=False,
                     )
                     text = " ".join(s.text.strip() for s in segs).strip()
@@ -778,18 +831,29 @@ def transcription_worker():
             ms = (time.perf_counter() - t0) * 1000
 
             # Hallucination guard — Whisper echoes the initial prompt on quiet audio.
-            # Pattern 1: single token looping  ("AGNT AGNT AGNT AGNT AGNT AGNT …")
-            #   Threshold >6 — a host legitimately saying a ticker 3-4 times is NOT a loop.
-            #   Real Whisper loops produce 10-20+ repetitions of the same token.
-            # Pattern 2: prompt echo — many *different* ALL-CAPS ticker tokens (full list echoed)
-            #   Requires >=10 words AND >=5 distinct uppercase tokens AND >70% ticker-shaped.
+            #
+            # Pattern 1: single token looping ("AGNT AGNT AGNT AGNT AGNT AGNT …")
+            #   The computer TTS voice legitimately repeats tickers many times, so we must
+            #   distinguish a real repeated ticker from a Whisper hallucination loop.
+            #   Rule: if the most-repeated word is a known valid ticker, allow up to 20
+            #   repetitions (computer voice). Otherwise flag as a loop at >6 reps.
+            #
+            # Pattern 2: prompt echo — many *different* ALL-CAPS ticker tokens echoed at once.
+            #   Raised unique-ticker threshold from 5 → 8 so a real ticker-list read by the
+            #   computer voice (e.g. 5-6 different tickers in one chunk) is not silenced.
             if text:
-                _words  = text.split()
-                _is_loop = max((_words.count(w) for w in set(_words)), default=0) > 6
-                _upper   = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
+                _words        = text.split()
+                _most_rep     = max(set(_words), key=_words.count) if _words else ""
+                _rep_count    = _words.count(_most_rep) if _most_rep else 0
+                _is_known_ticker = _most_rep.upper() in _VALID_TICKERS
+                # Real Whisper loops: >6 repeats of a non-ticker word, or >20 of anything
+                _is_loop = (_rep_count > 6 and not _is_known_ticker) or _rep_count > 20
+                _upper        = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
                 _unique_upper = len(set(_upper))
+                # Echo guard: needs >=8 distinct uppercase tokens (raised from 5) to avoid
+                # silencing a legitimate list of 5-6 tickers from the computer voice
                 _is_echo = (len(_words) >= 10
-                            and _unique_upper >= 5
+                            and _unique_upper >= 8
                             and len(_upper) / len(_words) > 0.70)
                 if _is_loop or _is_echo:
                     print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)

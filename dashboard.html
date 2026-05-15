@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=35" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=36" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -520,7 +520,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=30"></script>
+        <script type="module" src="/static/js/app.js?v=31"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
@@ -533,6 +533,9 @@
                 if (!track) return;
 
                 const tagLabels = { info: "INFO", tip: "TIP", alert: "ALERT" };
+
+                let _serverItems  = [];   // last items fetched from the JSON feed
+                let _copiedTickers = [];  // tickers added via the Copy button today
 
                 function buildHTML(items) {
                     return items
@@ -551,28 +554,43 @@
                         .join("");
                 }
 
+                function _rebuild() {
+                    // Prepend copied-tickers alert when any have been copied today
+                    const allItems = _copiedTickers.length
+                        ? [{ type: "alert", text: "Brasfield momentum selection: " + _copiedTickers.join(" · ") },
+                           ..._serverItems]
+                        : _serverItems;
+                    if (!allItems.length) return;
+
+                    track.style.animation = "none";
+                    track.innerHTML = buildHTML(allItems) + buildHTML(allItems);
+
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            const halfW = track.scrollWidth / 2;
+                            const duration = Math.max(
+                                10,
+                                Math.round(halfW / SPEED_PX),
+                            );
+                            track.style.animation = `ticker-scroll ${duration}s linear infinite`;
+                        });
+                    });
+                }
+
+                // Global hook — called by tickers.js whenever a ticker is copied
+                window.__feedUpdateCopied = function (tickers) {
+                    _copiedTickers = tickers || [];
+                    _rebuild();
+                };
+
                 async function load() {
                     try {
                         const res = await fetch(FEED_URL + "?t=" + Date.now());
                         if (!res.ok) return;
                         const items = await res.json();
                         if (!items || !items.length) return;
-
-                        // Stop existing animation, repopulate, restart
-                        track.style.animation = "none";
-                        track.innerHTML = buildHTML(items) + buildHTML(items); // doubled for seamless loop
-
-                        // Let the browser measure, then kick off scroll
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(() => {
-                                const halfW = track.scrollWidth / 2;
-                                const duration = Math.max(
-                                    10,
-                                    Math.round(halfW / SPEED_PX),
-                                );
-                                track.style.animation = `ticker-scroll ${duration}s linear infinite`;
-                            });
-                        });
+                        _serverItems = items;
+                        _rebuild();
                     } catch (e) {
                         console.warn("[ticker]", e);
                     }

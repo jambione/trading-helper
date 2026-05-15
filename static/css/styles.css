@@ -291,8 +291,10 @@ body.hosted .main-grid               { grid-template-columns: 210px 6px 1fr; }
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
+body.hosted .btn-copy                { display: none; }
 body.hosted .btn-delete              { display: none; }
 body.hosted.user-jmb .btn-add       { display: inline-flex; }
+body.hosted.user-jmb .btn-copy      { display: inline-flex; }
 .jmb-download                        { display: none; }
 body.user-jmb .jmb-download          { display: inline-flex; }
 

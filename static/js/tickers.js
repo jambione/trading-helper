@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=30';
-import { api } from './api.js?v=30';
+import { subscribe, selectTicker, get } from './store.js?v=31';
+import { api } from './api.js?v=31';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -16,6 +16,37 @@ let _sortCol    = 'price';
 let _sortDir    = 1;      // 1 = ascending, -1 = descending
 let _headerEls  = {};     // col key → th element
 let _lastRows   = [];     // last received rows (for re-render on sort change)
+
+// ── Copied-ticker feed tracking ────────────────────────────────
+const _COPY_DATE_KEY    = 'ss:copied-date';
+const _COPY_TICKERS_KEY = 'ss:copied-tickers';
+let _copiedTickers = [];
+
+function _loadCopiedTickers() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (localStorage.getItem(_COPY_DATE_KEY) === today) {
+    try { _copiedTickers = JSON.parse(localStorage.getItem(_COPY_TICKERS_KEY) || '[]'); } catch { _copiedTickers = []; }
+  } else {
+    // New day — reset
+    _copiedTickers = [];
+    localStorage.setItem(_COPY_DATE_KEY, today);
+    localStorage.setItem(_COPY_TICKERS_KEY, '[]');
+  }
+  _pushToFeed();
+}
+
+function _pushToFeed() {
+  if (typeof window.__feedUpdateCopied === 'function') {
+    window.__feedUpdateCopied([..._copiedTickers]);
+  }
+}
+
+export function clearCopiedTickers() {
+  _copiedTickers = [];
+  localStorage.removeItem(_COPY_DATE_KEY);
+  localStorage.removeItem(_COPY_TICKERS_KEY);
+  _pushToFeed();
+}
 
 export function init(panelEl) {
   _rowsEl  = panelEl.querySelector('[data-ticker-rows]');
@@ -40,6 +71,8 @@ export function init(panelEl) {
 
   subscribe('tickers',        rows   => _renderTable(rows));
   subscribe('selectedTicker', ticker => _highlightSelected(ticker));
+
+  _loadCopiedTickers();
 }
 
 // ── Sort helpers ───────────────────────────────────────────────
@@ -201,6 +234,14 @@ async function _removeTicker(ticker) {
 async function _copyTicker(btn, ticker) {
   try {
     await navigator.clipboard.writeText(ticker);
+    // Append to today's copied list (deduplicated, order preserved)
+    if (!_copiedTickers.includes(ticker)) {
+      _copiedTickers.push(ticker);
+      const today = new Date().toISOString().slice(0, 10);
+      localStorage.setItem(_COPY_DATE_KEY, today);
+      localStorage.setItem(_COPY_TICKERS_KEY, JSON.stringify(_copiedTickers));
+      _pushToFeed();
+    }
     btn.textContent = '✓';
     setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
   } catch {
