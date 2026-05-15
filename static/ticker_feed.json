@@ -7,21 +7,20 @@
     "type": "tip",
     "text": "7am is when momentum starts picking up, and tapers off at 10am"
   },
-  { "type": "alert", "text": "SpaceX IPO coming soon!" },
+  {
+    "type": "info",
+    "text": "Ask me how to make this site work better for you.  Send a note above"
+  },
   {
     "type": "tip",
-    "text": "SHORT SQUEEZE WATCH: LNKS - MNTS - LTRN"
+    "text": "SHORT SQUEEZE WATCH: LNKS - INMB - SEGG - ATER - MOBX"
   },
   {
     "type": "info",
     "text": "Stocks listed are real-time momentum stocks that are moving right now!"
   },
   {
-    "type": "alert",
-    "text": "Cerebras (CBRS) IPO today  — usually around 11am"
-  },
-  {
     "type": "info",
-    "text": "Since our beginng we have suggestion a 300% returns, yesterday 825% on TDIC.  Lests see what we suggest today!"
+    "text": "Alerts notify you of fast moving hot stocks.  Red alerts and sounds draw let you know to take notice!"
   }
 ]
