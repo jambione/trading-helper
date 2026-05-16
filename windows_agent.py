@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
@@ -41,10 +42,35 @@ VERSION = "1.0.0"
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_WINDOWS = sys.platform == "win32"
 
-# ── Config — edit these ───────────────────────────────────────────────────────
+# ── .env loader ───────────────────────────────────────────────────────────────
+def _load_env(path: Path):
+    """
+    Read KEY=VALUE pairs from a .env file into os.environ.
+    Existing environment variables always take precedence.
+    Supports plain, "double-quoted", and 'single-quoted' values.
+    Lines starting with # are ignored.
+    """
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if (val.startswith('"') and val.endswith('"')) or \
+           (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+_load_env(Path(__file__).parent / ".env")
+
+# ── Config — set values in .env (see .env.example) ───────────────────────────
 DASHBOARD_URL  = os.environ.get("DASHBOARD_URL",  "https://trading.jbrasfield.com")
-DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")   # your login username
-DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")   # your login password
+DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
+DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
 POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds between polls
 
 # ── Token — managed automatically, do not edit ────────────────────────────────

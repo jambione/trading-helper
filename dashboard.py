@@ -1145,9 +1145,14 @@ Setup
 1. Install Python 3.9+ (https://python.org) if not already installed.
 2. Install dependencies:
        pip install -r requirements.txt
-3. Edit windows_agent.py — fill in DASHBOARD_USER and DASHBOARD_PASS.
+3. Copy .env.example to .env and fill in your values:
+       DASHBOARD_URL   — your hosted dashboard URL
+       DASHBOARD_USER  — matches dashboard_user in secrets.json (if auth enabled)
+       DASHBOARD_PASS  — matches dashboard_pass in secrets.json (if auth enabled)
 4. Double-click windows_agent.bat  (or run: python windows_agent.py)
    The agent polls the dashboard and auto-adds tickers on every alert.
+
+Note: auth is disabled by default. Leave USER/PASS blank until you enable it.
 """
 
     REQUIREMENTS = "pyautogui\npygetwindow\npywin32\n"
@@ -1161,6 +1166,10 @@ Setup
         bat_path = base / "windows_agent.bat"
         if bat_path.exists():
             zf.write(bat_path, f"{folder}/windows_agent.bat")
+
+        env_example = base / "wb_tv_agent_env_example.txt"
+        if env_example.exists():
+            zf.write(env_example, f"{folder}/.env.example")
 
         zf.writestr(f"{folder}/requirements.txt", REQUIREMENTS)
         zf.writestr(f"{folder}/README.txt", README)
