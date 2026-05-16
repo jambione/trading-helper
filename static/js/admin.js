@@ -66,16 +66,37 @@ async function _loadFeedback() {
     }
     const sorted = [...suggestions].reverse();
     el.innerHTML = sorted.map(s => {
-      const ts = s.timestamp ? s.timestamp.replace('T', ' ').slice(0, 19) : '—';
-      const ip = s.ip || '—';
-      return `<div class="suggestion-card">
+      const ts  = s.timestamp ? s.timestamp.replace('T', ' ').slice(0, 19) : '—';
+      const ip  = s.ip || '—';
+      const key = _esc(s.timestamp || '');
+      return `<div class="suggestion-card" data-ts="${key}">
         <div class="suggestion-msg">${_esc(s.message)}</div>
         <div class="suggestion-meta">
           <span class="suggestion-ts">${_esc(ts)}</span>
           <span>${_esc(ip)}</span>
+          <button class="btn-feed-del suggestion-del-btn" data-del-ts="${key}" title="Delete">✕</button>
         </div>
       </div>`;
     }).join('');
+
+    // Wire delete buttons
+    el.querySelectorAll('[data-del-ts]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ts = btn.dataset.delTs;
+        btn.disabled = true;
+        btn.textContent = '…';
+        try {
+          await api.deleteSuggestion(ts);
+          btn.closest('.suggestion-card')?.remove();
+          if (!el.querySelector('.suggestion-card')) {
+            el.innerHTML = '<div class="suggestions-empty">No feedback yet.</div>';
+          }
+        } catch {
+          btn.disabled = false;
+          btn.textContent = '✕';
+        }
+      });
+    });
   } catch {
     el.innerHTML = '<div class="suggestions-empty">Failed to load.</div>';
   }

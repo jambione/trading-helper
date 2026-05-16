@@ -122,8 +122,9 @@ export const api = {
   addToTV:         ticker   => request('POST', '/api/tickers/add-tv',    { ticker }),
   addToWBAndTV:    ticker   => request('POST', '/api/tickers/add-wb-tv', { ticker }),
   loginLog:        ()       => request('GET',  '/api/login-log'),
-  addSuggestion:   msg      => request('POST', '/api/suggestions', { message: msg }),
-  getSuggestions:  ()       => request('GET',  '/api/suggestions'),
+  addSuggestion:    msg       => request('POST',   '/api/suggestions', { message: msg }),
+  getSuggestions:   ()        => request('GET',    '/api/suggestions'),
+  deleteSuggestion: timestamp => request('DELETE', '/api/suggestions', { timestamp }),
   getTickerFeed:   ()       => request('GET',  '/api/ticker-feed'),
   saveTickerFeed:  items    => request('POST', '/api/ticker-feed', { items }),
 };

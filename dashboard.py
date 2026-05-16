@@ -161,6 +161,18 @@ def save_suggestion(message: str, ip: str, ua: str):
     SUGGESTIONS_FILE.write_text(_json.dumps(items, indent=2), encoding="utf-8")
 
 
+def delete_suggestion(timestamp: str) -> bool:
+    """Remove the suggestion matching the given timestamp. Returns True if found."""
+    import json as _json
+    items = load_suggestions()
+    before = len(items)
+    items = [s for s in items if s.get("timestamp") != timestamp]
+    if len(items) == before:
+        return False  # nothing removed
+    SUGGESTIONS_FILE.write_text(_json.dumps(items, indent=2), encoding="utf-8")
+    return True
+
+
 # ── Mention tracking ──────────────────────────────────────────────────────────
 
 def _track_mention(ticker: str):
@@ -1079,6 +1091,23 @@ async def api_get_suggestions():
     loop  = asyncio.get_running_loop()
     items = await loop.run_in_executor(None, load_suggestions)
     return JSONResponse({"suggestions": items})
+
+
+@app.delete("/api/suggestions")
+async def api_delete_suggestion(request: Request):
+    try:
+        body      = await request.json()
+        timestamp = str(body.get("timestamp", "")).strip()
+        if not timestamp:
+            return JSONResponse({"ok": False, "error": "Missing timestamp"}, status_code=400)
+        loop    = asyncio.get_running_loop()
+        removed = await loop.run_in_executor(None, lambda: delete_suggestion(timestamp))
+        if not removed:
+            return JSONResponse({"ok": False, "error": "Not found"}, status_code=404)
+        log.info(f"[SUGGESTION] deleted entry {timestamp}")
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 # ── Ticker feed (admin read/write) ───────────────────────────────────────────
