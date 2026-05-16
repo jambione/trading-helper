@@ -1115,10 +1115,29 @@ async def api_agent_add_tv(request: Request):
 @app.get("/api/download/signal-engine")
 async def download_signal_engine(request: Request):
     """
-    Package the WB+TV agent (windows_agent.py + launcher bat) into a zip
-    and return it as a download.  Only accessible to user=jmb.
+    Package the WB+TV agent (windows_agent.py + launcher bat + requirements + README)
+    into a zip and return it as a download.  Only accessible to user=jmb.
     """
     base = Path(__file__).parent
+
+    README = """WB+TV Agent
+===========
+Runs on your Windows machine and automates adding tickers to Webull Desktop
+and TradingView when an alert fires on the Brasfield Momentum dashboard.
+
+Setup
+-----
+1. Install Python 3.9+ (https://python.org) if not already installed.
+2. Install dependencies:
+       pip install -r requirements.txt
+3. Double-click windows_agent.bat  (or run: python windows_agent.py)
+   The agent listens on http://localhost:8889
+
+The dashboard's "Auto-Add" toggle (visible to jmb) will call this agent
+automatically whenever a mention-burst or BUY alert fires.
+"""
+
+    REQUIREMENTS = "pyautogui\npygetwindow\npywin32\n"
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1131,6 +1150,12 @@ async def download_signal_engine(request: Request):
         bat_path = base / "windows_agent.bat"
         if bat_path.exists():
             zf.write(bat_path, "wb-tv-agent/windows_agent.bat")
+
+        # Dependencies
+        zf.writestr("wb-tv-agent/requirements.txt", REQUIREMENTS)
+
+        # Setup instructions
+        zf.writestr("wb-tv-agent/README.txt", README)
 
     buf.seek(0)
     return StreamingResponse(
