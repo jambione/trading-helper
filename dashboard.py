@@ -1112,7 +1112,7 @@ async def api_agent_add_tv(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-@app.get("/api/download/signal-engine")
+@app.get("/api/download/wb-tv-agent")
 async def download_signal_engine(request: Request):
     """
     Package the WB+TV agent (windows_agent.py + launcher bat + requirements + README)
