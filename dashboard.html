@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=39" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=40" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -82,6 +82,12 @@
                 >
                     🔔 Alerts
                 </button>
+                <div class="hotkey-anchor">
+                    <button id="hotkey-btn" class="btn btn--ghost" title="Keyboard shortcuts">
+                        ⌨ Keys
+                    </button>
+                    <div id="hotkey-panel" class="hotkey-panel"></div>
+                </div>
                 <button data-settings-btn class="btn btn--ghost">
                     ⚙ Settings<span id="feedback-badge" class="feedback-badge" hidden></span>
                 </button>
@@ -589,7 +595,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=34"></script>
+        <script type="module" src="/static/js/app.js?v=35"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

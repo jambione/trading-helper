@@ -18,6 +18,7 @@ import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=34';
 import { init as initNews }                      from './news.js?v=34';
 import { init as initLeaderboard }               from './leaderboard.js?v=34';
 import { init as initAdmin, open as openAdmin }  from './admin.js?v=34';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=35';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -61,6 +62,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initAdmin(document.querySelector('[data-drawer="admin"]')); }             catch (e) { console.error('[app] initAdmin', e); }
   try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer'), { hosted: !_isLocal }); } catch (e) { console.error('[app] initResizer', e); }
   notifications.init();
+
+  // ── Hotkeys ──────────────────────────────────────────────────
+  try {
+    initHotkeys(
+      document.getElementById('hotkey-panel'),
+      document.getElementById('hotkey-btn'),
+    );
+    // ALT+A — toggle Auto-Add (jmb only; safe to register for all, checkbox won't exist otherwise)
+    registerHotkey('a', 'Toggle Auto-Add', () => {
+      const cb = document.getElementById('auto-add-checkbox');
+      if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
+    });
+    // ALT+N — toggle browser alerts
+    registerHotkey('n', 'Toggle Alerts', () => {
+      document.querySelector('[data-notif-btn]')?.click();
+    });
+    // ALT+S — open Settings
+    registerHotkey('s', 'Open Settings', () => {
+      document.querySelector('[data-settings-btn]')?.click();
+    });
+  } catch (e) { console.error('[app] initHotkeys', e); }
 
   // ── Wire button actions ──────────────────────────────────────
   const txBtn     = document.querySelector('[data-tx-btn]');

@@ -338,6 +338,84 @@ body.user-jmb .jmb-only             { display: inline-flex !important; }
 }
 .auto-add-toggle.is-on .auto-add-label { color: #22c55e; }
 
+/* ── Hotkey reference panel ──────────────────────────────────── */
+.hotkey-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.hotkey-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 260px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: fade-in 0.12s ease;
+}
+
+.hotkey-panel--open { display: block; }
+
+.hotkey-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.hotkey-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.hotkey-table tr + tr td { padding-top: 7px; }
+
+.hotkey-table td:first-child {
+  white-space: nowrap;
+  padding-right: 14px;
+}
+
+.hotkey-kbd {
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-bright);
+  line-height: 1.6;
+}
+
+.hotkey-sep {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0 3px;
+}
+
+.hotkey-label {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.btn--active {
+  background: var(--accent-dim, rgba(56,136,255,0.15)) !important;
+  color: var(--accent, #3888ff) !important;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Admin drawer ────────────────────────────────────────────── */
 /* Reuses the existing .drawer-backdrop / .drawer / .drawer-header
    patterns from the config drawer — only admin-specific overrides here */
