@@ -4,16 +4,16 @@ windows_agent.py — Local Windows agent for Webull + TradingView automation.
 Run this on your Windows machine:
     python windows_agent.py   (or double-click windows_agent.bat)
 
-Listens on http://localhost:8889
-The trading dashboard's Add button POSTs here to automate Webull Desktop
-and TradingView (Brave) locally. Self-contained — no other files needed.
+The agent does two things:
+  1. Watches the Brasfield Momentum dashboard for alerts (mention burst / BUY).
+     When a ticker hits the alert threshold it automatically adds it to
+     Webull Desktop and TradingView — no browser toggle needed.
+  2. Listens on http://localhost:8889 so the dashboard can also trigger it
+     manually via the Add button or Auto-Add toggle.
 
-Endpoints:
-    POST /add-wb        {"ticker": "NVDA"}   → add to Webull Desktop watchlist
-    POST /add-tv        {"ticker": "NVDA"}   → switch to pinned TV tab, load + Alt+W
-    GET  /health        → {"ok": true, "platform": "win32"}
-
-Config (environment variables):
+Config (edit the CONFIG block below, or use environment variables):
+    DASHBOARD_URL   Full URL of your dashboard  (default: https://trading.jbrasfield.com)
+    DASHBOARD_TOKEN Auth token — paste the value of ss:token from browser localStorage
     BRAVE_TV_TAB    Ctrl+N tab number for the pinned TradingView tab (default: 1)
 """
 
@@ -24,14 +24,23 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
+from urllib.request import Request as _UReq, urlopen
+from urllib.error import URLError
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_WINDOWS = sys.platform == "win32"
 
 # ── Config ────────────────────────────────────────────────────────────────────
+# Edit these values directly, or set the matching environment variables.
+
+DASHBOARD_URL   = os.environ.get("DASHBOARD_URL",   "https://trading.jbrasfield.com")
+DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")   # paste ss:token here
+POLL_INTERVAL   = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds between state polls
+
 WB_WINDOW      = "Webull Desktop"
 WB_LAUNCH      = r"C:\Program Files (x86)\Webull Desktop\Webull Desktop.exe"
 LAUNCH_TIMEOUT = 20
@@ -280,7 +289,111 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     return True
 
 
-# ── HTTP handler ──────────────────────────────────────────────────────────────
+# ── Alert listener — polls dashboard and triggers workflow on alerts ──────────
+
+# Tracks previous ticker state so we only fire on rising edges
+_prev_bursts   = {}   # ticker → last known mention_burst bool
+_prev_statuses = {}   # ticker → last known status string
+
+# Cooldown: don't re-fire the same ticker within this many seconds
+_COOLDOWN = 60
+_last_fired: dict[str, float] = {}
+
+# Serialise all workflow calls through a single worker thread so Webull and TV
+# automation never overlap (pyautogui is not thread-safe).
+_work_queue: list[str] = []
+_work_lock  = threading.Lock()
+_work_event = threading.Event()
+
+
+def _enqueue(ticker: str):
+    """Add ticker to the workflow queue (deduplicated within cooldown window)."""
+    now = time.time()
+    if now - _last_fired.get(ticker, 0) < _COOLDOWN:
+        print(f"  ⏱  {ticker} cooldown — skipping")
+        return
+    _last_fired[ticker] = now
+    with _work_lock:
+        if ticker not in _work_queue:
+            _work_queue.append(ticker)
+    _work_event.set()
+
+
+def _worker():
+    """Background thread: drain the queue and run the workflow for each ticker."""
+    while True:
+        _work_event.wait()
+        _work_event.clear()
+        while True:
+            with _work_lock:
+                ticker = _work_queue.pop(0) if _work_queue else None
+            if ticker is None:
+                break
+            print(f"\n🚨 ALERT → {ticker}  running WB+TV workflow…")
+            workflow_add_wb(ticker)
+            time.sleep(0.5)
+            workflow_add_tv(ticker)
+
+
+def _fetch_state() -> dict | None:
+    """Fetch /api/state from the dashboard. Returns parsed JSON or None on error."""
+    url = DASHBOARD_URL.rstrip("/") + "/api/state"
+    headers = {"Accept": "application/json"}
+    if DASHBOARD_TOKEN:
+        headers["Authorization"] = f"Bearer {DASHBOARD_TOKEN}"
+    try:
+        req  = _UReq(url, headers=headers)
+        resp = urlopen(req, timeout=5)
+        return json.loads(resp.read().decode())
+    except URLError as e:
+        print(f"  ⚠️  fetch error: {e.reason}")
+        return None
+    except Exception as e:
+        print(f"  ⚠️  fetch error: {e}")
+        return None
+
+
+def _alert_listener():
+    """
+    Polls the dashboard every POLL_INTERVAL seconds.
+    Fires the WB+TV workflow when:
+      - mention_burst rises from False → True  (rapid mention spike)
+      - status transitions to 'BUY'
+    Same rising-edge logic as notifications.js in the browser.
+    """
+    print(f"👂 Alert listener started — polling {DASHBOARD_URL} every {POLL_INTERVAL}s")
+    if not DASHBOARD_TOKEN:
+        print("  ⚠️  DASHBOARD_TOKEN not set — requests may be rejected if auth is required")
+
+    while True:
+        state = _fetch_state()
+        if state:
+            tickers = state.get("tickers", [])
+            for row in tickers:
+                sym   = row.get("ticker", "")
+                burst = row.get("mention_burst", False)
+                status = row.get("status", "")
+
+                prev_burst  = _prev_bursts.get(sym)
+                prev_status = _prev_statuses.get(sym)
+
+                # Rising edge: mention_burst False → True
+                if burst and prev_burst is False:
+                    print(f"  🔥 Burst detected: {sym}  (mention_window={row.get('mention_window')})")
+                    _enqueue(sym)
+
+                # BUY signal transition
+                if status == "BUY" and prev_status is not None and prev_status != "BUY":
+                    print(f"  📈 BUY signal: {sym}")
+                    _enqueue(sym)
+
+                _prev_bursts[sym]   = burst
+                _prev_statuses[sym] = status
+
+        time.sleep(POLL_INTERVAL)
+
+
+# ── HTTP handler (manual / browser-triggered calls) ───────────────────────────
 
 class AgentHandler(BaseHTTPRequestHandler):
 
@@ -318,9 +431,11 @@ class AgentHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._json(200, {
-                "ok":          True,
-                "platform":    sys.platform,
-                "agent":       "windows_agent",
+                "ok":           True,
+                "platform":     sys.platform,
+                "agent":        "wb-tv-agent",
+                "dashboard_url": DASHBOARD_URL,
+                "polling":      True,
                 "brave_tv_tab": BRAVE_TV_TAB,
             })
         else:
@@ -369,13 +484,28 @@ PORT = 8889
 if __name__ == "__main__":
     if not _IS_WINDOWS:
         print("⚠️  WARNING: Not running on Windows — automation will be dry-run only.")
-    print(f"  Brave TradingView tab: Ctrl+{BRAVE_TV_TAB}  (set BRAVE_TV_TAB env var to change)")
-    # Listen on 0.0.0.0 to handle both localhost and 127.0.0.1 / IPv6 resolution issues
+
+    print(f"\n{'='*54}")
+    print(f"  WB+TV Agent")
+    print(f"{'='*54}")
+    print(f"  Dashboard : {DASHBOARD_URL}")
+    print(f"  Token     : {'set ✓' if DASHBOARD_TOKEN else 'NOT SET — edit DASHBOARD_TOKEN in script'}")
+    print(f"  Poll every: {POLL_INTERVAL}s")
+    print(f"  TV tab    : Ctrl+{BRAVE_TV_TAB}")
+    print(f"{'='*54}\n")
+
+    # Start workflow worker thread
+    threading.Thread(target=_worker, daemon=True, name="worker").start()
+
+    # Start alert listener thread (polls dashboard for bursts / BUY signals)
+    threading.Thread(target=_alert_listener, daemon=True, name="listener").start()
+
+    # Start HTTP server (for manual calls from dashboard Auto-Add toggle)
     server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
-    print(f"✅ Windows local agent running on http://localhost:{PORT}")
+    print(f"✅ HTTP server ready on http://localhost:{PORT}")
+    print(f"   GET  /health  → status")
     print(f"   POST /add-wb  {{\"ticker\": \"NVDA\"}}  → Webull Desktop")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Ctrl+{BRAVE_TV_TAB}, Alt+W)")
-    print(f"   GET  /health  → status")
     print(f"   Press Ctrl+C to stop.\n")
     try:
         server.serve_forever()
