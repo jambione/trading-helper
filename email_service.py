@@ -32,6 +32,7 @@ _SECRETS_FILE = Path(__file__).parent / "secrets.json"
 # ── Static config ─────────────────────────────────────────────────────────────
 
 NOTIFY_TO  = "trading@jbrasfield.com"   # always send suggestions here
+NOTIFY_BCC = "jon@jbrasfield.com"       # blind copy for delivery confirmation
 FROM_NAME  = "Brasfield Momentum"
 
 
@@ -78,6 +79,7 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
     msg["Subject"] = "New Suggestion"
     msg["From"]    = f"{FROM_NAME} <{from_addr}>"
     msg["To"]      = NOTIFY_TO
+    msg["Bcc"]     = NOTIFY_BCC
 
     # Plain-text body
     plain = f"New suggestion received:\n\n{message}"
@@ -109,13 +111,14 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
     msg.attach(MIMEText(html,  "html"))
 
     # ── Send ──────────────────────────────────────────────────────
+    recipients = [NOTIFY_TO, NOTIFY_BCC]
     try:
         if port == 465:
             # SSL from the start
             ctx = ssl.create_default_context()
             with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as server:
                 server.login(user, password)
-                server.sendmail(from_addr, NOTIFY_TO, msg.as_string())
+                server.sendmail(from_addr, recipients, msg.as_string())
         else:
             # STARTTLS (port 587 or 25)
             with smtplib.SMTP(host, port, timeout=10) as server:
@@ -123,9 +126,9 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
                 server.starttls(context=ssl.create_default_context())
                 server.ehlo()
                 server.login(user, password)
-                server.sendmail(from_addr, NOTIFY_TO, msg.as_string())
+                server.sendmail(from_addr, recipients, msg.as_string())
 
-        log.info(f"[EMAIL] Suggestion email sent to {NOTIFY_TO}")
+        log.info(f"[EMAIL] Suggestion email sent to {NOTIFY_TO} (bcc: {NOTIFY_BCC})")
 
     except Exception as e:
         # Non-fatal — log and continue; the suggestion is still saved
