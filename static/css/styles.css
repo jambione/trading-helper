@@ -338,6 +338,101 @@ body.user-jmb .jmb-only             { display: inline-flex !important; }
 }
 .auto-add-toggle.is-on .auto-add-label { color: #22c55e; }
 
+/* ── Admin drawer ────────────────────────────────────────────── */
+/* Reuses the existing .drawer-backdrop / .drawer / .drawer-header
+   patterns from the config drawer — only admin-specific overrides here */
+
+.feed-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 0 10px;
+}
+.feed-type-select {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.feed-item-input {
+  flex: 1;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 0;
+}
+.feed-item-input:focus { outline: none; border-color: var(--accent); }
+
+.feed-save-status {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 0 6px;
+}
+
+.feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  max-height: calc(100vh - 280px);
+  padding-right: 2px;
+}
+.feed-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.feed-item-type {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.feed-type--info  { background: #1a2f48; color: #7fb3d3; }
+.feed-type--tip   { background: #1c2f1a; color: #7dd87a; }
+.feed-type--alert { background: #2f1a1a; color: #e07070; }
+.feed-item-text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 0;
+  word-break: break-word;
+}
+.feed-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.feed-item-actions button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.feed-item-actions button:hover:not(:disabled) { border-color: var(--border-hi); color: var(--text); }
+.feed-item-actions button:disabled { opacity: 0.3; cursor: default; }
+.btn-feed-del:hover:not(:disabled) { color: #e07070 !important; border-color: #e07070 !important; }
+
 /* ── Mobile — full-width watchlist, no chart ───────────────── */
 @media (max-width: 700px) {
   .main-grid {

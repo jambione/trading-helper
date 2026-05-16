@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken } from './auth.js?v=33';
+import { getToken, getBackendUrl, clearToken } from './auth.js?v=34';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -124,4 +124,6 @@ export const api = {
   loginLog:        ()       => request('GET',  '/api/login-log'),
   addSuggestion:   msg      => request('POST', '/api/suggestions', { message: msg }),
   getSuggestions:  ()       => request('GET',  '/api/suggestions'),
+  getTickerFeed:   ()       => request('GET',  '/api/ticker-feed'),
+  saveTickerFeed:  items    => request('POST', '/api/ticker-feed', { items }),
 };

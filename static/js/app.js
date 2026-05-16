@@ -5,18 +5,19 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=33';
-import { subscribe, set }                        from './store.js?v=33';
-import { init as initTranscription }             from './transcription.js?v=33';
-import { init as initTickers }                   from './tickers.js?v=33';
-import { init as initTradingView }               from './tradingview.js?v=33';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=33';
-import { init as initResizer }                   from './resizer.js?v=33';
-import * as controls                             from './controls.js?v=33';
-import * as notifications                        from './notifications.js?v=33';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=33';
-import { init as initNews }                      from './news.js?v=33';
-import { init as initLeaderboard }               from './leaderboard.js?v=33';
+import { connect, on, api }                      from './api.js?v=34';
+import { subscribe, set }                        from './store.js?v=34';
+import { init as initTranscription }             from './transcription.js?v=34';
+import { init as initTickers }                   from './tickers.js?v=34';
+import { init as initTradingView }               from './tradingview.js?v=34';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=34';
+import { init as initResizer }                   from './resizer.js?v=34';
+import * as controls                             from './controls.js?v=34';
+import * as notifications                        from './notifications.js?v=34';
+import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=34';
+import { init as initNews }                      from './news.js?v=34';
+import { init as initLeaderboard }               from './leaderboard.js?v=34';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=34';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -57,6 +58,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
   }
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
+  try { initAdmin(document.querySelector('[data-drawer="admin"]')); }             catch (e) { console.error('[app] initAdmin', e); }
   try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer'), { hosted: !_isLocal }); } catch (e) { console.error('[app] initResizer', e); }
   notifications.init();
 
@@ -65,6 +67,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const clrWlBtn  = document.querySelector('[data-clear-watchlist-btn]');
   const clrTxBtn  = document.querySelector('[data-clear-transcript-btn]');
   const settBtn   = document.querySelector('[data-settings-btn]');
+  const adminBtn  = document.querySelector('[data-admin-btn]');
   const notifBtn  = document.querySelector('[data-notif-btn]');
   const logoutBtn = document.querySelector('[data-logout-btn]');
 
@@ -72,6 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
+  adminBtn ?.addEventListener('click', openAdmin);
   logoutBtn?.addEventListener('click', logout);
 
   const addInput = document.getElementById('add-ticker-input');
@@ -85,6 +89,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.target.value = e.target.value.toUpperCase();
     e.target.setSelectionRange(pos, pos);
   });
+
+  // ── Admin: ticker feed add-item form ────────────────────────
+  const feedInput  = document.getElementById('feed-item-input');
+  const feedType   = document.getElementById('feed-item-type');
+  const feedAddBtn = document.getElementById('feed-item-add-btn');
+  const _addFeedItem = () => {
+    const text = feedInput?.value.trim();
+    const type = feedType?.value || 'info';
+    if (!text) return;
+    import('./admin.js?v=34').then(m => m.addFeedItem(type, text));
+    if (feedInput) feedInput.value = '';
+  };
+  feedAddBtn?.addEventListener('click', _addFeedItem);
+  feedInput  ?.addEventListener('keydown', e => { if (e.key === 'Enter') _addFeedItem(); });
 
   // ── Feedback badge — check on startup ───────────────────────
   try {

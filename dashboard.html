@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=38" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=39" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -104,6 +104,11 @@
                     "
                 >
                     ⬇ WB+TV Agent
+                </button>
+
+                <!-- Admin button: visible to user=jmb only -->
+                <button data-admin-btn class="btn btn--ghost jmb-only" title="Admin panel">
+                    🛠 Admin
                 </button>
 
                 <!-- Auto-Add toggle: visible to user=jmb only (CSS controlled) -->
@@ -491,6 +496,61 @@
         <!-- /drawer-backdrop -->
 
         <!-- ═══════════════════════════════════════════════════════════
+     ADMIN DRAWER  (user=jmb only)
+════════════════════════════════════════════════════════════════ -->
+        <div class="drawer-backdrop jmb-only" data-drawer="admin">
+            <aside class="drawer">
+                <div class="drawer-header">
+                    <span class="drawer-title">Admin</span>
+                    <div class="tab-bar">
+                        <button class="tab-btn tab-btn--active" data-admin-tab="feedback">Feedback</button>
+                        <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
+                    </div>
+                    <button data-admin-close class="drawer-close-btn" title="Close">✕</button>
+                </div>
+
+                <div class="drawer-body">
+
+                    <!-- ── Tab: Feedback ──────────────────────── -->
+                    <div data-admin-panel="feedback">
+                        <div data-admin-feedback class="suggestions-list">
+                            <div class="suggestions-empty">Loading…</div>
+                        </div>
+                    </div>
+
+                    <!-- ── Tab: Ticker Feed ───────────────────── -->
+                    <div data-admin-panel="ticker-feed" class="hidden">
+
+                        <!-- Add new item -->
+                        <div class="feed-add-row">
+                            <select id="feed-item-type" class="feed-type-select">
+                                <option value="info">INFO</option>
+                                <option value="tip">TIP</option>
+                                <option value="alert">ALERT</option>
+                            </select>
+                            <input
+                                id="feed-item-input"
+                                type="text"
+                                class="feed-item-input"
+                                placeholder="New feed message…"
+                                maxlength="200"
+                                autocomplete="off"
+                            />
+                            <button id="feed-item-add-btn" class="btn btn--primary btn--sm">Add</button>
+                        </div>
+
+                        <!-- Save status -->
+                        <span data-feed-save-status class="feed-save-status" hidden></span>
+
+                        <!-- Current items -->
+                        <div data-feed-list class="feed-list"></div>
+                    </div>
+
+                </div>
+            </aside>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
      SUGGESTION BAR
 ════════════════════════════════════════════════════════════════ -->
         <div class="suggestion-bar">
@@ -529,7 +589,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=33"></script>
+        <script type="module" src="/static/js/app.js?v=34"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

@@ -5,7 +5,7 @@
  * Subscribes to `tickers` (for the known-symbol set) and `transcriber` (for lines).
  */
 
-import { subscribe } from './store.js?v=33';
+import { subscribe } from './store.js?v=34';
 
 let _box = null;                  // scrollable transcript container
 let _known = new Set();           // current watchlist symbols for highlighting

@@ -74,6 +74,7 @@ TICKER_LOG         = Path("transcription/wb_watchlist.json")
 TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 NEWS_FILE          = Path("news.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
+TICKER_FEED_FILE   = Path("static/ticker_feed.json")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -1074,6 +1075,42 @@ async def api_get_suggestions():
     loop  = asyncio.get_running_loop()
     items = await loop.run_in_executor(None, load_suggestions)
     return JSONResponse({"suggestions": items})
+
+
+# ── Ticker feed (admin read/write) ───────────────────────────────────────────
+
+@app.get("/api/ticker-feed")
+async def api_get_ticker_feed():
+    """Return current ticker feed items from ticker_feed.json."""
+    try:
+        items = json.loads(TICKER_FEED_FILE.read_text(encoding="utf-8")) if TICKER_FEED_FILE.exists() else []
+        return JSONResponse({"items": items})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/ticker-feed")
+async def api_save_ticker_feed(request: Request):
+    """Overwrite ticker_feed.json with the posted items array."""
+    try:
+        body  = await request.json()
+        items = body.get("items", [])
+        # Validate: each item must have type and text strings
+        allowed_types = {"info", "tip", "alert"}
+        sanitised = []
+        for item in items:
+            t = str(item.get("type", "info")).lower()
+            if t not in allowed_types:
+                t = "info"
+            sanitised.append({"type": t, "text": str(item.get("text", "")).strip()})
+        sanitised = [i for i in sanitised if i["text"]]  # drop blank entries
+        TICKER_FEED_FILE.write_text(
+            json.dumps(sanitised, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return JSONResponse({"ok": True, "count": len(sanitised)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 # ── Windows Agent proxy (forward requests from remote dashboard to local agent) ──

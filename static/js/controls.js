@@ -5,9 +5,9 @@
  * Buttons are always re-enabled in finally blocks regardless of outcome.
  */
 
-import { api } from './api.js?v=33';
-import { get, selectTicker } from './store.js?v=33';
-import { clearCopiedTickers } from './tickers.js?v=33';
+import { api } from './api.js?v=34';
+import { get, selectTicker } from './store.js?v=34';
+import { clearCopiedTickers } from './tickers.js?v=34';
 
 export async function toggleTranscriber(btnEl) {
   const running = get('transcriber').running;
