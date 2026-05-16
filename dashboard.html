@@ -87,7 +87,7 @@
                 </button>
                 <button
                     class="btn btn--ghost jmb-download"
-                    title="Download signal engine package"
+                    title="Download WB+TV agent package"
                     onclick="
                         (function () {
                             const t = localStorage.getItem('ss:token') || '';
@@ -96,14 +96,14 @@
                                 (t ? '&token=' + encodeURIComponent(t) : '');
                             const a = document.createElement('a');
                             a.href = u;
-                            a.download = 'signal-engine.zip';
+                            a.download = 'wb-tv-agent.zip';
                             document.body.appendChild(a);
                             a.click();
                             document.body.removeChild(a);
                         })()
                     "
                 >
-                    ⬇ Signal Engine
+                    ⬇ WB+TV Agent
                 </button>
 
                 <!-- Auto-Add toggle: visible to user=jmb only (CSS controlled) -->
