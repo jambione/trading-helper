@@ -8,7 +8,7 @@
  * Creates a new widget instance each time the symbol changes.
  */
 
-import { subscribe, get } from './store.js?v=32';
+import { subscribe, get } from './store.js?v=33';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
@@ -22,10 +22,7 @@ export function init(panelEl) {
   _widgetWrap  = panelEl.querySelector('[data-tv-widget]');
   _symbolEl    = panelEl.querySelector('[data-tv-symbol]');
 
-  console.log('[tv] init — panel:', !!panelEl, 'placeholder:', !!_placeholder, 'wrap:', !!_widgetWrap);
-
   subscribe('selectedTicker', ticker => {
-    console.log('[tv] selectedTicker →', ticker, '(current:', _current, ')');
     if (ticker && ticker !== _current) {
       _current = ticker;
       _loadChart(ticker);
@@ -36,8 +33,6 @@ export function init(panelEl) {
 // ── Chart loading ──────────────────────────────────────────────
 
 function _loadChart(symbol) {
-  console.log('[tv] _loadChart', symbol, '— window.TradingView:', !!window.TradingView);
-
   if (_symbolEl) {
     _symbolEl.textContent   = symbol;
     _symbolEl.style.display = '';
@@ -53,13 +48,12 @@ function _loadChart(symbol) {
   if (window.TradingView) {
     _createWidget(containerId, symbol);
   } else {
-    console.warn('[tv] tv.js not ready — polling…');
+    // tv.js not yet loaded — poll until ready (up to 10s)
     let waited = 0;
     const poll = setInterval(() => {
       waited += 100;
       if (window.TradingView) {
         clearInterval(poll);
-        console.log('[tv] tv.js ready after', waited, 'ms');
         _createWidget(containerId, symbol);
       } else if (waited >= 10000) {
         clearInterval(poll);
@@ -72,8 +66,6 @@ function _loadChart(symbol) {
 }
 
 function _createWidget(containerId, symbol) {
-  console.log('[tv] _createWidget', symbol);
-
   const widgetOpts = {
     autosize:            true,
     symbol,
@@ -98,7 +90,6 @@ function _createWidget(containerId, symbol) {
 
   try {
     new window.TradingView.widget(widgetOpts);
-    console.log('[tv] widget created for', symbol);
   } catch (err) {
     console.error('[tv] widget creation failed:', err);
   }

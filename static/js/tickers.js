@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=32';
-import { api } from './api.js?v=32';
+import { subscribe, selectTicker, get } from './store.js?v=33';
+import { api } from './api.js?v=33';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -247,41 +247,6 @@ async function _copyTicker(btn, ticker) {
   } catch {
     btn.textContent = '!';
     setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-  }
-}
-
-async function _addToWBAndTV(btn, ticker) {
-  btn.disabled = true;
-  btn.textContent = '...';
-  try {
-    // Step 1: save ticker to server watchlist
-    await api.addTicker(ticker);
-
-    // Steps 2 & 3: call the local Windows agent for Webull and TradingView.
-    // The agent runs on localhost:8889 — if it's not running, skip silently.
-    // Use 127.0.0.1 instead of localhost for more consistent Private Network Access behavior.
-    const _agentPost = async (endpoint) => {
-      try {
-        const resp = await fetch(`http://127.0.0.1:8889${endpoint}`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ ticker }),
-          signal:  AbortSignal.timeout(5000),
-        });
-        if (!resp.ok) console.warn(`[agent] ${endpoint} returned`, resp.status);
-      } catch {
-        // Agent not running — skip silently
-      }
-    };
-
-    await _agentPost('/add-wb');  // Webull Desktop: Ctrl+2, type ticker, Enter
-    await _agentPost('/add-tv');  // Brave TradingView: pinned tab, type, Enter, Alt+W
-
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
-  } catch {
-    btn.textContent = '!';
-    setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
   }
 }
 
