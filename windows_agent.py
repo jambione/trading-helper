@@ -11,10 +11,14 @@ The agent does two things:
   2. Listens on http://localhost:8889 so the dashboard can also trigger it
      manually via the Add button or Auto-Add toggle.
 
-Config (edit the CONFIG block below, or use environment variables):
-    DASHBOARD_URL   Full URL of your dashboard  (default: https://trading.jbrasfield.com)
-    DASHBOARD_TOKEN Auth token — paste the value of ss:token from browser localStorage
+Config (edit the values below — no environment variables needed):
+    DASHBOARD_URL   Full URL of your dashboard
+    DASHBOARD_USER  Your dashboard login username
+    DASHBOARD_PASS  Your dashboard login password
     BRAVE_TV_TAB    Ctrl+N tab number for the pinned TradingView tab (default: 1)
+
+The agent logs in automatically and refreshes the token before it expires —
+you never need to touch the token manually.
 """
 
 from __future__ import annotations
@@ -31,15 +35,24 @@ from urllib.parse import urlparse
 from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
 
+# ── Version ───────────────────────────────────────────────────────────────────
+VERSION = "1.0.0"
+
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_WINDOWS = sys.platform == "win32"
 
-# ── Config ────────────────────────────────────────────────────────────────────
-# Edit these values directly, or set the matching environment variables.
+# ── Config — edit these ───────────────────────────────────────────────────────
+DASHBOARD_URL  = os.environ.get("DASHBOARD_URL",  "https://trading.jbrasfield.com")
+DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")   # your login username
+DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")   # your login password
+POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds between polls
 
-DASHBOARD_URL   = os.environ.get("DASHBOARD_URL",   "https://trading.jbrasfield.com")
-DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")   # paste ss:token here
-POLL_INTERVAL   = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds between state polls
+# ── Token — managed automatically, do not edit ────────────────────────────────
+_token      = ""          # current JWT, refreshed automatically
+_token_lock = threading.Lock()
+TOKEN_TTL   = 86400       # server issues 24-hour tokens
+REFRESH_BEFORE = 300      # re-login 5 minutes before expiry
+_token_expires_at = 0.0   # unix timestamp when current token expires
 
 WB_WINDOW      = "Webull Desktop"
 WB_LAUNCH      = r"C:\Program Files (x86)\Webull Desktop\Webull Desktop.exe"
@@ -289,6 +302,52 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     return True
 
 
+# ── Auth — auto-login and token refresh ──────────────────────────────────────
+
+def _login() -> bool:
+    """
+    POST to /auth/login with username + password.
+    Stores the returned token and calculates its expiry time.
+    Returns True on success.
+    """
+    global _token, _token_expires_at
+    if not DASHBOARD_USER or not DASHBOARD_PASS:
+        return False  # no credentials configured — skip auth
+    url  = DASHBOARD_URL.rstrip("/") + "/auth/login"
+    body = json.dumps({"username": DASHBOARD_USER, "password": DASHBOARD_PASS}).encode()
+    try:
+        req  = _UReq(url, data=body, headers={"Content-Type": "application/json"})
+        resp = urlopen(req, timeout=10)
+        data = json.loads(resp.read().decode())
+        tok  = data.get("token") or data.get("access_token", "")
+        if tok:
+            with _token_lock:
+                _token            = tok
+                _token_expires_at = time.time() + TOKEN_TTL
+            print("  🔑 Logged in — token valid for 24 h")
+            return True
+        print(f"  ⚠️  Login response had no token: {data}")
+        return False
+    except Exception as e:
+        print(f"  ⚠️  Login failed: {e}")
+        return False
+
+
+def _ensure_token():
+    """Re-login if the token is missing or about to expire."""
+    with _token_lock:
+        expires = _token_expires_at
+        has_tok = bool(_token)
+    if not has_tok or time.time() >= expires - REFRESH_BEFORE:
+        _login()
+
+
+def _auth_header() -> dict:
+    with _token_lock:
+        tok = _token
+    return {"Authorization": f"Bearer {tok}"} if tok else {}
+
+
 # ── Alert listener — polls dashboard and triggers workflow on alerts ──────────
 
 # Tracks previous ticker state so we only fire on rising edges
@@ -337,10 +396,9 @@ def _worker():
 
 def _fetch_state() -> dict | None:
     """Fetch /api/state from the dashboard. Returns parsed JSON or None on error."""
-    url = DASHBOARD_URL.rstrip("/") + "/api/state"
-    headers = {"Accept": "application/json"}
-    if DASHBOARD_TOKEN:
-        headers["Authorization"] = f"Bearer {DASHBOARD_TOKEN}"
+    _ensure_token()
+    url     = DASHBOARD_URL.rstrip("/") + "/api/state"
+    headers = {"Accept": "application/json", **_auth_header()}
     try:
         req  = _UReq(url, headers=headers)
         resp = urlopen(req, timeout=5)
@@ -431,12 +489,13 @@ class AgentHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._json(200, {
-                "ok":           True,
-                "platform":     sys.platform,
-                "agent":        "wb-tv-agent",
+                "ok":            True,
+                "agent":         "wb-tv-agent",
+                "version":       VERSION,
+                "platform":      sys.platform,
                 "dashboard_url": DASHBOARD_URL,
-                "polling":      True,
-                "brave_tv_tab": BRAVE_TV_TAB,
+                "polling":       True,
+                "brave_tv_tab":  BRAVE_TV_TAB,
             })
         else:
             self._json(404, {"error": "not found"})
@@ -486,13 +545,18 @@ if __name__ == "__main__":
         print("⚠️  WARNING: Not running on Windows — automation will be dry-run only.")
 
     print(f"\n{'='*54}")
-    print(f"  WB+TV Agent")
+    print(f"  WB+TV Agent  v{VERSION}")
     print(f"{'='*54}")
     print(f"  Dashboard : {DASHBOARD_URL}")
-    print(f"  Token     : {'set ✓' if DASHBOARD_TOKEN else 'NOT SET — edit DASHBOARD_TOKEN in script'}")
+    print(f"  User      : {DASHBOARD_USER or 'NOT SET — edit DASHBOARD_USER in script'}")
+    print(f"  Password  : {'set ✓' if DASHBOARD_PASS else 'NOT SET — edit DASHBOARD_PASS in script'}")
     print(f"  Poll every: {POLL_INTERVAL}s")
     print(f"  TV tab    : Ctrl+{BRAVE_TV_TAB}")
     print(f"{'='*54}\n")
+
+    # Log in immediately on startup so the listener has a token ready
+    if DASHBOARD_USER and DASHBOARD_PASS:
+        _login()
 
     # Start workflow worker thread
     threading.Thread(target=_worker, daemon=True, name="worker").start()

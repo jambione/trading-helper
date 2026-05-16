@@ -1112,16 +1112,31 @@ async def api_agent_add_tv(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+def _agent_version() -> str:
+    """Read the VERSION constant out of windows_agent.py — single source of truth."""
+    try:
+        src = (Path(__file__).parent / "windows_agent.py").read_text(encoding="utf-8")
+        for line in src.splitlines():
+            if line.startswith("VERSION"):
+                return line.split('"')[1]
+    except Exception:
+        pass
+    return "0.0.0"
+
+
 @app.get("/api/download/wb-tv-agent")
-async def download_signal_engine(request: Request):
+async def download_wb_tv_agent(request: Request):
     """
     Package the WB+TV agent (windows_agent.py + launcher bat + requirements + README)
-    into a zip and return it as a download.  Only accessible to user=jmb.
+    into a versioned zip and return it as a download.  Only accessible to user=jmb.
     """
-    base = Path(__file__).parent
+    base    = Path(__file__).parent
+    version = _agent_version()
+    folder  = "wb-tv-agent"
+    fname   = f"wb-tv-agent-v{version}.zip"
 
-    README = """WB+TV Agent
-===========
+    README = f"""WB+TV Agent  v{version}
+{'=' * (14 + len(version))}
 Runs on your Windows machine and automates adding tickers to Webull Desktop
 and TradingView when an alert fires on the Brasfield Momentum dashboard.
 
@@ -1130,38 +1145,31 @@ Setup
 1. Install Python 3.9+ (https://python.org) if not already installed.
 2. Install dependencies:
        pip install -r requirements.txt
-3. Double-click windows_agent.bat  (or run: python windows_agent.py)
-   The agent listens on http://localhost:8889
-
-The dashboard's "Auto-Add" toggle (visible to jmb) will call this agent
-automatically whenever a mention-burst or BUY alert fires.
+3. Edit windows_agent.py — fill in DASHBOARD_USER and DASHBOARD_PASS.
+4. Double-click windows_agent.bat  (or run: python windows_agent.py)
+   The agent polls the dashboard and auto-adds tickers on every alert.
 """
 
     REQUIREMENTS = "pyautogui\npygetwindow\npywin32\n"
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # Main agent script
         agent_path = base / "windows_agent.py"
         if agent_path.exists():
-            zf.write(agent_path, "wb-tv-agent/windows_agent.py")
+            zf.write(agent_path, f"{folder}/windows_agent.py")
 
-        # Launcher bat
         bat_path = base / "windows_agent.bat"
         if bat_path.exists():
-            zf.write(bat_path, "wb-tv-agent/windows_agent.bat")
+            zf.write(bat_path, f"{folder}/windows_agent.bat")
 
-        # Dependencies
-        zf.writestr("wb-tv-agent/requirements.txt", REQUIREMENTS)
-
-        # Setup instructions
-        zf.writestr("wb-tv-agent/README.txt", README)
+        zf.writestr(f"{folder}/requirements.txt", REQUIREMENTS)
+        zf.writestr(f"{folder}/README.txt", README)
 
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=wb-tv-agent.zip"},
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
 
 
