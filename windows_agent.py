@@ -78,6 +78,13 @@ _token      = ""          # current JWT, refreshed automatically
 _token_lock = threading.Lock()
 TOKEN_TTL   = 86400       # server issues 24-hour tokens
 REFRESH_BEFORE = 300      # re-login 5 minutes before expiry
+
+# Browser-like User-Agent so Cloudflare doesn't block the requests with 403
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 _token_expires_at = 0.0   # unix timestamp when current token expires
 
 WB_WINDOW      = "Webull Desktop"
@@ -342,7 +349,7 @@ def _login() -> bool:
     url  = DASHBOARD_URL.rstrip("/") + "/auth/login"
     body = json.dumps({"username": DASHBOARD_USER, "password": DASHBOARD_PASS}).encode()
     try:
-        req  = _UReq(url, data=body, headers={"Content-Type": "application/json"})
+        req  = _UReq(url, data=body, headers={"Content-Type": "application/json", "User-Agent": _UA})
         resp = urlopen(req, timeout=10)
         data = json.loads(resp.read().decode())
         tok  = data.get("token") or data.get("access_token", "")
@@ -424,7 +431,7 @@ def _fetch_state() -> dict | None:
     """Fetch /api/state from the dashboard. Returns parsed JSON or None on error."""
     _ensure_token()
     url     = DASHBOARD_URL.rstrip("/") + "/api/state"
-    headers = {"Accept": "application/json", **_auth_header()}
+    headers = {"Accept": "application/json", "User-Agent": _UA, **_auth_header()}
     try:
         req  = _UReq(url, headers=headers)
         resp = urlopen(req, timeout=5)
