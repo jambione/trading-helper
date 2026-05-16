@@ -7,6 +7,7 @@ Ties together transcription, real-time prices, and signals.
 
 import asyncio
 import io
+import json
 import logging
 import os
 import re

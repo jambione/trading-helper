@@ -162,6 +162,7 @@ function _beep(type = 'buy') {
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.type = 'sine';
+    osc.addEventListener('ended', () => ctx.close());
 
     if (type === 'burst') {
       // Three rapid high pulses — urgent but distinct from BUY

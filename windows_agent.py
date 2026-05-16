@@ -446,8 +446,8 @@ def _alert_listener():
     Same rising-edge logic as notifications.js in the browser.
     """
     print(f"👂 Alert listener started — polling {DASHBOARD_URL} every {POLL_INTERVAL}s")
-    if not DASHBOARD_TOKEN:
-        print("  ⚠️  DASHBOARD_TOKEN not set — requests may be rejected if auth is required")
+    if not DASHBOARD_USER:
+        print("  ⚠️  DASHBOARD_USER not set — requests may be rejected if auth is required")
 
     while True:
         state = _fetch_state()
