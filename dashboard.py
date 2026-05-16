@@ -6,6 +6,7 @@ Ties together transcription, real-time prices, and signals.
 """
 
 import asyncio
+import io
 import logging
 import os
 import re
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -43,7 +45,7 @@ _free_port(8888)
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _SJSONResponse
@@ -1108,6 +1110,59 @@ async def api_agent_add_tv(request: Request):
             return JSONResponse(resp.json(), status_code=resp.status_code)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/download/signal-engine")
+async def download_signal_engine(request: Request):
+    """
+    Package the Windows agent (windows_agent.py + launcher bat + requirements + README)
+    into a zip and return it as a download.  Only accessible to user=jmb.
+    """
+    base = Path(__file__).parent
+
+    README = """Signal Engine — Windows Agent
+==============================
+This agent runs on your Windows machine and automates adding tickers
+to Webull Desktop and TradingView when an alert fires on the dashboard.
+
+Setup
+-----
+1. Install Python 3.9+ (https://python.org) if not already installed.
+2. Install dependencies:
+       pip install -r requirements.txt
+3. Double-click windows_agent.bat  (or run: python windows_agent.py)
+   The agent listens on http://localhost:8889
+
+The dashboard's "Auto-Add" toggle (visible to jmb) will call this agent
+automatically whenever a mention-burst or BUY alert fires.
+"""
+
+    REQUIREMENTS = "pyautogui\npygetwindow\npywin32\n"
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Main agent script
+        agent_path = base / "windows_agent.py"
+        if agent_path.exists():
+            zf.write(agent_path, "signal-engine/windows_agent.py")
+
+        # Launcher bat
+        bat_path = base / "windows_agent.bat"
+        if bat_path.exists():
+            zf.write(bat_path, "signal-engine/windows_agent.bat")
+
+        # Requirements
+        zf.writestr("signal-engine/requirements.txt", REQUIREMENTS)
+
+        # README
+        zf.writestr("signal-engine/README.txt", README)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=signal-engine.zip"},
+    )
 
 
 @app.websocket("/ws")

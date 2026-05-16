@@ -4,9 +4,13 @@
  * Single responsibility: watch for status transitions to BUY and alert the user
  * via browser Notification API and a short Web Audio beep.
  * Also auto-selects the ticker in TradingView on first BUY transition.
+ *
+ * Auto-Add: when the #auto-add-checkbox toggle is enabled (user=jmb only),
+ * fires a POST to the local Windows agent (port 8889) to add the ticker to
+ * Webull and TradingView on every mention_burst or BUY alert.
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=31';
+import { subscribe, selectTicker, get } from './store.js?v=32';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
@@ -14,8 +18,64 @@ let _enabled = (typeof Notification !== 'undefined' && Notification.permission =
 const _prevStatuses = {};   // ticker → last known status
 const _prevBursts   = {};   // ticker → last known mention_burst bool
 
+// ── Auto-Add toggle state ──────────────────────────────────────
+const _AUTO_ADD_KEY = 'ss:auto-add';
+let _autoAddEl = null;   // checkbox input element
+
+/** Read persisted toggle state and wire up change handler. */
+function _initAutoAdd() {
+  const label = document.getElementById('auto-add-checkbox')?.closest('.auto-add-toggle');
+  _autoAddEl  = document.getElementById('auto-add-checkbox');
+  if (!_autoAddEl) return;
+
+  // Restore persisted state
+  const saved = localStorage.getItem(_AUTO_ADD_KEY) === 'true';
+  _autoAddEl.checked = saved;
+  if (label) label.classList.toggle('is-on', saved);
+
+  _autoAddEl.addEventListener('change', () => {
+    const on = _autoAddEl.checked;
+    localStorage.setItem(_AUTO_ADD_KEY, String(on));
+    if (label) label.classList.toggle('is-on', on);
+  });
+}
+
+/** Returns true when the Auto-Add toggle is switched on. */
+function _autoAddEnabled() {
+  return _autoAddEl?.checked === true;
+}
+
+/**
+ * Fire-and-forget call to the local Windows agent for both Webull and TradingView.
+ * Port 8889, same as the existing _addToWBAndTV helper in tickers.js.
+ * Silently skips if the agent is not running.
+ */
+async function _agentAdd(ticker) {
+  const _post = async (path) => {
+    try {
+      const resp = await fetch(`http://127.0.0.1:8889${path}`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ticker }),
+        signal:  AbortSignal.timeout(5000),
+      });
+      if (!resp.ok) console.warn(`[notifications] agent ${path} returned`, resp.status);
+    } catch {
+      // Agent not running — skip silently
+    }
+  };
+  await _post('/add-wb');
+  await _post('/add-tv');
+}
+
 export function init() {
   subscribe('tickers', _check);
+  // Wire the Auto-Add toggle after DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initAutoAdd);
+  } else {
+    _initAutoAdd();
+  }
 }
 
 /** Request browser notification permission. Returns true if granted. */
@@ -43,12 +103,14 @@ function _check(rows) {
       _beep('buy');
       _notify(row, 'buy');
       if (!currentSelected) selectTicker(row.ticker);
+      if (_autoAddEnabled()) _agentAdd(row.ticker);
     }
 
     // Mention burst alert — only on rising edge (false → true)
     if (row.mention_burst && prevBurst === false) {
       _beep('burst');
       _notifyBurst(row);
+      if (_autoAddEnabled()) _agentAdd(row.ticker);
     }
 
     _prevStatuses[row.ticker] = row.status;

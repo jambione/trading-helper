@@ -298,6 +298,46 @@ body.hosted.user-jmb .btn-copy      { display: inline-flex; }
 .jmb-download                        { display: none; }
 body.user-jmb .jmb-download          { display: inline-flex; }
 
+/* ── jmb-only: hidden unless user=jmb ─────────────────────── */
+.jmb-only                            { display: none !important; }
+body.user-jmb .jmb-only             { display: inline-flex !important; }
+
+/* ── Auto-Add toggle ────────────────────────────────────────── */
+.auto-add-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.auto-add-toggle input[type="checkbox"] { display: none; }
+.auto-add-track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--border);
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.auto-add-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.2s;
+}
+/* JS adds .is-on to the label when checked */
+.auto-add-toggle.is-on .auto-add-track { background: #22c55e; }
+.auto-add-toggle.is-on .auto-add-thumb { left: 18px; }
+.auto-add-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.auto-add-toggle.is-on .auto-add-label { color: #22c55e; }
+
 /* ── Mobile — full-width watchlist, no chart ───────────────── */
 @media (max-width: 700px) {
   .main-grid {
