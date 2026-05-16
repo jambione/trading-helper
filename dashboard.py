@@ -55,6 +55,7 @@ from auth import check_credentials, create_token, verify_token, is_auth_required
 from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
+from email_service import send_suggestion_email
 import alpaca_api as _api
 
 import sys as _sys
@@ -1066,6 +1067,8 @@ async def api_add_suggestion(request: Request):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: save_suggestion(message, ip, ua))
         log.info(f"[SUGGESTION] from {ip}: {message[:60]}")
+        # Fire email non-blocking — failures are logged but never break the response
+        loop.run_in_executor(None, lambda: send_suggestion_email(message, ip, ua))
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
