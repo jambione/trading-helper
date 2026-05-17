@@ -253,9 +253,15 @@ body::after {
 
 /* ── Donation bar ────────────────────────────────────────────── */
 .donate-bar {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
+  padding: 7px 18px;
+  background: rgba(11, 15, 35, 0.40);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 .donate-label {
   font-size: 11px;
@@ -293,6 +299,13 @@ body::after {
   box-shadow: 0 0 16px rgba(255, 196, 57, 0.25);
   transform: translateY(-1px);
 }
+.donate-pill--patreon:hover {
+  color: #ff424d;
+  border-color: rgba(255, 66, 77, 0.55);
+  background: rgba(255, 66, 77, 0.10);
+  box-shadow: 0 0 16px rgba(255, 66, 77, 0.25);
+  transform: translateY(-1px);
+}
 
 @media (max-width: 700px) {
   .hdr {
@@ -303,15 +316,7 @@ body::after {
   }
   .hdr-brand  { flex: 1; min-width: 0; }
   .hdr-actions { flex-shrink: 0; }
-  .hdr-center {
-    order: 3;
-    flex: 0 0 100%;
-    justify-content: flex-start;
-    padding-bottom: 4px;
-  }
   .donate-label { display: none; }
-  .donate-bar { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
-  .donate-pill { flex-shrink: 0; }
 }
 body.mobile .hdr {
   flex-wrap: wrap;
@@ -321,21 +326,36 @@ body.mobile .hdr {
 }
 body.mobile .hdr-brand  { flex: 1; min-width: 0; }
 body.mobile .hdr-actions { flex-shrink: 0; }
-body.mobile .hdr-center {
-  order: 3;
-  flex: 0 0 100%;
-  justify-content: flex-start;
-  padding-bottom: 4px;
-}
 body.mobile .donate-label { display: none; }
-body.mobile .donate-bar { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
-body.mobile .donate-pill { flex-shrink: 0; }
 
 .hdr-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+
+/* Auth UI: hide all auth-related elements when auth is disabled */
+.auth-ui { display: none !important; }
+body.auth-on .auth-ui { display: revert !important; }
+
+/* Admin button: only show when hosted (not localhost) */
+.hosted-only { display: none !important; }
+body.hosted .hosted-only { display: inline-flex !important; }
+/* Beat the higher-specificity jmb-only rule on localhost */
+body.user-jmb:not(.hosted) .hosted-only { display: none !important; }
+
+/* Settings button: hide for remote admin users (they use the Admin drawer instead) */
+body.hosted.user-jmb .admin-settings-hide { display: none !important; }
+
+/* Tools row inside the admin drawer (Keys + WB+TV Agent) */
+.admin-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
 }
 
 /* WebSocket status dot */
@@ -446,6 +466,8 @@ body.user-jmb .jmb-download          { display: inline-flex; }
 body.user-jmb .jmb-only             { display: inline-flex !important; }
 
 /* ── Auto-Add toggle ────────────────────────────────────────── */
+body.mobile .auto-add-toggle { display: none !important; }
+
 .auto-add-toggle {
   display: inline-flex;
   align-items: center;

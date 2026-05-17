@@ -26,12 +26,39 @@
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
-        <!-- Apply hosted/mobile classes instantly (before paint) to prevent layout flash -->
+        <!-- Apply hosted/mobile/admin classes instantly (before paint) to prevent layout flash -->
         <script>
             if (!["localhost", "127.0.0.1", ""].includes(location.hostname))
                 document.body.classList.add("hosted");
-            if (new URLSearchParams(location.search).get("user") === "jmb")
-                document.body.classList.add("user-jmb");
+
+            // Decode the stored JWT to check admin status without a network round-trip.
+            // This runs synchronously so jmb-only elements appear on the first paint,
+            // matching the behaviour of the old ?user=jmb querystring approach.
+            (function () {
+                try {
+                    var token = localStorage.getItem("ss:token") || "";
+                    if (!token) return;
+                    var parts = token.split(".");
+                    if (parts.length !== 3) return;
+                    var p   = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+                    var pad = p.length % 4 ? "=".repeat(4 - p.length % 4) : "";
+                    var payload = JSON.parse(atob(p + pad));
+                    // Token is expired — clear it so the auth gate redirects to login.
+                    if ((payload.exp || 0) <= Date.now() / 1000) {
+                        localStorage.removeItem("ss:token");
+                        return;
+                    }
+                    // Old token format (no "sub" claim) — clear it to force a fresh login
+                    // so the new token with admin/sub claims is issued.
+                    if (!payload.sub) {
+                        localStorage.removeItem("ss:token");
+                        return;
+                    }
+                    if (payload.admin === true)
+                        document.body.classList.add("user-jmb");
+                } catch (e) {}
+            })();
+
             if (
                 window.innerWidth <= 700 ||
                 /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
@@ -54,27 +81,12 @@
                 <div data-ws-dot class="ws-dot" title="Disconnected"></div>
             </div>
 
-            <div class="hdr-center">
-                <span class="donate-bar">
-                    <span class="donate-label">I appreciate your support</span>
-                    <a
-                        href="https://venmo.com/u/Jonathan-Brasfield-2"
-                        target="_blank"
-                        rel="noopener"
-                        class="donate-pill donate-pill--venmo"
-                        >💙 Venmo</a
-                    >
-                    <a
-                        href="https://paypal.me/brasfieldjonathan"
-                        target="_blank"
-                        rel="noopener"
-                        class="donate-pill donate-pill--paypal"
-                        >🅿 PayPal</a
-                    >
-                </span>
-            </div>
-
             <div class="hdr-actions">
+                <!-- Active users count: visible to admins only -->
+                <span id="active-users-badge" class="jmb-only auth-ui" title="Currently active users" style="display:none; align-items:center; gap:4px; font-size:12px; color:var(--text-muted,#94a3b8); padding:0 4px;">
+                    👥 <span id="active-users-count">0</span>
+                </span>
+
                 <button
                     data-notif-btn
                     class="btn btn--ghost"
@@ -82,37 +94,13 @@
                 >
                     🔔 Alerts
                 </button>
-                <div class="hotkey-anchor jmb-only">
-                    <button id="hotkey-btn" class="btn btn--ghost" title="Keyboard shortcuts">
-                        ⌨ Keys
-                    </button>
-                    <div id="hotkey-panel" class="hotkey-panel"></div>
-                </div>
-                <button data-settings-btn class="btn btn--ghost">
+
+                <!-- Settings: shown to everyone on localhost; hidden for remote admins -->
+                <button data-settings-btn class="btn btn--ghost admin-settings-hide">
                     ⚙ Settings<span id="feedback-badge" class="feedback-badge" hidden></span>
                 </button>
-                <button
-                    class="btn btn--ghost jmb-download"
-                    title="Download WB+TV agent package"
-                    onclick="
-                        (function () {
-                            const t = localStorage.getItem('ss:token') || '';
-                            const u =
-                                '/api/download/wb-tv-agent?user=jmb' +
-                                (t ? '&token=' + encodeURIComponent(t) : '');
-                            const a = document.createElement('a');
-                            a.href = u;
-                            a.download = 'wb-tv-agent.zip';
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                        })()
-                    "
-                >
-                    ⬇ WB+TV Agent
-                </button>
 
-                <!-- Admin button: visible to user=jmb only -->
+                <!-- Admin button: visible to all admins -->
                 <button data-admin-btn class="btn btn--ghost jmb-only" title="Admin panel">
                     🛠 Admin
                 </button>
@@ -125,6 +113,10 @@
                     </span>
                     <span class="auto-add-label">Auto-Add</span>
                 </label>
+
+                <button data-logout-btn class="btn btn--ghost btn--danger auth-ui" title="Sign out">
+                    ⏻ Sign Out
+                </button>
             </div>
         </header>
 
@@ -140,6 +132,13 @@
             <div data-leaderboard class="lb-items">
                 <span class="lb-empty">No mentions yet today</span>
             </div>
+        </div>
+
+        <div class="donate-bar">
+            <span class="donate-label">I appreciate your support</span>
+            <a href="https://venmo.com/u/Jonathan-Brasfield-2" target="_blank" rel="noopener" class="donate-pill donate-pill--venmo">💙 Venmo</a>
+            <a href="https://paypal.me/brasfieldjonathan" target="_blank" rel="noopener" class="donate-pill donate-pill--paypal">🅿 PayPal</a>
+            <a href="https://patreon.com/BrasfieldMomentum" target="_blank" rel="noopener" class="donate-pill donate-pill--patreon">🧡 Patreon</a>
         </div>
 
         <main class="main-grid">
@@ -315,6 +314,9 @@
                     <button class="tab-btn" data-tab-btn="history">
                         Feedback
                     </button>
+                    <button class="tab-btn jmb-only auth-ui" data-tab-btn="sessions">
+                        Sessions
+                    </button>
                 </div>
 
                 <div class="drawer-body">
@@ -489,6 +491,19 @@
                             <div class="suggestions-empty">Loading…</div>
                         </div>
                     </div>
+
+                    <!-- ── Tab: Sessions (admin only) ────────────── -->
+                    <div class="tab-panel hidden auth-ui" data-tab-panel="sessions">
+                        <div id="sessions-panel">
+                            <div class="suggestions-empty">Loading…</div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <div class="form-section-label">Login History</div>
+                            <div id="login-log-panel" class="suggestions-list">
+                                <div class="suggestions-empty">Loading…</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <!-- /drawer-body -->
 
@@ -513,6 +528,34 @@
                         <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
                     </div>
                     <button data-admin-close class="btn btn--ghost btn--icon" title="Close">✕</button>
+                </div>
+
+                <!-- Tools row inside admin drawer -->
+                <div class="admin-tools-row">
+                    <div class="hotkey-anchor">
+                        <button id="hotkey-btn" class="btn btn--ghost btn--sm" title="Keyboard shortcuts">
+                            ⌨ Keys
+                        </button>
+                        <div id="hotkey-panel" class="hotkey-panel"></div>
+                    </div>
+                    <button
+                        class="btn btn--ghost btn--sm jmb-download"
+                        title="Download WB+TV agent package"
+                        onclick="
+                            (function () {
+                                const t = localStorage.getItem('ss:token') || '';
+                                const u = '/api/download/wb-tv-agent' + (t ? '?token=' + encodeURIComponent(t) : '');
+                                const a = document.createElement('a');
+                                a.href = u;
+                                a.download = 'wb-tv-agent.zip';
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                            })()
+                        "
+                    >
+                        ⬇ WB+TV Agent
+                    </button>
                 </div>
 
                 <div class="drawer-body">

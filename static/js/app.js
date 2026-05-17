@@ -5,7 +5,7 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=34';
+import { connect, on, api }                      from './api.js?v=35';
 import { subscribe, set }                        from './store.js?v=34';
 import { init as initTranscription }             from './transcription.js?v=34';
 import { init as initTickers }                   from './tickers.js?v=34';
@@ -19,6 +19,7 @@ import { init as initNews }                      from './news.js?v=34';
 import { init as initLeaderboard }               from './leaderboard.js?v=34';
 import { init as initAdmin, open as openAdmin }  from './admin.js?v=34';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=35';
+import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -28,11 +29,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   // hostname is localhost/127.0.0.1 regardless of fetch outcome.
   const _isLocal  = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
   const _isMobile = document.body.classList.contains('mobile');
+
+  // Clear any stale backend URL left over from the old login page field.
+  // Everything now runs on the same origin as the page.
+  localStorage.removeItem('ss:backend-url');
   let authRequired = false;
+  let _isAdmin     = false;
+  let _tokenSent   = false;
   try {
-    const res  = await fetch(getBackendUrl() + '/api/meta');
-    const meta = await res.json();
+    const token = localStorage.getItem('ss:token') || '';
+    _tokenSent  = !!token;
+    // Always fetch /api/meta from the same server that served this page.
+    // Using getBackendUrl() here could point at localhost when logged in remotely
+    // if an old ss:backend-url value is still in localStorage.
+    const res   = await fetch('/api/meta', {
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+    });
+    const meta  = await res.json();
     authRequired = _isLocal ? false : (meta.auth_required ?? false);
+    _isAdmin     = meta.is_admin ?? false;
+    if (meta.auth_required) document.body.classList.add('auth-on');
   } catch {
     // Backend unreachable — localhost is always open; remote requires a token
     authRequired = _isLocal ? false : !isAuthenticated();
@@ -41,6 +57,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (authRequired && !isAuthenticated()) {
     window.location.href = '/login';
     return;
+  }
+
+  // Confirm admin status from the server (the inline script already set user-jmb
+  // before paint via the JWT payload, so this is a no-op in the normal case).
+  if (_isAdmin) {
+    document.body.classList.add('user-jmb');
+  } else if (_tokenSent) {
+    // Server had a valid token and explicitly said not-admin — strip the class.
+    // This handles revoked admin without affecting anonymous or failed fetches.
+    document.body.classList.remove('user-jmb');
   }
 
   // Hosted mode: transcript + settings are localhost-only features.
@@ -61,7 +87,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initConfig(document.querySelector('[data-drawer="config"]')); }           catch (e) { console.error('[app] initConfig', e); }
   try { initAdmin(document.querySelector('[data-drawer="admin"]')); }             catch (e) { console.error('[app] initAdmin', e); }
   try { initResizer(document.querySelector('.main-grid'), document.getElementById('ticker-tv-resizer'), { hosted: !_isLocal }); } catch (e) { console.error('[app] initResizer', e); }
+  try { initSessions(); }                                                          catch (e) { console.error('[app] initSessions', e); }
   notifications.init();
+
+  // ── Refresh sessions when Settings → Sessions tab is opened ──
+  document.querySelector('[data-tab-btn="sessions"]')?.addEventListener('click', () => {
+    try { refreshSessions(); } catch {}
+  });
 
   // ── Hotkeys ──────────────────────────────────────────────────
   try {

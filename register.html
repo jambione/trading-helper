@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signal Scanner — Create Account</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=41" />
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-card">
+
+    <div class="login-brand">
+      <img src="/static/icons/logo.png" class="login-logo-img" alt="Brasfield Momentum">
+      <span>Brasfield Momentum</span>
+    </div>
+
+    <div class="login-fields">
+
+      <div id="reg-error"   class="login-error"></div>
+      <div id="reg-success" class="login-error" style="display:none; background:rgba(0,200,100,.15); color:#4ade80; border-color:#4ade80;"></div>
+
+      <div class="form-group">
+        <label for="backend-url">Backend URL</label>
+        <input id="backend-url" type="url"
+               placeholder="http://localhost:8888"
+               autocomplete="url" spellcheck="false" />
+        <span class="hint">Your local server or Cloudflare tunnel URL</span>
+      </div>
+
+      <div class="form-group">
+        <label for="reg-user">Username</label>
+        <input id="reg-user" type="text"
+               placeholder="Choose a username"
+               autocomplete="username" />
+        <span class="hint">At least 3 characters</span>
+      </div>
+
+      <div class="form-group">
+        <label for="reg-pass">Password</label>
+        <input id="reg-pass" type="password"
+               placeholder="••••••••"
+               autocomplete="new-password" />
+        <span class="hint">At least 6 characters</span>
+      </div>
+
+      <div class="form-group">
+        <label for="reg-pass2">Confirm Password</label>
+        <input id="reg-pass2" type="password"
+               placeholder="••••••••"
+               autocomplete="new-password" />
+      </div>
+
+      <button id="reg-btn" class="btn btn--primary login-submit">Create Account</button>
+
+    </div>
+
+    <p class="login-hint">
+      Already have an account? <a href="/login" style="color: var(--accent, #7dd3fc); text-decoration: none;">Sign in</a>
+    </p>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  const BACKEND_KEY = 'ss:backend-url';
+
+  const urlInput  = document.getElementById('backend-url');
+  const userInput = document.getElementById('reg-user');
+  const passInput = document.getElementById('reg-pass');
+  const pass2Input = document.getElementById('reg-pass2');
+  const btn       = document.getElementById('reg-btn');
+  const errEl     = document.getElementById('reg-error');
+  const okEl      = document.getElementById('reg-success');
+
+  urlInput.value = localStorage.getItem(BACKEND_KEY) || window.location.origin;
+
+  function showError(msg) {
+    okEl.style.display  = 'none';
+    errEl.textContent   = msg;
+    errEl.style.display = 'block';
+  }
+
+  function showSuccess(msg) {
+    errEl.style.display = 'none';
+    okEl.textContent    = msg;
+    okEl.style.display  = 'block';
+  }
+
+  async function register() {
+    errEl.style.display = 'none';
+    okEl.style.display  = 'none';
+
+    const backendUrl = urlInput.value.trim().replace(/\/$/, '');
+    const username   = userInput.value.trim();
+    const password   = passInput.value;
+    const password2  = pass2Input.value;
+
+    if (!backendUrl)        { showError('Backend URL is required');           return; }
+    if (!username)          { showError('Username is required');              return; }
+    if (username.length < 3){ showError('Username must be at least 3 characters'); return; }
+    if (!password)          { showError('Password is required');              return; }
+    if (password.length < 6){ showError('Password must be at least 6 characters'); return; }
+    if (password !== password2) { showError('Passwords do not match');        return; }
+
+    btn.disabled    = true;
+    btn.textContent = 'Creating account…';
+
+    try {
+      const res  = await fetch(`${backendUrl}/auth/register`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        showError(data.error || 'Could not create account');
+        return;
+      }
+
+      showSuccess('Account created! Redirecting to login…');
+      setTimeout(() => { window.location.href = '/login'; }, 1800);
+
+    } catch (e) {
+      showError('Connection failed: ' + e.message);
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Create Account';
+    }
+  }
+
+  btn.addEventListener('click', register);
+  [userInput, passInput, pass2Input].forEach(el =>
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') register(); })
+  );
+})();
+</script>
+
+</body>
+</html>

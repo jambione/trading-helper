@@ -51,11 +51,12 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _SJSONResponse
 
-from auth import check_credentials, create_token, verify_token, is_auth_required
+from auth import (check_credentials, create_token, verify_token, is_auth_required,
+                   create_user, user_exists, get_token_username, is_admin_user)
 from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
-from email_service import send_suggestion_email
+from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
 import sys as _sys
@@ -682,10 +683,36 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+# ── Active session tracker ────────────────────────────────────────────────────
+
+_ACTIVE_SESSIONS: dict = {}   # username → last_seen (epoch float)
+_SESSION_LOCK = threading.Lock()
+SESSION_TIMEOUT = 30 * 60     # 30 minutes = "currently active"
+
+
+def _touch_session(username: str):
+    """Record that this user just made an authenticated request."""
+    if not username:
+        return
+    with _SESSION_LOCK:
+        _ACTIVE_SESSIONS[username] = time.time()
+
+
+def get_active_sessions() -> list[dict]:
+    """Return list of {username, last_seen_ago_seconds} for recently active users."""
+    now = time.time()
+    with _SESSION_LOCK:
+        return [
+            {"username": u, "last_seen_seconds": int(now - ts)}
+            for u, ts in sorted(_ACTIVE_SESSIONS.items(), key=lambda x: -x[1])
+            if now - ts <= SESSION_TIMEOUT
+        ]
+
+
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
-_PUBLIC_PATHS   = {"/", "/login", "/auth/login", "/api/meta", "/api/pnl"}
-_PUBLIC_PREFIX  = ("/static/",)
+_PUBLIC_PATHS   = {"/", "/login", "/register", "/auth/login", "/auth/register", "/api/meta", "/api/pnl", "/favicon.ico"}
+_PUBLIC_PREFIX  = ("/static/", "/api/agent/")
 
 
 class _AuthMiddleware(BaseHTTPMiddleware):
@@ -711,6 +738,10 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
         if not verify_token(token):
             return _SJSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+        # Update last-seen for this user
+        username = get_token_username(token)
+        _touch_session(username)
 
         return await call_next(request)
 
@@ -809,6 +840,11 @@ async def login_page():
     return FileResponse("login.html")
 
 
+@app.get("/register")
+async def register_page():
+    return FileResponse("register.html")
+
+
 @app.post("/auth/login")
 async def auth_login(request: Request):
     try:
@@ -827,10 +863,42 @@ async def auth_login(request: Request):
         ok = check_credentials(username, password)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: record_login(username, ip, ua, success=ok))
+        await loop.run_in_executor(None, lambda: send_login_email(username, ok, ip=ip, ua=ua))
 
         if not ok:
             return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
-        return JSONResponse({"ok": True, "token": create_token()})
+        return JSONResponse({"ok": True, "token": create_token(username)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/auth/register")
+async def auth_register(request: Request):
+    """Create a new user account."""
+    try:
+        body     = await request.json()
+        username = str(body.get("username", "")).strip()
+        password = str(body.get("password", ""))
+
+        if not username:
+            return JSONResponse({"ok": False, "error": "Username is required"}, status_code=400)
+        if len(username) < 3:
+            return JSONResponse({"ok": False, "error": "Username must be at least 3 characters"}, status_code=400)
+        if not password:
+            return JSONResponse({"ok": False, "error": "Password is required"}, status_code=400)
+        if len(password) < 6:
+            return JSONResponse({"ok": False, "error": "Password must be at least 6 characters"}, status_code=400)
+
+        if user_exists(username):
+            return JSONResponse({"ok": False, "error": "Username already taken"}, status_code=409)
+
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(None, lambda: create_user(username, password))
+        if not ok:
+            return JSONResponse({"ok": False, "error": "Could not create account"}, status_code=500)
+
+        log.info("[AUTH] Account created: %s", username)
+        return JSONResponse({"ok": True, "message": "Account created successfully"})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
@@ -1052,8 +1120,31 @@ async def api_config_save(request: Request):
 
 
 @app.get("/api/meta")
-async def api_meta():
-    return JSONResponse({"auth_required": is_auth_required()})
+async def api_meta(request: Request):
+    auth  = request.headers.get("authorization", "")
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if not token:
+        token = request.query_params.get("token", "")
+    username = get_token_username(token) if token else ""
+    return JSONResponse({
+        "auth_required": is_auth_required(),
+        "is_admin":      is_admin_user(username),
+        "username":      username,
+    })
+
+
+@app.get("/api/active-sessions")
+async def api_active_sessions(request: Request):
+    """Return currently active users. Admin-only."""
+    auth  = request.headers.get("authorization", "")
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if not token:
+        token = request.query_params.get("token", "")
+    username = get_token_username(token)
+    if is_auth_required() and not is_admin_user(username):
+        return JSONResponse({"ok": False, "error": "Admin access required"}, status_code=403)
+    sessions = get_active_sessions()
+    return JSONResponse({"ok": True, "sessions": sessions, "count": len(sessions)})
 
 
 @app.get("/api/login-log")
@@ -1198,8 +1289,16 @@ def _agent_version() -> str:
 async def download_wb_tv_agent(request: Request):
     """
     Package the WB+TV agent (windows_agent.py + launcher bat + requirements + README)
-    into a versioned zip and return it as a download.  Only accessible to user=jmb.
+    into a versioned zip and return it as a download.  Admin only.
     """
+    auth  = request.headers.get("authorization", "")
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if not token:
+        token = request.query_params.get("token", "")
+    username = get_token_username(token)
+    if is_auth_required() and not is_admin_user(username):
+        return JSONResponse({"ok": False, "error": "Admin access required"}, status_code=403)
+
     base    = Path(__file__).parent
     version = _agent_version()
     folder  = "wb-tv-agent"
