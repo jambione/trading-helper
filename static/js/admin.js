@@ -6,7 +6,7 @@
  *   Ticker Feed — add / reorder / delete items in the scrolling bottom feed
  */
 
-import { api } from './api.js?v=34';
+import { api } from './api.js?v=38';
 
 let _backdrop = null;
 let _activeTab = 'feedback';

@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=35';
+import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=38';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -28,18 +28,21 @@ function emit(event, data) {
 
 function _apiUrl(path) {
   const user = getQueryUser();
-  if (!user) return getBackendUrl() + path;
+  const base = getBackendUrl(); // empty string means same origin
   const sep = path.includes('?') ? '&' : '?';
-  return getBackendUrl() + path + `${sep}user=${encodeURIComponent(user)}`;
+  const query = user ? `${sep}user=${encodeURIComponent(user)}` : '';
+  return base + path + query;
 }
 
 function _wsUrl() {
-  const base  = getBackendUrl() || window.location.origin;
+  const base = getBackendUrl() || window.location.origin;
   const proto = base.startsWith('https') ? 'wss' : 'ws';
-  const host  = base.replace(/^https?:\/\//, '');
+  const host = base.replace(/^https?:\/\//, '');
   const token = encodeURIComponent(getToken());
-  const user  = getQueryUser();
-  return `${proto}://${host}/ws?token=${token}${user ? `&user=${encodeURIComponent(user)}` : ''}`;
+  const user = getQueryUser();
+  return `${proto}://${host}/ws?token=${token}${
+    user ? `&user=${encodeURIComponent(user)}` : ''
+  }`;
 }
 
 // ── WebSocket ─────────────────────────────────────────────────

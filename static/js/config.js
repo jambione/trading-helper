@@ -5,9 +5,9 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=34';
-import { get } from './store.js?v=34';
-import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=34';
+import { api } from './api.js?v=38';
+import { get } from './store.js?v=38';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=38';
 
 let _backdrop = null;
 let _saveBtn  = null;

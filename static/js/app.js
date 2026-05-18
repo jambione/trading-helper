@@ -5,20 +5,20 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=36';
-import { subscribe, set }                        from './store.js?v=34';
-import { init as initTranscription }             from './transcription.js?v=34';
-import { init as initTickers }                   from './tickers.js?v=34';
-import { init as initTradingView }               from './tradingview.js?v=34';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=34';
-import { init as initResizer }                   from './resizer.js?v=34';
-import * as controls                             from './controls.js?v=34';
-import * as notifications                        from './notifications.js?v=34';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=35';
-import { init as initNews }                      from './news.js?v=34';
-import { init as initLeaderboard }               from './leaderboard.js?v=34';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=34';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=35';
+import { connect, on, api }                      from './api.js?v=38';
+import { subscribe, set }                        from './store.js?v=38';
+import { init as initTranscription }             from './transcription.js?v=38';
+import { init as initTickers }                   from './tickers.js?v=38';
+import { init as initTradingView }               from './tradingview.js?v=38';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=38';
+import { init as initResizer }                   from './resizer.js?v=38';
+import * as controls                             from './controls.js?v=38';
+import * as notifications                        from './notifications.js?v=38';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=38';
+import { init as initNews }                      from './news.js?v=38';
+import { init as initLeaderboard }               from './leaderboard.js?v=38';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=38';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=38';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -41,15 +41,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const token = localStorage.getItem('ss:token') || '';
     _tokenSent  = !!token;
     const url = '/api/meta' + (_queryUser ? ('?user=' + encodeURIComponent(_queryUser)) : '');
-    // Always fetch /api/meta from the same server that served this page.
-    // Using getBackendUrl() here could point at localhost when logged in remotely
-    // if an old ss:backend-url value is still in localStorage.
     const res   = await fetch(url, {
       headers: token ? { 'Authorization': 'Bearer ' + token } : {},
     });
     const meta  = await res.json();
     authRequired = _isLocal ? false : (meta.auth_required ?? false);
-    _isAdmin     = meta.is_admin ?? false;
+    _isAdmin     = meta.is_admin || _isAdmin;
     if (meta.auth_required) document.body.classList.add('auth-on');
   } catch {
     // Backend unreachable — localhost is always open; remote requires a token
@@ -77,7 +74,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  if (_isLocal) {
+  // Transcription is allowed for local users OR admins.
+  if (_isLocal || _isAdmin) {
     try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
@@ -150,11 +148,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const feedInput  = document.getElementById('feed-item-input');
   const feedType   = document.getElementById('feed-item-type');
   const feedAddBtn = document.getElementById('feed-item-add-btn');
-  const _addFeedItem = () => {
+  const _addFeedItem = async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    import('./admin.js?v=34').then(m => m.addFeedItem(type, text));
+    const m = await import('./admin.js?v=38');
+    m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
   feedAddBtn?.addEventListener('click', _addFeedItem);
