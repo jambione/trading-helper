@@ -953,34 +953,46 @@ def transcription_worker():
             if text:
                 text = normalize_transcript(text)
 
-            # Hallucination guard — Whisper echoes the initial prompt on quiet audio.
+            # Hallucination vs. real mention guard.
             #
-            # Pattern 1: single token looping ("AGNT AGNT AGNT AGNT AGNT AGNT …")
-            #   The computer TTS voice legitimately repeats tickers many times, so we must
-            #   distinguish a real repeated ticker from a Whisper hallucination loop.
-            #   Rule: if the most-repeated word is a known valid ticker, allow up to 20
-            #   repetitions (computer voice). Otherwise flag as a loop at >6 reps.
+            # Real Whisper loops on silence are short tokens (1-2 chars) repeated
+            # many times: "T T T T T T T T T". A real TTS read of a ticker can
+            # legitimately repeat the same 3-5 char symbol 10-30 times in one
+            # chunk. Distinguish by length AND by whether the repeated token
+            # matches a known ticker (exactly or phonetically).
             #
-            # Pattern 2: prompt echo — many *different* ALL-CAPS ticker tokens echoed at once.
-            #   Raised unique-ticker threshold from 5 → 8 so a real ticker-list read by the
-            #   computer voice (e.g. 5-6 different tickers in one chunk) is not silenced.
+            # Pattern 2: prompt echo — many *different* ALL-CAPS tickers echoed
+            # at once; left as-is.
             if text:
                 _words        = text.split()
-                _most_rep     = max(set(_words), key=_words.count) if _words else ""
-                _rep_count    = _words.count(_most_rep) if _most_rep else 0
-                _is_known_ticker = _most_rep.upper() in _VALID_TICKERS
-                # Real Whisper loops: >6 repeats of a non-ticker word, or >20 of anything
-                _is_loop = (_rep_count > 6 and not _is_known_ticker) or _rep_count > 20
-                _upper        = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
-                _unique_upper = len(set(_upper))
-                # Echo guard: needs >=8 distinct uppercase tokens (raised from 5) to avoid
-                # silencing a legitimate list of 5-6 tickers from the computer voice
-                _is_echo = (len(_words) >= 10
-                            and _unique_upper >= 8
-                            and len(_upper) / len(_words) > 0.70)
-                if _is_loop or _is_echo:
-                    print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
-                    continue
+                if _words:
+                    _most_rep_raw = max(set(_words), key=_words.count)
+                    _rep_count    = _words.count(_most_rep_raw)
+                    # Strip surrounding punctuation before matching against the
+                    # ticker set: "AIIO," should count as AIIO.
+                    _most_rep     = re.sub(r'[^A-Za-z]', '', _most_rep_raw).upper()
+                    _is_known_ticker = bool(_most_rep) and (
+                        _most_rep in _VALID_TICKERS or
+                        (2 <= len(_most_rep) <= 5
+                         and _phonetic_match(_most_rep, _VALID_TICKERS) is not None)
+                    )
+                    if _rep_count > 6:
+                        if len(_most_rep) <= 2:
+                            _is_loop = True            # single/double-char loop
+                        elif _is_known_ticker:
+                            _is_loop = _rep_count > 50 # allow heavy real TTS reads
+                        else:
+                            _is_loop = True            # unknown 3+ char repeated
+                    else:
+                        _is_loop = False
+                    _upper        = [w for w in _words if w.isupper() and 2 <= len(w) <= 5]
+                    _unique_upper = len(set(_upper))
+                    _is_echo = (len(_words) >= 10
+                                and _unique_upper >= 8
+                                and len(_upper) / len(_words) > 0.70)
+                    if _is_loop or _is_echo:
+                        print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
+                        continue
 
             print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
 
