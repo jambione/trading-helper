@@ -480,6 +480,44 @@ _TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
 _NAME_RE    = {n: re.compile(rf'\b{re.escape(n)}\b', re.I) for n in _NAME_TO_TICKER}
 _MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP}
 
+# ASR letter-spelling confusions: when a TTS voice spells a ticker letter-by-letter
+# Whisper often mishears the vowel ("A" → "E"), drops to wrong consonant pairs, or
+# multiplies sustained vowels ("A I I O" → "E-I-I-I-O"). Phonetic-correct unknown
+# letter-spelled candidates against the NASDAQ list at edit distance 1.
+_PHONETIC_CONFUSIONS = {
+    'A': ['E'], 'E': ['A'],
+    'B': ['V', 'D', 'P'], 'V': ['B'], 'P': ['B'],
+    'D': ['T', 'B'], 'T': ['D'],
+    'M': ['N'], 'N': ['M'],
+    'I': ['Y'], 'Y': ['I'],
+    'O': ['U'], 'U': ['O'],
+    'S': ['Z'], 'Z': ['S'],
+}
+
+
+def _phonetic_match(candidate: str, ticker_set: set) -> str | None:
+    """Map an ASR-misheard letter-spelling to a real ticker, or None.
+
+    Tries two transformations and returns the first hit in ticker_set:
+      1. Collapse runs of repeated chars (EIIIO → EIIO).
+      2. Single-character substitution from common ASR confusion pairs.
+    """
+    if not ticker_set:
+        return None
+    tries = [candidate]
+    collapsed = re.sub(r'(.)\1{2,}', r'\1\1', candidate)
+    if collapsed != candidate:
+        tries.append(collapsed)
+    for cand in tries:
+        if cand in ticker_set:
+            return cand
+        for i, ch in enumerate(cand):
+            for swap in _PHONETIC_CONFUSIONS.get(ch, ()):
+                fixed = cand[:i] + swap + cand[i+1:]
+                if fixed in ticker_set:
+                    return fixed
+    return None
+
 
 def extract_tickers(text: str) -> dict:
     """Return {ticker: mention_count} for this chunk.
@@ -490,21 +528,35 @@ def extract_tickers(text: str) -> dict:
     seen   = set()           # unique candidates for validation + dedup of name/mishear paths
     lower  = text.lower()
 
-    # 1. Token scan — count raw occurrences, then validate unique candidates
-    candidates = []
+    # 1. Token scan — count raw occurrences, then validate unique candidates.
+    # Track which candidates were originally all-caps (letter-spellings collapsed
+    # by normalize_transcript); phonetic correction only applies to those.
+    candidates    = []
+    was_spelled   = {}
     for m in _TICKER_RE.finditer(text):
-        t = m.group(1).upper()
+        raw = m.group(1)
+        t   = raw.upper()
         if t not in _STOP_WORDS:
             counts[t] = counts.get(t, 0) + 1   # count every occurrence
             if t not in seen:
                 candidates.append(t)
                 seen.add(t)
+                was_spelled[t] = raw.isupper()
 
     if candidates:
         if _ollama_ok:
             confirmed = _ollama_classify(candidates, text)
         elif _VALID_TICKERS:
-            confirmed = [t for t in candidates if t in _VALID_TICKERS]
+            confirmed = []
+            for t in candidates:
+                if t in _VALID_TICKERS:
+                    confirmed.append(t)
+                elif was_spelled.get(t):
+                    fixed = _phonetic_match(t, _VALID_TICKERS)
+                    if fixed and fixed != t:
+                        confirmed.append(fixed)
+                        counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
+                        print(f"[PHONETIC] {t} → {fixed}", flush=True)
         else:
             confirmed = candidates
         # Drop any raw counts for tokens that failed validation
@@ -894,6 +946,13 @@ def transcription_worker():
 
             ms = (time.perf_counter() - t0) * 1000
 
+            # Normalize FIRST so the hallucination guard sees collapsed letter-
+            # spellings ("A I I O A I I O" → "AIIO AIIO"). The repeated-token
+            # check then matches the known-ticker bypass instead of skipping the
+            # whole chunk for repeating "A" or "I".
+            if text:
+                text = normalize_transcript(text)
+
             # Hallucination guard — Whisper echoes the initial prompt on quiet audio.
             #
             # Pattern 1: single token looping ("AGNT AGNT AGNT AGNT AGNT AGNT …")
@@ -928,7 +987,6 @@ def transcription_worker():
             if not text or len(text.split()) < 2:
                 continue
 
-            text = normalize_transcript(text)
             tickers = extract_tickers(text)   # {ticker: count}
 
             for t, cnt in tickers.items():
