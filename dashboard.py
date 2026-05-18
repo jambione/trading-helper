@@ -93,17 +93,22 @@ class _State:
         self.tickers: dict    = {}   # ticker → {price, price_ts, day_open, pct_change}
         self.transcriber      = None # subprocess.Popen or None
         self.transcript_lines = []   # in-memory only, never written to disk
+        self.transcriber_metrics = {
+            "queue_drops": 0,
+            "ollama_timeouts": 0,
+            "ollama_failures": 0,
+            "ollama_retry_ok": 0,
+            "queue_size": 0,
+            "queue_capacity": 16,
+            "workers": 0,
+            "ollama_ready": False,
+        }
         # Mention tracking — resets on server restart (fresh each trading day)
         self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
         self.mention_daily: dict = {}  # ticker → int  daily total count
-        # Daily reset tracking — clears mention_daily at market open & close
-        import datetime as _dt
-        self.mention_reset_date: str  = str(_dt.date.today())
-        self.mention_market_opened: bool = False  # True once 9:30 AM reset fired today
-        # Daily reset tracking — resets mention_daily at market open & close
         from datetime import date as _date
-        self.mention_reset_date: str  = str(_date.today())  # last reset date
-        self.mention_market_opened: bool = False  # True once 9:30 reset fired today
+        self.mention_reset_date: str  = str(_date.today())
+        self.mention_market_opened: bool = False
 
     @property
     def transcriber_running(self) -> bool:
@@ -359,12 +364,23 @@ def refresh_ticker_timestamps(tickers: list[str]):
 _MAX_TRANSCRIPT_LINES = 200
 
 
+_METRICS_RE = re.compile(r'^\[METRICS\]\s+(\{.*\})\s*$')
+
+
 def _stdout_reader(proc: subprocess.Popen):
-    """Read subprocess stdout line-by-line into STATE.transcript_lines (in memory only)."""
     try:
         for raw in proc.stdout:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
+                continue
+            m = _METRICS_RE.match(line)
+            if m:
+                try:
+                    metrics = json.loads(m.group(1))
+                    with STATE.lock:
+                        STATE.transcriber_metrics = metrics
+                except Exception:
+                    pass
                 continue
             with STATE.lock:
                 STATE.transcript_lines.append(line)
@@ -670,11 +686,14 @@ def _snapshot() -> dict:
                 "running": STATE.transcriber_running,
                 "lines":   tx_lines,
                 "count":   len(tickers),
+                "metrics": dict(STATE.transcriber_metrics),
             },
             "tickers": rows,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
         }
+
+
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -762,20 +781,16 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["*"],
+    allow_credentials=True,
 )
 
 
 
 def _mention_reset_worker():
-    """
-    Background thread — resets daily mention counts at:
-      • 9:30 AM ET  (market open  — clears overnight/pre-market noise)
-      • 4:05 PM ET  (market close — clean slate for after-hours)
-      • Any date change (safety net for servers that run overnight)
-    """
     import datetime as _dt
     ET = ZoneInfo("America/New_York")
+    close_reset_fired = False
     while True:
         try:
             now   = _dt.datetime.now(ET)
@@ -783,31 +798,33 @@ def _mention_reset_worker():
             hhmm  = now.hour * 100 + now.minute
 
             with STATE.lock:
-                # New calendar day — reset the open flag so 9:30 fires again
                 if STATE.mention_reset_date != today:
                     STATE.mention_reset_date    = today
                     STATE.mention_market_opened = False
+                    close_reset_fired = False
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
                     log.info("[MENTIONS] Daily reset — new calendar day")
 
-                # 9:30 AM ET — market open
-                elif hhmm == 930 and not STATE.mention_market_opened:
+                elif 930 <= hhmm <= 935 and not STATE.mention_market_opened:
                     STATE.mention_market_opened = True
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
-                    log.info("[MENTIONS] Daily reset — market open (9:30 AM ET)")
+                    log.info("[MENTIONS] Daily reset — market open window")
 
-                # 4:05 PM ET — market close (5 min buffer after 4:00)
-                elif hhmm == 1605:
+                elif 1605 <= hhmm <= 1610 and not close_reset_fired:
+                    close_reset_fired = True
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
-                    log.info("[MENTIONS] Daily reset — market close (4:05 PM ET)")
+                    log.info("[MENTIONS] Daily reset — market close window")
+
+                elif hhmm > 1610 and close_reset_fired:
+                    close_reset_fired = False
 
         except Exception as e:
             log.warning(f"[MENTIONS] reset worker error: {e}")
 
-        time.sleep(30)   # check every 30 s — cheap, no need for tighter loop
+        time.sleep(30)
 
 @app.on_event("startup")
 async def _startup():

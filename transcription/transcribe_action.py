@@ -16,6 +16,7 @@ import time
 import threading
 import contextlib
 import urllib.request
+import urllib.error
 from pathlib import Path
 from queue import Queue, Full
 
@@ -252,39 +253,69 @@ _VALID_TICKERS: set = _load_valid_tickers()
 # The LLM receives only the short candidate list (≤10 words), not the full
 # transcript, so round-trips are consistently under 150ms.
 
-OLLAMA_MODEL   = "qwen2.5:0.5b"
-OLLAMA_URL     = "http://localhost:11434/api/generate"
-OLLAMA_TIMEOUT = 0.35          # 350ms hard cap — fall back to NASDAQ list if slower
+OLLAMA_MODEL       = "qwen2.5:0.5b"
+OLLAMA_URL         = "http://localhost:11434/api/generate"
+OLLAMA_TIMEOUT     = 0.50
+OLLAMA_RETRIES     = 1
+OLLAMA_RETRY_SLEEP = 0.10
 
-_ollama_ok      = None         # None = not yet checked, True/False after first ping
-_ollama_fail_ts = 0.0          # timestamp of last failure — back-off 30s before retrying
+_ollama_ok      = None
+_ollama_fail_ts = 0.0
+
+_METRICS_LOCK = threading.Lock()
+_METRICS = {
+    "queue_drops": 0,
+    "ollama_timeouts": 0,
+    "ollama_failures": 0,
+    "ollama_retry_ok": 0,
+}
 
 
-def _ping_ollama() -> bool:
-    """Check once if Ollama is reachable and the model is available."""
+def _metric_inc(key: str, value: int = 1):
+    with _METRICS_LOCK:
+        _METRICS[key] = int(_METRICS.get(key, 0)) + value
+
+
+def _metrics_payload() -> dict:
+    with _METRICS_LOCK:
+        return {
+            "queue_drops": int(_METRICS.get("queue_drops", 0)),
+            "ollama_timeouts": int(_METRICS.get("ollama_timeouts", 0)),
+            "ollama_failures": int(_METRICS.get("ollama_failures", 0)),
+            "ollama_retry_ok": int(_METRICS.get("ollama_retry_ok", 0)),
+            "queue_size": int(_audio_queue.qsize()) if '_audio_queue' in globals() else 0,
+            "queue_capacity": 16,
+            "workers": int(_N_WORKERS) if '_N_WORKERS' in globals() else 0,
+            "ollama_ready": bool(_ollama_ok),
+        }
+
+
+def get_runtime_metrics() -> dict:
+    return _metrics_payload()
+
+
+def _ping_ollama(verbose: bool = True) -> bool:
     global _ollama_ok
+    prev = _ollama_ok
     try:
         with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1.0) as r:
             tags = json.loads(r.read())
         models = [m["name"].split(":")[0] for m in tags.get("models", [])]
         _ollama_ok = OLLAMA_MODEL.split(":")[0] in models
-        if not _ollama_ok:
-            print(f"[OLLAMA] Model '{OLLAMA_MODEL}' not found. "
-                  f"Run: ollama pull {OLLAMA_MODEL}", flush=True)
+        if not _ollama_ok and (verbose or prev != _ollama_ok):
+            print(f"[OLLAMA] Model '{OLLAMA_MODEL}' not found. Run: ollama pull {OLLAMA_MODEL}", flush=True)
     except Exception:
         _ollama_ok = False
-    status = "ready" if _ollama_ok else "not available"
-    print(f"[OLLAMA] {status}", flush=True)
+    if verbose or prev != _ollama_ok:
+        status = "ready" if _ollama_ok else "not available"
+        print(f"[OLLAMA] {status}", flush=True)
     return _ollama_ok
 
 
 def _ollama_classify(candidates: list[str], context: str) -> list[str]:
-    """Ask Ollama which candidate tokens are real US stock tickers given context.
-    Returns confirmed list, or [] on timeout / error."""
     global _ollama_fail_ts
     if not candidates:
         return []
-    # Back-off: if Ollama failed recently, skip for 30s
     if time.monotonic() - _ollama_fail_ts < 30:
         return []
 
@@ -301,24 +332,45 @@ def _ollama_classify(candidates: list[str], context: str) -> list[str]:
         "stream":  False,
         "options": {"num_predict": 20, "temperature": 0, "num_ctx": 128},
     }
-    try:
-        req = urllib.request.Request(
-            OLLAMA_URL,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as r:
-            response = json.loads(r.read()).get("response", "").strip().upper()
-        if not response or response == "NONE":
+    candidate_set = set(candidates)
+    attempts = max(1, int(OLLAMA_RETRIES) + 1)
+
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(
+                OLLAMA_URL,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as r:
+                response = json.loads(r.read()).get("response", "").strip().upper()
+            if attempt > 0:
+                _metric_inc("ollama_retry_ok")
+            if not response or response == "NONE":
+                return []
+            tokens = re.findall(r'\b[A-Z]{2,5}\b', response)
+            return [t for t in tokens if t in candidate_set]
+        except Exception as e:
+            is_timeout = isinstance(e, TimeoutError)
+            if not is_timeout and isinstance(e, urllib.error.URLError):
+                reason = getattr(e, "reason", None)
+                is_timeout = isinstance(reason, TimeoutError) or ("timed out" in str(reason).lower())
+            if not is_timeout:
+                is_timeout = "timed out" in str(e).lower()
+            if is_timeout:
+                _metric_inc("ollama_timeouts")
+            else:
+                _metric_inc("ollama_failures")
+            if attempt < attempts - 1:
+                print(f"[OLLAMA] classify failed attempt {attempt + 1}/{attempts}: {type(e).__name__}", flush=True)
+                time.sleep(OLLAMA_RETRY_SLEEP)
+                continue
+            _ollama_fail_ts = time.monotonic()
+            print(f"[OLLAMA] classify unavailable: {type(e).__name__}", flush=True)
+            if _ollama_ok:
+                _ping_ollama(verbose=False)
             return []
-        tokens = re.findall(r'\b[A-Z]{2,5}\b', response)
-        # Only return candidates the model confirmed (don't let it invent new ones)
-        candidate_set = set(candidates)
-        return [t for t in tokens if t in candidate_set]
-    except Exception:
-        _ollama_fail_ts = time.monotonic()
-        return []
 
 
 # =============================================================================
@@ -512,9 +564,12 @@ _secrets_file = Path(__file__).parent.parent / "secrets.json"
 _alpaca_key = _alpaca_secret = ""
 
 _saved_device = None
+_saved_workers = None
 if _cfg_file.exists():
     try:
-        _saved_device = json.loads(_cfg_file.read_text()).get("device_index")
+        _cfg_data = json.loads(_cfg_file.read_text())
+        _saved_device = _cfg_data.get("device_index")
+        _saved_workers = _cfg_data.get("transcriber_workers")
     except Exception:
         pass
 if _secrets_file.exists():
@@ -526,6 +581,10 @@ if _secrets_file.exists():
         pass
 
 DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
+try:
+    _N_WORKERS = max(1, int(_saved_workers)) if _saved_workers is not None else 3
+except Exception:
+    _N_WORKERS = 3
 
 # Validate saved device index (a Windows index may not exist on Mac)
 _tmp_p = pyaudio.PyAudio()
@@ -776,7 +835,11 @@ def audio_capture():
                 try:
                     _audio_queue.put_nowait(chunk)
                 except Full:
-                    # Queue full — transcription is too slow; drop oldest
+                    _metric_inc("queue_drops")
+                    with _METRICS_LOCK:
+                        qd = int(_METRICS.get("queue_drops", 0))
+                    if qd <= 5 or qd % 25 == 0:
+                        print(f"[QUEUE] drop oldest chunk total={qd} size={_audio_queue.qsize()}/{_audio_queue.maxsize}", flush=True)
                     try:
                         _audio_queue.get_nowait()
                         _audio_queue.put_nowait(chunk)
@@ -791,6 +854,7 @@ def audio_capture():
 # =============================================================================
 
 def transcription_worker():
+    last_metrics_emit = 0.0
     while _running.is_set():
         try:
             chunk = _audio_queue.get(timeout=1.0)
@@ -870,6 +934,11 @@ def transcription_worker():
             for t, cnt in tickers.items():
                 _send_ticker(t, cnt)
 
+            now = time.time()
+            if now - last_metrics_emit >= 5:
+                last_metrics_emit = now
+                print(f"[METRICS] {json.dumps(_metrics_payload(), sort_keys=True)}", flush=True)
+
         except Exception as e:
             msg = str(e).strip()
             if msg:
@@ -877,14 +946,24 @@ def transcription_worker():
             time.sleep(0.05)
 
 
+def _ollama_health_worker():
+    while _running.is_set():
+        try:
+            _ping_ollama(verbose=False)
+        except Exception:
+            pass
+        time.sleep(60)
+
+
 # =============================================================================
 # START
 # =============================================================================
 
-_N_WORKERS = 2   # parallel transcription workers — Metal/GPU handles concurrent inference
+# parallel transcription workers — configurable via bot_config.json: transcriber_workers
 
 _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
+    threading.Thread(target=_ollama_health_worker, daemon=True, name="ollama-health"),
     *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
       for i in range(_N_WORKERS)],
 ]
