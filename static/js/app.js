@@ -74,8 +74,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  // Transcription is allowed for local users OR admins.
-  if (_isLocal || _isAdmin) {
+  // Transcription is localhost-only. Admin on remote does not get it.
+  if (_isLocal) {
     try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }

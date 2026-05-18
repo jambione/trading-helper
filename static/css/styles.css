@@ -457,18 +457,9 @@ body.hosted .btn-add                 { display: none; }
 body.hosted .btn-copy                { display: none; }
 body.hosted .btn-delete              { display: none; }
 
-/* Admins (jmb) can see everything even when hosted */
-body.hosted.user-jmb [data-panel="transcript"] { display: flex; }
-body.hosted.user-jmb [data-tx-btn]             { display: inline-flex; }
-body.hosted.user-jmb [data-clear-transcript-btn] { display: inline-flex; }
-body.hosted.user-jmb .status-audio-section     { display: inline-flex; }
-body.hosted.user-jmb [data-tab-btn="audio"]    { display: inline-flex; }
-body.hosted.user-jmb .main-grid               { grid-template-columns: 200px 230px 6px 1fr; }
-body.hosted.user-jmb .add-ticker-row          { display: flex; }
-body.hosted.user-jmb [data-clear-watchlist-btn] { display: inline-flex; }
-body.hosted.user-jmb .btn-add                 { display: inline-flex; }
+/* Admin (jmb) on remote: transcription + watchlist editing stay localhost-only.
+   Only re-enable copy, which is a passive read action. */
 body.hosted.user-jmb .btn-copy                { display: inline-flex; }
-body.hosted.user-jmb .btn-delete              { display: inline-flex; }
 .jmb-download                        { display: none; }
 body.user-jmb .jmb-download          { display: inline-flex; }
 

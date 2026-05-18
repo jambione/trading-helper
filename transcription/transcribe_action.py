@@ -259,7 +259,7 @@ OLLAMA_TIMEOUT     = 0.50
 OLLAMA_RETRIES     = 1
 OLLAMA_RETRY_SLEEP = 0.10
 
-_ollama_ok      = None
+_ollama_ok      = False  # Ollama disabled; transcriber uses the NASDAQ list classifier
 _ollama_fail_ts = 0.0
 
 _METRICS_LOCK = threading.Lock()
@@ -963,15 +963,11 @@ def _ollama_health_worker():
 
 _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
-    threading.Thread(target=_ollama_health_worker, daemon=True, name="ollama-health"),
     *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
       for i in range(_N_WORKERS)],
 ]
 for t in _threads:
     t.start()
-
-# Check Ollama availability once at startup (non-blocking — result cached in _ollama_ok)
-_ping_ollama()
 
 engine = f"MLX Whisper ({MLX_MODEL})" if _USE_MLX else f"faster-whisper ({CPU_MODEL})"
 ticker_engine = f"Ollama ({OLLAMA_MODEL})" if _ollama_ok else ("NASDAQ list" if _VALID_TICKERS else "stop-word filter")
