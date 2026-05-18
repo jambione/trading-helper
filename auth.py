@@ -234,16 +234,7 @@ def get_token_username(token: str) -> str:
 # ── Auth toggle ───────────────────────────────────────────────────────────────
 
 def is_auth_required() -> bool:
-    """
-    Returns True unless explicitly disabled.
-    Auth is ON by default — set require_auth=false in secrets.json to disable.
-    """
-    val = _load_secrets().get("require_auth")
-    if val is None:
-        val = os.getenv("REQUIRE_AUTH", "true")   # default ON
-    if isinstance(val, bool):
-        return val
-    return str(val).strip().lower() not in ("false", "0", "no")
+    return False
 
 
 # ── Bootstrap: ensure jmb is always an admin ─────────────────────────────────

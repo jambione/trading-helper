@@ -544,7 +544,13 @@
                         onclick="
                             (function () {
                                 const t = localStorage.getItem('ss:token') || '';
-                                const u = '/api/download/wb-tv-agent' + (t ? '?token=' + encodeURIComponent(t) : '');
+                                const qp = new URLSearchParams(window.location.search);
+                                const user = (qp.get('user') || '').trim().toLowerCase();
+                                const p = new URLSearchParams();
+                                if (t) p.set('token', t);
+                                if (user) p.set('user', user);
+                                const q = p.toString();
+                                const u = '/api/download/wb-tv-agent' + (q ? ('?' + q) : '');
                                 const a = document.createElement('a');
                                 a.href = u;
                                 a.download = 'wb-tv-agent.zip';
@@ -638,7 +644,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=35"></script>
+        <script type="module" src="/static/js/app.js?v=37"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

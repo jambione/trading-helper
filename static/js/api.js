@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken } from './auth.js?v=34';
+import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=35';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -27,7 +27,10 @@ function emit(event, data) {
 // ── URL helpers ───────────────────────────────────────────────
 
 function _apiUrl(path) {
-  return getBackendUrl() + path;
+  const user = getQueryUser();
+  if (!user) return getBackendUrl() + path;
+  const sep = path.includes('?') ? '&' : '?';
+  return getBackendUrl() + path + `${sep}user=${encodeURIComponent(user)}`;
 }
 
 function _wsUrl() {
@@ -35,7 +38,8 @@ function _wsUrl() {
   const proto = base.startsWith('https') ? 'wss' : 'ws';
   const host  = base.replace(/^https?:\/\//, '');
   const token = encodeURIComponent(getToken());
-  return `${proto}://${host}/ws?token=${token}`;
+  const user  = getQueryUser();
+  return `${proto}://${host}/ws?token=${token}${user ? `&user=${encodeURIComponent(user)}` : ''}`;
 }
 
 // ── WebSocket ─────────────────────────────────────────────────
@@ -69,7 +73,7 @@ export function connect() {
     if (e.code === 4001) {
       // Server rejected the token
       clearToken();
-      window.location.href = '/login';
+      window.location.href = '/';
       return;
     }
     _reconnectTimer = setTimeout(() => {
@@ -96,7 +100,7 @@ async function request(method, path, body) {
   const res = await fetch(_apiUrl(path), opts);
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/login';
+    window.location.href = '/';
     return;
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

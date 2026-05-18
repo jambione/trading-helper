@@ -62,7 +62,15 @@ export function setBackendUrl(url) {
 
 // ── Session ───────────────────────────────────────────────────
 
+export function getQueryUser() {
+  try {
+    return (new URLSearchParams(window.location.search).get('user') || '').trim().toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 export function logout() {
   clearToken();
-  window.location.href = '/login';
+  window.location.href = '/';
 }

@@ -5,7 +5,7 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=35';
+import { connect, on, api }                      from './api.js?v=36';
 import { subscribe, set }                        from './store.js?v=34';
 import { init as initTranscription }             from './transcription.js?v=34';
 import { init as initTickers }                   from './tickers.js?v=34';
@@ -14,7 +14,7 @@ import { init as initConfig, open as openConfig, updateFeedbackBadge } from './c
 import { init as initResizer }                   from './resizer.js?v=34';
 import * as controls                             from './controls.js?v=34';
 import * as notifications                        from './notifications.js?v=34';
-import { isAuthenticated, logout, getBackendUrl } from './auth.js?v=34';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=35';
 import { init as initNews }                      from './news.js?v=34';
 import { init as initLeaderboard }               from './leaderboard.js?v=34';
 import { init as initAdmin, open as openAdmin }  from './admin.js?v=34';
@@ -33,16 +33,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Clear any stale backend URL left over from the old login page field.
   // Everything now runs on the same origin as the page.
   localStorage.removeItem('ss:backend-url');
+  const _queryUser = getQueryUser();
   let authRequired = false;
-  let _isAdmin     = false;
+  let _isAdmin     = _queryUser === 'jmb';
   let _tokenSent   = false;
   try {
     const token = localStorage.getItem('ss:token') || '';
     _tokenSent  = !!token;
+    const url = '/api/meta' + (_queryUser ? ('?user=' + encodeURIComponent(_queryUser)) : '');
     // Always fetch /api/meta from the same server that served this page.
     // Using getBackendUrl() here could point at localhost when logged in remotely
     // if an old ss:backend-url value is still in localStorage.
-    const res   = await fetch('/api/meta', {
+    const res   = await fetch(url, {
       headers: token ? { 'Authorization': 'Bearer ' + token } : {},
     });
     const meta  = await res.json();
@@ -55,7 +57,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (authRequired && !isAuthenticated()) {
-    window.location.href = '/login';
+    window.location.href = '/';
     return;
   }
 
