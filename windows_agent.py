@@ -37,7 +37,7 @@ from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
 
 # ── Version ───────────────────────────────────────────────────────────────────
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_WINDOWS = sys.platform == "win32"
@@ -89,7 +89,21 @@ _token_expires_at = 0.0   # unix timestamp when current token expires
 
 WB_WINDOW      = "Webull Desktop"
 WB_LAUNCH      = r"C:\Program Files (x86)\Webull Desktop\Webull Desktop.exe"
+# Fallback locations that Webull's installer has used over the years.
+WB_LAUNCH_CANDIDATES = [
+    WB_LAUNCH,
+    r"C:\Program Files\Webull Desktop\Webull Desktop.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Webull Desktop\Webull Desktop.exe"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Webull Desktop\Webull Desktop.exe"),
+]
 LAUNCH_TIMEOUT = 20
+
+
+def _webull_installed() -> bool:
+    """True if any known Webull Desktop install path exists on this PC."""
+    if not _IS_WINDOWS:
+        return False
+    return any(os.path.isfile(p) for p in WB_LAUNCH_CANDIDATES if p)
 BRAVE_TV_TAB   = int(os.environ.get("BRAVE_TV_TAB", "1"))  # Ctrl+N to switch tab
 
 # ── Win32 setup ───────────────────────────────────────────────────────────────
@@ -203,8 +217,18 @@ def workflow_add_wb(ticker: str) -> bool:
         print(f"  [DRY RUN] ADD_WB → {ticker}")
         return True
 
+    if not _webull_installed():
+        print(f"  ⏭  ADD_WB skipped — Webull Desktop is not installed")
+        return False
+
+    # Prefer whichever known install path actually exists on this PC.
+    launch_path = next(
+        (p for p in WB_LAUNCH_CANDIDATES if p and os.path.isfile(p)),
+        WB_LAUNCH,
+    )
+
     print(f"  📊 ADD_WB → {ticker}")
-    if not _ensure_open(WB_WINDOW, WB_LAUNCH):
+    if not _ensure_open(WB_WINDOW, launch_path):
         print("  ❌ ADD_WB failed — could not open Webull Desktop")
         return False
 
@@ -391,6 +415,35 @@ _prev_statuses = {}   # ticker → last known status string
 _COOLDOWN = 60
 _last_fired: dict[str, float] = {}
 
+# Activated-ticker history: once a ticker has been pushed to Webull/TV we skip
+# it for this many seconds so the agent doesn't keep re-adding the same symbol.
+ACTIVATED_TTL = 15 * 60   # 15 minutes
+_activated: dict[str, float] = {}
+_activated_lock = threading.Lock()
+
+
+def _is_recently_activated(ticker: str) -> bool:
+    """Return True if `ticker` was added within the last ACTIVATED_TTL seconds."""
+    now = time.time()
+    with _activated_lock:
+        ts = _activated.get(ticker)
+        if ts is None:
+            return False
+        if now - ts >= ACTIVATED_TTL:
+            del _activated[ticker]
+            return False
+        return True
+
+
+def _mark_activated(ticker: str):
+    """Record that `ticker` was just added; opportunistically purge stale entries."""
+    now = time.time()
+    with _activated_lock:
+        _activated[ticker] = now
+        for sym, ts in list(_activated.items()):
+            if now - ts >= ACTIVATED_TTL:
+                del _activated[sym]
+
 # Serialise all workflow calls through a single worker thread so Webull and TV
 # automation never overlap (pyautogui is not thread-safe).
 _work_queue: list[str] = []
@@ -401,6 +454,9 @@ _work_event = threading.Event()
 def _enqueue(ticker: str):
     """Add ticker to the workflow queue (deduplicated within cooldown window)."""
     now = time.time()
+    if _is_recently_activated(ticker):
+        print(f"  ⏭  {ticker} already activated in the last 15 min — skipping")
+        return
     if now - _last_fired.get(ticker, 0) < _COOLDOWN:
         print(f"  ⏱  {ticker} cooldown — skipping")
         return
@@ -422,9 +478,11 @@ def _worker():
             if ticker is None:
                 break
             print(f"\n🚨 ALERT → {ticker}  running WB+TV workflow…")
-            workflow_add_wb(ticker)
+            wb_ok = workflow_add_wb(ticker)
             time.sleep(0.5)
-            workflow_add_tv(ticker)
+            tv_ok = workflow_add_tv(ticker)
+            if wb_ok or tv_ok:
+                _mark_activated(ticker)
 
 
 def _fetch_state() -> dict | None:
@@ -522,13 +580,15 @@ class AgentHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._json(200, {
-                "ok":            True,
-                "agent":         "wb-tv-agent",
-                "version":       VERSION,
-                "platform":      sys.platform,
-                "dashboard_url": DASHBOARD_URL,
-                "polling":       True,
-                "brave_tv_tab":  BRAVE_TV_TAB,
+                "ok":               True,
+                "agent":            "wb-tv-agent",
+                "version":          VERSION,
+                "platform":         sys.platform,
+                "dashboard_url":    DASHBOARD_URL,
+                "polling":          True,
+                "brave_tv_tab":     BRAVE_TV_TAB,
+                "webull_installed": _webull_installed(),
+                "activated_count":  len(_activated),
             })
         else:
             self._json(404, {"error": "not found"})
@@ -550,10 +610,16 @@ class AgentHandler(BaseHTTPRequestHandler):
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
+            if _is_recently_activated(ticker):
+                print(f"  ⏭  {ticker} already activated in the last 15 min — skipping")
+                self._json(200, {"ok": True, "ticker": ticker, "skipped": "recently_activated"})
+                return
             if path == "/add-wb":
                 ok = workflow_add_wb(ticker)
             else:
                 ok = workflow_add_tv(ticker)
+            if ok:
+                _mark_activated(ticker)
             self._json(200 if ok else 500, {"ok": ok, "ticker": ticker})
 
         else:
@@ -585,6 +651,12 @@ if __name__ == "__main__":
     print(f"  Password  : {'set ✓' if DASHBOARD_PASS else 'NOT SET — edit DASHBOARD_PASS in script'}")
     print(f"  Poll every: {POLL_INTERVAL}s")
     print(f"  TV tab    : Ctrl+{BRAVE_TV_TAB}")
+    if _IS_WINDOWS:
+        if _webull_installed():
+            print(f"  Webull    : detected ✓")
+        else:
+            print(f"  Webull    : NOT installed — Webull adds will be skipped")
+    print(f"  Skip-add window: {ACTIVATED_TTL // 60} min after activation")
     print(f"{'='*54}\n")
 
     # Log in immediately on startup so the listener has a token ready
