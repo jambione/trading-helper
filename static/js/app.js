@@ -16,7 +16,7 @@ import * as controls                             from './controls.js?v=38';
 import * as notifications                        from './notifications.js?v=38';
 import { isAuthenticated, logout, getQueryUser } from './auth.js?v=38';
 import { init as initNews }                      from './news.js?v=38';
-import { init as initLeaderboard }               from './leaderboard.js?v=38';
+import { init as initLeaderboard }               from './leaderboard.js?v=40';
 import { init as initAdmin, open as openAdmin }  from './admin.js?v=38';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=38';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';

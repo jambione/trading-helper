@@ -1413,6 +1413,15 @@ body.mobile .cell-chg    { font-size: 13px; }
   color: var(--accent);
   font-weight: 600;
 }
+.lb-since {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 500;
+  padding-left: 4px;
+  border-left: 1px solid var(--border-hi);
+  margin-left: 2px;
+}
 
 @media (max-width: 700px) {
   .lb-label { display: none; }
