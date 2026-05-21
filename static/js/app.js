@@ -5,7 +5,7 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=38';
+import { connect, on, api }                      from './api.js?v=39';
 import { subscribe, set }                        from './store.js?v=38';
 import { init as initTranscription }             from './transcription.js?v=38';
 import { init as initTickers }                   from './tickers.js?v=38';
@@ -17,7 +17,7 @@ import * as notifications                        from './notifications.js?v=38';
 import { isAuthenticated, logout, getQueryUser } from './auth.js?v=38';
 import { init as initNews }                      from './news.js?v=38';
 import { init as initLeaderboard }               from './leaderboard.js?v=40';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=38';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=39';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=38';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=38');
+    const m = await import('./admin.js?v=39');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

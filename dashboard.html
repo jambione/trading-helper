@@ -526,6 +526,7 @@
                     <div class="tab-bar">
                         <button class="tab-btn tab-btn--active" data-admin-tab="feedback">Feedback</button>
                         <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
+                        <button class="tab-btn" data-admin-tab="news">News</button>
                     </div>
                     <button data-admin-close class="btn btn--ghost btn--icon" title="Close">✕</button>
                 </div>
@@ -599,6 +600,27 @@
 
                         <!-- Current items -->
                         <div data-feed-list class="feed-list"></div>
+                    </div>
+
+                    <!-- ── Tab: News ──────────────────────────── -->
+                    <div data-admin-panel="news" class="hidden">
+
+                        <!-- Add new item form -->
+                        <div class="news-add-form">
+                            <div class="feed-add-row">
+                                <input id="news-ticker"   type="text" class="feed-item-input" style="max-width:90px" placeholder="Ticker" maxlength="10" autocomplete="off" />
+                                <input id="news-date"     type="date" class="feed-item-input" style="max-width:150px" />
+                                <button id="news-add-btn" class="btn btn--primary btn--sm">Add</button>
+                            </div>
+                            <input id="news-headline" type="text" class="feed-item-input" style="width:100%;margin-bottom:6px" placeholder="Headline…" maxlength="200" autocomplete="off" />
+                            <textarea id="news-body" class="feed-item-input" style="width:100%;resize:vertical;min-height:60px;font-family:inherit" placeholder="Body text (optional)…" maxlength="1000"></textarea>
+                        </div>
+
+                        <!-- Save status -->
+                        <span data-news-save-status class="feed-save-status" hidden></span>
+
+                        <!-- Current items -->
+                        <div data-news-list class="feed-list"></div>
                     </div>
 
                 </div>

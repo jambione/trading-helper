@@ -139,6 +139,14 @@ def load_news() -> list:
         log.warning(f"[NEWS] Failed to load news.json: {e}")
         return []
 
+def save_news(items: list) -> None:
+    """Write items list to news.json and invalidate the cache."""
+    NEWS_FILE.write_text(
+        json.dumps(items, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    _news_cache["mtime"] = -1.0
+
 
 # ── Suggestions ──────────────────────────────────────────────────────────────
 
@@ -940,6 +948,30 @@ async def api_state():
 @app.get("/api/news")
 async def api_news():
     return JSONResponse({"items": load_news()})
+
+
+@app.post("/api/news")
+async def api_save_news(request: Request):
+    """Overwrite news.json with the posted items array (admin only)."""
+    try:
+        body  = await request.json()
+        items = body.get("items", [])
+        sanitised = []
+        for item in items:
+            headline = str(item.get("headline", "")).strip()
+            if not headline:
+                continue
+            sanitised.append({
+                "ticker":   str(item.get("ticker", "")).strip().upper(),
+                "headline": headline,
+                "date":     str(item.get("date",   "")).strip(),
+                "body":     str(item.get("body",   "")).strip(),
+            })
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: save_news(sanitised))
+        return JSONResponse({"ok": True, "count": len(sanitised)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @app.post("/api/transcriber/start")

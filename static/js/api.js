@@ -135,4 +135,6 @@ export const api = {
   deleteSuggestion: timestamp => request('DELETE', '/api/suggestions', { timestamp }),
   getTickerFeed:   ()       => request('GET',  '/api/ticker-feed'),
   saveTickerFeed:  items    => request('POST', '/api/ticker-feed', { items }),
+  getNews:         ()       => request('GET',  '/api/news'),
+  saveNews:        items    => request('POST', '/api/news',        { items }),
 };

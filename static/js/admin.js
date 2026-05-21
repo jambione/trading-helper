@@ -1,12 +1,13 @@
 /**
  * admin.js — Admin panel for user=jmb
  *
- * Two tabs:
- *   Feedback   — read-only view of user suggestion submissions
+ * Tabs:
+ *   Feedback    — read-only view of user suggestion submissions
  *   Ticker Feed — add / reorder / delete items in the scrolling bottom feed
+ *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=38';
+import { api } from './api.js?v=39';
 
 let _backdrop = null;
 let _activeTab = 'feedback';
@@ -50,6 +51,7 @@ function _switchTab(tab) {
   );
   if (tab === 'feedback')    _loadFeedback();
   if (tab === 'ticker-feed') _loadFeed();
+  if (tab === 'news')        _loadNews();
 }
 
 // ── Feedback tab ───────────────────────────────────────────────
@@ -184,6 +186,92 @@ async function _saveFeed() {
     if (saveBtn) {
       saveBtn.textContent = 'Error saving';
       setTimeout(() => { saveBtn.hidden = true; }, 3000);
+    }
+  }
+}
+
+// ── News tab ───────────────────────────────────────────────────
+
+let _newsItems = [];
+
+async function _loadNews() {
+  const listEl = _backdrop.querySelector('[data-news-list]');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="suggestions-empty">Loading…</div>';
+  try {
+    const { items = [] } = await api.getNews();
+    _newsItems = items;
+    _renderNews();
+    _wireNewsAddBtn();
+  } catch {
+    listEl.innerHTML = '<div class="suggestions-empty">Failed to load.</div>';
+  }
+}
+
+function _renderNews() {
+  const listEl = _backdrop.querySelector('[data-news-list]');
+  if (!listEl) return;
+  if (!_newsItems.length) {
+    listEl.innerHTML = '<div class="suggestions-empty">No news items yet.</div>';
+    return;
+  }
+  listEl.innerHTML = _newsItems.map((item, i) => `
+    <div class="feed-item" data-news-idx="${i}" style="flex-direction:column;align-items:flex-start;gap:4px">
+      <div style="display:flex;width:100%;justify-content:space-between;align-items:center">
+        <span>
+          ${item.ticker ? `<strong>${_esc(item.ticker)}</strong> · ` : ''}
+          <span>${_esc(item.headline)}</span>
+          ${item.date ? `<span style="opacity:.6;margin-left:6px">${_esc(item.date)}</span>` : ''}
+        </span>
+        <button class="btn-feed-del" data-news-del="${i}" title="Delete">✕</button>
+      </div>
+      ${item.body ? `<div style="opacity:.7;font-size:.85em">${_esc(item.body)}</div>` : ''}
+    </div>`).join('');
+
+  listEl.querySelectorAll('[data-news-del]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      _newsItems.splice(+btn.dataset.newsDel, 1);
+      _renderNews();
+      _saveNews();
+    })
+  );
+}
+
+function _wireNewsAddBtn() {
+  const btn = _backdrop.querySelector('#news-add-btn');
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.addEventListener('click', () => {
+    const headline = _backdrop.querySelector('#news-headline')?.value.trim();
+    if (!headline) return;
+    _newsItems.unshift({
+      ticker:   (_backdrop.querySelector('#news-ticker')?.value.trim() || '').toUpperCase(),
+      headline,
+      date:     _backdrop.querySelector('#news-date')?.value || '',
+      body:     _backdrop.querySelector('#news-body')?.value.trim() || '',
+    });
+    _backdrop.querySelector('#news-ticker').value   = '';
+    _backdrop.querySelector('#news-headline').value = '';
+    _backdrop.querySelector('#news-date').value     = '';
+    _backdrop.querySelector('#news-body').value     = '';
+    _renderNews();
+    _saveNews();
+  });
+}
+
+async function _saveNews() {
+  const statusEl = _backdrop.querySelector('[data-news-save-status]');
+  if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.hidden = false; }
+  try {
+    await api.saveNews(_newsItems);
+    if (statusEl) {
+      statusEl.textContent = 'Saved ✓';
+      setTimeout(() => { statusEl.hidden = true; }, 2000);
+    }
+  } catch {
+    if (statusEl) {
+      statusEl.textContent = 'Error saving';
+      setTimeout(() => { statusEl.hidden = true; }, 3000);
     }
   }
 }
