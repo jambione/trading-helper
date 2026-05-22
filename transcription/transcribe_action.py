@@ -1152,9 +1152,13 @@ _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
       for i in range(_N_WORKERS)],
+    threading.Thread(target=_ollama_health_worker, daemon=True, name="ollama-health"),
 ]
 for t in _threads:
     t.start()
+
+# Initial Ollama ping before printing status
+_ping_ollama(verbose=True)
 
 engine = f"MLX Whisper ({MLX_MODEL})" if _USE_MLX else f"faster-whisper ({CPU_MODEL})"
 ticker_engine = f"Ollama ({OLLAMA_MODEL})" if _ollama_ok else ("NASDAQ list" if _VALID_TICKERS else "stop-word filter")
