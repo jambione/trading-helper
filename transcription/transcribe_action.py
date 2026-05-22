@@ -76,7 +76,7 @@ else:
 
 TARGET_SR       = 16000
 CHUNK_DURATION  = 3.0    # 3s window — enough sentence context for accuracy
-OVERLAP         = 1.5    # large overlap: slide every 1.5s instead of 2.5s
+OVERLAP         = 2.2    # increased overlap: recover partial recognition at chunk boundaries
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per result
@@ -373,6 +373,60 @@ def _ollama_classify(candidates: list[str], context: str) -> list[str]:
             return []
 
 
+def _ollama_phonetic_validate(candidate: str) -> str | None:
+    """Use Ollama to resolve phonetically-misheard tickers.
+
+    When a TTS voice spells a ticker letter-by-letter (e.g., 'N V D A'),
+    Whisper sometimes mishears vowels or doubles consonants. Ask Ollama
+    to reason about the correct US stock ticker this resembles.
+
+    Returns the corrected ticker if found, or None.
+    """
+    global _ollama_fail_ts
+    if not _ollama_ok or not candidate or len(candidate) > 5:
+        return None
+    if time.monotonic() - _ollama_fail_ts < 30:
+        return None
+
+    prompt = (
+        f"Computer voice reading stock ticker letter-by-letter.\n"
+        f"ASR heard: {candidate}\n"
+        f"What is the correct US stock ticker symbol (2-5 letters)?\n"
+        f"Examples: NVDA (N-V-D-A), TSLA (T-S-L-A), AAPL (A-A-P-L)\n"
+        f"Reply with ONLY the ticker symbol, or NONE if unclear."
+    )
+    payload = {
+        "model":   OLLAMA_MODEL,
+        "prompt":  prompt,
+        "stream":  False,
+        "options": {"num_predict": 6, "temperature": 0, "num_ctx": 256},
+    }
+
+    try:
+        req = urllib.request.Request(
+            OLLAMA_URL,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as r:
+            response = json.loads(r.read()).get("response", "").strip().upper()
+        if not response or response == "NONE":
+            return None
+        match = re.search(r'\b([A-Z]{2,5})\b', response)
+        if match and match.group(1) in _VALID_TICKERS:
+            return match.group(1)
+    except Exception as e:
+        is_timeout = "timed out" in str(e).lower() or isinstance(e, TimeoutError)
+        if is_timeout:
+            _metric_inc("ollama_timeouts")
+        else:
+            _metric_inc("ollama_failures")
+        if not is_timeout:
+            _ollama_fail_ts = time.monotonic()
+    return None
+
+
 # =============================================================================
 # TICKER EXTRACTION
 # =============================================================================
@@ -546,6 +600,21 @@ def extract_tickers(text: str) -> dict:
     if candidates:
         if _ollama_ok:
             confirmed = _ollama_classify(candidates, text)
+            # For isolated ticker reads with no context, also try phonetic resolution
+            # on spelled candidates that weren't caught by context-based classification
+            for t in candidates:
+                if t not in confirmed and was_spelled.get(t):
+                    fixed = _phonetic_match(t, _VALID_TICKERS)
+                    if fixed and fixed != t:
+                        confirmed.append(fixed)
+                        counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
+                        print(f"[PHONETIC] {t} → {fixed}", flush=True)
+                    else:
+                        ollama_fixed = _ollama_phonetic_validate(t)
+                        if ollama_fixed and ollama_fixed != t:
+                            confirmed.append(ollama_fixed)
+                            counts[ollama_fixed] = counts.get(ollama_fixed, 0) + counts.pop(t, 0)
+                            print(f"[OLLAMA_PHONETIC] {t} → {ollama_fixed}", flush=True)
         elif _VALID_TICKERS:
             confirmed = []
             for t in candidates:
