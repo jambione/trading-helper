@@ -253,13 +253,13 @@ _VALID_TICKERS: set = _load_valid_tickers()
 # The LLM receives only the short candidate list (≤10 words), not the full
 # transcript, so round-trips are consistently under 150ms.
 
-OLLAMA_MODEL       = "qwen2.5:0.5b"
+OLLAMA_MODEL       = "qwen3:0.6b"
 OLLAMA_URL         = "http://localhost:11434/api/generate"
 OLLAMA_TIMEOUT     = 0.25  # reduced from 0.50 for faster latency
 OLLAMA_RETRIES     = 0     # no retries — fail fast for speed
 OLLAMA_RETRY_SLEEP = 0.10
 
-_ollama_ok      = False  # disabled during speed optimization; uses NASDAQ list classifier
+_ollama_ok      = False  # enabled during accuracy optimization; qwen3:0.6b for phonetic validation
 _ollama_fail_ts = 0.0
 
 _METRICS_LOCK = threading.Lock()
@@ -268,6 +268,9 @@ _METRICS = {
     "ollama_timeouts": 0,
     "ollama_failures": 0,
     "ollama_retry_ok": 0,
+    "ticker_candidates_total": 0,
+    "ticker_candidates_validated": 0,
+    "ticker_candidates_failed": 0,
 }
 
 
@@ -283,6 +286,9 @@ def _metrics_payload() -> dict:
             "ollama_timeouts": int(_METRICS.get("ollama_timeouts", 0)),
             "ollama_failures": int(_METRICS.get("ollama_failures", 0)),
             "ollama_retry_ok": int(_METRICS.get("ollama_retry_ok", 0)),
+            "ticker_candidates_total": int(_METRICS.get("ticker_candidates_total", 0)),
+            "ticker_candidates_validated": int(_METRICS.get("ticker_candidates_validated", 0)),
+            "ticker_candidates_failed": int(_METRICS.get("ticker_candidates_failed", 0)),
             "queue_size": int(_audio_queue.qsize()) if '_audio_queue' in globals() else 0,
             "queue_capacity": 16,
             "workers": int(_N_WORKERS) if '_N_WORKERS' in globals() else 0,
@@ -539,22 +545,43 @@ _MISHEAR_RE = {k: re.compile(rf'\b{re.escape(k)}\b', re.I) for k in _MISHEAR_MAP
 # multiplies sustained vowels ("A I I O" → "E-I-I-I-O"). Phonetic-correct unknown
 # letter-spelled candidates against the NASDAQ list at edit distance 1.
 _PHONETIC_CONFUSIONS = {
-    'A': ['E'], 'E': ['A'],
-    'B': ['V', 'D', 'P'], 'V': ['B'], 'P': ['B'],
-    'D': ['T', 'B'], 'T': ['D'],
-    'M': ['N'], 'N': ['M'],
-    'I': ['Y'], 'Y': ['I'],
-    'O': ['U'], 'U': ['O'],
-    'S': ['Z'], 'Z': ['S'],
+    'A': ['E', 'I'], 'E': ['A', 'I'], 'I': ['A', 'E', 'Y'],
+    'O': ['U', 'A'], 'U': ['O', 'A'],
+    'B': ['V', 'D', 'P', 'G'], 'V': ['B', 'F'], 'P': ['B', 'F'],
+    'D': ['T', 'B', 'G'], 'T': ['D'],
+    'M': ['N', 'B'], 'N': ['M', 'D'],
+    'S': ['Z', 'C', 'X'], 'Z': ['S', 'X'], 'C': ['S', 'K'],
+    'G': ['C', 'D', 'K'], 'K': ['C', 'G'], 'X': ['S', 'Z'],
+    'F': ['V', 'P'], 'Y': ['I', 'J'],
 }
+
+
+def _levenshtein_distance(s1: str, s2: str) -> int:
+    """Compute Levenshtein distance between two strings."""
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    prev_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        cur_row = [i + 1] + [0] * len(s2)
+        for j, c2 in enumerate(s2):
+            cur_row[j + 1] = min(
+                prev_row[j + 1] + 1,
+                cur_row[j] + 1,
+                prev_row[j] + (0 if c1 == c2 else 1),
+            )
+        prev_row = cur_row
+    return prev_row[-1]
 
 
 def _phonetic_match(candidate: str, ticker_set: set) -> str | None:
     """Map an ASR-misheard letter-spelling to a real ticker, or None.
 
-    Tries two transformations and returns the first hit in ticker_set:
+    Tries transformations in order of confidence:
       1. Collapse runs of repeated chars (EIIIO → EIIO).
-      2. Single-character substitution from common ASR confusion pairs.
+      2. Single-character substitution from ASR confusion pairs.
+      3. Levenshtein distance 1 fallback for unmatched mishears.
     """
     if not ticker_set:
         return None
@@ -562,6 +589,8 @@ def _phonetic_match(candidate: str, ticker_set: set) -> str | None:
     collapsed = re.sub(r'(.)\1{2,}', r'\1\1', candidate)
     if collapsed != candidate:
         tries.append(collapsed)
+
+    # Try exact/confusion matches first
     for cand in tries:
         if cand in ticker_set:
             return cand
@@ -570,6 +599,11 @@ def _phonetic_match(candidate: str, ticker_set: set) -> str | None:
                 fixed = cand[:i] + swap + cand[i+1:]
                 if fixed in ticker_set:
                     return fixed
+
+    # Levenshtein fallback: find any ticker at distance 1
+    for ticker in ticker_set:
+        if len(ticker) == len(candidate) and _levenshtein_distance(candidate, ticker) == 1:
+            return ticker
     return None
 
 
@@ -598,6 +632,7 @@ def extract_tickers(text: str) -> dict:
                 was_spelled[t] = raw.isupper()
 
     if candidates:
+        _metric_inc("ticker_candidates_total", len(candidates))
         if _ollama_ok:
             confirmed = _ollama_classify(candidates, text)
             # For isolated ticker reads with no context, also try phonetic resolution
@@ -631,6 +666,14 @@ def extract_tickers(text: str) -> dict:
         # Drop any raw counts for tokens that failed validation
         confirmed_set = set(confirmed)
         counts = {t: c for t, c in counts.items() if t in confirmed_set}
+
+        # Track validation success/failure
+        failed = [t for t in candidates if t not in confirmed_set and was_spelled.get(t)]
+        _metric_inc("ticker_candidates_validated", len(confirmed))
+        if failed:
+            _metric_inc("ticker_candidates_failed", len(failed))
+            if len(failed) <= 3:
+                print(f"[UNRESOLVED] {failed} (from: {text[:60]})", flush=True)
 
     # 2. Company name scan — 1 mention each
     for name, ticker in _NAME_TO_TICKER.items():
