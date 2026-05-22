@@ -1408,11 +1408,11 @@ class SignalEngine:
         if PRIORITY_MENTIONS > 0:
             print(f"  Priority BUY  : {PRIORITY_MENTIONS}+ mentions in {PRIORITY_WINDOW_SECONDS}s → RSI filter OFF")
         else:
-            print(f"  Priority BUY  : disabled (PRIORITY_MENTIONS=0)")
+            print("  Priority BUY  : disabled (PRIORITY_MENTIONS=0)")
         if RSI_SELL_OVERBOUGHT > 0:
             print(f"  RSI sell      : exit position when RSI >= {RSI_SELL_OVERBOUGHT}")
         else:
-            print(f"  RSI sell      : disabled (RSI_SELL_OVERBOUGHT=0)")
+            print("  RSI sell      : disabled (RSI_SELL_OVERBOUGHT=0)")
         print(f"  Log file      : {LOG_FILE}")
         print("=" * 60)
 

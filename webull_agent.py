@@ -64,9 +64,10 @@ import math
 import os
 import sys
 import time
+
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 _HERE = Path(__file__).parent
@@ -710,14 +711,14 @@ def _finish_setup(wb, email: str, pin: str):
     }
     TOKENS_FILE.write_text(json.dumps(tokens, indent=2))
 
-    print(f"\n  ✓  Logged in successfully!")
+    print("\n  ✓  Logged in successfully!")
     print(f"  ✓  Tokens saved to {TOKENS_FILE.name}")
     print()
     print("  Make sure webull_agent.env has:")
     print(f"    WEBULL_EMAIL={email}")
-    print(f"    WEBULL_PASS=<your password>")
+    print("    WEBULL_PASS=<your password>")
     print(f"    WEBULL_TRADING_PIN={pin}")
-    print(f"    ENABLED=false   ← change to true when ready to trade")
+    print("    ENABLED=false   ← change to true when ready to trade")
     print()
     print("  Run the agent:  python webull_agent.py")
 

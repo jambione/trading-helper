@@ -225,7 +225,7 @@ LAUNCH_TIMEOUT = 20
 def _init_live():
     """Import GUI libraries and resolve TV exe path. Called once if LIVE_MODE=True."""
     global _pyautogui, _gw, _os, _subprocess, _time, TV_LAUNCH
-    import os, subprocess, time as _time_mod
+    import os, subprocess
     import pyautogui as _pag
     import pygetwindow as _pgw
     _pyautogui  = _pag
@@ -365,7 +365,7 @@ def workflow_add_wb(ticker: str, dry_run: bool = False) -> bool:
 
     print(f"📊 ADD_WB → {ticker}")
     if not _ensure_open(WB_WINDOW, WB_LAUNCH):
-        print(f"   ❌ ADD_WB failed — could not open Webull Desktop")
+        print("   ❌ ADD_WB failed — could not open Webull Desktop")
         return False
 
     import time
@@ -401,7 +401,7 @@ def workflow_add_wb_bulk(tickers: list, dry_run: bool = False) -> dict:
         return results
 
     if not _ensure_open(WB_WINDOW, WB_LAUNCH):
-        print(f"   ❌ ADD_WB_BULK failed — could not open Webull Desktop")
+        print("   ❌ ADD_WB_BULK failed — could not open Webull Desktop")
         results["failed"] = to_add
         return results
 
@@ -447,7 +447,7 @@ def workflow_add_tv(ticker: str, dry_run: bool = False) -> bool:
 
     hwnd = _tv_ensure_open()
     if not hwnd:
-        print(f"   ❌ ADD_TV failed — could not open TradingView")
+        print("   ❌ ADD_TV failed — could not open TradingView")
         return False
 
     _time_mod.sleep(0.5)   # let click-focus settle
@@ -588,7 +588,7 @@ def workflow_buy(ticker: str, dry_run: bool = False) -> bool:
         # _pyautogui.hotkey("shift", "b")
         print(f"   ✅ BUY (Shift+B) sent for {ticker}")
         return True
-    print(f"   ❌ BUY failed — could not open Webull Desktop")
+    print("   ❌ BUY failed — could not open Webull Desktop")
     return False
 
 
@@ -604,5 +604,5 @@ def workflow_sell_all(ticker: str, dry_run: bool = False) -> bool:
         # _pyautogui.hotkey("shift", "a")
         print(f"   ✅ SELL ALL (Shift+A) sent for {ticker}")
         return True
-    print(f"   ❌ SELL failed — could not open Webull Desktop")
-    return F
+    print("   ❌ SELL failed — could not open Webull Desktop")
+    return False

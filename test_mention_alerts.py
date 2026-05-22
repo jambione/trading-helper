@@ -96,7 +96,7 @@ try:
     print(f"  Server: OK  (auth_required={meta.get('auth_required', False)})")
 except Exception as e:
     print(f"\033[91mERROR: Cannot reach server at {BASE}\033[0m")
-    print(f"  Make sure the trading server is running first.")
+    print("  Make sure the trading server is running first.")
     print(f"  Detail: {e}")
     sys.exit(1)
 
@@ -209,7 +209,7 @@ print(f"  Results: {_passed}/{total_tests} passed", end="")
 if _failed:
     print(f"  \033[91m({_failed} failed)\033[0m")
 else:
-    print(f"  \033[92m— all good!\033[0m")
+    print("  \033[92m— all good!\033[0m")
 print(f"{'═'*55}\n")
 
 sys.exit(0 if _failed == 0 else 1)

@@ -81,7 +81,6 @@ print(norm)
 print()
 
 # Monkey-patch universe into the exec'd namespace's global
-import types
 # Call extract_tickers with universe injected
 _TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
 _STOP_WORDS = _ns["_STOP_WORDS"]

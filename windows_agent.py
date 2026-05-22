@@ -218,7 +218,7 @@ def workflow_add_wb(ticker: str) -> bool:
         return True
 
     if not _webull_installed():
-        print(f"  ⏭  ADD_WB skipped — Webull Desktop is not installed")
+        print("  ⏭  ADD_WB skipped — Webull Desktop is not installed")
         return False
 
     # Prefer whichever known install path actually exists on this PC.
@@ -653,9 +653,9 @@ if __name__ == "__main__":
     print(f"  TV tab    : Ctrl+{BRAVE_TV_TAB}")
     if _IS_WINDOWS:
         if _webull_installed():
-            print(f"  Webull    : detected ✓")
+            print("  Webull    : detected ✓")
         else:
-            print(f"  Webull    : NOT installed — Webull adds will be skipped")
+            print("  Webull    : NOT installed — Webull adds will be skipped")
     print(f"  Skip-add window: {ACTIVATED_TTL // 60} min after activation")
     print(f"{'='*54}\n")
 
@@ -672,10 +672,10 @@ if __name__ == "__main__":
     # Start HTTP server (for manual calls from dashboard Auto-Add toggle)
     server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
-    print(f"   GET  /health  → status")
-    print(f"   POST /add-wb  {{\"ticker\": \"NVDA\"}}  → Webull Desktop")
+    print("   GET  /health  → status")
+    print("   POST /add-wb  {\"ticker\": \"NVDA\"}  → Webull Desktop")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Ctrl+{BRAVE_TV_TAB}, Alt+W)")
-    print(f"   Press Ctrl+C to stop.\n")
+    print("   Press Ctrl+C to stop.\n")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
