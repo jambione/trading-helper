@@ -52,7 +52,12 @@ fi
 
 # ── 4. Kill the trading server ────────────────────────────────────────────────
 echo "[4/4] Shutting down trading server..."
-bash "$REPO/stop_trading_server.sh"
+pkill -SIGTERM -f "start_all.py" 2>/dev/null; sleep 2
+pkill -SIGKILL -f "start_all.py" 2>/dev/null
+pkill -SIGKILL -f "dashboard.py" 2>/dev/null
+pkill -SIGKILL -f "transcribe_action.py" 2>/dev/null
+pkill -SIGKILL -f "caffeinate.*start_all" 2>/dev/null
+pkill -SIGKILL -f "cloudflared" 2>/dev/null
 echo "      ✓ Server stopped."
 
 echo ""
