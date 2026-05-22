@@ -456,6 +456,10 @@ _STOP_WORDS = {
     "YOUR", "SAID", "SAYS", "TOLD", "TELL", "TALK", "WENT", "GOES", "BOTH",
     "ONCE", "UPON", "SOON", "EVER", "YEAR", "WEEK", "DAYS", "LETS", "PUTS",
     "ALSO", "THEN", "THAN", "BEEN", "WERE", "HAVE", "MAKE",
+    # Numbers spelled out
+    "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
+    "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "TWENTY", "THIRTY", "FORTY", "FIFTY",
+    "HUNDRED", "THOUSAND", "MILLION", "BILLION",
     # Finance / market terms that look like tickers
     "ETF", "IPO", "CEO", "CFO", "COO", "CTO", "SEC", "FDA", "FED", "GDP",
     "CPI", "EPS", "ATH", "ATL", "RSI", "SMA", "EMA", "BEAR", "BULL",
@@ -464,6 +468,7 @@ _STOP_WORDS = {
     "HALT", "ALERT", "LEVEL", "STOCK", "PRICE", "TRADE", "SHARE",
     "OPEN", "HIGH", "CLOSE", "AFTER", "ABOVE", "BELOW", "RANGE",
     "BEAT", "MISS", "GUIDE", "VIEW", "RAISE", "LOWER", "CUTS",
+    "SPIKE", "SPIKE", "VOLUME", "VOLATILITY", "FLAG", "FACILITY",
     # Months / days
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
     "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
