@@ -75,8 +75,8 @@ else:
     GAIN_MAX          = None
 
 TARGET_SR       = 16000
-CHUNK_DURATION  = 3.0    # 3s window — enough sentence context for accuracy
-OVERLAP         = 2.2    # increased overlap: recover partial recognition at chunk boundaries
+CHUNK_DURATION  = 1.5    # shorter chunks = faster latency (1.5s window)
+OVERLAP         = 1.0    # minimal overlap: prioritize latency over partial recovery
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per result
@@ -255,11 +255,11 @@ _VALID_TICKERS: set = _load_valid_tickers()
 
 OLLAMA_MODEL       = "qwen2.5:0.5b"
 OLLAMA_URL         = "http://localhost:11434/api/generate"
-OLLAMA_TIMEOUT     = 0.50
-OLLAMA_RETRIES     = 1
+OLLAMA_TIMEOUT     = 0.25  # reduced from 0.50 for faster latency
+OLLAMA_RETRIES     = 0     # no retries — fail fast for speed
 OLLAMA_RETRY_SLEEP = 0.10
 
-_ollama_ok      = False  # Ollama disabled; transcriber uses the NASDAQ list classifier
+_ollama_ok      = False  # disabled during speed optimization; uses NASDAQ list classifier
 _ollama_fail_ts = 0.0
 
 _METRICS_LOCK = threading.Lock()
