@@ -734,6 +734,12 @@ INITIAL_PROMPT = (
     "calls puts earnings price target breakout resistance."
 )
 
+# Tickers that appear verbatim in the initial prompt — used by the prompt-echo
+# hallucination guard to detect chunks that are just Whisper regurgitating its seed.
+_PROMPT_TICKERS: frozenset[str] = frozenset(
+    w for w in INITIAL_PROMPT.split() if w.isupper() and 2 <= len(w) <= 5
+)
+
 
 # =============================================================================
 # CONFIG — device index, API keys
@@ -911,6 +917,12 @@ _running.set()
 _session_tickers: set = set()
 _session_lock = threading.Lock()
 
+# Cross-chunk mention dedup — chunk overlap means the same utterance can land in
+# two consecutive chunks. Suppress a ticker's mention if it was just sent within
+# one full chunk window (CHUNK_DURATION seconds).
+_ticker_last_sent: dict[str, float] = {}
+_MENTION_COOLDOWN = CHUNK_DURATION  # 1.5s — one full chunk window
+
 
 # =============================================================================
 # TICKER DELIVERY — POST to dashboard API
@@ -926,7 +938,12 @@ def _send_ticker(ticker: str, count: int = 1):
     Falls back to writing the file if API is down.
     """
     ticker = ticker.upper()
+    now = time.monotonic()
     with _session_lock:
+        last = _ticker_last_sent.get(ticker, 0.0)
+        if now - last < _MENTION_COOLDOWN:
+            return  # same utterance echoed by chunk overlap — skip
+        _ticker_last_sent[ticker] = now
         is_new = ticker not in _session_tickers
         if is_new:
             _session_tickers.add(ticker)
@@ -1074,7 +1091,14 @@ def transcription_worker():
                         compression_ratio_threshold=2.4,
                         condition_on_previous_text=False,
                     )
-                    text = " ".join(s.text.strip() for s in segs).strip()
+                    # Filter low-confidence segments before joining. faster-whisper
+                    # exposes per-segment no_speech_prob and avg_logprob; segments
+                    # that are likely silence or noise produce tickers that slip
+                    # past the repetition-loop guard.
+                    text = " ".join(
+                        s.text.strip() for s in segs
+                        if s.no_speech_prob < 0.6 and s.avg_logprob > -1.0
+                    ).strip()
 
             ms = (time.perf_counter() - t0) * 1000
 
@@ -1122,6 +1146,14 @@ def transcription_worker():
                     _is_echo = (len(_words) >= 10
                                 and _unique_upper >= 8
                                 and len(_upper) / len(_words) > 0.70)
+                    # Subtler prompt echo: Whisper regurgitates a handful of tickers
+                    # from the seed prompt rather than the full list. Flag if 5+ of
+                    # the chunk's all-caps words are verbatim prompt tickers and
+                    # those words make up the majority of the chunk.
+                    if not _is_echo and _PROMPT_TICKERS:
+                        _prompt_hits = sum(1 for w in _upper if w in _PROMPT_TICKERS)
+                        _is_echo = (_prompt_hits >= 5
+                                    and _prompt_hits / max(len(_words), 1) > 0.60)
                     if _is_loop or _is_echo:
                         print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
                         continue
