@@ -58,6 +58,7 @@ pkill -SIGKILL -f "dashboard.py" 2>/dev/null
 pkill -SIGKILL -f "transcribe_action.py" 2>/dev/null
 pkill -SIGKILL -f "caffeinate.*start_all" 2>/dev/null
 pkill -SIGKILL -f "cloudflared" 2>/dev/null
+pkill -SIGKILL -f "venv/bin/python" 2>/dev/null
 echo "      ✓ Server stopped."
 
 echo ""
