@@ -2,7 +2,6 @@
 """Start the Signal Scanner dashboard.
 
 Scanner engine is now embedded — no separate process needed.
-Uses venv for all subprocesses.
 """
 import os
 import subprocess
@@ -10,8 +9,6 @@ import sys
 import threading
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-VENV_BIN = os.path.join(ROOT, "venv", "bin")
-VENV_PYTHON = os.path.join(VENV_BIN, "python")
 
 
 def _stream(proc: subprocess.Popen, label: str) -> None:
@@ -22,10 +19,10 @@ def _stream(proc: subprocess.Popen, label: str) -> None:
 
 
 def main() -> None:
-    utf8_env = {**os.environ, 'PYTHONUTF8': '1', 'VIRTUAL_ENV': os.path.join(ROOT, 'venv'), 'PATH': f"{VENV_BIN}:{os.environ.get('PATH', '')}"}
+    utf8_env = {**os.environ, 'PYTHONUTF8': '1'}
 
     helper = subprocess.Popen(
-        [VENV_PYTHON, 'dashboard.py'],
+        [sys.executable, 'dashboard.py'],
         cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -48,11 +45,7 @@ def main() -> None:
     finally:
         if helper.poll() is None:
             helper.terminate()
-        try:
-            helper.wait(timeout=5)
-        except (KeyboardInterrupt, subprocess.TimeoutExpired):
-            helper.kill()
-            helper.wait()
+        helper.wait()
 
 
 if __name__ == '__main__':

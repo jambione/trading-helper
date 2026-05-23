@@ -6,124 +6,25 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=38';
-import { api } from './api.js?v=38';
+import { subscribe, selectTicker, get } from './store.js?v=6';
+import { api } from './api.js?v=6';
 
-let _rowsEl     = null;   // <div data-ticker-rows>
-let _countEl    = null;   // <span data-ticker-count>
-let _prevPrices = {};     // ticker → last price (for flash detection)
-let _sortCol    = 'price';
-let _sortDir    = 1;      // 1 = ascending, -1 = descending
-let _headerEls  = {};     // col key → th element
-let _lastRows   = [];     // last received rows (for re-render on sort change)
-
-// ── Copied-ticker feed tracking ────────────────────────────────
-const _COPY_DATE_KEY    = 'ss:copied-date';
-const _COPY_TICKERS_KEY = 'ss:copied-tickers';
-let _copiedTickers = [];
-
-function _loadCopiedTickers() {
-  const today = new Date().toISOString().slice(0, 10);
-  if (localStorage.getItem(_COPY_DATE_KEY) === today) {
-    try { _copiedTickers = JSON.parse(localStorage.getItem(_COPY_TICKERS_KEY) || '[]'); } catch { _copiedTickers = []; }
-  } else {
-    // New day — reset
-    _copiedTickers = [];
-    localStorage.setItem(_COPY_DATE_KEY, today);
-    localStorage.setItem(_COPY_TICKERS_KEY, '[]');
-  }
-  _pushToFeed();
-}
-
-function _pushToFeed() {
-  if (typeof window.__feedUpdateCopied === 'function') {
-    window.__feedUpdateCopied([..._copiedTickers]);
-  }
-}
-
-export function clearCopiedTickers() {
-  _copiedTickers = [];
-  localStorage.removeItem(_COPY_DATE_KEY);
-  localStorage.removeItem(_COPY_TICKERS_KEY);
-  _pushToFeed();
-}
+let _rowsEl  = null;   // <div data-ticker-rows>
+let _countEl = null;   // <span data-ticker-count>
+let _prevPrices = {};  // ticker → last price (for flash detection)
 
 export function init(panelEl) {
   _rowsEl  = panelEl.querySelector('[data-ticker-rows]');
   _countEl = panelEl.querySelector('[data-ticker-count]');
 
-  // Wire sortable column headers
-  panelEl.querySelectorAll('[data-sort-col]').forEach(h => {
-    const col = h.dataset.sortCol;
-    _headerEls[col] = h;
-    h.addEventListener('click', () => {
-      if (_sortCol === col) {
-        _sortDir *= -1;
-      } else {
-        _sortCol = col;
-        _sortDir = col === 'ticker' ? 1 : 1;
-      }
-      _updateSortHeaders();
-      if (_lastRows.length) _renderTable(_lastRows);
-    });
-  });
-  _updateSortHeaders();
-
   subscribe('tickers',        rows   => _renderTable(rows));
   subscribe('selectedTicker', ticker => _highlightSelected(ticker));
-
-  _loadCopiedTickers();
-}
-
-// ── Sort helpers ───────────────────────────────────────────────
-
-function _applySort(rows) {
-  const mentioned = rows.filter(r => r.mentioned);
-  const rest      = rows.filter(r => !r.mentioned);
-  rest.sort((a, b) => {
-    switch (_sortCol) {
-      case 'ticker': return _sortDir * a.ticker.localeCompare(b.ticker);
-      case 'price': {
-        const av = a.price  ?? (_sortDir > 0 ? Infinity : -Infinity);
-        const bv = b.price  ?? (_sortDir > 0 ? Infinity : -Infinity);
-        return _sortDir * (av - bv);
-      }
-      case 'chg': {
-        const av = a.pct_change ?? (_sortDir > 0 ? Infinity : -Infinity);
-        const bv = b.pct_change ?? (_sortDir > 0 ? Infinity : -Infinity);
-        return _sortDir * (av - bv);
-      }
-      case 'vol': {
-        const av = a.day_vol ?? (_sortDir > 0 ? -Infinity : Infinity);
-        const bv = b.day_vol ?? (_sortDir > 0 ? -Infinity : Infinity);
-        return _sortDir * (av - bv);
-      }
-      default: return 0;
-    }
-  });
-  return [...mentioned, ...rest];
-}
-
-function _updateSortHeaders() {
-  Object.entries(_headerEls).forEach(([col, el]) => {
-    // Store original label once
-    if (!el.dataset.sortLabel) el.dataset.sortLabel = el.textContent.trim();
-    const label = el.dataset.sortLabel;
-    if (col === _sortCol) {
-      el.textContent = label + (_sortDir === 1 ? ' ↑' : ' ↓');
-      el.classList.add('th--sorted');
-    } else {
-      el.textContent = label;
-      el.classList.remove('th--sorted');
-    }
-  });
 }
 
 // ── Table rendering ────────────────────────────────────────────
 
 function _renderTable(rows) {
   if (!_rowsEl) return;
-  _lastRows = rows;
 
   // Update count badge
   if (_countEl) {
@@ -131,7 +32,7 @@ function _renderTable(rows) {
   }
 
   if (!rows.length) {
-    _rowsEl.innerHTML = '';
+    _rowsEl.innerHTML = '<div class="table-empty">No tickers — start the transcriber and mention some stocks.</div>';
     _prevPrices = {};
     return;
   }
@@ -160,9 +61,8 @@ function _renderTable(rows) {
     if (!rendered.has(sym)) el.remove();
   });
 
-  // Client-side sort: highlighted rows always first, then un-mentioned sorted by chosen column
-  const sorted  = _applySort(rows);
-  const ordered = sorted.map(r => r.ticker);
+  // Re-order DOM to match server sort order (BUY → ON_DECK → …)
+  const ordered = rows.map(r => r.ticker);
   const children = [..._rowsEl.querySelectorAll('[data-row]')];
   const needsReorder = children.some((el, i) => el.dataset.row !== ordered[i]);
   if (needsReorder) {
@@ -172,30 +72,14 @@ function _renderTable(rows) {
     });
   }
 
-  // $20 price divider — only shown when sorting by price
-  _rowsEl.querySelector('[data-price-divider]')?.remove();
-  if (_sortCol === 'price') {
-    const firstAbove20 = sorted.find(r => !r.mentioned && r.price != null && r.price > 20);
-    const hasBelow20   = sorted.some(r => !r.mentioned && (r.price == null || r.price <= 20));
-    if (firstAbove20 && hasBelow20) {
-      const aboveEl = _rowsEl.querySelector(`[data-row="${firstAbove20.ticker}"]`);
-      if (aboveEl) {
-        const divider = document.createElement('div');
-        divider.className = 'price-divider';
-        divider.setAttribute('data-price-divider', '');
-        _rowsEl.insertBefore(divider, aboveEl);
-      }
-    }
-  }
-
-  // Price-change flash — uses CSS transition (no forced reflow)
+  // Price-change flash
   for (const row of rows) {
     if (row.price != null && _prevPrices[row.ticker] !== undefined && _prevPrices[row.ticker] !== row.price) {
       const priceEl = _rowsEl.querySelector(`[data-price="${row.ticker}"]`);
       if (priceEl) {
+        priceEl.classList.remove('price-flash');
+        void priceEl.offsetWidth; // force reflow
         priceEl.classList.add('price-flash');
-        clearTimeout(priceEl._flashTimer);
-        priceEl._flashTimer = setTimeout(() => priceEl.classList.remove('price-flash'), 600);
       }
     }
     if (row.price != null) _prevPrices[row.ticker] = row.price;
@@ -208,13 +92,13 @@ function _renderTable(rows) {
 
 function _createRow(row) {
   const el = document.createElement('div');
-  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`;
+  el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
-  el.querySelector('[data-copy-btn]').addEventListener('click', e => {
+  el.querySelector('[data-add-btn]').addEventListener('click', e => {
     e.stopPropagation();
-    _copyTicker(e.currentTarget, row.ticker);
+    _addToWBAndTV(e.currentTarget, row.ticker);
   });
   el.querySelector('[data-delete-btn]').addEventListener('click', e => {
     e.stopPropagation();
@@ -231,47 +115,23 @@ async function _removeTicker(ticker) {
   }
 }
 
-async function _copyTicker(btn, ticker) {
+async function _addToWBAndTV(btn, ticker) {
+  btn.disabled = true;
+  btn.textContent = '...';
   try {
-    await navigator.clipboard.writeText(ticker);
-    // Append to today's copied list (deduplicated, order preserved)
-    if (!_copiedTickers.includes(ticker)) {
-      _copiedTickers.push(ticker);
-      const today = new Date().toISOString().slice(0, 10);
-      localStorage.setItem(_COPY_DATE_KEY, today);
-      localStorage.setItem(_COPY_TICKERS_KEY, JSON.stringify(_copiedTickers));
-      _pushToFeed();
-    }
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    await api.addToWBAndTV(ticker);
+    btn.textContent = 'Add';
   } catch {
     btn.textContent = '!';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    setTimeout(() => { btn.textContent = 'Add'; btn.disabled = false; }, 1500);
+    return;
   }
+  btn.disabled = false;
 }
 
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
-  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}${row.mention_burst ? ' row-burst' : ''}`;
-
-  // Update mention badge
-  const tickerCell = el.querySelector('.cell-ticker');
-  if (tickerCell) {
-    let badge = tickerCell.querySelector('.mention-badge');
-    const w = row.mention_window ?? 0;
-    if (w > 0) {
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'mention-badge';
-        tickerCell.appendChild(badge);
-      }
-      badge.textContent = String(w);
-      badge.title       = `${row.mention_count ?? 0} today`;
-      badge.className   = `mention-badge${row.mention_burst ? ' mentions-burst' : ' mentions-active'}`;
-    } else if (badge) {
-      badge.remove();
-    }
-  }
+  el.className = `ticker-row ${_rowClass(row.status)}${row.mentioned ? ' row-mentioned' : ''}`;
 
   const priceEl = el.querySelector('[data-price]');
   if (priceEl) priceEl.textContent = row.price != null ? `$${row.price.toFixed(2)}` : '—';
@@ -296,20 +156,13 @@ function _rowHTML(row) {
   const chgCls = _chgClass(row.pct_change ?? null);
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
-  const mentionCls = row.mention_burst  ? ' mentions-burst'
-                   : (row.mention_window ?? 0) > 1 ? ' mentions-active' : '';
-  const mentionTxt = (row.mention_window ?? 0) > 1 ? `${row.mention_window}` : '';
-
   return `<div class="watchlist-cols">
-    <div class="cell-ticker">
-      ${row.ticker}
-      ${mentionTxt ? `<span class="mention-badge${mentionCls}" title="${row.mention_count ?? 0} today">${mentionTxt}</span>` : ''}
-    </div>
+    <div class="cell-ticker">${row.ticker}</div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-actions">
-      <button class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>
+      <button class="btn-add" data-add-btn title="Add to Webull + open in TradingView">Add</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
     </div>
   </div>`;
@@ -325,6 +178,11 @@ function _highlightSelected(ticker) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+
+function _rowClass(status) {
+  return { BUY: 'row-buy', ON_DECK: 'row-deck' }[status] ?? '';
+}
+
 
 function _fmtChg(v) {
   if (v == null) return '—';

@@ -1,770 +1,321 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta
-            name="viewport"
-            content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-        />
-        <title>Brasfield Momentum</title>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signal Scanner</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=6" />
+</head>
+<body>
 
-        <link rel="icon" type="image/png" href="/static/favicon.png" />
-        <link rel="shortcut icon" href="/favicon.ico" />
-
-        <!-- PWA / iOS Home Screen support -->
-        <link rel="manifest" href="/static/manifest.json" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta
-            name="apple-mobile-web-app-status-bar-style"
-            content="black-translucent"
-        />
-        <meta name="apple-mobile-web-app-title" content="Trading" />
-        <meta name="theme-color" content="#090f1d" />
-
-        <link rel="stylesheet" href="/static/css/styles.css?v=43" />
-        <script src="https://s3.tradingview.com/tv.js"></script>
-    </head>
-    <body>
-        <!-- Apply hosted/mobile/admin classes instantly (before paint) to prevent layout flash -->
-        <script>
-            if (!["localhost", "127.0.0.1", ""].includes(location.hostname))
-                document.body.classList.add("hosted");
-
-            // Decode the stored JWT to check admin status without a network round-trip.
-            // This runs synchronously so jmb-only elements appear on the first paint,
-            // matching the behaviour of the old ?user=jmb querystring approach.
-            (function () {
-                try {
-                    var token = localStorage.getItem("ss:token") || "";
-                    if (!token) return;
-                    var parts = token.split(".");
-                    if (parts.length !== 3) return;
-                    var p   = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-                    var pad = p.length % 4 ? "=".repeat(4 - p.length % 4) : "";
-                    var payload = JSON.parse(atob(p + pad));
-                    // Token is expired — clear it so the auth gate redirects to login.
-                    if ((payload.exp || 0) <= Date.now() / 1000) {
-                        localStorage.removeItem("ss:token");
-                        return;
-                    }
-                    // Old token format (no "sub" claim) — clear it to force a fresh login
-                    // so the new token with admin/sub claims is issued.
-                    if (!payload.sub) {
-                        localStorage.removeItem("ss:token");
-                        return;
-                    }
-                    if (payload.admin === true)
-                        document.body.classList.add("user-jmb");
-                } catch (e) {}
-            })();
-
-            if (
-                window.innerWidth <= 700 ||
-                /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
-            )
-                document.body.classList.add("mobile");
-        </script>
-
-        <!-- ═══════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════
      HEADER
 ════════════════════════════════════════════════════════════════ -->
-        <header class="hdr">
-            <div class="hdr-brand">
-                <img
-                    src="/static/brasfield-logo.png"
-                    alt="Brasfield Logo"
-                    class="hdr-logo-img"
-                    style="width: 40px; height: 40px; object-fit: contain"
-                />
-                <span class="hdr-title">BRASFIELD MOMENTUM</span>
-                <div data-ws-dot class="ws-dot" title="Disconnected"></div>
-            </div>
+<header class="hdr">
 
-            <div class="hdr-actions">
-                <!-- Active users count: visible to admins only -->
-                <span id="active-users-badge" class="jmb-only auth-ui" title="Currently active users" style="display:none; align-items:center; gap:4px; font-size:12px; color:var(--text-muted,#94a3b8); padding:0 4px;">
-                    👥 <span id="active-users-count">0</span>
-                </span>
+  <div class="hdr-brand">
+    <span class="hdr-logo">◈</span>
+    <span class="hdr-title">Signal Scanner</span>
+    <div data-ws-dot class="ws-dot" title="Disconnected"></div>
+  </div>
 
-                <button
-                    data-notif-btn
-                    class="btn btn--ghost"
-                    title="Click to enable price alerts"
-                >
-                    🔔 Alerts
-                </button>
+  <div class="hdr-center">
+    <span data-scan-pill class="scan-pill">No scan yet</span>
+  </div>
 
-                <!-- Settings: shown to everyone on localhost; hidden for remote admins -->
-                <button data-settings-btn class="btn btn--ghost admin-settings-hide">
-                    ⚙ Settings<span id="feedback-badge" class="feedback-badge" hidden></span>
-                </button>
+  <div class="hdr-actions">
+    <button data-scan-btn class="btn btn--ghost">↺ Scan Now</button>
+    <button data-notif-btn class="btn btn--ghost" title="Click to enable BUY signal alerts">🔔 Alerts</button>
+    <button data-settings-btn class="btn btn--ghost">⚙ Settings</button>
+  </div>
 
-                <!-- Admin button: visible to all admins -->
-                <button data-admin-btn class="btn btn--ghost jmb-only" title="Admin panel">
-                    🛠 Admin
-                </button>
+</header>
 
-                <!-- Auto-Add toggle: visible to user=jmb only (CSS controlled) -->
-                <label class="auto-add-toggle jmb-only" title="Auto-add tickers to Webull + TradingView when alert fires">
-                    <input type="checkbox" id="auto-add-checkbox" />
-                    <span class="auto-add-track">
-                        <span class="auto-add-thumb"></span>
-                    </span>
-                    <span class="auto-add-label">Auto-Add</span>
-                </label>
-
-                <button data-logout-btn class="btn btn--ghost btn--danger auth-ui" title="Sign out">
-                    ⏻ Sign Out
-                </button>
-            </div>
-        </header>
-
-        <!-- ═══════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════
      MAIN  —  3-column panel grid
 ════════════════════════════════════════════════════════════════ -->
+<main class="main-grid">
 
-        <!-- ═══════════════════════════════════════════════════════════
-     LEADERBOARD BAR  —  today's top mentions
-════════════════════════════════════════════════════════════════ -->
-        <div class="leaderboard-bar">
-            <span class="lb-label">Today</span>
-            <div data-leaderboard class="lb-items">
-                <span class="lb-empty">No mentions yet today</span>
-            </div>
-        </div>
+  <!-- ── LEFT: Live Transcript ─────────────────────────── -->
+  <section data-panel="transcript" class="panel panel-transcript">
 
-        <div class="donate-bar">
-            <span class="donate-label">I appreciate your support</span>
-            <a href="https://venmo.com/u/Jonathan-Brasfield-2" target="_blank" rel="noopener" class="donate-pill donate-pill--venmo">💙 Venmo</a>
-            <a href="https://paypal.me/brasfieldjonathan" target="_blank" rel="noopener" class="donate-pill donate-pill--paypal">🅿 PayPal</a>
-            <a href="https://patreon.com/BrasfieldMomentum" target="_blank" rel="noopener" class="donate-pill donate-pill--patreon">🧡 Patreon</a>
-        </div>
+    <div class="panel-header">
+      <span class="panel-title">Live Transcript</span>
+      <div class="tx-status-row">
+        <div data-tx-dot class="tx-dot"></div>
+        <span data-tx-label class="tx-label">STOPPED</span>
+      </div>
+    </div>
 
-        <main class="main-grid">
-            <!-- ── LEFT: Live Transcript ─────────────────────────── -->
-            <section data-panel="transcript" class="panel panel-transcript">
-                <div class="panel-header">
-                    <span class="panel-title">Live Transcript</span>
-                    <div class="tx-status-row">
-                        <div data-tx-dot class="tx-dot"></div>
-                        <span data-tx-label class="tx-label">STOPPED</span>
-                    </div>
-                </div>
+    <div class="tx-controls">
+      <button data-tx-btn class="tx-btn tx-btn--start">Start Transcription</button>
+      <div class="tx-meta">
+        <span data-tx-count class="tx-count">0 tickers captured today</span>
+        <button data-clear-transcript-btn class="btn btn--ghost btn--sm">Clear</button>
+      </div>
+    </div>
 
-                <div class="tx-controls">
-                    <button data-tx-btn class="tx-btn tx-btn--start">
-                        Start Transcription
-                    </button>
-                    <div class="tx-meta">
-                        <span data-tx-count class="tx-count"
-                            >0 tickers captured today</span
-                        >
-                        <button
-                            data-clear-transcript-btn
-                            class="btn btn--ghost btn--sm"
-                        >
-                            Clear
-                        </button>
-                    </div>
-                </div>
+    <div data-transcript-box class="transcript-box">
+      <span class="tx-placeholder">Waiting for transcription…</span>
+    </div>
 
-                <div data-transcript-box class="transcript-box">
-                    <span class="tx-placeholder"
-                        >Waiting for transcription…</span
-                    >
-                </div>
-            </section>
+  </section>
 
-            <!-- ── CENTER: Watchlist ──────────────────────────────── -->
-            <section data-panel="tickers" class="panel panel-watchlist">
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">Momentum Stocks</span>
-                        <span data-ticker-count class="ticker-count"></span>
-                    </div>
-                    <div class="panel-header-right">
-                        <button
-                            data-clear-watchlist-btn
-                            class="btn btn--ghost btn--danger btn--sm"
-                        >
-                            ✕ Clear
-                        </button>
-                    </div>
-                </div>
+  <!-- ── CENTER: Market Radar (scanner) ────────────────── -->
+  <section data-panel="scanner" class="panel panel-scanner">
 
-                <div data-news class="news-feed hidden"></div>
+    <div class="panel-header">
+      <div class="panel-header-left">
+        <span class="panel-title">Market Radar</span>
+        <div data-scanner-dot class="ws-dot" title="Disconnected"></div>
+        <span data-scanner-poll class="tx-count"></span>
+      </div>
+      <div class="panel-header-right">
+        <button data-scanner-toggle class="btn btn--ghost btn--sm">Start Scanner</button>
+      </div>
+    </div>
 
-                <div class="watchlist-table-header">
-                    <div class="watchlist-cols">
-                        <div class="th" data-sort-col="ticker">Ticker</div>
-                        <div class="th" data-sort-col="price">Price</div>
-                        <div class="th" data-sort-col="chg">Chg%</div>
-                        <div class="th" data-sort-col="vol">Vol</div>
-                        <div class="th"></div>
-                    </div>
-                </div>
+    <div data-scanner-rows class="scanner-card-grid">
+      <div class="scanner-grid-empty">Waiting for scanner…</div>
+    </div>
 
-                <div class="add-ticker-row">
-                    <input
-                        id="add-ticker-input"
-                        type="text"
-                        placeholder="Add ticker…"
-                        autocomplete="off"
-                        spellcheck="false"
-                    />
-                    <button data-add-ticker-btn class="btn btn--ghost btn--sm">
-                        +
-                    </button>
-                </div>
+  </section>
 
-                <div data-ticker-rows class="watchlist-rows"></div>
-            </section>
+  <!-- ── RESIZER: drag handle between scanner and watchlist ── -->
+  <div class="panel-resizer" id="ticker-tv-resizer" aria-hidden="true"></div>
 
-            <!-- ── RESIZER: drag handle between watchlist and chart ── -->
-            <div
-                class="panel-resizer"
-                id="ticker-tv-resizer"
-                aria-hidden="true"
-            ></div>
+  <!-- ── RIGHT: Watchlist ───────────────────────────────── -->
+  <section data-panel="tickers" class="panel panel-watchlist">
 
-            <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
-            <section data-panel="tradingview" class="panel panel-tradingview">
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">Chart</span>
-                        <span
-                            data-tv-symbol
-                            class="tv-symbol-badge"
-                            style="display: none"
-                        ></span>
-                    </div>
-                </div>
+    <div class="panel-header">
+      <div class="panel-header-left">
+        <span class="panel-title">Watchlist</span>
+        <span data-ticker-count class="ticker-count"></span>
+      </div>
+      <div class="panel-header-right">
+        <button data-clear-watchlist-btn class="btn btn--ghost btn--danger btn--sm">✕ Clear</button>
+      </div>
+    </div>
 
-                <div data-tv-placeholder class="tv-placeholder">
-                    <span>Select a ticker to load chart</span>
-                </div>
+    <div class="watchlist-table-header">
+      <div class="watchlist-cols">
+        <div class="th">Ticker</div>
+        <div class="th">Price</div>
+        <div class="th">Chg%</div>
+        <div class="th">Vol</div>
+        <div class="th"></div>
+      </div>
+    </div>
 
-                <div data-tv-widget class="tv-widget-wrap hidden">
-                    <div
-                        id="tv_chart_container"
-                        style="height: 100%; width: 100%"
-                    ></div>
-                </div>
-            </section>
-        </main>
+    <div class="add-ticker-row">
+      <input id="add-ticker-input" type="text" placeholder="Add ticker…"
+             autocomplete="off" spellcheck="false" />
+      <button data-add-ticker-btn class="btn btn--ghost btn--sm">+</button>
+    </div>
 
-        <!-- ═══════════════════════════════════════════════════════════
+    <div data-ticker-rows class="watchlist-rows">
+      <div class="table-empty">No tickers yet.</div>
+    </div>
+
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════
      STATUS BAR
 ════════════════════════════════════════════════════════════════ -->
-        <footer class="status-bar">
-            <div class="status-items">
-                <span class="status-item">
-                    <span class="status-label">WS</span>
-                    <span
-                        data-ws-dot
-                        class="ws-dot ws-dot--sm"
-                        title="WebSocket"
-                    ></span>
-                </span>
+<footer class="status-bar">
+  <div class="status-items">
 
-                <span class="status-divider">|</span>
+    <span class="status-item">
+      <span class="status-label">WS</span>
+      <span data-ws-dot class="ws-dot ws-dot--sm" title="WebSocket"></span>
+    </span>
 
-                <span class="status-item">
-                    <span class="status-label">Tickers</span>
-                    <span data-statusbar-tickers class="status-value">—</span>
-                </span>
+    <span class="status-divider">|</span>
 
-                <span class="status-audio-section">
-                    <span class="status-divider">|</span>
-                    <span class="status-item">
-                        <span class="status-label">Audio</span>
-                        <span data-audio-status class="status-value"
-                            >Stopped</span
-                        >
-                    </span>
-                </span>
-            </div>
+    <span class="status-item">
+      <span class="status-label">Last scan</span>
+      <span data-statusbar-scan class="status-value">—</span>
+    </span>
 
-            <span class="status-version">Signal Scanner v2</span>
-        </footer>
+    <span class="status-divider">|</span>
 
-        <!-- ═══════════════════════════════════════════════════════════
+    <span class="status-item">
+      <span class="status-label">Tickers</span>
+      <span data-statusbar-tickers class="status-value">—</span>
+    </span>
+
+    <span class="status-divider">|</span>
+
+    <span class="status-item">
+      <span class="status-label">Audio</span>
+      <span data-audio-status class="status-value">Stopped</span>
+    </span>
+
+  </div>
+
+  <span class="status-version">Signal Scanner v2</span>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════
      SETTINGS DRAWER  (slide-in from right)
 ════════════════════════════════════════════════════════════════ -->
-        <div data-drawer="config" class="drawer-backdrop">
-            <aside class="drawer">
-                <div class="drawer-header">
-                    <span class="drawer-title">Settings</span>
-                    <button data-close-btn class="btn btn--ghost btn--icon">
-                        ✕
-                    </button>
-                </div>
+<div data-drawer="config" class="drawer-backdrop">
+<aside class="drawer">
 
-                <!-- Tab bar -->
-                <div class="tab-bar">
-                    <button class="tab-btn tab-btn--active" data-tab-btn="api">
-                        API Keys
-                    </button>
-                    <button class="tab-btn" data-tab-btn="data">Data</button>
-                    <button class="tab-btn" data-tab-btn="audio">Audio</button>
-                    <button class="tab-btn" data-tab-btn="connection">
-                        Connection
-                    </button>
-                    <button class="tab-btn" data-tab-btn="history">
-                        Feedback
-                    </button>
-                    <button class="tab-btn jmb-only auth-ui" data-tab-btn="sessions">
-                        Sessions
-                    </button>
-                </div>
+  <div class="drawer-header">
+    <span class="drawer-title">Settings</span>
+    <button data-close-btn class="btn btn--ghost btn--icon">✕</button>
+  </div>
 
-                <div class="drawer-body">
-                    <!-- ── Tab: API Keys ─────────────────────────── -->
-                    <div class="tab-panel" data-tab-panel="api">
-                        <div class="form-group">
-                            <label for="cfg-api-key">Alpaca API Key</label>
-                            <input
-                                id="cfg-api-key"
-                                type="password"
-                                placeholder="PKXXXXXXXXXXXXXXXX"
-                                autocomplete="off"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="cfg-secret-key"
-                                >Alpaca Secret Key</label
-                            >
-                            <input
-                                id="cfg-secret-key"
-                                type="password"
-                                placeholder="••••••••••••••••••••••••"
-                                autocomplete="off"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="cfg-finnhub-key">Finnhub API Key</label>
-                            <input
-                                id="cfg-finnhub-key"
-                                type="password"
-                                placeholder="••••••••••••••••"
-                                autocomplete="off"
-                            />
-                        </div>
-                    </div>
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-btn tab-btn--active" data-tab-btn="api">API Keys</button>
+    <button class="tab-btn" data-tab-btn="data">Data</button>
+    <button class="tab-btn" data-tab-btn="signals">Signals</button>
+    <button class="tab-btn" data-tab-btn="audio">Audio</button>
+  </div>
 
-                    <!-- ── Tab: Data ─────────────────────────────── -->
-                    <div class="tab-panel hidden" data-tab-panel="data">
-                        <div class="form-group">
-                            <label for="cfg-tv-url"
-                                >TradingView Chart Layout URL/ID</label
-                            >
-                            <input
-                                id="cfg-tv-url"
-                                type="text"
-                                placeholder="https://www.tradingview.com/chart/x04Gfcu8/"
-                            />
-                            <span class="hint"
-                                >Use your saved layout to see your
-                                indicators.</span
-                            >
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="cfg-timeframe">Bar Timeframe</label>
-                                <select id="cfg-timeframe">
-                                    <option value="1Min">1 Min</option>
-                                    <option value="5Min">5 Min</option>
-                                    <option value="15Min">15 Min</option>
-                                    <option value="1Hour">1 Hour</option>
-                                    <option value="1Day">1 Day</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="cfg-bar-count">Bar Count</label>
-                                <input
-                                    id="cfg-bar-count"
-                                    type="number"
-                                    min="50"
-                                    max="1000"
-                                />
-                            </div>
-                        </div>
+  <div class="drawer-body">
 
-                        <div class="form-section-label">
-                            Mention Burst Alerts
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="cfg-mention-threshold"
-                                    >Mentions to Alert</label
-                                >
-                                <input
-                                    id="cfg-mention-threshold"
-                                    type="number"
-                                    min="2"
-                                    max="50"
-                                    placeholder="5"
-                                />
-                                <span class="hint"
-                                    >Triggers alert when reached within the
-                                    window.</span
-                                >
-                            </div>
-                            <div class="form-group">
-                                <label for="cfg-mention-window"
-                                    >Window (seconds)</label
-                                >
-                                <input
-                                    id="cfg-mention-window"
-                                    type="number"
-                                    min="3"
-                                    max="120"
-                                    placeholder="10"
-                                />
-                            </div>
-                        </div>
-                    </div>
+    <!-- ── Tab: API Keys ─────────────────────────── -->
+    <div class="tab-panel" data-tab-panel="api">
+      <div class="form-group">
+        <label for="cfg-api-key">Alpaca API Key</label>
+        <input id="cfg-api-key" type="password" placeholder="PKXXXXXXXXXXXXXXXX" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label for="cfg-secret-key">Alpaca Secret Key</label>
+        <input id="cfg-secret-key" type="password" placeholder="••••••••••••••••••••••••" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label for="cfg-finnhub-key">Finnhub API Key</label>
+        <input id="cfg-finnhub-key" type="password" placeholder="••••••••••••••••" autocomplete="off" />
+      </div>
+    </div>
 
-                    <!-- ── Tab: Audio ────────────────────────────── -->
-                    <div class="tab-panel hidden" data-tab-panel="audio">
-                        <div class="form-group">
-                            <label for="cfg-device-index"
-                                >Audio Input Device</label
-                            >
-                            <div class="input-row">
-                                <select id="cfg-device-index">
-                                    <option value="">Loading…</option>
-                                </select>
-                                <button
-                                    data-refresh-devices
-                                    class="btn btn--ghost btn--sm"
-                                    title="Refresh device list"
-                                >
-                                    ↺
-                                </button>
-                            </div>
-                        </div>
-                        <div class="device-hint">
-                            Devices marked <strong>⟳ LOOPBACK</strong> capture
-                            system audio playing through your speakers — ideal
-                            for transcribing financial media. Mic devices
-                            capture your voice directly.
-                        </div>
-                    </div>
-
-                    <!-- ── Tab: Connection ──────────────────────────── -->
-                    <div class="tab-panel hidden" data-tab-panel="connection">
-                        <div class="form-group">
-                            <label for="cfg-backend-url">Backend URL</label>
-                            <input
-                                id="cfg-backend-url"
-                                type="url"
-                                placeholder="http://localhost:8888"
-                                autocomplete="off"
-                                spellcheck="false"
-                            />
-                            <span class="hint">
-                                Leave empty to use the same server this page is
-                                loaded from. Set to your Cloudflare tunnel URL
-                                when the frontend is hosted remotely.
-                            </span>
-                        </div>
-                        <div class="form-group" style="margin-top: 8px">
-                            <button
-                                data-logout-btn
-                                class="btn btn--ghost btn--danger"
-                                style="
-                                    width: 100%;
-                                    justify-content: center;
-                                    padding: 9px;
-                                "
-                            >
-                                Sign Out
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- ── Tab: Feedback ─────────────────────────── -->
-                    <div class="tab-panel hidden" data-tab-panel="history">
-                        <div data-suggestions class="suggestions-list">
-                            <div class="suggestions-empty">Loading…</div>
-                        </div>
-                    </div>
-
-                    <!-- ── Tab: Sessions (admin only) ────────────── -->
-                    <div class="tab-panel hidden auth-ui" data-tab-panel="sessions">
-                        <div id="sessions-panel">
-                            <div class="suggestions-empty">Loading…</div>
-                        </div>
-                        <div style="margin-top:12px;">
-                            <div class="form-section-label">Login History</div>
-                            <div id="login-log-panel" class="suggestions-list">
-                                <div class="suggestions-empty">Loading…</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <!-- /drawer-body -->
-
-                <div class="drawer-footer">
-                    <button data-save-btn class="btn btn--primary">
-                        Save Settings
-                    </button>
-                </div>
-            </aside>
+    <!-- ── Tab: Data ─────────────────────────────── -->
+    <div class="tab-panel hidden" data-tab-panel="data">
+      <div class="form-group">
+        <label for="cfg-strategy">Trading Strategy</label>
+        <select id="cfg-strategy">
+          <option value="multiple_os">Multiple Oversold (Vol + RSI-2 + %R)</option>
+          <option value="scoring">Weighted Scoring (Legacy)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="cfg-tv-url">TradingView Chart Layout URL/ID</label>
+        <input id="cfg-tv-url" type="text" placeholder="https://www.tradingview.com/chart/x04Gfcu8/" />
+        <span class="hint">Use your saved layout to see your indicators.</span>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-timeframe">Bar Timeframe</label>
+          <select id="cfg-timeframe">
+            <option value="1Min">1 Min</option>
+            <option value="5Min">5 Min</option>
+            <option value="15Min">15 Min</option>
+            <option value="1Hour">1 Hour</option>
+            <option value="1Day">1 Day</option>
+          </select>
         </div>
-        <!-- /drawer-backdrop -->
-
-        <!-- ═══════════════════════════════════════════════════════════
-     ADMIN DRAWER  (user=jmb only)
-════════════════════════════════════════════════════════════════ -->
-        <div class="drawer-backdrop" data-drawer="admin">
-            <aside class="drawer">
-                <div class="drawer-header">
-                    <span class="drawer-title">Admin</span>
-                    <div class="tab-bar">
-                        <button class="tab-btn tab-btn--active" data-admin-tab="feedback">Feedback</button>
-                        <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
-                        <button class="tab-btn" data-admin-tab="news">News</button>
-                    </div>
-                    <button data-admin-close class="btn btn--ghost btn--icon" title="Close">✕</button>
-                </div>
-
-                <!-- Tools row inside admin drawer -->
-                <div class="admin-tools-row">
-                    <div class="hotkey-anchor">
-                        <button id="hotkey-btn" class="btn btn--ghost btn--sm" title="Keyboard shortcuts">
-                            ⌨ Keys
-                        </button>
-                        <div id="hotkey-panel" class="hotkey-panel"></div>
-                    </div>
-                    <button
-                        class="btn btn--ghost btn--sm jmb-download"
-                        title="Download WB+TV agent package"
-                        onclick="
-                            (function () {
-                                const t = localStorage.getItem('ss:token') || '';
-                                const qp = new URLSearchParams(window.location.search);
-                                const user = (qp.get('user') || '').trim().toLowerCase();
-                                const p = new URLSearchParams();
-                                if (t) p.set('token', t);
-                                if (user) p.set('user', user);
-                                const q = p.toString();
-                                const u = '/api/download/wb-tv-agent' + (q ? ('?' + q) : '');
-                                const a = document.createElement('a');
-                                a.href = u;
-                                a.download = 'wb-tv-agent.zip';
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                            })()
-                        "
-                    >
-                        ⬇ WB+TV Agent
-                    </button>
-                </div>
-
-                <div class="drawer-body">
-
-                    <!-- ── Tab: Feedback ──────────────────────── -->
-                    <div data-admin-panel="feedback">
-                        <div data-admin-feedback class="suggestions-list">
-                            <div class="suggestions-empty">Loading…</div>
-                        </div>
-                    </div>
-
-                    <!-- ── Tab: Ticker Feed ───────────────────── -->
-                    <div data-admin-panel="ticker-feed" class="hidden">
-
-                        <!-- Add new item -->
-                        <div class="feed-add-row">
-                            <select id="feed-item-type" class="feed-type-select">
-                                <option value="info">INFO</option>
-                                <option value="tip">TIP</option>
-                                <option value="alert">ALERT</option>
-                            </select>
-                            <input
-                                id="feed-item-input"
-                                type="text"
-                                class="feed-item-input"
-                                placeholder="New feed message…"
-                                maxlength="200"
-                                autocomplete="off"
-                            />
-                            <button id="feed-item-add-btn" class="btn btn--primary btn--sm">Add</button>
-                        </div>
-
-                        <!-- Save status -->
-                        <span data-feed-save-status class="feed-save-status" hidden></span>
-
-                        <!-- Current items -->
-                        <div data-feed-list class="feed-list"></div>
-                    </div>
-
-                    <!-- ── Tab: News ──────────────────────────── -->
-                    <div data-admin-panel="news" class="hidden">
-
-                        <!-- Add new item form -->
-                        <div class="news-add-form">
-                            <div class="feed-add-row">
-                                <input id="news-ticker"   type="text" class="feed-item-input" style="max-width:90px" placeholder="Ticker" maxlength="10" autocomplete="off" />
-                                <input id="news-date"     type="date" class="feed-item-input" style="max-width:150px" />
-                                <button id="news-add-btn" class="btn btn--primary btn--sm">Add</button>
-                            </div>
-                            <input id="news-headline" type="text" class="feed-item-input" style="width:100%;margin-bottom:6px" placeholder="Headline…" maxlength="200" autocomplete="off" />
-                            <textarea id="news-body" class="feed-item-input" style="width:100%;resize:vertical;min-height:60px;font-family:inherit" placeholder="Body text (optional)…" maxlength="1000"></textarea>
-                        </div>
-
-                        <!-- Save status -->
-                        <span data-news-save-status class="feed-save-status" hidden></span>
-
-                        <!-- Current items -->
-                        <div data-news-list class="feed-list"></div>
-                    </div>
-
-                </div>
-            </aside>
+        <div class="form-group">
+          <label for="cfg-bar-count">Bar Count</label>
+          <input id="cfg-bar-count" type="number" min="50" max="1000" />
         </div>
+      </div>
+      <div class="form-group">
+        <label for="cfg-scan-interval">Scan Interval (seconds)</label>
+        <input id="cfg-scan-interval" type="number" min="10" max="3600" />
+      </div>
+    </div>
 
-        <!-- ═══════════════════════════════════════════════════════════
-     SUGGESTION BAR
-════════════════════════════════════════════════════════════════ -->
-        <div class="suggestion-bar">
-            <input
-                id="suggestion-input"
-                type="text"
-                maxlength="500"
-                placeholder="Have a suggestion or feedback? Type it here…"
-                autocomplete="off"
-                spellcheck="true"
-            />
-            <button id="suggestion-btn" class="btn btn--ghost btn--sm">
-                Send
-            </button>
+    <!-- ── Tab: Signals ──────────────────────────── -->
+    <div class="tab-panel hidden" data-tab-panel="signals">
+
+      <div class="form-section">%R Trend Exhaustion (On Deck)</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-rte-threshold">OB Zone Edge <span class="hint">default 20</span></label>
+          <input id="cfg-rte-threshold" type="number" min="5" max="50" />
         </div>
-
-        <!-- ═══════════════════════════════════════════════════════════
-     SCROLLING TICKER
-════════════════════════════════════════════════════════════════ -->
-        <div class="ticker-bar" id="tickerBar">
-            <div class="ticker-badge">
-                <span class="ticker-badge-dot"></span>
-                <time id="tickerClock" class="ticker-badge-label" datetime=""></time>
-            </div>
-            <div class="ticker-viewport">
-                <div class="ticker-track" id="tickerTrack"></div>
-            </div>
+        <div class="form-group">
+          <label for="cfg-rte-min-boxes">Min Bars in Zone <span class="hint">default 2</span></label>
+          <input id="cfg-rte-min-boxes" type="number" min="1" max="10" />
         </div>
+      </div>
 
-        <!-- Module entry point -->
-        <!-- Service worker registration (PWA / iOS alerts) -->
-        <script>
-            if ("serviceWorker" in navigator) {
-                navigator.serviceWorker
-                    .register("/static/sw.js")
-                    .catch((e) => console.warn("[sw] registration failed", e));
-            }
-        </script>
-        <script type="module" src="/static/js/app.js?v=39"></script>
+      <div class="form-section">OBV Oscillator</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-obv-length">OBV EMA Length</label>
+          <input id="cfg-obv-length" type="number" min="5" max="100" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-vol-surge">Volume Surge ×</label>
+          <input id="cfg-vol-surge" type="number" step="0.1" min="1" max="10" />
+        </div>
+      </div>
 
-        <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
-        <script>
-            (async function initTicker() {
-                const FEED_URL = "/static/ticker_feed.json";
-                const SPEED_PX = 55; // pixels per second
-                const RELOAD_MS = 60000; // re-fetch feed every 60 s
+      <div class="form-section">CM RSI-2</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="cfg-cm-rsi-len">RSI Period</label>
+          <input id="cfg-cm-rsi-len" type="number" min="2" max="30" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-cm-rsi-os">Oversold Level</label>
+          <input id="cfg-cm-rsi-os" type="number" min="5" max="50" />
+        </div>
+      </div>
 
-                const track = document.getElementById("tickerTrack");
-                if (!track) return;
+      <div class="form-section">MACD</div>
+      <div class="form-row form-row-3">
+        <div class="form-group">
+          <label for="cfg-macd-fast">Fast</label>
+          <input id="cfg-macd-fast" type="number" min="3" max="50" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-macd-slow">Slow</label>
+          <input id="cfg-macd-slow" type="number" min="5" max="100" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-macd-signal">Signal</label>
+          <input id="cfg-macd-signal" type="number" min="3" max="30" />
+        </div>
+      </div>
 
-                const tagLabels = { info: "INFO", tip: "TIP", alert: "ALERT" };
+    </div>
 
-                let _serverItems  = [];   // last items fetched from the JSON feed
-                let _copiedTickers = [];  // tickers added via the Copy button today
+    <!-- ── Tab: Audio ────────────────────────────── -->
+    <div class="tab-panel hidden" data-tab-panel="audio">
+      <div class="form-group">
+        <label for="cfg-device-index">Audio Input Device</label>
+        <div class="input-row">
+          <select id="cfg-device-index">
+            <option value="">Loading…</option>
+          </select>
+          <button data-refresh-devices class="btn btn--ghost btn--sm" title="Refresh device list">↺</button>
+        </div>
+      </div>
+      <div class="device-hint">
+        Devices marked <strong>⟳ LOOPBACK</strong> capture system audio playing through your speakers —
+        ideal for transcribing financial media. Mic devices capture your voice directly.
+      </div>
+    </div>
 
-                function buildHTML(items) {
-                    return items
-                        .map((item) => {
-                            const tag =
-                                tagLabels[item.type] || item.type.toUpperCase();
-                            const type = item.type || "info";
-                            return (
-                                `<span class="ticker-sep">◆</span>` +
-                                `<span class="ticker-item ticker-item--${type}">` +
-                                `<span class="ticker-type-tag">${tag}</span>` +
-                                `<span class="ticker-text">${item.text}</span>` +
-                                `</span>`
-                            );
-                        })
-                        .join("");
-                }
+  </div><!-- /drawer-body -->
 
-                function _rebuild() {
-                    // Prepend copied-tickers alert when any have been copied today
-                    const allItems = _copiedTickers.length
-                        ? [{ type: "alert", text: "Brasfield momentum selection: " + _copiedTickers.join(" · ") },
-                           ..._serverItems]
-                        : _serverItems;
-                    if (!allItems.length) return;
+  <div class="drawer-footer">
+    <button data-save-btn class="btn btn--primary">Save Settings</button>
+  </div>
 
-                    track.style.animation = "none";
-                    track.innerHTML = buildHTML(allItems) + buildHTML(allItems);
+</aside>
+</div><!-- /drawer-backdrop -->
 
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            const halfW = track.scrollWidth / 2;
-                            const duration = Math.max(
-                                10,
-                                Math.round(halfW / SPEED_PX),
-                            );
-                            track.style.animation = `ticker-scroll ${duration}s linear infinite`;
-                        });
-                    });
-                }
+<!-- Module entry point -->
+<script type="module" src="/static/js/app.js?v=6"></script>
 
-                // Global hook — called by tickers.js whenever a ticker is copied
-                window.__feedUpdateCopied = function (tickers) {
-                    _copiedTickers = tickers || [];
-                    _rebuild();
-                };
-
-                async function load() {
-                    try {
-                        const res = await fetch(FEED_URL + "?t=" + Date.now());
-                        if (!res.ok) return;
-                        const items = await res.json();
-                        if (!items || !items.length) return;
-                        _serverItems = items;
-                        _rebuild();
-                    } catch (e) {
-                        console.warn("[ticker]", e);
-                    }
-                }
-
-                await load();
-                setInterval(load, RELOAD_MS);
-            })();
-        </script>
-
-        <!-- ── Bottom-bar clock ───────────────────────────────────────── -->
-        <script>
-            (function () {
-                const el = document.getElementById("tickerClock");
-                if (!el) return;
-                function tick() {
-                    const now = new Date();
-                    let h = now.getHours();
-                    const ampm = h >= 12 ? "PM" : "AM";
-                    h = h % 12 || 12;
-                    const mm = String(now.getMinutes()).padStart(2, "0");
-                    const ss = String(now.getSeconds()).padStart(2, "0");
-                    el.textContent = `${h}:${mm}:${ss} ${ampm}`;
-                    el.setAttribute("datetime", now.toISOString());
-                }
-                tick();
-                setInterval(tick, 1000);
-            })();
-        </script>
-    </body>
+</body>
 </html>

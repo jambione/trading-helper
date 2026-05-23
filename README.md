@@ -1,56 +1,95 @@
-# Trading Helper — Brasfield Momentum Tools
+# Alpaca Momentum Trading Bot
 
-This repository contains the dashboard, signal scanner, indicator library,
-and optional Alpaca execution helpers used to run the Brasfield momentum
-workflow locally or on a server.
+## Files
 
-Quick links:
-- Dashboard & API: `dashboard.py` (FastAPI + WebSocket)
-- Signal engine: `signal_engine.py`
-- Indicators: `signals.py`
-- Alpaca execution: `alpaca_trader.py`
-- Config: `config.py`, `bot_config.json`, `secrets.example.json`
+| File                   | Description                                                  |
+| ---------------------- | ------------------------------------------------------------ | --- | -------------------------- | ---------------------------------------------------- | --- | --------------- | --------------------------------------------------- |
+| `alpaca_stocks_bot.py` | Core trading bot — runs the momentum strategy loop           |
+| `alpaca_dashboard.py`  | Web dashboard — start/stop bot, view positions & trades live |     | `screen_ticker_scanner.py` | Local live OCR scanner for video/screen ticker feeds |     | `trade_log.csv` | Auto-generated trade history (created on first run) |
+| `alpaca_bot.log`       | Auto-generated bot log (created on first run)                |
 
-Quickstart (local)
-1. Create a virtualenv and install deps:
+## Setup
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+pip install fastapi uvicorn alpaca-py pandas numpy websockets
+```
+
+To use the local screen OCR ticker scanner, install these additional open-source packages:
+
+```bash
+pip install mss opencv-python easyocr pyyaml
+```
+
+You can also install everything via:
+
+```bash
 pip install -r requirements.txt
 ```
 
-2. Copy secrets example and edit keys:
+## Running
+
+**Always run from this folder:**
 
 ```bash
-cp secrets.example.json secrets.json
-# edit secrets.json (do NOT commit this file)
+cd alpaca_trading_bot
+python alpaca_dashboard.py
 ```
 
-3. Run the dashboard (opens browser):
+Then open **http://localhost:8888** in your browser.
+
+The dashboard lets you:
+
+- Toggle paper / live trading
+- Start and stop the bot
+- View open positions and close them manually
+- See today's trade count and P&L
+- Browse trending StockTwits picks under $5 (refreshes every 5 min)
+- Stream live bot logs
+
+## Finnhub realtime feed
+
+The dashboard now supports Finnhub as the realtime quote source using `finnhub_key` from `bot_config.json` or `FINNHUB_API_KEY`.
+
+## Finnhub quick start
+
+```python
+import asyncio
+import json
+import websockets
+import os
+
+API_KEY = os.getenv("FINNHUB_API_KEY")  # Get free key at finnhub.io
+
+async def stock_stream(tickers: list[str]):
+    url = f"wss://ws.finnhub.io?token={API_KEY}"
+    async with websockets.connect(url) as ws:
+        for ticker in tickers:
+            await ws.send(json.dumps({"type": "subscribe", "symbol": ticker}))
+
+        async for message in ws:
+            data = json.loads(message)
+            if data.get("type") == "trade":
+                for trade in data.get("data", []):
+                    print(f"{trade.get('s')} @ {trade.get('p')} (vol: {trade.get('v')})")
+
+asyncio.run(stock_stream(["AAPL", "TSLA", "NVDA"]))
+```
+
+## Paper vs Live
+
+The config panel on the dashboard has a **Paper Trading** toggle.
+Default is **paper = ON**. Switch to live only when ready.
+
+## API Keys
+
+Keys are pre-configured. You can also set environment variables:
 
 ```bash
-python dashboard.py
+export ALPACA_API_KEY=your_key
+export ALPACA_SECRET_KEY=your_secret
+export FINNHUB_API_KEY=your_finnhub_key
 ```
 
-Then open http://localhost:8888 in your browser.
+# alpaca-bot
 
-Security & secrets
-- `secrets.json` MUST NOT be committed. This repo already includes
-    `.gitignore` entry for `secrets.json`. If you accidentally committed
-    keys, rotate them immediately.
-- Use `secrets.example.json` as the template for required keys.
-
-Recommended next steps
-- Install the pre-commit hooks: `pip install pre-commit && pre-commit install`
-- Enable the GitHub workflow secret-scan (provided in `.github/workflows/`)
-
-Configuration
-- Edit `bot_config.json` or use environment variables. See `config.py` for
-    default keys and `SAFE_CONFIG_KEYS` that can be changed from the dashboard.
-
-Tests & CI
-- Add unit tests under `tests/` and enable CI. A secret-scan workflow
-    and a pre-commit config are included to prevent accidental key commits.
-
-If you want, I can update this README with deployment or Docker instructions.
+# alpaca-bot
