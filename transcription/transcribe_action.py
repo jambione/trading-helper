@@ -123,7 +123,7 @@ _LETTER_NAMES = {
     "em":      "M", "en":     "N", "oh":     "O", "pee":   "P",
     "cue":     "Q", "queue":  "Q", "ar":     "R", "arr":   "R",
     "ess":     "S", "es":     "S", "tee":    "T", "you":   "U",
-    "vee":     "V", "ex":     "X", "wye":    "Y", "why":   "Y",
+    "vee":     "V", "ex":     "X", "eks":    "X", "ecks":  "X", "wye":   "Y", "why":   "Y",
     "zee":     "Z", "zed":    "Z",
 }
 _letter_name_word    = "(?:" + "|".join(re.escape(w) for w in _LETTER_NAMES) + ")"
