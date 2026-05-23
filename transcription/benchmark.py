@@ -149,6 +149,13 @@ _STOP_WORDS = {
     "AWS", "BIG", "CHIP", "CARE", "CORE", "FUND", "BOOM", "GROW",
     "HALF", "RAN", "FIND", "DR", "CRP", "MRP", "DRP",
     "ALERT", "SCAN", "SCANNER", "SPIKE", "DETECT", "DETECTED",
+    # NATO phonetic alphabet words (2-5 chars) — collapsed in pairs by normalize_transcript,
+    # but isolated NATO words slip through and Levenshtein-match real tickers
+    # e.g. KILO→SILO, LIMA→LIMI, MIKE→BIKE
+    "ECHO", "GOLF", "KILO", "LIMA", "MIKE", "PAPA", "ZULU", "DELTA", "INDIA",
+    # Common English words appearing all-caps in scanner audio that match tickers at edit-distance 1
+    # e.g. CENTS→CENTA, DEAL→DIAL, OFF→OVF
+    "CENTS", "DEAL", "OFF",
 }
 
 _NAME_TO_TICKER = {
@@ -211,6 +218,7 @@ _MISHEAR_MAP = {
     "coinbase": "COIN",
     "snowflake": "SNOW",
     "cloudflare": "NET",
+    "tsmc": "TSM",
 }
 
 _PHONETIC_CONFUSIONS = {
@@ -290,7 +298,7 @@ def extract_tickers(text: str, ollama_ok: bool = False) -> dict:
             for t in candidates:
                 if t in _VALID_TICKERS:
                     confirmed.append(t)
-                elif was_spelled.get(t):
+                elif was_spelled.get(t) and len(t) >= 4:
                     fixed = _phonetic_match(t, _VALID_TICKERS)
                     if fixed and fixed != t:
                         confirmed.append(fixed)

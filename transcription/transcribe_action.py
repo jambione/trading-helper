@@ -486,6 +486,13 @@ _STOP_WORDS = {
     "HALF", "RAN", "FIND", "DR", "CRP", "MRP", "DRP",
     # Noise fragments from scanner alerts / audio artefacts
     "ALERT", "SCAN", "SCANNER", "SPIKE", "DETECT", "DETECTED",
+    # NATO phonetic alphabet words (2-5 chars) — collapsed in pairs by normalize_transcript,
+    # but isolated NATO words slip through and Levenshtein-match real tickers
+    # e.g. KILO→SILO, LIMA→LIMI, MIKE→BIKE
+    "ECHO", "GOLF", "KILO", "LIMA", "MIKE", "PAPA", "ZULU", "DELTA", "INDIA",
+    # Common English words appearing all-caps in scanner audio that match tickers at edit-distance 1
+    # e.g. CENTS→CENTA, DEAL→DIAL, OFF→OVF
+    "CENTS", "DEAL", "OFF",
 }
 
 # Company name → ticker (spoken names on air)
@@ -550,6 +557,7 @@ _MISHEAR_MAP = {
     "coinbase": "COIN",
     "snowflake": "SNOW",
     "cloudflare": "NET",
+    "tsmc": "TSM",
 }
 
 _TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
@@ -657,8 +665,10 @@ def extract_tickers(text: str) -> dict:
             for t in candidates:
                 if t in _VALID_TICKERS:
                     confirmed.append(t)
-                elif was_spelled.get(t):
-                    # Spelled-out ticker not directly in NASDAQ — try phonetic correction
+                elif was_spelled.get(t) and len(t) >= 4:
+                    # Spelled-out ticker not directly in NASDAQ — try phonetic correction.
+                    # Min length 4: 3-letter candidates have too high a false-positive rate
+                    # via Levenshtein (e.g. AMB→EMB, MNT→BNT, OFF→OVF).
                     fixed = _phonetic_match(t, _VALID_TICKERS)
                     if fixed and fixed != t:
                         confirmed.append(fixed)
