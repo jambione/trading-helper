@@ -76,7 +76,7 @@ else:
 
 TARGET_SR       = 16000
 CHUNK_DURATION  = 1.5    # shorter chunks = faster latency (1.5s window)
-OVERLAP         = 1.0    # minimal overlap: prioritize latency over partial recovery
+OVERLAP         = 0.5    # 0.5s overlap: boundary protection without 3× count inflation
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per result
@@ -179,7 +179,7 @@ def normalize_transcript(text: str) -> str:
         return letters if 2 <= len(letters) <= 5 else m.group(0)
 
     text = re.sub(
-        r'(?<![A-Za-z])([A-Za-z])(?: ([A-Za-z])){1,4}(?![A-Za-z])',
+        r'(?<![A-Za-z])([A-Za-z])(?: ([A-Za-z])){1,3}(?![A-Za-z])',
         collapse_spaced_letters,
         text,
     )
@@ -318,12 +318,13 @@ def _ping_ollama(verbose: bool = True) -> bool:
     return _ollama_ok
 
 
-def _ollama_classify(candidates: list[str], context: str) -> list[str]:
+def _ollama_classify(candidates: list[str], context: str) -> list[str] | None:
+    """Return confirmed tickers, [] if Ollama says none, None on failure/timeout."""
     global _ollama_fail_ts
     if not candidates:
         return []
     if time.monotonic() - _ollama_fail_ts < 30:
-        return []
+        return None
 
     words = " ".join(candidates)
     prompt = (
@@ -376,7 +377,7 @@ def _ollama_classify(candidates: list[str], context: str) -> list[str]:
             print(f"[OLLAMA] classify unavailable: {type(e).__name__}", flush=True)
             if _ollama_ok:
                 _ping_ollama(verbose=False)
-            return []
+            return None
 
 
 def _ollama_phonetic_validate(candidate: str) -> str | None:
@@ -471,10 +472,20 @@ _STOP_WORDS = {
     "SPIKE", "SPIKE", "VOLUME", "VOLATILITY", "FLAG", "FACILITY",
     # Months / days
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
-    "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
+    "JAN", "FEB", "MAR", "APR", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
     # Filler / noise
     "HEY", "YEAH", "OKAY", "WELL", "LIKE", "JUST", "SAID",
     "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE",
+    # Common English words that are also valid NASDAQ tickers — almost never
+    # the subject of a ticker discussion; Ollama can't filter these fast enough
+    "REAL", "BAND", "IRON", "FAST", "LOVE", "CAPS", "CUT",
+    # Tech / finance acronyms that shadow common English speech on air
+    "AWS", "BIG", "CHIP", "CARE", "CORE", "FUND", "BOOM", "GROW",
+    # Common words that Whisper outputs all-caps and then Levenshtein-match tickers
+    # e.g. HALF→CALF, RAN→RAA, FIND→FINT, DR→TR, CRP→KRP (fragment of MCRP)
+    "HALF", "RAN", "FIND", "DR", "CRP", "MRP", "DRP",
+    # Noise fragments from scanner alerts / audio artefacts
+    "ALERT", "SCAN", "SCANNER", "SPIKE", "DETECT", "DETECTED",
 }
 
 # Company name → ticker (spoken names on air)
@@ -508,7 +519,7 @@ _NAME_TO_TICKER = {
     "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP",
     "halliburton": "HAL", "schlumberger": "SLB",
     "boeing": "BA", "lockheed": "LMT", "raytheon": "RTX", "northrop": "NOC",
-    "walmart": "WMT", "target": "TGT", "costco": "COST",
+    "walmart": "WMT", "costco": "COST",
     "home depot": "HD",
     "disney": "DIS", "comcast": "CMCSA", "warner": "WBD",
     "paramount": "PARA", "spotify": "SPOT", "roblox": "RBLX",
@@ -638,36 +649,30 @@ def extract_tickers(text: str) -> dict:
 
     if candidates:
         _metric_inc("ticker_candidates_total", len(candidates))
-        if _ollama_ok:
-            confirmed = _ollama_classify(candidates, text)
-            # For isolated ticker reads with no context, also try phonetic resolution
-            # on spelled candidates that weren't caught by context-based classification
-            for t in candidates:
-                if t not in confirmed and was_spelled.get(t):
-                    fixed = _phonetic_match(t, _VALID_TICKERS)
-                    if fixed and fixed != t:
-                        confirmed.append(fixed)
-                        counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
-                        print(f"[PHONETIC] {t} → {fixed}", flush=True)
-                    else:
-                        ollama_fixed = _ollama_phonetic_validate(t)
-                        if ollama_fixed and ollama_fixed != t:
-                            confirmed.append(ollama_fixed)
-                            counts[ollama_fixed] = counts.get(ollama_fixed, 0) + counts.pop(t, 0)
-                            print(f"[OLLAMA_PHONETIC] {t} → {ollama_fixed}", flush=True)
-        elif _VALID_TICKERS:
+
+        # Step 1: NASDAQ validation always runs — never skipped.
+        # Ollama cannot cause misses because it only filters what NASDAQ already confirmed.
+        if _VALID_TICKERS:
             confirmed = []
             for t in candidates:
                 if t in _VALID_TICKERS:
                     confirmed.append(t)
                 elif was_spelled.get(t):
+                    # Spelled-out ticker not directly in NASDAQ — try phonetic correction
                     fixed = _phonetic_match(t, _VALID_TICKERS)
                     if fixed and fixed != t:
                         confirmed.append(fixed)
                         counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
                         print(f"[PHONETIC] {t} → {fixed}", flush=True)
+                    elif _ollama_ok:
+                        ollama_fixed = _ollama_phonetic_validate(t)
+                        if ollama_fixed and ollama_fixed != t:
+                            confirmed.append(ollama_fixed)
+                            counts[ollama_fixed] = counts.get(ollama_fixed, 0) + counts.pop(t, 0)
+                            print(f"[OLLAMA_PHONETIC] {t} → {ollama_fixed}", flush=True)
         else:
-            confirmed = candidates
+            confirmed = list(candidates)
+
         # Drop any raw counts for tokens that failed validation
         confirmed_set = set(confirmed)
         counts = {t: c for t, c in counts.items() if t in confirmed_set}
