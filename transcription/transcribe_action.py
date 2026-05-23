@@ -1147,13 +1147,15 @@ def transcription_worker():
                                 and _unique_upper >= 8
                                 and len(_upper) / len(_words) > 0.70)
                     # Subtler prompt echo: Whisper regurgitates a handful of tickers
-                    # from the seed prompt rather than the full list. Flag if 5+ of
-                    # the chunk's all-caps words are verbatim prompt tickers and
-                    # those words make up the majority of the chunk.
-                    if not _is_echo and _PROMPT_TICKERS:
-                        _prompt_hits = sum(1 for w in _upper if w in _PROMPT_TICKERS)
-                        _is_echo = (_prompt_hits >= 5
-                                    and _prompt_hits / max(len(_words), 1) > 0.60)
+                    # from the seed prompt rather than the full list. Flag if 5+
+                    # *unique* prompt tickers appear and dominate the chunk.
+                    # Requires ≥7 words so a legitimate short rundown isn't caught.
+                    # Uses unique counts so a single ticker repeated many times
+                    # (real TTS) doesn't trigger the guard.
+                    if not _is_echo and _PROMPT_TICKERS and len(_words) >= 7:
+                        _unique_prompt_hits = sum(1 for w in set(_upper) if w in _PROMPT_TICKERS)
+                        _is_echo = (_unique_prompt_hits >= 5
+                                    and _unique_prompt_hits / max(len(_words), 1) > 0.60)
                     if _is_loop or _is_echo:
                         print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
                         continue

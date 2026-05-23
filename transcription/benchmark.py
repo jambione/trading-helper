@@ -323,6 +323,173 @@ def extract_tickers(text: str, ollama_ok: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Improvement 1: Hallucination guard
+# Reproduces the worker-level guard logic so it can be unit-tested without
+# running Whisper or audio threads.
+# ---------------------------------------------------------------------------
+
+INITIAL_PROMPT_TICKERS_RAW = (
+    "AAPL MSFT NVDA AMZN GOOGL META NFLX TSLA "
+    "AMD INTC QCOM AVGO MU AMAT TSM ARM MRVL SMCI "
+    "CRM SNOW SHOP ZM DDOG CRWD PANW NET WDAY NOW MDB "
+    "V MA PYPL SQ HOOD COIN AFRM SOFI MSTR "
+    "JPM GS MS BAC WFC C SCHW BLK "
+    "SPY QQQ IWM XLF XLE XLK "
+    "WMT TGT COST HD DIS CMCSA SPOT RBLX "
+    "F GM RIVN LCID NIO "
+    "PFE MRNA UNH LLY JNJ ABBV MRK AMGN GILD REGN VRTX "
+    "XOM CVX COP BA LMT RTX VZ T TMUS "
+    "GME AMC PLTR UBER LYFT ABNB DASH DKNG SOUN"
+)
+_PROMPT_TICKERS: frozenset = frozenset(
+    w for w in INITIAL_PROMPT_TICKERS_RAW.split() if w.isupper() and 2 <= len(w) <= 5
+)
+
+
+def hallucination_guard(text: str) -> bool:
+    """Return True if the text looks like a Whisper hallucination and should be skipped."""
+    words = text.split()
+    if not words:
+        return False
+
+    most_rep_raw  = max(set(words), key=words.count)
+    rep_count     = words.count(most_rep_raw)
+    most_rep      = re.sub(r'[^A-Za-z]', '', most_rep_raw).upper()
+    is_known      = bool(most_rep) and (
+        most_rep in _VALID_TICKERS or
+        (2 <= len(most_rep) <= 5 and _phonetic_match(most_rep, _VALID_TICKERS) is not None)
+    )
+
+    if rep_count > 6:
+        if len(most_rep) <= 2:
+            is_loop = True
+        elif is_known:
+            is_loop = rep_count > 50
+        else:
+            is_loop = True
+    else:
+        is_loop = False
+
+    upper        = [w for w in words if w.isupper() and 2 <= len(w) <= 5]
+    unique_upper = len(set(upper))
+    is_echo      = (len(words) >= 10
+                    and unique_upper >= 8
+                    and len(upper) / len(words) > 0.70)
+
+    if not is_echo and _PROMPT_TICKERS and len(words) >= 7:
+        unique_prompt_hits = sum(1 for w in set(upper) if w in _PROMPT_TICKERS)
+        is_echo = (unique_prompt_hits >= 5
+                   and unique_prompt_hits / max(len(words), 1) > 0.60)
+
+    return is_loop or is_echo
+
+
+# (text, should_be_skipped, description)
+HALLUCINATION_CASES = [
+    # Repetition loop — silence noise
+    ("T T T T T T T T T",                                          True,  "single-letter loop"),
+    ("AI AI AI AI AI AI AI AI",                                     True,  "two-letter loop"),
+    # Known ticker repeated heavily — real TTS, should pass (known ticker threshold is >50)
+    ("NVDA NVDA NVDA NVDA NVDA",                                    False, "NVDA ×5 — real TTS, pass"),
+    ("NVDA NVDA NVDA NVDA NVDA NVDA NVDA",                         False, "NVDA ×7 — known ticker, pass"),
+    # Unknown 3+ char token repeated — hallucination (use clearly invalid ticker)
+    ("ZZXQ ZZXQ ZZXQ ZZXQ ZZXQ ZZXQ ZZXQ",                       True,  "unknown token ×7 — skip"),
+    # Prompt echo — full density (old guard)
+    ("AAPL MSFT NVDA AMZN GOOGL META NFLX TSLA AMD INTC QCOM AVGO MU",  True,  "full prompt echo — old guard"),
+    # Subtle prompt echo — 5+ unique prompt tickers, 60%+ density, ≥7 words (NEW guard)
+    ("AAPL MSFT NVDA AMZN GOOGL META NFLX TSLA this morning",      True,  "partial prompt echo — new guard"),
+    # Below 7-word minimum or below 5 unique prompt tickers — should pass
+    ("AAPL MSFT NVDA AMZN GOOGL",                                   False, "5 words < 7-word minimum — pass"),
+    # Real sentence with some prompt tickers — should not be flagged
+    ("NVDA is up three percent while AAPL and MSFT are flat ahead of earnings", False, "real sentence — pass"),
+    ("PLTR COIN HOOD SOFI AFRM MSTR rallied hard today on risk-on sentiment",   False, "real sentence — pass"),
+]
+
+
+def run_hallucination_tests() -> None:
+    print(f"\n{'='*70}")
+    print("  HALLUCINATION GUARD BENCHMARK")
+    print(f"{'='*70}\n")
+    passed = failed = 0
+    for text, expected_skip, desc in HALLUCINATION_CASES:
+        got_skip = hallucination_guard(text)
+        ok       = got_skip == expected_skip
+        mark     = "✓" if ok else "✗"
+        action   = "SKIP" if got_skip else "PASS"
+        exp_str  = "skip" if expected_skip else "pass"
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+        print(f"  {mark} [{action:<4}] (expected {exp_str})  {desc}")
+        if not ok:
+            print(f"         text: {text[:80]}")
+    print(f"\n  Result: {passed}/{passed+failed} passed")
+
+
+# ---------------------------------------------------------------------------
+# Improvement 2: Mention cooldown (cross-chunk dedup)
+# Tests the timestamp-based suppression logic in isolation.
+# ---------------------------------------------------------------------------
+
+def mention_cooldown_guard(ticker: str, now: float,
+                            last_sent: dict, cooldown: float) -> bool:
+    """Returns True if the ticker should be suppressed (within cooldown)."""
+    last = last_sent.get(ticker, 0.0)
+    if now - last < cooldown:
+        return True
+    last_sent[ticker] = now
+    return False
+
+
+def run_cooldown_tests() -> None:
+    print(f"\n{'='*70}")
+    print("  MENTION COOLDOWN BENCHMARK")
+    print(f"{'='*70}\n")
+
+    COOLDOWN = 1.5  # matches CHUNK_DURATION
+
+    cases = [
+        # (ticker, delta_since_last_send, expected_suppressed, description)
+        ("NVDA", 0.0,  True,  "same instant — suppress (overlap echo)"),
+        ("NVDA", 0.5,  True,  "0.5s later — suppress (within cooldown)"),
+        ("NVDA", 1.4,  True,  "1.4s later — suppress (just inside cooldown)"),
+        ("NVDA", 1.5,  False, "exactly 1.5s — allow (boundary: not suppressed)"),
+        ("NVDA", 2.0,  False, "2.0s later — allow (new mention)"),
+        ("AAPL", 0.3,  False, "different ticker — always allow"),
+        ("AAPL", 0.3,  True,  "same ticker 0.3s later — suppress"),
+    ]
+
+    passed = failed = 0
+    last_sent: dict = {}
+    base_time = 1000.0
+
+    # Seed NVDA with a prior send at base_time
+    last_sent["NVDA"] = base_time
+
+    for ticker, delta, expected_suppress, desc in cases:
+        now = base_time + delta
+        got = mention_cooldown_guard(ticker, now, last_sent, COOLDOWN)
+        ok  = got == expected_suppress
+        mark = "✓" if ok else "✗"
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+        action = "SUPPRESS" if got else "SEND    "
+        exp    = "suppress" if expected_suppress else "send"
+        print(f"  {mark} [{action}] (expected {exp})  {desc}")
+        # Reset base for next case using same ticker to avoid interference
+        if ticker == "NVDA" and not got:
+            base_time = now  # NVDA was sent; update base for next relative delta
+
+    print(f"\n  Result: {passed}/{passed+failed} passed")
+    print()
+    print("  Note: Whisper segment confidence filtering (no_speech_prob / avg_logprob)")
+    print("        requires a live faster-whisper model and cannot be tested here.")
+
+
+# ---------------------------------------------------------------------------
 # Optional: live Ollama call for benchmarking the Ollama path
 # ---------------------------------------------------------------------------
 OLLAMA_URL     = "http://localhost:11434/api/generate"
@@ -523,6 +690,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run(use_ollama=False)
+    run_hallucination_tests()
+    run_cooldown_tests()
 
     if args.ollama:
         if _ping_ollama():
