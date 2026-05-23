@@ -21,6 +21,41 @@ const _state = {
 
 const _subs = /** @type {Map<string, Function[]>} */ (new Map());
 
+function _eq(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a == null || b == null) return false;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    if (!a.length) return true;
+    const a0 = a[0], b0 = b[0];
+    if (typeof a0 === 'object' && typeof b0 === 'object') {
+      const key = ('ticker' in (a0 || {}) && 'ticker' in (b0 || {})) ? 'ticker' : null;
+      if (key) {
+        for (let i = 0; i < a.length; i++) {
+          if ((a[i] && a[i][key]) !== (b[i] && b[i][key])) return false;
+        }
+        return JSON.stringify(a) === JSON.stringify(b);
+      }
+    }
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  if (typeof a === 'object' && typeof b === 'object') {
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) {
+      if (!(k in b)) return false;
+      if (a[k] !== b[k]) return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Subscribe to a state key. `fn` is called with the new value on each change.
  * Use `'*'` to receive the full state on any change.
@@ -42,7 +77,7 @@ export function get(key) {
 export function set(updates) {
   const changed = [];
   for (const [k, v] of Object.entries(updates)) {
-    if (JSON.stringify(_state[k]) !== JSON.stringify(v)) {
+    if (!_eq(_state[k], v)) {
       _state[k] = v;
       changed.push(k);
     }

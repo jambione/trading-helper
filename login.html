@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signal Scanner — Login</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=41" />
+  <!-- All login styles live in styles.css under the Aurora Glass section. -->
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-card">
+
+    <div class="login-brand">
+      <img src="/static/icons/logo.png" class="login-logo-img" alt="Brasfield Momentum">
+      <span>Brasfield Momentum</span>
+    </div>
+
+    <div class="login-fields">
+
+      <div id="login-error" class="login-error"></div>
+
+      <div class="form-group">
+        <label for="login-user">Username</label>
+        <input id="login-user" type="text"
+               placeholder="Username"
+               autocomplete="username" />
+      </div>
+
+      <div class="form-group">
+        <label for="login-pass">Password</label>
+        <input id="login-pass" type="password"
+               placeholder="••••••••"
+               autocomplete="current-password" />
+      </div>
+
+      <button id="login-btn" class="btn btn--primary login-submit">Sign In</button>
+
+    </div>
+
+    <p class="login-hint">
+      Don't have an account? <a href="/register" style="color: var(--accent, #7dd3fc); text-decoration: none;">Create one</a>
+    </p>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  const TOKEN_KEY = 'ss:token';
+
+  const userInput = document.getElementById('login-user');
+  const passInput = document.getElementById('login-pass');
+  const btn       = document.getElementById('login-btn');
+  const errEl     = document.getElementById('login-error');
+
+  function showError(msg) {
+    errEl.textContent   = msg;
+    errEl.style.display = 'block';
+  }
+
+  async function login() {
+    errEl.style.display = 'none';
+
+    const username = userInput.value.trim();
+    const password = passInput.value;
+
+    if (!username) { showError('Username is required'); return; }
+    if (!password) { showError('Password is required'); return; }
+
+    btn.disabled    = true;
+    btn.textContent = 'Signing in…';
+
+    try {
+      const res  = await fetch('/auth/login', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.token) {
+        showError(data.error || 'Invalid credentials');
+        return;
+      }
+
+      localStorage.setItem(TOKEN_KEY, data.token);
+      window.location.href = '/';
+
+    } catch (e) {
+      showError('Connection failed: ' + e.message);
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Sign In';
+    }
+  }
+
+  btn.addEventListener('click', login);
+  [userInput, passInput].forEach(el =>
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') login(); })
+  );
+})();
+</script>
+
+</body>
+</html>

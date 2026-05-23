@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 workflows.py — Trading workflow actions for transcribe_action.py.
 Imported by both the main script and test_workflows.py.
@@ -10,7 +11,10 @@ import ctypes
 import json
 import os
 import subprocess
+import sys
 import time as _time_mod
+
+_IS_WINDOWS = sys.platform == "win32"
 
 # ========================= WATCHLIST TRACKER =========================
 # Tickers already added to Webull are stored in a JSON file so the list
@@ -66,7 +70,7 @@ def wb_watchlist_show():
 # ── Win32 direct-message helpers ─────────────────────────────────────────────
 # PostMessage sends keystrokes straight to a window's message queue by HWND,
 # completely bypassing focus — nothing else on the desktop can be affected.
-_PostMessage = ctypes.windll.user32.PostMessageW
+_PostMessage = ctypes.windll.user32.PostMessageW if _IS_WINDOWS else None
 
 WM_KEYDOWN = 0x0100
 WM_KEYUP   = 0x0101
@@ -98,14 +102,14 @@ def _wb_post_enter(hwnd: int):
 # ── TradingView Win32 window helpers ─────────────────────────────────────────
 # Use EnumWindows directly — pygetwindow can't reliably detect Store/UWP apps.
 
-_user32 = ctypes.windll.user32
 _SW_RESTORE = 9
-_EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_size_t, ctypes.c_size_t)
+if _IS_WINDOWS:
+    _user32 = ctypes.windll.user32
+    _EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_size_t, ctypes.c_size_t)
 
-
-class _RECT(ctypes.Structure):
-    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
-                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+    class _RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
 
 def _tv_enum_windows(fragment: str) -> list[tuple[int, str]]:
@@ -192,7 +196,7 @@ def _tv_ensure_open() -> int | None:
 
 # ========================= CONFIG =========================
 
-LIVE_MODE = True  # ← flip to True to enable real GUI automation
+LIVE_MODE = _IS_WINDOWS  # GUI automation only available on Windows
 
 # Window title fragments (used when LIVE_MODE is True)
 TV_WINDOW = "TradingView"
@@ -221,7 +225,7 @@ LAUNCH_TIMEOUT = 20
 def _init_live():
     """Import GUI libraries and resolve TV exe path. Called once if LIVE_MODE=True."""
     global _pyautogui, _gw, _os, _subprocess, _time, TV_LAUNCH
-    import os, subprocess, time as _time_mod
+    import os, subprocess
     import pyautogui as _pag
     import pygetwindow as _pgw
     _pyautogui  = _pag
@@ -361,7 +365,7 @@ def workflow_add_wb(ticker: str, dry_run: bool = False) -> bool:
 
     print(f"📊 ADD_WB → {ticker}")
     if not _ensure_open(WB_WINDOW, WB_LAUNCH):
-        print(f"   ❌ ADD_WB failed — could not open Webull Desktop")
+        print("   ❌ ADD_WB failed — could not open Webull Desktop")
         return False
 
     import time
@@ -397,7 +401,7 @@ def workflow_add_wb_bulk(tickers: list, dry_run: bool = False) -> dict:
         return results
 
     if not _ensure_open(WB_WINDOW, WB_LAUNCH):
-        print(f"   ❌ ADD_WB_BULK failed — could not open Webull Desktop")
+        print("   ❌ ADD_WB_BULK failed — could not open Webull Desktop")
         results["failed"] = to_add
         return results
 
@@ -443,7 +447,7 @@ def workflow_add_tv(ticker: str, dry_run: bool = False) -> bool:
 
     hwnd = _tv_ensure_open()
     if not hwnd:
-        print(f"   ❌ ADD_TV failed — could not open TradingView")
+        print("   ❌ ADD_TV failed — could not open TradingView")
         return False
 
     _time_mod.sleep(0.5)   # let click-focus settle
@@ -584,7 +588,7 @@ def workflow_buy(ticker: str, dry_run: bool = False) -> bool:
         # _pyautogui.hotkey("shift", "b")
         print(f"   ✅ BUY (Shift+B) sent for {ticker}")
         return True
-    print(f"   ❌ BUY failed — could not open Webull Desktop")
+    print("   ❌ BUY failed — could not open Webull Desktop")
     return False
 
 
@@ -600,5 +604,5 @@ def workflow_sell_all(ticker: str, dry_run: bool = False) -> bool:
         # _pyautogui.hotkey("shift", "a")
         print(f"   ✅ SELL ALL (Shift+A) sent for {ticker}")
         return True
-    print(f"   ❌ SELL failed — could not open Webull Desktop")
-    return F
+    print("   ❌ SELL failed — could not open Webull Desktop")
+    return False

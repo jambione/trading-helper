@@ -1,0 +1,17 @@
+# wb-tv-agent configuration
+# Copy this file to .env and fill in your values.
+# Lines starting with # are comments and are ignored.
+
+# URL of your Brasfield Momentum dashboard
+DASHBOARD_URL=https://trading.jbrasfield.com
+
+# Login credentials — must match dashboard_user / dashboard_pass in secrets.json
+# Leave blank if auth is not enabled on the server (auth is off by default).
+DASHBOARD_USER=
+DASHBOARD_PASS=
+
+# How often to poll the dashboard for alerts (seconds)
+POLL_INTERVAL=1.5
+
+# Which browser tab has TradingView open (Ctrl+1 = tab 1, Ctrl+2 = tab 2, etc.)
+BRAVE_TV_TAB=1

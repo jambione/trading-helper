@@ -5,12 +5,28 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=6';
-import { get } from './store.js?v=6';
+import { api } from './api.js?v=38';
+import { get } from './store.js?v=38';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=38';
 
 let _backdrop = null;
 let _saveBtn  = null;
 let _activeTab = 'api';
+
+const _SEEN_KEY = 'ss:feedback-seen';
+
+export function updateFeedbackBadge(total) {
+  const seen   = parseInt(localStorage.getItem(_SEEN_KEY) || '0', 10);
+  const unread = Math.max(0, total - seen);
+  const badge  = document.getElementById('feedback-badge');
+  if (!badge) return;
+  if (unread > 0) {
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+}
 
 export function init(backdropEl) {
   _backdrop = backdropEl;
@@ -25,6 +41,9 @@ export function init(backdropEl) {
   backdropEl.querySelector('[data-close-btn]').addEventListener('click', close);
   backdropEl.addEventListener('click', e => { if (e.target === backdropEl) close(); });
 
+  // Logout
+  backdropEl.querySelector('[data-logout-btn]')?.addEventListener('click', logout);
+
   // Save
   _saveBtn.addEventListener('click', _save);
 
@@ -35,6 +54,7 @@ export function init(backdropEl) {
 
 export async function open() {
   _backdrop.classList.add('open');
+  _set('cfg-backend-url', getBackendUrl());
   await Promise.all([_loadConfig(), _loadAudioDevices()]);
 }
 
@@ -52,6 +72,7 @@ function _switchTab(tab) {
   _backdrop.querySelectorAll('[data-tab-panel]').forEach(panel =>
     panel.classList.toggle('hidden', panel.dataset.tabPanel !== tab)
   );
+  if (tab === 'history') _loadSuggestions();
 }
 
 // ── Load config ────────────────────────────────────────────────
@@ -59,23 +80,14 @@ function _switchTab(tab) {
 async function _loadConfig() {
   try {
     const { config: c } = await api.getConfig();
-    _set('cfg-api-key',       c.api_key          ?? '');
-    _set('cfg-secret-key',    c.secret_key        ?? '');
-    _set('cfg-finnhub-key',   c.finnhub_key       ?? '');
-    _set('cfg-timeframe',     c.bar_timeframe     ?? '5Min');
-    _set('cfg-bar-count',     c.bar_count         ?? 300);
-    _set('cfg-scan-interval', c.scan_interval_sec ?? 60);
-    _set('cfg-rte-threshold', c.rte_threshold     ?? 20);
-    _set('cfg-rte-min-boxes', c.rte_min_boxes     ?? 2);
-    _set('cfg-obv-length',    c.obv_length        ?? 20);
-    _set('cfg-vol-surge',     c.volume_surge_mult ?? 1.5);
-    _set('cfg-macd-fast',     c.macd_fast         ?? 12);
-    _set('cfg-macd-slow',     c.macd_slow         ?? 26);
-    _set('cfg-macd-signal',   c.macd_signal       ?? 9);
-    _set('cfg-cm-rsi-len',    c.cm_rsi_length     ?? 14);
-    _set('cfg-cm-rsi-os',     c.cm_rsi_oversold   ?? 30);
-    _set('cfg-tv-url',        c.tv_chart_url      ?? '');
-    _set('cfg-strategy',      c.strategy          ?? 'multiple_os');
+    _set('cfg-api-key',            c.api_key                ?? '');
+    _set('cfg-secret-key',         c.secret_key             ?? '');
+    _set('cfg-finnhub-key',        c.finnhub_key            ?? '');
+    _set('cfg-timeframe',          c.bar_timeframe          ?? '1Min');
+    _set('cfg-bar-count',          c.bar_count              ?? 300);
+    _set('cfg-tv-url',             c.tv_chart_url           ?? '');
+    _set('cfg-mention-threshold',  c.mention_alert_threshold ?? 5);
+    _set('cfg-mention-window',     c.mention_alert_window    ?? 10);
   } catch (e) {
     console.error('[config] load failed', e);
   }
@@ -112,21 +124,12 @@ async function _loadAudioDevices() {
 
 async function _save() {
   const body = {
-    bar_timeframe:     _strVal('cfg-timeframe'),
-    bar_count:         _numVal('cfg-bar-count'),
-    scan_interval_sec: _numVal('cfg-scan-interval'),
-    device_index:      _deviceVal('cfg-device-index'),
-    rte_threshold:     _numVal('cfg-rte-threshold'),
-    rte_min_boxes:     _numVal('cfg-rte-min-boxes'),
-    obv_length:        _numVal('cfg-obv-length'),
-    volume_surge_mult: _numVal('cfg-vol-surge'),
-    macd_fast:         _numVal('cfg-macd-fast'),
-    macd_slow:         _numVal('cfg-macd-slow'),
-    macd_signal:       _numVal('cfg-macd-signal'),
-    cm_rsi_length:     _numVal('cfg-cm-rsi-len'),
-    cm_rsi_oversold:   _numVal('cfg-cm-rsi-os'),
-    tv_chart_url:      _strVal('cfg-tv-url'),
-    strategy:          _strVal('cfg-strategy'),
+    bar_timeframe:            _strVal('cfg-timeframe'),
+    bar_count:                _numVal('cfg-bar-count'),
+    device_index:             _deviceVal('cfg-device-index'),
+    tv_chart_url:             _strVal('cfg-tv-url'),
+    mention_alert_threshold:  _numVal('cfg-mention-threshold'),
+    mention_alert_window:     _numVal('cfg-mention-window'),
   };
 
   const ak = _pwdVal('cfg-api-key');
@@ -135,6 +138,10 @@ async function _save() {
   if (ak) body.api_key     = ak;
   if (sk) body.secret_key  = sk;
   if (fk) body.finnhub_key = fk;
+
+  // Backend URL is stored locally — not sent to the server
+  const backendUrl = _val('cfg-backend-url').trim();
+  setBackendUrl(backendUrl);
 
   // Drop undefined/null values that weren't touched
   Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);
@@ -180,4 +187,50 @@ function _deviceVal(id) { const v = _val(id); return v !== '' ? +v : null; }
 
 function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Feedback / Suggestions ─────────────────────────────────────
+
+async function _loadSuggestions() {
+  const el = _backdrop.querySelector('[data-suggestions]');
+  if (!el) return;
+  el.innerHTML = '<div class="suggestions-empty">Loading…</div>';
+  try {
+    const { suggestions = [] } = await api.getSuggestions();
+    if (!suggestions.length) {
+      el.innerHTML = '<div class="suggestions-empty">No suggestions yet.</div>';
+      // Still mark as seen (0 total)
+      localStorage.setItem(_SEEN_KEY, '0');
+      updateFeedbackBadge(0);
+      return;
+    }
+    // Newest first
+    const sorted = [...suggestions].reverse();
+    el.innerHTML = sorted.map(s => {
+      const ts  = s.timestamp ? s.timestamp.replace('T', ' ').slice(0, 19) : '—';
+      const ua  = _shortUa(s.user_agent || '');
+      const ip  = s.ip || '—';
+      return `<div class="suggestion-card">
+        <div class="suggestion-msg">${_esc(s.message)}</div>
+        <div class="suggestion-meta">
+          <span class="suggestion-ts">${_esc(ts)}</span>
+          <span>${_esc(ip)}</span>
+          <span>${_esc(ua)}</span>
+        </div>
+      </div>`;
+    }).join('');
+    // Mark all currently loaded suggestions as seen — clears the badge
+    localStorage.setItem(_SEEN_KEY, String(suggestions.length));
+    updateFeedbackBadge(suggestions.length);
+  } catch {
+    el.innerHTML = '<div class="suggestions-empty">Failed to load suggestions.</div>';
+  }
+}
+
+function _shortUa(ua) {
+  if (!ua) return '';
+  const m = ua.match(/\(([^)]+)\)/);
+  const os = m ? m[1].split(';')[0].trim() : '';
+  const browser = ua.match(/(Chrome|Firefox|Safari|Edge|OPR)\/[\d.]+/)?.[0] ?? '';
+  return [browser, os].filter(Boolean).join(' · ') || ua.slice(0, 40);
 }

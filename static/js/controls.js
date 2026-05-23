@@ -5,8 +5,9 @@
  * Buttons are always re-enabled in finally blocks regardless of outcome.
  */
 
-import { api } from './api.js?v=6';
-import { get, selectTicker } from './store.js?v=6';
+import { api } from './api.js?v=38';
+import { get, selectTicker } from './store.js?v=38';
+import { clearCopiedTickers } from './tickers.js?v=38';
 
 export async function toggleTranscriber(btnEl) {
   const running = get('transcriber').running;
@@ -37,6 +38,7 @@ export async function clearWatchlist() {
   if (!confirm('Clear the watchlist?\n\nThis removes all tickers from wb_watchlist.json.')) return;
   try {
     await api.clearWatchlist();
+    clearCopiedTickers();
   } catch (e) {
     console.error('[controls] clearWatchlist', e);
   }

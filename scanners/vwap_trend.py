@@ -30,5 +30,5 @@ class VwapTrendScanner(BaseScanner):
         if (price - vwap) / vwap * 100 < ABOVE_VWAP_PCT_MIN:
             return None
 
-        pct_above = round((price - vwap) / vwap * 100, 1)
+        round((price - vwap) / vwap * 100, 1)
         return self._build_alert(ticker, float_cache, f"{vwap:.2f}")

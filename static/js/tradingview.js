@@ -8,7 +8,7 @@
  * Creates a new widget instance each time the symbol changes.
  */
 
-import { subscribe, get } from './store.js?v=6';
+import { subscribe, get } from './store.js?v=38';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
@@ -40,7 +40,7 @@ function _loadChart(symbol) {
   if (_placeholder) _placeholder.classList.add('hidden');
   if (_widgetWrap)  _widgetWrap.classList.remove('hidden');
 
-  // Clear previous widget (remove all children + reset id)
+  // Clear previous widget
   const containerId = 'tv_chart_container';
   const container = document.getElementById(containerId);
   if (container) container.innerHTML = '';
@@ -48,28 +48,24 @@ function _loadChart(symbol) {
   if (window.TradingView) {
     _createWidget(containerId, symbol);
   } else {
-    // tv.js hasn't finished loading yet — poll briefly
+    // tv.js not yet loaded — poll until ready (up to 10s)
+    let waited = 0;
     const poll = setInterval(() => {
+      waited += 100;
       if (window.TradingView) {
         clearInterval(poll);
         _createWidget(containerId, symbol);
+      } else if (waited >= 10000) {
+        clearInterval(poll);
+        console.error('[tv] tv.js failed to load after 10s — check network');
+        if (container) container.innerHTML =
+          '<div style="color:#ff6b6b;padding:20px;font-size:13px;">Chart failed to load.<br>Check your internet connection.</div>';
       }
     }, 100);
   }
 }
 
 function _createWidget(containerId, symbol) {
-  const config = get('config') || {};
-  const chartUrl = config.tv_chart_url || '';
-  
-  // Extract layout ID if a full URL was provided
-  // e.g. https://www.tradingview.com/chart/x04Gfcu8/ -> x04Gfcu8
-  let watchlistId = undefined;
-  if (chartUrl) {
-    const parts = chartUrl.split('/');
-    watchlistId = parts.filter(p => p.length >= 6 && p.length <= 12 && p !== 'chart').pop();
-  }
-
   const widgetOpts = {
     autosize:            true,
     symbol,
@@ -83,24 +79,18 @@ function _createWidget(containerId, symbol) {
     hide_side_toolbar:   false,
     allow_symbol_change: true,
     save_image:          false,
-    withdateranges:      false,
     container_id:        containerId,
   };
 
-  if (watchlistId) {
-    widgetOpts.watchlist = [symbol];
-    widgetOpts.chart = watchlistId;
-  } else {
-    // Only use default studies if NO custom layout is provided
-    widgetOpts.studies = [
-      'Volume@tv-basicstudies',
-      { id: 'RSI@tv-basicstudies',  inputs: { length: 2 } },
-      'MACD@tv-basicstudies',
-      'OBV@tv-basicstudies',
-      'WilliamsR@tv-basicstudies',
-    ];
-  }
+  widgetOpts.studies = [
+    'MACD@tv-basicstudies',
+    'Volume@tv-basicstudies',
+    'VWAP@tv-basicstudies',
+  ];
 
-  // eslint-disable-next-line no-new
-  new window.TradingView.widget(widgetOpts);
+  try {
+    new window.TradingView.widget(widgetOpts);
+  } catch (err) {
+    console.error('[tv] widget creation failed:', err);
+  }
 }
