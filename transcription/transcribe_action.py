@@ -76,7 +76,7 @@ else:
 
 TARGET_SR       = 16000
 CHUNK_DURATION  = 1.5    # shorter chunks = faster latency (1.5s window)
-OVERLAP         = 0.5    # 0.5s overlap: boundary protection without 3× count inflation
+OVERLAP         = 1.0    # minimal overlap: prioritize latency over partial recovery
 CHUNK_SAMPLES   = int(TARGET_SR * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(TARGET_SR * OVERLAP)
 ADVANCE_SAMPLES = CHUNK_SAMPLES - OVERLAP_SAMPLES  # 1.5s of new audio per result
@@ -123,7 +123,7 @@ _LETTER_NAMES = {
     "em":      "M", "en":     "N", "oh":     "O", "pee":   "P",
     "cue":     "Q", "queue":  "Q", "ar":     "R", "arr":   "R",
     "ess":     "S", "es":     "S", "tee":    "T", "you":   "U",
-    "vee":     "V", "ex":     "X", "eks":    "X", "ecks":  "X", "wye":   "Y", "why":   "Y",
+    "vee":     "V", "ex":     "X", "wye":    "Y", "why":   "Y",
     "zee":     "Z", "zed":    "Z",
 }
 _letter_name_word    = "(?:" + "|".join(re.escape(w) for w in _LETTER_NAMES) + ")"
@@ -179,7 +179,7 @@ def normalize_transcript(text: str) -> str:
         return letters if 2 <= len(letters) <= 5 else m.group(0)
 
     text = re.sub(
-        r'(?<![A-Za-z])([A-Za-z])(?: ([A-Za-z])){1,3}(?![A-Za-z])',
+        r'(?<![A-Za-z])([A-Za-z])(?: ([A-Za-z])){1,4}(?![A-Za-z])',
         collapse_spaced_letters,
         text,
     )
@@ -318,13 +318,12 @@ def _ping_ollama(verbose: bool = True) -> bool:
     return _ollama_ok
 
 
-def _ollama_classify(candidates: list[str], context: str) -> list[str] | None:
-    """Return confirmed tickers, [] if Ollama says none, None on failure/timeout."""
+def _ollama_classify(candidates: list[str], context: str) -> list[str]:
     global _ollama_fail_ts
     if not candidates:
         return []
     if time.monotonic() - _ollama_fail_ts < 30:
-        return None
+        return []
 
     words = " ".join(candidates)
     prompt = (
@@ -377,7 +376,7 @@ def _ollama_classify(candidates: list[str], context: str) -> list[str] | None:
             print(f"[OLLAMA] classify unavailable: {type(e).__name__}", flush=True)
             if _ollama_ok:
                 _ping_ollama(verbose=False)
-            return None
+            return []
 
 
 def _ollama_phonetic_validate(candidate: str) -> str | None:
@@ -457,10 +456,6 @@ _STOP_WORDS = {
     "YOUR", "SAID", "SAYS", "TOLD", "TELL", "TALK", "WENT", "GOES", "BOTH",
     "ONCE", "UPON", "SOON", "EVER", "YEAR", "WEEK", "DAYS", "LETS", "PUTS",
     "ALSO", "THEN", "THAN", "BEEN", "WERE", "HAVE", "MAKE",
-    # Numbers spelled out
-    "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
-    "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "TWENTY", "THIRTY", "FORTY", "FIFTY",
-    "HUNDRED", "THOUSAND", "MILLION", "BILLION",
     # Finance / market terms that look like tickers
     "ETF", "IPO", "CEO", "CFO", "COO", "CTO", "SEC", "FDA", "FED", "GDP",
     "CPI", "EPS", "ATH", "ATL", "RSI", "SMA", "EMA", "BEAR", "BULL",
@@ -469,30 +464,12 @@ _STOP_WORDS = {
     "HALT", "ALERT", "LEVEL", "STOCK", "PRICE", "TRADE", "SHARE",
     "OPEN", "HIGH", "CLOSE", "AFTER", "ABOVE", "BELOW", "RANGE",
     "BEAT", "MISS", "GUIDE", "VIEW", "RAISE", "LOWER", "CUTS",
-    "SPIKE", "SPIKE", "VOLUME", "VOLATILITY", "FLAG", "FACILITY",
     # Months / days
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
-    "JAN", "FEB", "MAR", "APR", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    "JAN", "FEB", "MAR", "APR", "AUG", "SEP", "OCT", "NOV", "DEC",
     # Filler / noise
     "HEY", "YEAH", "OKAY", "WELL", "LIKE", "JUST", "SAID",
     "STILL", "REALLY", "PRETTY", "MIGHT", "MAYBE",
-    # Common English words that are also valid NASDAQ tickers — almost never
-    # the subject of a ticker discussion; Ollama can't filter these fast enough
-    "REAL", "BAND", "IRON", "FAST", "LOVE", "CAPS", "CUT",
-    # Tech / finance acronyms that shadow common English speech on air
-    "AWS", "BIG", "CHIP", "CARE", "CORE", "FUND", "BOOM", "GROW",
-    # Common words that Whisper outputs all-caps and then Levenshtein-match tickers
-    # e.g. HALF→CALF, RAN→RAA, FIND→FINT, DR→TR, CRP→KRP (fragment of MCRP)
-    "HALF", "RAN", "FIND", "DR", "CRP", "MRP", "DRP",
-    # Noise fragments from scanner alerts / audio artefacts
-    "ALERT", "SCAN", "SCANNER", "SPIKE", "DETECT", "DETECTED",
-    # NATO phonetic alphabet words (2-5 chars) — collapsed in pairs by normalize_transcript,
-    # but isolated NATO words slip through and Levenshtein-match real tickers
-    # e.g. KILO→SILO, LIMA→LIMI, MIKE→BIKE
-    "ECHO", "GOLF", "KILO", "LIMA", "MIKE", "PAPA", "ZULU", "DELTA", "INDIA",
-    # Common English words appearing all-caps in scanner audio that match tickers at edit-distance 1
-    # e.g. CENTS→CENTA, DEAL→DIAL, OFF→OVF
-    "CENTS", "DEAL", "OFF",
 }
 
 # Company name → ticker (spoken names on air)
@@ -526,7 +503,7 @@ _NAME_TO_TICKER = {
     "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP",
     "halliburton": "HAL", "schlumberger": "SLB",
     "boeing": "BA", "lockheed": "LMT", "raytheon": "RTX", "northrop": "NOC",
-    "walmart": "WMT", "costco": "COST",
+    "walmart": "WMT", "target": "TGT", "costco": "COST",
     "home depot": "HD",
     "disney": "DIS", "comcast": "CMCSA", "warner": "WBD",
     "paramount": "PARA", "spotify": "SPOT", "roblox": "RBLX",
@@ -557,7 +534,6 @@ _MISHEAR_MAP = {
     "coinbase": "COIN",
     "snowflake": "SNOW",
     "cloudflare": "NET",
-    "tsmc": "TSM",
 }
 
 _TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
@@ -657,32 +633,36 @@ def extract_tickers(text: str) -> dict:
 
     if candidates:
         _metric_inc("ticker_candidates_total", len(candidates))
-
-        # Step 1: NASDAQ validation always runs — never skipped.
-        # Ollama cannot cause misses because it only filters what NASDAQ already confirmed.
-        if _VALID_TICKERS:
-            confirmed = []
+        if _ollama_ok:
+            confirmed = _ollama_classify(candidates, text)
+            # For isolated ticker reads with no context, also try phonetic resolution
+            # on spelled candidates that weren't caught by context-based classification
             for t in candidates:
-                if t in _VALID_TICKERS:
-                    confirmed.append(t)
-                elif was_spelled.get(t) and len(t) >= 4:
-                    # Spelled-out ticker not directly in NASDAQ — try phonetic correction.
-                    # Min length 4: 3-letter candidates have too high a false-positive rate
-                    # via Levenshtein (e.g. AMB→EMB, MNT→BNT, OFF→OVF).
+                if t not in confirmed and was_spelled.get(t):
                     fixed = _phonetic_match(t, _VALID_TICKERS)
                     if fixed and fixed != t:
                         confirmed.append(fixed)
                         counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
                         print(f"[PHONETIC] {t} → {fixed}", flush=True)
-                    elif _ollama_ok:
+                    else:
                         ollama_fixed = _ollama_phonetic_validate(t)
                         if ollama_fixed and ollama_fixed != t:
                             confirmed.append(ollama_fixed)
                             counts[ollama_fixed] = counts.get(ollama_fixed, 0) + counts.pop(t, 0)
                             print(f"[OLLAMA_PHONETIC] {t} → {ollama_fixed}", flush=True)
+        elif _VALID_TICKERS:
+            confirmed = []
+            for t in candidates:
+                if t in _VALID_TICKERS:
+                    confirmed.append(t)
+                elif was_spelled.get(t):
+                    fixed = _phonetic_match(t, _VALID_TICKERS)
+                    if fixed and fixed != t:
+                        confirmed.append(fixed)
+                        counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
+                        print(f"[PHONETIC] {t} → {fixed}", flush=True)
         else:
-            confirmed = list(candidates)
-
+            confirmed = candidates
         # Drop any raw counts for tokens that failed validation
         confirmed_set = set(confirmed)
         counts = {t: c for t, c in counts.items() if t in confirmed_set}
@@ -732,12 +712,6 @@ INITIAL_PROMPT = (
     "Tickers are sometimes spelled letter by letter: "
     "N V D A, A A P L, A M Z N, M S F T, T S L A. "
     "calls puts earnings price target breakout resistance."
-)
-
-# Tickers that appear verbatim in the initial prompt — used by the prompt-echo
-# hallucination guard to detect chunks that are just Whisper regurgitating its seed.
-_PROMPT_TICKERS: frozenset[str] = frozenset(
-    w for w in INITIAL_PROMPT.split() if w.isupper() and 2 <= len(w) <= 5
 )
 
 
@@ -917,12 +891,6 @@ _running.set()
 _session_tickers: set = set()
 _session_lock = threading.Lock()
 
-# Cross-chunk mention dedup — chunk overlap means the same utterance can land in
-# two consecutive chunks. Suppress a ticker's mention if it was just sent within
-# one full chunk window (CHUNK_DURATION seconds).
-_ticker_last_sent: dict[str, float] = {}
-_MENTION_COOLDOWN = CHUNK_DURATION  # 1.5s — one full chunk window
-
 
 # =============================================================================
 # TICKER DELIVERY — POST to dashboard API
@@ -938,12 +906,7 @@ def _send_ticker(ticker: str, count: int = 1):
     Falls back to writing the file if API is down.
     """
     ticker = ticker.upper()
-    now = time.monotonic()
     with _session_lock:
-        last = _ticker_last_sent.get(ticker, 0.0)
-        if now - last < _MENTION_COOLDOWN:
-            return  # same utterance echoed by chunk overlap — skip
-        _ticker_last_sent[ticker] = now
         is_new = ticker not in _session_tickers
         if is_new:
             _session_tickers.add(ticker)
@@ -1091,14 +1054,7 @@ def transcription_worker():
                         compression_ratio_threshold=2.4,
                         condition_on_previous_text=False,
                     )
-                    # Filter low-confidence segments before joining. faster-whisper
-                    # exposes per-segment no_speech_prob and avg_logprob; segments
-                    # that are likely silence or noise produce tickers that slip
-                    # past the repetition-loop guard.
-                    text = " ".join(
-                        s.text.strip() for s in segs
-                        if s.no_speech_prob < 0.6 and s.avg_logprob > -1.0
-                    ).strip()
+                    text = " ".join(s.text.strip() for s in segs).strip()
 
             ms = (time.perf_counter() - t0) * 1000
 
@@ -1146,16 +1102,6 @@ def transcription_worker():
                     _is_echo = (len(_words) >= 10
                                 and _unique_upper >= 8
                                 and len(_upper) / len(_words) > 0.70)
-                    # Subtler prompt echo: Whisper regurgitates a handful of tickers
-                    # from the seed prompt rather than the full list. Flag if 5+
-                    # *unique* prompt tickers appear and dominate the chunk.
-                    # Requires ≥7 words so a legitimate short rundown isn't caught.
-                    # Uses unique counts so a single ticker repeated many times
-                    # (real TTS) doesn't trigger the guard.
-                    if not _is_echo and _PROMPT_TICKERS and len(_words) >= 7:
-                        _unique_prompt_hits = sum(1 for w in set(_upper) if w in _PROMPT_TICKERS)
-                        _is_echo = (_unique_prompt_hits >= 5
-                                    and _unique_prompt_hits / max(len(_words), 1) > 0.60)
                     if _is_loop or _is_echo:
                         print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] [SKIP hallucination] {text[:80]}", flush=True)
                         continue
@@ -1201,13 +1147,9 @@ _threads = [
     threading.Thread(target=audio_capture,        daemon=True, name="audio"),
     *[threading.Thread(target=transcription_worker, daemon=True, name=f"transcription-{i+1}")
       for i in range(_N_WORKERS)],
-    threading.Thread(target=_ollama_health_worker, daemon=True, name="ollama-health"),
 ]
 for t in _threads:
     t.start()
-
-# Initial Ollama ping before printing status
-_ping_ollama(verbose=True)
 
 engine = f"MLX Whisper ({MLX_MODEL})" if _USE_MLX else f"faster-whisper ({CPU_MODEL})"
 ticker_engine = f"Ollama ({OLLAMA_MODEL})" if _ollama_ok else ("NASDAQ list" if _VALID_TICKERS else "stop-word filter")
