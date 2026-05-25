@@ -23,7 +23,7 @@
         <meta name="theme-color" content="#090f1d" />
 
         <link rel="stylesheet" href="/static/css/styles.css?v=43" />
-        <script src="https://s3.tradingview.com/tv.js"></script>
+        <!-- Lightweight Charts loaded on-demand by lwchart.js -->
     </head>
     <body>
         <!-- Apply hosted/mobile/admin classes instantly (before paint) to prevent layout flash -->
@@ -228,7 +228,7 @@
                 aria-hidden="true"
             ></div>
 
-            <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
+            <!-- ── RIGHT: Lightweight Chart ──────────────────────── -->
             <section data-panel="tradingview" class="panel panel-tradingview">
                 <div class="panel-header">
                     <div class="panel-header-left">
@@ -238,6 +238,21 @@
                             class="tv-symbol-badge"
                             style="display: none"
                         ></span>
+                        <span data-chart-ohlcv class="chart-ohlcv hidden">
+                            O <span data-ohlcv-o></span>
+                            H <span data-ohlcv-h></span>
+                            L <span data-ohlcv-l></span>
+                            C <span data-ohlcv-c></span>
+                            V <span data-ohlcv-v></span>
+                        </span>
+                    </div>
+                    <div class="panel-header-right">
+                        <div class="chart-tf-bar">
+                            <button class="chart-tf-btn chart-tf-btn--active" data-tf="1Min">1m</button>
+                            <button class="chart-tf-btn" data-tf="5Min">5m</button>
+                            <button class="chart-tf-btn" data-tf="15Min">15m</button>
+                            <button class="chart-tf-btn" data-tf="1Hour">1h</button>
+                        </div>
                     </div>
                 </div>
 

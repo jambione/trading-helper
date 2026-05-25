@@ -945,6 +945,30 @@ async def api_state():
     return JSONResponse(snap)
 
 
+@app.get("/api/candles/{ticker}")
+async def api_candles(ticker: str, tf: str = "1Min"):
+    ticker = ticker.upper()
+    if STATE.data_client is None:
+        return JSONResponse({"candles": [], "error": "Alpaca not connected"})
+    cfg_override = {**STATE.cfg, "bar_timeframe": tf, "bar_count": 390}
+    loop = asyncio.get_running_loop()
+    bars = await loop.run_in_executor(None, _api.fetch_bars, STATE.data_client, ticker, cfg_override)
+    if bars is None or bars.empty:
+        return JSONResponse({"candles": []})
+    candles = []
+    for ts, row in bars.iterrows():
+        t = int(ts.timestamp()) if hasattr(ts, "timestamp") else int(ts)
+        candles.append({
+            "time":   t,
+            "open":   round(float(row["open"]),  4),
+            "high":   round(float(row["high"]),  4),
+            "low":    round(float(row["low"]),   4),
+            "close":  round(float(row["close"]), 4),
+            "volume": int(row["volume"]),
+        })
+    return JSONResponse({"candles": candles})
+
+
 @app.get("/api/news")
 async def api_news():
     return JSONResponse({"items": load_news()})
