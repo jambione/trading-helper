@@ -37,7 +37,7 @@ from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
 
 # ── Version ───────────────────────────────────────────────────────────────────
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_WINDOWS = sys.platform == "win32"
@@ -446,13 +446,14 @@ def _mark_activated(ticker: str):
 
 # Serialise all workflow calls through a single worker thread so Webull and TV
 # automation never overlap (pyautogui is not thread-safe).
-_work_queue: list[str] = []
+# Queue entries are (ticker, mode) where mode is 'wb', 'tv', or 'both'.
+_work_queue: list[tuple[str, str]] = []
 _work_lock  = threading.Lock()
 _work_event = threading.Event()
 
 
-def _enqueue(ticker: str):
-    """Add ticker to the workflow queue (deduplicated within cooldown window)."""
+def _enqueue(ticker: str, mode: str = "both"):
+    """Add ticker+mode to the workflow queue (deduplicated within cooldown window)."""
     now = time.time()
     if _is_recently_activated(ticker):
         print(f"  ⏭  {ticker} already activated in the last 15 min — skipping")
@@ -462,8 +463,9 @@ def _enqueue(ticker: str):
         return
     _last_fired[ticker] = now
     with _work_lock:
-        if ticker not in _work_queue:
-            _work_queue.append(ticker)
+        if not any(t == ticker and m == mode for t, m in _work_queue):
+            _work_queue.append((ticker, mode))
+            print(f"  📥 Queued {ticker} [{mode}]  (queue depth: {len(_work_queue)})")
     _work_event.set()
 
 
@@ -474,13 +476,19 @@ def _worker():
         _work_event.clear()
         while True:
             with _work_lock:
-                ticker = _work_queue.pop(0) if _work_queue else None
-            if ticker is None:
+                item = _work_queue.pop(0) if _work_queue else None
+            if item is None:
                 break
-            print(f"\n🚨 ALERT → {ticker}  running WB+TV workflow…")
-            wb_ok = workflow_add_wb(ticker)
-            time.sleep(0.5)
-            tv_ok = workflow_add_tv(ticker)
+            ticker, mode = item
+            label = {"wb": "WB", "tv": "TV", "both": "WB+TV"}.get(mode, mode.upper())
+            print(f"\n🚨 ALERT → {ticker}  running {label} workflow…")
+            wb_ok = tv_ok = False
+            if mode in ("wb", "both"):
+                wb_ok = workflow_add_wb(ticker)
+                if mode == "both":
+                    time.sleep(0.5)
+            if mode in ("tv", "both"):
+                tv_ok = workflow_add_tv(ticker)
             if wb_ok or tv_ok:
                 _mark_activated(ticker)
 
@@ -610,17 +618,9 @@ class AgentHandler(BaseHTTPRequestHandler):
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
-            if _is_recently_activated(ticker):
-                print(f"  ⏭  {ticker} already activated in the last 15 min — skipping")
-                self._json(200, {"ok": True, "ticker": ticker, "skipped": "recently_activated"})
-                return
-            if path == "/add-wb":
-                ok = workflow_add_wb(ticker)
-            else:
-                ok = workflow_add_tv(ticker)
-            if ok:
-                _mark_activated(ticker)
-            self._json(200 if ok else 500, {"ok": ok, "ticker": ticker})
+            mode = "wb" if path == "/add-wb" else "tv"
+            _enqueue(ticker, mode)
+            self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
 
         else:
             self._json(404, {"error": "not found"})
