@@ -219,6 +219,11 @@ _MISHEAR_MAP = {
     "snowflake": "SNOW",
     "cloudflare": "NET",
     "tsmc": "TSM",
+    # Letter-spelling mishears confirmed from audio analysis
+    "aiio": "AIO", "eiio": "AIO", "eio": "AIO",
+    "otrk": "OTLK",
+    "sipy": "SIFY",
+    "outlook therapeutics": "OTLK",
 }
 
 _PHONETIC_CONFUSIONS = {
@@ -230,6 +235,7 @@ _PHONETIC_CONFUSIONS = {
     'S': ['Z', 'C', 'X'], 'Z': ['S', 'X'], 'C': ['S', 'K'],
     'G': ['C', 'D', 'K'], 'K': ['C', 'G'], 'X': ['S', 'Z'],
     'F': ['V', 'P'], 'Y': ['I', 'J'],
+    'R': ['L'], 'L': ['R'],
 }
 
 _TICKER_RE  = re.compile(r'\b([A-Za-z]{2,5})\b')
@@ -298,11 +304,12 @@ def extract_tickers(text: str, ollama_ok: bool = False) -> dict:
             for t in candidates:
                 if t in _VALID_TICKERS:
                     confirmed.append(t)
-                elif was_spelled.get(t) and len(t) >= 4:
+                elif was_spelled.get(t):
                     fixed = _phonetic_match(t, _VALID_TICKERS)
                     if fixed and fixed != t:
                         confirmed.append(fixed)
                         counts[fixed] = counts.get(fixed, 0) + counts.pop(t, 0)
+                        seen.add(fixed)  # prevent mishear map from double-firing
         else:
             confirmed = list(candidates)
 
