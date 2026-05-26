@@ -107,6 +107,11 @@ INITIAL_PROMPT = (
     "GME AMC PLTR UBER LYFT ABNB DASH DKNG SOUN "
     "Tickers are sometimes spelled letter by letter: "
     "N V D A, A A P L, A M Z N, M S F T, T S L A. "
+    "Tickers are sometimes spelled using NATO phonetic alphabet: "
+    "November Vee Delta Alpha for NVDA, "
+    "Charlie Romeo Bravo Papa for CRBP, "
+    "Bravo Romeo Kilo Romeo for BRKR, "
+    "Yankee Mike Alpha Tango for YMAT. "
     "calls puts earnings price target breakout resistance."
 )
 
@@ -167,6 +172,23 @@ _VALID_TICKERS: set = _load_valid_tickers()
 # without any stop-word list.
 _TICKER_RE = re.compile(r'\b([A-Z]{2,5})\b')
 
+# Words that match _TICKER_RE but are never valid ticker mentions.
+# Keeps common English abbreviations, titles, and date markers from firing.
+_TICKER_STOPWORDS: frozenset = frozenset({
+    # Time / dates
+    "AM", "PM", "AD", "BC",
+    # Regulatory / government agencies (not exchange-listed)
+    "FDA", "SEC", "FTC", "FED", "IRS", "CDC", "NIH", "DOJ", "DOD",
+    # Currencies / macros
+    "USD", "EUR", "GBP", "JPY", "CNY",
+    # Executive titles
+    "CEO", "CFO", "CTO", "COO", "CIO",
+    # Market structure terms (not tickers)
+    "IPO", "NYSE", "ETF",
+    # Very common English two-letter all-caps that appear in transcripts
+    "OK", "US", "EU", "UK",
+})
+
 # English letter-name phonetics — how TTS voices pronounce individual letters.
 # "en vee dee ay" → NVDA, "tee es el ay" → TSLA
 _LETTER_NAMES = {
@@ -185,6 +207,42 @@ _LETTER_NAME_PATTERN = re.compile(
     rf"(?i)\b{_letter_name_word}(?:[ \t]*[.,\-]?[ \t]*{_letter_name_word}){{1,4}}\b"
 )
 
+# NATO phonetic alphabet — "charlie romeo bravo papa" → CRBP.
+# Includes common Whisper mis-transcriptions (michael→M, romy→R).
+_NATO = {
+    "alpha": "A", "bravo": "B", "charlie": "C", "delta": "D",
+    "echo": "E", "foxtrot": "F", "golf": "G", "hotel": "H",
+    "india": "I", "juliet": "J", "kilo": "K", "lima": "L",
+    "mike": "M", "michael": "M",
+    "november": "N", "oscar": "O", "papa": "P",
+    "quebec": "Q", "romeo": "R", "romy": "R",
+    "sierra": "S", "tango": "T", "uniform": "U", "victor": "V",
+    "whiskey": "W", "xray": "X", "yankee": "Y", "zulu": "Z",
+}
+_nato_word    = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
+_NATO_PATTERN = re.compile(
+    rf"(?i)\b{_nato_word}(?:[ \t]+{_nato_word}){{1,4}}\b"
+)
+
+# Well-known company names that Whisper reliably outputs in lowercase.
+# Only include names where the word is unambiguous as a ticker reference.
+_COMPANY_NAMES: dict[str, str] = {
+    "apple":     "AAPL",
+    "microsoft": "MSFT",
+    "nvidia":    "NVDA",
+    "amazon":    "AMZN",
+    "alphabet":  "GOOGL",
+    "netflix":   "NFLX",
+    "tesla":     "TSLA",
+    "intel":     "INTC",
+    "facebook":  "META",
+    "palantir":  "PLTR",
+    "coinbase":  "COIN",
+    "spotify":   "SPOT",
+    "roblox":    "RBLX",
+    "doordash":  "DASH",
+}
+
 
 def _collapse_letter_names(text: str) -> str:
     """en vee dee ay → NVDA, tee es el ay → TSLA"""
@@ -193,6 +251,17 @@ def _collapse_letter_names(text: str) -> str:
         letters = "".join(_LETTER_NAMES.get(w, "") for w in words if w)
         return letters if 2 <= len(letters) <= 5 else m.group(0)
     return _LETTER_NAME_PATTERN.sub(collapse, text)
+
+
+def _collapse_nato(text: str) -> str:
+    """charlie romeo bravo papa → CRBP, bravo romeo kilo romeo → BRKR"""
+    def collapse(m):
+        words   = m.group(0).lower().split()
+        letters = "".join(_NATO.get(w, "") for w in words if w)
+        # Require 3+ letters: 2-word NATO matches are almost always fragments,
+        # not intentional ticker spells.
+        return letters if 3 <= len(letters) <= 5 else m.group(0)
+    return _NATO_PATTERN.sub(collapse, text)
 
 
 def _collapse_hyphens(text: str) -> str:
@@ -224,15 +293,33 @@ def _collapse_spaced_letters(text: str) -> str:
     return re.sub(r'(?<![A-Za-z])[A-Za-z](?:\s[A-Za-z])+(?![A-Za-z])', replace_run, text)
 
 
-def extract_tickers(text: str) -> dict[str, int]:
-    """Return {ticker: count} for all valid NASDAQ/NYSE tickers found in text."""
+def normalize_transcript(text: str) -> str:
+    """Chain all normalization steps: letter names → NATO → hyphens → spaced letters."""
     text = _collapse_letter_names(text)
+    text = _collapse_nato(text)
     text = _collapse_hyphens(text)
     text = _collapse_spaced_letters(text)
+    return text
+
+
+def extract_tickers(text: str) -> dict[str, int]:
+    """Return {ticker: count} for all valid NASDAQ/NYSE tickers found in text."""
+    # Expand company names before normalization so they don't interfere with
+    # letter-level patterns.
+    text_lower = text.lower()
+    extra: list[str] = []
+    for name, ticker in _COMPANY_NAMES.items():
+        if name in text_lower:
+            extra.append(ticker)
+
+    text = normalize_transcript(text)
+    if extra:
+        text = text + " " + " ".join(extra)
+
     counts: dict[str, int] = {}
     for m in _TICKER_RE.finditer(text):
         t = m.group(1)  # already uppercase — enforced by regex
-        if t in _VALID_TICKERS:
+        if t in _VALID_TICKERS and t not in _TICKER_STOPWORDS:
             counts[t] = counts.get(t, 0) + 1
     return counts
 
