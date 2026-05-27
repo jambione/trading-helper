@@ -19,6 +19,7 @@ import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 
@@ -942,7 +943,42 @@ async def auth_register(request: Request):
 async def api_state():
     loop = asyncio.get_running_loop()
     snap = await loop.run_in_executor(None, _snapshot)
+    # Merge signal proximity data from signal_engine if available
+    sig = _load_signal_state()
+    if sig:
+        sig_tickers = sig.get("tickers", {})
+        for row in snap.get("tickers", []):
+            ticker_sym = row.get("ticker", "")
+            if ticker_sym in sig_tickers:
+                row["signal_proximity"] = sig_tickers[ticker_sym]
     return JSONResponse(snap)
+
+
+@app.get("/api/signals")
+async def api_signals():
+    """
+    Return the latest signal proximity state written by signal_engine.py.
+    Each entry contains RSI, MACD histogram, proximity_pct (0–100), status,
+    is_hot, mention_velocity, and data_source.
+
+    The signal_engine.py process writes signal_state.json every 5 seconds;
+    this endpoint reads and serves that file.  Returns an empty dict if the
+    signal engine is not running.
+    """
+    data = _load_signal_state()
+    return JSONResponse(data or {"updated": None, "tickers": {}})
+
+
+_SIGNAL_STATE_FILE = Path(__file__).parent / "signal_state.json"
+
+def _load_signal_state() -> Optional[dict]:
+    """Read signal_state.json written by signal_engine.py, or return None."""
+    if not _SIGNAL_STATE_FILE.exists():
+        return None
+    try:
+        return json.loads(_SIGNAL_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 @app.get("/api/news")

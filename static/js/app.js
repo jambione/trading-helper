@@ -8,7 +8,7 @@
 import { connect, on, api }                      from './api.js?v=39';
 import { subscribe, set }                        from './store.js?v=38';
 import { init as initTranscription }             from './transcription.js?v=38';
-import { init as initTickers }                   from './tickers.js?v=38';
+import { init as initTickers }                   from './tickers.js?v=41';
 import { init as initTradingView }               from './tradingview.js?v=38';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=38';
 import { init as initResizer }                   from './resizer.js?v=38';

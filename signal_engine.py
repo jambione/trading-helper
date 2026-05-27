@@ -105,6 +105,9 @@ from finnhub_stream import (
     FINNHUB_STATE,
 )
 
+# ── Import Massive API client (optional — activated by MASSIVE_API_KEY) ───────
+import massive_client
+
 # ── Load signal_engine.env ────────────────────────────────────────────────────
 def _load_env_file(path: Path):
     """
@@ -222,9 +225,19 @@ RVOL_MIN           = float(os.getenv("RVOL_MIN", "3.0"))   # relative volume thr
 # Time stop: force-sell after this many minutes in position (0 = disabled)
 MAX_HOLD_MINUTES   = int(os.getenv("MAX_HOLD_MINUTES", "0"))
 
-LOG_FILE       = _HERE / "signal_log.json"
+LOG_FILE          = _HERE / "signal_log.json"
+SIGNAL_STATE_FILE = _HERE / "signal_state.json"   # written every SIGNAL_STATE_INTERVAL s
 
 ALPACA_BASE_URL = "https://data.alpaca.markets"
+
+# ── Massive API ───────────────────────────────────────────────────────────────
+# When MASSIVE_API_KEY is set, alert tickers (mention_burst / is_hot) will
+# try Massive first for OHLCV bars before falling back to Alpaca.
+# Free tier provides end-of-day bars only; paid tiers ($29+/mo) provide
+# 15-minute delayed or real-time intraday bars.
+MASSIVE_API_KEY         = os.getenv("MASSIVE_API_KEY", "")
+# How often to write signal_state.json (seconds) — dashboard reads this file
+SIGNAL_STATE_INTERVAL   = int(os.getenv("SIGNAL_STATE_INTERVAL", "5"))
 
 
 # ── Credential loading ────────────────────────────────────────────────────────
@@ -574,6 +587,9 @@ class TickerState:
         self.last_cm_rsi_ok:  bool            = False  # CM RSI approaching oversold
         self.last_obv_ok:     bool            = False  # OBV oscillator trending up
 
+        # Which API supplied the most recent bar data ("massive" or "alpaca")
+        self._data_source: str = "alpaca"
+
     def expiry_seconds(self) -> int:
         """How long this ticker is allowed to live without a position."""
         return EXPIRY_WARM if self.ever_positive_hist else EXPIRY_COLD
@@ -729,6 +745,78 @@ class TickerState:
             f"age={age:.0f}s ttl={left:.0f}s  "
             f"#{check}  {status}"
         )
+
+    def proximity_pct(self) -> int:
+        """
+        Return 0–100 indicating how close this ticker is to a BUY signal.
+
+        Three conditions, each worth 33 points:
+          1. RSI below threshold  (or bypassed when ticker is_hot)
+          2. MACD histogram > 0   (positive)
+          3. MACD histogram growing
+
+        A ticker that satisfies all three scores 100 and is in the BUY ZONE.
+        """
+        if not self.bars_fetched:
+            return 0
+
+        score = 0
+        rsi   = self.last_rsi
+        hist  = self.last_hist
+
+        # Condition 1 — RSI filter (auto-pass when hot)
+        if self.is_hot or (rsi is not None and rsi < RSI_BUY_MAX):
+            score += 1
+
+        # Condition 2 — MACD histogram positive
+        if hist is not None and hist > 0:
+            score += 1
+
+        # Condition 3 — MACD histogram growing
+        if self.hist_growing:
+            score += 1
+
+        return round(score / 3 * 100)
+
+    def proximity_state(self) -> dict:
+        """
+        Return a JSON-serialisable dict describing the current signal proximity.
+        Written to signal_state.json every SIGNAL_STATE_INTERVAL seconds so the
+        dashboard can render the visual progress bar without coupling to the engine.
+        """
+        rsi  = self.last_rsi
+        hist = self.last_hist
+        pct  = self.proximity_pct()
+
+        if self.in_position:
+            status = "in_position"
+        elif self.hist_growing and (rsi is None or rsi < RSI_BUY_MAX or self.is_hot):
+            status = "buy_zone"
+        elif self.hist_growing:
+            status = "growing_rsi_high"
+        elif hist is not None and hist > 0:
+            status = "hist_positive"
+        elif self.ever_positive_hist:
+            status = "retreated"
+        else:
+            status = "watching"
+
+        return {
+            "price":          round(self.last_price, 4) if self.last_price else None,
+            "rsi":            round(rsi, 2)             if rsi is not None else None,
+            "macd_hist":      round(hist, 6)            if hist is not None else None,
+            "hist_positive":  hist is not None and hist > 0,
+            "hist_growing":   self.hist_growing,
+            "in_position":    self.in_position,
+            "buy_price":      round(self.buy_price, 4)  if self.buy_price else None,
+            "proximity_pct":  pct,
+            "proximity_score": round(pct / 33.34),      # 0–3 integer
+            "is_hot":         self.is_hot,
+            "mention_velocity": self.mention_velocity,
+            "status":         status,
+            "bars_fetched":   self.bars_fetched,
+            "data_source":    getattr(self, "_data_source", "alpaca"),
+        }
 
     def update_momentum(self, hist: float, price: float, rsi: float,
                         open_positions: int = 0):
@@ -1025,6 +1113,7 @@ class SignalEngine:
         self._known_mentioned: set[str] = set()        # ever-seen mentioned syms
         self._stagger_index: int = 0                   # increments per added ticker
         self._last_poll_time: float = 0.0              # last time we hit /api/state
+        self._last_state_write: float = 0.0            # last time we wrote signal_state.json
 
         # Initialise Alpaca trader (off / paper / live — set by TRADER_MODE)
         alpaca_trader.init(
@@ -1040,6 +1129,11 @@ class SignalEngine:
         if self.finnhub_key:
             start_finnhub_stream(self.finnhub_key, tickers=[])
             print("[FH] Finnhub WebSocket stream started — subscribing tickers as they appear")
+
+        # Initialise Massive client for alert-ticker bar fetching
+        self.massive = massive_client.MassiveClient(api_key=MASSIVE_API_KEY)
+        if self.massive.is_configured():
+            print("[MASSIVE] API key loaded — alert tickers will try Massive bars first")
 
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
@@ -1121,8 +1215,12 @@ class SignalEngine:
                     # Boolean "mentioned" only — each 5-second poll counts as 1
                     ts.update_mention_velocity(1)
 
-            # Add newly mentioned tickers
-            if row.get("mentioned") and sym not in self._known_mentioned:
+            # Add newly mentioned tickers — trigger on either transcription mention
+            # OR a mention_burst (5+ rapid mentions via the API / chat feed).
+            # mention_burst tickers are always worth tracking even without a
+            # transcription hit because the signal bar needs proximity data.
+            is_triggered = row.get("mentioned") or row.get("mention_burst")
+            if is_triggered and sym not in self._known_mentioned:
                 self._known_mentioned.add(sym)
                 if sym in self.active:
                     continue  # already tracking
@@ -1189,7 +1287,34 @@ class SignalEngine:
 
         print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars  "
               f"(minute={current_minute} secs={secs_past_minute:.1f})")
-        df = fetch_bars(ts.ticker, self.api_key, self.secret_key)
+
+        # ── Try Massive first for alert (hot) tickers ──────────────────────
+        # When a ticker has 5+ mention alerts it is marked is_hot.  Massive
+        # provides higher-quality bar data (tick-accurate aggregates) for paid
+        # plans, or end-of-day bars on the free tier (useful for overnight warmup).
+        df = None
+        if ts.is_hot and self.massive.is_configured():
+            df = self.massive.fetch_bars(
+                symbol=ts.ticker,
+                timeframe=BAR_TIMEFRAME,
+                count=BAR_COUNT,
+                lookback_days=BAR_LOOKBACK_DAYS,
+            )
+            if df is not None and len(df) >= MACD_SLOW + MACD_SIG + 5:
+                ts._data_source = "massive"
+                print(f"  [{ticker_tag(ts.ticker)}] ✨ using Massive bar data")
+            else:
+                if df is not None:
+                    print(f"  [{ticker_tag(ts.ticker)}] ⚠️  Massive returned only "
+                          f"{len(df)} bars (plan may be free-tier, need intraday) "
+                          f"— falling back to Alpaca")
+                df = None  # fall through to Alpaca
+
+        # ── Fall back to Alpaca ────────────────────────────────────────────
+        if df is None:
+            df = fetch_bars(ts.ticker, self.api_key, self.secret_key)
+            if df is not None:
+                ts._data_source = "alpaca"
 
         # Always mark the minute so we don't retry this same minute on failure
         ts.last_bar_fetch  = now
@@ -1387,6 +1512,40 @@ class SignalEngine:
             # Allow re-adding if the ticker gets mentioned again later
             self._known_mentioned.discard(sym)
 
+    # ── Signal state persistence ──────────────────────────────────────────────
+
+    def _write_signal_state(self):
+        """
+        Write per-ticker proximity data to signal_state.json.
+
+        Called every SIGNAL_STATE_INTERVAL seconds (default 5 s) from the main
+        loop.  dashboard.py reads this file and merges it into the /api/state
+        response so the dashboard can render signal proximity progress bars
+        without needing a direct connection to the signal engine process.
+
+        File format:
+        {
+          "updated": "2026-05-26T12:00:00Z",
+          "tickers": {
+            "AAPL": { "proximity_pct": 67, "status": "buy_zone", ... },
+            ...
+          }
+        }
+        """
+        try:
+            payload = {
+                "updated": _now_iso(),
+                "tickers": {
+                    sym: ts.proximity_state()
+                    for sym, ts in self.active.items()
+                },
+            }
+            SIGNAL_STATE_FILE.write_text(
+                json.dumps(payload, indent=2), encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"[ENGINE] ⚠️  Could not write signal_state.json: {e}")
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self):
@@ -1396,6 +1555,7 @@ class SignalEngine:
         print(f"  Auth user     : {DASHBOARD_USER or '(none)'}")
         print(f"  Finnhub key   : {'✓ loaded — WebSocket active' if self.finnhub_key else '✗ missing — using dashboard prices'}")
         print(f"  Alpaca key    : {'✓ loaded' if self.api_key else '✗ missing'}")
+        print(f"  Massive key   : {'✓ loaded — alert tickers use Massive bars first' if self.massive.is_configured() else '✗ not set — using Alpaca only (set MASSIVE_API_KEY)'}")
         trader_label = {"off": "off — log only", "paper": "PAPER trading", "live": "⚠️  LIVE trading"}.get(TRADER_MODE, TRADER_MODE)
         print(f"  Trader mode   : {trader_label}  (${TRADE_AMOUNT:.0f}/trade)")
         print(f"  Loop cadence  : every {POLL_INTERVAL}s")
@@ -1444,7 +1604,13 @@ class SignalEngine:
                 # 3. Drop expired tickers
                 self._expire_tickers()
 
-                # 4. Sleep for the remainder of POLL_INTERVAL so we don't
+                # 4. Write signal_state.json so the dashboard can render
+                #    the visual proximity bars (throttled to every SIGNAL_STATE_INTERVAL s)
+                if now - self._last_state_write >= SIGNAL_STATE_INTERVAL:
+                    self._write_signal_state()
+                    self._last_state_write = time.time()
+
+                # 5. Sleep for the remainder of POLL_INTERVAL so we don't
                 #    drift — if the above took 0.3 s we sleep 0.7 s.
                 elapsed = time.time() - cycle_start
                 sleep_for = max(0, POLL_INTERVAL - elapsed)
