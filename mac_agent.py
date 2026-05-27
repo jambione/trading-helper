@@ -210,8 +210,8 @@ def workflow_add_wb(ticker: str) -> bool:
 
     time.sleep(0.4)
 
-    # Cmd+2 → Stocks tab  (macOS equivalent of Windows Ctrl+2)
-    _pag.hotkey("command", "2")
+    # Option+2 → Stocks tab  (macOS Webull shortcut)
+    _pag.hotkey("option", "2")
     time.sleep(0.5)
 
     # Type ticker into search box
