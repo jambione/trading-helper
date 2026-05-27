@@ -214,8 +214,10 @@ def workflow_add_wb(ticker: str) -> bool:
     _pag.hotkey("option", "2")
     time.sleep(0.5)
 
-    # Type ticker into search box
-    _pag.typewrite(ticker, interval=0.05)
+    # Type ticker letter-by-letter — matches how TradingView input works on Mac
+    for letter in ticker:
+        _pag.press(letter.lower())
+        time.sleep(0.05)
     time.sleep(0.5)
     _pag.press("enter")
 
