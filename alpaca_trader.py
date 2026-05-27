@@ -25,27 +25,31 @@ _HERE        = Path(__file__).parent
 _TRADE_LOG   = _HERE / "alpaca_trade_log.json"
 
 # Module-level state — set by init()
-_mode:         str   = "off"      # "off" | "paper" | "live"
-_trade_amount: float = 500.0      # dollars per BUY
-_client               = None      # alpaca TradingClient instance
+_mode:           str   = "off"    # "off" | "paper" | "live"
+_trade_amount:   float = 500.0    # dollars per BUY
+_extended_hours: bool  = False    # allow pre/post-market orders
+_client                = None     # alpaca TradingClient instance
 
 
 # ── Initialisation ────────────────────────────────────────────────────────────
 
-def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0):
+def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
+         extended_hours: bool = False):
     """
     Initialise the Alpaca trading module.
     Call once at signal engine startup.
 
-    mode         : "off" | "paper" | "live"
-    api_key      : Alpaca API key
-    secret_key   : Alpaca secret key
-    trade_amount : dollars to spend per BUY signal
+    mode           : "off" | "paper" | "live"
+    api_key        : Alpaca API key
+    secret_key     : Alpaca secret key
+    trade_amount   : dollars to spend per BUY signal
+    extended_hours : allow pre/post-market limit orders
     """
-    global _mode, _trade_amount, _client
+    global _mode, _trade_amount, _extended_hours, _client
 
-    _mode         = mode.lower().strip()
-    _trade_amount = trade_amount
+    _mode           = mode.lower().strip()
+    _trade_amount   = trade_amount
+    _extended_hours = bool(extended_hours)
 
     if _mode == "off":
         log.info("[TRADER] mode=off — no orders will be placed")
@@ -118,17 +122,30 @@ def buy(ticker: str, price: float, rsi: float, hist: float):
           f"${_trade_amount:.0f} notional  ~{est_shares:.2f} shares @ ${price:.2f}")
 
     try:
-        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
         from alpaca.trading.enums   import OrderSide, TimeInForce
 
-        order = _client.submit_order(
-            MarketOrderRequest(
-                symbol        = ticker,
-                notional      = round(_trade_amount, 2),
-                side          = OrderSide.BUY,
-                time_in_force = TimeInForce.DAY,
+        if _extended_hours and price and price > 0:
+            # Extended-hours orders must be limit + DAY (Alpaca requirement)
+            order = _client.submit_order(
+                LimitOrderRequest(
+                    symbol         = ticker,
+                    notional       = round(_trade_amount, 2),
+                    side           = OrderSide.BUY,
+                    time_in_force  = TimeInForce.DAY,
+                    limit_price    = round(price, 2),
+                    extended_hours = True,
+                )
             )
-        )
+        else:
+            order = _client.submit_order(
+                MarketOrderRequest(
+                    symbol        = ticker,
+                    notional      = round(_trade_amount, 2),
+                    side          = OrderSide.BUY,
+                    time_in_force = TimeInForce.DAY,
+                )
+            )
         order_id = str(order.id)
         status   = str(order.status)
         print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
