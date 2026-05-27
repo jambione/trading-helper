@@ -217,7 +217,7 @@ def workflow_add_wb(ticker: str) -> bool:
     # Type ticker letter-by-letter — matches how TradingView input works on Mac
     for letter in ticker:
         _pag.press(letter.lower())
-        time.sleep(0.05)
+        time.sleep(0.025)
     time.sleep(0.5)
     _pag.press("enter")
 
