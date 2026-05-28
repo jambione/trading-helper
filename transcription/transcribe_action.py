@@ -553,6 +553,45 @@ def audio_capture():
 
 
 # =============================================================================
+# CROSS-CHUNK TICKER STITCHING
+# =============================================================================
+# A ticker spelled across a chunk boundary ("...N V" | "D A...") validates as
+# neither half alone.  We keep the previous chunk's text and re-extract on the
+# joined pair, emitting only tickers that appear in the join but in neither
+# half — so normal mentions are never double-counted.
+#
+# Assumes a single transcription worker (ordering matters for the stitch).
+
+_prev_text:       str            = ""
+_prev_tickers:    dict[str, int] = {}
+_last_chunk_time: float          = 0.0
+STITCH_MAX_GAP                   = 3.0   # seconds; don't stitch across silences
+
+
+def _extract_with_stitch(text: str) -> dict[str, int]:
+    """Extract tickers from `text` plus any split across the previous boundary."""
+    global _prev_text, _prev_tickers, _last_chunk_time
+
+    now        = time.time()
+    contiguous = (now - _last_chunk_time) <= STITCH_MAX_GAP
+    _last_chunk_time = now
+
+    cur = extract_tickers(text)
+
+    out = dict(cur)
+    if _prev_text and contiguous:
+        joined = extract_tickers(f"{_prev_text} {text}")
+        for t, c in joined.items():
+            # Boundary-only: present when stitched but in neither half alone
+            if t not in cur and t not in _prev_tickers:
+                out[t] = out.get(t, 0) + c
+
+    _prev_text    = text
+    _prev_tickers = cur
+    return out
+
+
+# =============================================================================
 # WORKER: TRANSCRIPTION
 # =============================================================================
 
@@ -579,7 +618,17 @@ def transcription_worker():
                             condition_on_previous_text=False,
                             verbose=False,
                         )
-                    text = result.get("text", "").strip()
+                    # Drop low-confidence segments (hallucinations on noise/music)
+                    # using the same thresholds as the faster-whisper path below.
+                    segs = result.get("segments") or []
+                    if segs:
+                        text = " ".join(
+                            s.get("text", "").strip() for s in segs
+                            if s.get("no_speech_prob", 0.0) < 0.6
+                            and s.get("avg_logprob", 0.0) > -1.0
+                        ).strip()
+                    else:
+                        text = result.get("text", "").strip()
                 else:
                     segs, _ = _fw_model.transcribe(
                         chunk,
@@ -601,7 +650,7 @@ def transcription_worker():
 
             if text:
                 print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
-                for ticker, count in extract_tickers(text).items():
+                for ticker, count in _extract_with_stitch(text).items():
                     _send_ticker(ticker, count)
 
         except Exception as e:
