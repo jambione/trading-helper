@@ -38,6 +38,22 @@ import strategy_three_indicator as strat
 from backtest import _load_alpaca_credentials, calc_stats, fetch_history
 
 
+# ── Regular-hours filter ──────────────────────────────────────────────────────
+
+def filter_regular_hours(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep only US regular-session bars (Mon–Fri, 09:30–16:00 ET). With ALPACA_FEED
+    =sip the fetch includes thin pre/post-market bars, which can distort the
+    indicators; this validates on RTH first. Handles EDT/EST via tz conversion.
+    """
+    if "time" not in df.columns:
+        return df
+    et = pd.to_datetime(df["time"], utc=True).dt.tz_convert("America/New_York")
+    mins = et.dt.hour * 60 + et.dt.minute
+    keep = (et.dt.weekday < 5) & (mins >= 9 * 60 + 30) & (mins < 16 * 60)
+    return df[keep.values].reset_index(drop=True)
+
+
 # ── Core simulation ───────────────────────────────────────────────────────────
 
 def simulate(df: pd.DataFrame, p: dict,
@@ -183,6 +199,8 @@ def main():
     ap.add_argument("--exit-mode", choices=["any", "all"], default="any",
                     help="Exit on first reversal signal (any) or require all three (all)")
     ap.add_argument("--sweep", action="store_true", help="Grid-search key thresholds")
+    ap.add_argument("--regular-hours-only", action="store_true",
+                    help="Drop pre/post-market bars (validate on RTH 09:30–16:00 ET)")
     args = ap.parse_args()
 
     api_key, secret_key = _load_alpaca_credentials()
@@ -194,6 +212,10 @@ def main():
     for ticker in (t.upper() for t in args.tickers):
         print(f"\n{'─' * 64}\n  {ticker}\n{'─' * 64}")
         df = fetch_history(ticker, api_key, secret_key, months=args.months)
+        if df is not None and args.regular_hours_only:
+            before = len(df)
+            df = filter_regular_hours(df)
+            print(f"  regular-hours filter: {before} → {len(df)} bars")
         if df is None or len(df) < 200:
             print(f"  ⚠️  not enough data for {ticker} — skipping")
             continue

@@ -221,6 +221,7 @@ TRADER_MODE      = os.getenv("TRADER_MODE",   "off").lower().strip()
 TRADE_AMOUNT     = float(os.getenv("TRADE_AMOUNT", "500"))   # $ per BUY signal
 MAX_PRICE        = float(os.getenv("MAX_PRICE", "0"))         # skip BUY if price > this (0 = no limit)
 EXTENDED_HOURS   = os.getenv("EXTENDED_HOURS", "false").lower() in ("true", "1", "yes")  # premarket/afterhours orders
+EXT_LIMIT_OFFSET = float(os.getenv("EXTENDED_LIMIT_OFFSET_PCT", "0"))  # nudge ext-hours limits for fills (e.g. 0.2)
 
 # ── Buy signal filters (all off by default) ───────────────────────────────────
 BUY_FILTER_VWAP    = os.getenv("BUY_FILTER_VWAP",    "false").lower() in ("true","1","yes")
@@ -1217,6 +1218,7 @@ class SignalEngine:
             secret_key     = self.secret_key,
             trade_amount   = TRADE_AMOUNT,
             extended_hours = EXTENDED_HOURS,
+            limit_offset_pct = EXT_LIMIT_OFFSET,
         )
 
         # Start the Finnhub WebSocket in a background thread.

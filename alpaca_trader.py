@@ -28,28 +28,32 @@ _TRADE_LOG   = _HERE / "alpaca_trade_log.json"
 _mode:           str   = "off"    # "off" | "paper" | "live"
 _trade_amount:   float = 500.0    # dollars per BUY
 _extended_hours: bool  = False    # allow pre/post-market orders
+_limit_offset:   float = 0.0      # % to push ext-hours limit prices for fills
 _client                = None     # alpaca TradingClient instance
 
 
 # ── Initialisation ────────────────────────────────────────────────────────────
 
 def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
-         extended_hours: bool = False):
+         extended_hours: bool = False, limit_offset_pct: float = 0.0):
     """
     Initialise the Alpaca trading module.
     Call once at signal engine startup.
 
-    mode           : "off" | "paper" | "live"
-    api_key        : Alpaca API key
-    secret_key     : Alpaca secret key
-    trade_amount   : dollars to spend per BUY signal
-    extended_hours : allow pre/post-market limit orders
+    mode             : "off" | "paper" | "live"
+    api_key          : Alpaca API key
+    secret_key       : Alpaca secret key
+    trade_amount     : dollars to spend per BUY signal
+    extended_hours   : allow pre/post-market limit orders
+    limit_offset_pct : push ext-hours limit prices this %% past the touch
+                       (buys higher, sells lower) to improve fills in thin books
     """
-    global _mode, _trade_amount, _extended_hours, _client
+    global _mode, _trade_amount, _extended_hours, _limit_offset, _client
 
     _mode           = mode.lower().strip()
     _trade_amount   = trade_amount
     _extended_hours = bool(extended_hours)
+    _limit_offset   = max(0.0, float(limit_offset_pct))
 
     if _mode == "off":
         log.info("[TRADER] mode=off — no orders will be placed")
@@ -126,14 +130,16 @@ def buy(ticker: str, price: float, rsi: float, hist: float):
         from alpaca.trading.enums   import OrderSide, TimeInForce
 
         if _extended_hours and price and price > 0:
-            # Extended-hours orders must be limit + DAY (Alpaca requirement)
+            # Extended-hours orders must be limit + DAY (Alpaca requirement).
+            # Nudge the limit slightly above the touch so it fills in thin books.
+            limit_px = round(price * (1 + _limit_offset / 100.0), 2)
             order = _client.submit_order(
                 LimitOrderRequest(
                     symbol         = ticker,
                     notional       = round(_trade_amount, 2),
                     side           = OrderSide.BUY,
                     time_in_force  = TimeInForce.DAY,
-                    limit_price    = round(price, 2),
+                    limit_price    = limit_px,
                     extended_hours = True,
                 )
             )
@@ -191,7 +197,25 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
           f"{qty_held} shares @ ${price:.2f}{pnl_str}")
 
     try:
-        order    = _client.close_position(ticker)
+        if _extended_hours and price and price > 0:
+            # close_position() submits a MARKET order, which Alpaca rejects
+            # outside regular hours. Sell the held qty as an ext-hours limit
+            # order, nudged below the touch so it fills in thin books.
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.enums   import OrderSide, TimeInForce
+            limit_px = round(price * (1 - _limit_offset / 100.0), 2)
+            order = _client.submit_order(
+                LimitOrderRequest(
+                    symbol         = ticker,
+                    qty            = qty_held,
+                    side           = OrderSide.SELL,
+                    time_in_force  = TimeInForce.DAY,
+                    limit_price    = limit_px,
+                    extended_hours = True,
+                )
+            )
+        else:
+            order = _client.close_position(ticker)
         order_id = str(order.id)
         status   = str(order.status)
         print(f"  [TRADER] ✓  SELL order submitted  id={order_id}  status={status}")
