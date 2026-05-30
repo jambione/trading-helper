@@ -77,8 +77,9 @@ except Exception:
 }
 
 cmd_start() {
-    local want_tunnel=0
-    case "${1:-}" in tunnel|--tunnel|-t) want_tunnel=1 ;; esac
+    # Tunnel starts by default; pass 'local' (or --no-tunnel) to stay local-only.
+    local want_tunnel=1
+    case "${1:-}" in local|--no-tunnel|notunnel|-n) want_tunnel=0 ;; esac
 
     if _running "dashboard.py" || _running "signal_engine.py"; then
         echo "Already running. Use './trading restart' to reload code, or './trading status'."
@@ -165,10 +166,10 @@ case "${1:-}" in
     *) cat <<'USAGE'
 usage: ./trading <command>
 
-  start [tunnel]      start dashboard + engine (add 'tunnel' to also expose
-                      the public Cloudflare URL)
+  start [local]       start dashboard + engine + Cloudflare tunnel
+                      (add 'local' to skip the tunnel and stay local-only)
   stop                stop dashboard + engine + tunnel
-  restart [tunnel]    stop then start (reload code after edits)
+  restart [local]     stop then start (reload code after edits)
   status              what's running + which build
   logs                tail dashboard + engine (+ tunnel) logs
   tunnel [stop]       start/stop just the Cloudflare tunnel
