@@ -29,6 +29,7 @@ import sys
 from itertools import product
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 _HERE = Path(__file__).parent
@@ -39,6 +40,49 @@ from backtest import _load_alpaca_credentials, calc_stats, fetch_history
 
 
 # ── Regular-hours filter ──────────────────────────────────────────────────────
+
+def sanitize_splits(df: pd.DataFrame, max_ratio: float = 3.0) -> tuple[pd.DataFrame, int]:
+    """
+    Detect (reverse-)split bars and rescale the prior history so the price
+    series is continuous.
+
+    Alpaca's intraday bars for sub-$1 microcaps are NOT split-adjusted, so a
+    1:50 reverse split shows up as a single 1-minute bar where price jumps 50x.
+    The backtest reads that as a fake +5000% gain. Here we find any 1-minute
+    close-to-close move beyond max_ratio (or its reciprocal), treat it as a
+    split boundary, and multiply every earlier OHLC bar by that ratio so the
+    jump collapses to ~0%. Volume is left untouched (the strategy is price-only).
+
+    Returns (cleaned_df, n_splits_detected).
+    """
+    price_cols = [c for c in ("open", "high", "low", "close") if c in df.columns]
+    if "close" not in df.columns or len(df) < 2:
+        return df, 0
+
+    close = df["close"].to_numpy(dtype=float)
+    adj = np.ones(len(df))
+    cum = 1.0
+    n_splits = 0
+    # Walk backward: cum carries the product of every split ratio that occurs
+    # AFTER the current bar, which is the factor that bar must be scaled by.
+    for i in range(len(df) - 1, 0, -1):
+        adj[i] = cum
+        prev = close[i - 1]
+        if prev > 0:
+            r = close[i] / prev
+            if r > max_ratio or r < 1.0 / max_ratio:
+                cum *= r
+                n_splits += 1
+    adj[0] = cum
+
+    if n_splits == 0:
+        return df, 0
+
+    out = df.copy()
+    for col in price_cols:
+        out[col] = out[col].to_numpy(dtype=float) * adj
+    return out, n_splits
+
 
 def filter_regular_hours(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -142,6 +186,19 @@ def _print_stats(label: str, s: dict):
           f"avg hold {s['avg_hold_bars']} bars  max consec losses {s['max_consec_losses']}")
 
 
+def completed_trades(trades: list[dict]) -> tuple[list[dict], int]:
+    """
+    Keep only real round-trips. A trade that exits on "end_of_data" never got a
+    sell signal — the position was still open when history ran out — so its P&L
+    is an unrealized mark, not something you could have booked. Counting those
+    lets a never-sold microcap masquerade as a +400% "win". Drop them.
+
+    Returns (real_trades, n_dropped).
+    """
+    real = [t for t in trades if t.get("reason") != "end_of_data"]
+    return real, len(trades) - len(real)
+
+
 def _reason_breakdown(trades: list[dict]):
     if not trades:
         return
@@ -164,14 +221,18 @@ _SWEEP = {
 }
 
 
-def run_sweep(df: pd.DataFrame, slippage_bps: float, stop: float, target: float):
+def run_sweep(df: pd.DataFrame, slippage_bps: float, stop: float, target: float,
+              keep_open: bool = False):
     keys = list(_SWEEP)
     rows = []
     combos = list(product(*(_SWEEP[k] for k in keys)))
     print(f"  Sweeping {len(combos)} combos …")
     for vals in combos:
         p = strat.params(**dict(zip(keys, vals)))
-        s = calc_stats(simulate(df, p, slippage_bps, stop, target))
+        trades = simulate(df, p, slippage_bps, stop, target)
+        if not keep_open:
+            trades, _ = completed_trades(trades)
+        s = calc_stats(trades)
         rows.append((dict(zip(keys, vals)), s))
     rows.sort(key=lambda r: r[1].get("total_dollar_pnl", 0), reverse=True)
 
@@ -201,6 +262,10 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="Grid-search key thresholds")
     ap.add_argument("--regular-hours-only", action="store_true",
                     help="Drop pre/post-market bars (validate on RTH 09:30–16:00 ET)")
+    ap.add_argument("--keep-artifacts", action="store_true",
+                    help="Do NOT split-adjust microcap data (show raw, corrupt bars)")
+    ap.add_argument("--keep-open", action="store_true",
+                    help="Count never-sold end-of-data positions in the stats")
     args = ap.parse_args()
 
     api_key, secret_key = _load_alpaca_credentials()
@@ -216,16 +281,26 @@ def main():
             before = len(df)
             df = filter_regular_hours(df)
             print(f"  regular-hours filter: {before} → {len(df)} bars")
+        if df is not None and not args.keep_artifacts:
+            df, n_splits = sanitize_splits(df)
+            if n_splits:
+                print(f"  ⚠️  split-adjusted {n_splits} corrupt bar(s) "
+                      f"(unadjusted reverse-split jumps in microcap data)")
         if df is None or len(df) < 200:
             print(f"  ⚠️  not enough data for {ticker} — skipping")
             continue
 
         if args.sweep:
-            run_sweep(df, args.slippage, args.stop, args.target)
+            run_sweep(df, args.slippage, args.stop, args.target, args.keep_open)
             continue
 
         p = strat.params(exit_mode=args.exit_mode)
         trades = simulate(df, p, args.slippage, args.stop, args.target)
+        if not args.keep_open:
+            trades, n_open = completed_trades(trades)
+            if n_open:
+                print(f"  ⚠️  excluded {n_open} never-sold position(s) "
+                      f"(open at end of data — unrealized, not tradeable)")
         _print_stats(f"{ticker}  (exit={args.exit_mode}, slip={args.slippage}bps"
                      f"{f', stop {args.stop}%' if args.stop else ''}"
                      f"{f', target {args.target}%' if args.target else ''})",
