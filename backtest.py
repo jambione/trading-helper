@@ -123,12 +123,18 @@ RSI_PERIOD = 14     # RSI lookback period (not swept — standard value)
 ALPACA_BASE_URL = "https://data.alpaca.markets"
 
 def fetch_history(symbol: str, api_key: str, secret_key: str,
-                  months: int = 3) -> Optional[pd.DataFrame]:
+                  months: int = 3, adjustment: str = "split") -> Optional[pd.DataFrame]:
     """
     Download N months of 1-minute OHLCV bars from Alpaca.
 
     Alpaca returns a maximum of 10,000 bars per request, so we follow
     the 'next_page_token' cursor until all bars are collected.
+
+    adjustment : Alpaca corporate-action adjustment — "raw" (none), "split",
+                 "dividend", or "all". Defaults to "split": sub-$1 microcaps
+                 reverse-split constantly, and raw bars show a 1:50 split as a
+                 single 50x jump that poisons the indicators. "split" rescales
+                 history on Alpaca's side so the series is continuous.
 
     Returns a DataFrame with columns: time, open, high, low, close, volume
     sorted oldest → newest.  Returns None on failure.
@@ -151,11 +157,12 @@ def fetch_history(symbol: str, api_key: str, secret_key: str,
 
     while True:
         params: dict = {
-            "timeframe": "1Min",
-            "start":     start_dt,
-            "limit":     10000,
-            "feed":      "iex",
-            "sort":      "asc",
+            "timeframe":  "1Min",
+            "start":      start_dt,
+            "limit":      10000,
+            "feed":       "iex",
+            "sort":       "asc",
+            "adjustment": adjustment,
         }
         if page_token:
             params["page_token"] = page_token

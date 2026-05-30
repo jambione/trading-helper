@@ -266,6 +266,10 @@ def main():
                     help="Do NOT split-adjust microcap data (show raw, corrupt bars)")
     ap.add_argument("--keep-open", action="store_true",
                     help="Count never-sold end-of-data positions in the stats")
+    ap.add_argument("--pool", action="store_true",
+                    help="Aggregate every ticker's trades into ONE pooled result. "
+                         "Microcaps fire too rarely to judge per-name; pooling a "
+                         "whole watchlist is the only way to get a real sample size.")
     args = ap.parse_args()
 
     api_key, secret_key = _load_alpaca_credentials()
@@ -274,38 +278,61 @@ def main():
               "in signal_engine.env")
         sys.exit(1)
 
+    p = strat.params(exit_mode=args.exit_mode)
+    pooled: list[dict] = []          # tagged trades across all tickers (--pool)
+    contributed: list[str] = []      # tickers that produced ≥1 pooled trade
+
     for ticker in (t.upper() for t in args.tickers):
-        print(f"\n{'─' * 64}\n  {ticker}\n{'─' * 64}")
+        if not args.pool:
+            print(f"\n{'─' * 64}\n  {ticker}\n{'─' * 64}")
         df = fetch_history(ticker, api_key, secret_key, months=args.months)
         if df is not None and args.regular_hours_only:
             before = len(df)
             df = filter_regular_hours(df)
-            print(f"  regular-hours filter: {before} → {len(df)} bars")
+            if not args.pool:
+                print(f"  regular-hours filter: {before} → {len(df)} bars")
         if df is not None and not args.keep_artifacts:
             df, n_splits = sanitize_splits(df)
-            if n_splits:
-                print(f"  ⚠️  split-adjusted {n_splits} corrupt bar(s) "
-                      f"(unadjusted reverse-split jumps in microcap data)")
+            if n_splits and not args.pool:
+                print(f"  ⚠️  split-adjusted {n_splits} residual corrupt bar(s)")
         if df is None or len(df) < 200:
-            print(f"  ⚠️  not enough data for {ticker} — skipping")
+            if not args.pool:
+                print(f"  ⚠️  not enough data for {ticker} — skipping")
             continue
 
         if args.sweep:
             run_sweep(df, args.slippage, args.stop, args.target, args.keep_open)
             continue
 
-        p = strat.params(exit_mode=args.exit_mode)
         trades = simulate(df, p, args.slippage, args.stop, args.target)
         if not args.keep_open:
             trades, n_open = completed_trades(trades)
-            if n_open:
+            if n_open and not args.pool:
                 print(f"  ⚠️  excluded {n_open} never-sold position(s) "
                       f"(open at end of data — unrealized, not tradeable)")
+
+        if args.pool:
+            for t in trades:
+                t["ticker"] = ticker
+            pooled.extend(trades)
+            if trades:
+                contributed.append(f"{ticker}({len(trades)})")
+            continue
+
         _print_stats(f"{ticker}  (exit={args.exit_mode}, slip={args.slippage}bps"
                      f"{f', stop {args.stop}%' if args.stop else ''}"
                      f"{f', target {args.target}%' if args.target else ''})",
                      calc_stats(trades))
         _reason_breakdown(trades)
+
+    if args.pool and not args.sweep:
+        print(f"\n{'═' * 64}\n  POOLED  ({len(args.tickers)} tickers)\n{'═' * 64}")
+        print(f"  contributing: {', '.join(contributed) if contributed else 'none'}")
+        _print_stats(f"ALL  (exit={args.exit_mode}, slip={args.slippage}bps"
+                     f"{f', stop {args.stop}%' if args.stop else ''}"
+                     f"{f', target {args.target}%' if args.target else ''})",
+                     calc_stats(pooled))
+        _reason_breakdown(pooled)
 
 
 if __name__ == "__main__":
