@@ -436,9 +436,16 @@ def _load_log() -> list:
             pass
     return []
 
+# Keep only the most recent N log entries on disk. BUY/SELL volume is low, but
+# _append_log rewrites the whole file each call, so an uncapped log grows without
+# bound and the rewrite cost grows with it. Capping keeps recent history cheap.
+LOG_MAX_ENTRIES = 5000
+
 def _append_log(entry: dict):
     entries = _load_log()
     entries.append(entry)
+    if len(entries) > LOG_MAX_ENTRIES:
+        entries = entries[-LOG_MAX_ENTRIES:]
     LOG_FILE.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 def log_buy(ticker: str, price: float, rsi: float, hist: float,
