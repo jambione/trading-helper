@@ -207,10 +207,18 @@ def _collapse_hyphens(text: str) -> str:
     return re.sub(r'(?<![A-Za-z])(?:[A-Za-z]-){1,4}[A-Za-z](?![A-Za-z])', collapse, text)
 
 
+# A real spoken ticker spell is <=5 letters; two back-to-back is <=10. Longer
+# single-letter runs are Whisper hallucination streams ("A Z O F A Z U L O ...")
+# that the greedy segmenter would otherwise carve dozens of fake tickers from.
+_MAX_SPELL_LETTERS = 10
+
+
 def _collapse_spaced_letters(text: str) -> str:
     """H T T B I Y A → HTT BIYA  (NASDAQ-aware greedy segmentation)"""
     def replace_run(m):
         letters = m.group(0).split()
+        if len(letters) > _MAX_SPELL_LETTERS:
+            return m.group(0)   # too long to be a real spell — leave it untouched
         result  = []
         i = 0
         while i < len(letters):
@@ -236,6 +244,55 @@ def normalize_transcript(text: str) -> str:
     text = _collapse_hyphens(text)
     text = _collapse_spaced_letters(text)
     return text
+
+
+def is_hallucination(text: str) -> bool:
+    """
+    True if `text` looks like a Whisper hallucination that should NOT be mined for
+    tickers. Whisper loops on near-silence/music and emits degenerate streams:
+        "B-I-Y-A B-I-Y-A …×31",  "B.I.Y.Y.Y.Y…",  "A-Z-O-F-A-Z-U-L-O-H-O-N-G-O-N-G…"
+    Each of those would otherwise spray many 1× false-positive tickers. Three
+    signatures, all measured AFTER normalization so collapsed spells are seen:
+
+      1. Repeated-word loop — one token repeated >6×: noise if it's a short
+         (<=2 char) or unknown token; even a real ticker repeated >50× is a loop.
+      2. Degenerate token — a single long token built from <=3 distinct letters
+         ("BIYYYYYY…", "ONGONGONG…").
+      3. Prompt/echo dump — a long line that is mostly distinct 2–5 letter caps.
+    """
+    words = normalize_transcript(text).split()
+    if not words:
+        return False
+
+    # 1) repeated-word loop
+    most = max(set(words), key=words.count)
+    rep  = words.count(most)
+    core = re.sub(r"[^A-Za-z]", "", most).upper()
+    if rep > 6:
+        if len(core) <= 2:                       # short unit repeated = noise
+            return True
+        if core not in _VALID_TICKERS:           # unknown token repeated = junk
+            return True
+        if rep > 50:                             # even a real ticker, 50+ = loop
+            return True
+
+    # 2) degenerate single/double token: long and built from few distinct
+    #    letters or dominated by one ("BIYYYYYY…", "EIYAIIAIIIIIII…")
+    if len(words) <= 2:
+        for w in words:
+            letters = re.sub(r"[^A-Za-z]", "", w).upper()
+            if len(letters) >= 8:
+                distinct = len(set(letters))
+                top = max(letters.count(ch) for ch in set(letters))
+                if distinct <= 3 or top / len(letters) >= 0.5:
+                    return True
+
+    # 3) prompt/echo dump
+    caps = [w for w in words if w.isupper() and 2 <= len(w) <= 5]
+    if len(words) >= 10 and len(set(caps)) >= 8 and len(caps) / len(words) > 0.70:
+        return True
+
+    return False
 
 
 def extract_tickers(text: str) -> dict[str, int]:
@@ -282,6 +339,13 @@ def extract_with_stitch(text: str) -> dict[str, int]:
     now        = time.time()
     contiguous = (now - _last_chunk_time) <= STITCH_MAX_GAP
     _last_chunk_time = now
+
+    # Drop hallucination loops before they spray false positives, and break the
+    # stitch chain so we don't glue real text onto garbage.
+    if is_hallucination(text):
+        _prev_text    = ""
+        _prev_tickers = {}
+        return {}
 
     cur = extract_tickers(text)
 

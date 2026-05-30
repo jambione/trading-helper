@@ -17,7 +17,6 @@ Requires macOS (uses afconvert for MP3 → WAV conversion).
 
 import contextlib
 import os
-import re
 import sys
 import argparse
 import subprocess
@@ -29,9 +28,9 @@ import numpy as np
 from scipy.io import wavfile
 
 sys.path.insert(0, str(Path(__file__).parent))
-# benchmark.py has the same normalize/extract logic as production but is
-# importable (no threads / blocking code at module level).
-from benchmark import normalize_transcript, extract_tickers, _VALID_TICKERS, _phonetic_match  # noqa: E402
+# Import the SAME pure logic production uses (ticker_extract), so this test
+# measures real production behaviour — including the hallucination guard.
+from ticker_extract import normalize_transcript, extract_tickers, is_hallucination  # noqa: E402
 
 import mlx_whisper
 
@@ -146,35 +145,11 @@ def run_chunked(audio: np.ndarray, show_empty: bool = False) -> dict[str, int]:
                 print(f"[{chunk_num:02d}] {ms:>5.0f}ms  (silence)\n")
             continue
 
-        # Hallucination guard — same logic as production transcribe_action.py.
-        # Normalize first so collapsed letter-spellings are what we check.
+        # Hallucination guard — the SAME shared function production calls.
         normalized = normalize_transcript(raw)
-        words = normalized.split()
-        if words:
-            most_rep_raw = max(set(words), key=words.count)
-            rep_count    = words.count(most_rep_raw)
-            most_rep     = re.sub(r'[^A-Za-z]', '', most_rep_raw).upper()
-            is_known     = bool(most_rep) and (
-                most_rep in _VALID_TICKERS or
-                (2 <= len(most_rep) <= 5 and _phonetic_match(most_rep, _VALID_TICKERS) is not None)
-            )
-            if rep_count > 6:
-                if len(most_rep) <= 2:
-                    is_loop = True
-                elif is_known:
-                    is_loop = rep_count > 50
-                else:
-                    is_loop = True
-            else:
-                is_loop = False
-            upper_words  = [w for w in words if w.isupper() and 2 <= len(w) <= 5]
-            is_echo      = (len(words) >= 10
-                            and len(set(upper_words)) >= 8
-                            and len(upper_words) / len(words) > 0.70)
-            if is_loop or is_echo:
-                label = "loop" if is_loop else "echo"
-                print(f"[{chunk_num:02d}] {ms:>5.0f}ms  [SKIP {label}] {normalized[:80]}\n")
-                continue
+        if is_hallucination(raw):
+            print(f"[{chunk_num:02d}] {ms:>5.0f}ms  [SKIP hallucination] {normalized[:80]}\n")
+            continue
         tickers    = extract_tickers(normalized)
 
         for t, c in tickers.items():
