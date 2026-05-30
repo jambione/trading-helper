@@ -5,20 +5,20 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=43';
-import { subscribe, set }                        from './store.js?v=43';
-import { init as initTranscription }             from './transcription.js?v=43';
-import { init as initTickers }                   from './tickers.js?v=43';
-import { init as initTradingView }               from './tradingview.js?v=43';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=43';
-import { init as initResizer }                   from './resizer.js?v=43';
-import * as controls                             from './controls.js?v=43';
-import * as notifications                        from './notifications.js?v=43';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=43';
-import { init as initNews }                      from './news.js?v=43';
-import { init as initLeaderboard }               from './leaderboard.js?v=43';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=43';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=43';
+import { connect, on, api }                      from './api.js?v=44';
+import { subscribe, set }                        from './store.js?v=44';
+import { init as initTranscription }             from './transcription.js?v=44';
+import { init as initTickers }                   from './tickers.js?v=44';
+import { init as initTradingView }               from './tradingview.js?v=44';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=44';
+import { init as initResizer }                   from './resizer.js?v=44';
+import * as controls                             from './controls.js?v=44';
+import * as notifications                        from './notifications.js?v=44';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=44';
+import { init as initNews }                      from './news.js?v=44';
+import { init as initLeaderboard }               from './leaderboard.js?v=44';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=44';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=44';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=43');
+    const m = await import('./admin.js?v=44');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

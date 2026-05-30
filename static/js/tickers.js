@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=43';
-import { api } from './api.js?v=43';
+import { subscribe, selectTicker, get } from './store.js?v=44';
+import { api } from './api.js?v=44';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -288,10 +288,12 @@ function _updateRow(el, row) {
     volEl.className   = `cell-vol${(row.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}`;
   }
 
-  // Signal proximity bar — add, update, or remove based on mention_burst
-  // Show bar whenever mention_burst is true, even if signal engine has no data yet
+  // Signal proximity bar. Momentum mode shows it on alerted (mention_burst)
+  // tickers only; the three_indicator strategy shows it on every engine-tracked
+  // ticker so the whole watchlist is watchable while testing.
   const sp          = row.signal_proximity || null;
-  const hasBar      = !!row.mention_burst;
+  const isThreeInd  = !!(sp && sp.strategy === 'three_indicator');
+  const hasBar      = !!row.mention_burst || isThreeInd;
   let   barEl       = el.querySelector('[data-signal-bar]');
 
   if (hasBar) {
@@ -378,8 +380,9 @@ function _signalPills(sp) {
 }
 
 function _signalBarHTML(row) {
-  if (!row.mention_burst) return '';
   const sp = row.signal_proximity || null;
+  // Momentum: alerted tickers only. three_indicator: every tracked ticker.
+  if (!row.mention_burst && !(sp && sp.strategy === 'three_indicator')) return '';
 
   // No signal engine data yet — show a dormant placeholder bar
   if (!sp) {
