@@ -57,6 +57,7 @@ from auth import (check_credentials, create_token, verify_token, is_auth_require
 from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
+import version
 from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
@@ -690,6 +691,18 @@ def _snapshot() -> dict:
             price = r["price"] if r.get("price") is not None else float("inf")
             return (0 if in_mention else 1, rank, price)
         rows.sort(key=_row_sort_key)
+
+        # Merge signal-engine proximity + build badge. Done here (not just in the
+        # /api/state HTTP handler) so the WebSocket stream — which the frontend
+        # actually consumes — carries signal_proximity and the version too.
+        sig = _load_signal_state() or {}
+        sig_tickers = sig.get("tickers", {})
+        if sig_tickers:
+            for r in rows:
+                sp = sig_tickers.get(r["ticker"])
+                if sp:
+                    r["signal_proximity"] = sp
+
         return {
             "transcriber": {
                 "running": STATE.transcriber_running,
@@ -700,6 +713,13 @@ def _snapshot() -> dict:
             "tickers": rows,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
+            "version": {
+                "dashboard":       version.get_version(),
+                "engine":          sig.get("version"),
+                "engine_strategy": sig.get("strategy"),
+                "engine_started":  sig.get("started"),
+                "engine_updated":  sig.get("updated"),
+            },
         }
 
 
@@ -942,15 +962,9 @@ async def auth_register(request: Request):
 @app.get("/api/state")
 async def api_state():
     loop = asyncio.get_running_loop()
+    # _snapshot() already merges signal_proximity + the version badge, so the
+    # HTTP and WebSocket paths return identical data.
     snap = await loop.run_in_executor(None, _snapshot)
-    # Merge signal proximity data from signal_engine if available
-    sig = _load_signal_state()
-    if sig:
-        sig_tickers = sig.get("tickers", {})
-        for row in snap.get("tickers", []):
-            ticker_sym = row.get("ticker", "")
-            if ticker_sym in sig_tickers:
-                row["signal_proximity"] = sig_tickers[ticker_sym]
     return JSONResponse(snap)
 
 

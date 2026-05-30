@@ -96,6 +96,7 @@ from signals import (
 
 # ── Import Alpaca trader module (optional — activated by TRADER_MODE) ─────────
 import alpaca_trader
+import version
 
 # ── Import Finnhub WebSocket stream ───────────────────────────────────────────
 from finnhub_stream import (
@@ -1289,6 +1290,7 @@ class SignalEngine:
         self.api_key, self.secret_key = _load_alpaca_credentials()
         self.finnhub_key: str = _load_finnhub_key()
 
+        self._started = _now_iso()                     # engine boot time (for the build badge)
         self._token: Optional[str] = None
         self.active: dict[str, TickerState] = {}       # sym → TickerState
         self._known_mentioned: set[str] = set()        # ever-seen mentioned syms
@@ -1919,6 +1921,9 @@ class SignalEngine:
         try:
             payload = {
                 "updated": _now_iso(),
+                "version": version.get_version(),   # which engine build is running
+                "started": self._started,           # when this engine booted
+                "strategy": STRATEGY_MODE,
                 "tickers": {
                     sym: ts.proximity_state()
                     for sym, ts in self.active.items()
