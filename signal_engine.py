@@ -108,6 +108,12 @@ from finnhub_stream import (
 # ── Import Massive API client (optional — activated by MASSIVE_API_KEY) ───────
 import massive_client
 
+# ── Import the 3-indicator strategy + realtime bar aggregator (optional) ──────
+# Both are inert unless STRATEGY_MODE=three_indicator / REALTIME_BARS=1.
+import strategy_three_indicator as three_ind
+from finnhub_stream import register_trade_callback
+from realtime_bars import RealtimeBarAggregator
+
 # ── Load signal_engine.env ────────────────────────────────────────────────────
 def _load_env_file(path: Path):
     """
@@ -239,6 +245,28 @@ MASSIVE_API_KEY         = os.getenv("MASSIVE_API_KEY", "")
 # How often to write signal_state.json (seconds) — dashboard reads this file
 SIGNAL_STATE_INTERVAL   = int(os.getenv("SIGNAL_STATE_INTERVAL", "5"))
 
+# ── Strategy selection ────────────────────────────────────────────────────────
+# "momentum"        → the original RSI + MACD-histogram engine (default; unchanged)
+# "three_indicator" → the discretionary CM RSI-2 + %R Exhaustion + MACD-cross rule
+#                     from strategy_three_indicator.py (validated in backtest_3ind.py).
+# Routing always goes through alpaca_trader, so TRADER_MODE (off/paper/live) still
+# governs whether real orders are placed — keep it on "paper" while validating.
+STRATEGY_MODE  = os.getenv("STRATEGY_MODE", "momentum").lower()
+
+# When 1, build live OHLCV bars from the Finnhub trade stream (realtime_bars.py)
+# and evaluate the strategy on a forming candle that updates every tick — closing
+# the gap with TradingView. Only consumed by the three_indicator path.
+REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
+
+# Minimum seconds to hold a three_indicator position before a strategy reversal
+# may close it — guards against per-second buy/sell flip-flop on the forming bar.
+THREE_IND_MIN_HOLD = int(os.getenv("THREE_IND_MIN_HOLD", "30"))
+
+# Strategy parameters (defaults from the module; exit mode overridable).
+THREE_IND_PARAMS = three_ind.params(
+    exit_mode=os.getenv("THREE_IND_EXIT_MODE", "any").lower(),
+)
+
 
 # ── Credential loading ────────────────────────────────────────────────────────
 
@@ -338,7 +366,12 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 
     min_needed = MACD_SLOW + MACD_SIG + 5   # 40 bars minimum for stable MACD
 
-    for feed in ("iex", "sip"):
+    # Feed order. IEX is free but covers ~2-3% of volume — sparse and
+    # unrepresentative for low-float small caps, where it disagrees with what
+    # TradingView shows. Set ALPACA_FEED=sip (requires a paid Alpaca data plan)
+    # to prefer the consolidated SIP feed. Default keeps the free IEX→SIP order.
+    feeds = ("sip", "iex") if os.getenv("ALPACA_FEED", "iex").lower() == "sip" else ("iex", "sip")
+    for feed in feeds:
         params = {
             "timeframe": timeframe,
             "start":     start_dt,   # fetch from N days ago, not just today
@@ -1142,6 +1175,17 @@ class SignalEngine:
         if self.massive.is_configured():
             print("[MASSIVE] API key loaded — alert tickers will try Massive bars first")
 
+        # Realtime bar aggregator — fed by the Finnhub trade stream when enabled.
+        self.rt_bars = RealtimeBarAggregator()
+        if STRATEGY_MODE == "three_indicator":
+            print(f"[STRATEGY] three_indicator active  (exit={THREE_IND_PARAMS['exit_mode']}, "
+                  f"realtime_bars={'on' if REALTIME_BARS else 'off'}, trader={TRADER_MODE})")
+            if REALTIME_BARS:
+                register_trade_callback(
+                    lambda sym, price, vol, ts: self.rt_bars.on_trade(sym, price, vol, ts)
+                )
+                print("[STRATEGY] realtime bars: aggregating live OHLCV from Finnhub trades")
+
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
 
@@ -1369,8 +1413,89 @@ class SignalEngine:
 
         # Signal check on the freshly closed bar
         open_pos = sum(1 for t in self.active.values() if t.in_position)
-        ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val,
-                           open_positions=open_pos)
+        if STRATEGY_MODE == "three_indicator":
+            if REALTIME_BARS and not self.rt_bars.is_seeded(ts.ticker):
+                self.rt_bars.seed(ts.ticker, df)
+            self._eval_three_indicator(ts, self._strategy_df(ts, df))
+        else:
+            ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val,
+                               open_positions=open_pos)
+
+    # ── 3-indicator strategy evaluation (gated by STRATEGY_MODE) ──────────────
+
+    def _strategy_df(self, ts: TickerState, fallback_df):
+        """Realtime aggregated bars when enabled and sufficient, else the fetched bars."""
+        if REALTIME_BARS:
+            rt = self.rt_bars.get_bars(ts.ticker)
+            if rt is not None and len(rt) >= MACD_SLOW + MACD_SIG + 5:
+                return rt
+        return fallback_df
+
+    def _eval_three_indicator(self, ts: TickerState, df):
+        """
+        Evaluate strategy_three_indicator on `df` and act via alpaca_trader
+        (TRADER_MODE governs paper/live). Entry/exit bookkeeping mirrors
+        update_momentum; protective stop-loss/take-profit still fire in
+        _check_proximity, so risk management is unchanged.
+        """
+        if df is None or len(df) < MACD_SLOW + MACD_SIG + 5:
+            return
+        try:
+            ind = three_ind.compute_indicators(df, THREE_IND_PARAMS)
+            a   = three_ind.to_arrays(ind)
+        except Exception as e:
+            print(f"  [{ticker_tag(ts.ticker)}] ❌ 3ind error: {e}")
+            return
+
+        i = len(a["close"]) - 1
+        if i < 2:
+            return
+        price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
+        if price <= 0:
+            return
+
+        if not ts.in_position:
+            if not three_ind.buy_signal(a, i, THREE_IND_PARAMS):
+                return
+            if MAX_PRICE > 0 and price > MAX_PRICE:
+                return
+            if MAX_TOTAL_EXPOSURE > 0:
+                open_pos = sum(1 for t in self.active.values() if t.in_position)
+                if open_pos * TRADE_AMOUNT >= MAX_TOTAL_EXPOSURE:
+                    return
+            print(f"  [{ticker_tag(ts.ticker)}] ✅ 3IND BUY signal  price=${price:.2f}")
+            log_buy(
+                ticker=ts.ticker, price=price,
+                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
+                priority=ts.is_hot, mention_velocity=ts.mention_velocity,
+                atr=ts.last_atr, vwap=ts.last_vwap, rvol=ts.last_rvol,
+            )
+            ts.in_position  = True
+            ts.buy_price    = price
+            ts.buy_time     = _now_iso()
+            ts.buy_time_ts  = time.time()
+            ts.priority_buy = ts.is_hot
+        else:
+            # Hold guard against per-second flip-flop on the forming bar.
+            if ts.buy_time_ts and (time.time() - ts.buy_time_ts) < THREE_IND_MIN_HOLD:
+                return
+            if not three_ind.sell_signal(a, i, THREE_IND_PARAMS):
+                return
+            hold_min = round((time.time() - ts.buy_time_ts) / 60, 1) if ts.buy_time_ts else None
+            print(f"  [{ticker_tag(ts.ticker)}] 🔻 3IND SELL signal  price=${price:.2f}")
+            log_sell(
+                ticker=ts.ticker, price=price, buy_price=ts.buy_price,
+                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
+                buy_time=ts.buy_time, reason="3ind_reversal", hold_minutes=hold_min,
+            )
+            ts.in_position    = False
+            ts.buy_price      = None
+            ts.buy_time       = None
+            ts.buy_time_ts    = None
+            ts.dyn_stop       = None
+            ts.dyn_take       = None
+            ts.high_since_buy = None
+            ts.priority_buy   = False
 
     # ── Every-second proximity check ──────────────────────────────────────────
 
@@ -1481,13 +1606,19 @@ class SignalEngine:
                 # Normal tickers still wait for confirmed bar closes to avoid
                 # false signals from mid-candle histogram fluctuations.
                 if ts.is_hot and ts.bars_fetched:
-                    open_pos = sum(1 for t in self.active.values() if t.in_position)
-                    ts.update_momentum(
-                        hist           = hist_live,
-                        price          = ts.last_price,
-                        rsi            = rsi_live,
-                        open_positions = open_pos,
-                    )
+                    if STRATEGY_MODE == "three_indicator":
+                        # Evaluate the 3-indicator rule on the realtime forming
+                        # candle (aggregator when enabled, else the live-price
+                        # injected cache) — TradingView-style intra-bar updates.
+                        self._eval_three_indicator(ts, self._strategy_df(ts, df_live))
+                    else:
+                        open_pos = sum(1 for t in self.active.values() if t.in_position)
+                        ts.update_momentum(
+                            hist           = hist_live,
+                            price          = ts.last_price,
+                            rsi            = rsi_live,
+                            open_positions = open_pos,
+                        )
 
             except Exception:
                 pass   # keep last known values if recompute fails
