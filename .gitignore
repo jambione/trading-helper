@@ -8,3 +8,5 @@ transcription/__pycache__/
 venv/
 .venv/
 transcription/wb_watchlist.json
+# Signal engine runtime state (regenerated every few seconds)
+signal_state.json
