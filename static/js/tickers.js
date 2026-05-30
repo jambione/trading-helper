@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=44';
-import { api } from './api.js?v=44';
+import { subscribe, selectTicker, get } from './store.js?v=45';
+import { api } from './api.js?v=45';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -293,7 +293,8 @@ function _updateRow(el, row) {
   // ticker so the whole watchlist is watchable while testing.
   const sp          = row.signal_proximity || null;
   const isThreeInd  = !!(sp && sp.strategy === 'three_indicator');
-  const hasBar      = !!row.mention_burst || isThreeInd;
+  const isAlert     = !!(sp && sp.strategy === 'alert');
+  const hasBar      = !!row.mention_burst || isThreeInd || isAlert;
   let   barEl       = el.querySelector('[data-signal-bar]');
 
   if (hasBar) {
@@ -337,7 +338,12 @@ function _signalFillClass(sp) {
 // Human-readable status label — labels differ per strategy.
 function _signalStatusLabel(sp) {
   const status = sp.status ?? 'watching';
-  const labels = (sp.strategy === 'three_indicator') ? {
+  const labels = (sp.strategy === 'alert') ? {
+    buy_zone:    '🔥 CATALYST — buying',
+    aligning:    '📈 Mentions building',
+    in_position: '📈 In position',
+    watching:    '😴 Watching',
+  } : (sp.strategy === 'three_indicator') ? {
     buy_zone:    '🔥 BUY ZONE',
     aligning:    '📈 Aligning',
     in_position: '📈 In position',
@@ -362,6 +368,22 @@ function _signalPills(sp) {
   const srcBadge = (sp.data_source === 'massive')
     ? `<span class="sig-src" title="Bar data from Massive.com">M</span>` : '';
 
+  if (sp.strategy === 'alert') {
+    // The catalyst is the signal: show mention velocity; once in a position
+    // show live P&L + the peak the trailing stop is protecting.
+    const velPill = `<span class="sig-cond ${sp.is_hot ? 'cond-ok' : 'cond-no'}" title="${vel} mentions in window — a burst fires the buy">🔥${vel}</span>`;
+    if (sp.in_position) {
+      const pnl = sp.pnl_pct, peak = sp.peak_gain_pct;
+      const pnlCls = (pnl != null && pnl >= 0) ? 'cond-ok' : 'cond-no';
+      const pnlTxt = pnl != null ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}%` : 'P&L ?';
+      const pnlPill = `<span class="sig-cond ${pnlCls}" title="unrealized P&L since entry">${pnlTxt}</span>`;
+      const peakPill = `<span class="sig-cond" title="peak gain since entry — trailing stop is ${sp.trail_stop_pct}% below the peak">▲${peak != null ? peak.toFixed(0) : '0'}%</span>`;
+      return `${velPill}${pnlPill}${peakPill}${srcBadge}`;
+    }
+    const stopPill = `<span class="sig-cond" title="exit recipe: trailing ${sp.trail_stop_pct}% / hard ${sp.hard_stop_pct}%">⛒ ${sp.trail_stop_pct}/${sp.hard_stop_pct}</span>`;
+    return `${velPill}${stopPill}${srcBadge}`;
+  }
+
   if (sp.strategy === 'three_indicator') {
     const cm = sp.cm_rsi, pr = sp.pctr, sep = sp.macd_sep_ratio;
     const cmPill = `<span class="sig-cond ${sp.cm_ok ? 'cond-ok' : 'cond-no'}" title="CM RSI-2 ${cm != null ? cm.toFixed(1) : '?'}${sp.cm_rsi_rising ? ' rising' : ''} — need <40 rising">CM</span>`;
@@ -381,8 +403,9 @@ function _signalPills(sp) {
 
 function _signalBarHTML(row) {
   const sp = row.signal_proximity || null;
-  // Momentum: alerted tickers only. three_indicator: every tracked ticker.
-  if (!row.mention_burst && !(sp && sp.strategy === 'three_indicator')) return '';
+  // Momentum: alerted tickers only. three_indicator / alert: every tracked ticker.
+  if (!row.mention_burst &&
+      !(sp && (sp.strategy === 'three_indicator' || sp.strategy === 'alert'))) return '';
 
   // No signal engine data yet — show a dormant placeholder bar
   if (!sp) {
