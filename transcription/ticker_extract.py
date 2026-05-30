@@ -136,23 +136,48 @@ _NATO_PATTERN = re.compile(
 )
 
 # Well-known company names that Whisper reliably outputs in lowercase.
-# Only include names where the word is unambiguous as a ticker reference.
+# Matched on WORD BOUNDARIES (see _COMPANY_RE) — never as substrings — so
+# "intel" no longer fires on "intelligence" and "ford" stays off "Stanford".
+# Curated to avoid common-English collisions: deliberately NO "target" (price
+# target), "arm", "block", "square", bare "gm"/"ms" — those are added only via
+# unambiguous full phrases.
 _COMPANY_NAMES: dict[str, str] = {
-    "apple":     "AAPL",
-    "microsoft": "MSFT",
-    "nvidia":    "NVDA",
-    "amazon":    "AMZN",
-    "alphabet":  "GOOGL",
-    "netflix":   "NFLX",
-    "tesla":     "TSLA",
-    "intel":     "INTC",
-    "facebook":  "META",
-    "palantir":  "PLTR",
-    "coinbase":  "COIN",
-    "spotify":   "SPOT",
-    "roblox":    "RBLX",
-    "doordash":  "DASH",
+    # Mega-cap tech
+    "apple": "AAPL", "microsoft": "MSFT", "nvidia": "NVDA", "amazon": "AMZN",
+    "alphabet": "GOOGL", "google": "GOOGL", "netflix": "NFLX", "tesla": "TSLA",
+    "intel": "INTC", "meta": "META", "facebook": "META", "palantir": "PLTR",
+    "coinbase": "COIN", "spotify": "SPOT", "roblox": "RBLX", "doordash": "DASH",
+    "broadcom": "AVGO", "qualcomm": "QCOM", "oracle": "ORCL", "salesforce": "CRM",
+    "adobe": "ADBE", "micron": "MU", "snowflake": "SNOW", "shopify": "SHOP",
+    "paypal": "PYPL", "uber": "UBER", "lyft": "LYFT", "airbnb": "ABNB",
+    # Finance
+    "goldman": "GS", "goldman sachs": "GS", "jpmorgan": "JPM", "jp morgan": "JPM",
+    "bank of america": "BAC", "citigroup": "C", "wells fargo": "WFC",
+    "morgan stanley": "MS", "blackrock": "BLK", "robinhood": "HOOD",
+    "sofi": "SOFI", "visa": "V", "mastercard": "MA",
+    # Consumer / industrial
+    "boeing": "BA", "costco": "COST", "walmart": "WMT", "disney": "DIS",
+    "nike": "NKE", "starbucks": "SBUX", "mcdonalds": "MCD", "mcdonald's": "MCD",
+    "coca cola": "KO", "pepsi": "PEP", "home depot": "HD",
+    # Energy
+    "chevron": "CVX", "exxon": "XOM", "exxonmobil": "XOM",
+    # Auto / EV
+    "ford": "F", "general motors": "GM", "rivian": "RIVN", "lucid": "LCID",
+    "nio": "NIO",
+    # Pharma
+    "pfizer": "PFE", "moderna": "MRNA", "eli lilly": "LLY",
+    # Semis / other popular trading names
+    "taiwan semi": "TSM", "asml": "ASML", "marvell": "MRVL",
+    "microstrategy": "MSTR", "marathon digital": "MARA", "riot": "RIOT",
+    "gamestop": "GME", "blackberry": "BB",
 }
+# Longest names first so "goldman sachs" wins over "goldman"; word-boundaried
+# and case-insensitive so "Goldman Sachs" / "GOLDMAN" all match.
+_COMPANY_RE = re.compile(
+    r"\b(" + "|".join(re.escape(n) for n in
+                      sorted(_COMPANY_NAMES, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
 
 
 def _collapse_letter_names(text: str) -> str:
@@ -216,12 +241,11 @@ def normalize_transcript(text: str) -> str:
 def extract_tickers(text: str) -> dict[str, int]:
     """Return {ticker: count} for all valid NASDAQ/NYSE tickers found in text."""
     # Expand company names before normalization so they don't interfere with
-    # letter-level patterns.
-    text_lower = text.lower()
-    extra: list[str] = []
-    for name, ticker in _COMPANY_NAMES.items():
-        if name in text_lower:
-            extra.append(ticker)
+    # letter-level patterns. Word-boundary matching (not substring) so "intel"
+    # doesn't fire on "intelligence".
+    extra: list[str] = [
+        _COMPANY_NAMES[m.group(1).lower()] for m in _COMPANY_RE.finditer(text)
+    ]
 
     text = normalize_transcript(text)
     if extra:
