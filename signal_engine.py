@@ -630,6 +630,10 @@ class TickerState:
         # Which API supplied the most recent bar data ("massive" or "alpaca")
         self._data_source: str = "alpaca"
 
+        # Latest 3-indicator breakdown (set by _eval_three_indicator), surfaced
+        # to the dashboard by proximity_state() when STRATEGY_MODE=three_indicator.
+        self.three_ind_state: Optional[dict] = None
+
     def expiry_seconds(self) -> int:
         """How long this ticker is allowed to live without a position."""
         return EXPIRY_WARM if self.ever_positive_hist else EXPIRY_COLD
@@ -818,12 +822,63 @@ class TickerState:
 
         return round(score / 3 * 100)
 
+    def three_indicator_state(self) -> dict:
+        """
+        Dashboard state for the 3-indicator strategy. Reads the breakdown stashed
+        by _eval_three_indicator (no recomputation) and adds position context.
+        Shares the proximity_pct / status / pill keys the frontend already uses,
+        with a "strategy" marker so the bar relabels its three conditions.
+        """
+        s = self.three_ind_state or {}
+        pct = int(s.get("buy_pct", 0))
+
+        if self.in_position and s.get("sell"):
+            status = "exit_signal"
+        elif self.in_position:
+            status = "in_position"
+        elif s.get("buy") or pct >= 100:
+            status = "buy_zone"
+        elif pct >= 67:
+            status = "aligning"
+        elif not self.bars_fetched:
+            status = "watching"
+        else:
+            status = "watching"
+
+        return {
+            "strategy":       "three_indicator",
+            "price":          round(self.last_price, 4) if self.last_price else None,
+            "proximity_pct":  pct,
+            "status":         status,
+            "in_position":    self.in_position,
+            "buy_price":      round(self.buy_price, 4) if self.buy_price else None,
+            "is_hot":         self.is_hot,
+            "mention_velocity": self.mention_velocity,
+            "bars_fetched":   self.bars_fetched,
+            "data_source":    getattr(self, "_data_source", "alpaca"),
+            # 3-indicator breakdown (drives the three condition pills)
+            "cm_rsi":         s.get("cm_rsi"),
+            "cm_ok":          bool(s.get("cm_ok")),
+            "cm_rsi_rising":  bool(s.get("cm_rsi_rising")),
+            "pctr":           s.get("pctr"),
+            "pctr_ok":        bool(s.get("pctr_ok")),
+            "pctr_rising":    bool(s.get("pctr_rising")),
+            "macd_cross":     bool(s.get("macd_cross")),
+            "macd_sep_ratio": s.get("macd_sep_ratio"),
+            "macd_ok":        bool(s.get("macd_ok")),
+            "buy_signal":     bool(s.get("buy")),
+            "sell_signal":    bool(s.get("sell")),
+        }
+
     def proximity_state(self) -> dict:
         """
         Return a JSON-serialisable dict describing the current signal proximity.
         Written to signal_state.json every SIGNAL_STATE_INTERVAL seconds so the
         dashboard can render the visual progress bar without coupling to the engine.
         """
+        if STRATEGY_MODE == "three_indicator":
+            return self.three_indicator_state()
+
         rsi  = self.last_rsi
         hist = self.last_hist
         pct  = self.proximity_pct()
@@ -1450,12 +1505,18 @@ class SignalEngine:
         i = len(a["close"]) - 1
         if i < 2:
             return
+
+        # Stash the breakdown for the dashboard (reuses `a` — no extra indicator
+        # computation). proximity_state() reads this every SIGNAL_STATE_INTERVAL.
+        st = three_ind.evaluate_state(a, i, THREE_IND_PARAMS)
+        ts.three_ind_state = st
+
         price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
         if price <= 0:
             return
 
         if not ts.in_position:
-            if not three_ind.buy_signal(a, i, THREE_IND_PARAMS):
+            if not st["buy"]:
                 return
             if MAX_PRICE > 0 and price > MAX_PRICE:
                 return
@@ -1479,7 +1540,7 @@ class SignalEngine:
             # Hold guard against per-second flip-flop on the forming bar.
             if ts.buy_time_ts and (time.time() - ts.buy_time_ts) < THREE_IND_MIN_HOLD:
                 return
-            if not three_ind.sell_signal(a, i, THREE_IND_PARAMS):
+            if not st["sell"]:
                 return
             hold_min = round((time.time() - ts.buy_time_ts) / 60, 1) if ts.buy_time_ts else None
             print(f"  [{ticker_tag(ts.ticker)}] 🔻 3IND SELL signal  price=${price:.2f}")

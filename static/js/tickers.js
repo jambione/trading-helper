@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=42';
-import { api } from './api.js?v=42';
+import { subscribe, selectTicker, get } from './store.js?v=43';
+import { api } from './api.js?v=43';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -302,58 +302,17 @@ function _updateRow(el, row) {
       barEl = tmp.firstElementChild;
       if (barEl) el.appendChild(barEl);
     } else if (sp) {
-      // Bar exists — surgically update fill width + class + label
-      const pct      = sp.proximity_pct ?? 0;
-      const status   = sp.status ?? 'watching';
-      const inPos    = sp.in_position;
-      const isHot    = sp.is_hot;
-      const histPos  = sp.hist_positive;
-      const histGrow = sp.hist_growing;
-      const rsi      = sp.rsi;
-      const macdHist = sp.macd_hist;
-      const src      = sp.data_source ?? 'alpaca';
-      const vel      = sp.mention_velocity ?? 0;
-
-      const rsiOk   = isHot || (rsi != null && rsi < 70);
-      const fillCls = inPos      ? 'signal-fill--position'
-                    : pct >= 100 ? 'signal-fill--max'
-                    : pct >= 67  ? 'signal-fill--high'
-                    : pct >= 34  ? 'signal-fill--mid'
-                    :              'signal-fill--low';
-
+      // Bar exists — surgically update fill width + class + label + pills
+      const pct = sp.proximity_pct ?? 0;
       const fillEl = barEl.querySelector('[data-signal-fill]');
       if (fillEl) {
         fillEl.style.width = `${Math.min(pct, 100)}%`;
-        fillEl.className   = `signal-bar-fill ${fillCls}`;
+        fillEl.className   = `signal-bar-fill ${_signalFillClass(sp)}`;
       }
-
-      const statusLabels = {
-        buy_zone:         '🔥 BUY ZONE',
-        growing_rsi_high: '📈 Growing — RSI high',
-        hist_positive:    '👀 MACD positive',
-        retreated:        '↩ Retreated',
-        in_position:      '📈 In position',
-        watching:         '😴 Watching',
-      };
       const labelEl = barEl.querySelector('[data-signal-label]');
-      if (labelEl) labelEl.textContent = statusLabels[status] ?? status;
-
-      // Rebuild condition pills (cheap — small HTML)
+      if (labelEl) labelEl.textContent = _signalStatusLabel(sp);
       const condsEl = barEl.querySelector('.signal-conds');
-      if (condsEl) {
-        const srcBadge = src === 'massive'
-          ? `<span class="sig-src" title="Bar data from Massive.com">M</span>`
-          : '';
-        const hotPill = isHot
-          ? `<span class="sig-cond cond-hot" title="${vel} mentions — RSI bypassed">🔥</span>`
-          : '';
-        condsEl.innerHTML = `
-          <span class="sig-cond ${rsiOk  ? 'cond-ok' : 'cond-no'}" title="RSI ${rsi != null ? rsi.toFixed(1) : '?'}${isHot ? ' (bypassed)' : ''}">RSI</span>
-          <span class="sig-cond ${histPos ? 'cond-ok' : 'cond-no'}" title="MACD hist ${macdHist != null ? macdHist.toFixed(4) : '?'}">+</span>
-          <span class="sig-cond ${histGrow ? 'cond-ok' : 'cond-no'}" title="MACD growing">↑</span>
-          ${hotPill}${srcBadge}
-        `.trim();
-      }
+      if (condsEl) condsEl.innerHTML = _signalPills(sp);
     }
   } else if (barEl) {
     // Ticker no longer has a burst alert — remove bar
@@ -362,6 +321,61 @@ function _updateRow(el, row) {
 }
 
 // ── Row HTML template ──────────────────────────────────────────
+
+// Fill-colour tier from proximity_pct / position state (strategy-agnostic).
+function _signalFillClass(sp) {
+  const pct = sp.proximity_pct ?? 0;
+  return sp.in_position ? 'signal-fill--position'
+       : pct >= 100     ? 'signal-fill--max'
+       : pct >= 67      ? 'signal-fill--high'
+       : pct >= 34      ? 'signal-fill--mid'
+       :                  'signal-fill--low';
+}
+
+// Human-readable status label — labels differ per strategy.
+function _signalStatusLabel(sp) {
+  const status = sp.status ?? 'watching';
+  const labels = (sp.strategy === 'three_indicator') ? {
+    buy_zone:    '🔥 BUY ZONE',
+    aligning:    '📈 Aligning',
+    in_position: '📈 In position',
+    exit_signal: '🔻 EXIT signal',
+    watching:    '😴 Watching',
+  } : {
+    buy_zone:         '🔥 BUY ZONE',
+    growing_rsi_high: '📈 Growing — RSI high',
+    hist_positive:    '👀 MACD positive',
+    retreated:        '↩ Retreated',
+    in_position:      '📈 In position',
+    watching:         '😴 Watching',
+  };
+  return labels[status] ?? status;
+}
+
+// Condition pills — three_indicator shows CM / %R / MACD; momentum shows RSI / + / ↑.
+function _signalPills(sp) {
+  const isHot = sp.is_hot;
+  const vel   = sp.mention_velocity ?? 0;
+  const hotPill  = isHot ? `<span class="sig-cond cond-hot" title="${vel} mentions — RSI bypassed">🔥</span>` : '';
+  const srcBadge = (sp.data_source === 'massive')
+    ? `<span class="sig-src" title="Bar data from Massive.com">M</span>` : '';
+
+  if (sp.strategy === 'three_indicator') {
+    const cm = sp.cm_rsi, pr = sp.pctr, sep = sp.macd_sep_ratio;
+    const cmPill = `<span class="sig-cond ${sp.cm_ok ? 'cond-ok' : 'cond-no'}" title="CM RSI-2 ${cm != null ? cm.toFixed(1) : '?'}${sp.cm_rsi_rising ? ' rising' : ''} — need <40 rising">CM</span>`;
+    const prPill = `<span class="sig-cond ${sp.pctr_ok ? 'cond-ok' : 'cond-no'}" title="%R Exhaustion ${pr != null ? pr.toFixed(1) : '?'}${sp.pctr_rising ? ' rising toward 0' : ''}">%R</span>`;
+    const mdPill = `<span class="sig-cond ${sp.macd_ok ? 'cond-ok' : 'cond-no'}" title="MACD ${sp.macd_cross ? 'crossed bullish' : 'no cross'}${sep != null ? `, separation ×${sep}` : ''} — need wide cross">MACD</span>`;
+    return `${cmPill}${prPill}${mdPill}${hotPill}${srcBadge}`;
+  }
+
+  // momentum (default)
+  const rsi = sp.rsi, macdHist = sp.macd_hist;
+  const rsiOk = isHot || (rsi != null && rsi < 70);
+  const rsiPill  = `<span class="sig-cond ${rsiOk ? 'cond-ok' : 'cond-no'}" title="RSI ${rsi != null ? rsi.toFixed(1) : '?'}${isHot ? ' (bypassed)' : ''}">RSI</span>`;
+  const posPill  = `<span class="sig-cond ${sp.hist_positive ? 'cond-ok' : 'cond-no'}" title="MACD histogram ${macdHist != null ? macdHist.toFixed(4) : '?'}">+</span>`;
+  const growPill = `<span class="sig-cond ${sp.hist_growing ? 'cond-ok' : 'cond-no'}" title="MACD growing">↑</span>`;
+  return `${rsiPill}${posPill}${growPill}${hotPill}${srcBadge}`;
+}
 
 function _signalBarHTML(row) {
   if (!row.mention_burst) return '';
@@ -375,63 +389,23 @@ function _signalBarHTML(row) {
     </div>
     <div class="signal-bar-meta">
       <div class="signal-conds">
-        <span class="sig-cond cond-no" title="RSI not loaded">RSI</span>
-        <span class="sig-cond cond-no" title="MACD not loaded">+</span>
-        <span class="sig-cond cond-no" title="MACD not loaded">↑</span>
+        <span class="sig-cond cond-no">…</span>
+        <span class="sig-cond cond-no">…</span>
+        <span class="sig-cond cond-no">…</span>
       </div>
       <span class="signal-status-label" data-signal-label>⏳ Waiting for engine…</span>
     </div>
   </div>`;
   }
 
-  const pct      = sp.proximity_pct ?? 0;
-  const status   = sp.status ?? 'watching';
-  const inPos    = sp.in_position;
-  const isHot    = sp.is_hot;
-  const histPos  = sp.hist_positive;
-  const histGrow = sp.hist_growing;
-  const rsi      = sp.rsi;
-  const macdHist = sp.macd_hist;
-  const src      = sp.data_source ?? 'alpaca';
-  const vel      = sp.mention_velocity ?? 0;
-
-  // RSI check: null means not yet loaded; treat is_hot as auto-pass
-  const rsiOk = isHot || (rsi != null && rsi < 70);
-
-  // Colour class for the fill bar
-  const fillCls = inPos        ? 'signal-fill--position'
-                : pct >= 100   ? 'signal-fill--max'
-                : pct >= 67    ? 'signal-fill--high'
-                : pct >= 34    ? 'signal-fill--mid'
-                :                'signal-fill--low';
-
-  // Human-readable status label
-  const statusLabels = {
-    buy_zone:         '🔥 BUY ZONE',
-    growing_rsi_high: '📈 Growing — RSI high',
-    hist_positive:    '👀 MACD positive',
-    retreated:        '↩ Retreated',
-    in_position:      '📈 In position',
-    watching:         '😴 Watching',
-  };
-  const statusLabel = statusLabels[status] ?? status;
-
-  // Condition pills
-  const rsiPill  = `<span class="sig-cond ${rsiOk  ? 'cond-ok' : 'cond-no'}" title="RSI ${rsi != null ? rsi.toFixed(1) : '?'}${isHot ? ' (bypassed)' : ''}">RSI</span>`;
-  const posPill  = `<span class="sig-cond ${histPos ? 'cond-ok' : 'cond-no'}" title="MACD histogram ${macdHist != null ? macdHist.toFixed(4) : '?'}">+</span>`;
-  const growPill = `<span class="sig-cond ${histGrow ? 'cond-ok' : 'cond-no'}" title="MACD growing">↑</span>`;
-  const hotPill  = isHot ? `<span class="sig-cond cond-hot" title="${vel} mentions — RSI bypassed">🔥</span>` : '';
-  const srcBadge = src === 'massive'
-    ? `<span class="sig-src" title="Bar data from Massive.com">M</span>`
-    : '';
-
+  const pct = sp.proximity_pct ?? 0;
   return `<div class="signal-bar-row" data-signal-bar>
     <div class="signal-bar-track">
-      <div class="signal-bar-fill ${fillCls}" style="width:${Math.min(pct, 100)}%" data-signal-fill></div>
+      <div class="signal-bar-fill ${_signalFillClass(sp)}" style="width:${Math.min(pct, 100)}%" data-signal-fill></div>
     </div>
     <div class="signal-bar-meta">
-      <div class="signal-conds">${rsiPill}${posPill}${growPill}${hotPill}${srcBadge}</div>
-      <span class="signal-status-label" data-signal-label>${statusLabel}</span>
+      <div class="signal-conds">${_signalPills(sp)}</div>
+      <span class="signal-status-label" data-signal-label>${_signalStatusLabel(sp)}</span>
     </div>
   </div>`;
 }

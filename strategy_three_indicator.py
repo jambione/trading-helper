@@ -104,7 +104,7 @@ def _rising(s: np.ndarray, i: int, lookback: int) -> bool:
     if j < 0:
         return False
     a, b = s[j], s[i]
-    return np.isfinite(a) and np.isfinite(b) and b > a
+    return bool(np.isfinite(a) and np.isfinite(b) and b > a)
 
 
 def _falling(s: np.ndarray, i: int, lookback: int) -> bool:
@@ -112,7 +112,7 @@ def _falling(s: np.ndarray, i: int, lookback: int) -> bool:
     if j < 0:
         return False
     a, b = s[j], s[i]
-    return np.isfinite(a) and np.isfinite(b) and b < a
+    return bool(np.isfinite(a) and np.isfinite(b) and b < a)
 
 
 def _ready(a: dict, i: int, keys) -> bool:
@@ -192,3 +192,56 @@ def sell_signal(a: dict, i: int, p: dict) -> bool:
 
     sigs = (macd_down, cm, rte)
     return all(sigs) if p["exit_mode"] == "all" else any(sigs)
+
+
+# ── Display breakdown (for the dashboard) ─────────────────────────────────────
+
+def evaluate_state(a: dict, i: int, p: dict) -> dict:
+    """
+    Return a JSON-serialisable breakdown of the strategy at bar i — the three
+    BUY conditions (met/not), the live indicator values, and the authoritative
+    buy/sell booleans. Used to render the dashboard's strategy bar.
+
+    Reads only the pre-computed arrays in `a` (no indicator recomputation), so it
+    is cheap enough to call on every evaluation.
+    """
+    cw, tl = int(p["confirm_window"]), int(p["trend_lookback"])
+    out = {
+        "cm_rsi": None, "cm_rsi_rising": False, "cm_ok": False,
+        "pctr": None, "pctr_rising": False, "pctr_ok": False,
+        "macd_cross": False, "macd_sep_ratio": None, "macd_ok": False,
+        "buy": False, "sell": False, "buy_pct": 0,
+    }
+    if i < cw + tl:
+        return out
+    lo = max(tl, i - cw + 1)
+
+    # CM RSI-2: < buy_max and rising, somewhere in the window
+    cm = a["cm_rsi"][i]
+    if np.isfinite(cm):
+        out["cm_rsi"] = round(float(cm), 1)
+    out["cm_rsi_rising"] = _rising(a["cm_rsi"], i, tl)
+    out["cm_ok"] = bool(any(a["cm_rsi"][j] < p["cm_rsi_buy_max"]
+                            and _rising(a["cm_rsi"], j, tl)
+                            for j in range(lo, i + 1)))
+
+    # %R Trend Exhaustion: rising toward 0, somewhere in the window
+    pr = a["s_percentR"][i]
+    if np.isfinite(pr):
+        out["pctr"] = round(float(pr), 1)
+    out["pctr_rising"] = _rising(a["s_percentR"], i, tl)
+    out["pctr_ok"] = bool(any(_rising(a["s_percentR"], j, tl) for j in range(lo, i + 1)))
+
+    # MACD: recent bullish cross, still bullish, wide separation
+    line, sig = a["macd_line"][i], a["macd_signal"][i]
+    cross = bool(a["macd_bull"][lo:i + 1].any()) and (np.isfinite(line) and np.isfinite(sig) and line > sig)
+    out["macd_cross"] = cross
+    sep = a["macd_hist_std"][i]
+    if np.isfinite(sep) and sep > 0 and np.isfinite(a["macd_hist"][i]):
+        out["macd_sep_ratio"] = round(float(a["macd_hist"][i] / sep), 2)
+        out["macd_ok"] = bool(cross and a["macd_hist"][i] >= p["macd_sep_mult"] * sep)
+
+    out["buy"] = buy_signal(a, i, p)
+    out["sell"] = sell_signal(a, i, p)
+    out["buy_pct"] = round((int(out["cm_ok"]) + int(out["pctr_ok"]) + int(out["macd_ok"])) / 3 * 100)
+    return out

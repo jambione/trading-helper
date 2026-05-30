@@ -130,6 +130,30 @@ def test_simulate_produces_round_trips():
         assert abs(expected - t["pnl_pct"]) < 0.02
 
 
+def test_evaluate_state_breakdown_matches_signals():
+    a = strat.to_arrays(strat.compute_indicators(_frame(_sine()), LOOSE))
+    n = len(a["close"])
+    for i in range(n - 1):
+        st = strat.evaluate_state(a, i, LOOSE)
+        # buy/sell in the breakdown must equal the authoritative signal functions
+        assert st["buy"] == strat.buy_signal(a, i, LOOSE)
+        assert st["sell"] == strat.sell_signal(a, i, LOOSE)
+        # buy_pct is the fraction of the three conditions met
+        expected = round((int(st["cm_ok"]) + int(st["pctr_ok"]) + int(st["macd_ok"])) / 3 * 100)
+        assert st["buy_pct"] == expected
+        # a real buy means all three conditions are met
+        if st["buy"]:
+            assert st["cm_ok"] and st["pctr_ok"] and st["macd_ok"]
+            assert st["buy_pct"] == 100
+
+
+def test_evaluate_state_is_json_safe():
+    import json
+    a = strat.to_arrays(strat.compute_indicators(_frame(_sine()), LOOSE))
+    st = strat.evaluate_state(a, len(a["close"]) - 2, LOOSE)
+    json.dumps(st)   # must not raise (no numpy bools/floats leaking)
+
+
 def test_stop_loss_caps_downside():
     # A series that rips up (triggering a buy) then collapses should exit via the
     # protective stop rather than riding all the way down.
