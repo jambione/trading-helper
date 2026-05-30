@@ -17,7 +17,6 @@ Ticker extraction:
 import argparse
 import json
 import os as _os
-import re
 import sys as _sys
 import time
 import threading
@@ -117,211 +116,20 @@ INITIAL_PROMPT = (
 
 
 # =============================================================================
-# TICKER VALIDATION — NASDAQ + NYSE list
+# TICKER RECOGNITION — imported from ticker_extract (pure, ASR-free)
 # =============================================================================
-
-_TICKER_CACHE_FILE = Path(__file__).parent.parent / "valid_tickers.txt"
-_TICKER_CACHE_DAYS = 7
-
-
-def _load_valid_tickers() -> set:
-    def _fetch() -> set:
-        tickers = set()
-        sources = [
-            ("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
-             lambda line: line.split("|")[0].strip()),
-            ("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
-             lambda line: line.split("|")[0].strip()),
-        ]
-        for url, extract in sources:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    for raw in r.read().decode("utf-8", errors="ignore").splitlines():
-                        sym = extract(raw)
-                        if sym and sym.isalpha() and 1 <= len(sym) <= 5 \
-                                and sym not in ("Symbol", "ACTSymbol"):
-                            tickers.add(sym.upper())
-            except Exception as e:
-                print(f"[TICKERS] Warning: could not fetch {url}: {e}", flush=True)
-        return tickers
-
-    try:
-        if _TICKER_CACHE_FILE.exists():
-            age_days = (time.time() - _TICKER_CACHE_FILE.stat().st_mtime) / 86400
-            if age_days < _TICKER_CACHE_DAYS:
-                syms = set(_TICKER_CACHE_FILE.read_text().split())
-                if syms:
-                    print(f"[TICKERS] Loaded {len(syms):,} tickers from cache ({age_days:.1f}d old).", flush=True)
-                    return syms
-        print("[TICKERS] Downloading ticker list from NASDAQ Trader …", flush=True)
-        tickers = _fetch()
-        if tickers:
-            _TICKER_CACHE_FILE.write_text("\n".join(sorted(tickers)))
-            print(f"[TICKERS] Downloaded and cached {len(tickers):,} tickers.", flush=True)
-        return tickers
-    except Exception as e:
-        print(f"[TICKERS] Could not load ticker list: {e}", flush=True)
-        return set()
-
-
-_VALID_TICKERS: set = _load_valid_tickers()
-
-# Only match all-caps tokens — Whisper outputs known tickers in ALL-CAPS,
-# common English words in lowercase. This eliminates most false positives
-# without any stop-word list.
-_TICKER_RE = re.compile(r'\b([A-Z]{2,5})\b')
-
-# Words that match _TICKER_RE but are never valid ticker mentions.
-# Keeps common English abbreviations, titles, and date markers from firing.
-_TICKER_STOPWORDS: frozenset = frozenset({
-    # Time / dates
-    "AM", "PM", "AD", "BC",
-    # Regulatory / government agencies (not exchange-listed)
-    "FDA", "SEC", "FTC", "FED", "IRS", "CDC", "NIH", "DOJ", "DOD",
-    # Currencies / macros
-    "USD", "EUR", "GBP", "JPY", "CNY",
-    # Executive titles
-    "CEO", "CFO", "CTO", "COO", "CIO",
-    # Market structure terms (not tickers)
-    "IPO", "NYSE", "ETF",
-    # Very common English two-letter all-caps that appear in transcripts
-    "OK", "US", "EU", "UK",
-})
-
-# English letter-name phonetics — how TTS voices pronounce individual letters.
-# "en vee dee ay" → NVDA, "tee es el ay" → TSLA
-_LETTER_NAMES = {
-    "ay": "A", "bee": "B", "cee": "C", "see": "C",
-    "dee": "D", "ee": "E", "ef": "F", "eff": "F",
-    "gee": "G", "jee": "G", "aitch": "H", "haitch": "H",
-    "eye": "I", "jay": "J", "kay": "K", "el": "L",
-    "em": "M", "en": "N", "oh": "O", "pee": "P",
-    "cue": "Q", "queue": "Q", "ar": "R", "arr": "R",
-    "ess": "S", "es": "S", "tee": "T", "you": "U",
-    "vee": "V", "ex": "X", "eks": "X", "ecks": "X",
-    "wye": "Y", "why": "Y", "zee": "Z", "zed": "Z",
-}
-_letter_name_word    = "(?:" + "|".join(re.escape(w) for w in _LETTER_NAMES) + ")"
-_LETTER_NAME_PATTERN = re.compile(
-    rf"(?i)\b{_letter_name_word}(?:[ \t]*[.,\-]?[ \t]*{_letter_name_word}){{1,4}}\b"
+# The recognition logic lives in ticker_extract.py with ZERO ASR/audio deps so
+# it imports in milliseconds and can be unit-tested without loading Whisper.
+# Re-exported here so this module's public names are unchanged.
+_sys.path.insert(0, str(Path(__file__).parent))
+from ticker_extract import (   # noqa: E402,F401
+    normalize_transcript,
+    extract_tickers,
+    extract_with_stitch,
+    _extract_with_stitch,
+    _VALID_TICKERS,
+    STITCH_MAX_GAP,
 )
-
-# NATO phonetic alphabet — "charlie romeo bravo papa" → CRBP.
-# Includes common Whisper mis-transcriptions (michael→M, romy→R).
-_NATO = {
-    "alpha": "A", "bravo": "B", "charlie": "C", "delta": "D",
-    "echo": "E", "foxtrot": "F", "golf": "G", "hotel": "H",
-    "india": "I", "juliet": "J", "kilo": "K", "lima": "L",
-    "mike": "M", "michael": "M",
-    "november": "N", "oscar": "O", "papa": "P",
-    "quebec": "Q", "romeo": "R", "romy": "R",
-    "sierra": "S", "tango": "T", "uniform": "U", "victor": "V",
-    "whiskey": "W", "xray": "X", "yankee": "Y", "zulu": "Z",
-}
-_nato_word    = "(?:" + "|".join(re.escape(w) for w in _NATO) + ")"
-_NATO_PATTERN = re.compile(
-    rf"(?i)\b{_nato_word}(?:[ \t]+{_nato_word}){{1,4}}\b"
-)
-
-# Well-known company names that Whisper reliably outputs in lowercase.
-# Only include names where the word is unambiguous as a ticker reference.
-_COMPANY_NAMES: dict[str, str] = {
-    "apple":     "AAPL",
-    "microsoft": "MSFT",
-    "nvidia":    "NVDA",
-    "amazon":    "AMZN",
-    "alphabet":  "GOOGL",
-    "netflix":   "NFLX",
-    "tesla":     "TSLA",
-    "intel":     "INTC",
-    "facebook":  "META",
-    "palantir":  "PLTR",
-    "coinbase":  "COIN",
-    "spotify":   "SPOT",
-    "roblox":    "RBLX",
-    "doordash":  "DASH",
-}
-
-
-def _collapse_letter_names(text: str) -> str:
-    """en vee dee ay → NVDA, tee es el ay → TSLA"""
-    def collapse(m):
-        words   = re.split(r'[\s.,\-]+', m.group(0).lower())
-        letters = "".join(_LETTER_NAMES.get(w, "") for w in words if w)
-        return letters if 2 <= len(letters) <= 5 else m.group(0)
-    return _LETTER_NAME_PATTERN.sub(collapse, text)
-
-
-def _collapse_nato(text: str) -> str:
-    """charlie romeo bravo papa → CRBP, bravo romeo kilo romeo → BRKR"""
-    def collapse(m):
-        words   = m.group(0).lower().split()
-        letters = "".join(_NATO.get(w, "") for w in words if w)
-        # Require 3+ letters: 2-word NATO matches are almost always fragments,
-        # not intentional ticker spells.
-        return letters if 3 <= len(letters) <= 5 else m.group(0)
-    return _NATO_PATTERN.sub(collapse, text)
-
-
-def _collapse_hyphens(text: str) -> str:
-    """A-I-I-O → AIIO, H-T-T → HTT, B-I-Y-A → BIYA"""
-    def collapse(m):
-        return m.group(0).replace("-", "").upper()
-    return re.sub(r'(?<![A-Za-z])(?:[A-Za-z]-){1,4}[A-Za-z](?![A-Za-z])', collapse, text)
-
-
-def _collapse_spaced_letters(text: str) -> str:
-    """H T T B I Y A → HTT BIYA  (NASDAQ-aware greedy segmentation)"""
-    def replace_run(m):
-        letters = m.group(0).split()
-        result  = []
-        i = 0
-        while i < len(letters):
-            matched = False
-            for length in range(min(5, len(letters) - i), 1, -1):
-                candidate = "".join(letters[i:i+length]).upper()
-                if candidate in _VALID_TICKERS:
-                    result.append(candidate)
-                    i += length
-                    matched = True
-                    break
-            if not matched:
-                result.append(letters[i])
-                i += 1
-        return " ".join(result)
-    return re.sub(r'(?<![A-Za-z])[A-Za-z](?:\s[A-Za-z])+(?![A-Za-z])', replace_run, text)
-
-
-def normalize_transcript(text: str) -> str:
-    """Chain all normalization steps: letter names → NATO → hyphens → spaced letters."""
-    text = _collapse_letter_names(text)
-    text = _collapse_nato(text)
-    text = _collapse_hyphens(text)
-    text = _collapse_spaced_letters(text)
-    return text
-
-
-def extract_tickers(text: str) -> dict[str, int]:
-    """Return {ticker: count} for all valid NASDAQ/NYSE tickers found in text."""
-    # Expand company names before normalization so they don't interfere with
-    # letter-level patterns.
-    text_lower = text.lower()
-    extra: list[str] = []
-    for name, ticker in _COMPANY_NAMES.items():
-        if name in text_lower:
-            extra.append(ticker)
-
-    text = normalize_transcript(text)
-    if extra:
-        text = text + " " + " ".join(extra)
-
-    counts: dict[str, int] = {}
-    for m in _TICKER_RE.finditer(text):
-        t = m.group(1)  # already uppercase — enforced by regex
-        if t in _VALID_TICKERS and t not in _TICKER_STOPWORDS:
-            counts[t] = counts.get(t, 0) + 1
-    return counts
 
 
 # =============================================================================
@@ -552,43 +360,7 @@ def audio_capture():
             time.sleep(0.05)
 
 
-# =============================================================================
-# CROSS-CHUNK TICKER STITCHING
-# =============================================================================
-# A ticker spelled across a chunk boundary ("...N V" | "D A...") validates as
-# neither half alone.  We keep the previous chunk's text and re-extract on the
-# joined pair, emitting only tickers that appear in the join but in neither
-# half — so normal mentions are never double-counted.
-#
-# Assumes a single transcription worker (ordering matters for the stitch).
-
-_prev_text:       str            = ""
-_prev_tickers:    dict[str, int] = {}
-_last_chunk_time: float          = 0.0
-STITCH_MAX_GAP                   = 3.0   # seconds; don't stitch across silences
-
-
-def _extract_with_stitch(text: str) -> dict[str, int]:
-    """Extract tickers from `text` plus any split across the previous boundary."""
-    global _prev_text, _prev_tickers, _last_chunk_time
-
-    now        = time.time()
-    contiguous = (now - _last_chunk_time) <= STITCH_MAX_GAP
-    _last_chunk_time = now
-
-    cur = extract_tickers(text)
-
-    out = dict(cur)
-    if _prev_text and contiguous:
-        joined = extract_tickers(f"{_prev_text} {text}")
-        for t, c in joined.items():
-            # Boundary-only: present when stitched but in neither half alone
-            if t not in cur and t not in _prev_tickers:
-                out[t] = out.get(t, 0) + c
-
-    _prev_text    = text
-    _prev_tickers = cur
-    return out
+# (cross-chunk stitching now lives in ticker_extract.extract_with_stitch)
 
 
 # =============================================================================

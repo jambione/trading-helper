@@ -10,10 +10,10 @@ Run with:
 import sys
 from pathlib import Path
 
-# Add parent dir to path so we can import transcribe_action
+# Add parent dir to path so we can import the (ASR-free) ticker logic
 sys.path.insert(0, str(Path(__file__).parent))
 
-from transcribe_action import normalize_transcript, extract_tickers
+from ticker_extract import normalize_transcript, extract_tickers
 
 
 def test_normalize_transcript():
