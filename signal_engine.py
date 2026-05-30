@@ -268,6 +268,23 @@ THREE_IND_PARAMS = three_ind.params(
     exit_mode=os.getenv("THREE_IND_EXIT_MODE", "any").lower(),
 )
 
+# ── Alert strategy (STRATEGY_MODE=alert) ──────────────────────────────────────
+# The thesis the backtests pointed to: on low-float microcaps, indicator ENTRIES
+# have no edge — the catalyst does. So the buy signal IS the mention burst
+# (a ticker going `is_hot`), not an oscillator. The money is then made on the
+# EXIT, and backtest_exits.py showed the winning recipe across 1031 entries:
+#   • trailing stop (let the runner run)  +  hard stop (cut losers fast)
+#   • NO fixed time cap and NO take-profit cap — both tested strictly WORSE,
+#     because the whole P&L lives in the rare big winner those rules amputate.
+# These percentages are the levers; defaults are the backtest's top performer.
+ALERT_HARD_STOP   = float(os.getenv("ALERT_HARD_STOP",  "8.0"))   # % below entry → hard stop
+ALERT_TRAIL_STOP  = float(os.getenv("ALERT_TRAIL_STOP", "15.0"))  # % below peak  → trailing stop
+ALERT_MIN_HOLD    = int(os.getenv("ALERT_MIN_HOLD",     "30"))    # seconds to hold before a stop can fire
+# Optional falling-knife veto: require the live price to be at/above the last
+# closed bar (don't buy a ticker that's already dumping). Default off so the pure
+# alert→buy thesis is what gets paper-tested first.
+ALERT_REQUIRE_GREEN = os.getenv("ALERT_REQUIRE_GREEN", "0") in ("1", "true", "yes")
+
 
 # ── Credential loading ────────────────────────────────────────────────────────
 
@@ -734,6 +751,27 @@ class TickerState:
         left  = self.time_left_s()
         check = self.check_count
 
+        # ── Alert mode: report the catalyst + position, not indicators ─────────
+        if STRATEGY_MODE == "alert":
+            price = self.last_price
+            price_str = f"${price:.2f}" if price is not None else "$?"
+            hot_str = f"🔥HOT(vel={self.mention_velocity})" if self.is_hot else \
+                      f"vel={self.mention_velocity}/{PRIORITY_MENTIONS}"
+            if self.in_position and self.buy_price and price:
+                pnl  = (price - self.buy_price) / self.buy_price * 100
+                peak = ((self.high_since_buy - self.buy_price) / self.buy_price * 100
+                        if self.high_since_buy else 0.0)
+                trail_at = (self.high_since_buy * (1 - ALERT_TRAIL_STOP / 100.0)
+                            if self.high_since_buy else 0.0)
+                status = (f"📈 IN POSITION P&L {pnl:+.2f}%  peak +{peak:.1f}%  "
+                          f"trail@${trail_at:.2f} / hard@${self.buy_price*(1-ALERT_HARD_STOP/100):.2f}")
+            elif self.is_hot:
+                status = "🔥 BUY ZONE — catalyst live"
+            else:
+                status = "😴 watching for mention burst"
+            return (f"  [{ticker_tag(self.ticker)}] {price_str}  {hot_str}  "
+                    f"age={age:.0f}s ttl={left:.0f}s  #{check}  {status}")
+
         # ── Not yet loaded ─────────────────────────────────────────────────────
         if not self.bars_fetched:
             next_fetch = max(0, BAR_REFRESH - (time.time() - self.last_bar_fetch))
@@ -871,6 +909,51 @@ class TickerState:
             "sell_signal":    bool(s.get("sell")),
         }
 
+    def alert_state(self) -> dict:
+        """
+        Dashboard state for the alert strategy. The "signal" here is the mention
+        burst, so proximity is how close mention_velocity is to the hot threshold.
+        Once in a position, surfaces live P&L and the peak gain the trailing stop
+        is protecting. Reuses the generic proximity keys the frontend renders.
+        """
+        if PRIORITY_MENTIONS > 0:
+            pct = int(min(100, self.mention_velocity / PRIORITY_MENTIONS * 100))
+        else:
+            pct = 100 if self.is_hot else 0
+
+        pnl_pct = peak_gain = None
+        if self.in_position and self.buy_price:
+            if self.last_price:
+                pnl_pct = round((self.last_price - self.buy_price) / self.buy_price * 100, 2)
+            if self.high_since_buy:
+                peak_gain = round((self.high_since_buy - self.buy_price) / self.buy_price * 100, 2)
+
+        if self.in_position:
+            status = "in_position"
+        elif self.is_hot:
+            status = "buy_zone"
+        elif pct > 0:
+            status = "aligning"
+        else:
+            status = "watching"
+
+        return {
+            "strategy":         "alert",
+            "price":            round(self.last_price, 4) if self.last_price else None,
+            "proximity_pct":    pct,
+            "status":           status,
+            "in_position":      self.in_position,
+            "buy_price":        round(self.buy_price, 4) if self.buy_price else None,
+            "pnl_pct":          pnl_pct,
+            "peak_gain_pct":    peak_gain,
+            "is_hot":           self.is_hot,
+            "mention_velocity": self.mention_velocity,
+            "hard_stop_pct":    ALERT_HARD_STOP,
+            "trail_stop_pct":   ALERT_TRAIL_STOP,
+            "bars_fetched":     self.bars_fetched,
+            "data_source":      getattr(self, "_data_source", "alpaca"),
+        }
+
     def proximity_state(self) -> dict:
         """
         Return a JSON-serialisable dict describing the current signal proximity.
@@ -879,6 +962,8 @@ class TickerState:
         """
         if STRATEGY_MODE == "three_indicator":
             return self.three_indicator_state()
+        if STRATEGY_MODE == "alert":
+            return self.alert_state()
 
         rsi  = self.last_rsi
         hist = self.last_hist
@@ -1242,6 +1327,11 @@ class SignalEngine:
                     lambda sym, price, vol, ts: self.rt_bars.on_trade(sym, price, vol, ts)
                 )
                 print("[STRATEGY] realtime bars: aggregating live OHLCV from Finnhub trades")
+        elif STRATEGY_MODE == "alert":
+            print(f"[STRATEGY] alert active  (entry=mention burst, "
+                  f"exit=trail {ALERT_TRAIL_STOP:.0f}% + hard {ALERT_HARD_STOP:.0f}%, "
+                  f"min_hold={ALERT_MIN_HOLD}s, trader={TRADER_MODE})")
+            print("[STRATEGY] the catalyst is the buy; exits are the validated trail+hard-stop recipe")
 
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
@@ -1474,6 +1564,10 @@ class SignalEngine:
             if REALTIME_BARS and not self.rt_bars.is_seeded(ts.ticker):
                 self.rt_bars.seed(ts.ticker, df)
             self._eval_three_indicator(ts, self._strategy_df(ts, df))
+        elif STRATEGY_MODE == "alert":
+            # Entry/exit run every second on the live price in _check_proximity;
+            # nothing to do on a closed bar except keep the dashboard fed.
+            self._eval_alert(ts)
         else:
             ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val,
                                open_positions=open_pos)
@@ -1560,6 +1654,85 @@ class SignalEngine:
             ts.high_since_buy = None
             ts.priority_buy   = False
 
+    # ── Alert strategy evaluation (gated by STRATEGY_MODE=alert) ──────────────
+
+    def _eval_alert(self, ts: TickerState):
+        """
+        The alert engine. Entry = the catalyst (ticker is hot from a mention
+        burst); exit = trailing stop + hard stop, the recipe validated in
+        backtest_exits.py. Deliberately uses NO indicator, NO time cap and NO
+        take-profit — those tested worse. Runs every second on the live price.
+        """
+        price = ts.last_price
+        if price is None or price <= 0:
+            return
+
+        if not ts.in_position:
+            # ── ENTRY: the mention burst is the signal ───────────────────────
+            if not ts.is_hot:
+                return
+            if MAX_PRICE > 0 and price > MAX_PRICE:
+                return
+            if MAX_TOTAL_EXPOSURE > 0:
+                open_pos = sum(1 for t in self.active.values() if t.in_position)
+                if open_pos * TRADE_AMOUNT >= MAX_TOTAL_EXPOSURE:
+                    return
+            # Optional falling-knife veto — skip if already dumping vs last close.
+            if ALERT_REQUIRE_GREEN and ts.cached_df is not None and len(ts.cached_df) >= 2:
+                prev_close = float(ts.cached_df["close"].iloc[-2])
+                if prev_close > 0 and price < prev_close:
+                    print(f"  [{ticker_tag(ts.ticker)}] ⛔ alert BUY vetoed — "
+                          f"price ${price:.2f} below prior close ${prev_close:.2f} (falling)")
+                    return
+
+            print(f"  [{ticker_tag(ts.ticker)}] ✅ ALERT BUY  price=${price:.2f}  "
+                  f"velocity={ts.mention_velocity}  (mention burst)")
+            log_buy(
+                ticker=ts.ticker, price=price,
+                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
+                priority=True, mention_velocity=ts.mention_velocity,
+                atr=ts.last_atr, vwap=ts.last_vwap, rvol=ts.last_rvol,
+            )
+            ts.in_position    = True
+            ts.buy_price      = price
+            ts.buy_time       = _now_iso()
+            ts.buy_time_ts    = time.time()
+            ts.priority_buy   = True
+            ts.high_since_buy = price
+            return
+
+        # ── EXIT: trailing stop + hard stop ──────────────────────────────────
+        if ts.high_since_buy is None or price > ts.high_since_buy:
+            ts.high_since_buy = price   # ratchet the peak up
+
+        # Brief min-hold so a momentary dip on the entry tick can't insta-stop.
+        if ts.buy_time_ts and (time.time() - ts.buy_time_ts) < ALERT_MIN_HOLD:
+            return
+
+        reason = None
+        if ALERT_HARD_STOP > 0 and price <= ts.buy_price * (1 - ALERT_HARD_STOP / 100.0):
+            reason = f"alert_hard_stop (-{ALERT_HARD_STOP:.0f}%)"
+        elif (ALERT_TRAIL_STOP > 0 and ts.high_since_buy
+              and price <= ts.high_since_buy * (1 - ALERT_TRAIL_STOP / 100.0)):
+            peak_gain = (ts.high_since_buy - ts.buy_price) / ts.buy_price * 100
+            reason = (f"alert_trail_stop (-{ALERT_TRAIL_STOP:.0f}% from peak "
+                      f"+{peak_gain:.1f}%)")
+
+        if reason:
+            hold_min = round((time.time() - ts.buy_time_ts) / 60, 1) if ts.buy_time_ts else None
+            print(f"  [{ticker_tag(ts.ticker)}] 🔻 ALERT SELL  price=${price:.2f}  [{reason}]")
+            log_sell(
+                ticker=ts.ticker, price=price, buy_price=ts.buy_price,
+                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
+                buy_time=ts.buy_time, reason=reason, hold_minutes=hold_min,
+            )
+            ts.in_position    = False
+            ts.buy_price      = None
+            ts.buy_time       = None
+            ts.buy_time_ts    = None
+            ts.high_since_buy = None
+            ts.priority_buy   = False
+
     # ── Every-second proximity check ──────────────────────────────────────────
 
     def _check_proximity(self, ts: TickerState):
@@ -1581,6 +1754,16 @@ class SignalEngine:
         if fh_price is not None:
             ts.last_price = fh_price
 
+        # ── Alert mode: entry on the mention burst, exit on trailing/hard stop.
+        # Runs every second on the live price and bypasses the momentum-specific
+        # SL/TP/RSI exits below (the alert recipe defines its own exits).
+        if STRATEGY_MODE == "alert":
+            self._eval_alert(ts)
+            ts.check_count += 1
+            print(ts.proximity_summary())
+            return
+
+        if fh_price is not None:
             # ── 2. Real-time stop-loss / take-profit check ─────────────────────
             # Check SL/TP on every tick so we don't have to wait up to a minute
             # for the next bar fetch to exit a losing or winning position.
