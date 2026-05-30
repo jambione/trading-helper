@@ -10,3 +10,7 @@ venv/
 transcription/wb_watchlist.json
 # Signal engine runtime state (regenerated every few seconds)
 signal_state.json
+
+# Local control script artifacts
+.trading.pids
+logs/

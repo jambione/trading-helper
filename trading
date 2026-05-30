@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+#
+# trading — start/stop the LOCAL stack (dashboard + signal engine) in the
+# background, with PID tracking, a health check, and a version readout.
+#
+#   ./trading start     launch dashboard + engine (background), wait until up
+#   ./trading stop       graceful stop, then force-kill any stragglers
+#   ./trading restart    stop then start (use after editing code — processes
+#                        don't reload on their own)
+#   ./trading status     what's running, for how long, and which build
+#   ./trading logs       tail both logs (Ctrl+C to stop tailing)
+#
+# This is the local-dev control. For the full production session (Cloudflare
+# tunnel, Discord, audio) use morning_start.sh / evening_stop.sh.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+ROOT="$(pwd)"
+PORT=8888
+URL="http://localhost:${PORT}"
+LOGDIR="$ROOT/logs"
+PIDFILE="$ROOT/.trading.pids"
+
+if [ -x "venv/bin/python" ]; then
+    PY="venv/bin/python"
+else
+    echo "⚠ venv not found — using system python3 (MLX Whisper may be unavailable)."
+    PY="python3"
+fi
+
+_running() { pgrep -f "$1" >/dev/null 2>&1; }
+
+_version() {
+    # Pull the build badge straight from the running dashboard.
+    curl -s --max-time 3 "$URL/api/state" 2>/dev/null | "$PY" -c '
+import sys, json
+try:
+    v = json.load(sys.stdin).get("version", {}) or {}
+    print("   dashboard %s  |  engine %s  |  strategy %s" % (
+        v.get("dashboard"), v.get("engine") or "off", v.get("engine_strategy") or "-"))
+except Exception:
+    print("   (dashboard not responding yet)")
+' 2>/dev/null || echo "   (dashboard not responding yet)"
+}
+
+cmd_start() {
+    if _running "dashboard.py" || _running "signal_engine.py"; then
+        echo "Already running. Use './trading restart' to reload code, or './trading status'."
+        cmd_status
+        return 0
+    fi
+    mkdir -p "$LOGDIR"
+    : > "$PIDFILE"
+
+    echo "Starting dashboard → $URL"
+    nohup "$PY" -u dashboard.py      >"$LOGDIR/dashboard.log" 2>&1 &
+    echo "$!" >> "$PIDFILE"
+
+    # Wait for the dashboard to bind the port before launching the engine,
+    # so the engine's first poll of localhost:8888 succeeds.
+    for _ in $(seq 1 30); do
+        curl -s --max-time 2 "$URL/api/meta" >/dev/null 2>&1 && break
+        sleep 0.5
+    done
+
+    echo "Starting signal engine"
+    nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 &
+    echo "$!" >> "$PIDFILE"
+
+    sleep 2
+    echo "✅ Started. Logs: $LOGDIR/{dashboard,engine}.log"
+    _version
+    echo "   Open $URL  (hard-refresh: Cmd+Shift+R)"
+}
+
+cmd_stop() {
+    echo "Stopping…"
+    # Graceful first — by tracked PID, then by name as a backstop.
+    if [ -f "$PIDFILE" ]; then
+        while read -r pid; do [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true; done < "$PIDFILE"
+    fi
+    pkill -TERM -f "signal_engine.py" 2>/dev/null || true
+    pkill -TERM -f "dashboard.py"     2>/dev/null || true
+    sleep 2
+    # Force-kill anything still alive.
+    pkill -KILL -f "signal_engine.py" 2>/dev/null || true
+    pkill -KILL -f "dashboard.py"     2>/dev/null || true
+    rm -f "$PIDFILE"
+    echo "✅ Stopped."
+}
+
+cmd_status() {
+    local d e
+    d=$(pgrep -f "dashboard.py"     | tr '\n' ' ' || true)
+    e=$(pgrep -f "signal_engine.py" | tr '\n' ' ' || true)
+    echo "dashboard : ${d:-not running}"
+    echo "engine    : ${e:-not running}"
+    if [ -n "${d:-}" ]; then _version; fi
+}
+
+cmd_logs() {
+    mkdir -p "$LOGDIR"
+    tail -n 40 -f "$LOGDIR/dashboard.log" "$LOGDIR/engine.log"
+}
+
+case "${1:-}" in
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    restart) cmd_stop; sleep 1; cmd_start ;;
+    status)  cmd_status ;;
+    logs)    cmd_logs ;;
+    *) echo "usage: ./trading {start|stop|restart|status|logs}"; exit 1 ;;
+esac
