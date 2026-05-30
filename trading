@@ -29,7 +29,39 @@ else
     PY="python3"
 fi
 
+# Cloudflare tunnel (exposes the local dashboard at the public hostname).
+CF=""
+for c in /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared; do
+    [ -x "$c" ] && CF="$c" && break
+done
+CF_CONFIG="$ROOT/cloudflared-config.yml"
+CF_TUNNEL="trading-helper"
+PUBLIC_URL="https://trading.jbrasfield.com"
+
 _running() { pgrep -f "$1" >/dev/null 2>&1; }
+_tunnel_running() { pgrep -f "cloudflared.*$CF_TUNNEL" >/dev/null 2>&1; }
+
+_start_tunnel() {
+    if [ -z "$CF" ]; then
+        echo "⚠ cloudflared not found — skipping tunnel."
+        return 1
+    fi
+    if _tunnel_running; then
+        echo "Tunnel already running → $PUBLIC_URL"
+        return 0
+    fi
+    mkdir -p "$LOGDIR"
+    echo "Starting Cloudflare tunnel → $PUBLIC_URL"
+    nohup "$CF" tunnel --config "$CF_CONFIG" run "$CF_TUNNEL" >"$LOGDIR/tunnel.log" 2>&1 &
+    echo "$!" >> "$PIDFILE"
+    sleep 2
+}
+
+_stop_tunnel() {
+    pkill -TERM -f "cloudflared.*$CF_TUNNEL" 2>/dev/null || true
+    sleep 1
+    pkill -KILL -f "cloudflared.*$CF_TUNNEL" 2>/dev/null || true
+}
 
 _version() {
     # Pull the build badge straight from the running dashboard.
@@ -45,8 +77,12 @@ except Exception:
 }
 
 cmd_start() {
+    local want_tunnel=0
+    case "${1:-}" in tunnel|--tunnel|-t) want_tunnel=1 ;; esac
+
     if _running "dashboard.py" || _running "signal_engine.py"; then
         echo "Already running. Use './trading restart' to reload code, or './trading status'."
+        [ "$want_tunnel" = 1 ] && _start_tunnel
         cmd_status
         return 0
     fi
@@ -68,10 +104,13 @@ cmd_start() {
     nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 &
     echo "$!" >> "$PIDFILE"
 
+    [ "$want_tunnel" = 1 ] && _start_tunnel
+
     sleep 2
     echo "✅ Started. Logs: $LOGDIR/{dashboard,engine}.log"
     _version
     echo "   Open $URL  (hard-refresh: Cmd+Shift+R)"
+    _tunnel_running && echo "   Public: $PUBLIC_URL"
 }
 
 cmd_stop() {
@@ -82,12 +121,13 @@ cmd_stop() {
     fi
     pkill -TERM -f "signal_engine.py" 2>/dev/null || true
     pkill -TERM -f "dashboard.py"     2>/dev/null || true
+    _stop_tunnel
     sleep 2
     # Force-kill anything still alive.
     pkill -KILL -f "signal_engine.py" 2>/dev/null || true
     pkill -KILL -f "dashboard.py"     2>/dev/null || true
     rm -f "$PIDFILE"
-    echo "✅ Stopped."
+    echo "✅ Stopped (incl. tunnel)."
 }
 
 cmd_status() {
@@ -96,19 +136,42 @@ cmd_status() {
     e=$(pgrep -f "signal_engine.py" | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
+    if _tunnel_running; then
+        echo "tunnel    : up → $PUBLIC_URL"
+    else
+        echo "tunnel    : not running"
+    fi
     if [ -n "${d:-}" ]; then _version; fi
 }
 
 cmd_logs() {
     mkdir -p "$LOGDIR"
-    tail -n 40 -f "$LOGDIR/dashboard.log" "$LOGDIR/engine.log"
+    local files="$LOGDIR/dashboard.log $LOGDIR/engine.log"
+    [ -f "$LOGDIR/tunnel.log" ] && files="$files $LOGDIR/tunnel.log"
+    tail -n 40 -f $files
 }
 
 case "${1:-}" in
-    start)   cmd_start ;;
+    start)   shift; cmd_start "$@" ;;
     stop)    cmd_stop ;;
-    restart) cmd_stop; sleep 1; cmd_start ;;
+    restart) shift; cmd_stop; sleep 1; cmd_start "$@" ;;
     status)  cmd_status ;;
     logs)    cmd_logs ;;
-    *) echo "usage: ./trading {start|stop|restart|status|logs}"; exit 1 ;;
+    tunnel)
+        case "${2:-}" in
+            stop) _stop_tunnel; echo "✅ Tunnel stopped." ;;
+            *)    _start_tunnel; _tunnel_running && echo "✅ Tunnel up → $PUBLIC_URL" ;;
+        esac ;;
+    *) cat <<'USAGE'
+usage: ./trading <command>
+
+  start [tunnel]      start dashboard + engine (add 'tunnel' to also expose
+                      the public Cloudflare URL)
+  stop                stop dashboard + engine + tunnel
+  restart [tunnel]    stop then start (reload code after edits)
+  status              what's running + which build
+  logs                tail dashboard + engine (+ tunnel) logs
+  tunnel [stop]       start/stop just the Cloudflare tunnel
+USAGE
+       exit 1 ;;
 esac
