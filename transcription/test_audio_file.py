@@ -8,7 +8,7 @@ and a final summary.
 
 Usage (from repo root):
     python3 transcription/test_audio_file.py
-    python3 transcription/test_audio_file.py "Ticker audio 2.mp3"
+    python3 transcription/test_audio_file.py "samples/Ticker audio 2.mp3"
     python3 transcription/test_audio_file.py some_file.mp3 --whole
     python3 transcription/test_audio_file.py some_file.mp3 --show-empty
 
@@ -59,7 +59,7 @@ INITIAL_PROMPT = (
     "XOM CVX COP BA LMT RTX VZ T TMUS"
 )
 
-DEFAULT_FILE = Path(__file__).parent.parent / "Ticker audio 2.mp3"
+DEFAULT_FILE = Path(__file__).parent.parent / "samples" / "Ticker audio 2.mp3"
 
 
 # ── Audio loading ─────────────────────────────────────────────────────────────

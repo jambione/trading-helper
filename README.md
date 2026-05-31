@@ -11,6 +11,11 @@ Quick links:
 - Alpaca execution: `alpaca_trader.py`
 - Config: `config.py`, `bot_config.json`, `secrets.example.json`
 
+Docs (see `docs/`)
+- Onboarding guide: `docs/ONBOARDING.md`
+- Ticker recognition notes: `docs/TICKER_RECOGNITION_SUMMARY.md`,
+  `docs/TICKER_RECOGNITION_IMPROVEMENTS.md`, `docs/CODX_FIX_SUMMARY.md`
+
 Quickstart (local)
 1. Create a virtualenv and install deps:
 

@@ -1,9 +1,16 @@
 secrets.json
+.DS_Store
 __pycache__/
 *.pyc
 *.pyo
 debug.log
 *.log
+
+# Large media & generated data — kept locally under samples/, not tracked
+*.mp3
+*.m4a
+backtest_trades.csv
+backtest_results.csv
 transcription/__pycache__/
 venv/
 .venv/
