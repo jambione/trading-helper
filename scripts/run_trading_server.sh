@@ -65,7 +65,7 @@ echo "======================================" >> "$LOG"
 echo "" > "$TUNNEL_LOG"
 if [ -n "$CF" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting Cloudflare tunnel (trading.jbrasfield.com)..." >> "$TUNNEL_LOG"
-    "$CF" tunnel --config /Users/jonathanbrasfield/repo/trading-helper/trading-helper/cloudflared-config.yml run trading-helper >> "$TUNNEL_LOG" 2>&1 &
+    "$CF" tunnel --config /Users/jonathanbrasfield/repo/trading-helper/trading-helper/config/cloudflared-config.yml run trading-helper >> "$TUNNEL_LOG" 2>&1 &
     CF_PID=$!
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipping tunnel — cloudflared not found." >> "$TUNNEL_LOG"

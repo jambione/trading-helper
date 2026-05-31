@@ -3,7 +3,8 @@
 
 # Get the directory of this script
 DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="$DIR/cloudflared-config.yml"
+REPO="$(dirname "$DIR")"   # repo root (this script now lives in scripts/)
+CONFIG_FILE="$REPO/config/cloudflared-config.yml"
 
 echo "Stopping any running cloudflared processes..."
 pkill cloudflared 2>/dev/null || true

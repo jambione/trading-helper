@@ -11,7 +11,7 @@
 #   ./trading logs       tail both logs (Ctrl+C to stop tailing)
 #
 # This is the local-dev control. For the full production session (Cloudflare
-# tunnel, Discord, audio) use morning_start.sh / evening_stop.sh.
+# tunnel, Discord, audio) use scripts/morning_start.sh / scripts/evening_stop.sh.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,7 +34,7 @@ CF=""
 for c in /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared; do
     [ -x "$c" ] && CF="$c" && break
 done
-CF_CONFIG="$ROOT/cloudflared-config.yml"
+CF_CONFIG="$ROOT/config/cloudflared-config.yml"
 CF_TUNNEL="trading-helper"
 PUBLIC_URL="https://trading.jbrasfield.com"
 

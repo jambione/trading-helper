@@ -21,7 +21,7 @@ if curl -s "$BACKEND/api/meta" > /dev/null 2>&1; then
     echo "      ✓ Server already running at $BACKEND"
 else
     echo "      Server not running — starting it now..."
-    nohup bash "$REPO/run_trading_server.sh" >> "$REPO/server.log" 2>&1 &
+    nohup bash "$REPO/scripts/run_trading_server.sh" >> "$REPO/server.log" 2>&1 &
     echo "      Waiting up to 60s for server to come up..."
     for i in $(seq 1 60); do
         sleep 1
