@@ -27,7 +27,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_SECRETS_FILE = Path(__file__).parent / "secrets.json"
+_SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
 
 # ── Static config ─────────────────────────────────────────────────────────────
 

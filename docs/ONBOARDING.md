@@ -49,10 +49,10 @@ pip install -r requirements.txt
 Copy the example and fill in your values:
 
 ```bash
-cp secrets.example.json secrets.json
+cp config/secrets.example.json config/secrets.json
 ```
 
-Edit `secrets.json`:
+Edit `config/secrets.json`:
 
 ```json
 {
@@ -356,7 +356,7 @@ Or use environment variables: `REQUIRE_AUTH=true`, `DASHBOARD_USER`, `DASHBOARD_
 |------|---------|
 | `dashboard.py` | FastAPI backend — prices, signals, WebSocket, REST API |
 | `auth.py` | JWT token creation and verification |
-| `config.py` | Config loading/saving (`bot_config.json` + `secrets.json`) |
+| `config.py` | Config loading/saving (`config/bot_config.json` + `config/secrets.json`) |
 | `signals.py` | Multi-indicator signal calculation |
 | `alpaca_api.py` | Alpaca bar fetching and price lookup |
 | `finnhub_stream.py` | Finnhub WebSocket price stream |
@@ -371,6 +371,6 @@ Or use environment variables: `REQUIRE_AUTH=true`, `DASHBOARD_USER`, `DASHBOARD_
 | `static/js/config.js` | Settings drawer component |
 | `static/css/styles.css` | All styles |
 | `transcription/wb_watchlist.json` | Live watchlist — the shared data file |
-| `secrets.json` | API keys and auth credentials (not in git) |
-| `secrets.example.json` | Template for secrets.json |
-| `bot_config.json` | Non-secret settings (timeframe, thresholds, etc.) |
+| `config/secrets.json` | API keys and auth credentials (not in git) |
+| `config/secrets.example.json` | Template for config/secrets.json |
+| `config/bot_config.json` | Non-secret settings (timeframe, thresholds, etc.) |

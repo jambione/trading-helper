@@ -92,7 +92,7 @@ def _load_alpaca_credentials() -> tuple[str, str]:
     api_key    = os.getenv("ALPACA_API_KEY", "")
     secret_key = os.getenv("ALPACA_SECRET_KEY", "")
     if not api_key or not secret_key:
-        secrets_path = _ROOT / "secrets.json"
+        secrets_path = _ROOT / "config" / "secrets.json"
         if secrets_path.exists():
             try:
                 s = json.loads(secrets_path.read_text())

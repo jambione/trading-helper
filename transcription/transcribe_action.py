@@ -163,7 +163,7 @@ _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--device", type=int, default=None)
 _args, _ = _parser.parse_known_args()
 
-_cfg_file = Path(__file__).parent.parent / "bot_config.json"
+_cfg_file = Path(__file__).parent.parent / "config" / "bot_config.json"
 _saved_device = None
 if _cfg_file.exists():
     try:

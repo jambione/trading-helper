@@ -9,7 +9,7 @@ Quick links:
 - Signal engine: `signal_engine.py`
 - Indicators: `signals.py`
 - Alpaca execution: `alpaca_trader.py`
-- Config: `config.py`, `bot_config.json`, `secrets.example.json`
+- Config: `config.py`, `config/bot_config.json`, `config/secrets.example.json`
 
 Docs (see `docs/`)
 - Onboarding guide: `docs/ONBOARDING.md`
@@ -28,8 +28,8 @@ pip install -r requirements.txt
 2. Copy secrets example and edit keys:
 
 ```bash
-cp secrets.example.json secrets.json
-# edit secrets.json (do NOT commit this file)
+cp config/secrets.example.json config/secrets.json
+# edit config/secrets.json (do NOT commit this file)
 ```
 
 3. Run the dashboard (opens browser):
