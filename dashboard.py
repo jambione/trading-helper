@@ -1470,7 +1470,11 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
 
 if __name__ == "__main__":
     import webbrowser
-    url = f"http://localhost:{PORT}"
-    print(f"\n  Signal Scanner  —  {url}\n  Ctrl+C to stop\n")
-    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    local_url = f"http://localhost:{PORT}"
+    # Open the public (tunnelled) dashboard by default; override with DASHBOARD_OPEN_URL.
+    open_url = os.environ.get(
+        "DASHBOARD_OPEN_URL", "https://trading.jbrasfield.com/?user=jmb"
+    )
+    print(f"\n  Signal Scanner  —  {local_url}  (opening {open_url})\n  Ctrl+C to stop\n")
+    threading.Timer(1.5, lambda: webbrowser.open(open_url)).start()
     uvicorn.run("dashboard:app", host="0.0.0.0", port=PORT, log_level="warning")

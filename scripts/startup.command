@@ -4,7 +4,8 @@
 #   1. ./trading start  → dashboard + signal engine + Cloudflare tunnel
 #   2. Open Discord → Stock Scanners & Alerts, click Join Voice + Watch Stream,
 #      then start the transcriber  (the Discord/transcriber steps from morning_start.sh)
-#   3. Launch the macOS TradingView/Webull agent (mac_agent.sh).
+#   3. Arrange windows  → Brave left, Webull right, Terminal minimized (runs in background)
+#   4. Launch the macOS TradingView/Webull agent (mac_agent.sh).
 #      This stays in the foreground and keeps THIS window open — leave it running.
 #
 # Source of truth lives in the repo at scripts/startup.command; a copy sits on the
@@ -22,7 +23,7 @@ echo "============================================"
 echo ""
 
 # ── 1. Start the local stack (dashboard + engine + tunnel) ────────────────────
-echo "[1/3] ./trading start"
+echo "[1/4] ./trading start"
 ./trading start
 
 # Make sure the backend is actually answering before we drive Discord / transcriber.
@@ -35,7 +36,7 @@ done
 
 # ── 2. Discord (join voice + watch stream) and transcriber ────────────────────
 echo ""
-echo "[2/3] Opening Discord → Stock Scanners & Alerts (join voice + watch stream)..."
+echo "[2/4] Opening Discord → Stock Scanners & Alerts (join voice + watch stream)..."
 python3 "$REPO/click_join_voice.py" \
     && echo "      ✓ Joined voice channel + Watch Stream." \
     || echo "      ⚠ Could not auto-click — please join manually."
@@ -51,9 +52,14 @@ else
     echo "      ✗ Could not reach backend. Response: ${RESPONSE:-(empty)}"
 fi
 
-# ── 3. macOS TradingView/Webull agent (foreground — keeps this window open) ────
+# ── 3. Arrange windows (background — fires after mac_agent starts) ───────────
 echo ""
-echo "[3/3] Launching macOS TradingView/Webull agent (mac_agent.sh)..."
+echo "[3/4] Scheduling window arrangement in 6 s..."
+bash "$REPO/scripts/arrange_windows.sh" 6 &
+
+# ── 4. macOS TradingView/Webull agent (foreground — keeps this window open) ────
+echo ""
+echo "[4/4] Launching macOS TradingView/Webull agent (mac_agent.sh)..."
 echo "      Keep this window open while trading. Close it (or Ctrl+C) to stop the agent."
 echo ""
 cd "$REPO"
