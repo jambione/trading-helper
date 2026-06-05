@@ -2,9 +2,10 @@
 # morning_start.sh
 # Automates the morning trading setup:
 #   1. Start backend server if not already running
-#   2. Switch Mac audio output to Multi-Output Device
-#   3. Open Discord → Stock Scanners & Alerts, click Join Voice + Watch Stream
-#   4. Start transcription via the dashboard API
+#   2. Open Discord → Stock Scanners & Alerts, click Join Voice + Watch Stream
+#   3. Start transcription via the dashboard API
+#
+# Audio: transcription uses ScreenCaptureKit (no BlackHole / Multi-Output Device needed).
 
 REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 BACKEND="http://localhost:8888"
@@ -16,7 +17,7 @@ echo "========================================"
 echo ""
 
 # ── 1. Start backend if not running ───────────────────────────────────────────
-echo "[1/4] Checking backend server..."
+echo "[1/3] Checking backend server..."
 if curl -s "$BACKEND/api/meta" > /dev/null 2>&1; then
     echo "      ✓ Server already running at $BACKEND"
 else
@@ -36,24 +37,14 @@ else
     done
 fi
 
-# ── 2. Switch audio output to Multi-Output Device ─────────────────────────────
-echo "[2/4] Switching audio to Multi-Output Device..."
-if ! command -v SwitchAudioSource &>/dev/null; then
-    echo "      Installing SwitchAudioSource (one-time)..."
-    brew install switchaudio-osx
-fi
-SwitchAudioSource -s "Multi-Output Device" 2>/dev/null \
-    && echo "      ✓ Audio output set to Multi-Output Device." \
-    || echo "      ⚠ Could not switch audio — check Audio MIDI Setup."
-
-# ── 3. Open Discord → right channel, click Join Voice + Watch Stream ──────────
-echo "[3/4] Opening Discord → Stock Scanners & Alerts..."
+# ── 2. Open Discord → right channel, click Join Voice + Watch Stream ──────────
+echo "[2/3] Opening Discord → Stock Scanners & Alerts..."
 python3 "$REPO/click_join_voice.py" \
     && echo "      ✓ Joined voice channel + Watch Stream." \
     || echo "      ⚠ Could not auto-click — please join manually."
 
-# ── 4. Start transcription ────────────────────────────────────────────────────
-echo "[4/4] Starting transcription..."
+# ── 3. Start transcription ────────────────────────────────────────────────────
+echo "[3/3] Starting transcription..."
 sleep 2
 RESPONSE=$(curl -s -X POST "$BACKEND/api/transcriber/start" 2>/dev/null)
 

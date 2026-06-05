@@ -3,8 +3,8 @@ transcribe_action.py — CNBC audio → stock ticker detection
 Apple Silicon: MLX Whisper large-v3-turbo (Neural Engine / GPU)
 Fallback:      faster-whisper medium.en (CPU)
 
-Pipeline:
-  BlackHole 48kHz → resample 3:1 → 16kHz → 1.5s chunks → Whisper → extract tickers → dashboard API
+Pipeline (macOS):  ScreenCaptureKit → 48kHz float32 → resample 3:1 → 16kHz → 1.5s chunks → Whisper → extract tickers → dashboard API
+Pipeline (Windows): PyAudio loopback → 44.1kHz → resample → 16kHz → 1.5s chunks → Whisper → extract tickers → dashboard API
 
 Ticker extraction:
   1. Collapse letter-name phonetics  ("en vee dee ay"  → NVDA)
@@ -17,6 +17,8 @@ Ticker extraction:
 import argparse
 import json
 import os as _os
+import shutil
+import subprocess
 import sys as _sys
 import time
 import threading
@@ -156,31 +158,33 @@ def _send_ticker(ticker: str, count: int = 1):
 
 
 # =============================================================================
-# CONFIG — device index
+# CONFIG — device index (Windows only; macOS uses ScreenCaptureKit)
 # =============================================================================
 
-_parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument("--device", type=int, default=None)
-_args, _ = _parser.parse_known_args()
+DEVICE_INDEX = None
+if _sys.platform != "darwin":
+    _parser = argparse.ArgumentParser(add_help=False)
+    _parser.add_argument("--device", type=int, default=None)
+    _args, _ = _parser.parse_known_args()
 
-_cfg_file = Path(__file__).parent.parent / "config" / "bot_config.json"
-_saved_device = None
-if _cfg_file.exists():
-    try:
-        _cfg_data = json.loads(_cfg_file.read_text())
-        _saved_device = _cfg_data.get("device_index")
-    except Exception:
-        pass
+    _cfg_file = Path(__file__).parent.parent / "config" / "bot_config.json"
+    _saved_device = None
+    if _cfg_file.exists():
+        try:
+            _cfg_data = json.loads(_cfg_file.read_text())
+            _saved_device = _cfg_data.get("device_index")
+        except Exception:
+            pass
 
-DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
+    DEVICE_INDEX = _args.device if _args.device is not None else _saved_device
 
-_tmp_p = pyaudio.PyAudio()
-_valid_inputs = [i for i in range(_tmp_p.get_device_count())
-                 if _tmp_p.get_device_info_by_index(i)["maxInputChannels"] > 0]
-_tmp_p.terminate()
-if DEVICE_INDEX is not None and DEVICE_INDEX not in _valid_inputs:
-    print(f"[WARN] Saved device {DEVICE_INDEX} not found — will auto-detect.")
-    DEVICE_INDEX = None
+    _tmp_p = pyaudio.PyAudio()
+    _valid_inputs = [i for i in range(_tmp_p.get_device_count())
+                     if _tmp_p.get_device_info_by_index(i)["maxInputChannels"] > 0]
+    _tmp_p.terminate()
+    if DEVICE_INDEX is not None and DEVICE_INDEX not in _valid_inputs:
+        print(f"[WARN] Saved device {DEVICE_INDEX} not found — will auto-detect.")
+        DEVICE_INDEX = None
 
 
 # =============================================================================
@@ -239,62 +243,59 @@ _init_asr()
 # AUDIO SETUP
 # =============================================================================
 
-p = pyaudio.PyAudio()
-
-print("\nAvailable audio input devices:")
-for i in range(p.get_device_count()):
-    dev = p.get_device_info_by_index(i)
-    if dev["maxInputChannels"] > 0:
-        tag = " ← LOOPBACK" if "loopback" in dev["name"].lower() else ""
-        bh  = " ← BLACKHOLE" if "blackhole" in dev["name"].lower() else ""
-        print(f"  {i:2d}: {dev['name']}{tag}{bh}")
+_SCK_PROC  = None
+stream     = None
+_channels  = 2
 
 if _sys.platform == "darwin":
-    _loopback_keywords = ("blackhole", "loopback", "multi-output")
-    _loopback_idx = None
+    # macOS: use ScreenCaptureKit helper to capture system audio directly.
+    # No virtual audio device (BlackHole) or Multi-Output Device needed.
+    _sck_dir    = Path(__file__).parent
+    _sck_binary = _sck_dir / "sck_audio"
+    _sck_script = _sck_dir / "sck_audio.swift"
+    if _sck_binary.exists():
+        _sck_cmd = [str(_sck_binary), str(SAMPLE_RATE), str(_channels)]
+        print(f"[AUDIO] macOS — ScreenCaptureKit ({_sck_binary.name})", flush=True)
+    elif shutil.which("swift") and _sck_script.exists():
+        _sck_cmd = ["swift", str(_sck_script), str(SAMPLE_RATE), str(_channels)]
+        print("[AUDIO] macOS — ScreenCaptureKit (swift interpreter; compile sck_audio for faster startup)", flush=True)
+    else:
+        print("[ERROR] sck_audio binary not found. Rebuild it from transcription/:")
+        print("  swiftc sck_audio.swift -o sck_audio")
+        raise SystemExit(1)
+    _SCK_PROC = subprocess.Popen(_sck_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+else:
+    # Windows: use PyAudio loopback device
+    p = pyaudio.PyAudio()
+    print("\nAvailable audio input devices:")
     for i in range(p.get_device_count()):
         dev = p.get_device_info_by_index(i)
-        name_lower = dev["name"].lower()
-        if dev["maxInputChannels"] > 0 and any(k in name_lower for k in _loopback_keywords):
-            _loopback_idx = i
-            if "blackhole" in name_lower:
-                break
-    if _loopback_idx is not None:
-        if DEVICE_INDEX != _loopback_idx:
-            print(f"\n[AUDIO] Overriding device {DEVICE_INDEX} → loopback device {_loopback_idx}: "
-                  f"{p.get_device_info_by_index(_loopback_idx)['name']}")
-        DEVICE_INDEX = _loopback_idx
-    else:
-        print("[ERROR] No BlackHole or loopback device found on Mac.")
-        print("  Install BlackHole 2ch and set up a Multi-Output Device in Audio MIDI Setup.")
+        if dev["maxInputChannels"] > 0:
+            tag = " ← LOOPBACK" if "loopback" in dev["name"].lower() else ""
+            print(f"  {i:2d}: {dev['name']}{tag}")
+    if DEVICE_INDEX is None:
+        try:
+            choice = input("\nEnter device index (Enter = default): ").strip()
+            DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
+        except Exception:
+            DEVICE_INDEX = p.get_default_input_device_info()["index"]
+    print(f"Using device: {DEVICE_INDEX}", flush=True)
+    _dev_info = p.get_device_info_by_index(DEVICE_INDEX)
+    _channels = min(2, int(_dev_info["maxInputChannels"]))
+    try:
+        stream = p.open(
+            format=pyaudio.paFloat32,
+            channels=_channels,
+            rate=SAMPLE_RATE,
+            input=True,
+            input_device_index=DEVICE_INDEX,
+            frames_per_buffer=READ_FRAMES,
+        )
+    except OSError as e:
+        print(f"[ERROR] Could not open device {DEVICE_INDEX}: {e}")
         p.terminate()
         raise SystemExit(1)
-elif DEVICE_INDEX is None:
-    try:
-        choice = input("\nEnter device index (Enter = default): ").strip()
-        DEVICE_INDEX = int(choice) if choice else p.get_default_input_device_info()["index"]
-    except Exception:
-        DEVICE_INDEX = p.get_default_input_device_info()["index"]
-
-print(f"Using device: {DEVICE_INDEX}", flush=True)
-
-_dev_info = p.get_device_info_by_index(DEVICE_INDEX)
-_channels = min(2, int(_dev_info["maxInputChannels"]))
-
-try:
-    stream = p.open(
-        format=pyaudio.paFloat32,
-        channels=_channels,
-        rate=SAMPLE_RATE,
-        input=True,
-        input_device_index=DEVICE_INDEX,
-        frames_per_buffer=READ_FRAMES,
-    )
-except OSError as e:
-    print(f"[ERROR] Could not open device {DEVICE_INDEX}: {e}")
-    print("Check that BlackHole 2ch is installed and set as output in Audio MIDI Setup.")
-    p.terminate()
-    raise SystemExit(1)
 
 
 # =============================================================================
@@ -330,11 +331,20 @@ def _apply_gain(mono: np.ndarray) -> np.ndarray:
 
 def audio_capture():
     buf = np.empty(0, dtype=np.float32)
+    _chunk_bytes = READ_FRAMES * _channels * 4  # 4 bytes per sample (float32 or int32)
 
     while _running.is_set():
         try:
-            data = stream.read(READ_FRAMES, exception_on_overflow=False)
-            raw  = np.frombuffer(data, dtype=np.float32)
+            if _SCK_PROC is not None:
+                data = _SCK_PROC.stdout.read(_chunk_bytes)
+                if len(data) < _chunk_bytes:
+                    time.sleep(0.05)
+                    continue
+                # SCKit outputs float32 PCM directly
+                raw = np.frombuffer(data, dtype=np.float32)
+            else:
+                data = stream.read(READ_FRAMES, exception_on_overflow=False)
+                raw  = np.frombuffer(data, dtype=np.float32)
             mono = raw.reshape(-1, _channels).mean(axis=1)
 
             rms = float(np.sqrt(np.mean(mono ** 2)))
@@ -463,7 +473,11 @@ except KeyboardInterrupt:
         except Full:
             pass
 
-stream.stop_stream()
-stream.close()
-p.terminate()
+if _SCK_PROC is not None:
+    _SCK_PROC.terminate()
+    _SCK_PROC.wait(timeout=2)
+elif stream is not None:
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
 print("Stopped.")

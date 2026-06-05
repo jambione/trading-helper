@@ -19,7 +19,7 @@
   "wr_length": 14,
   "tv_chart_url": "https://www.tradingview.com/chart/x04Gfcu8",
   "brave_tv_tab": 1,
-  "device_index": 2,
+  "device_index": null,
   "mention_alert_threshold": 5,
   "mention_alert_window": 10,
   "strategy": "multiple_os",
