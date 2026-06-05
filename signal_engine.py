@@ -292,7 +292,7 @@ ALERT_REQUIRE_GREEN = os.getenv("ALERT_REQUIRE_GREEN", "0") in ("1", "true", "ye
 def _load_alpaca_credentials() -> tuple[str, str]:
     api_key    = os.getenv("ALPACA_API_KEY", "")
     secret_key = os.getenv("ALPACA_SECRET_KEY", "")
-    secrets_path = _HERE / "secrets.json"
+    secrets_path = _HERE / "config" / "secrets.json"
     if secrets_path.exists():
         try:
             s = json.loads(secrets_path.read_text())
@@ -318,7 +318,7 @@ def _load_finnhub_key() -> str:
     """
     key = os.getenv("FINNHUB_API_KEY", "")
     if not key:
-        secrets_path = _HERE / "secrets.json"
+        secrets_path = _HERE / "config" / "secrets.json"
         if secrets_path.exists():
             try:
                 s   = json.loads(secrets_path.read_text())

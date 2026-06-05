@@ -9,7 +9,12 @@ Quick links:
 - Signal engine: `signal_engine.py`
 - Indicators: `signals.py`
 - Alpaca execution: `alpaca_trader.py`
-- Config: `config.py`, `bot_config.json`, `secrets.example.json`
+- Config: `config.py`, `config/bot_config.json`, `config/secrets.example.json`
+
+Docs (see `docs/`)
+- Onboarding guide: `docs/ONBOARDING.md`
+- Ticker recognition notes: `docs/TICKER_RECOGNITION_SUMMARY.md`,
+  `docs/TICKER_RECOGNITION_IMPROVEMENTS.md`, `docs/CODX_FIX_SUMMARY.md`
 
 Quickstart (local)
 1. Create a virtualenv and install deps:
@@ -23,8 +28,8 @@ pip install -r requirements.txt
 2. Copy secrets example and edit keys:
 
 ```bash
-cp secrets.example.json secrets.json
-# edit secrets.json (do NOT commit this file)
+cp config/secrets.example.json config/secrets.json
+# edit config/secrets.json (do NOT commit this file)
 ```
 
 3. Run the dashboard (opens browser):

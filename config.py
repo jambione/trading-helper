@@ -3,8 +3,8 @@ import os
 import tempfile
 from pathlib import Path
 
-CONFIG_FILE  = Path(__file__).parent / "bot_config.json"
-SECRETS_FILE = Path(__file__).parent / "secrets.json"
+CONFIG_FILE  = Path(__file__).parent / "config" / "bot_config.json"
+SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
 SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key"]
 
 DEFAULT_CONFIG = {

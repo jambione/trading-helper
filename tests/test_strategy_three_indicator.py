@@ -16,7 +16,9 @@ import sys
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "tools"))  # backtest_3ind now lives under tools/
 
 import strategy_three_indicator as strat   # noqa: E402
 import backtest_3ind                        # noqa: E402
