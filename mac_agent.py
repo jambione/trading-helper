@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -113,6 +114,47 @@ def _osascript(script: str) -> tuple[int, str]:
     """Run an AppleScript snippet, return (returncode, stdout)."""
     r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return r.returncode, r.stdout.strip()
+
+
+# Resolve terminal-notifier once at import. None → fall back to osascript.
+_NOTIFIER = shutil.which("terminal-notifier")
+
+
+def _notify_mac(title: str, message: str, subtitle: str = "",
+                sound: str = "Glass", group: str = "") -> None:
+    """
+    Post a native macOS notification banner.
+
+    Prefers terminal-notifier (clickable → opens the dashboard, app-branded,
+    coalesces by -group so repeat alerts for one ticker replace each other).
+    Falls back to `osascript display notification` if terminal-notifier is
+    not installed. Fire-and-forget — never raises.
+    """
+    if not _IS_MAC:
+        print(f"  [DRY RUN] NOTIFY → {title}: {message}")
+        return
+    try:
+        if _NOTIFIER:
+            cmd = [
+                _NOTIFIER,
+                "-title",    title,
+                "-message",  message,
+                "-sound",    sound,
+                "-open",     DASHBOARD_URL,
+            ]
+            if subtitle:
+                cmd += ["-subtitle", subtitle]
+            if group:
+                cmd += ["-group", group]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        else:
+            sub = f'subtitle "{subtitle}" ' if subtitle else ""
+            _osascript(
+                f'display notification "{message}" with title "{title}" '
+                f'{sub}sound name "{sound}"'
+            )
+    except Exception as e:
+        print(f"  ⚠️  notify failed: {e}")
 
 
 def _app_is_running(app_name: str) -> bool:
@@ -462,11 +504,25 @@ def _alert_listener():
                 prev_status = _prev_statuses.get(sym)
 
                 if burst and prev_burst is False:
-                    print(f"  🔥 Burst detected: {sym}  (mention_window={row.get('mention_window')})")
+                    count = row.get("mention_window", 0)
+                    print(f"  🔥 Burst detected: {sym}  (mention_window={count})")
+                    _notify_mac(
+                        f"🔥 {sym}  burst",
+                        f"{count}x mentions in the last few seconds",
+                        subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
+                        sound="Ping",
+                        group=f"burst-{sym}",
+                    )
                     _enqueue(sym)
 
                 if status == "BUY" and prev_status is not None and prev_status != "BUY":
                     print(f"  📈 BUY signal: {sym}")
+                    _notify_mac(
+                        f"📈 BUY  {sym}",
+                        f"${row['price']:.2f}" if row.get("price") is not None else "BUY signal",
+                        sound="Glass",
+                        group=f"buy-{sym}",
+                    )
                     _enqueue(sym)
 
                 _prev_bursts[sym]   = burst
