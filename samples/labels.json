@@ -1,0 +1,6 @@
+{
+  "_comment": "PROVISIONAL ground-truth ticker sets per sample clip. Set-based scoring (presence, not count). Edit freely; null = unlabeled (holdout, not scored). Keyed by filename; identical files (same md5) are deduped by the harness.",
+  "finnhub_stream.mp3": ["AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "SMCI", "ARM", "PLTR", "META", "AMD", "INTC", "COIN", "HOOD", "RIVN", "LCID", "XOM"],
+  "Ticker audio 2.mp3": ["QCOM", "ELPW", "MCRP", "ATGL", "ECX", "NXDR"],
+  "Ticker3.mp3": null
+}
