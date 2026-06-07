@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=44" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=45" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -168,6 +168,13 @@
                             Clear
                         </button>
                     </div>
+                    <label
+                        class="tx-mode-toggle"
+                        title="Experimental: silence-segmentation + recognize pipeline instead of fixed 1.5s chunks. Restarts the transcriber to apply."
+                    >
+                        <input type="checkbox" id="spell-pipeline-checkbox" data-spell-toggle />
+                        <span>Spell pipeline (beta)</span>
+                    </label>
                 </div>
 
                 <div data-transcript-box class="transcript-box">
@@ -667,7 +674,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=46"></script>
+        <script type="module" src="/static/js/app.js?v=47"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

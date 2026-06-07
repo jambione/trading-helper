@@ -896,6 +896,25 @@ body.mobile .cell-chg    { font-size: 13px; }
   flex-shrink: 0;
 }
 
+/* Experimental transcription-mode toggle (classic vs spell pipeline) */
+.tx-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #8a93a3);
+  cursor: pointer;
+  user-select: none;
+}
+.tx-mode-toggle:hover { color: var(--text, #e6e9ef); }
+.tx-mode-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent, #4ea1ff);
+  cursor: pointer;
+}
+
 .tx-btn {
   width: 100%;
   padding: 11px 14px;

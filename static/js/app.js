@@ -5,20 +5,20 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=46';
-import { subscribe, set }                        from './store.js?v=46';
-import { init as initTranscription }             from './transcription.js?v=46';
-import { init as initTickers }                   from './tickers.js?v=46';
-import { init as initTradingView }               from './tradingview.js?v=46';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=46';
-import { init as initResizer }                   from './resizer.js?v=46';
-import * as controls                             from './controls.js?v=46';
-import * as notifications                        from './notifications.js?v=46';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=46';
-import { init as initNews }                      from './news.js?v=46';
-import { init as initLeaderboard }               from './leaderboard.js?v=46';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=46';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=46';
+import { connect, on, api }                      from './api.js?v=47';
+import { subscribe, set }                        from './store.js?v=47';
+import { init as initTranscription }             from './transcription.js?v=47';
+import { init as initTickers }                   from './tickers.js?v=47';
+import { init as initTradingView }               from './tradingview.js?v=47';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=47';
+import { init as initResizer }                   from './resizer.js?v=47';
+import * as controls                             from './controls.js?v=47';
+import * as notifications                        from './notifications.js?v=47';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=47';
+import { init as initNews }                      from './news.js?v=47';
+import { init as initLeaderboard }               from './leaderboard.js?v=47';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=47';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=47';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -155,6 +155,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   txBtn    ?.addEventListener('click', () => controls.toggleTranscriber(txBtn));
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
+
+  // ── Transcription mode toggle: classic vs experimental spell pipeline ──
+  // The flag is applied at transcriber launch, so the server restarts it if it's
+  // running. Seed the checkbox from the server's current mode on load.
+  const spellToggle = document.querySelector('[data-spell-toggle]');
+  if (spellToggle) {
+    api.getTxMode().then(m => { spellToggle.checked = !!m.spell_pipeline; }).catch(() => {});
+    spellToggle.addEventListener('change', async () => {
+      spellToggle.disabled = true;
+      try {
+        const r = await api.setTxMode(spellToggle.checked);
+        spellToggle.checked = !!r.spell_pipeline;
+      } catch (e) {
+        console.error('[app] setTxMode', e);
+        spellToggle.checked = !spellToggle.checked;   // revert on failure
+      } finally {
+        spellToggle.disabled = false;
+      }
+    });
+  }
   clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
   adminBtn ?.addEventListener('click', openAdmin);
@@ -180,7 +200,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=46');
+    const m = await import('./admin.js?v=47');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

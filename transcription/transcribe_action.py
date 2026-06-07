@@ -133,6 +133,32 @@ from ticker_extract import (   # noqa: E402,F401
     STITCH_MAX_GAP,
 )
 
+# Experimental two-stage "spell pipeline" (silence-segmentation + recognize),
+# OFF by default. Toggle via the dashboard (sets SPELL_PIPELINE=1 in the
+# transcriber's env at launch). When on, audio_capture endpoints on silence
+# instead of fixed 1.5s chunks, and the worker uses recognize() not stitch.
+# See transcription/spell_pipeline.py and SESSION_HANDOFF.md.
+from spell_pipeline import (   # noqa: E402
+    StreamingSegmenter, recognize, load_watchlist, load_seed_tickers, watchlist_prompt)
+_USE_SPELL_PIPELINE = _os.environ.get("SPELL_PIPELINE") == "1"
+
+# Watchlist biases BOTH stages in spell pipeline mode: appended to the ASR prompt
+# (Stage 1) and used to fuzzy-correct mis-heard spells (Stage 2). It is the UNION
+# of two sources, cached and refreshed every ~10s so edits apply without restart:
+#   1. config/scanner_watchlist.txt — persistent, user-curated scanner universe
+#   2. transcription/ticker_log.csv  — the dashboard's live tracked tickers (purges)
+_SEED_FILE      = Path(__file__).parent.parent / "config" / "scanner_watchlist.txt"
+_WATCHLIST_FILE = Path(__file__).parent / "ticker_log.csv"
+_wl_cache = {"t": 0.0, "wl": set()}
+
+
+def _get_watchlist() -> set:
+    now = time.time()
+    if now - _wl_cache["t"] > 10.0:
+        _wl_cache["wl"] = load_seed_tickers(_SEED_FILE) | load_watchlist(_WATCHLIST_FILE)
+        _wl_cache["t"] = now
+    return _wl_cache["wl"]
+
 
 # =============================================================================
 # TICKER DELIVERY — POST to dashboard API
@@ -329,9 +355,24 @@ def _apply_gain(mono: np.ndarray) -> np.ndarray:
 # WORKER: AUDIO CAPTURE
 # =============================================================================
 
+def _enqueue_chunk(chunk):
+    """Put a chunk on the work queue, dropping the oldest if it's full."""
+    try:
+        _audio_queue.put_nowait(chunk)
+    except Full:
+        try:
+            _audio_queue.get_nowait()
+            _audio_queue.put_nowait(chunk)
+        except Exception:
+            pass
+
+
 def audio_capture():
     buf = np.empty(0, dtype=np.float32)
     _chunk_bytes = READ_FRAMES * _channels * 4  # 4 bytes per sample (float32 or int32)
+    # Spell-pipeline mode: endpoint on silence (variable-length segments) instead
+    # of the fixed 1.5s grid below. Built per-stream so state never leaks.
+    segmenter = StreamingSegmenter() if _USE_SPELL_PIPELINE else None
 
     while _running.is_set():
         try:
@@ -348,6 +389,19 @@ def audio_capture():
             mono = raw.reshape(-1, _channels).mean(axis=1)
 
             rms = float(np.sqrt(np.mean(mono ** 2)))
+
+            if segmenter is not None:
+                # Feed every frame so the segmenter can see the silence GAPS that
+                # mark utterance ends. Voicing is ADAPTIVE inside the segmenter
+                # (tracks the live noise floor) — a fixed threshold globs reps
+                # into one blob and makes Whisper mis-spell. Gain is applied once
+                # per emitted segment.
+                resampled = resample_poly(mono, RESAMPLE_UP, RESAMPLE_DOWN)
+                seg = segmenter.push(resampled)
+                if seg is not None:
+                    _enqueue_chunk(_apply_gain(seg))
+                continue
+
             if rms < SILENCE_THRESHOLD:
                 continue
 
@@ -358,16 +412,14 @@ def audio_capture():
             while len(buf) >= CHUNK_SAMPLES:
                 chunk = buf[:CHUNK_SAMPLES].copy()
                 buf   = buf[ADVANCE_SAMPLES:].copy()
-                try:
-                    _audio_queue.put_nowait(chunk)
-                except Full:
-                    try:
-                        _audio_queue.get_nowait()
-                        _audio_queue.put_nowait(chunk)
-                    except Exception:
-                        pass
+                _enqueue_chunk(chunk)
         except Exception:
             time.sleep(0.05)
+
+    if segmenter is not None:                      # drain final in-progress segment
+        seg = segmenter.flush()
+        if seg is not None:
+            _enqueue_chunk(_apply_gain(seg))
 
 
 # (cross-chunk stitching now lives in ticker_extract.extract_with_stitch)
@@ -384,6 +436,15 @@ def transcription_worker():
             if chunk is None:
                 break
 
+            # Spell-pipeline mode: bias the ASR prompt with the active watchlist
+            # (Stage 1) and pass the same watchlist to recognize() (Stage 2).
+            if _USE_SPELL_PIPELINE:
+                watchlist = _get_watchlist()
+                prompt = INITIAL_PROMPT + watchlist_prompt(watchlist)
+            else:
+                watchlist = None
+                prompt = INITIAL_PROMPT
+
             t0 = time.perf_counter()
 
             with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
@@ -393,7 +454,7 @@ def transcription_worker():
                             chunk,
                             path_or_hf_repo=MLX_MODEL,
                             language="en",
-                            initial_prompt=INITIAL_PROMPT,
+                            initial_prompt=prompt,
                             temperature=0.0,
                             no_speech_threshold=0.4,
                             compression_ratio_threshold=2.4,
@@ -415,7 +476,7 @@ def transcription_worker():
                     segs, _ = _fw_model.transcribe(
                         chunk,
                         language="en",
-                        initial_prompt=INITIAL_PROMPT,
+                        initial_prompt=prompt,
                         beam_size=CPU_BEAM,
                         temperature=0.0,
                         vad_filter=True,
@@ -432,8 +493,15 @@ def transcription_worker():
 
             if text:
                 print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
-                for ticker, count in _extract_with_stitch(text).items():
-                    _send_ticker(ticker, count)
+                if _USE_SPELL_PIPELINE:
+                    # Stage 2: each silence-bounded segment is one utterance, so
+                    # recognize() over it (no cross-chunk stitch needed). The
+                    # watchlist fuzzy-corrects mis-heard spells (EOPW -> ELPW).
+                    for ticker in recognize(text, watchlist=watchlist):
+                        _send_ticker(ticker, 1)
+                else:
+                    for ticker, count in _extract_with_stitch(text).items():
+                        _send_ticker(ticker, count)
 
         except Exception as e:
             msg = str(e).strip()

@@ -55,6 +55,10 @@ DEFAULT_CONFIG = {
 
     # Transcription
     "device_index": None,
+    # Experimental two-stage "spell pipeline" (silence-segmentation + recognize)
+    # for the transcriber. Off = classic 1.5s fixed-chunk path. Applied at
+    # transcriber launch (toggling restarts it). See transcription/spell_pipeline.py.
+    "spell_pipeline": False,
 
     # ── Mention burst alerts ─────────────────────────────────
     "mention_alert_threshold": 5,   # mentions within window to trigger alert
@@ -78,6 +82,7 @@ SAFE_CONFIG_KEYS = [
     "brave_tv_tab",
     "strategy",
     "device_index",
+    "spell_pipeline",
     "mention_alert_threshold",
     "mention_alert_window",
 ]

@@ -420,6 +420,8 @@ def start_transcriber() -> dict:
         args += ["--device", str(int(device))]
     try:
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        if STATE.cfg.get("spell_pipeline"):
+            env["SPELL_PIPELINE"] = "1"   # experimental segment+recognize path
         proc = subprocess.Popen(
             args,
             stdin=subprocess.DEVNULL,
@@ -1036,6 +1038,38 @@ async def api_tx_stop():
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, stop_transcriber)
     return JSONResponse({"ok": True, "running": False})
+
+
+@app.get("/api/transcriber/mode")
+async def api_tx_mode_get():
+    return JSONResponse({
+        "spell_pipeline": bool(STATE.cfg.get("spell_pipeline")),
+        "running": STATE.transcriber_running,
+    })
+
+
+@app.post("/api/transcriber/mode")
+async def api_tx_mode_set(request: Request):
+    """Toggle the experimental spell pipeline. The flag is applied at transcriber
+    launch, so if it's running we restart it to take effect."""
+    try:
+        body = await request.json()
+        enabled = bool(body.get("spell_pipeline"))
+    except Exception:
+        return JSONResponse({"ok": False, "error": "bad body"}, status_code=400)
+
+    with STATE.lock:
+        STATE.cfg["spell_pipeline"] = enabled
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: save_config(dict(STATE.cfg)))
+
+    restarted = False
+    if STATE.transcriber_running:                       # restart to apply the flag
+        await loop.run_in_executor(None, stop_transcriber)
+        await loop.run_in_executor(None, start_transcriber)
+        restarted = True
+    return JSONResponse({"ok": True, "spell_pipeline": enabled,
+                         "restarted": restarted, "running": STATE.transcriber_running})
 
 
 @app.post("/api/ticker-log/clear")
