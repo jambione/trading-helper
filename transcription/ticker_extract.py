@@ -88,8 +88,10 @@ _TICKER_RE = re.compile(r'\b([A-Z]{2,5})\b')
 _TICKER_STOPWORDS: frozenset = frozenset({
     # Time / dates
     "AM", "PM", "AD", "BC",
-    # Regulatory / government agencies (not exchange-listed)
-    "FDA", "SEC", "FTC", "FED", "IRS", "CDC", "NIH", "DOJ", "DOD",
+    # Regulatory / government agencies (not exchange-listed). CIA is Citizens
+    # Inc's symbol, but in a news stream the agency ("the CIA says ...") swamps
+    # genuine $CIA mentions — same rationale as AI/TC below.
+    "FDA", "SEC", "FTC", "FED", "IRS", "CDC", "NIH", "DOJ", "DOD", "CIA",
     # Currencies / macros
     "USD", "EUR", "GBP", "JPY", "CNY",
     # Executive titles
@@ -98,6 +100,11 @@ _TICKER_STOPWORDS: frozenset = frozenset({
     "IPO", "NYSE", "ETF",
     # Very common English two-letter all-caps that appear in transcripts
     "OK", "US", "EU", "UK",
+    # Topic words / mis-splits that collide with real tickers in CNBC audio
+    # ("AI server" -> AI; spelled "I N T C" mis-heard -> TC). AI is C3.ai's
+    # symbol, but in a transcription stream the topic-word false positives
+    # vastly outnumber genuine $AI mentions.
+    "AI", "TC",
 })
 
 # English letter-name phonetics — how TTS voices pronounce individual letters.
@@ -330,6 +337,16 @@ _prev_text:       str            = ""
 _prev_tickers:    dict[str, int] = {}
 _last_chunk_time: float          = 0.0
 STITCH_MAX_GAP                   = 3.0   # seconds; don't stitch across silences
+
+
+def reset_stitch_state() -> None:
+    """Clear the cross-chunk stitch state. Production never needs this (one
+    long-lived worker), but tests/benchmarks that replay multiple independent
+    streams must reset between them so state doesn't leak across runs."""
+    global _prev_text, _prev_tickers, _last_chunk_time
+    _prev_text = ""
+    _prev_tickers = {}
+    _last_chunk_time = 0.0
 
 
 def extract_with_stitch(text: str) -> dict[str, int]:
