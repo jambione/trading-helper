@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=45" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=46" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -175,6 +175,22 @@
                         <input type="checkbox" id="spell-pipeline-checkbox" data-spell-toggle />
                         <span>Spell pipeline (beta)</span>
                     </label>
+
+                    <!-- Learned corrections: map a consistently mis-heard token to
+                         the right ticker once; it sticks forever. Shown only with
+                         the spell pipeline on. -->
+                    <div class="tx-corrections" data-corrections hidden>
+                        <div class="tx-corr-pending" data-corr-pending></div>
+                        <form class="tx-corr-form" data-corr-form>
+                            <input type="text" data-corr-from placeholder="heard"
+                                   maxlength="6" autocomplete="off" spellcheck="false" />
+                            <span>&rarr;</span>
+                            <input type="text" data-corr-to placeholder="ticker"
+                                   maxlength="5" autocomplete="off" spellcheck="false" />
+                            <button type="submit" class="btn btn--ghost btn--sm">Map</button>
+                        </form>
+                        <div class="tx-corr-list" data-corr-list></div>
+                    </div>
                 </div>
 
                 <div data-transcript-box class="transcript-box">
@@ -674,7 +690,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=47"></script>
+        <script type="module" src="/static/js/app.js?v=48"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

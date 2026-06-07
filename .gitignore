@@ -21,3 +21,7 @@ signal_state.json
 # Local control script artifacts
 .trading.pids
 logs/
+
+# Spell-pipeline learned-correction runtime state (per-machine, regenerated)
+config/learned_corrections.json
+config/pending_corrections.json

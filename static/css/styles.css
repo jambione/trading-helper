@@ -915,6 +915,39 @@ body.mobile .cell-chg    { font-size: 13px; }
   cursor: pointer;
 }
 
+/* Learned-corrections panel (teach the engine a mis-hear once) */
+.tx-corrections {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim, #8a93a3);
+}
+.tx-corr-chip {
+  font-size: 11px;
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--text, #e6e9ef);
+  background: var(--surface-2, #1b2435);
+  border: 1px solid var(--border, #2a3550);
+  border-radius: 6px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.tx-corr-chip:hover { border-color: var(--accent, #4ea1ff); }
+.tx-corr-form { display: flex; align-items: center; gap: 6px; }
+.tx-corr-form input {
+  width: 64px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: var(--mono, ui-monospace, monospace);
+  text-transform: uppercase;
+  color: var(--text, #e6e9ef);
+  background: var(--surface-2, #1b2435);
+  border: 1px solid var(--border, #2a3550);
+  border-radius: 6px;
+}
+.tx-corr-list { font-family: var(--mono, ui-monospace, monospace); opacity: 0.8; }
+
 .tx-btn {
   width: 100%;
   padding: 11px 14px;

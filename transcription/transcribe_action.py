@@ -139,7 +139,8 @@ from ticker_extract import (   # noqa: E402,F401
 # instead of fixed 1.5s chunks, and the worker uses recognize() not stitch.
 # See transcription/spell_pipeline.py and SESSION_HANDOFF.md.
 from spell_pipeline import (   # noqa: E402
-    StreamingSegmenter, recognize, load_watchlist, load_seed_tickers, watchlist_prompt)
+    StreamingSegmenter, recognize, candidate_tokens, CorrectionLearner,
+    load_watchlist, load_seed_tickers, watchlist_prompt)
 _USE_SPELL_PIPELINE = _os.environ.get("SPELL_PIPELINE") == "1"
 
 # Watchlist biases BOTH stages in spell pipeline mode: appended to the ASR prompt
@@ -147,9 +148,18 @@ _USE_SPELL_PIPELINE = _os.environ.get("SPELL_PIPELINE") == "1"
 # of two sources, cached and refreshed every ~10s so edits apply without restart:
 #   1. config/scanner_watchlist.txt — persistent, user-curated scanner universe
 #   2. transcription/ticker_log.csv  — the dashboard's live tracked tickers (purges)
-_SEED_FILE      = Path(__file__).parent.parent / "config" / "scanner_watchlist.txt"
-_WATCHLIST_FILE = Path(__file__).parent / "ticker_log.csv"
-_wl_cache = {"t": 0.0, "wl": set()}
+_SEED_FILE        = Path(__file__).parent.parent / "config" / "scanner_watchlist.txt"
+_WATCHLIST_FILE   = Path(__file__).parent / "ticker_log.csv"
+# Learned corrections: deterministic misheard->ticker map. Written by the learner
+# (auto, from clean anchors) and by the dashboard (user one-click). pending file
+# surfaces high-count unresolved tokens to the dashboard for one-click mapping.
+_CORRECTIONS_FILE = Path(__file__).parent.parent / "config" / "learned_corrections.json"
+_PENDING_FILE     = Path(__file__).parent.parent / "config" / "pending_corrections.json"
+_wl_cache    = {"t": 0.0, "wl": set()}
+_corr_cache  = {"t": 0.0}
+_learner     = CorrectionLearner(_CORRECTIONS_FILE) if _USE_SPELL_PIPELINE else None
+_BURST_WINDOW = 4.0           # seconds: emit a given ticker at most once per burst
+_last_emit: dict = {}
 
 
 def _get_watchlist() -> set:
@@ -158,6 +168,20 @@ def _get_watchlist() -> set:
         _wl_cache["wl"] = load_seed_tickers(_SEED_FILE) | load_watchlist(_WATCHLIST_FILE)
         _wl_cache["t"] = now
     return _wl_cache["wl"]
+
+
+def _write_pending():
+    """Publish the learner's high-count unresolved tokens for the dashboard's
+    one-click correction UI (cross-process: transcriber writes, dashboard reads)."""
+    import json as _json, os as _o, tempfile as _tf
+    try:
+        p = _PENDING_FILE; p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = _tf.mkstemp(dir=str(p.parent), suffix=".tmp")
+        with _o.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump(_learner.pending(20), f)
+        _o.replace(tmp, str(p))
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -494,11 +518,23 @@ def transcription_worker():
             if text:
                 print(f"[{time.strftime('%H:%M:%S')}] [{ms:.0f}ms] {text}", flush=True)
                 if _USE_SPELL_PIPELINE:
-                    # Stage 2: each silence-bounded segment is one utterance, so
-                    # recognize() over it (no cross-chunk stitch needed). The
-                    # watchlist fuzzy-corrects mis-heard spells (EOPW -> ELPW).
-                    for ticker in recognize(text, watchlist=watchlist):
-                        _send_ticker(ticker, 1)
+                    # Refresh learned corrections (the dashboard may add some) and
+                    # republish the pending list every ~10s.
+                    if time.time() - _corr_cache["t"] > 10.0:
+                        _learner.reload(); _corr_cache["t"] = time.time(); _write_pending()
+                    # Stage 2: each silence-bounded segment is one utterance.
+                    # corrections (deterministic) > valid ticker > watchlist fuzzy.
+                    found = recognize(text, watchlist=watchlist,
+                                      corrections=_learner.corrections)
+                    now = time.time()
+                    for ticker in found:
+                        if now - _last_emit.get(ticker, 0.0) >= _BURST_WINDOW:
+                            _send_ticker(ticker, 1)   # per-burst dedup: once per window
+                            _last_emit[ticker] = now
+                    # Self-supervised learning: tally unresolved mis-hears; when a
+                    # clean ticker anchors one, persist the correction permanently.
+                    for m, t in _learner.observe(candidate_tokens(text), found):
+                        print(f"[LEARN] {m} -> {t}", flush=True)
                 else:
                     for ticker, count in _extract_with_stitch(text).items():
                         _send_ticker(ticker, count)

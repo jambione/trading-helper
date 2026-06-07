@@ -8,7 +8,7 @@
  *   - #login-log-panel in the Settings → Sessions tab
  */
 
-import { api } from './api.js?v=47';
+import { api } from './api.js?v=48';
 
 const POLL_INTERVAL = 30_000; // 30 seconds
 let _pollTimer = null;

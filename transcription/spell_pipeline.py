@@ -132,6 +132,13 @@ _COMPANY_RE = re.compile(
 )
 
 
+def candidate_tokens(text: str) -> set[str]:
+    """The raw candidate strings recognize() considers (all-caps tokens + assembled
+    letter spells), before validation/correction. The learner needs these to tally
+    unresolved mis-hears."""
+    return set(_TOKEN_RE.findall(text)) | _spell_candidates(text)
+
+
 def _within_edit1(a: str, b: str) -> bool:
     """True if a and b differ by at most one edit (substitution / insertion /
     deletion). Whisper mis-hears one letter of a spell ('ELPW' -> 'EOPW'), so a
@@ -167,22 +174,28 @@ def _fuzzy_snap(cand: str, watchlist: set) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def recognize(text: str, watchlist: set | None = None) -> set[str]:
-    """Resolve spoken characters to tickers. With a `watchlist` (the user's
-    tracked symbols), a candidate that is NOT itself a valid ticker but is one
-    edit from a single watchlist ticker is snapped to it — recovering Whisper
-    mis-hears like 'EOPW' -> 'ELPW'. Valid tickers are never overridden."""
+def recognize(text: str, watchlist: set | None = None,
+              corrections: dict | None = None) -> set[str]:
+    """Resolve spoken characters to tickers. Resolution order per candidate:
+      1. `corrections[c]` — a learned/user-confirmed mapping (DETERMINISTIC: a
+         consistent mis-hear like 'EOPW' always becomes 'ELPW', every time).
+      2. c is itself a valid ticker.
+      3. `watchlist` fuzzy-snap — non-ticker one edit from a single tracked symbol.
+    Plus company names spoken as words. Valid tickers are never overridden by the
+    fuzzy step (corrections, being explicit, may override anything)."""
+    corr = corrections or {}
+    wl = {w.upper() for w in watchlist} if watchlist else set()
     raw = set(_TOKEN_RE.findall(text)) | _spell_candidates(text)
-    out = {t for t in raw if t in VALID_TICKERS and t not in _STOPWORDS}
-    out |= {_COMPANY[m.group(1).lower()] for m in _COMPANY_RE.finditer(text)}
-    if watchlist:
-        wl = {w.upper() for w in watchlist}
-        for c in raw:
-            if c in _STOPWORDS or c in VALID_TICKERS:   # only correct non-tickers
-                continue
-            snap = _fuzzy_snap(c, wl)
-            if snap:
-                out.add(snap)
+    out = {_COMPANY[m.group(1).lower()] for m in _COMPANY_RE.finditer(text)}
+    for c in raw:
+        if c in _STOPWORDS:
+            continue
+        if c in corr:                       # 1. deterministic learned/user correction
+            out.add(corr[c])
+        elif c in VALID_TICKERS:            # 2. already a real ticker
+            out.add(c)
+        elif wl and (snap := _fuzzy_snap(c, wl)):   # 3. fuzzy-snap to watchlist
+            out.add(snap)
     return out
 
 
@@ -218,6 +231,98 @@ def load_seed_tickers(path) -> set[str]:
     except Exception:
         pass
     return out
+
+
+# ===========================================================================
+# LEARNED CORRECTIONS — a persistent, deterministic mis-hear -> ticker map.
+# The scanner mis-hears a ticker the SAME way every time within a burst, so once
+# we know 'EOPW' means 'ELPW' the fix is exact and permanent (not probabilistic).
+# ===========================================================================
+def load_corrections(path) -> dict[str, str]:
+    """Load {misheard_form: ticker} from JSON. Values must be real tickers; keys
+    are upper-cased alpha. Returns {} on any error."""
+    import json
+    out: dict[str, str] = {}
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        for k, v in (raw.items() if isinstance(raw, dict) else []):
+            k, v = str(k).strip().upper(), str(v).strip().upper()
+            if k.isalpha() and 2 <= len(v) <= 5 and v.isalpha() and v in VALID_TICKERS and k != v:
+                out[k] = v
+    except Exception:
+        pass
+    return out
+
+
+def add_correction(path, misheard: str, ticker: str) -> bool:
+    """Persist one mapping (misheard -> ticker). The target must be a real ticker.
+    Atomic write so the live reader never sees a half file. Returns success."""
+    import json, os, tempfile
+    misheard, ticker = str(misheard).strip().upper(), str(ticker).strip().upper()
+    if not (misheard.isalpha() and 2 <= len(ticker) <= 5 and ticker.isalpha()
+            and ticker in VALID_TICKERS and misheard != ticker):
+        return False
+    cur = load_corrections(path)
+    cur[misheard] = ticker
+    p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cur, f, indent=2, sort_keys=True)
+        os.replace(tmp, str(p))
+    except Exception:
+        try: os.unlink(tmp)
+        except Exception: pass
+        return False
+    return True
+
+
+class CorrectionLearner:
+    """Self-supervised learner for consistent mis-hears. It tallies invalid
+    candidate tokens it can't resolve; when a real ticker is later heard cleanly,
+    any frequently-seen invalid token one edit away from it is recorded as a
+    permanent correction. Also exposes the high-count unresolved tokens so a human
+    can map them in one click (the reliable path when a clean hearing never comes).
+    """
+
+    def __init__(self, path, min_count: int = 3):
+        import collections
+        self.path = path
+        self.min_count = min_count
+        self.corrections = load_corrections(path)
+        self._unresolved = collections.Counter()
+
+    def reload(self):
+        """Pick up corrections added out-of-band (e.g. by the dashboard)."""
+        self.corrections = load_corrections(self.path)
+
+    def observe(self, raw_candidates: set, emitted: set) -> list:
+        """Feed one utterance's raw candidate tokens and the tickers it emitted.
+        Returns any newly-learned (misheard, ticker) pairs."""
+        for c in raw_candidates:
+            if (c not in self.corrections and c not in VALID_TICKERS
+                    and c not in _STOPWORDS and c.isalpha() and 2 <= len(c) <= 5):
+                self._unresolved[c] += 1
+        learned = []
+        anchors = {t for t in emitted if t in VALID_TICKERS}
+        for t in anchors:
+            for m, cnt in list(self._unresolved.items()):
+                if cnt < self.min_count or m == t or not _within_edit1(m, t):
+                    continue
+                # unambiguous: m is one edit from exactly one emitted ticker
+                if sum(1 for a in anchors if _within_edit1(m, a)) != 1:
+                    continue
+                if add_correction(self.path, m, t):
+                    self.corrections[m] = t
+                    del self._unresolved[m]
+                    learned.append((m, t))
+        return learned
+
+    def pending(self, n: int = 10) -> list:
+        """High-frequency unresolved tokens, for the dashboard to offer for
+        one-click mapping. Excludes anything already corrected."""
+        return [{"token": k, "count": c}
+                for k, c in self._unresolved.most_common(n) if k not in self.corrections]
 
 
 # ===========================================================================

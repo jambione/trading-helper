@@ -58,6 +58,14 @@ from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 import version
+
+# Learned-correction store (shared with the transcriber): the dashboard validates
+# and writes user one-click corrections; the transcriber publishes the pending
+# (high-count unresolved) tokens for the UI to offer.
+sys.path.insert(0, str(Path(__file__).parent / "transcription"))
+from spell_pipeline import add_correction, load_corrections   # noqa: E402
+_CORRECTIONS_FILE = Path(__file__).parent / "config" / "learned_corrections.json"
+_PENDING_FILE     = Path(__file__).parent / "config" / "pending_corrections.json"
 from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
@@ -1070,6 +1078,34 @@ async def api_tx_mode_set(request: Request):
         restarted = True
     return JSONResponse({"ok": True, "spell_pipeline": enabled,
                          "restarted": restarted, "running": STATE.transcriber_running})
+
+
+@app.get("/api/transcriber/corrections")
+async def api_corrections_get():
+    """Current learned corrections + pending high-count unresolved tokens (which
+    the spell pipeline keeps getting wrong) for one-click mapping."""
+    try:
+        pending = json.loads(_PENDING_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pending = []
+    return JSONResponse({"corrections": load_corrections(_CORRECTIONS_FILE), "pending": pending})
+
+
+@app.post("/api/transcriber/corrections")
+async def api_corrections_set(request: Request):
+    """User maps a mis-heard token to the right ticker once; it sticks forever.
+    The transcriber reloads the store within ~10s (no restart)."""
+    try:
+        body = await request.json()
+        frm = str(body.get("from", "")).strip().upper()
+        to  = str(body.get("to", "")).strip().upper()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "bad body"}, status_code=400)
+    ok = add_correction(_CORRECTIONS_FILE, frm, to)
+    return JSONResponse(
+        {"ok": ok, "from": frm, "to": to, "corrections": load_corrections(_CORRECTIONS_FILE),
+         "error": None if ok else "target must be a real ticker"},
+        status_code=200 if ok else 400)
 
 
 @app.post("/api/ticker-log/clear")

@@ -78,29 +78,35 @@ WL_CASES: list[tuple[str, set, set, str]] = [
 ]
 
 
+# Deterministic learned/user corrections: (asr, corrections, expected, note).
+# A consistent mis-hear always maps to its ticker, regardless of validity.
+CORR_CASES: list[tuple[str, dict, set, str]] = [
+    ("EOPW",                 {"EOPW": "ELPW"},   {"ELPW"}, "correction snaps invalid mis-hear"),
+    ("scanner alert EOPW",   {"EOPW": "ELPW"},   {"ELPW"}, "correction in context"),
+    ("E.O.P.W. E.O.P.W.",    {"EOPW": "ELPW"},   {"ELPW"}, "correction + period/repeat"),
+    ("NCRP NCRP NCRP",       {"NCRP": "MCRP"},   {"MCRP"}, "correction on repeated spam"),
+    ("EOPW",                 {},                 set(),    "no correction -> dropped (invalid)"),
+    ("TGL",                  {"TGL": "ATGL"},    {"ATGL"}, "user can override a valid fragment"),
+]
+
+
 def main() -> None:
     verbose = "-v" in sys.argv
     npass = 0
-    print(f"{'result':<6} {'note':<30} {'expected':<22} got")
-    print("-" * 82)
-    for asr, expect, note in CASES:
-        got = recognize(asr)
+    print(f"{'result':<6} {'note':<34} {'expected':<22} got")
+    print("-" * 86)
+    rows = ([(a, recognize(a), e, n) for a, e, n in CASES]
+            + [(a, recognize(a, watchlist=w), e, n) for a, w, e, n in WL_CASES]
+            + [(a, recognize(a, corrections=c), e, n) for a, c, e, n in CORR_CASES])
+    for asr, got, expect, note in rows:
         ok = got == expect
         npass += ok
         if verbose or not ok:
-            mark = "PASS" if ok else "FAIL"
-            print(f"{mark:<6} {note:<30} {str(sorted(expect)):<22} {sorted(got)}")
-    for asr, wl, expect, note in WL_CASES:
-        got = recognize(asr, watchlist=wl)
-        ok = got == expect
-        npass += ok
-        if verbose or not ok:
-            mark = "PASS" if ok else "FAIL"
-            print(f"{mark:<6} {note:<30} {str(sorted(expect)):<22} {sorted(got)}")
-    total = len(CASES) + len(WL_CASES)
-    print("-" * 82)
+            print(f"{'PASS' if ok else 'FAIL':<6} {note:<34} {str(sorted(expect)):<22} {sorted(got)}")
+    total = len(CASES) + len(WL_CASES) + len(CORR_CASES)
+    print("-" * 86)
     print(f"STAGE-2 recognize(): {npass}/{total} cases pass  "
-          f"({len(CASES)} plain + {len(WL_CASES)} watchlist)")
+          f"({len(CASES)} plain + {len(WL_CASES)} watchlist + {len(CORR_CASES)} corrections)")
 
 
 if __name__ == "__main__":

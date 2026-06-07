@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=47';
+import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=48';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -118,6 +118,8 @@ export const api = {
   stopTx:          ()       => request('POST', '/api/transcriber/stop'),
   getTxMode:       ()       => request('GET',  '/api/transcriber/mode'),
   setTxMode:       enabled  => request('POST', '/api/transcriber/mode', { spell_pipeline: !!enabled }),
+  getCorrections:  ()       => request('GET',  '/api/transcriber/corrections'),
+  addCorrection:   (from,to)=> request('POST', '/api/transcriber/corrections', { from, to }),
   clearWatchlist:  ()       => request('POST', '/api/ticker-log/clear'),
   clearTranscript: ()       => request('POST', '/api/transcript/clear'),
   triggerScan:     ()       => request('POST', '/api/scan'),

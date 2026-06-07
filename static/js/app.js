@@ -5,20 +5,20 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=47';
-import { subscribe, set }                        from './store.js?v=47';
-import { init as initTranscription }             from './transcription.js?v=47';
-import { init as initTickers }                   from './tickers.js?v=47';
-import { init as initTradingView }               from './tradingview.js?v=47';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=47';
-import { init as initResizer }                   from './resizer.js?v=47';
-import * as controls                             from './controls.js?v=47';
-import * as notifications                        from './notifications.js?v=47';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=47';
-import { init as initNews }                      from './news.js?v=47';
-import { init as initLeaderboard }               from './leaderboard.js?v=47';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=47';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=47';
+import { connect, on, api }                      from './api.js?v=48';
+import { subscribe, set }                        from './store.js?v=48';
+import { init as initTranscription }             from './transcription.js?v=48';
+import { init as initTickers }                   from './tickers.js?v=48';
+import { init as initTradingView }               from './tradingview.js?v=48';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=48';
+import { init as initResizer }                   from './resizer.js?v=48';
+import * as controls                             from './controls.js?v=48';
+import * as notifications                        from './notifications.js?v=48';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=48';
+import { init as initNews }                      from './news.js?v=48';
+import { init as initLeaderboard }               from './leaderboard.js?v=48';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=48';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=48';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -161,7 +161,54 @@ document.addEventListener('DOMContentLoaded', async () => {
   // running. Seed the checkbox from the server's current mode on load.
   const spellToggle = document.querySelector('[data-spell-toggle]');
   if (spellToggle) {
-    api.getTxMode().then(m => { spellToggle.checked = !!m.spell_pipeline; }).catch(() => {});
+    // ── Learned-corrections panel: teach the engine a mis-hear once ──
+    const corrEl = document.querySelector('[data-corrections]');
+    let corrTimer = null;
+    const upper = el => el?.addEventListener('input', () => {
+      const p = el.selectionStart; el.value = el.value.toUpperCase(); el.setSelectionRange?.(p, p);
+    });
+    const renderCorrections = async () => {
+      if (!corrEl) return;
+      try {
+        const d = await api.getCorrections();
+        const pend = (d.pending || []).slice(0, 6);
+        corrEl.querySelector('[data-corr-pending]').innerHTML = pend.length
+          ? 'Keeps mis-hearing: ' + pend.map(p =>
+              `<button type="button" class="tx-corr-chip" data-tok="${p.token}">${p.token}×${p.count}</button>`).join(' ')
+          : '';
+        const corr = d.corrections || {};
+        const keys = Object.keys(corr);
+        corrEl.querySelector('[data-corr-list]').textContent = keys.length
+          ? 'Learned: ' + keys.map(k => `${k}→${corr[k]}`).join(', ') : '';
+      } catch {}
+    };
+    const syncCorr = () => {
+      if (!corrEl) return;
+      const on = spellToggle.checked;
+      corrEl.hidden = !on;
+      if (on && !corrTimer) { renderCorrections(); corrTimer = setInterval(renderCorrections, 5000); }
+      if (!on && corrTimer) { clearInterval(corrTimer); corrTimer = null; }
+    };
+    if (corrEl) {
+      const fromEl = corrEl.querySelector('[data-corr-from]');
+      const toEl   = corrEl.querySelector('[data-corr-to]');
+      upper(fromEl); upper(toEl);
+      corrEl.querySelector('[data-corr-pending]')?.addEventListener('click', e => {
+        const b = e.target.closest('[data-tok]');
+        if (b) { fromEl.value = b.dataset.tok; toEl.focus(); }
+      });
+      corrEl.querySelector('[data-corr-form]')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        const from = fromEl.value.trim().toUpperCase(), to = toEl.value.trim().toUpperCase();
+        if (!from || !to) return;
+        try {
+          const r = await api.addCorrection(from, to);
+          if (r.ok) { fromEl.value = ''; toEl.value = ''; renderCorrections(); }
+        } catch (e) { console.error('[app] addCorrection', e); }
+      });
+    }
+
+    api.getTxMode().then(m => { spellToggle.checked = !!m.spell_pipeline; syncCorr(); }).catch(() => {});
     spellToggle.addEventListener('change', async () => {
       spellToggle.disabled = true;
       try {
@@ -172,6 +219,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         spellToggle.checked = !spellToggle.checked;   // revert on failure
       } finally {
         spellToggle.disabled = false;
+        syncCorr();
       }
     });
   }
@@ -200,7 +248,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=47');
+    const m = await import('./admin.js?v=48');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
