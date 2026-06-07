@@ -6,17 +6,21 @@ Run this on your Mac:
     python mac_agent.py        (if deps already installed)
 
 The agent does two things:
-  1. Watches the Brasfield Momentum dashboard for alerts (mention burst / BUY).
-     When a ticker hits the alert threshold it automatically adds it to
-     Webull Desktop and TradingView — no browser toggle needed.
-  2. Listens on http://localhost:8889 so the dashboard can also trigger it
-     manually via the Add button or Auto-Add toggle.
+  1. Watches the Brasfield Momentum dashboard for alerts (mention burst / BUY)
+     and posts a native toast for each. By default it does NOT auto-add (so you
+     can run everything minimized) — click a toast to add that ticker to Webull
+     Desktop + TradingView. Set AUTO_ADD=1 for the old hands-free behavior
+     (auto-adds on every burst/BUY, which steals window focus).
+  2. Listens on http://localhost:8889 so the dashboard (and the toast click)
+     can trigger an add manually.
 
 Config (edit the values below — no environment variables needed):
     DASHBOARD_URL   Full URL of your dashboard
     DASHBOARD_USER  Your dashboard login username
     DASHBOARD_PASS  Your dashboard login password
     BRAVE_TV_TAB    Cmd+N tab number for the pinned TradingView tab (default: 1)
+    AUTO_ADD        1 = auto-add on every alert (steals focus); default 0 =
+                    toast-only, click a toast to add (run minimized)
 
 macOS prerequisites (one-time):
   - Grant Terminal (or your IDE) Accessibility access:
@@ -39,7 +43,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
 
@@ -83,6 +87,9 @@ POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds betwee
 TV_CHART_URL   = os.environ.get(
     "TV_CHART_URL", "https://www.tradingview.com/chart/x04Gfcu8/?symbol={sym}"
 )
+# AUTO_ADD=1 → hands-free: auto-add to WB+TV on every burst/BUY (old behavior,
+# steals focus). Default off → run minimized; click a toast to add that ticker.
+AUTO_ADD       = os.environ.get("AUTO_ADD", "0") == "1"
 
 # ── Token — managed automatically, do not edit ────────────────────────────────
 _token      = ""
@@ -125,14 +132,19 @@ _NOTIFIER = shutil.which("terminal-notifier")
 
 
 def _notify_mac(title: str, message: str, subtitle: str = "",
-                sound: str = "Glass", group: str = "", open_url: str = "") -> None:
+                sound: str = "Glass", group: str = "", open_url: str = "",
+                execute: str = "") -> None:
     """
     Post a native macOS notification banner.
 
-    Prefers terminal-notifier (clickable → opens open_url, or the dashboard if
-    none given; app-branded, coalesces by -group so repeat alerts for one
-    ticker replace each other). Falls back to `osascript display notification`
-    if terminal-notifier is not installed. Fire-and-forget — never raises.
+    Prefers terminal-notifier (app-branded, coalesces by -group so repeat alerts
+    for one ticker replace each other). The click action is one of:
+      - execute  → run this shell command on click (-execute). Takes priority.
+      - open_url → open this URL on click (-open); falls back to the dashboard.
+    -execute and -open are mutually exclusive (one click action), so when
+    `execute` is set it wins. Falls back to `osascript display notification` if
+    terminal-notifier is not installed — note the fallback cannot run a command
+    on click, so it just shows the banner. Fire-and-forget — never raises.
     """
     if not _IS_MAC:
         print(f"  [DRY RUN] NOTIFY → {title}: {message}")
@@ -144,8 +156,11 @@ def _notify_mac(title: str, message: str, subtitle: str = "",
                 "-title",    title,
                 "-message",  message,
                 "-sound",    sound,
-                "-open",     open_url or DASHBOARD_URL,
             ]
+            if execute:
+                cmd += ["-execute", execute]
+            else:
+                cmd += ["-open", open_url or DASHBOARD_URL]
             if subtitle:
                 cmd += ["-subtitle", subtitle]
             if group:
@@ -485,6 +500,18 @@ def _fetch_state() -> dict | None:
         return None
 
 
+def _add_command(ticker: str) -> str:
+    """
+    Shell command for a toast's -execute action: curl the agent's own /add
+    endpoint so clicking the toast adds the ticker to Webull + TradingView.
+    Runs locally against this agent (PORT) — fire-and-forget, output discarded.
+    """
+    return (
+        f'curl -s "http://localhost:{PORT}/add?ticker={ticker}&mode=both" '
+        f'>/dev/null 2>&1'
+    )
+
+
 def _alert_listener():
     """
     Polls the dashboard every POLL_INTERVAL seconds.
@@ -512,24 +539,28 @@ def _alert_listener():
                     print(f"  🔥 Burst detected: {sym}  (mention_window={count})")
                     _notify_mac(
                         f"🔥 {sym}  burst",
-                        f"{count}x mentions in the last few seconds",
+                        f"{count}x mentions — click to add to TV + WB",
                         subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
                         sound="Ping",
                         group=f"burst-{sym}",
-                        # Click the toast → open this ticker's TradingView chart
-                        open_url=TV_CHART_URL.format(sym=sym),
+                        # Click the toast → add this ticker to TradingView + Webull
+                        execute=_add_command(sym),
                     )
-                    _enqueue(sym)
+                    if AUTO_ADD:
+                        _enqueue(sym)
 
                 if status == "BUY" and prev_status is not None and prev_status != "BUY":
                     print(f"  📈 BUY signal: {sym}")
+                    price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
                     _notify_mac(
                         f"📈 BUY  {sym}",
-                        f"${row['price']:.2f}" if row.get("price") is not None else "BUY signal",
+                        f"{price}click to add to TV + WB",
                         sound="Glass",
                         group=f"buy-{sym}",
+                        execute=_add_command(sym),
                     )
-                    _enqueue(sym)
+                    if AUTO_ADD:
+                        _enqueue(sym)
 
                 _prev_bursts[sym]   = burst
                 _prev_statuses[sym] = status
@@ -566,7 +597,21 @@ class AgentHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if urlparse(self.path).path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/add":
+            # Triggered by a toast click (terminal-notifier -execute → curl).
+            qs     = parse_qs(parsed.query)
+            ticker = (qs.get("ticker", [""])[0]).strip().upper()
+            mode   = (qs.get("mode",   ["both"])[0]).strip().lower()
+            if mode not in ("wb", "tv", "both"):
+                mode = "both"
+            if not ticker:
+                self._json(400, {"error": "missing ticker"})
+                return
+            _enqueue(ticker, mode)
+            self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
+            return
+        if parsed.path == "/health":
             self._json(200, {
                 "ok":               True,
                 "agent":            "mac-tv-agent",
@@ -626,13 +671,14 @@ if __name__ == "__main__":
     # terminal-notifier (alert style must be Banners/Alerts, not None).
     if "--test-toast" in sys.argv:
         print("🔔 Firing test burst notification via _notify_mac …")
+        print("   (the agent must be running for the click to reach /add)")
         _notify_mac(
             "🔥 TSLA  burst",
-            "7x mentions in the last few seconds — click to open chart",
+            "7x mentions — click to add to TV + WB",
             subtitle="$240.50",
             sound="Ping",
             group="burst-TSLA",
-            open_url=TV_CHART_URL.format(sym="TSLA"),
+            execute=_add_command("TSLA"),
         )
         print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
         print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
@@ -646,6 +692,7 @@ if __name__ == "__main__":
     print(f"  User       : {DASHBOARD_USER or 'NOT SET — set DASHBOARD_USER in .env'}")
     print(f"  Password   : {'set ✓' if DASHBOARD_PASS else 'NOT SET — set DASHBOARD_PASS in .env'}")
     print(f"  Poll every : {POLL_INTERVAL}s")
+    print(f"  Add mode   : {'AUTO_ADD (hands-free, steals focus)' if AUTO_ADD else 'toast-click (run minimized)'}")
     print(f"  TV tab     : Cmd+{BRAVE_TV_TAB}")
     print(f"  pyautogui  : {'✓' if _PAG_OK else '✗ not installed — run: pip install pyautogui'}")
     if _webull_installed():
@@ -668,6 +715,7 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
     print("   GET  /health  → status")
+    print("   GET  /add?ticker=NVDA&mode=both  → WB+TV (used by toast click)")
     print("   POST /add-wb  {\"ticker\": \"NVDA\"}  → Webull Desktop")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Cmd+{BRAVE_TV_TAB}, Option+W)")
     print("   Press Ctrl+C to stop.\n")
