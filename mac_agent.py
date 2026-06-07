@@ -79,6 +79,10 @@ DASHBOARD_URL  = os.environ.get("DASHBOARD_URL",  "https://trading.jbrasfield.co
 DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
 DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
 POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds between polls
+# Clicking a burst toast opens this chart; {sym} is replaced with the ticker.
+TV_CHART_URL   = os.environ.get(
+    "TV_CHART_URL", "https://www.tradingview.com/chart/x04Gfcu8/?symbol={sym}"
+)
 
 # ── Token — managed automatically, do not edit ────────────────────────────────
 _token      = ""
@@ -121,14 +125,14 @@ _NOTIFIER = shutil.which("terminal-notifier")
 
 
 def _notify_mac(title: str, message: str, subtitle: str = "",
-                sound: str = "Glass", group: str = "") -> None:
+                sound: str = "Glass", group: str = "", open_url: str = "") -> None:
     """
     Post a native macOS notification banner.
 
-    Prefers terminal-notifier (clickable → opens the dashboard, app-branded,
-    coalesces by -group so repeat alerts for one ticker replace each other).
-    Falls back to `osascript display notification` if terminal-notifier is
-    not installed. Fire-and-forget — never raises.
+    Prefers terminal-notifier (clickable → opens open_url, or the dashboard if
+    none given; app-branded, coalesces by -group so repeat alerts for one
+    ticker replace each other). Falls back to `osascript display notification`
+    if terminal-notifier is not installed. Fire-and-forget — never raises.
     """
     if not _IS_MAC:
         print(f"  [DRY RUN] NOTIFY → {title}: {message}")
@@ -140,7 +144,7 @@ def _notify_mac(title: str, message: str, subtitle: str = "",
                 "-title",    title,
                 "-message",  message,
                 "-sound",    sound,
-                "-open",     DASHBOARD_URL,
+                "-open",     open_url or DASHBOARD_URL,
             ]
             if subtitle:
                 cmd += ["-subtitle", subtitle]
@@ -512,6 +516,8 @@ def _alert_listener():
                         subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
                         sound="Ping",
                         group=f"burst-{sym}",
+                        # Click the toast → open this ticker's TradingView chart
+                        open_url=TV_CHART_URL.format(sym=sym),
                     )
                     _enqueue(sym)
 
@@ -615,6 +621,24 @@ class AgentHandler(BaseHTTPRequestHandler):
 PORT = 8889
 
 if __name__ == "__main__":
+    # --test-toast: fire a sample burst through the real notify path, then exit.
+    # If nothing pops on screen, check System Settings → Notifications →
+    # terminal-notifier (alert style must be Banners/Alerts, not None).
+    if "--test-toast" in sys.argv:
+        print("🔔 Firing test burst notification via _notify_mac …")
+        _notify_mac(
+            "🔥 TSLA  burst",
+            "7x mentions in the last few seconds — click to open chart",
+            subtitle="$240.50",
+            sound="Ping",
+            group="burst-TSLA",
+            open_url=TV_CHART_URL.format(sym="TSLA"),
+        )
+        print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
+        print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
+        print("   not the code — the notification still lands in Notification Center.")
+        sys.exit(0)
+
     print(f"\n{'='*56}")
     print(f"  WB+TV Agent (macOS)  v{VERSION}")
     print(f"{'='*56}")
