@@ -9,31 +9,6 @@ import { api } from './api.js?v=48';
 import { get, selectTicker } from './store.js?v=48';
 import { clearCopiedTickers } from './tickers.js?v=48';
 
-export async function toggleTranscriber(btnEl) {
-  const running = get('transcriber').running;
-
-  if (btnEl) {
-    btnEl.disabled    = true;
-    btnEl.textContent = running ? 'Stopping…' : 'Starting…';
-  }
-
-  let result = null;
-  try {
-    result = await (running ? api.stopTx() : api.startTx());
-  } catch (e) {
-    console.error('[controls] toggleTranscriber', e);
-  } finally {
-    if (btnEl) {
-      // Use the API response state when available; fall back to current store state.
-      // The WS subscriber will correct any mismatch within 1 second.
-      const actual = result?.running ?? get('transcriber').running;
-      btnEl.disabled    = false;
-      btnEl.textContent = actual ? 'Stop Transcription' : 'Start Transcription';
-      btnEl.className   = `tx-btn ${actual ? 'tx-btn--stop' : 'tx-btn--start'}`;
-    }
-  }
-}
-
 export async function clearWatchlist() {
   if (!confirm('Clear the watchlist?\n\nThis removes all tickers from wb_watchlist.json.')) return;
   try {
@@ -41,14 +16,6 @@ export async function clearWatchlist() {
     clearCopiedTickers();
   } catch (e) {
     console.error('[controls] clearWatchlist', e);
-  }
-}
-
-export async function clearTranscript() {
-  try {
-    await api.clearTranscript();
-  } catch (e) {
-    console.error('[controls] clearTranscript', e);
   }
 }
 

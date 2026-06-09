@@ -1,16 +1,17 @@
 /**
- * transcription.js — Live transcript panel component
+ * transcription.js — Discord Alerts panel component
  *
- * Single responsibility: render transcript lines with recognized-ticker highlighting.
- * Subscribes to `tickers` (for the known-symbol set) and `transcriber` (for lines).
+ * Single responsibility: render the live feed of Discord OCR alerts (the app's
+ * ticker source) with watchlist-ticker highlighting. Subscribes to `tickers`
+ * (for the known-symbol set) and `discord` (for the captured alert feed).
  */
 
 import { subscribe } from './store.js?v=48';
 
-let _box = null;                  // scrollable transcript container
+let _box = null;                  // scrollable feed container
 let _known = new Set();           // current watchlist symbols for highlighting
-let _lastLineCount = 0;           // track rendered lines for incremental updates
-let _lastLine = '';               // last rendered line text; detects sliding-window shifts
+let _lastCount = 0;               // rendered alert count for incremental updates
+let _lastKey = '';                // last alert's identity; detects feed shifts
 
 export function init(panelEl) {
   _box = panelEl.querySelector('[data-transcript-box]');
@@ -20,82 +21,57 @@ export function init(panelEl) {
     _known = new Set(rows.map(r => r.ticker));
   });
 
-  subscribe('transcriber', tx => _render(tx.lines ?? []));
+  subscribe('discord', d => _render(d.alerts ?? []));
 }
 
 // ── Rendering ─────────────────────────────────────────────────
 
-function _render(lines) {
+function _render(alerts) {
   if (!_box) return;
 
-  if (!lines.length) {
-    if (_lastLineCount !== 0) {
-      _box.innerHTML = '<span class="tx-placeholder">Waiting for transcription…</span>';
-      _lastLineCount = 0;
-      _lastLine = '';
+  if (!alerts.length) {
+    if (_lastCount !== 0) {
+      _box.innerHTML = '<span class="tx-placeholder">Waiting for Discord alerts…</span>';
+      _lastCount = 0;
+      _lastKey = '';
     }
     return;
   }
 
-  const tail = lines[lines.length - 1];
+  const tail    = alerts[alerts.length - 1];
+  const tailKey = `${tail.ts}|${tail.ticker}|${tail.line}`;
 
   // No change at all — skip DOM work
-  if (tail === _lastLine && lines.length === _lastLineCount) return;
+  if (tailKey === _lastKey && alerts.length === _lastCount) return;
 
   const atBottom = _box.scrollHeight - _box.scrollTop - _box.clientHeight < 60;
 
-  if (lines.length > _lastLineCount && _lastLineCount > 0) {
-    // Pure growth: append only the new lines
+  if (alerts.length > _lastCount && _lastCount > 0) {
+    // Pure growth: append only the new alerts
     _box.insertAdjacentHTML('beforeend',
-      lines.slice(_lastLineCount).map(_renderLine).join(''));
+      alerts.slice(_lastCount).map(_renderAlert).join(''));
   } else {
-    // First render, clear, count shrank, or sliding-window shift — full re-render
-    _box.innerHTML = lines.map(_renderLine).join('');
+    // First render or rolling-window shift — full re-render
+    _box.innerHTML = alerts.map(_renderAlert).join('');
   }
 
-  _lastLineCount = lines.length;
-  _lastLine = tail;
+  _lastCount = alerts.length;
+  _lastKey = tailKey;
   if (atBottom) _box.scrollTop = _box.scrollHeight;
 }
 
-function _renderLine(line) {
-  // Error / stack trace
-  if (line.includes('Traceback') || line.includes('Error:') || line.startsWith('  File')) {
-    return `<div class="tx-error">${_esc(line)}</div>`;
-  }
-
-  // [LOG] ticker-extraction events
-  if (line.includes('[LOG]')) {
-    return `<div class="tx-log">${_highlight(_esc(line))}</div>`;
-  }
-
-  // Standard timestamped line: [HH:MM:SS] text…
-  const m = line.match(/^\[(\d{2}:\d{2}:\d{2})\] ([\s\S]*)$/);
-  if (m) {
-    const ts   = `<span class="tx-ts">${_esc(m[1])}</span>`;
-    const body = _highlight(_esc(m[2]));
-    return `<div class="tx-line">${ts} ${body}</div>`;
-  }
-
-  // Status / startup line (no timestamp)
-  return `<div class="tx-status">${_esc(line)}</div>`;
+function _renderAlert(a) {
+  const ts     = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
+  const ticker = `<strong class="tx-ticker">${_esc(a.ticker || '')}</strong>`;
+  const body   = _highlight(_esc(a.line || ''));
+  return `<div class="tx-line">${ts} ${ticker} ${body}</div>`;
 }
 
-/**
- * Bold any 2-5 uppercase-letter token that is in the live watchlist.
- * Also highlights the "Big volume spike detected" alert phrase.
- * Runs on already-escaped HTML so it only matches text content.
- */
+/** Bold any 2-5 uppercase-letter token that is in the live watchlist. */
 function _highlight(html) {
-  let result = html.replace(/\b([A-Z]{2,5})\b/g, m =>
-    _known.has(m)
-      ? `<strong class="tx-ticker">${m}</strong>`
-      : m
+  return html.replace(/\b([A-Z]{2,5})\b/g, m =>
+    _known.has(m) ? `<strong class="tx-ticker">${m}</strong>` : m
   );
-  result = result.replace(/big volume spike detected/gi, m =>
-    `<span class="tx-keyword">${m}</span>`
-  );
-  return result;
 }
 
 function _esc(s) {

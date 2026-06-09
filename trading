@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# trading — start/stop the LOCAL stack (dashboard + signal engine) in the
-# background, with PID tracking, a health check, and a version readout.
+# trading — start/stop the LOCAL stack (dashboard + signal engine + Discord OCR
+# source) in the background, with PID tracking, a health check, and a version readout.
 #
 #   ./trading start     launch dashboard + engine (background), wait until up
 #   ./trading stop       graceful stop, then force-kill any stragglers
@@ -105,10 +105,14 @@ cmd_start() {
     nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 &
     echo "$!" >> "$PIDFILE"
 
+    echo "Starting Discord OCR source"
+    nohup "$PY" -u discord_source.py >"$LOGDIR/discord.log" 2>&1 &
+    echo "$!" >> "$PIDFILE"
+
     [ "$want_tunnel" = 1 ] && _start_tunnel
 
     sleep 2
-    echo "✅ Started. Logs: $LOGDIR/{dashboard,engine}.log"
+    echo "✅ Started. Logs: $LOGDIR/{dashboard,engine,discord}.log"
     _version
     echo "   Open $URL  (hard-refresh: Cmd+Shift+R)"
     _tunnel_running && echo "   Public: $PUBLIC_URL"
@@ -120,23 +124,27 @@ cmd_stop() {
     if [ -f "$PIDFILE" ]; then
         while read -r pid; do [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true; done < "$PIDFILE"
     fi
-    pkill -TERM -f "signal_engine.py" 2>/dev/null || true
-    pkill -TERM -f "dashboard.py"     2>/dev/null || true
+    pkill -TERM -f "discord_source.py" 2>/dev/null || true
+    pkill -TERM -f "signal_engine.py"  2>/dev/null || true
+    pkill -TERM -f "dashboard.py"      2>/dev/null || true
     _stop_tunnel
     sleep 2
     # Force-kill anything still alive.
-    pkill -KILL -f "signal_engine.py" 2>/dev/null || true
-    pkill -KILL -f "dashboard.py"     2>/dev/null || true
+    pkill -KILL -f "discord_source.py" 2>/dev/null || true
+    pkill -KILL -f "signal_engine.py"  2>/dev/null || true
+    pkill -KILL -f "dashboard.py"      2>/dev/null || true
     rm -f "$PIDFILE"
     echo "✅ Stopped (incl. tunnel)."
 }
 
 cmd_status() {
-    local d e
-    d=$(pgrep -f "dashboard.py"     | tr '\n' ' ' || true)
-    e=$(pgrep -f "signal_engine.py" | tr '\n' ' ' || true)
+    local d e g
+    d=$(pgrep -f "dashboard.py"      | tr '\n' ' ' || true)
+    e=$(pgrep -f "signal_engine.py"  | tr '\n' ' ' || true)
+    g=$(pgrep -f "discord_source.py" | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
+    echo "discord   : ${g:-not running}"
     if _tunnel_running; then
         echo "tunnel    : up → $PUBLIC_URL"
     else
@@ -147,7 +155,7 @@ cmd_status() {
 
 cmd_logs() {
     mkdir -p "$LOGDIR"
-    local files="$LOGDIR/dashboard.log $LOGDIR/engine.log"
+    local files="$LOGDIR/dashboard.log $LOGDIR/engine.log $LOGDIR/discord.log"
     [ -f "$LOGDIR/tunnel.log" ] && files="$files $LOGDIR/tunnel.log"
     tail -n 40 -f $files
 }
@@ -166,7 +174,7 @@ case "${1:-}" in
     *) cat <<'USAGE'
 usage: ./trading <command>
 
-  start [local]       start dashboard + engine + Cloudflare tunnel
+  start [local]       start dashboard + engine + Discord OCR source + Cloudflare tunnel
                       (add 'local' to skip the tunnel and stay local-only)
   stop                stop dashboard + engine + tunnel
   restart [local]     stop then start (reload code after edits)

@@ -114,18 +114,10 @@ async function request(method, path, body) {
 
 export const api = {
   getState:        ()       => request('GET',  '/api/state'),
-  startTx:         ()       => request('POST', '/api/transcriber/start'),
-  stopTx:          ()       => request('POST', '/api/transcriber/stop'),
-  getTxMode:       ()       => request('GET',  '/api/transcriber/mode'),
-  setTxMode:       enabled  => request('POST', '/api/transcriber/mode', { spell_pipeline: !!enabled }),
-  getCorrections:  ()       => request('GET',  '/api/transcriber/corrections'),
-  addCorrection:   (from,to)=> request('POST', '/api/transcriber/corrections', { from, to }),
   clearWatchlist:  ()       => request('POST', '/api/ticker-log/clear'),
-  clearTranscript: ()       => request('POST', '/api/transcript/clear'),
   triggerScan:     ()       => request('POST', '/api/scan'),
   getConfig:       ()       => request('GET',  '/api/config'),
   saveConfig:      cfg      => request('POST', '/api/config', cfg),
-  audioDevices:    ()       => request('GET',  '/api/audio-devices'),
   addTicker:       ticker   => request('POST', '/api/tickers/add',      { ticker }),
   removeTicker:    ticker   => request('POST', '/api/tickers/remove',   { ticker }),
   addBulk:         tickers  => request('POST', '/api/tickers/add-bulk', { tickers }),

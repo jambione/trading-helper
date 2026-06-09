@@ -27,7 +27,7 @@ sleep 3
 pkill -SIGKILL -f "start_all.py"
 pkill -SIGKILL -f "dashboard.py"
 pkill -SIGKILL -f "signal_engine.py"
-pkill -SIGKILL -f "transcribe_action.py"
+pkill -SIGKILL -f "discord_source.py"
 pkill -SIGKILL -f "caffeinate.*start_all"
 pkill -SIGKILL -f "cloudflared"
 

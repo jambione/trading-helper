@@ -53,12 +53,10 @@ DEFAULT_CONFIG = {
     "tv_chart_url": "https://www.tradingview.com/chart/",
     "brave_tv_tab": 1,    # tab number (1-9) holding TradingView in Brave
 
-    # Transcription
-    "device_index": None,
-    # Experimental two-stage "spell pipeline" (silence-segmentation + recognize)
-    # for the transcriber. Off = classic 1.5s fixed-chunk path. Applied at
-    # transcriber launch (toggling restarts it). See transcription/spell_pipeline.py.
-    "spell_pipeline": False,
+    # ── Discord OCR source (the ticker source) ───────────────
+    "discord_ocr_poll_sec": 2.5,    # seconds between OCR captures
+    "discord_window_owner": "Discord",
+    "discord_window_title": "",     # optional window-title substring filter
 
     # ── Mention burst alerts ─────────────────────────────────
     "mention_alert_threshold": 5,   # mentions within window to trigger alert
@@ -81,8 +79,9 @@ SAFE_CONFIG_KEYS = [
     "tv_chart_url",
     "brave_tv_tab",
     "strategy",
-    "device_index",
-    "spell_pipeline",
+    "discord_ocr_poll_sec",
+    "discord_window_owner",
+    "discord_window_title",
     "mention_alert_threshold",
     "mention_alert_window",
 ]

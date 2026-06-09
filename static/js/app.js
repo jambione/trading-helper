@@ -145,85 +145,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) { console.error('[app] initHotkeys', e); }
 
   // ── Wire button actions ──────────────────────────────────────
-  const txBtn     = document.querySelector('[data-tx-btn]');
   const clrWlBtn  = document.querySelector('[data-clear-watchlist-btn]');
-  const clrTxBtn  = document.querySelector('[data-clear-transcript-btn]');
   const settBtn   = document.querySelector('[data-settings-btn]');
   const adminBtn  = document.querySelector('[data-admin-btn]');
   const notifBtn  = document.querySelector('[data-notif-btn]');
   const logoutBtn = document.querySelector('[data-logout-btn]');
 
-  txBtn    ?.addEventListener('click', () => controls.toggleTranscriber(txBtn));
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
-
-  // ── Transcription mode toggle: classic vs experimental spell pipeline ──
-  // The flag is applied at transcriber launch, so the server restarts it if it's
-  // running. Seed the checkbox from the server's current mode on load.
-  const spellToggle = document.querySelector('[data-spell-toggle]');
-  if (spellToggle) {
-    // ── Learned-corrections panel: teach the engine a mis-hear once ──
-    const corrEl = document.querySelector('[data-corrections]');
-    let corrTimer = null;
-    const upper = el => el?.addEventListener('input', () => {
-      const p = el.selectionStart; el.value = el.value.toUpperCase(); el.setSelectionRange?.(p, p);
-    });
-    const renderCorrections = async () => {
-      if (!corrEl) return;
-      try {
-        const d = await api.getCorrections();
-        const pend = (d.pending || []).slice(0, 6);
-        corrEl.querySelector('[data-corr-pending]').innerHTML = pend.length
-          ? 'Keeps mis-hearing: ' + pend.map(p =>
-              `<button type="button" class="tx-corr-chip" data-tok="${p.token}">${p.token}×${p.count}</button>`).join(' ')
-          : '';
-        const corr = d.corrections || {};
-        const keys = Object.keys(corr);
-        corrEl.querySelector('[data-corr-list]').textContent = keys.length
-          ? 'Learned: ' + keys.map(k => `${k}→${corr[k]}`).join(', ') : '';
-      } catch {}
-    };
-    const syncCorr = () => {
-      if (!corrEl) return;
-      const on = spellToggle.checked;
-      corrEl.hidden = !on;
-      if (on && !corrTimer) { renderCorrections(); corrTimer = setInterval(renderCorrections, 5000); }
-      if (!on && corrTimer) { clearInterval(corrTimer); corrTimer = null; }
-    };
-    if (corrEl) {
-      const fromEl = corrEl.querySelector('[data-corr-from]');
-      const toEl   = corrEl.querySelector('[data-corr-to]');
-      upper(fromEl); upper(toEl);
-      corrEl.querySelector('[data-corr-pending]')?.addEventListener('click', e => {
-        const b = e.target.closest('[data-tok]');
-        if (b) { fromEl.value = b.dataset.tok; toEl.focus(); }
-      });
-      corrEl.querySelector('[data-corr-form]')?.addEventListener('submit', async e => {
-        e.preventDefault();
-        const from = fromEl.value.trim().toUpperCase(), to = toEl.value.trim().toUpperCase();
-        if (!from || !to) return;
-        try {
-          const r = await api.addCorrection(from, to);
-          if (r.ok) { fromEl.value = ''; toEl.value = ''; renderCorrections(); }
-        } catch (e) { console.error('[app] addCorrection', e); }
-      });
-    }
-
-    api.getTxMode().then(m => { spellToggle.checked = !!m.spell_pipeline; syncCorr(); }).catch(() => {});
-    spellToggle.addEventListener('change', async () => {
-      spellToggle.disabled = true;
-      try {
-        const r = await api.setTxMode(spellToggle.checked);
-        spellToggle.checked = !!r.spell_pipeline;
-      } catch (e) {
-        console.error('[app] setTxMode', e);
-        spellToggle.checked = !spellToggle.checked;   // revert on failure
-      } finally {
-        spellToggle.disabled = false;
-        syncCorr();
-      }
-    });
-  }
-  clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
   adminBtn ?.addEventListener('click', openAdmin);
   logoutBtn?.addEventListener('click', logout);
@@ -300,7 +228,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const update = {};
     if (snap.tickers      !== undefined) update.tickers      = snap.tickers;
     if (snap.config)                     update.config       = snap.config;
-    if (snap.transcriber)                update.transcriber  = snap.transcriber;
+    if (snap.discord)                    update.discord      = snap.discord;
     if (snap.news         !== undefined) update.news         = snap.news;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);
@@ -316,30 +244,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // ── Store → transcription controls ──────────────────────────
-  subscribe('transcriber', tx => {
+  // ── Store → Discord OCR source status ───────────────────────
+  subscribe('discord', d => {
     const dot   = document.querySelector('[data-tx-dot]');
     const lbl   = document.querySelector('[data-tx-label]');
     const count = document.querySelector('[data-tx-count]');
+    const live  = !!d.running;
 
-    if (dot) dot.className = `tx-dot${tx.running ? ' tx-dot--on' : ''}`;
+    if (dot) dot.className = `tx-dot${live ? ' tx-dot--on' : ''}`;
     if (lbl) {
-      lbl.textContent = tx.running ? 'LISTENING' : 'STOPPED';
-      lbl.className   = `tx-label${tx.running ? ' tx-label--on' : ''}`;
-    }
-
-    if (txBtn && !txBtn.disabled) {
-      txBtn.textContent = tx.running ? 'Stop Transcription' : 'Start Transcription';
-      txBtn.className   = `tx-btn ${tx.running ? 'tx-btn--stop' : 'tx-btn--start'}`;
+      lbl.textContent = live ? 'LIVE' : 'OFFLINE';
+      lbl.className   = `tx-label${live ? ' tx-label--on' : ''}`;
     }
 
     if (count) {
-      const n = tx.count ?? 0;
+      const n = d.count ?? 0;
       count.textContent = `${n} ticker${n !== 1 ? 's' : ''} captured today`;
     }
 
     const audioStatus = document.querySelector('[data-audio-status]');
-    if (audioStatus) audioStatus.textContent = tx.running ? 'Listening' : 'Stopped';
+    if (audioStatus) audioStatus.textContent = live ? 'Live' : 'Offline';
   });
 
   // ── Store → status bar ───────────────────────────────────────

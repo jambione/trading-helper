@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 dashboard.py — Signal Scanner
-Ties together transcription, real-time prices, and signals.
+Ties together the Discord OCR alert source, real-time prices, and signals.
   http://localhost:8888
 """
 
@@ -10,13 +10,13 @@ import io
 import json
 import logging
 import os
-import re
 import signal
 import subprocess
 import sys
 import threading
 import time
 import zipfile
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -59,13 +59,6 @@ from login_log import record_login, get_log as get_login_log
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 import version
 
-# Learned-correction store (shared with the transcriber): the dashboard validates
-# and writes user one-click corrections; the transcriber publishes the pending
-# (high-count unresolved) tokens for the UI to offer.
-sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from spell_pipeline import add_correction, load_corrections   # noqa: E402
-_CORRECTIONS_FILE = Path(__file__).parent / "config" / "learned_corrections.json"
-_PENDING_FILE     = Path(__file__).parent / "config" / "pending_corrections.json"
 from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
@@ -81,10 +74,7 @@ from finnhub_stream import (
 
 ET                 = ZoneInfo("America/New_York")
 PORT               = 8888
-_TICKER_RE         = re.compile(r'\b([A-Z]{2,5})\b')
-_SPEECH_LINE_RE    = re.compile(r'^\[(\d{2}:\d{2}:\d{2})\] ')
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
-TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 NEWS_FILE          = Path("news.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
@@ -101,18 +91,11 @@ class _State:
         self.cfg              = load_config()
         self.data_client      = None
         self.tickers: dict    = {}   # ticker → {price, price_ts, day_open, pct_change}
-        self.transcriber      = None # subprocess.Popen or None
-        self.transcript_lines = []   # in-memory only, never written to disk
-        self.transcriber_metrics = {
-            "queue_drops": 0,
-            "ollama_timeouts": 0,
-            "ollama_failures": 0,
-            "ollama_retry_ok": 0,
-            "queue_size": 0,
-            "queue_capacity": 16,
-            "workers": 0,
-            "ollama_ready": False,
-        }
+        # Discord OCR source feed — the dashboard's only ticker producer. ingest()
+        # appends captured alerts here and stamps discord_last_ts so the UI can
+        # render a live feed + a 'source alive' status (in-memory only).
+        self.discord_alerts: deque = deque(maxlen=_MAX_DISCORD_ALERTS)
+        self.discord_last_ts: float = 0.0
         # Mention tracking — resets on server restart (fresh each trading day)
         self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
         self.mention_daily: dict = {}  # ticker → int  daily total count
@@ -120,9 +103,10 @@ class _State:
         self.mention_reset_date: str  = str(_date.today())
         self.mention_market_opened: bool = False
 
-    @property
-    def transcriber_running(self) -> bool:
-        return self.transcriber is not None and self.transcriber.poll() is None
+# Discord OCR feed sizing + liveness window. The source pings every poll
+# (~2.5s); if we haven't heard from it within this window it's considered down.
+_MAX_DISCORD_ALERTS = 60
+_DISCORD_STALE_SEC  = 15.0
 
 STATE = _State()
 
@@ -377,87 +361,47 @@ def refresh_ticker_timestamps(tickers: list[str]):
                              tickers=[e["ticker"] for e in entries])
 
 
-# ── Transcription subprocess ──────────────────────────────────────────────────
+# ── Discord OCR source ingest ───────────────────────────────────────────────
+# The Discord OCR producer (discord_source.py) POSTs here every poll: any newly
+# captured alerts plus a heartbeat. Each alert drives the mention system exactly
+# like the old transcriber did (watchlist add + _track_mention → burst), and is
+# recorded in a rolling feed the dashboard renders.
 
-_MAX_TRANSCRIPT_LINES = 200
-
-
-_METRICS_RE = re.compile(r'^\[METRICS\]\s+(\{.*\})\s*$')
-
-
-def _stdout_reader(proc: subprocess.Popen):
-    try:
-        for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            if not line:
-                continue
-            m = _METRICS_RE.match(line)
-            if m:
-                try:
-                    metrics = json.loads(m.group(1))
-                    with STATE.lock:
-                        STATE.transcriber_metrics = metrics
-                except Exception:
-                    pass
-                continue
-            with STATE.lock:
-                STATE.transcript_lines.append(line)
-                if len(STATE.transcript_lines) > _MAX_TRANSCRIPT_LINES:
-                    STATE.transcript_lines = STATE.transcript_lines[-_MAX_TRANSCRIPT_LINES:]
-    except Exception:
-        pass
-
-
-def read_transcript_lines(n: int = 60) -> list:
-    with STATE.lock:
-        return list(STATE.transcript_lines[-n:])
-
-
-def clear_transcript():
-    with STATE.lock:
-        STATE.transcript_lines.clear()
-
-
-def start_transcriber() -> dict:
-    if STATE.transcriber_running:
-        return {"ok": False, "msg": "already running"}
-    clear_transcript()
-    args = [sys.executable, "-u", str(TRANSCRIBER_SCRIPT)]
-    device = STATE.cfg.get("device_index")
-    if device is not None:
-        args += ["--device", str(int(device))]
-    try:
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-        if STATE.cfg.get("spell_pipeline"):
-            env["SPELL_PIPELINE"] = "1"   # experimental segment+recognize path
-        proc = subprocess.Popen(
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # merge stderr so errors appear in transcript panel
-            cwd=Path(__file__).parent,
-            env=env,
-        )
+def ingest_discord_alerts(alerts: list[dict]) -> int:
+    """Record captured Discord alerts: add each ticker to the watchlist, count a
+    mention (for burst detection), and append to the live feed. Returns the
+    number accepted. Always stamps discord_last_ts (so an empty list is a valid
+    heartbeat). Each alert: {"ticker": str, "line": str}."""
+    accepted = 0
+    for a in alerts:
+        ticker = str(a.get("ticker", "")).strip().upper()
+        line   = str(a.get("line", "")).strip()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            continue
+        add_ticker_to_log(ticker)
         with STATE.lock:
-            STATE.transcriber = proc
-        threading.Thread(target=_stdout_reader, args=(proc,), daemon=True, name="tx-reader").start()
-        log.info(f"[TX] Started pid={proc.pid}")
-        return {"ok": True}
-    except Exception as e:
-        log.error(f"[TX] Start failed: {e}")
-        return {"ok": False, "msg": str(e)}
-
-
-def stop_transcriber():
+            _track_mention(ticker)
+            STATE.discord_alerts.append({
+                "ts":     datetime.now(ET).strftime("%H:%M:%S"),
+                "ticker": ticker,
+                "line":   line[:160],
+            })
+        accepted += 1
     with STATE.lock:
-        proc, STATE.transcriber = STATE.transcriber, None
-    if proc and proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    log.info("[TX] Stopped")
+        STATE.discord_last_ts = time.time()
+    return accepted
+
+
+def discord_status() -> dict:
+    """Snapshot of the OCR source for the UI: alive flag + recent alert feed."""
+    with STATE.lock:
+        last  = STATE.discord_last_ts
+        feed  = list(STATE.discord_alerts)
+    return {
+        "running":   bool(last) and (time.time() - last) <= _DISCORD_STALE_SEC,
+        "last_ts":   last,
+        "alerts":    feed,
+    }
 
 
 # ── Price polling ─────────────────────────────────────────────────────────────
@@ -636,31 +580,22 @@ def _vol_loop():
 
 # ── Mention detection ─────────────────────────────────────────────────────────
 
-def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0) -> dict:
-    """Return {ticker: rank} for up to 3 watchlist tickers spoken in the last
-    window_s seconds.  Rank 0 = most recently mentioned."""
-    now = datetime.now()
-    seen: list[str] = []
-    for line in reversed(tx_lines):
-        m = _SPEECH_LINE_RE.match(line)
-        if not m:
-            continue
-        ts = m.group(1)
-        try:
-            line_time = now.replace(
-                hour=int(ts[0:2]), minute=int(ts[3:5]), second=int(ts[6:8]), microsecond=0
-            )
-            if (now - line_time).total_seconds() > window_s:
-                break  # lines are chronological; everything older can be skipped
-        except ValueError:
-            continue
-        for sym in _TICKER_RE.findall(line):
-            if sym in ticker_set and sym not in seen:
-                seen.append(sym)
-                if len(seen) == 3:
-                    return {s: i for i, s in enumerate(seen)}
-
-    return {s: i for i, s in enumerate(seen)}
+def _build_mention_rank(ticker_set: set, window_s: float = 30.0) -> dict:
+    """Return {ticker: rank} for up to 3 watchlist tickers mentioned in the last
+    window_s seconds (rank 0 = most recently mentioned). Driven by the mention
+    store (STATE.mention_ts) that the Discord OCR source feeds — this is what
+    floats a freshly-alerted ticker to the top of the watchlist."""
+    now = time.time()
+    recent: list[tuple[float, str]] = []   # (most-recent mention ts, ticker)
+    with STATE.lock:
+        for t, times in STATE.mention_ts.items():
+            if t not in ticker_set or not times:
+                continue
+            last = max(times)
+            if now - last <= window_s:
+                recent.append((last, t))
+    recent.sort(reverse=True)               # most recent first
+    return {t: i for i, (_, t) in enumerate(recent[:3])}
 
 
 # ── State snapshot ────────────────────────────────────────────────────────────
@@ -668,10 +603,9 @@ def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0)
 def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
-    # Read transcript lines BEFORE acquiring STATE.lock — read_transcript_lines also
-    # acquires STATE.lock, and threading.Lock is non-reentrant; nested acquisition deadlocks.
-    tx_lines = read_transcript_lines(30)
-    mention_rank = _build_mention_rank(tx_lines, set(tickers))
+    # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
+    # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
+    mention_rank = _build_mention_rank(set(tickers))
     if mention_rank:
         refresh_ticker_timestamps(list(mention_rank.keys()))
 
@@ -714,11 +648,12 @@ def _snapshot() -> dict:
                     r["signal_proximity"] = sp
 
         return {
-            "transcriber": {
-                "running": STATE.transcriber_running,
-                "lines":   tx_lines,
+            "discord": {
+                "running": bool(STATE.discord_last_ts)
+                           and (now_ts - STATE.discord_last_ts) <= _DISCORD_STALE_SEC,
+                "last_ts": STATE.discord_last_ts,
+                "alerts":  list(STATE.discord_alerts),
                 "count":   len(tickers),
-                "metrics": dict(STATE.transcriber_metrics),
             },
             "tickers": rows,
             "news":    news,
@@ -1034,90 +969,33 @@ async def api_save_news(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
-@app.post("/api/transcriber/start")
-async def api_tx_start():
-    loop   = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, start_transcriber)
-    return JSONResponse({**result, "running": STATE.transcriber_running})
-
-
-@app.post("/api/transcriber/stop")
-async def api_tx_stop():
+@app.post("/api/discord/ingest")
+async def api_discord_ingest(request: Request):
+    """The Discord OCR source POSTs here each poll: any newly-captured alerts
+    plus an implicit heartbeat. Body: {"alerts": [{"ticker","line"}, ...]}.
+    Each alert feeds the mention system (watchlist add + burst) and the live
+    feed; an empty list is a valid heartbeat that keeps the source 'alive'."""
+    try:
+        body   = await request.json()
+        alerts = body.get("alerts", [])
+        if not isinstance(alerts, list):
+            return JSONResponse({"ok": False, "error": "alerts must be a list"}, status_code=400)
+    except Exception:
+        alerts = []
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, stop_transcriber)
-    return JSONResponse({"ok": True, "running": False})
+    accepted = await loop.run_in_executor(None, lambda: ingest_discord_alerts(alerts))
+    return JSONResponse({"ok": True, "accepted": accepted})
 
 
-@app.get("/api/transcriber/mode")
-async def api_tx_mode_get():
-    return JSONResponse({
-        "spell_pipeline": bool(STATE.cfg.get("spell_pipeline")),
-        "running": STATE.transcriber_running,
-    })
-
-
-@app.post("/api/transcriber/mode")
-async def api_tx_mode_set(request: Request):
-    """Toggle the experimental spell pipeline. The flag is applied at transcriber
-    launch, so if it's running we restart it to take effect."""
-    try:
-        body = await request.json()
-        enabled = bool(body.get("spell_pipeline"))
-    except Exception:
-        return JSONResponse({"ok": False, "error": "bad body"}, status_code=400)
-
-    with STATE.lock:
-        STATE.cfg["spell_pipeline"] = enabled
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: save_config(dict(STATE.cfg)))
-
-    restarted = False
-    if STATE.transcriber_running:                       # restart to apply the flag
-        await loop.run_in_executor(None, stop_transcriber)
-        await loop.run_in_executor(None, start_transcriber)
-        restarted = True
-    return JSONResponse({"ok": True, "spell_pipeline": enabled,
-                         "restarted": restarted, "running": STATE.transcriber_running})
-
-
-@app.get("/api/transcriber/corrections")
-async def api_corrections_get():
-    """Current learned corrections + pending high-count unresolved tokens (which
-    the spell pipeline keeps getting wrong) for one-click mapping."""
-    try:
-        pending = json.loads(_PENDING_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pending = []
-    return JSONResponse({"corrections": load_corrections(_CORRECTIONS_FILE), "pending": pending})
-
-
-@app.post("/api/transcriber/corrections")
-async def api_corrections_set(request: Request):
-    """User maps a mis-heard token to the right ticker once; it sticks forever.
-    The transcriber reloads the store within ~10s (no restart)."""
-    try:
-        body = await request.json()
-        frm = str(body.get("from", "")).strip().upper()
-        to  = str(body.get("to", "")).strip().upper()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "bad body"}, status_code=400)
-    ok = add_correction(_CORRECTIONS_FILE, frm, to)
-    return JSONResponse(
-        {"ok": ok, "from": frm, "to": to, "corrections": load_corrections(_CORRECTIONS_FILE),
-         "error": None if ok else "target must be a real ticker"},
-        status_code=200 if ok else 400)
+@app.get("/api/discord/status")
+async def api_discord_status():
+    return JSONResponse(discord_status())
 
 
 @app.post("/api/ticker-log/clear")
 async def api_clear():
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, clear_ticker_log)
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/transcript/clear")
-async def api_transcript_clear():
-    await asyncio.get_running_loop().run_in_executor(None, clear_transcript)
     return JSONResponse({"ok": True})
 
 
@@ -1234,32 +1112,6 @@ async def api_add_bulk(request: Request):
         return JSONResponse({"ok": True, "added": len(added), "tickers": added})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
-
-
-@app.get("/api/audio-devices")
-async def api_audio_devices():
-    def _list():
-        try:
-            if sys.platform == "win32":
-                import pyaudiowpatch as _pa_mod
-            else:
-                import pyaudio as _pa_mod
-            p = _pa_mod.PyAudio()
-            devices = []
-            for i in range(p.get_device_count()):
-                dev = p.get_device_info_by_index(i)
-                if dev["maxInputChannels"] > 0:
-                    devices.append({
-                        "index":    i,
-                        "name":     dev["name"],
-                        "loopback": "loopback" in dev["name"].lower(),
-                    })
-            p.terminate()
-            return {"ok": True, "devices": devices}
-        except Exception as e:
-            return {"ok": False, "error": str(e), "devices": []}
-    result = await asyncio.get_running_loop().run_in_executor(None, _list)
-    return JSONResponse(result)
 
 
 @app.get("/api/config")

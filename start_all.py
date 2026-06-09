@@ -20,6 +20,10 @@ if not os.path.isfile(VENV_PYTHON):
     VENV_PYTHON = shutil.which("python3") or sys.executable
 
 
+class _ProcExited(Exception):
+    """Raised internally when any managed subprocess exits, to break the wait loop."""
+
+
 def _stream(proc: subprocess.Popen, label: str) -> None:
     assert proc.stdout
     for raw in iter(proc.stdout.readline, b''):
@@ -56,26 +60,38 @@ def main() -> None:
     )
     threading.Thread(target=_stream, args=(engine, '[engine]  '), daemon=True).start()
 
+    # ── Discord OCR source — the ticker source (replaces audio transcription) ──
+    discord = subprocess.Popen(
+        [VENV_PYTHON, 'discord_source.py'],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=utf8_env,
+    )
+    threading.Thread(target=_stream, args=(discord, '[discord] '), daemon=True).start()
+
+    procs = {'dashboard': dashboard, 'engine': engine, 'discord': discord}
+
     print('Dashboard     ->  http://localhost:8888')
     print('Signal engine ->  running (logs prefixed [engine])')
-    print('Press Ctrl+C to stop both.\n')
+    print('Discord OCR   ->  running (logs prefixed [discord])')
+    print('Press Ctrl+C to stop all.\n')
 
     try:
         while True:
-            if dashboard.poll() is not None:
-                print(f'\n[dashboard] exited with code {dashboard.returncode}')
-                break
-            if engine.poll() is not None:
-                print(f'\n[engine] exited with code {engine.returncode}')
-                break
+            for name, proc in procs.items():
+                if proc.poll() is not None:
+                    print(f'\n[{name}] exited with code {proc.returncode}')
+                    raise _ProcExited
             threading.Event().wait(1)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, _ProcExited):
         print('\nStopping...')
     finally:
-        for proc in (engine, dashboard):
+        ordered = [p for n, p in procs.items() if n != 'dashboard'] + [dashboard]
+        for proc in ordered:
             if proc.poll() is None:
                 proc.terminate()
-        for proc in (engine, dashboard):
+        for proc in ordered:
             try:
                 proc.wait(timeout=5)
             except (KeyboardInterrupt, subprocess.TimeoutExpired):

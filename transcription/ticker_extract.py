@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """
-ticker_extract.py — pure ticker-recognition logic, ZERO ASR/audio dependencies.
+ticker_extract.py — pure ticker-recognition + validation, ZERO audio deps.
 
-This is the detection brain split out of transcribe_action.py. It imports only
-the stdlib (re, time, urllib, pathlib), so `from ticker_extract import
-extract_tickers` loads in milliseconds instead of pulling in mlx_whisper / torch
-/ pyaudio (which made the old `from transcribe_action import extract_tickers`
-take minutes and ~2 GB). That fast import is what makes it practical to unit-test
-and iterate on recognition accuracy — the part that actually moves the needle.
-
-transcribe_action.py imports everything public from here, so its behaviour is
-unchanged; this is a structural split, not a logic change.
+Imports only the stdlib (re, time, urllib, pathlib), so loading it is instant.
+It owns the NASDAQ/NYSE ticker universe (cached in ../valid_tickers.txt) and the
+validation/extraction helpers. The Discord OCR source (discord_source.py) reuses
+is_valid_ticker() from here so there is a single source of truth for what counts
+as a real ticker; extract_tickers/normalize_transcript remain available for any
+free-text ticker mining.
 
 Public API:
     normalize_transcript(text) -> str
     extract_tickers(text)      -> dict[str, int]
     extract_with_stitch(text)  -> dict[str, int]   # cross-chunk boundary aware
+    is_valid_ticker(sym)       -> bool             # single-symbol validation
     VALID_TICKERS              : set[str]
 """
 
@@ -300,6 +298,14 @@ def is_hallucination(text: str) -> bool:
         return True
 
     return False
+
+
+def is_valid_ticker(sym: str) -> bool:
+    """True if `sym` is a real NASDAQ/NYSE symbol and not a known false-positive
+    stopword. Single source of truth for the ticker universe, reused by other
+    producers (e.g. the Discord OCR source) so they don't duplicate the list."""
+    s = sym.strip().upper()
+    return bool(s) and s in _VALID_TICKERS and s not in _TICKER_STOPWORDS
 
 
 def extract_tickers(text: str) -> dict[str, int]:

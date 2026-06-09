@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop the Signal Scanner dashboard and transcriber.
+"""Stop the Signal Scanner dashboard, signal engine, and Discord OCR source.
 
 Cleanly terminates all child processes started by start_all.py.
 """
@@ -45,7 +45,8 @@ def main() -> None:
     print("Stopping Signal Scanner...\n")
 
     kill_process("dashboard.py", grace_period=2)
-    kill_process("transcribe_action.py", grace_period=1)
+    kill_process("signal_engine.py", grace_period=1)
+    kill_process("discord_source.py", grace_period=1)
     kill_process("start_all.py", grace_period=1)
 
     print("✓ All processes stopped.")

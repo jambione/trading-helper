@@ -143,59 +143,27 @@
         </div>
 
         <main class="main-grid">
-            <!-- ── LEFT: Live Transcript ─────────────────────────── -->
+            <!-- ── LEFT: Discord Alerts (OCR source) ──────────────── -->
             <section data-panel="transcript" class="panel panel-transcript">
                 <div class="panel-header">
-                    <span class="panel-title">Live Transcript</span>
+                    <span class="panel-title">Discord Alerts</span>
                     <div class="tx-status-row">
                         <div data-tx-dot class="tx-dot"></div>
-                        <span data-tx-label class="tx-label">STOPPED</span>
+                        <span data-tx-label class="tx-label">OFFLINE</span>
                     </div>
                 </div>
 
                 <div class="tx-controls">
-                    <button data-tx-btn class="tx-btn tx-btn--start">
-                        Start Transcription
-                    </button>
                     <div class="tx-meta">
                         <span data-tx-count class="tx-count"
                             >0 tickers captured today</span
                         >
-                        <button
-                            data-clear-transcript-btn
-                            class="btn btn--ghost btn--sm"
-                        >
-                            Clear
-                        </button>
-                    </div>
-                    <label
-                        class="tx-mode-toggle"
-                        title="Experimental: silence-segmentation + recognize pipeline instead of fixed 1.5s chunks. Restarts the transcriber to apply."
-                    >
-                        <input type="checkbox" id="spell-pipeline-checkbox" data-spell-toggle />
-                        <span>Spell pipeline (beta)</span>
-                    </label>
-
-                    <!-- Learned corrections: map a consistently mis-heard token to
-                         the right ticker once; it sticks forever. Shown only with
-                         the spell pipeline on. -->
-                    <div class="tx-corrections" data-corrections hidden>
-                        <div class="tx-corr-pending" data-corr-pending></div>
-                        <form class="tx-corr-form" data-corr-form>
-                            <input type="text" data-corr-from placeholder="heard"
-                                   maxlength="6" autocomplete="off" spellcheck="false" />
-                            <span>&rarr;</span>
-                            <input type="text" data-corr-to placeholder="ticker"
-                                   maxlength="5" autocomplete="off" spellcheck="false" />
-                            <button type="submit" class="btn btn--ghost btn--sm">Map</button>
-                        </form>
-                        <div class="tx-corr-list" data-corr-list></div>
                     </div>
                 </div>
 
                 <div data-transcript-box class="transcript-box">
                     <span class="tx-placeholder"
-                        >Waiting for transcription…</span
+                        >Waiting for Discord alerts…</span
                     >
                 </div>
             </section>
@@ -302,9 +270,9 @@
                 <span class="status-audio-section">
                     <span class="status-divider">|</span>
                     <span class="status-item">
-                        <span class="status-label">Audio</span>
+                        <span class="status-label">Discord</span>
                         <span data-audio-status class="status-value"
-                            >Stopped</span
+                            >Offline</span
                         >
                     </span>
                 </span>
@@ -331,7 +299,6 @@
                         API Keys
                     </button>
                     <button class="tab-btn" data-tab-btn="data">Data</button>
-                    <button class="tab-btn" data-tab-btn="audio">Audio</button>
                     <button class="tab-btn" data-tab-btn="connection">
                         Connection
                     </button>
@@ -447,33 +414,6 @@
                                     placeholder="10"
                                 />
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- ── Tab: Audio ────────────────────────────── -->
-                    <div class="tab-panel hidden" data-tab-panel="audio">
-                        <div class="form-group">
-                            <label for="cfg-device-index"
-                                >Audio Input Device</label
-                            >
-                            <div class="input-row">
-                                <select id="cfg-device-index">
-                                    <option value="">Loading…</option>
-                                </select>
-                                <button
-                                    data-refresh-devices
-                                    class="btn btn--ghost btn--sm"
-                                    title="Refresh device list"
-                                >
-                                    ↺
-                                </button>
-                            </div>
-                        </div>
-                        <div class="device-hint">
-                            Devices marked <strong>⟳ LOOPBACK</strong> capture
-                            system audio playing through your speakers — ideal
-                            for transcribing financial media. Mic devices
-                            capture your voice directly.
                         </div>
                     </div>
 

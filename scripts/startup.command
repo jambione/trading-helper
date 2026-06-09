@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # startup.command — double-click from the Desktop to start the full trading session.
 #
-#   1. ./trading start  → dashboard + signal engine + Cloudflare tunnel
-#   2. Open Discord → Stock Scanners & Alerts, click Join Voice + Watch Stream,
-#      then start the transcriber  (the Discord/transcriber steps from morning_start.sh)
+#   1. ./trading start  → dashboard + signal engine + Discord OCR source + Cloudflare tunnel
+#   2. Open Discord → Stock Scanners & Alerts so the alert channel is on screen for OCR
 #   3. Arrange windows  → Brave left, Webull right, Terminal minimized (runs in background)
 #   4. Launch the macOS TradingView/Webull agent (mac_agent.sh).
 #      This stays in the foreground and keeps THIS window open — leave it running.
@@ -26,7 +25,7 @@ echo ""
 echo "[1/4] ./trading start"
 ./trading start
 
-# Make sure the backend is actually answering before we drive Discord / transcriber.
+# Make sure the backend is actually answering before we drive Discord.
 echo "      Waiting for backend at $BACKEND ..."
 for i in $(seq 1 60); do
     curl -s "$BACKEND/api/meta" > /dev/null 2>&1 && { echo "      ✓ Backend up (${i}s)."; break; }
@@ -34,20 +33,20 @@ for i in $(seq 1 60); do
     [ "$i" -eq 60 ] && echo "      ⚠ Backend not responding after 60s — continuing anyway."
 done
 
-# ── 2. Discord (join voice + watch stream) and transcriber ────────────────────
+# ── 2. Discord — open -daytrading-alerts and dock the window right for OCR ────
 echo ""
-echo "[2/4] Opening Discord → Stock Scanners & Alerts (join voice + watch stream)..."
-python3 "$REPO/click_join_voice.py" \
-    && echo "      ✓ Joined voice channel + Watch Stream." \
-    || echo "      ⚠ Could not auto-click — please join manually."
+echo "[2/4] Opening Discord → -daytrading-alerts (docked right)..."
+"$REPO/venv/bin/python" "$REPO/open_discord_alerts.py" \
+    && echo "      ✓ Discord alert channel docked right." \
+    || echo "      ⚠ Could not auto-open — open -daytrading-alerts and dock it right manually."
 
-echo "      Starting transcription..."
+echo "      Verifying Discord OCR source..."
 sleep 2
-RESPONSE=$(curl -s -X POST "$BACKEND/api/transcriber/start" 2>/dev/null)
+RESPONSE=$(curl -s "$BACKEND/api/discord/status" 2>/dev/null)
 if echo "$RESPONSE" | grep -qE '"running":\s*true'; then
-    echo "      ✓ Transcription started."
-elif echo "$RESPONSE" | grep -qE '"running":\s*false'; then
-    echo "      ⚠ Transcription did not start. Response: $RESPONSE"
+    echo "      ✓ Discord OCR source is live."
+elif [ -n "$RESPONSE" ]; then
+    echo "      ⚠ OCR source not live yet (it starts with the server). Response: $RESPONSE"
 else
     echo "      ✗ Could not reach backend. Response: ${RESPONSE:-(empty)}"
 fi

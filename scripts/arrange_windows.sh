@@ -65,6 +65,26 @@ if webullOpen then
     end if
 end if
 
+-- Discord: dock to the right and bring to front so the OCR source can read the
+-- -daytrading-alerts channel. Placed LAST so it sits on top of the right side.
+tell application "System Events"
+    set discordOpen to (exists process "Discord")
+end tell
+if discordOpen then
+    tell application "Discord" to activate
+    delay 0.3
+    try
+        tell application "System Events"
+            tell process "Discord"
+                if (count of windows) > 0 then
+                    set position of window 1 to {rightX, 0}
+                    set size of window 1 to {rightW, screenH}
+                end if
+            end tell
+        end try
+    end try
+end if
+
 -- Minimize the Terminal window (mac_agent stays running, just hidden)
 tell application "Terminal"
     set miniaturized of front window to true
