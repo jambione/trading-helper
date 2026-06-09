@@ -60,9 +60,14 @@ OCR_SCRIPT    = ROOT / "discord_ocr.swift"
 CONFIG_FILE   = ROOT / "config" / "bot_config.json"
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:8888")
 
-# An alert line carries this arrow marker between the ticker/headline and the
-# data payload. Two-or-more ">" tolerates OCR dropping a couple of arrows.
+# A standard alert line carries this arrow marker between the ticker/headline and
+# the data payload. Two-or-more ">" tolerates OCR dropping a couple of arrows.
 _ALERT_MARKER = re.compile(r">>+")
+
+# A "Squeeze Potential Alert" body reads e.g. "ATHE ww close over 6.78/7/7.50".
+# These have no arrow marker; "close over" is the signature. We treat them as a
+# strong catalyst → fire the burst toast immediately (see ingest, "burst" flag).
+_SQUEEZE_MARKER = re.compile(r"(?i)\bclose\s+over\b")
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -76,22 +81,25 @@ def _load_config() -> dict:
 
 # ── Alert parsing ───────────────────────────────────────────────────────────
 
-def parse_alert_line(line: str) -> str | None:
-    """Return the ticker for an alert line, or None if the line isn't a parseable
-    alert. The ticker is the first real word of the line (after any leading
-    emoji/symbol); if that word isn't a valid ticker we reject the whole line —
-    we never scan deeper, so mid-line words like NEW/LOW can't false-positive."""
-    if not _ALERT_MARKER.search(line):
-        return None
+def parse_alert_line(line: str) -> tuple[str, str] | tuple[None, None]:
+    """Parse one OCR line into (ticker, kind), or (None, None) if it isn't an
+    alert. kind is "squeeze" for 'X close over ...' breakout alerts (a strong
+    catalyst → burst) or "alert" for standard '>>>>>' alerts. The ticker is the
+    first real word (after any leading emoji/symbol); if that word isn't a valid
+    ticker we reject the line — we never scan deeper, so mid-line words like
+    NEW/LOW/OVER can't false-positive."""
+    is_squeeze = bool(_SQUEEZE_MARKER.search(line))
+    if not (is_squeeze or _ALERT_MARKER.search(line)):
+        return None, None
     for tok in line.split():
         alpha = re.sub(r"[^A-Za-z]", "", tok)
         if not alpha:
             continue  # leading emoji / symbol — look at the next token
         sym = alpha.upper()
         if 2 <= len(sym) <= 5 and is_valid_ticker(sym):
-            return sym
-        return None   # first real word isn't a valid ticker → not an alert
-    return None
+            return sym, ("squeeze" if is_squeeze else "alert")
+        return None, None   # first real word isn't a valid ticker → not an alert
+    return None, None
 
 
 def _signature(line: str) -> str:
@@ -170,8 +178,11 @@ def check() -> int:
     cfg   = _load_config()
     cmd   = _ocr_command(cfg)
     lines = _run_ocr(cmd)
-    alerts = [(parse_alert_line(ln), ln) for ln in lines]
-    alerts = [(t, ln) for t, ln in alerts if t]
+    alerts = []
+    for ln in lines:
+        tkr, kind = parse_alert_line(ln)
+        if tkr:
+            alerts.append((tkr, kind, ln))
 
     print(f"[discord] OCR read {len(lines)} text line(s) from the Discord window.")
     if not lines:
@@ -180,12 +191,14 @@ def check() -> int:
         return 1
     if not alerts:
         print("[discord] VERDICT: ⚠ window captured, but no alert line is visible. "
-              "Scroll the alert channel so the latest '>>>>>' alerts are on screen.")
+              "Scroll the alert channel so the latest alerts are on screen.")
         return 2
     print(f"[discord] parsed {len(alerts)} alert(s):")
-    for t, ln in alerts:
-        print(f"   {t:6}  <=  {ln[:75]}")
-    print("[discord] VERDICT: ✓ working — these tickers would post as they newly appear.")
+    for tkr, kind, ln in alerts:
+        tag = "🔥burst" if kind == "squeeze" else "mention"
+        print(f"   {tkr:6} {tag:8} <=  {ln[:70]}")
+    print("[discord] VERDICT: ✓ working — these tickers would post as they newly appear "
+          "(squeeze alerts fire the burst toast).")
     return 0
 
 
@@ -209,9 +222,9 @@ def main() -> None:
     while True:
         t0 = time.time()
         new_alerts: list[dict] = []
-        first_frame_tickers: "OrderedDict[str, str]" = OrderedDict()   # ticker → line
+        first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
         for line in _run_ocr(cmd):
-            ticker = parse_alert_line(line)
+            ticker, kind = parse_alert_line(line)
             if not ticker:
                 continue
             sig = _signature(line)
@@ -220,13 +233,16 @@ def main() -> None:
             seen[sig] = None
             if len(seen) > _SEEN_CAP:
                 seen.popitem(last=False)
+            # A squeeze breakout is a strong catalyst → ask the dashboard to fire
+            # the burst toast immediately (simulate a mention burst).
+            alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze"}
             if primed:
-                new_alerts.append({"ticker": ticker, "line": line})
+                new_alerts.append(alert)
             else:
-                first_frame_tickers.setdefault(ticker, line)
+                first_frame.setdefault(ticker, alert)
         if not primed:
             primed = True
-            new_alerts = [{"ticker": t, "line": ln} for t, ln in first_frame_tickers.items()]
+            new_alerts = list(first_frame.values())
             print(f"[discord] startup: surfacing {len(new_alerts)} visible ticker(s); "
                   "watching for new alerts…", flush=True)
         # POST every poll (even with no new alerts) — it doubles as a heartbeat

@@ -371,7 +371,12 @@ def ingest_discord_alerts(alerts: list[dict]) -> int:
     """Record captured Discord alerts: add each ticker to the watchlist, count a
     mention (for burst detection), and append to the live feed. Returns the
     number accepted. Always stamps discord_last_ts (so an empty list is a valid
-    heartbeat). Each alert: {"ticker": str, "line": str}."""
+    heartbeat). Each alert: {"ticker": str, "line": str, "burst": bool}.
+
+    A "burst" alert (e.g. a 'Squeeze Potential Alert') injects a full burst's
+    worth of mentions at once (mention_alert_threshold) so the existing burst
+    toast fires immediately — i.e. it simulates a mention spike."""
+    threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
     accepted = 0
     for a in alerts:
         ticker = str(a.get("ticker", "")).strip().upper()
@@ -379,12 +384,15 @@ def ingest_discord_alerts(alerts: list[dict]) -> int:
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
             continue
         add_ticker_to_log(ticker)
+        hits = threshold if a.get("burst") else 1
         with STATE.lock:
-            _track_mention(ticker)
+            for _ in range(hits):
+                _track_mention(ticker)
             STATE.discord_alerts.append({
                 "ts":     datetime.now(ET).strftime("%H:%M:%S"),
                 "ticker": ticker,
                 "line":   line[:160],
+                "burst":  bool(a.get("burst")),
             })
         accepted += 1
     with STATE.lock:

@@ -66,6 +66,21 @@ def test_empty_list_is_a_valid_heartbeat():
     assert d.discord_status()["running"] is True
 
 
+def test_squeeze_burst_alert_trips_the_threshold_immediately():
+    # A burst alert injects mention_alert_threshold mentions at once, so the
+    # ticker should immediately be in burst (>= threshold within the window).
+    threshold = int(d.STATE.cfg.get("mention_alert_threshold", 5))
+    d.ingest_discord_alerts([
+        {"ticker": "ATHE", "line": "ATHE ww close over 6.78/7/7.50", "burst": True},
+    ])
+    with d.STATE.lock:
+        assert len(d.STATE.mention_ts["ATHE"]) >= threshold
+    # A plain alert injects exactly one mention (no burst).
+    d.ingest_discord_alerts([{"ticker": "NVDA", "line": "NVDA >>>>> x"}])
+    with d.STATE.lock:
+        assert len(d.STATE.mention_ts["NVDA"]) == 1
+
+
 def test_status_goes_offline_when_stale():
     d.ingest_discord_alerts([{"ticker": "AAPL", "line": "AAPL >>>>> x"}])
     # Simulate no heartbeat for longer than the stale window.
