@@ -116,13 +116,17 @@ def _ocr_command(cfg: dict) -> list[str]:
     owner = str(cfg.get("discord_window_owner") or "Discord")
     title = str(cfg.get("discord_window_title") or "").strip()
     if OCR_BINARY.exists():
+        # Warn when the source file is newer than the compiled binary.
+        if OCR_SCRIPT.exists() and OCR_SCRIPT.stat().st_mtime > OCR_BINARY.stat().st_mtime:
+            print("[discord] WARNING: discord_ocr.swift is newer than the compiled binary — "
+                  "rebuild with:  bash scripts/build_ocr.sh", flush=True)
         cmd = [str(OCR_BINARY)]
     elif OCR_SCRIPT.exists():
         # Fallback: run via the swift interpreter (slower startup).
         cmd = ["swift", str(OCR_SCRIPT)]
     else:
         print("[discord] ERROR: discord_ocr not found. Build it:", flush=True)
-        print("  swiftc discord_ocr.swift -o discord_ocr", flush=True)
+        print("  bash scripts/build_ocr.sh", flush=True)
         raise SystemExit(1)
     cmd += ["--owner", owner]
     if title:
@@ -130,17 +134,20 @@ def _ocr_command(cfg: dict) -> list[str]:
     return cmd
 
 
-def _run_ocr(cmd: list[str]) -> list[str]:
+def _run_ocr(cmd: list[str]) -> tuple[list[str], bool]:
+    """Run the OCR binary once. Returns (lines, ok); ok=False means a process-level
+    failure (window not found, binary crashed, timeout) — distinct from a successful
+    capture that returned zero lines (quiet Discord channel)."""
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     except subprocess.TimeoutExpired:
         print("[discord] OCR timed out", flush=True)
-        return []
+        return [], False
     if out.returncode != 0:
         msg = (out.stderr or "").strip().splitlines()
         print(f"[discord] OCR failed: {msg[-1] if msg else out.returncode}", flush=True)
-        return []
-    return [ln for ln in out.stdout.splitlines() if ln.strip()]
+        return [], False
+    return [ln for ln in out.stdout.splitlines() if ln.strip()], True
 
 
 def _post_ingest(alerts: list[dict]) -> None:
@@ -166,18 +173,25 @@ def _post_ingest(alerts: list[dict]) -> None:
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
-# Bounded set of recently-emitted alert signatures so messages that linger on
-# screen across polls aren't re-counted, while messages that scroll in are.
-_SEEN_CAP = 800
+# Signatures expire after one full trading session so early-session alerts can
+# never be evicted by sheer volume and accidentally re-fire later in the day.
+_SESSION_TTL = 8 * 3600   # 8 hours
+
+# Backoff caps how long we wait between retries when the Discord window can't be
+# found (e.g. Discord is closed or on a different Space).
+_MAX_BACKOFF_SEC = 60.0
 
 
 def check() -> int:
     """One-shot self-test: capture once, report what OCR saw and parsed, and give
     a verdict. No priming, no POST, no loop. Returns a shell exit code so it's
     scriptable.  Run:  python discord_source.py --check"""
-    cfg   = _load_config()
-    cmd   = _ocr_command(cfg)
-    lines = _run_ocr(cmd)
+    cfg          = _load_config()
+    cmd          = _ocr_command(cfg)
+    lines, ok    = _run_ocr(cmd)
+    if not ok:
+        print("[discord] VERDICT: ✗ OCR process failed — see error above.")
+        return 1
     alerts = []
     for ln in lines:
         tkr, kind = parse_alert_line(ln)
@@ -211,28 +225,44 @@ def main() -> None:
     print(f"[discord] command: {' '.join(cmd)}", flush=True)
     print(f"[discord] posting alerts → {DASHBOARD_URL}/api/discord/ingest", flush=True)
 
-    seen: "OrderedDict[str, None]" = OrderedDict()
+    # sig → first-seen timestamp; entries expire after _SESSION_TTL seconds.
+    seen: dict[str, float] = {}
     # First scan is special: the channel already shows several alerts. We surface
     # each VISIBLE ticker once (so the watchlist populates immediately) but never
     # re-post the same on-screen lines, and we collapse to one-per-ticker so a
     # screen full of repeats (e.g. MTEN ×7) can't fake a startup burst. After the
     # first scan, every genuinely new alert line is posted as it appears.
-    primed = False
+    primed      = False
+    fail_streak = 0   # consecutive OCR process failures (window not found, crash)
 
     while True:
         t0 = time.time()
+
+        # Expire stale signatures from previous sessions.
+        expired = [s for s, ts in seen.items() if t0 - ts > _SESSION_TTL]
+        for s in expired:
+            del seen[s]
+
+        lines, ok = _run_ocr(cmd)
+
+        if not ok:
+            # Exponential backoff so we don't spam logs when Discord is closed.
+            fail_streak += 1
+            backoff = min(poll_sec * (2 ** (fail_streak - 1)), _MAX_BACKOFF_SEC)
+            time.sleep(backoff)
+            continue
+
+        fail_streak = 0
         new_alerts: list[dict] = []
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
-        for line in _run_ocr(cmd):
+        for line in lines:
             ticker, kind = parse_alert_line(line)
             if not ticker:
                 continue
             sig = _signature(line)
             if sig in seen:
                 continue
-            seen[sig] = None
-            if len(seen) > _SEEN_CAP:
-                seen.popitem(last=False)
+            seen[sig] = t0
             # A squeeze breakout is a strong catalyst → ask the dashboard to fire
             # the burst toast immediately (simulate a mention burst).
             alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze"}

@@ -4,6 +4,7 @@
 Both processes run together; Ctrl+C or either process exiting stops both.
 Uses venv when available, otherwise falls back to the system python3.
 """
+import json
 import os
 import subprocess
 import sys
@@ -31,7 +32,18 @@ def _stream(proc: subprocess.Popen, label: str) -> None:
         sys.stdout.flush()
 
 
+def _load_cfg() -> dict:
+    try:
+        cfg_path = os.path.join(ROOT, 'config', 'bot_config.json')
+        with open(cfg_path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def main() -> None:
+    cfg = _load_cfg()
+
     utf8_env = {
         **os.environ,
         'PYTHONUTF8': '1',
@@ -60,21 +72,26 @@ def main() -> None:
     )
     threading.Thread(target=_stream, args=(engine, '[engine]  '), daemon=True).start()
 
-    # ── Discord OCR source — the ticker source (replaces audio transcription) ──
-    discord = subprocess.Popen(
-        [VENV_PYTHON, 'discord_source.py'],
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env=utf8_env,
-    )
-    threading.Thread(target=_stream, args=(discord, '[discord] '), daemon=True).start()
-
-    procs = {'dashboard': dashboard, 'engine': engine, 'discord': discord}
+    procs = {'dashboard': dashboard, 'engine': engine}
 
     print('Dashboard     ->  http://localhost:8888')
     print('Signal engine ->  running (logs prefixed [engine])')
-    print('Discord OCR   ->  running (logs prefixed [discord])')
+
+    # ── Discord OCR source — only launched when enabled in config ─────────────
+    if cfg.get('discord_ocr_enabled', False):
+        discord = subprocess.Popen(
+            [VENV_PYTHON, 'discord_source.py'],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=utf8_env,
+        )
+        threading.Thread(target=_stream, args=(discord, '[discord] '), daemon=True).start()
+        procs['discord'] = discord
+        print('Discord OCR   ->  running (logs prefixed [discord])')
+    else:
+        print('Discord OCR   ->  disabled (set discord_ocr_enabled: true in config/bot_config.json)')
+
     print('Press Ctrl+C to stop all.\n')
 
     try:

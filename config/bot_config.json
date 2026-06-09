@@ -19,6 +19,7 @@
   "wr_length": 14,
   "tv_chart_url": "https://www.tradingview.com/chart/x04Gfcu8",
   "brave_tv_tab": 1,
+  "discord_ocr_enabled": true,
   "discord_ocr_poll_sec": 2.5,
   "discord_window_owner": "Discord",
   "discord_window_title": "",
