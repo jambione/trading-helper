@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     "discord_window_title": "",     # optional window-title substring filter
 
     # ── Mention burst alerts ─────────────────────────────────
-    "mention_alert_threshold": 5,   # mentions within window to trigger alert
+    "mention_alert_threshold": 2,   # mentions within window to trigger alert
     "mention_alert_window":    10,  # rolling window in seconds
 }
 
