@@ -54,24 +54,25 @@ Configuration
 - Edit `bot_config.json` or use environment variables. See `config.py` for
     default keys and `SAFE_CONFIG_KEYS` that can be changed from the dashboard.
 
-Discord alert source (OCR — optional, macOS)
-- An optional second ticker producer that reads trading-alert messages straight
-  off the on-screen Discord window — no Discord login, no token, ToS-safe (it
-  only reads pixels). It runs ALONGSIDE the audio transcriber and POSTs to the
-  same `/api/tickers/add` seam, so all downstream behaviour is identical.
-- Pieces: `discord_ocr.swift` → `discord_ocr` (Apple Vision OCR of the Discord
-  window) and `discord_source.py` (polls the helper, parses alert lines, POSTs
-  new mentions). Ticker validation is shared with the transcriber via
-  `ticker_extract.is_valid_ticker`.
+Discord alert source (OCR — macOS)
+- The primary ticker producer. Reads trading-alert messages off the on-screen
+  Discord window using Apple Vision OCR — no Discord login, no token, ToS-safe.
+- Pieces: `discord_ocr.swift` → `discord_ocr` (compiled Swift binary) and
+  `discord_source.py` (polls the binary, parses alert lines, POSTs new mentions).
 - Setup:
-  1. Build the helper once: `swiftc discord_ocr.swift -o discord_ocr`
-  2. Keep the Discord window with the alert channel visible (not minimized).
+  1. Build the binary once: `bash scripts/build_ocr.sh`
+  2. Keep the Discord alert channel window visible (not minimized).
   3. Enable in `config/bot_config.json`: `"discord_ocr_enabled": true`
-     (optional: `discord_ocr_poll_sec`, `discord_window_owner`,
-     `discord_window_title`).
-  4. `start_all.py` then launches it automatically (logs prefixed `[discord]`);
-     or run it standalone with `python discord_source.py`.
-  - First run prompts for Screen Recording permission (same as audio capture).
+  4. `start_all.py` launches it automatically (logs prefixed `[discord]`).
+  - First run prompts for Screen Recording permission — grant it.
+
+TradingView webhook (second signal source)
+- A Pine Script squeeze indicator (`scripts/brasfield_squeeze_alert.pine`) fires
+  a webhook to `/api/tradingview/webhook` when a squeeze releases on the chart.
+- Independent of Discord — two sources confirming the same ticker is a stronger signal.
+- Set `tv_webhook_secret` in `config/bot_config.json` and point the TV alert at
+  `https://trading.jbrasfield.com/api/tradingview/webhook?secret=<your_secret>`.
+- See `docs/ONBOARDING.md` §6 for the full setup walkthrough.
 
 Tests & CI
 - Add unit tests under `tests/` and enable CI. A secret-scan workflow

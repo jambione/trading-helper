@@ -1,376 +1,440 @@
-# Signal Scanner — Onboarding Guide
+# Trading Helper — New Machine Setup Guide
 
-## What it is
+This guide walks through setting up the Brasfield momentum trading dashboard on
+a fresh macOS machine from scratch.
 
-Signal Scanner is a real-time trading dashboard that runs on your local machine. It monitors a watchlist of stock tickers, calculates multi-indicator signals (Williams %R, CM RSI-2, OBV), streams live prices, and transcribes financial audio to detect tickers mentioned on air.
+> **macOS only.** The Discord OCR source uses ScreenCaptureKit and Apple Vision —
+> both macOS-only frameworks. The rest of the stack (dashboard, signal engine,
+> Alpaca, Finnhub) runs on any platform, but the full pipeline requires a Mac.
 
-The app has two distinct parts:
+---
 
-| Part | Where it runs | What it does |
-|------|--------------|--------------|
-| **Backend** | Your local machine | Price feeds, signal calculation, watchlist file, transcription |
-| **Frontend** | Browser (local or hosted) | Dashboard UI, TradingView chart, login |
+## What the system does
 
-Both parts currently live in this repo. The goal is to eventually host the frontend on a service like Vercel while the backend continues to run locally — connected via Cloudflare Tunnel.
+Three processes run together and talk to each other:
+
+| Process | File | Role |
+|---|---|---|
+| **Dashboard** | `dashboard.py` | FastAPI server — prices, signals, WebSocket UI, REST API |
+| **Signal engine** | `signal_engine.py` | Scans watchlist tickers for multi-indicator setups |
+| **Discord OCR** | `discord_source.py` | Screenshots Discord every 2.5 s, OCRs alert messages, POSTs tickers |
+
+A fourth source feeds the dashboard from outside the machine:
+
+| Source | Direction | Role |
+|---|---|---|
+| **TradingView webhook** | TV → dashboard | Pine Script squeeze indicator fires a burst alert when a setup confirms |
+
+Everything flows into the same mention-tracking and burst-detection pipeline.
+When a ticker appears in both the Discord OCR feed and the TradingView feed
+within a short window, that is your highest-confidence signal.
 
 ---
 
 ## Prerequisites
 
-- Python 3.11+
-- A modern browser (Chrome / Edge recommended for TradingView)
-- API keys:
-  - **Alpaca** — for bar data and price fallback (free paper account works)
-  - **Finnhub** — for real-time WebSocket price stream (free tier works)
+| Requirement | Version | Install |
+|---|---|---|
+| macOS | 12.3 Monterey or later | — |
+| Xcode Command Line Tools | latest | `xcode-select --install` |
+| Python | 3.12 | `brew install python@3.12` |
+| Homebrew | latest | [brew.sh](https://brew.sh) |
+| cloudflared | latest | `brew install cloudflare/cloudflare/cloudflared` |
+| Git | any | included with Xcode CLT |
 
 ---
 
-## Installation
+## 1. Clone the repository
 
 ```bash
-# 1. Clone / navigate to the project folder
+git clone https://github.com/jambione/trading-helper.git
 cd trading-helper
-
-# 2. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate        # Mac / Linux
-.venv\Scripts\activate           # Windows
-
-# 3. Install dependencies
-pip install -r requirements.txt
+git checkout ocr-only-source
 ```
 
 ---
 
-## First-time Setup
+## 2. Create the virtual environment
 
-### 1. Create your secrets file
+The startup scripts expect a `venv/` directory at the repo root.
 
-Copy the example and fill in your values:
+```bash
+python3.12 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Verify the install:
+
+```bash
+python -c "import fastapi, uvicorn, pandas, alpaca; print('OK')"
+```
+
+---
+
+## 3. Create your secrets file
 
 ```bash
 cp config/secrets.example.json config/secrets.json
 ```
 
-Edit `config/secrets.json`:
+Edit `config/secrets.json` and fill in your keys:
 
 ```json
 {
-  "api_key":     "your-alpaca-api-key",
-  "secret_key":  "your-alpaca-secret-key",
-  "finnhub_key": "your-finnhub-api-key"
+  "api_key":        "your-alpaca-api-key",
+  "secret_key":     "your-alpaca-secret-key",
+  "finnhub_key":    "your-finnhub-api-key",
+  "require_auth":   false,
+  "dashboard_user": "admin",
+  "dashboard_pass": "changeme",
+  "jwt_secret":     "replace-with-a-long-random-string"
 }
 ```
 
-> `secrets.json` is never committed to git. Keep it out of any repo you push to.
+**Where to get the keys:**
 
-**Login is disabled by default.** You can open `http://localhost:8888` without a password. No `require_auth`, `dashboard_user`, `dashboard_pass`, or `jwt_secret` fields are needed for local use.
+| Key | Source | Notes |
+|---|---|---|
+| `api_key` / `secret_key` | [alpaca.markets](https://alpaca.markets) | Free paper account works |
+| `finnhub_key` | [finnhub.io](https://finnhub.io) | Free tier works |
+| `jwt_secret` | any random string | Run `openssl rand -hex 32` to generate one |
 
-### 2. Start the server
+> `config/secrets.json` is in `.gitignore` and must never be committed.
+> Set `require_auth: true` before exposing the dashboard via Cloudflare Tunnel.
+
+---
+
+## 4. Build the Discord OCR binary
+
+The Discord alert source uses a native Swift helper that screenshots the Discord
+window and runs Apple Vision OCR. Compile it once:
 
 ```bash
-python dashboard.py
+bash scripts/build_ocr.sh
 ```
 
-The terminal will print:
+This produces `discord_ocr` in the repo root. The script is idempotent — it
+skips recompilation if the binary is already up-to-date.
 
-```
-Signal Scanner  —  http://localhost:8888
-Ctrl+C to stop
-```
-
-### 3. Open the dashboard
-
-Open `http://localhost:8888` in your browser. The dashboard loads directly — no login required when running locally.
+If you update `discord_ocr.swift` later, re-run the script. The dashboard will
+warn you at startup if the source file is newer than the binary.
 
 ---
 
-## Dashboard Layout
+## 5. Configure Discord
 
-The dashboard is a three-column layout:
+The OCR source reads alerts from the Discord window on your screen. It never
+logs into Discord or touches Discord's servers — it only reads pixels.
+
+**Before starting the server each day:**
+
+1. Open Discord and navigate to your trading alert channel
+2. Keep the window visible on your primary display (not minimized, not on a
+   hidden Space)
+3. The OCR polls every 2.5 seconds; any alert line containing `>>>>>` or
+   `close over` will be parsed and sent to the dashboard
+
+**Config keys** (in `config/bot_config.json`):
+
+| Key | Default | Description |
+|---|---|---|
+| `discord_ocr_enabled` | `true` | Set to `false` to disable without stopping the server |
+| `discord_ocr_poll_sec` | `2.5` | Seconds between OCR captures |
+| `discord_window_owner` | `"Discord"` | App name to capture |
+| `discord_window_title` | `""` | Optional window title substring filter |
+
+**Grant Screen Recording permission** the first time you run:
+System Settings → Privacy & Security → Screen Recording → enable your terminal
+or launcher app.
+
+**Test it without starting the full server:**
+
+```bash
+source venv/bin/activate
+python discord_source.py --check
+```
+
+Expected output when working:
 
 ```
-┌─────────────────┬──────────────────┬──────────────────────────────┐
-│  Live Transcript│    Watchlist     │      TradingView Chart        │
-│  (left, fixed)  │  (center, resize)│      (right, fills space)    │
-└─────────────────┴──────────────────┴──────────────────────────────┘
+[discord] OCR read 34 text line(s) from the Discord window.
+[discord] parsed 3 alert(s):
+   NVDA   mention  <=  NVDA Price Volatility Spike! >>>>> 1 Minute High...
+[discord] VERDICT: ✓ working
 ```
-
-Drag the handle between the watchlist and chart to resize. The widths are saved to localStorage.
-
-### Left — Live Transcript
-
-Captures real-time speech from a selected audio device (loopback or microphone). As tickers are spoken, they are:
-
-- Highlighted in bold in the transcript
-- Automatically added to the watchlist
-- Highlighted in the watchlist row with an amber border
-
-**Controls**
-- **Start / Stop Transcription** — toggle the speech capture subprocess
-- **Clear** — wipe the in-memory transcript (does not affect the watchlist)
-- Device selection is in **Settings → Audio**
-
-### Center — Watchlist
-
-Live table of tickers being tracked. Sorted by: recently mentioned → signal strength → price.
-
-| Column | Meaning |
-|--------|---------|
-| Ticker | Symbol |
-| Price | Last trade price (Finnhub WebSocket, Alpaca fallback) |
-| Chg% | Day change percentage from open |
-| Vol | Day volume (green = high relative volume) |
-| Add | Opens Webull + TradingView workflow |
-| ✕ | Removes ticker from watchlist |
-
-**Row colors**
-
-| Color | Signal status | Meaning |
-|-------|--------------|---------|
-| Green tint | BUY | All signal conditions met |
-| Blue tint | ON_DECK | Setup building (oversold streak ≥ min bars) |
-| Amber left border | — | Spoken in the last 30 seconds |
-
-Click any row to load that ticker in the TradingView chart.
-
-**Adding tickers manually** — type a symbol in the input box at the top of the watchlist and press Enter or click `+`.
-
-### Right — TradingView Chart
-
-Loads a TradingView widget for the selected ticker. Uses your saved chart layout if you configure one in **Settings → Data → TradingView Chart Layout URL**.
 
 ---
 
-## The Watchlist File
+## 6. Configure the TradingView webhook
 
-Tickers are persisted to `transcription/wb_watchlist.json` — a JSON array of timestamped objects:
+TradingView is a second independent squeeze detector. When a Pine Script alert
+fires, TradingView POSTs to the dashboard — confirming the same setup from a
+completely different source.
+
+### 6a. Set a webhook secret
+
+Open `config/bot_config.json` and set a secret token:
 
 ```json
-[
-  {"ticker": "AAPL", "added": "2026-05-07T09:30:00-04:00"},
-  {"ticker": "NVDA", "added": "2026-05-07T09:31:15-04:00"}
-]
+"tv_webhook_secret": "your-secret-here"
 ```
 
-**Auto-purge:** entries whose `added` timestamp is 15 minutes old or older are automatically removed from the file the next time the backend reads it (within 100 ms of expiry).
+Use any string. This prevents random internet traffic from injecting fake alerts
+into your public endpoint.
 
-**Adding entries from external tools:** write an object with `ticker` and `added` (ISO 8601 with timezone). The old plain-string format is still accepted and migrated automatically on first read — those entries are treated as just-added and will expire 15 minutes later.
+### 6b. Add the Pine Script to TradingView
 
-The backend polls this file every 100 ms by file mtime and broadcasts changes over the WebSocket. You can edit it directly from any text editor or script and the dashboard will update within a fraction of a second.
+1. Open TradingView → Pine Editor (bottom toolbar)
+2. Paste the contents of `scripts/brasfield_squeeze_alert.pine`
+3. Click **Save** then **Add to chart**
 
-This is the primary integration point for the local → hosted split: your local tooling writes to this file; the dashboard reads from it in real time.
+### 6c. Create the TradingView alert
 
----
+1. Right-click the indicator pane → **Add Alert on Brasfield Squeeze Alert**
+2. Condition: **Squeeze Fire Long**
+3. Trigger: **Once Per Bar Close**
+4. Enable **Webhook URL**, paste:
+   ```
+   https://trading.jbrasfield.com/api/tradingview/webhook?secret=your-secret-here
+   ```
+5. In the **Message** box, paste exactly:
+   ```json
+   {"ticker":"{{ticker}}","close":{{close}},"interval":"{{interval}}"}
+   ```
+6. Click **Create**
 
-## Signal Logic
+Repeat for each chart or watchlist you want to monitor.
 
-Every ticker on the watchlist is evaluated against three indicators:
-
-| Indicator | Trigger condition |
-|-----------|------------------|
-| **Williams %R (fast/slow)** | Fast %R < oversold threshold for N consecutive bars |
-| **CM RSI-2** (Larry Connors) | RSI(2) < oversold level AND price > 200-SMA AND price < 5-SMA |
-| **OBV Oscillator** | On-balance volume trending up with a volume surge |
-
-**Signal statuses** (shown as row color and badge):
-
-| Status | Condition |
-|--------|-----------|
-| `BUY` | All conditions met |
-| `ON_DECK` | Oversold streak ≥ min bars |
-| `WARMING` | Fast %R < −60 (approaching zone) |
-| `COLD` | Far from oversold |
-
----
-
-## Settings Reference
-
-Open settings with the **⚙ Settings** button in the header.
-
-### API Keys tab
-
-| Field | Description |
-|-------|-------------|
-| Alpaca API Key | Paper or live Alpaca key |
-| Alpaca Secret Key | Corresponding secret |
-| Finnhub API Key | Free key from finnhub.io |
-
-### Data tab
-
-| Field | Description |
-|-------|-------------|
-| Trading Strategy | `Multiple Oversold` (recommended) or legacy weighted scoring |
-| TradingView Chart Layout URL | Paste a saved layout URL to load your indicators automatically |
-| Bar Timeframe | Candle size for signal calculation (1 Min default) |
-| Bar Count | Number of bars to fetch (300 default) |
-
-### Signals tab
-
-Fine-tune indicator thresholds. Defaults work well for intraday momentum setups.
-
-| Group | Key fields |
-|-------|-----------|
-| %R Trend Exhaustion | OB Zone Edge (default 20), Min Bars in Zone (default 2) |
-| OBV Oscillator | EMA Length, Volume Surge multiplier |
-| CM RSI-2 | RSI Period (2), Oversold Level (25) |
-| MACD | Fast / Slow / Signal periods |
-
-### Audio tab
-
-Select the audio input device for transcription. Devices marked `⟳ LOOPBACK` capture system audio (TV/web streams playing through your speakers) — this is the recommended mode for transcribing financial media.
-
-### Connection tab
-
-| Field | Description |
-|-------|-------------|
-| Backend URL | Leave empty when running locally. Set to your Cloudflare tunnel URL when the frontend is hosted remotely. |
-| Sign Out | Clears your session token and returns to the login page. |
-
----
-
-## Remote Access Setup (Cloudflare Tunnel)
-
-This section covers how to make the dashboard accessible from anywhere while keeping all data processing local.
-
-> **Enable login before exposing the backend publicly.** Add `"require_auth": true` (plus `dashboard_user`, `dashboard_pass`, and `jwt_secret`) to `secrets.json` before starting `cloudflared`.
-
-### Step 1 — Install cloudflared
+**Test the endpoint** with the server running:
 
 ```bash
-# Mac
-brew install cloudflare/cloudflare/cloudflared
-
-# Windows (winget)
-winget install Cloudflare.cloudflared
-
-# Linux
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/
+curl -X POST "https://trading.jbrasfield.com/api/tradingview/webhook?secret=your-secret-here" \
+  -H "Content-Type: application/json" \
+  -d '{"ticker":"NVDA","close":950.00,"interval":"5"}'
 ```
 
-### Step 2 — Start a quick tunnel
+You should see a burst toast fire in the dashboard immediately.
+
+---
+
+## 7. Cloudflare Tunnel
+
+The tunnel makes the dashboard reachable at `https://trading.jbrasfield.com`
+so TradingView webhooks can reach it and you can access the UI from any device.
+
+### First-time setup on a new machine
+
+The tunnel is already created and DNS-configured in Cloudflare. You just need to
+authenticate `cloudflared` and place the credentials file.
 
 ```bash
-cloudflared tunnel --url http://localhost:8888
+cloudflared tunnel login
 ```
 
-You will see output like:
+This opens a browser. Authorise the `jambione` Cloudflare account. The
+credentials file is saved to `~/.cloudflared/`.
 
+Then update `config/cloudflared-config.yml` so the path matches your home
+directory (the default has `/Users/jonathanbrasfield/`):
+
+```yaml
+credentials-file: /Users/YOUR_USERNAME/.cloudflared/56c84116-0ef0-47c7-bbea-25634d765487.json
 ```
-+--------------------------------------------------------------------------------------------+
-|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
-|  https://random-words-here.trycloudflare.com                                               |
-+--------------------------------------------------------------------------------------------+
+
+### Start the tunnel manually
+
+```bash
+bash scripts/restart_cloudflare.sh
 ```
 
-Copy that URL. It is your public backend URL.
+Or it starts automatically with `scripts/run_trading_server.sh` (see §8).
 
-> For a permanent URL instead of a random one, create a named tunnel with `cloudflared tunnel create <name>` and configure DNS routing. See the [Cloudflare docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+### Enable login before going public
 
-### Step 3 — Log in from anywhere
-
-On any device, open `https://random-words-here.trycloudflare.com` in a browser.
-
-You will see the login page. Enter:
-- **Backend URL**: `https://random-words-here.trycloudflare.com`
-- Your username and password from `secrets.json`
-
-The dashboard will connect over the tunnel, streaming your local data to the remote browser.
+Set `"require_auth": true` in `config/secrets.json` before the tunnel goes live.
+Anyone with the tunnel URL can reach the login page — only valid credentials get
+through.
 
 ---
 
-## Hosting the Frontend (Optional)
+## 8. Starting and stopping the server
 
-If you want the dashboard HTML/CSS/JS hosted on a static platform (Vercel, Netlify, GitHub Pages) instead of served by the local backend:
+### Quick start (manual)
 
-1. Deploy the following files to your hosting service:
-   - `dashboard.html`
-   - `login.html`
-   - `static/`
-
-2. Visit your hosted URL (e.g. `https://my-dashboard.vercel.app`)
-
-3. The login page will appear. Set:
-   - **Backend URL**: your Cloudflare tunnel URL
-   - Username and password as usual
-
-All API calls and the WebSocket will go to your tunnel URL. The frontend is stateless — it has no backend of its own.
-
----
-
-## Credentials and Security
-
-Login is **disabled by default**. The dashboard is open to anyone who can reach the server.
-
-To enable login (required before exposing the backend via Cloudflare Tunnel):
-
-```json
-{
-  "require_auth":   true,
-  "dashboard_user": "yourname",
-  "dashboard_pass": "a-strong-password",
-  "jwt_secret":     "a-long-random-string-at-least-32-chars"
-}
+```bash
+source venv/bin/activate
+python start_all.py
 ```
 
-Or use environment variables: `REQUIRE_AUTH=true`, `DASHBOARD_USER`, `DASHBOARD_PASS`, `JWT_SECRET`.
+Launches dashboard, signal engine, and Discord OCR source together.
+Press `Ctrl+C` to stop all three.
 
-| What | Where | Notes |
-|------|-------|-------|
-| Auth on/off | `secrets.json` key `require_auth` | `false` = no login (local default). `true` = login required. |
-| Dashboard login | `secrets.json` keys `dashboard_user` / `dashboard_pass` | Only used when `require_auth` is `true` |
-| JWT signing secret | `secrets.json` key `jwt_secret` | Use a random 32+ character string. Rotating this invalidates all active sessions. |
-| Alpaca / Finnhub keys | `secrets.json` (same file) | Never committed to git |
-| Session token | Browser localStorage | Auto-expires after 24 hours |
+### Full startup with tunnel and caffeinate (recommended for trading days)
+
+```bash
+bash scripts/run_trading_server.sh
+```
+
+This script:
+- Creates / repairs the venv automatically
+- Starts the Cloudflare tunnel
+- Runs `caffeinate -si` to keep the Mac awake on AC power
+- Launches `start_all.py`
+- Tears the tunnel down cleanly when the server exits
+
+> **Update the hardcoded path** in `scripts/run_trading_server.sh` if your repo
+> is not at `/Users/jonathanbrasfield/repo/trading-helper/trading-helper`:
+> ```bash
+> REPO="/Users/YOUR_USERNAME/path/to/trading-helper"
+> ```
+> Same change is needed in `scripts/evening_stop.sh`.
+
+### Automated startup via launchd (optional)
+
+The repo includes a launchd plist to start the server automatically at 4:00 AM
+on weekdays:
+
+```bash
+cp com.trading.helper.start.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.trading.helper.start.plist
+```
+
+Review and update all paths in the plist file before loading it.
+
+### Evening shutdown
+
+```bash
+bash scripts/evening_stop.sh
+```
+
+Quits Discord, then kills the server, Discord OCR source, signal engine,
+dashboard, caffeinate, and cloudflared in the correct order.
 
 ---
 
-## Troubleshooting
+## 9. Verifying everything is running
 
-**Redirected to login on every page load**
-- Check that `secrets.json` has a `jwt_secret` set. Without it, the backend uses an insecure default that changes if the process restarts, which invalidates all tokens.
+Open `http://localhost:8888` (or `https://trading.jbrasfield.com` remotely).
 
-**WebSocket shows disconnected (red dot)**
-- Verify the backend is running: `python dashboard.py`
-- If using a tunnel, confirm `cloudflared` is still running
-- Check the browser console for close code `4001` (bad token — try logging out and back in)
+Check the source status indicators in the dashboard header:
 
-**No prices showing in the watchlist**
-- Confirm Finnhub and/or Alpaca keys are saved in Settings → API Keys
-- Check the terminal for `[STARTUP] Alpaca connected` and `[STARTUP] Finnhub stream started`
+| Indicator | Green means |
+|---|---|
+| **Discord OCR** | `discord_source.py` has polled within the last 15 seconds |
+| **TradingView** | At least one webhook has been received this session |
 
-**Transcription not starting**
-- Only works on Windows with `pyaudiowpatch` installed (for loopback capture)
-- On other platforms, start the transcriber manually and write output to the watchlist file
+Check the terminal output for these lines at startup:
 
-**Watchlist changes not appearing**
-- The backend polls `transcription/wb_watchlist.json` every 100 ms by file mtime
-- Confirm the file is valid JSON: `python -c "import json; json.load(open('transcription/wb_watchlist.json'))"`
+```
+[dashboard] Signal Scanner  —  http://localhost:8888
+[engine]    Signal engine started
+[discord]   OCR source started — polling every 2.5s
+```
 
 ---
 
-## File Reference
+## 10. Dashboard layout
+
+```
+┌─────────────────┬──────────────────┬──────────────────────────┐
+│  Discord Feed   │    Watchlist     │    TradingView Chart     │
+│  + TV Alerts    │  (center panel)  │    (fills remaining)     │
+└─────────────────┴──────────────────┴──────────────────────────┘
+```
+
+**Watchlist row colors:**
+
+| Color | Meaning |
+|---|---|
+| Green tint | BUY — all signal conditions met |
+| Blue tint | ON_DECK — setup building |
+| Amber border | Mentioned in the last 30 seconds |
+
+**Alert feed** (left panel) shows Discord OCR alerts and TradingView squeeze
+alerts in a unified chronological feed. Squeeze bursts are marked 🔥.
+
+Click any watchlist row to load that ticker in the TradingView chart panel.
+
+---
+
+## 11. Configuration reference
+
+All non-secret settings live in `config/bot_config.json` and can be changed
+from the dashboard Settings drawer without restarting.
+
+**Key settings for the OCR + webhook pipeline:**
+
+| Key | Default | Description |
+|---|---|---|
+| `discord_ocr_enabled` | `true` | Enable/disable the Discord OCR source |
+| `discord_ocr_poll_sec` | `2.5` | Polling interval in seconds |
+| `tv_webhook_secret` | `""` | Secret token for the TradingView webhook endpoint |
+| `mention_alert_threshold` | `5` | Mentions needed to trigger a burst toast |
+| `mention_alert_window` | `10` | Rolling window in seconds for burst detection |
+
+---
+
+## 12. Troubleshooting
+
+**`[discord] OCR failed: no on-screen window found`**
+Discord is closed, minimized, or on a different Space. Bring the Discord alert
+channel window to your main display.
+
+**Discord OCR source backing off / stops polling**
+Consecutive OCR failures trigger exponential backoff (up to 60 s). Once Discord
+is visible again it resumes automatically.
+
+**TradingView webhook returning 401**
+The secret in the webhook URL doesn't match `tv_webhook_secret` in
+`config/bot_config.json`. They must be identical.
+
+**No prices in the watchlist**
+Confirm Finnhub and Alpaca keys are saved in Settings → API Keys. Check the
+terminal for `[STARTUP] Finnhub stream started` and `[STARTUP] Alpaca connected`.
+
+**Dashboard unreachable at `trading.jbrasfield.com`**
+Run `bash scripts/restart_cloudflare.sh`. Check `tunnel.log` for errors.
+Confirm cloudflared is authenticated: `cloudflared tunnel list`.
+
+**`discord_ocr` binary not found or stale**
+Run `bash scripts/build_ocr.sh`. Requires Xcode Command Line Tools.
+
+**WebSocket shows disconnected (red dot in UI)**
+- Local: confirm `dashboard.py` is still running
+- Remote: confirm `cloudflared` is running and the tunnel is healthy
+
+**Watchlist not updating**
+Validate the file:
+```bash
+python -c "import json; json.load(open('transcription/wb_watchlist.json'))"
+```
+
+---
+
+## 13. File reference
 
 | File | Purpose |
-|------|---------|
-| `dashboard.py` | FastAPI backend — prices, signals, WebSocket, REST API |
-| `auth.py` | JWT token creation and verification |
-| `config.py` | Config loading/saving (`config/bot_config.json` + `config/secrets.json`) |
-| `signals.py` | Multi-indicator signal calculation |
-| `alpaca_api.py` | Alpaca bar fetching and price lookup |
-| `finnhub_stream.py` | Finnhub WebSocket price stream |
+|---|---|
+| `dashboard.py` | FastAPI backend — all REST endpoints, WebSocket, state |
+| `signal_engine.py` | Scans watchlist tickers, writes signal state |
+| `discord_source.py` | Discord OCR poller — screenshots window, parses alerts |
+| `discord_ocr.swift` | Swift/Vision OCR helper (compiled to `discord_ocr`) |
+| `transcription/ticker_extract.py` | NASDAQ/NYSE ticker validation, company-name expansion |
+| `transcription/workflows.py` | Webull + TradingView GUI automation |
+| `config/bot_config.json` | Non-secret runtime settings |
+| `config/secrets.json` | API keys and auth credentials (**not in git**) |
+| `config/secrets.example.json` | Template for `secrets.json` |
+| `config/cloudflared-config.yml` | Cloudflare tunnel configuration |
+| `scripts/build_ocr.sh` | Compile `discord_ocr.swift` → `discord_ocr` |
+| `scripts/brasfield_squeeze_alert.pine` | TradingView Pine Script squeeze indicator |
+| `scripts/run_trading_server.sh` | Full startup: venv + tunnel + caffeinate + server |
+| `scripts/restart_cloudflare.sh` | Kill and restart the Cloudflare tunnel |
+| `scripts/evening_stop.sh` | Clean shutdown of the full trading session |
+| `start_all.py` | Launch dashboard + signal engine + Discord OCR |
+| `stop_all.py` | Graceful shutdown of all processes |
 | `dashboard.html` | Main dashboard SPA |
 | `login.html` | Login page |
-| `static/js/app.js` | Frontend bootstrap, auth gate, store wiring |
-| `static/js/api.js` | WebSocket + REST client, auth headers |
-| `static/js/auth.js` | Token and backend URL storage |
-| `static/js/tickers.js` | Watchlist table component |
-| `static/js/tradingview.js` | TradingView chart widget |
-| `static/js/transcription.js` | Transcript panel component |
-| `static/js/config.js` | Settings drawer component |
-| `static/css/styles.css` | All styles |
-| `transcription/wb_watchlist.json` | Live watchlist — the shared data file |
-| `config/secrets.json` | API keys and auth credentials (not in git) |
-| `config/secrets.example.json` | Template for config/secrets.json |
-| `config/bot_config.json` | Non-secret settings (timeframe, thresholds, etc.) |
+| `static/` | Frontend JS, CSS, assets |
+| `tests/` | Test suite — `python -m pytest tests/ -q` |
