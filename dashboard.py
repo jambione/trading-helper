@@ -252,7 +252,7 @@ def _generate_or_load_vapid_keys():
         private_pem = v.private_pem().decode("utf-8")
         pub_bytes   = v.public_key.public_bytes(
             serialization.Encoding.X962,
-            serialization.PublicFormat.UncompressedPoint,
+            serialization.PublicFormat.UncompressedPoint,  # 65-byte uncompressed point required by browsers
         )
         public_b64 = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
 
@@ -284,6 +284,7 @@ def _send_push_notifications(ticker: str, price) -> None:
         "url":   "/",
     })
 
+    # Snapshot under lock then release — HTTP calls must not hold STATE.lock
     with STATE.lock:
         subs = list(STATE.push_subscriptions)
 
@@ -298,7 +299,7 @@ def _send_push_notifications(ticker: str, price) -> None:
             )
         except WebPushException as e:
             if e.response is not None and e.response.status_code in (404, 410):
-                stale.append(sub)
+                stale.append(sub)  # 404/410 = browser revoked or expired subscription
             else:
                 log.warning(f"[PUSH] WebPushException for {ticker}: {e}")
         except Exception as e:
