@@ -333,7 +333,7 @@ body::after {
   .hdr {
     flex-wrap: wrap;
     height: auto;
-    padding: 10px 14px;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
     row-gap: 8px;
   }
   .hdr-brand  { flex: 1; min-width: 0; }
@@ -343,7 +343,7 @@ body::after {
 body.mobile .hdr {
   flex-wrap: wrap;
   height: auto;
-  padding: 10px 14px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
   row-gap: 8px;
 }
 body.mobile .hdr-brand  { flex: 1; min-width: 0; }
@@ -752,6 +752,22 @@ body.mobile .watchlist-cols { grid-template-columns: 1fr 76px 64px 52px; }
 body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
+
+/* ── Mobile: safe-area bottom (notched iPhones) ────────────── */
+body.mobile .status-bar {
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  height: auto;
+  min-height: var(--statusbar-h);
+}
+
+/* ── Mobile: 44px minimum touch targets ────────────────────── */
+body.mobile button,
+body.mobile [role="button"],
+body.mobile .hdr-btn,
+body.mobile .icon-btn {
+  min-height: 44px;
+  min-width: 44px;
+}
 
 /* ════════════════════════════════════════════════════════════
    MAIN GRID

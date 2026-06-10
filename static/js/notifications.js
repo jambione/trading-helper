@@ -81,13 +81,45 @@ export function init() {
 /** Request browser notification permission. Returns true if granted. */
 export async function requestPermission() {
   if (typeof Notification === 'undefined') return false;
-  if (Notification.permission === 'granted') { _enabled = true; return true; }
+  if (Notification.permission === 'granted') { _enabled = true; _setupPushSubscription(); return true; }
   const result = await Notification.requestPermission();
   _enabled = result === 'granted';
+  if (_enabled) _setupPushSubscription();
   return _enabled;
 }
 
 export function isEnabled() { return _enabled; }
+
+// ── Web Push subscription ─────────────────────────────────────
+
+function _urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const b64     = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw     = atob(b64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function _setupPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg  = await navigator.serviceWorker.ready;
+    const resp = await fetch('/api/push/vapid-public-key');
+    if (!resp.ok) return;
+    const { key } = await resp.json();
+    if (!key) return;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: _urlBase64ToUint8Array(key),
+    });
+    await fetch('/api/push/subscribe', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(sub),
+    });
+  } catch (e) {
+    console.warn('[notifications] push subscription failed', e);
+  }
+}
 
 // ── Internal ──────────────────────────────────────────────────
 
@@ -109,6 +141,7 @@ function _check(rows) {
     // Mention burst alert — only on rising edge (false → true)
     if (row.mention_burst && prevBurst === false) {
       _beep('burst');
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       _notifyBurst(row);
       if (_autoAddEnabled()) _agentAdd(row.ticker);
     }
