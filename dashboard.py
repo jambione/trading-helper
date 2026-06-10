@@ -394,10 +394,14 @@ def ingest_discord_alerts(alerts: list[dict]) -> int:
             for _ in range(hits):
                 _track_mention(ticker)
             STATE.discord_alerts.append({
-                "ts":     datetime.now(ET).strftime("%H:%M:%S"),
-                "ticker": ticker,
-                "line":   line[:160],
-                "burst":  bool(a.get("burst")),
+                "ts":         datetime.now(ET).strftime("%H:%M:%S"),
+                "ticker":     ticker,
+                "line":       line[:160],
+                "burst":      bool(a.get("burst")),
+                "alert_type": str(a.get("alert_type") or ""),
+                "price":      a.get("price"),
+                "volume":     a.get("volume"),
+                "levels":     a.get("levels") or [],
             })
         accepted += 1
     with STATE.lock:

@@ -81,25 +81,75 @@ def _load_config() -> dict:
 
 # ── Alert parsing ───────────────────────────────────────────────────────────
 
-def parse_alert_line(line: str) -> tuple[str, str] | tuple[None, None]:
-    """Parse one OCR line into (ticker, kind), or (None, None) if it isn't an
-    alert. kind is "squeeze" for 'X close over ...' breakout alerts (a strong
-    catalyst → burst) or "alert" for standard '>>>>>' alerts. The ticker is the
-    first real word (after any leading emoji/symbol); if that word isn't a valid
-    ticker we reject the line — we never scan deeper, so mid-line words like
-    NEW/LOW/OVER can't false-positive."""
+_PRICE_RE  = re.compile(r'(?:High|Current|Bar High|Bar Low|Close|Last)?\s*Price\s*[=:]\s*\$?([\d,]+\.?\d*)', re.I)
+_VOLUME_RE = re.compile(r'(?:Total\s+)?Volume\s*[=:]\s*([\d,]+)', re.I)
+
+
+def _parse_regular_meta(ticker: str, line: str) -> dict:
+    """Extract alert_type, price, and volume from a standard >>>>> alert line."""
+    parts = re.split(r'>>+', line, maxsplit=1)
+    headline     = parts[0].strip()
+    data_section = parts[1].strip() if len(parts) > 1 else ""
+
+    # Strip leading ticker (and any stray punctuation/whitespace) from headline
+    alert_type = re.sub(rf'(?i)^\W*{re.escape(ticker)}\s*', '', headline).strip()
+    alert_type = re.sub(r'[!?.,]+$', '', alert_type).strip().title()
+
+    price = None
+    m = _PRICE_RE.search(data_section)
+    if m:
+        try:
+            price = float(m.group(1).replace(',', ''))
+        except ValueError:
+            pass
+
+    volume = None
+    m = _VOLUME_RE.search(data_section)
+    if m:
+        try:
+            volume = int(m.group(1).replace(',', ''))
+        except ValueError:
+            pass
+
+    return {"alert_type": alert_type, "price": price, "volume": volume}
+
+
+def _parse_squeeze_levels(line: str) -> list[float]:
+    """Extract slash-separated price levels from a 'close over X/Y/Z' line."""
+    m = re.search(r'(?i)close\s+over\s+([\d./]+)', line)
+    if not m:
+        return []
+    levels = []
+    for part in m.group(1).split('/'):
+        try:
+            levels.append(float(part.strip()))
+        except ValueError:
+            pass
+    return levels
+
+
+def parse_alert_line(line: str) -> tuple[str, str, dict] | tuple[None, None, dict]:
+    """Parse one OCR line into (ticker, kind, meta), or (None, None, {}) if it
+    isn't an alert. kind is "squeeze" or "alert". meta contains:
+      - regular: {alert_type, price, volume}
+      - squeeze: {levels: [float, ...]}
+    """
     is_squeeze = bool(_SQUEEZE_MARKER.search(line))
     if not (is_squeeze or _ALERT_MARKER.search(line)):
-        return None, None
+        return None, None, {}
     for tok in line.split():
         alpha = re.sub(r"[^A-Za-z]", "", tok)
         if not alpha:
-            continue  # leading emoji / symbol — look at the next token
+            continue
         sym = alpha.upper()
         if 2 <= len(sym) <= 5 and is_valid_ticker(sym):
-            return sym, ("squeeze" if is_squeeze else "alert")
-        return None, None   # first real word isn't a valid ticker → not an alert
-    return None, None
+            if is_squeeze:
+                meta = {"levels": _parse_squeeze_levels(line)}
+            else:
+                meta = _parse_regular_meta(sym, line)
+            return sym, ("squeeze" if is_squeeze else "alert"), meta
+        return None, None, {}
+    return None, None, {}
 
 
 def _signature(line: str) -> str:
@@ -194,7 +244,7 @@ def check() -> int:
         return 1
     alerts = []
     for ln in lines:
-        tkr, kind = parse_alert_line(ln)
+        tkr, kind, _ = parse_alert_line(ln)
         if tkr:
             alerts.append((tkr, kind, ln))
 
@@ -256,7 +306,7 @@ def main() -> None:
         new_alerts: list[dict] = []
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
         for line in lines:
-            ticker, kind = parse_alert_line(line)
+            ticker, kind, meta = parse_alert_line(line)
             if not ticker:
                 continue
             sig = _signature(line)
@@ -265,7 +315,7 @@ def main() -> None:
             seen[sig] = t0
             # A squeeze breakout is a strong catalyst → ask the dashboard to fire
             # the burst toast immediately (simulate a mention burst).
-            alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze"}
+            alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze", **meta}
             if primed:
                 new_alerts.append(alert)
             else:

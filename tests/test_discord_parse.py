@@ -1,9 +1,9 @@
 """
 test_discord_parse.py — offline tests for the Discord OCR alert parser.
 
-Covers parse_alert_line (ticker extraction + rejection of non-alert / sidebar
-noise) and _signature (OCR-jitter-stable de-dupe key). No screen capture, no
-network — pure string logic over realistic OCR output lines.
+Covers parse_alert_line (ticker + kind + metadata extraction, rejection of
+non-alert / sidebar noise) and _signature (OCR-jitter-stable de-dupe key).
+No screen capture, no network — pure string logic over realistic OCR output.
 
 Run:
     venv/bin/python -m pytest tests/test_discord_parse.py -q
@@ -17,67 +17,110 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import discord_source as ds   # noqa: E402
 
 
-# ── parse_alert_line: standard '>>>>>' alerts (kind="alert") ─────────────────
+# ── parse_alert_line: ticker + kind ──────────────────────────────────────────
 
 def test_volatility_spike():
     line = "INHD Price Volatility Spike! >>>>> 1 Minute High Price = 41.83, 1 Minute Total"
-    assert ds.parse_alert_line(line) == ("INHD", "alert")
+    tkr, kind, _ = ds.parse_alert_line(line)
+    assert (tkr, kind) == ("INHD", "alert")
 
 
 def test_spike_no_space_before_arrows():
-    # OCR sometimes glues the headline to the arrows.
     line = "STAK Price Volatility Spike!>>>>> 1 Minute High Price = 6.29, 1 Minute Total"
-    assert ds.parse_alert_line(line) == ("STAK", "alert")
+    tkr, kind, _ = ds.parse_alert_line(line)
+    assert (tkr, kind) == ("STAK", "alert")
 
 
 def test_weekly_low():
     line = "SPY NEW WEEKLY LOW >>>>> Price: $739.20 | Bar Low: $738.19"
-    assert ds.parse_alert_line(line) == ("SPY", "alert")
+    tkr, kind, _ = ds.parse_alert_line(line)
+    assert (tkr, kind) == ("SPY", "alert")
 
 
 def test_new_daily_high():
     line = "DXF New Daily High >>>>> Current Price = 0.6379"
-    assert ds.parse_alert_line(line) == ("DXF", "alert")
+    tkr, kind, _ = ds.parse_alert_line(line)
+    assert (tkr, kind) == ("DXF", "alert")
 
 
 def test_leading_emoji_or_symbol_is_skipped():
     line = "\U0001F4C9 SPY NEW WEEKLY LOW >>>>> Price: $739.20"
-    assert ds.parse_alert_line(line) == ("SPY", "alert")
+    tkr, kind, _ = ds.parse_alert_line(line)
+    assert (tkr, kind) == ("SPY", "alert")
 
-
-# ── parse_alert_line: 'Squeeze Potential Alert' breakouts (kind="squeeze") ───
 
 def test_squeeze_alert_is_burst():
-    # "ATHE ww close over 6.78/7/7.50" — no arrow marker; "close over" = squeeze.
-    assert ds.parse_alert_line("ATHE ww close over 6.78/7/7.50") == ("ATHE", "squeeze")
+    tkr, kind, _ = ds.parse_alert_line("ATHE ww close over 6.78/7/7.50")
+    assert (tkr, kind) == ("ATHE", "squeeze")
 
 
 def test_squeeze_alert_simple_close_over():
-    assert ds.parse_alert_line("DXF close over 1.20/1.35") == ("DXF", "squeeze")
+    tkr, kind, _ = ds.parse_alert_line("DXF close over 1.20/1.35")
+    assert (tkr, kind) == ("DXF", "squeeze")
+
+
+# ── parse_alert_line: metadata — regular alerts ───────────────────────────────
+
+def test_volatility_spike_price_extracted():
+    line = "INHD Price Volatility Spike! >>>>> 1 Minute High Price = 41.83, 1 Minute Total Volume = 39001"
+    _, _, meta = ds.parse_alert_line(line)
+    assert meta["price"]  == 41.83
+    assert meta["volume"] == 39001
+
+
+def test_volatility_spike_alert_type():
+    line = "STAK Price Volatility Spike! >>>>> 1 Minute High Price = 6.29"
+    _, _, meta = ds.parse_alert_line(line)
+    assert "Volatility Spike" in meta["alert_type"]
+
+
+def test_weekly_low_price_extracted():
+    line = "SPY NEW WEEKLY LOW >>>>> Price: $739.20 | Bar Low: $738.19"
+    _, _, meta = ds.parse_alert_line(line)
+    assert meta["price"] == 739.20
+
+
+def test_daily_high_price_extracted():
+    line = "DXF New Daily High >>>>> Current Price = 0.6379"
+    _, _, meta = ds.parse_alert_line(line)
+    assert meta["price"] == pytest.approx(0.6379, rel=1e-4)
+
+
+def test_regular_alert_no_volume_gives_none():
+    line = "DXF New Daily High >>>>> Current Price = 0.6379"
+    _, _, meta = ds.parse_alert_line(line)
+    assert meta["volume"] is None
+
+
+# ── parse_alert_line: metadata — squeeze alerts ───────────────────────────────
+
+def test_squeeze_levels_three():
+    _, _, meta = ds.parse_alert_line("ATHE ww close over 6.78/7/7.50")
+    assert meta["levels"] == [6.78, 7.0, 7.50]
+
+
+def test_squeeze_levels_two():
+    _, _, meta = ds.parse_alert_line("DXF close over 1.20/1.35")
+    assert meta["levels"] == [1.20, 1.35]
 
 
 # ── parse_alert_line: rejection cases ────────────────────────────────────────
 
 def test_line_without_any_marker_is_rejected():
-    # The wrapped second line of an alert (no ">>>>>" and no "close over").
-    assert ds.parse_alert_line("Volume = 39001") == (None, None)
+    assert ds.parse_alert_line("Volume = 39001")[:2] == (None, None)
 
 
 def test_sidebar_channel_name_rejected():
-    assert ds.parse_alert_line("daytrading-chat") == (None, None)
-    assert ds.parse_alert_line("Bullish Bob's Trading Hub") == (None, None)
+    assert ds.parse_alert_line("daytrading-chat")[:2]          == (None, None)
+    assert ds.parse_alert_line("Bullish Bob's Trading Hub")[:2] == (None, None)
 
 
 def test_arrow_line_with_non_ticker_first_word_rejected():
-    # Has the marker but the first real word isn't a valid ticker → not an alert,
-    # and we must NOT scan deeper and pick up a later word that happens to be one.
-    assert ds.parse_alert_line("Some random note >>>>> blah") == (None, None)
+    assert ds.parse_alert_line("Some random note >>>>> blah")[:2] == (None, None)
 
 
 def test_first_word_not_ticker_does_not_fall_through_to_later_ticker():
-    # "HELLO" is not a valid ticker; even though "SPY" appears later, the first
-    # real word gates the line, so this is rejected.
-    assert ds.parse_alert_line("HELLO there SPY >>>>> noise") == (None, None)
+    assert ds.parse_alert_line("HELLO there SPY >>>>> noise")[:2] == (None, None)
 
 
 # ── _signature: OCR-jitter-stable de-dupe ────────────────────────────────────
@@ -92,3 +135,6 @@ def test_signature_distinguishes_successive_alerts_by_price():
     a = "MTEN Price Volatility Spike! >>>>> 1 Minute High Price = 1.92"
     b = "MTEN Price Volatility Spike! >>>>> 1 Minute High Price = 2.02"
     assert ds._signature(a) != ds._signature(b)
+
+
+import pytest

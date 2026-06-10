@@ -1,77 +1,101 @@
 /**
  * transcription.js — Discord Alerts panel component
  *
- * Single responsibility: render the live feed of Discord OCR alerts (the app's
- * ticker source) with watchlist-ticker highlighting. Subscribes to `tickers`
- * (for the known-symbol set) and `discord` (for the captured alert feed).
+ * Renders two columns: regular alerts (left) and squeeze alerts (right).
+ * Regular alerts show alert type, price, and volume.
+ * Squeeze alerts show the ticker and price-level chips.
  */
 
 import { subscribe } from './store.js?v=48';
 
-let _box = null;                  // scrollable feed container
-let _known = new Set();           // current watchlist symbols for highlighting
-let _lastCount = 0;               // rendered alert count for incremental updates
-let _lastKey = '';                // last alert's identity; detects feed shifts
+let _regularBox = null;
+let _squeezeBox = null;
+let _known = new Set();
+
+let _lastRegularCount = 0;
+let _lastRegularKey   = '';
+let _lastSqueezeCount = 0;
+let _lastSqueezeKey   = '';
 
 export function init(panelEl) {
-  _box = panelEl.querySelector('[data-transcript-box]');
+  _regularBox = panelEl.querySelector('[data-regular-box]');
+  _squeezeBox = panelEl.querySelector('[data-squeeze-box]');
 
-  // Keep known-ticker set in sync so highlighting reflects the live watchlist
   subscribe('tickers', rows => {
     _known = new Set(rows.map(r => r.ticker));
   });
 
-  subscribe('discord', d => _render(d.alerts ?? []));
+  subscribe('discord', d => {
+    const all     = d.alerts ?? [];
+    const regular = all.filter(a => !a.burst);
+    const squeeze = all.filter(a =>  a.burst);
+    _renderFeed(_regularBox, regular, false);
+    _renderFeed(_squeezeBox, squeeze, true);
+  });
 }
 
-// ── Rendering ─────────────────────────────────────────────────
+// ── Rendering ──────────────────────────────────────────────────
 
-function _render(alerts) {
-  if (!_box) return;
+function _renderFeed(box, alerts, isSqueeze) {
+  if (!box) return;
 
   if (!alerts.length) {
-    if (_lastCount !== 0) {
-      _box.innerHTML = '<span class="tx-placeholder">Waiting for Discord alerts…</span>';
-      _lastCount = 0;
-      _lastKey = '';
+    const placeholder = isSqueeze ? 'No squeezes…' : 'Waiting…';
+    const lastCount   = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
+    if (lastCount !== 0) {
+      box.innerHTML = `<span class="tx-placeholder">${placeholder}</span>`;
+      if (isSqueeze) { _lastSqueezeCount = 0; _lastSqueezeKey = ''; }
+      else           { _lastRegularCount = 0; _lastRegularKey = ''; }
     }
     return;
   }
 
   const tail    = alerts[alerts.length - 1];
-  const tailKey = `${tail.ts}|${tail.ticker}|${tail.line}`;
+  const tailKey = `${tail.ts}|${tail.ticker}`;
+  const lastCount = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
+  const lastKey   = isSqueeze ? _lastSqueezeKey   : _lastRegularKey;
 
-  // No change at all — skip DOM work
-  if (tailKey === _lastKey && alerts.length === _lastCount) return;
+  if (tailKey === lastKey && alerts.length === lastCount) return;
 
-  const atBottom = _box.scrollHeight - _box.scrollTop - _box.clientHeight < 60;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const render   = isSqueeze ? _renderSqueeze : _renderRegular;
 
-  if (alerts.length > _lastCount && _lastCount > 0) {
-    // Pure growth: append only the new alerts
-    _box.insertAdjacentHTML('beforeend',
-      alerts.slice(_lastCount).map(_renderAlert).join(''));
+  if (alerts.length > lastCount && lastCount > 0) {
+    box.insertAdjacentHTML('beforeend', alerts.slice(lastCount).map(render).join(''));
   } else {
-    // First render or rolling-window shift — full re-render
-    _box.innerHTML = alerts.map(_renderAlert).join('');
+    box.innerHTML = alerts.map(render).join('');
   }
 
-  _lastCount = alerts.length;
-  _lastKey = tailKey;
-  if (atBottom) _box.scrollTop = _box.scrollHeight;
+  if (isSqueeze) { _lastSqueezeCount = alerts.length; _lastSqueezeKey = tailKey; }
+  else           { _lastRegularCount = alerts.length; _lastRegularKey = tailKey; }
+
+  if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
-function _renderAlert(a) {
+function _renderRegular(a) {
+  const ts       = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
+  const ticker   = `<strong class="tx-ticker">${_esc(a.ticker || '')}</strong>`;
+  const typeRow  = a.alert_type
+    ? `<div class="tx-alert-type">${_esc(a.alert_type)}</div>` : '';
+  const price    = a.price  != null ? `<span class="tx-price">$${Number(a.price).toFixed(2)}</span>` : '';
+  const vol      = a.volume != null ? `<span class="tx-vol">${_fmtVol(a.volume)}</span>` : '';
+  const metaRow  = (price || vol) ? `<div class="tx-meta-row">${price}${vol}</div>` : '';
+  return `<div class="tx-line">${ts}${ticker}${typeRow}${metaRow}</div>`;
+}
+
+function _renderSqueeze(a) {
   const ts     = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
-  const ticker = `<strong class="tx-ticker">${_esc(a.ticker || '')}</strong>`;
-  const body   = _highlight(_esc(a.line || ''));
-  return `<div class="tx-line">${ts} ${ticker} ${body}</div>`;
+  const ticker = `<strong class="tx-ticker tx-ticker--squeeze">${_esc(a.ticker || '')}</strong>`;
+  const levels = (a.levels || []).map(l => `<span class="tx-level-chip">$${Number(l).toFixed(2)}</span>`).join('');
+  const levRow = levels ? `<div class="tx-levels">${levels}</div>` : '';
+  return `<div class="tx-line tx-line--squeeze">${ts}${ticker}${levRow}</div>`;
 }
 
-/** Bold any 2-5 uppercase-letter token that is in the live watchlist. */
-function _highlight(html) {
-  return html.replace(/\b([A-Z]{2,5})\b/g, m =>
-    _known.has(m) ? `<strong class="tx-ticker">${m}</strong>` : m
-  );
+function _fmtVol(v) {
+  v = Number(v);
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M vol';
+  if (v >= 1_000)     return Math.round(v / 1_000) + 'K vol';
+  return v + ' vol';
 }
 
 function _esc(s) {
