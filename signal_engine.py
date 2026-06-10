@@ -663,6 +663,8 @@ class TickerState:
 
     def time_left_s(self) -> float:
         """Seconds remaining before expiry (if no position)."""
+        if self.cooled_at is not None:
+            return max(0.0, EXPIRY_COOLED - (time.time() - self.cooled_at))
         return max(0.0, self.expiry_seconds() - self.age_s())
 
     def is_expired(self) -> bool:

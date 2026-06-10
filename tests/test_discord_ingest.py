@@ -96,6 +96,16 @@ def test_build_mention_rank_floats_recent_alert():
     assert "AAPL" not in rank             # never mentioned → not ranked
 
 
+def test_alert_deque_drops_oldest_at_capacity():
+    cap = d._MAX_DISCORD_ALERTS
+    for i in range(cap + 5):
+        d.ingest_discord_alerts([{"ticker": "TST", "line": f"TST >>>>> tick {i}"}])
+    st = d.discord_status()
+    assert len(st["alerts"]) == cap
+    # The most recent entry should be tick (cap+4); the oldest were evicted.
+    assert f"tick {cap + 4}" in st["alerts"][-1]["line"]
+
+
 def test_snapshot_exposes_discord_block_not_transcriber(monkeypatch):
     # _snapshot reads the watchlist + signal state from disk; stub those to keep
     # it hermetic and focused on the discord block shape.
