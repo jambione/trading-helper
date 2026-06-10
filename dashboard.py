@@ -524,12 +524,18 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
         if to_poll:
             log.info(f"[PRICE] Extended hours REST poll for {len(to_poll)} tickers: {to_poll}")
 
+        fail_streak = 0
         for ticker in to_poll:
             try:
                 q = _fh_rest_quote(api_key, ticker)
                 if not q.get("ok"):
-                    time.sleep(0.1)
+                    fail_streak += 1
+                    if fail_streak >= 3:
+                        log.warning("[PRICE] Finnhub REST: %d consecutive failures — aborting cycle", fail_streak)
+                        break
+                    time.sleep(0.1 * fail_streak)
                     continue
+                fail_streak = 0
                 price = float(q.get("c", 0))
                 if price > 0:
                     FINNHUB_STATE.update_price(ticker, price)
@@ -539,8 +545,12 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
                             entry = STATE.tickers.setdefault(ticker, {})
                             entry["day_open"] = round(day_open, 4)
                 time.sleep(0.1)
-            except Exception:
-                pass
+            except Exception as e:
+                fail_streak += 1
+                log.debug("[PRICE] Finnhub REST error for %s: %s", ticker, e)
+                if fail_streak >= 3:
+                    log.warning("[PRICE] Finnhub REST: %d consecutive errors — aborting cycle", fail_streak)
+                    break
     finally:
         _finnhub_rest_running = False
 

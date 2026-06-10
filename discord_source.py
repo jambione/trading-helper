@@ -195,8 +195,14 @@ def _run_ocr(cmd: list[str]) -> tuple[list[str], bool]:
         print("[discord] OCR timed out", flush=True)
         return [], False
     if out.returncode != 0:
-        msg = (out.stderr or "").strip().splitlines()
-        print(f"[discord] OCR failed: {msg[-1] if msg else out.returncode}", flush=True)
+        lines = [l for l in (out.stderr or "").strip().splitlines() if l.strip()]
+        if not lines:
+            detail = str(out.returncode)
+        elif len(lines) <= 2:
+            detail = " | ".join(lines)
+        else:
+            detail = f"{lines[0]} | … | {lines[-1]}"
+        print(f"[discord] OCR failed (rc={out.returncode}): {detail}", flush=True)
         return [], False
     return [ln for ln in out.stdout.splitlines() if ln.strip()], True
 

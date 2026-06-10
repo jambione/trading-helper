@@ -194,8 +194,10 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df["oversold"]   = (s_percentR <= -100 + threshold) & (l_percentR <= -100 + threshold)
     
     # Track consecutive bars in zone
-    df["ob_consecutive"] = df["overbought"].cumsum() - df["overbought"].cumsum().where(~df["overbought"]).ffill().fillna(0)
-    df["os_consecutive"] = df["oversold"].cumsum() - df["oversold"].cumsum().where(~df["oversold"]).ffill().fillna(0)
+    ob_groups = (df["overbought"] != df["overbought"].shift()).cumsum()
+    os_groups = (df["oversold"]   != df["oversold"].shift()).cumsum()
+    df["ob_consecutive"] = df.groupby(ob_groups).cumcount().add(1).where(df["overbought"], 0)
+    df["os_consecutive"] = df.groupby(os_groups).cumcount().add(1).where(df["oversold"],   0)
     
     # "Multiple Oversold" Indicator tracking
     # We define a signal when multiple oversold levels are hit

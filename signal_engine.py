@@ -624,7 +624,7 @@ class TickerState:
         self.mention_velocity: int    = 0
         self.is_hot: bool             = False
         self.priority_buy: bool       = False
-        self._last_raw_count: int     = 0
+        self._last_raw_count: Optional[int] = None  # None = baseline not yet seeded
         self.went_hot: bool             = False  # True once this ticker was ever hot
         self.cooled_at: Optional[float] = None  # timestamp when it last lost hotness
         self.buy_time_ts: Optional[float] = None  # time.time() of last BUY (for min hold)
@@ -1409,10 +1409,14 @@ class SignalEngine:
                 ts = self.active[sym]
                 raw_count = row.get("mentions") or row.get("mention_count")
                 if isinstance(raw_count, (int, float)) and raw_count > 0:
-                    delta = int(raw_count) - ts._last_raw_count
-                    ts._last_raw_count = int(raw_count)
-                    if delta > 0:
-                        ts.update_mention_velocity(delta)
+                    raw = int(raw_count)
+                    if ts._last_raw_count is None:
+                        ts._last_raw_count = raw  # seed baseline; don't fire on first sight
+                    else:
+                        delta = raw - ts._last_raw_count
+                        ts._last_raw_count = raw
+                        if delta > 0:
+                            ts.update_mention_velocity(delta)
                 else:
                     # Boolean "mentioned" only — each 5-second poll counts as 1
                     ts.update_mention_velocity(1)
@@ -1470,7 +1474,7 @@ class SignalEngine:
         """
         now = time.time()
         dt  = datetime.now(timezone.utc)
-        current_minute   = int(now // 60)               # ever-increasing minute counter
+        current_minute   = int(now // 60)               # used for logging / last_bar_minute stamp
         secs_past_minute = dt.second + dt.microsecond / 1_000_000  # 0–59.999
 
         if ts.last_bar_minute == -1:
@@ -1478,14 +1482,14 @@ class SignalEngine:
             if now - ts.last_bar_fetch < BAR_REFRESH:
                 return
         else:
-            # ── Subsequent fetches: wait for next minute boundary ─────────
-            # Fire 5 s into the new minute + this ticker's stagger offset.
-            # E.g. stagger=0 → fires at :05, stagger=5 → :10, stagger=10 → :15
+            # ── Subsequent fetches: elapsed-time guard + stagger slot ─────
+            # Using elapsed time (not minute counter) so NTP adjustments or
+            # clock steps backward don't permanently block future fetches.
             fire_at = 5 + ts.fetch_offset_s
-            if current_minute <= ts.last_bar_minute:
-                return   # same minute we already fetched — nothing new yet
+            if (now - ts.last_bar_fetch) < 55:
+                return   # not yet ~1 minute since last fetch
             if secs_past_minute < fire_at:
-                return   # new minute opened but our stagger slot hasn't arrived
+                return   # stagger slot not reached yet in this minute
 
         print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars  "
               f"(minute={current_minute} secs={secs_past_minute:.1f})")

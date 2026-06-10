@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -256,4 +258,23 @@ def _log_action(action: str, ticker: str, price: float,
         except Exception:
             pass
     entries.append(entry)
-    _TRADE_LOG.write_text(json.dumps(entries, indent=2))
+    _TRADE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=_TRADE_LOG.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2)
+        except Exception:
+            os.close(fd)
+            raise
+        Path(tmp_path).replace(_TRADE_LOG)
+        tmp_path = None
+    except Exception as e:
+        log.error("[TRADER] Failed to write trade log: %s", e)
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
