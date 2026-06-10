@@ -705,9 +705,8 @@ def _snapshot() -> dict:
                 if sp:
                     r["signal_proximity"] = sp
 
-        with STATE.lock:
-            tv_last  = STATE.tv_last_ts
-            tv_feed  = list(STATE.tv_alerts)
+        tv_last = STATE.tv_last_ts
+        tv_feed = list(STATE.tv_alerts)
 
         return {
             "discord": {
