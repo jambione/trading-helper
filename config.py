@@ -5,7 +5,8 @@ from pathlib import Path
 
 CONFIG_FILE  = Path(__file__).parent / "bot_config.json"
 SECRETS_FILE = Path(__file__).parent / "secrets.json"
-SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key"]
+SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key",
+                "push_vapid_private_key", "push_contact_email"]
 
 DEFAULT_CONFIG = {
     # ── API credentials ──────────────────────────────────────
@@ -80,6 +81,7 @@ SAFE_CONFIG_KEYS = [
     "device_index",
     "mention_alert_threshold",
     "mention_alert_window",
+    "push_vapid_public_key",
 ]
 
 

@@ -311,7 +311,7 @@ body::after {
   .hdr {
     flex-wrap: wrap;
     height: auto;
-    padding: 10px 14px;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
     row-gap: 8px;
   }
   .hdr-brand  { flex: 1; min-width: 0; }
@@ -321,7 +321,7 @@ body::after {
 body.mobile .hdr {
   flex-wrap: wrap;
   height: auto;
-  padding: 10px 14px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
   row-gap: 8px;
 }
 body.mobile .hdr-brand  { flex: 1; min-width: 0; }
@@ -2009,4 +2009,18 @@ body.mobile .lb-item:nth-child(n+4) { display: none; }
   background-clip: text;
   color: transparent !important;
   line-height: 1 !important;
+}
+
+/* ── Mobile safe-area + touch targets ─────────────────────────────────────── */
+body.mobile .status-bar {
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  height: auto;
+  min-height: var(--statusbar-h);
+}
+body.mobile button,
+body.mobile [role="button"],
+body.mobile .hdr-btn,
+body.mobile .icon-btn {
+  min-height: 44px;
+  min-width: 44px;
 }

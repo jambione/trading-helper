@@ -78,6 +78,7 @@ TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 NEWS_FILE          = Path("news.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
+PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -109,6 +110,9 @@ class _State:
         from datetime import date as _date
         self.mention_reset_date: str  = str(_date.today())
         self.mention_market_opened: bool = False
+        # Web Push — subscriptions loaded from disk at startup, notified set resets daily
+        self.push_subscriptions: list = []
+        self.push_notified: set       = set()
 
     @property
     def transcriber_running(self) -> bool:
@@ -199,6 +203,17 @@ def _track_mention(ticker: str):
     STATE.mention_ts[ticker] = [t for t in ts if now - t <= window]
     STATE.mention_daily[ticker] = STATE.mention_daily.get(ticker, 0) + 1
 
+    # Dispatch Web Push on burst threshold (rising edge only)
+    threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
+    if len(STATE.mention_ts[ticker]) >= threshold and ticker not in STATE.push_notified:
+        STATE.push_notified.add(ticker)
+        price = STATE.tickers.get(ticker, {}).get("price")
+        threading.Thread(
+            target=_send_push_notifications,
+            args=(ticker, price),
+            daemon=True,
+        ).start()
+
 
 def _mention_window_count(ticker: str) -> int:
     """Current mention count within the rolling window. Thread-safe read."""
@@ -206,6 +221,98 @@ def _mention_window_count(ticker: str) -> int:
     window = float(STATE.cfg.get("mention_alert_window", 10))
     ts     = STATE.mention_ts.get(ticker, [])
     return sum(1 for t in ts if now - t <= window)
+
+
+# ── Web Push ──────────────────────────────────────────────────────────────────
+
+def _load_push_subscriptions() -> list:
+    try:
+        if not PUSH_SUBS_FILE.exists():
+            return []
+        return json.loads(PUSH_SUBS_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning(f"[PUSH] Failed to load subscriptions: {e}")
+        return []
+
+
+def _save_push_subscriptions(subs: list) -> None:
+    try:
+        PUSH_SUBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PUSH_SUBS_FILE.write_text(json.dumps(subs, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"[PUSH] Failed to save subscriptions: {e}")
+
+
+def _generate_or_load_vapid_keys():
+    """Auto-generate VAPID keys on first run and save to secrets.json."""
+    if STATE.cfg.get("push_vapid_public_key") and STATE.cfg.get("push_vapid_private_key"):
+        return
+    try:
+        from py_vapid import Vapid
+        from cryptography.hazmat.primitives import serialization
+        import base64
+
+        v = Vapid()
+        v.generate_keys()
+        private_pem = v.private_pem().decode("utf-8")
+        pub_bytes   = v.public_key.public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
+        public_b64 = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
+
+        STATE.cfg["push_vapid_public_key"]  = public_b64
+        STATE.cfg["push_vapid_private_key"] = private_pem
+        save_config(STATE.cfg)
+        log.info("[PUSH] Generated new VAPID keys")
+    except Exception as e:
+        log.warning(f"[PUSH] Failed to generate VAPID keys: {e}")
+
+
+def _send_push_notifications(ticker: str, price) -> None:
+    """Send Web Push burst alert to all subscribers; prune stale endpoints."""
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return
+
+    private_pem = STATE.cfg.get("push_vapid_private_key", "")
+    contact     = STATE.cfg.get("push_contact_email") or "admin@localhost"
+    if not private_pem:
+        return
+
+    price_str = f"${price:.2f}  · " if price else ""
+    payload = json.dumps({
+        "title": f"🔥 {ticker} Burst",
+        "body":  f"{price_str}Rapid mentions detected",
+        "tag":   f"burst-{ticker}",
+        "url":   "/",
+    })
+
+    with STATE.lock:
+        subs = list(STATE.push_subscriptions)
+
+    stale = []
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=private_pem,
+                vapid_claims={"sub": f"mailto:{contact}"},
+            )
+        except WebPushException as e:
+            if e.response is not None and e.response.status_code in (404, 410):
+                stale.append(sub)
+            else:
+                log.warning(f"[PUSH] WebPushException for {ticker}: {e}")
+        except Exception as e:
+            log.warning(f"[PUSH] push failed for {ticker}: {e}")
+
+    if stale:
+        with STATE.lock:
+            STATE.push_subscriptions = [s for s in STATE.push_subscriptions if s not in stale]
+        _save_push_subscriptions(STATE.push_subscriptions)
 
 
 # ── Ticker log ────────────────────────────────────────────────────────────────
@@ -812,18 +919,21 @@ def _mention_reset_worker():
                     close_reset_fired = False
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
+                    STATE.push_notified.clear()
                     log.info("[MENTIONS] Daily reset — new calendar day")
 
                 elif 930 <= hhmm <= 935 and not STATE.mention_market_opened:
                     STATE.mention_market_opened = True
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
+                    STATE.push_notified.clear()
                     log.info("[MENTIONS] Daily reset — market open window")
 
                 elif 1605 <= hhmm <= 1610 and not close_reset_fired:
                     close_reset_fired = True
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
+                    STATE.push_notified.clear()
                     log.info("[MENTIONS] Daily reset — market close window")
 
                 elif hhmm > 1610 and close_reset_fired:
@@ -858,6 +968,10 @@ async def _startup():
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
     threading.Thread(target=_vol_loop, daemon=True, name="vol").start()
     threading.Thread(target=_mention_reset_worker, daemon=True, name="mention-reset").start()
+
+    _generate_or_load_vapid_keys()
+    STATE.push_subscriptions = _load_push_subscriptions()
+    log.info(f"[PUSH] Loaded {len(STATE.push_subscriptions)} push subscription(s)")
 
 
 @app.get("/")
@@ -1176,6 +1290,47 @@ async def api_config_save(request: Request):
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.get("/api/push/vapid-public-key")
+async def api_push_vapid_key():
+    key = STATE.cfg.get("push_vapid_public_key", "")
+    if not key:
+        return JSONResponse({"error": "VAPID not configured"}, status_code=503)
+    return JSONResponse({"key": key})
+
+
+@app.post("/api/push/subscribe")
+async def api_push_subscribe(request: Request):
+    try:
+        sub = await request.json()
+        if not isinstance(sub, dict) or "endpoint" not in sub:
+            return JSONResponse({"error": "invalid subscription"}, status_code=400)
+        with STATE.lock:
+            if not any(s.get("endpoint") == sub.get("endpoint") for s in STATE.push_subscriptions):
+                STATE.push_subscriptions.append(sub)
+                _save_push_subscriptions(STATE.push_subscriptions)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        log.warning(f"[PUSH] subscribe error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/push/subscribe")
+async def api_push_unsubscribe(request: Request):
+    try:
+        body     = await request.json()
+        endpoint = body.get("endpoint", "")
+        with STATE.lock:
+            before = len(STATE.push_subscriptions)
+            STATE.push_subscriptions = [
+                s for s in STATE.push_subscriptions if s.get("endpoint") != endpoint
+            ]
+            if len(STATE.push_subscriptions) != before:
+                _save_push_subscriptions(STATE.push_subscriptions)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/meta")
