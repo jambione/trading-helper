@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 VENV_BIN = os.path.join(ROOT, "venv", "bin")
@@ -61,8 +62,14 @@ def main() -> None:
     )
     threading.Thread(target=_stream, args=(dashboard, '[dashboard]'), daemon=True).start()
 
-    # ── Signal engine — give dashboard a moment to bind port 8888 ─────────────
-    time.sleep(3)
+    # ── Signal engine — wait for dashboard to accept connections ─────────────
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen("http://localhost:8888/api/meta", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.25)
     engine = subprocess.Popen(
         [VENV_PYTHON, 'signal_engine.py'],
         cwd=ROOT,

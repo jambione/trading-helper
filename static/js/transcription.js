@@ -86,7 +86,7 @@ function _renderRegular(a) {
 function _renderSqueeze(a) {
   const ts     = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
   const ticker = `<strong class="tx-ticker tx-ticker--squeeze">${_esc(a.ticker || '')}</strong>`;
-  const levels = (a.levels || []).map(l => `<span class="tx-level-chip">$${Number(l).toFixed(2)}</span>`).join('');
+  const levels = (a.levels || []).filter(l => !isNaN(Number(l))).map(l => `<span class="tx-level-chip">$${Number(l).toFixed(2)}</span>`).join('');
   const levRow = levels ? `<div class="tx-levels">${levels}</div>` : '';
   return `<div class="tx-line tx-line--squeeze">${ts}${ticker}${levRow}</div>`;
 }

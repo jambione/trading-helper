@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -529,6 +530,7 @@ def _price_loop():
     global _alpaca_fallback_running, _finnhub_rest_running
     last_alpaca_poll    = 0
     last_fh_rest_poll   = 0
+    _fail_streak        = 0
     _prev_tickers: set  = set(load_tickers())  # seed from file; avoids first-run flood
     while True:
         try:
@@ -596,8 +598,13 @@ def _price_loop():
                         entry["price"]    = round(p, 4)
                         entry["price_ts"] = ts
 
+            _fail_streak = 0
         except Exception as e:
-            log.debug(f"[PRICE] {e}")
+            _fail_streak += 1
+            if _fail_streak == 1 or _fail_streak % 50 == 0:
+                log.warning("[PRICE] loop error (%d consecutive): %s", _fail_streak, e)
+            else:
+                log.debug("[PRICE] %s", e)
         time.sleep(0.1)  # 10Hz — Finnhub ticks are picked up within 100ms
 
 
@@ -1406,7 +1413,9 @@ def _agent_version() -> str:
         src = (Path(__file__).parent / "windows_agent.py").read_text(encoding="utf-8")
         for line in src.splitlines():
             if line.startswith("VERSION"):
-                return line.split('"')[1]
+                m = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', line)
+                if m:
+                    return m.group(1)
     except Exception:
         pass
     return "0.0.0"

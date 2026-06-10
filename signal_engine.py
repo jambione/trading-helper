@@ -1541,9 +1541,14 @@ class SignalEngine:
         # Prefer Finnhub live price; fall back to last dashboard poll value,
         # then finally the last bar's close price.
         fh_price = get_latest_price(ts.ticker)
-        price    = fh_price if fh_price is not None else (
-                   ts.last_price if ts.last_price is not None else
-                   float(df["close"].iloc[-1]))
+        if fh_price is not None:
+            price = fh_price
+        elif ts.last_price is not None:
+            price = ts.last_price
+        elif len(df) > 0 and "close" in df.columns:
+            price = float(df["close"].iloc[-1])
+        else:
+            price = 0.0
         if fh_price is not None:
             ts.last_price = fh_price   # keep in sync
 
@@ -1868,8 +1873,8 @@ class SignalEngine:
                             open_positions = open_pos,
                         )
 
-            except Exception:
-                pass   # keep last known values if recompute fails
+            except Exception as e:
+                print(f"  [engine] live recompute error for {ts.ticker}: {e}", flush=True)
 
         ts.check_count += 1
         print(ts.proximity_summary())
