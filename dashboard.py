@@ -39,8 +39,8 @@ def _free_port(port: int):
                 pass
         if pids:
             time.sleep(0.5)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[STARTUP] Warning: could not free port 8888: {e}", file=sys.stderr)
 
 
 _free_port(8888)
@@ -63,8 +63,7 @@ import version
 from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent / "transcription"))
+sys.path.insert(0, str(Path(__file__).parent / "transcription"))
 from workflows import workflow_add_wb, workflow_add_brave_tv, workflow_add_wb_and_tv
 from finnhub_stream import (
     FINNHUB_STATE,
@@ -212,6 +211,28 @@ def _mention_window_count(ticker: str) -> int:
 # File format: [{"ticker": "AAPL", "added": "2026-05-07T09:30:00-04:00"}, ...]
 # Backward-compat: plain strings are migrated to objects on first read.
 
+def _atomic_write_json(path: Path, data) -> None:
+    """Write JSON atomically via tmpfile + rename so a crash mid-write never corrupts the file."""
+    import json as _json, tempfile as _tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        fd, tmp_path = _tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                _json.dump(data, f, indent=2)
+        except Exception:
+            os.close(fd)
+            raise
+        Path(tmp_path).replace(path)
+        tmp_path = None
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
 TICKER_MAX_AGE = 15 * 60  # seconds — entries older than this are auto-purged
 
 _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
@@ -271,8 +292,7 @@ def load_tickers() -> list:
                 log.debug(f"[TICKER] Purged stale {t}")
 
         if changed:
-            TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
-            TICKER_LOG.write_text(_json.dumps(kept, indent=2), encoding="utf-8")
+            _atomic_write_json(TICKER_LOG, kept)
             mtime = TICKER_LOG.stat().st_mtime
 
         tickers = [e["ticker"] for e in kept]
@@ -285,7 +305,7 @@ def load_tickers() -> list:
 def clear_ticker_log():
     try:
         import json as _json
-        TICKER_LOG.write_text(_json.dumps([]), encoding="utf-8")
+        _atomic_write_json(TICKER_LOG, [])
         _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
     except Exception:
         pass
@@ -305,8 +325,7 @@ def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
             return True, False
         now_iso = datetime.now(ET).isoformat(timespec="seconds")
         entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
-        TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+        _atomic_write_json(TICKER_LOG, entries)
         _ticker_cache["mtime"] = -1.0   # force re-read on next load
         return True, True
     except Exception as e:
@@ -323,7 +342,7 @@ def remove_ticker_from_log(ticker: str) -> bool:
         if ticker not in _ticker_cache["tickers"]:
             return True
         entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+        _atomic_write_json(TICKER_LOG, entries)
         _ticker_cache["mtime"] = -1.0
         with STATE.lock:
             STATE.tickers.pop(ticker, None)
@@ -362,7 +381,7 @@ def refresh_ticker_timestamps(tickers: list[str]):
             e["added"] = now_iso
             changed = True
     if changed:
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+        _atomic_write_json(TICKER_LOG, entries)
         _ticker_cache.update(mtime=-1.0, entries=entries,
                              tickers=[e["ticker"] for e in entries])
 
@@ -615,25 +634,31 @@ def _vol_loop():
     Runs every 60 seconds in a background thread and writes into STATE.tickers
     so the values flow through to the /api/state response automatically.
     """
+    _BATCH = 50
     while True:
         try:
             tickers = load_tickers()
             if tickers:
                 import yfinance as yf
-                tks = yf.Tickers(" ".join(tickers))
                 vol_data: dict = {}
-                for sym in tickers:
+                for i in range(0, len(tickers), _BATCH):
+                    batch = tickers[i:i + _BATCH]
                     try:
-                        fi = tks.tickers[sym].fast_info
-                        day_vol = int(getattr(fi, "last_volume", 0) or 0)
-                        avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
-                        if day_vol > 0:
-                            vol_data[sym] = {
-                                "day_vol": day_vol,
-                                "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
-                            }
-                    except Exception:
-                        pass
+                        tks = yf.Tickers(" ".join(batch))
+                        for sym in batch:
+                            try:
+                                fi = tks.tickers[sym].fast_info
+                                day_vol = int(getattr(fi, "last_volume", 0) or 0)
+                                avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
+                                if day_vol > 0:
+                                    vol_data[sym] = {
+                                        "day_vol": day_vol,
+                                        "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
+                                    }
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        log.debug("[VOL] batch %d-%d failed: %s", i, i + _BATCH, e)
                 with STATE.lock:
                     for sym, vd in vol_data.items():
                         STATE.tickers.setdefault(sym, {}).update(vd)
@@ -1362,10 +1387,7 @@ async def api_save_ticker_feed(request: Request):
                 t = "info"
             sanitised.append({"type": t, "text": str(item.get("text", "")).strip()})
         sanitised = [i for i in sanitised if i["text"]]  # drop blank entries
-        TICKER_FEED_FILE.write_text(
-            json.dumps(sanitised, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(TICKER_FEED_FILE, sanitised)
         return JSONResponse({"ok": True, "count": len(sanitised)})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

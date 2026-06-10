@@ -1133,7 +1133,7 @@ class TickerState:
         if prev is not None:
             if hist > 0 and hist > prev:
                 # ── Histogram growing ──────────────────────────────────────────
-                self.hist_grow_count = min(self.hist_grow_count + 1, HIST_CONFIRM_BARS + 1)
+                self.hist_grow_count = min(self.hist_grow_count + 1, HIST_CONFIRM_BARS)
                 if self.hist_grow_count >= HIST_CONFIRM_BARS and not self.hist_growing:
                     print(f"  [{ticker_tag(self.ticker)}] 📈 histogram CONFIRMED GROWING"
                           f"  ({self.hist_grow_count} bars)  hist={hist:+.4f}"

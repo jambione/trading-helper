@@ -111,20 +111,28 @@ def load_config() -> dict:
 
 
 def _write_json(path: Path, data: dict):
+    tmp_path = None
     try:
         tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            Path(tmp_path).replace(path)
         except Exception:
+            try:
+                os.close(tmp_fd)
+            except Exception:
+                pass
+            raise
+        Path(tmp_path).replace(path)
+        tmp_path = None   # rename succeeded — nothing to clean up
+    except Exception as e:
+        print(f"[CFG] Failed to save {path.name}: {e}")
+    finally:
+        if tmp_path:
             try:
                 os.unlink(tmp_path)
             except Exception:
                 pass
-            raise
-    except Exception as e:
-        print(f"[CFG] Failed to save {path.name}: {e}")
 
 
 def save_config(cfg: dict):

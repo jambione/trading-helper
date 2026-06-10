@@ -74,9 +74,53 @@ def test_time_left_uses_cooled_window_not_warm_window():
     assert 0 < left < se.EXPIRY_COOLED, (
         f"time_left_s() should reflect EXPIRY_COOLED window, got {left:.1f}s"
     )
+    assert not ts.is_expired()   # time_left > 0 must be consistent with is_expired()=False
 
 
 def test_time_left_zero_when_cooled_and_expired():
     ts = TickerState("NVDA")
     ts.cooled_at = time.time() - (se.EXPIRY_COOLED + 60)
     assert ts.time_left_s() == 0.0
+    assert ts.is_expired()   # zero time left must be consistent with is_expired()=True
+
+
+# ── decay_mentions ────────────────────────────────────────────────────────────
+
+def test_decay_transitions_hot_to_cooled():
+    ts = TickerState("NVDA")
+    ts.is_hot = True
+    ts.went_hot = True
+    ts.mention_history = [(time.time(), 1)]   # one fresh mention
+    ts.mention_velocity = 1
+
+    # Expire the window by backdating the mention
+    ts.mention_history = [(time.time() - se.PRIORITY_WINDOW_SECONDS - 1, 1)]
+    ts.decay_mentions()
+
+    assert not ts.is_hot
+    assert ts.cooled_at is not None
+
+
+def test_decay_does_not_set_cooled_when_still_hot():
+    ts = TickerState("NVDA")
+    ts.is_hot = True
+    # All mentions fresh — velocity stays above threshold
+    ts.mention_history = [(time.time(), se.PRIORITY_MENTIONS)] * 3
+    ts.mention_velocity = se.PRIORITY_MENTIONS * 3
+    ts.decay_mentions()
+
+    assert ts.is_hot
+    assert ts.cooled_at is None
+
+
+def test_decay_does_not_set_cooled_when_in_position():
+    ts = TickerState("NVDA")
+    ts.is_hot = True
+    ts.in_position = True
+    ts.mention_history = [(time.time() - se.PRIORITY_WINDOW_SECONDS - 1, 1)]
+    ts.mention_velocity = 1
+    ts.decay_mentions()
+
+    # cooled_at must not be set when in a position — is_expired() returns False
+    assert ts.cooled_at is None
+    assert not ts.is_expired()

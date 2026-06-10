@@ -12,9 +12,9 @@ let _regularBox = null;
 let _squeezeBox = null;
 let _known = new Set();
 
-let _lastRegularCount = 0;
+let _lastRegularCount = -1;
 let _lastRegularKey   = '';
-let _lastSqueezeCount = 0;
+let _lastSqueezeCount = -1;
 let _lastSqueezeKey   = '';
 
 export function init(panelEl) {

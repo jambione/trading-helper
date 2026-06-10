@@ -45,6 +45,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from collections import OrderedDict
 from pathlib import Path
@@ -212,10 +213,15 @@ def _post_ingest(alerts: list[dict]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=2):
+        with urllib.request.urlopen(req, timeout=5):
             pass
         for a in alerts:
             print(f"  → {a['ticker']}", flush=True)
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, TimeoutError) or "timed out" in str(e).lower():
+            print(f"[discord] POST timeout — dashboard slow? ({e})", flush=True)
+        elif alerts:
+            print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
     except Exception as e:
         if alerts:
             print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
