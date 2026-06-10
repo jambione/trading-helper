@@ -83,13 +83,14 @@ Edit `config/secrets.json` and fill in your keys:
 
 ```json
 {
-  "api_key":        "your-alpaca-api-key",
-  "secret_key":     "your-alpaca-secret-key",
-  "finnhub_key":    "your-finnhub-api-key",
-  "require_auth":   false,
-  "dashboard_user": "admin",
-  "dashboard_pass": "changeme",
-  "jwt_secret":     "replace-with-a-long-random-string"
+  "api_key":            "your-alpaca-api-key",
+  "secret_key":         "your-alpaca-secret-key",
+  "finnhub_key":        "your-finnhub-api-key",
+  "require_auth":       false,
+  "dashboard_user":     "admin",
+  "dashboard_pass":     "changeme",
+  "jwt_secret":         "replace-with-a-long-random-string",
+  "push_contact_email": "mailto:you@example.com"
 }
 ```
 
@@ -100,6 +101,11 @@ Edit `config/secrets.json` and fill in your keys:
 | `api_key` / `secret_key` | [alpaca.markets](https://alpaca.markets) | Free paper account works |
 | `finnhub_key` | [finnhub.io](https://finnhub.io) | Free tier works |
 | `jwt_secret` | any random string | Run `openssl rand -hex 32` to generate one |
+| `push_contact_email` | your own email | Used in VAPID push claims — format `mailto:you@example.com` |
+
+The VAPID key pair (`push_vapid_public_key` / `push_vapid_private_key`) is
+**generated automatically** on first startup and written back into
+`config/secrets.json`. You do not need to create them manually.
 
 > `config/secrets.json` is in `.gitignore` and must never be committed.
 > Set `require_auth: true` before exposing the dashboard via Cloudflare Tunnel.
@@ -314,7 +320,54 @@ dashboard, caffeinate, and cloudflared in the correct order.
 
 ---
 
-## 9. Verifying everything is running
+## 9. Mobile push notifications (iPhone / Android)
+
+The dashboard is a Progressive Web App (PWA). When installed to the home screen
+it can deliver burst-alert notifications to your lock screen even when the screen
+is off or the app is closed.
+
+### 9a. Install to iPhone home screen (required for iOS push)
+
+iOS push only works from a PWA installed via Safari — it does **not** work from
+a browser tab.
+
+1. Open `https://trading.jbrasfield.com` in **Safari** (not Chrome)
+2. Tap the **Share** button (box with arrow) → **Add to Home Screen**
+3. Tap **Add** — the dashboard icon appears on your home screen
+
+### 9b. Grant notification permission
+
+1. Open the dashboard from the **home screen icon** (not from Safari)
+2. Tap the **bell icon** in the top-right header
+3. iOS will prompt: *"trading.jbrasfield.com" Would Like to Send You Notifications* → tap **Allow**
+
+The bell turns solid when permission is granted. Burst alerts will now arrive as
+OS notifications with sound, even with the phone locked.
+
+### 9c. Android
+
+On Android, Chrome is fine — no PWA install required for push. Open the
+dashboard, tap the bell icon, and allow notifications when prompted.
+
+### 9d. Verify push is working
+
+With notification permission granted, trigger a test burst from the terminal
+while the browser tab is in the background:
+
+```bash
+# With the server running, inject 5 rapid mentions of a ticker
+for i in 1 2 3 4 5; do
+  curl -s -X POST http://localhost:8888/api/mention \
+    -H "Content-Type: application/json" \
+    -d '{"ticker":"NVDA"}' > /dev/null
+done
+```
+
+You should receive a lock-screen notification within a few seconds.
+
+---
+
+## 10. Verifying everything is running
 
 Open `http://localhost:8888` (or `https://trading.jbrasfield.com` remotely).
 
@@ -335,7 +388,7 @@ Check the terminal output for these lines at startup:
 
 ---
 
-## 10. Dashboard layout
+## 11. Dashboard layout
 
 ```
 ┌─────────────────┬──────────────────┬──────────────────────────┐
@@ -359,7 +412,7 @@ Click any watchlist row to load that ticker in the TradingView chart panel.
 
 ---
 
-## 11. Configuration reference
+## 12. Configuration reference
 
 All non-secret settings live in `config/bot_config.json` and can be changed
 from the dashboard Settings drawer without restarting.
@@ -376,7 +429,7 @@ from the dashboard Settings drawer without restarting.
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 **`[discord] OCR failed: no on-screen window found`**
 Discord is closed, minimized, or on a different Space. Bring the Discord alert
@@ -411,9 +464,19 @@ Validate the file:
 python -c "import json; json.load(open('transcription/wb_watchlist.json'))"
 ```
 
+**No push notifications reaching the phone**
+- Confirm `push_contact_email` is set in `config/secrets.json` (not the placeholder value)
+- On iPhone: the dashboard must be opened from the **home screen icon**, not Safari
+- Check that the bell icon is solid (permission granted), not outlined
+- Confirm the browser/PWA has notification permission in iOS Settings → Notifications
+
+**Push subscription not persisting across server restarts**
+Check that `config/push_subscriptions.json` exists and is valid JSON. If corrupted,
+delete it — the browser will re-subscribe on the next bell-icon tap.
+
 ---
 
-## 13. File reference
+## 14. File reference
 
 | File | Purpose |
 |---|---|
@@ -426,6 +489,7 @@ python -c "import json; json.load(open('transcription/wb_watchlist.json'))"
 | `config/bot_config.json` | Non-secret runtime settings |
 | `config/secrets.json` | API keys and auth credentials (**not in git**) |
 | `config/secrets.example.json` | Template for `secrets.json` |
+| `config/push_subscriptions.json` | Browser push subscriptions (auto-created, **not in git**) |
 | `config/cloudflared-config.yml` | Cloudflare tunnel configuration |
 | `scripts/build_ocr.sh` | Compile `discord_ocr.swift` → `discord_ocr` |
 | `scripts/brasfield_squeeze_alert.pine` | TradingView Pine Script squeeze indicator |
@@ -437,4 +501,5 @@ python -c "import json; json.load(open('transcription/wb_watchlist.json'))"
 | `dashboard.html` | Main dashboard SPA |
 | `login.html` | Login page |
 | `static/` | Frontend JS, CSS, assets |
+| `static/sw.js` | Service worker — handles background push events |
 | `tests/` | Test suite — `python -m pytest tests/ -q` |
