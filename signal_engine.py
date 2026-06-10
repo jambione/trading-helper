@@ -1407,7 +1407,7 @@ class SignalEngine:
             # If only a boolean is available we count each poll as 1 mention.
             if sym in self.active and row.get("mentioned"):
                 ts = self.active[sym]
-                raw_count = row.get("mentions") or row.get("mention_count")
+                raw_count = row.get("mentions") if row.get("mentions") is not None else row.get("mention_count")
                 if isinstance(raw_count, (int, float)) and raw_count > 0:
                     raw = int(raw_count)
                     if ts._last_raw_count is None:

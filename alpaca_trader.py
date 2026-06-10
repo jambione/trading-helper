@@ -266,7 +266,10 @@ def _log_action(action: str, ticker: str, price: float,
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(entries, f, indent=2)
         except Exception:
-            os.close(fd)
+            try:
+                os.close(fd)
+            except Exception:
+                pass
             raise
         Path(tmp_path).replace(_TRADE_LOG)
         tmp_path = None
