@@ -21,6 +21,7 @@
   "brave_tv_tab": 1,
   "discord_ocr_enabled": true,
   "discord_ocr_poll_sec": 2.5,
+  "tv_webhook_secret": "",
   "discord_window_owner": "Discord",
   "discord_window_title": "",
   "mention_alert_threshold": 5,

@@ -96,6 +96,11 @@ class _State:
         # render a live feed + a 'source alive' status (in-memory only).
         self.discord_alerts: deque = deque(maxlen=_MAX_DISCORD_ALERTS)
         self.discord_last_ts: float = 0.0
+        # TradingView webhook feed — a second independent signal source. Each
+        # inbound webhook fires as a burst and is tracked separately so the UI
+        # can show both sources and their agreement.
+        self.tv_alerts: deque = deque(maxlen=_MAX_DISCORD_ALERTS)
+        self.tv_last_ts: float = 0.0
         # Mention tracking — resets on server restart (fresh each trading day)
         self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
         self.mention_daily: dict = {}  # ticker → int  daily total count
@@ -412,6 +417,47 @@ def discord_status() -> dict:
     }
 
 
+# ── TradingView webhook ingest ────────────────────────────────────────────────
+# TradingView POSTs here when a Pine Script alertcondition fires.
+# Expected payload: {"ticker": "AAPL", "close": 150.23, "interval": "1"}
+# TradingView prepends the exchange to the ticker (e.g. "NASDAQ:AAPL") —
+# we strip it before validation.
+
+def ingest_tv_alert(ticker: str, close: float, interval: str) -> bool:
+    """Record one TradingView squeeze alert. Always fires as a full burst
+    (the TV Pine Script only alerts when the squeeze has already confirmed).
+    Returns True if the alert was accepted."""
+    ticker = ticker.strip().upper()
+    # Strip exchange prefix ("NASDAQ:AAPL" → "AAPL")
+    if ":" in ticker:
+        ticker = ticker.split(":")[-1]
+    if not ticker or not ticker.isalpha() or len(ticker) > 5:
+        return False
+    threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
+    label = f"${close:.2f}" if close else ""
+    line  = f"TV squeeze {label} ({interval}m)".strip()
+    add_ticker_to_log(ticker)
+    with STATE.lock:
+        for _ in range(threshold):
+            _track_mention(ticker)
+        STATE.tv_alerts.append({
+            "ts":     datetime.now(ET).strftime("%H:%M:%S"),
+            "ticker": ticker,
+            "close":  close,
+            "line":   line,
+        })
+        STATE.tv_last_ts = time.time()
+    return True
+
+
+def tv_status() -> dict:
+    """Snapshot of the TradingView webhook source for the UI."""
+    with STATE.lock:
+        last = STATE.tv_last_ts
+        feed = list(STATE.tv_alerts)
+    return {"last_ts": last, "alerts": feed}
+
+
 # ── Price polling ─────────────────────────────────────────────────────────────
 
 # Alpaca fallback runs in its own thread so it never blocks the price loop.
@@ -655,6 +701,10 @@ def _snapshot() -> dict:
                 if sp:
                     r["signal_proximity"] = sp
 
+        with STATE.lock:
+            tv_last  = STATE.tv_last_ts
+            tv_feed  = list(STATE.tv_alerts)
+
         return {
             "discord": {
                 "running": bool(STATE.discord_last_ts)
@@ -662,6 +712,10 @@ def _snapshot() -> dict:
                 "last_ts": STATE.discord_last_ts,
                 "alerts":  list(STATE.discord_alerts),
                 "count":   len(tickers),
+            },
+            "tradingview": {
+                "last_ts": tv_last,
+                "alerts":  tv_feed,
             },
             "tickers": rows,
             "news":    news,
@@ -998,6 +1052,45 @@ async def api_discord_ingest(request: Request):
 @app.get("/api/discord/status")
 async def api_discord_status():
     return JSONResponse(discord_status())
+
+
+@app.post("/api/tradingview/webhook")
+async def api_tv_webhook(request: Request):
+    """Receive TradingView Pine Script alerts.
+
+    Configure your TV alert with:
+      Webhook URL:  https://trading.jbrasfield.com/api/tradingview/webhook?secret=<your_secret>
+      Message:      {"ticker":"{{ticker}}","close":{{close}},"interval":"{{interval}}"}
+
+    Set tv_webhook_secret in config/bot_config.json to validate the secret param.
+    Leave it blank to accept all incoming webhooks (not recommended on public internet).
+    """
+    secret = str(STATE.cfg.get("tv_webhook_secret", "")).strip()
+    if secret:
+        token = (request.query_params.get("secret", "")
+                 or request.headers.get("X-Webhook-Secret", ""))
+        if token != secret:
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+
+    ticker   = str(body.get("ticker", "")).strip()
+    close    = float(body.get("close", 0) or 0)
+    interval = str(body.get("interval", "")).strip()
+
+    loop = asyncio.get_running_loop()
+    ok   = await loop.run_in_executor(None, lambda: ingest_tv_alert(ticker, close, interval))
+    if not ok:
+        return JSONResponse({"ok": False, "error": "Invalid ticker"}, status_code=400)
+    return JSONResponse({"ok": True, "ticker": ticker.split(":")[-1].upper()})
+
+
+@app.get("/api/tradingview/status")
+async def api_tv_status():
+    return JSONResponse(tv_status())
 
 
 @app.post("/api/ticker-log/clear")
