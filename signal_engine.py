@@ -77,6 +77,7 @@ __version__ = "1.7"
 import json
 import os
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -419,14 +420,35 @@ def _load_log() -> list:
     if LOG_FILE.exists():
         try:
             return json.loads(LOG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  [engine] signal log parse failed ({e}) — starting fresh", flush=True)
     return []
 
 def _append_log(entry: dict):
     entries = _load_log()
     entries.append(entry)
-    LOG_FILE.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=LOG_FILE.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2)
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
+        Path(tmp_path).replace(LOG_FILE)
+        tmp_path = None
+    except Exception as e:
+        print(f"  [engine] failed to write signal log: {e}", flush=True)
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 def log_buy(ticker: str, price: float, rsi: float, hist: float,
             priority: bool = False, mention_velocity: int = 0,

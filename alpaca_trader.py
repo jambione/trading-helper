@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -23,6 +25,32 @@ log = logging.getLogger(__name__)
 
 _HERE        = Path(__file__).parent
 _TRADE_LOG   = _HERE / "alpaca_trade_log.json"
+
+
+def _atomic_write(data) -> None:
+    """Write trade log atomically via tmpfile + rename."""
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=_HERE, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
+        Path(tmp_path).replace(_TRADE_LOG)
+        tmp_path = None
+    except Exception as e:
+        log.error(f"[TRADER] Failed to write trade log: {e}")
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 # Module-level state — set by init()
 _mode:         str   = "off"      # "off" | "paper" | "live"
@@ -212,7 +240,8 @@ def _log_action(action: str, ticker: str, price: float,
     if _TRADE_LOG.exists():
         try:
             entries = json.loads(_TRADE_LOG.read_text())
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"[TRADER] Trade log parse failed ({e}) — starting fresh")
+    entries = entries[-999:]  # cap at 1000 entries
     entries.append(entry)
-    _TRADE_LOG.write_text(json.dumps(entries, indent=2))
+    _atomic_write(entries)

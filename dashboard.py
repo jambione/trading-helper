@@ -145,10 +145,7 @@ def load_news() -> list:
 
 def save_news(items: list) -> None:
     """Write items list to news.json and invalidate the cache."""
-    NEWS_FILE.write_text(
-        json.dumps(items, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _atomic_write_json(NEWS_FILE, items)
     _news_cache["mtime"] = -1.0
 
 
@@ -313,7 +310,34 @@ def _send_push_notifications(ticker: str, price) -> None:
     if stale:
         with STATE.lock:
             STATE.push_subscriptions = [s for s in STATE.push_subscriptions if s not in stale]
-        _save_push_subscriptions(STATE.push_subscriptions)
+            pruned = list(STATE.push_subscriptions)  # capture inside lock before releasing
+        _save_push_subscriptions(pruned)
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    """Write JSON atomically via tmpfile + rename so a crash mid-write never corrupts the file."""
+    import json as _json, tempfile as _tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        fd, tmp_path = _tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                _json.dump(data, f, indent=2)
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
+        Path(tmp_path).replace(path)
+        tmp_path = None
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # ── Ticker log ────────────────────────────────────────────────────────────────
@@ -323,6 +347,7 @@ def _send_push_notifications(ticker: str, price) -> None:
 TICKER_MAX_AGE = 15 * 60  # seconds — entries older than this are auto-purged
 
 _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
+_ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/writes
 
 
 def load_tickers() -> list:
@@ -391,12 +416,12 @@ def load_tickers() -> list:
 
 
 def clear_ticker_log():
-    try:
-        import json as _json
-        TICKER_LOG.write_text(_json.dumps([]), encoding="utf-8")
-        _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
-    except Exception:
-        pass
+    with _ticker_lock:
+        try:
+            _atomic_write_json(TICKER_LOG, [])
+            _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
+        except Exception:
+            pass
     with STATE.lock:
         STATE.tickers.clear()
         STATE.mention_ts.clear()
@@ -406,41 +431,41 @@ def clear_ticker_log():
 def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
     """Add a single ticker. Returns (ok, is_new) — is_new is False when already present."""
     ticker = ticker.upper()
-    try:
-        import json as _json
-        load_tickers()   # refresh cache + purge stale
-        if ticker in _ticker_cache["tickers"]:
-            return True, False
-        now_iso = datetime.now(ET).isoformat(timespec="seconds")
-        entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
-        TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
-        _ticker_cache["mtime"] = -1.0   # force re-read on next load
-        return True, True
-    except Exception as e:
-        log.error(f"[TICKER] Add {ticker} failed: {e}")
-        return False, False
+    with _ticker_lock:
+        try:
+            load_tickers()   # refresh cache + purge stale
+            if ticker in _ticker_cache["tickers"]:
+                return True, False
+            now_iso = datetime.now(ET).isoformat(timespec="seconds")
+            entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
+            _atomic_write_json(TICKER_LOG, entries)
+            _ticker_cache["mtime"] = -1.0
+            return True, True
+        except Exception as e:
+            log.error(f"[TICKER] Add {ticker} failed: {e}")
+            return False, False
 
 
 def remove_ticker_from_log(ticker: str) -> bool:
     """Remove a single ticker from the watchlist and internal state."""
     ticker = ticker.upper()
-    try:
-        import json as _json
-        load_tickers()   # refresh cache + purge stale
-        if ticker not in _ticker_cache["tickers"]:
-            return True
-        entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
-        _ticker_cache["mtime"] = -1.0
-        with STATE.lock:
-            STATE.tickers.pop(ticker, None)
-            STATE.mention_ts.pop(ticker, None)
-            STATE.mention_daily.pop(ticker, None)
-        return True
-    except Exception as e:
-        log.error(f"[TICKER] Remove {ticker} failed: {e}")
-        return False
+    with _ticker_lock:
+        try:
+            load_tickers()   # refresh cache + purge stale
+            if ticker not in _ticker_cache["tickers"]:
+                pass  # still clear STATE below
+            else:
+                entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
+                _atomic_write_json(TICKER_LOG, entries)
+                _ticker_cache["mtime"] = -1.0
+        except Exception as e:
+            log.error(f"[TICKER] Remove {ticker} failed: {e}")
+            return False
+    with STATE.lock:
+        STATE.tickers.pop(ticker, None)
+        STATE.mention_ts.pop(ticker, None)
+        STATE.mention_daily.pop(ticker, None)
+    return True
 
 
 def refresh_ticker_timestamps(tickers: list[str]):
@@ -452,27 +477,27 @@ def refresh_ticker_timestamps(tickers: list[str]):
     """
     if not tickers:
         return
-    import json as _json
-    load_tickers()   # ensure cache is fresh
-    entries  = list(_ticker_cache["entries"])
-    now_ts   = time.time()
-    now_iso  = datetime.now(ET).isoformat(timespec="seconds")
-    refresh  = set(tickers)
-    changed  = False
-    for e in entries:
-        if e["ticker"] not in refresh:
-            continue
-        try:
-            age = now_ts - datetime.fromisoformat(e["added"]).timestamp()
-        except Exception:
-            age = 9999
-        if age > 30:
-            e["added"] = now_iso
-            changed = True
-    if changed:
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
-        _ticker_cache.update(mtime=-1.0, entries=entries,
-                             tickers=[e["ticker"] for e in entries])
+    with _ticker_lock:
+        load_tickers()   # ensure cache is fresh
+        entries  = list(_ticker_cache["entries"])
+        now_ts   = time.time()
+        now_iso  = datetime.now(ET).isoformat(timespec="seconds")
+        refresh  = set(tickers)
+        changed  = False
+        for e in entries:
+            if e["ticker"] not in refresh:
+                continue
+            try:
+                age = now_ts - datetime.fromisoformat(e["added"]).timestamp()
+            except Exception:
+                age = 9999
+            if age > 30:
+                e["added"] = now_iso
+                changed = True
+        if changed:
+            _atomic_write_json(TICKER_LOG, entries)
+            _ticker_cache.update(mtime=-1.0, entries=entries,
+                                 tickers=[e["ticker"] for e in entries])
 
 
 # ── Transcription subprocess ──────────────────────────────────────────────────
