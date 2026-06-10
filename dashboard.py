@@ -630,7 +630,7 @@ def _price_loop():
             _fail_streak = 0
         except Exception as e:
             _fail_streak += 1
-            if _fail_streak == 1 or _fail_streak % 50 == 0:
+            if _fail_streak in (1, 5, 25) or _fail_streak % 50 == 0:
                 log.warning("[PRICE] loop error (%d consecutive): %s", _fail_streak, e)
             else:
                 log.debug("[PRICE] %s", e)
@@ -1379,7 +1379,8 @@ async def api_get_ticker_feed():
         items = json.loads(TICKER_FEED_FILE.read_text(encoding="utf-8")) if TICKER_FEED_FILE.exists() else []
         return JSONResponse({"items": items})
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        log.warning("[TICKER-FEED] corrupted ticker_feed.json, returning empty list: %s", e)
+        return JSONResponse({"items": []})
 
 
 @app.post("/api/ticker-feed")

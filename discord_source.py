@@ -228,9 +228,13 @@ def _post_ingest(alerts: list[dict]) -> None:
             print(f"[discord] POST timeout — dashboard slow? ({e})", flush=True)
         elif alerts:
             print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
+        else:
+            print(f"[discord] heartbeat POST failed: {e}", flush=True)
     except Exception as e:
         if alerts:
             print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
+        else:
+            print(f"[discord] heartbeat POST failed: {e}", flush=True)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
