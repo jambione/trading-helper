@@ -723,13 +723,12 @@ def _snapshot() -> dict:
             price    = d.get("price")
             day_open = d.get("day_open")
             d["pct_change"] = round((price - day_open) / day_open * 100, 2) if (price and day_open and day_open > 0) else None
-            # Mention counts — prune stale timestamps in-place
-            ts = STATE.mention_ts.get(t, [])
-            ts = [tm for tm in ts if now_ts - tm <= m_window]
-            STATE.mention_ts[t] = ts
+            # Mention counts — count in-window entries without rebuilding the list;
+            # _track_mention() prunes at write time so this path stays read-only.
+            window_count        = sum(1 for tm in STATE.mention_ts.get(t, []) if now_ts - tm <= m_window)
             d["mention_count"]  = STATE.mention_daily.get(t, 0)
-            d["mention_window"] = len(ts)
-            d["mention_burst"]  = len(ts) >= threshold
+            d["mention_window"] = window_count
+            d["mention_burst"]  = window_count >= threshold
             rows.append(d)
         def _row_sort_key(r):
             in_mention = r["ticker"] in mention_rank

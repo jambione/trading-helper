@@ -632,6 +632,7 @@ class TickerState:
         # Live indicator values — updated each bar fetch / proximity check
         self.last_atr:  Optional[float] = None
         self.last_vwap: Optional[float] = None
+        self._last_computed_price: Optional[float] = None  # guards live-recompute throttle
 
         # Dynamic exit levels — set at BUY time, cleared on sell
         self.dyn_stop:  Optional[float] = None  # price to trigger stop-loss
@@ -1848,39 +1849,47 @@ class SignalEngine:
         # For HOT tickers we also run the full momentum/BUY check on the live
         # values — no waiting up to 60 s for the next confirmed bar to close.
         if ts.cached_df is not None and ts.last_price is not None:
-            try:
-                df_live = ts.cached_df.copy()
-                df_live.at[df_live.index[-1], "close"] = ts.last_price
-                rsi_live, hist_live, atr_live, vwap_live, rvol_live, cm_rsi_live, obv_live = compute_indicators(df_live)
-                ts.last_rsi       = rsi_live
-                ts.last_hist      = hist_live
-                if atr_live  > 0: ts.last_atr  = atr_live
-                if vwap_live > 0: ts.last_vwap = vwap_live
-                ts.last_rvol      = rvol_live
-                ts.last_cm_rsi_ok = cm_rsi_live
-                ts.last_obv_ok    = obv_live
+            # Skip the full recompute when price hasn't moved more than half a cent —
+            # indicators are unchanged and the DataFrame copy + compute is expensive.
+            price_moved = (
+                ts._last_computed_price is None or
+                abs(ts.last_price - ts._last_computed_price) >= 0.005
+            )
+            if price_moved:
+                try:
+                    ts._last_computed_price = ts.last_price
+                    df_live = ts.cached_df.copy()
+                    df_live.at[df_live.index[-1], "close"] = ts.last_price
+                    rsi_live, hist_live, atr_live, vwap_live, rvol_live, cm_rsi_live, obv_live = compute_indicators(df_live)
+                    ts.last_rsi       = rsi_live
+                    ts.last_hist      = hist_live
+                    if atr_live  > 0: ts.last_atr  = atr_live
+                    if vwap_live > 0: ts.last_vwap = vwap_live
+                    ts.last_rvol      = rvol_live
+                    ts.last_cm_rsi_ok = cm_rsi_live
+                    ts.last_obv_ok    = obv_live
 
-                # Hot tickers get real-time momentum checks so the BUY fires
-                # the moment MACD starts growing — not up to a minute later.
-                # Normal tickers still wait for confirmed bar closes to avoid
-                # false signals from mid-candle histogram fluctuations.
-                if ts.is_hot and ts.bars_fetched:
-                    if STRATEGY_MODE == "three_indicator":
-                        # Evaluate the 3-indicator rule on the realtime forming
-                        # candle (aggregator when enabled, else the live-price
-                        # injected cache) — TradingView-style intra-bar updates.
-                        self._eval_three_indicator(ts, self._strategy_df(ts, df_live))
-                    else:
-                        open_pos = sum(1 for t in self.active.values() if t.in_position)
-                        ts.update_momentum(
-                            hist           = hist_live,
-                            price          = ts.last_price,
-                            rsi            = rsi_live,
-                            open_positions = open_pos,
-                        )
+                    # Hot tickers get real-time momentum checks so the BUY fires
+                    # the moment MACD starts growing — not up to a minute later.
+                    # Normal tickers still wait for confirmed bar closes to avoid
+                    # false signals from mid-candle histogram fluctuations.
+                    if ts.is_hot and ts.bars_fetched:
+                        if STRATEGY_MODE == "three_indicator":
+                            # Evaluate the 3-indicator rule on the realtime forming
+                            # candle (aggregator when enabled, else the live-price
+                            # injected cache) — TradingView-style intra-bar updates.
+                            self._eval_three_indicator(ts, self._strategy_df(ts, df_live))
+                        else:
+                            open_pos = sum(1 for t in self.active.values() if t.in_position)
+                            ts.update_momentum(
+                                hist           = hist_live,
+                                price          = ts.last_price,
+                                rsi            = rsi_live,
+                                open_positions = open_pos,
+                            )
 
-            except Exception as e:
-                print(f"  [engine] live recompute error for {ts.ticker}: {e}", flush=True)
+                except Exception as e:
+                    print(f"  [engine] live recompute error for {ts.ticker}: {e}", flush=True)
 
         ts.check_count += 1
         print(ts.proximity_summary())

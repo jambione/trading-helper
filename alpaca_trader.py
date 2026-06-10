@@ -257,6 +257,7 @@ def _log_action(action: str, ticker: str, price: float,
             entries = json.loads(_TRADE_LOG.read_text())
         except Exception:
             pass
+    entries = entries[-999:]   # cap at 1000 total (999 kept + 1 new)
     entries.append(entry)
     _TRADE_LOG.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = None
