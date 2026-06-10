@@ -27,7 +27,9 @@ class _ProcExited(Exception):
 
 
 def _stream(proc: subprocess.Popen, label: str) -> None:
-    assert proc.stdout
+    if proc.stdout is None:
+        raise RuntimeError(f"[{label}] subprocess stdout is None — cannot stream output")
+
     for raw in iter(proc.stdout.readline, b''):
         sys.stdout.write(f'{label} {raw.decode(errors="replace")}')
         sys.stdout.flush()

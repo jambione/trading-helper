@@ -1252,7 +1252,7 @@ async def api_add_bulk(request: Request):
         added = []
         for item in raw[:100]:          # safety cap
             t = str(item).strip().upper()
-            if not t or not t.isalpha() or not (1 <= len(t) <= 5):
+            if not t or not t.isalpha() or not (2 <= len(t) <= 5):
                 continue
             ok, is_new = await loop.run_in_executor(None, lambda t=t: add_ticker_to_log(t))
             if ok and is_new:
