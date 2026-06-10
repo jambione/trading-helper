@@ -144,10 +144,7 @@ def load_news() -> list:
 
 def save_news(items: list) -> None:
     """Write items list to news.json and invalidate the cache."""
-    NEWS_FILE.write_text(
-        json.dumps(items, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _atomic_write_json(NEWS_FILE, items)
     _news_cache["mtime"] = -1.0
 
 
@@ -308,7 +305,8 @@ def _send_push_notifications(ticker: str, price) -> None:
     if stale:
         with STATE.lock:
             STATE.push_subscriptions = [s for s in STATE.push_subscriptions if s not in stale]
-        _save_push_subscriptions(STATE.push_subscriptions)
+            pruned = list(STATE.push_subscriptions)  # capture inside lock before releasing
+        _save_push_subscriptions(pruned)
 
 
 # ── Ticker log ────────────────────────────────────────────────────────────────
