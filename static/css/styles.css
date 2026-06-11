@@ -2324,14 +2324,15 @@ body.mobile .lb-item:nth-child(n+4) { display: none; }
 
 /* ── Trading Engine panel (owner only) ──────────────────────── */
 .engine-bar {
-  display: none;            /* shown only for the owner via body.user-jmb */
+  display: none;            /* owner (user-jmb) or localhost (engine-visible) */
   margin: 0 14px 10px;
   padding: 8px 14px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
 }
-body.user-jmb .engine-bar { display: block; }
+body.user-jmb .engine-bar,
+body.engine-visible .engine-bar { display: block; }
 
 .engine-header {
   display: flex;

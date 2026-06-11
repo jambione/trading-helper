@@ -5,21 +5,21 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=51';
-import { subscribe, set }                        from './store.js?v=51';
-import { init as initTranscription }             from './transcription.js?v=51';
-import { init as initTickers }                   from './tickers.js?v=51';
-import { init as initTradingView }               from './tradingview.js?v=51';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=51';
-import { init as initResizer }                   from './resizer.js?v=51';
-import * as controls                             from './controls.js?v=51';
-import * as notifications                        from './notifications.js?v=51';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=51';
-import { init as initNews }                      from './news.js?v=51';
-import { init as initLeaderboard }               from './leaderboard.js?v=51';
-import { init as initEngine }                    from './engine.js?v=51';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=51';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=51';
+import { connect, on, api }                      from './api.js?v=52';
+import { subscribe, set }                        from './store.js?v=52';
+import { init as initTranscription }             from './transcription.js?v=52';
+import { init as initTickers }                   from './tickers.js?v=52';
+import { init as initTradingView }               from './tradingview.js?v=52';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=52';
+import { init as initResizer }                   from './resizer.js?v=52';
+import * as controls                             from './controls.js?v=52';
+import * as notifications                        from './notifications.js?v=52';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=52';
+import { init as initNews }                      from './news.js?v=52';
+import { init as initLeaderboard }               from './leaderboard.js?v=52';
+import { init as initEngine }                    from './engine.js?v=52';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=52';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=52';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -101,6 +101,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Use _isLocal directly so this works regardless of auth settings.
   if (!_isLocal) document.body.classList.add('hosted');
 
+  // Trading Engine panel: owner-only when hosted, but localhost IS the owner's
+  // machine — always show it there (the engine API already trusts localhost).
+  if (_isLocal) document.body.classList.add('engine-visible');
+
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
   // Discord Alerts panel is server-fed (WebSocket), so it works hosted too.
@@ -176,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=51');
+    const m = await import('./admin.js?v=52');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
