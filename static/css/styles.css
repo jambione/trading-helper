@@ -1123,20 +1123,6 @@ body.mobile .icon-btn {
   border-radius: 3px;
   padding: 0 4px;
 }
-/* Clickable tickers in the regular Alerts column */
-[data-regular-box] .tx-ticker {
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-[data-regular-box] .tx-ticker:hover {
-  background: rgba(94, 234, 212, 0.15);
-  border-color: var(--accent);
-}
-[data-regular-box] .tx-ticker--firing {
-  background: rgba(245, 158, 11, 0.25);
-  border-color: #f59e0b;
-  color: #fbbf24;
-}
 .tx-keyword {
   color: var(--warming);
   background: var(--warming-bg);
@@ -1363,6 +1349,14 @@ body.mobile .icon-btn {
   font-weight: 700;
   color: var(--text-bright);
   letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.cell-ticker:hover {
+  color: var(--accent);
+}
+.cell-ticker--firing {
+  color: #f59e0b;
 }
 .cell-price {
   font-family: var(--font-mono);

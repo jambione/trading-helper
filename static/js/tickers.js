@@ -212,6 +212,10 @@ function _createRow(row) {
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
+  el.querySelector('.cell-ticker').addEventListener('click', e => {
+    e.stopPropagation();
+    _burstAlert(e.currentTarget, row.ticker);
+  });
   el.querySelector('[data-copy-btn]').addEventListener('click', e => {
     e.stopPropagation();
     _copyTicker(e.currentTarget, row.ticker);
@@ -228,6 +232,17 @@ async function _removeTicker(ticker) {
     await api.removeTicker(ticker);
   } catch (err) {
     console.error('Failed to remove ticker', err);
+  }
+}
+
+async function _burstAlert(cellEl, ticker) {
+  cellEl.classList.add('cell-ticker--firing');
+  try {
+    await api.burstAlert(ticker);
+  } catch (err) {
+    console.error('Failed to fire burst alert', err);
+  } finally {
+    setTimeout(() => cellEl.classList.remove('cell-ticker--firing'), 800);
   }
 }
 
