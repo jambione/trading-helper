@@ -7,6 +7,7 @@
  */
 
 import { subscribe } from './store.js?v=49';
+import { api } from './api.js?v=49';
 
 let _regularBox = null;
 let _squeezeBox = null;
@@ -31,6 +32,22 @@ export function init(panelEl) {
     const squeeze = all.filter(a =>  a.burst);
     _renderFeed(_regularBox, regular, false);
     _renderFeed(_squeezeBox, squeeze, true);
+  });
+
+  // Click a ticker in the Alerts column to fire a manual burst alert
+  _regularBox?.addEventListener('click', async e => {
+    const tickerEl = e.target.closest('.tx-ticker');
+    if (!tickerEl) return;
+    const ticker = tickerEl.textContent.trim();
+    if (!ticker) return;
+    tickerEl.classList.add('tx-ticker--firing');
+    try {
+      await api.burstAlert(ticker);
+    } catch (err) {
+      console.error('[transcription] burst alert failed', err);
+    } finally {
+      setTimeout(() => tickerEl.classList.remove('tx-ticker--firing'), 800);
+    }
   });
 }
 

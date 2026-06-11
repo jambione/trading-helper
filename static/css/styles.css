@@ -477,7 +477,6 @@ body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
 body.hosted .btn-copy                { display: none; }
-body.hosted .btn-alert               { display: none; }
 body.hosted .btn-delete              { display: none; }
 
 /* Admin (jmb) on remote: transcription + watchlist editing stay localhost-only.
@@ -1124,6 +1123,20 @@ body.mobile .icon-btn {
   border-radius: 3px;
   padding: 0 4px;
 }
+/* Clickable tickers in the regular Alerts column */
+[data-regular-box] .tx-ticker {
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+[data-regular-box] .tx-ticker:hover {
+  background: rgba(94, 234, 212, 0.15);
+  border-color: var(--accent);
+}
+[data-regular-box] .tx-ticker--firing {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
 .tx-keyword {
   color: var(--warming);
   background: var(--warming-bg);
@@ -1391,7 +1404,7 @@ body.mobile .icon-btn {
 }
 
 /* Action buttons */
-.btn-add, .btn-copy, .btn-alert, .btn-delete {
+.btn-add, .btn-copy, .btn-delete {
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
@@ -1424,20 +1437,6 @@ body.mobile .icon-btn {
 }
 .btn-add:disabled,
 .btn-copy:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.btn-alert {
-  color: #f59e0b;
-}
-.btn-alert:hover:not(:disabled) {
-  color: #fbbf24;
-  border-color: rgba(245, 158, 11, 0.5);
-  background: rgba(245, 158, 11, 0.08);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.20);
-}
-.btn-alert:disabled {
   opacity: 0.4;
   cursor: default;
 }
