@@ -27,6 +27,23 @@ against the live Finnhub price):
 - `STOP_LOSS` % — the tight protective stop
 - `MAX_HOLD_MINUTES` — time stop
 
+## Running it from the dashboard
+
+The **Trading Engine panel** (visible only to the owner, between the donate bar
+and the main grid) is the day-to-day control surface:
+
+- **Status chips** (live): trader mode, strategy, engine freshness, kill-switch,
+  today's realized P&L, trades today, PDT counter, open positions + exposure
+- **⚙ Settings**: edits whitelisted signal_engine.env keys (mode, scalp exits,
+  risk guard, 3-indicator params). "Save + Restart Engine" applies them.
+  `TRADER_MODE=live` is deliberately NOT settable here — file edit only.
+- **📊 Report**: per-day P&L, green-day rate, exit-reason breakdown
+- **⟳ Restart**: re-execs the engine (open positions are re-adopted on boot)
+
+Security: settings writes and restarts work from the local dashboard without
+ceremony; through the public URL they require `engine_control_secret` (set it
+in config/bot_config.json — the panel prompts once and remembers it).
+
 ## Workflow
 
 ### Stage 1 — Validate the port vs TradingView (TRADER_MODE=off)
