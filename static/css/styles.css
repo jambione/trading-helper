@@ -465,8 +465,9 @@ body.hosted.user-jmb .admin-settings-hide { display: none !important; }
   box-shadow: 0 0 14px rgba(94, 234, 212, 0.20) !important;
 }
 
-/* ── Hosted mode — transcript column + settings hidden ──────── */
-body.hosted [data-panel="transcript"]   { display: none; }
+/* ── Hosted mode — transcript controls + settings hidden ──────
+   The Discord Alerts panel itself stays visible (server-fed), but its
+   audio/transcript controls are localhost-only. */
 body.hosted [data-tx-btn]               { display: none; }
 body.hosted [data-clear-transcript-btn] { display: none; }
 body.hosted .status-audio-section       { display: none; }

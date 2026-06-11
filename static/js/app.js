@@ -5,20 +5,20 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=49';
-import { subscribe, set }                        from './store.js?v=49';
-import { init as initTranscription }             from './transcription.js?v=49';
-import { init as initTickers }                   from './tickers.js?v=49';
-import { init as initTradingView }               from './tradingview.js?v=49';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=49';
-import { init as initResizer }                   from './resizer.js?v=49';
-import * as controls                             from './controls.js?v=49';
-import * as notifications                        from './notifications.js?v=49';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=49';
-import { init as initNews }                      from './news.js?v=49';
-import { init as initLeaderboard }               from './leaderboard.js?v=49';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=49';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=49';
+import { connect, on, api }                      from './api.js?v=50';
+import { subscribe, set }                        from './store.js?v=50';
+import { init as initTranscription }             from './transcription.js?v=50';
+import { init as initTickers }                   from './tickers.js?v=50';
+import { init as initTradingView }               from './tradingview.js?v=50';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=50';
+import { init as initResizer }                   from './resizer.js?v=50';
+import * as controls                             from './controls.js?v=50';
+import * as notifications                        from './notifications.js?v=50';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=50';
+import { init as initNews }                      from './news.js?v=50';
+import { init as initLeaderboard }               from './leaderboard.js?v=50';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=50';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=50';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -96,16 +96,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.classList.remove('user-jmb');
   }
 
-  // Hosted mode: transcript + settings are localhost-only features.
+  // Hosted mode: settings is a localhost-only feature.
   // Use _isLocal directly so this works regardless of auth settings.
   if (!_isLocal) document.body.classList.add('hosted');
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  // Transcription is localhost-only. Admin on remote does not get it.
-  if (_isLocal) {
-    try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
-  }
+  // Discord Alerts panel is server-fed (WebSocket), so it works hosted too.
+  try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
@@ -176,7 +174,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=49');
+    const m = await import('./admin.js?v=50');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
