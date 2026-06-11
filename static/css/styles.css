@@ -472,7 +472,7 @@ body.hosted [data-clear-transcript-btn] { display: none; }
 body.hosted .status-audio-section       { display: none; }
 body.hosted [data-tab-btn="audio"]      { display: none; }
 body.hosted [data-settings-btn]         { display: none; }
-body.hosted .main-grid               { grid-template-columns: 240px 6px 1fr; }
+body.hosted .main-grid               { grid-template-columns: 1fr 1fr; }
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
@@ -802,7 +802,7 @@ body.mobile .icon-btn {
 .main-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 360px 230px 6px 1fr;
+  grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
   gap: 0;
