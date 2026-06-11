@@ -25,3 +25,4 @@ logs/
 # Spell-pipeline learned-correction runtime state (per-machine, regenerated)
 config/learned_corrections.json
 config/pending_corrections.json
+trade_guard_state.json
