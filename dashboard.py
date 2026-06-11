@@ -1291,6 +1291,23 @@ async def api_mention_ticker(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
+@app.post("/api/tickers/burst")
+async def api_burst_ticker(request: Request):
+    """Manually fire a burst alert for a ticker (injects threshold mentions at once)."""
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        threshold = int(STATE.cfg.get("mention_alert_threshold", 2))
+        with STATE.lock:
+            for _ in range(threshold):
+                _track_mention(ticker)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
 @app.post("/api/tickers/remove")
 async def api_remove_ticker(request: Request):
     try:

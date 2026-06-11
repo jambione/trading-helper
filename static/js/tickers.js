@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=48';
-import { api } from './api.js?v=48';
+import { subscribe, selectTicker, get } from './store.js?v=49';
+import { api } from './api.js?v=49';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -220,6 +220,10 @@ function _createRow(row) {
     e.stopPropagation();
     _removeTicker(row.ticker);
   });
+  el.querySelector('[data-alert-btn]').addEventListener('click', e => {
+    e.stopPropagation();
+    _burstAlert(e.currentTarget, row.ticker);
+  });
   return el;
 }
 
@@ -228,6 +232,21 @@ async function _removeTicker(ticker) {
     await api.removeTicker(ticker);
   } catch (err) {
     console.error('Failed to remove ticker', err);
+  }
+}
+
+async function _burstAlert(btn, ticker) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  try {
+    btn.textContent = '…';
+    await api.burstAlert(ticker);
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1200);
+  } catch (err) {
+    console.error('Failed to fire burst alert', err);
+    btn.textContent = orig;
+    btn.disabled = false;
   }
 }
 
@@ -455,6 +474,7 @@ function _rowHTML(row) {
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-actions">
       <button class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>
+      <button class="btn-alert" data-alert-btn title="Fire manual burst alert">Alert</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
     </div>
   </div>

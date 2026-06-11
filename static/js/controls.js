@@ -5,9 +5,9 @@
  * Buttons are always re-enabled in finally blocks regardless of outcome.
  */
 
-import { api } from './api.js?v=48';
-import { get, selectTicker } from './store.js?v=48';
-import { clearCopiedTickers } from './tickers.js?v=48';
+import { api } from './api.js?v=49';
+import { get, selectTicker } from './store.js?v=49';
+import { clearCopiedTickers } from './tickers.js?v=49';
 
 export async function clearWatchlist() {
   if (!confirm('Clear the watchlist?\n\nThis removes all tickers from wb_watchlist.json.')) return;
