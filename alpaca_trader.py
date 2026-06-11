@@ -110,11 +110,14 @@ def is_active() -> bool:
 
 # ── Order execution ───────────────────────────────────────────────────────────
 
-def buy(ticker: str, price: float, rsi: float, hist: float):
+def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
     """
     Place a notional BUY order for TRADE_AMOUNT dollars.
     Alpaca handles fractional shares automatically.
     Always logs the action regardless of mode.
+
+    Returns {"ok": bool, "order_id": str|None, "status": str|None} so the
+    caller can later look the order up and rebase to the real fill price.
     """
     est_shares = _trade_amount / price if price > 0 else 0
     mode_tag   = f"[{_mode.upper()}]"
@@ -122,7 +125,7 @@ def buy(ticker: str, price: float, rsi: float, hist: float):
     if not is_active():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
-        return
+        return {"ok": False, "order_id": None, "status": None}
 
     print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
           f"${_trade_amount:.0f} notional  ~{est_shares:.2f} shares @ ${price:.2f}")
@@ -159,18 +162,22 @@ def buy(ticker: str, price: float, rsi: float, hist: float):
         print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
         _log_action("BUY", ticker, price, rsi, hist,
                     order_id=order_id, order_status=status)
+        return {"ok": True, "order_id": order_id, "status": status}
 
     except Exception as e:
         print(f"  [TRADER] ❌  BUY order failed: {e}")
         _log_action("BUY_ERROR", ticker, price, rsi, hist, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error"}
 
 
 def sell(ticker: str, price: float, rsi: float, hist: float,
-         buy_price: Optional[float] = None):
+         buy_price: Optional[float] = None) -> dict:
     """
     Close the entire Alpaca position for a ticker.
     Uses close_position() — no manual share counting needed.
     Always logs the action regardless of mode.
+
+    Returns {"ok": bool, "order_id": str|None, "status": str|None}.
     """
     pnl_str  = ""
     if buy_price and buy_price > 0:
@@ -183,7 +190,7 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
         _log_action("SELL_LOGGED", ticker, price, rsi, hist,
                     buy_price=buy_price,
                     note="TRADER_MODE=off — no order placed")
-        return
+        return {"ok": False, "order_id": None, "status": None}
 
     # Confirm we actually hold a position
     try:
@@ -193,7 +200,7 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
         print(f"  [TRADER] ℹ️  SELL {ticker}: no open Alpaca position — skipping order")
         _log_action("SELL_SKIPPED", ticker, price, rsi, hist,
                     note="no open Alpaca position")
-        return
+        return {"ok": False, "order_id": None, "status": "skipped"}
 
     print(f"\n  [TRADER] {mode_tag} 🔴 SELL {ticker}  "
           f"{qty_held} shares @ ${price:.2f}{pnl_str}")
@@ -224,11 +231,57 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
         _log_action("SELL", ticker, price, rsi, hist,
                     buy_price=buy_price, qty=qty_held,
                     order_id=order_id, order_status=status)
+        return {"ok": True, "order_id": order_id, "status": status}
 
     except Exception as e:
         print(f"  [TRADER] ❌  SELL order failed: {e}")
         _log_action("SELL_ERROR", ticker, price, rsi, hist,
                     buy_price=buy_price, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error"}
+
+
+# ── Order / position lookups (fill reconciliation) ────────────────────────────
+
+def get_order(order_id: str) -> Optional[dict]:
+    """
+    Look up one order. Returns {"status", "filled_avg_price", "filled_qty"}
+    or None when the trader is off or the lookup fails.
+    """
+    if not is_active() or not order_id:
+        return None
+    try:
+        o = _client.get_order_by_id(order_id)
+        fap = getattr(o, "filled_avg_price", None)
+        fq  = getattr(o, "filled_qty", None)
+        return {
+            "status":           str(o.status),
+            "filled_avg_price": float(fap) if fap is not None else None,
+            "filled_qty":       float(fq)  if fq  is not None else None,
+        }
+    except Exception as e:
+        log.warning("[TRADER] get_order(%s) failed: %s", order_id, e)
+        return None
+
+
+def get_open_positions() -> Optional[dict]:
+    """
+    All open Alpaca positions as {symbol: {"qty", "avg_entry_price"}}.
+    Returns None when the trader is off or the call fails (so callers can
+    tell "no positions" apart from "couldn't ask").
+    """
+    if not is_active():
+        return None
+    try:
+        out = {}
+        for pos in _client.get_all_positions():
+            out[str(pos.symbol).upper()] = {
+                "qty":             float(pos.qty),
+                "avg_entry_price": float(pos.avg_entry_price),
+            }
+        return out
+    except Exception as e:
+        log.warning("[TRADER] get_open_positions failed: %s", e)
+        return None
 
 
 # ── Trade logging ─────────────────────────────────────────────────────────────
