@@ -13,7 +13,7 @@ tell application "Finder"
     set screenH to item 4 of screenBounds
 end tell
 
--- Brave takes the left 66% (extends well to the right); Webull fills the rest.
+-- Brave takes the left 66%; Discord fills the rest on the right.
 set leftW  to (screenW * 0.66) as integer
 set rightX to leftW
 set rightW to screenW - leftW
@@ -32,41 +32,8 @@ try
     end tell
 end try
 
--- Webull Desktop: right half
--- Electron apps often block System Events window access; try direct AS dict first.
-set webullOpen to false
-tell application "System Events"
-    set webullOpen to (exists process "Webull Desktop")
-end tell
-
-if webullOpen then
-    tell application "Webull Desktop" to activate
-    delay 0.5
-    -- Attempt 1: direct AppleScript dictionary (works if Webull exposes it)
-    set wbMoved to false
-    try
-        tell application "Webull Desktop"
-            set bounds of window 1 to {rightX, 0, screenW, screenH}
-        end tell
-        set wbMoved to true
-    end try
-    -- Attempt 2: System Events (works for non-Electron windows)
-    if not wbMoved then
-        try
-            tell application "System Events"
-                tell process "Webull Desktop"
-                    if (count of windows) > 0 then
-                        set position of window 1 to {rightX, 0}
-                        set size of window 1 to {rightW, screenH}
-                    end if
-                end tell
-            end tell
-        end try
-    end if
-end if
-
--- Discord: dock to the right and bring to front so the OCR source can read the
--- -daytrading-alerts channel. Placed LAST so it sits on top of the right side.
+-- Discord: dock to the right so the OCR source can read the
+-- -daytrading-alerts channel.
 tell application "System Events"
     set discordOpen to (exists process "Discord")
 end tell
