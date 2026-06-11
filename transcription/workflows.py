@@ -15,6 +15,7 @@ import sys
 import time as _time_mod
 
 _IS_WINDOWS = sys.platform == "win32"
+_IS_MACOS   = sys.platform == "darwin"
 
 # ========================= WATCHLIST TRACKER =========================
 # Tickers already added to Webull are stored in a JSON file so the list
@@ -606,3 +607,135 @@ def workflow_sell_all(ticker: str, dry_run: bool = False) -> bool:
         return True
     print("   ❌ SELL failed — could not open Webull Desktop")
     return False
+
+
+# ── TradingView alert creation ────────────────────────────────────────────────
+
+def _macos_create_tv_alert(ticker: str, cfg: dict) -> bool:
+    """Navigate TradingView to ticker and create a squeeze alert on macOS.
+
+    Uses AppleScript to activate the browser, pyautogui to type the ticker
+    and trigger the Create Alert dialog (Option+A), then confirms with Enter.
+
+    Prerequisite: create one alert manually first so TradingView pre-fills
+    the webhook URL and message for all subsequent Option+A dialogs.
+    """
+    try:
+        import pyautogui as _pag
+    except ImportError:
+        print("   ❌ CREATE_TV_ALERT: pyautogui not installed — run: pip install pyautogui")
+        return False
+
+    import subprocess
+
+    tab_num = str(int(cfg.get("brave_tv_tab", 1)))
+    browser = cfg.get("tv_browser_macos", "Brave Browser")
+
+    # Activate browser
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{browser}" to activate'],
+            check=True, capture_output=True, timeout=5,
+        )
+    except Exception as e:
+        print(f"   ❌ CREATE_TV_ALERT: could not activate {browser}: {e}")
+        return False
+
+    _time_mod.sleep(0.4)
+
+    # Switch to pinned TradingView tab
+    _pag.hotkey("ctrl", tab_num)
+    _time_mod.sleep(0.4)
+
+    # Click center of screen to focus the chart area
+    sw, sh = _pag.size()
+    _pag.click(sw // 2, sh // 2)
+    _time_mod.sleep(0.2)
+
+    # Type ticker — TradingView opens symbol search on any keypress in the chart
+    for letter in ticker:
+        _pag.press(letter.lower())
+        _time_mod.sleep(0.05)
+    _time_mod.sleep(0.3)
+    _pag.press("enter")
+    _time_mod.sleep(2.5)   # wait for chart to load
+
+    # Open Create Alert dialog: Option+A (Alt+A on macOS via pyautogui)
+    _pag.hotkey("alt", "a")
+    _time_mod.sleep(1.5)   # wait for dialog to open
+
+    # Confirm — pre-filled webhook URL and message are reused automatically
+    _pag.press("enter")
+    _time_mod.sleep(0.3)
+
+    print(f"   ✅ CREATE_TV_ALERT done for {ticker}")
+    return True
+
+
+def workflow_create_tv_alert(ticker: str, cfg: dict = None) -> bool:
+    """Navigate TradingView to ticker and create a squeeze alert using Alt/Option+A.
+
+    The alert dialog opens with the last-used settings pre-filled (webhook URL
+    and message), so a single Enter keystroke is all that's needed after the
+    first manual alert is set up.
+
+    Works on macOS (pyautogui + AppleScript) and Windows (pyautogui + Win32).
+    On other platforms, or when neither pyautogui nor a browser is available,
+    logs the intent and returns False.
+    """
+    ticker = ticker.upper()
+    cfg    = cfg or {}
+
+    if _IS_MACOS:
+        print(f"📡 CREATE_TV_ALERT → {ticker}")
+        return _macos_create_tv_alert(ticker, cfg)
+
+    if not LIVE_MODE:
+        print(f"📡 [LOG] CREATE_TV_ALERT → {ticker}")
+        return True
+
+    # Windows path — reuse Brave window focus
+    import pyautogui as _pag
+
+    tab_num = str(int(cfg.get("brave_tv_tab", 1)))
+
+    hwnd = _find_brave_window()
+    if not hwnd:
+        print("   ❌ CREATE_TV_ALERT: Brave browser window not found")
+        return False
+
+    print(f"📡 CREATE_TV_ALERT → {ticker}")
+
+    _SW_SHOW = 5
+    _user32.ShowWindow(hwnd, _SW_RESTORE if _user32.IsIconic(hwnd) else _SW_SHOW)
+    _time_mod.sleep(0.15)
+    _user32.SetForegroundWindow(hwnd)
+    _user32.BringWindowToTop(hwnd)
+    _time_mod.sleep(0.4)
+
+    _pag.hotkey("ctrl", tab_num)
+    _time_mod.sleep(0.4)
+
+    # Click center of window to focus chart
+    left, top, w, h = _tv_get_rect(hwnd)
+    _pag.click(left + w // 2, top + h // 2)
+    _time_mod.sleep(0.2)
+
+    # Navigate to ticker
+    for letter in ticker:
+        _pag.press(letter.lower())
+        _time_mod.sleep(0.05)
+    _time_mod.sleep(0.3)
+    _pag.press("enter")
+    _time_mod.sleep(2.5)
+
+    # Open Create Alert dialog
+    _pag.hotkey("alt", "a")
+    _time_mod.sleep(1.5)
+
+    # Confirm with pre-filled settings
+    _pag.press("enter")
+    _time_mod.sleep(0.3)
+
+    print(f"   ✅ CREATE_TV_ALERT done for {ticker}")
+    return True

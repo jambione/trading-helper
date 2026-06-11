@@ -543,6 +543,33 @@ body.mobile .auto-add-toggle { display: none !important; }
   color: transparent;
 }
 
+/* ── Auto-Alert toggle (amber — distinct from teal Auto-Add) ─── */
+body.mobile .auto-alert-toggle { display: none !important; }
+
+.auto-alert-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 10px 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-hi);
+  background: rgba(255,255,255,0.02);
+  transition: all 0.2s var(--ease-out);
+}
+.auto-alert-toggle:hover { border-color: rgba(245, 158, 11, 0.4); }
+.auto-alert-toggle input[type="checkbox"] { display: none; }
+.auto-alert-toggle.is-on .auto-add-track {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.40);
+}
+.auto-alert-toggle.is-on .auto-add-label {
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 /* ── Hotkey reference panel ──────────────────────────────────── */
 .hotkey-anchor {
   position: relative;

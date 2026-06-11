@@ -51,8 +51,9 @@ DEFAULT_CONFIG = {
     "wr_length": 14,
 
     # ── TradingView ──────────────────────────────────────────
-    "tv_chart_url": "https://www.tradingview.com/chart/",
-    "brave_tv_tab": 1,    # tab number (1-9) holding TradingView in Brave
+    "tv_chart_url":     "https://www.tradingview.com/chart/",
+    "brave_tv_tab":     1,    # tab number (1-9) holding TradingView in Brave
+    "tv_browser_macos": "Brave Browser",  # browser name for macOS alert automation
 
     # ── Discord OCR source (the ticker source) ───────────────
     "discord_ocr_poll_sec": 2.5,    # seconds between OCR captures
@@ -79,6 +80,7 @@ SAFE_CONFIG_KEYS = [
     "wr_length",
     "tv_chart_url",
     "brave_tv_tab",
+    "tv_browser_macos",
     "strategy",
     "discord_ocr_poll_sec",
     "discord_window_owner",

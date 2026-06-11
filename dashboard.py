@@ -64,7 +64,7 @@ from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
 sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from workflows import workflow_add_wb, workflow_add_brave_tv, workflow_add_wb_and_tv
+from workflows import workflow_add_wb, workflow_add_brave_tv, workflow_add_wb_and_tv, workflow_create_tv_alert
 from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
@@ -1361,6 +1361,22 @@ async def api_add_wb_tv(request: Request):
         cfg = STATE.cfg
         threading.Thread(target=workflow_add_wb_and_tv, args=(ticker, cfg),
                          daemon=True, name=f"wbtv-{ticker}").start()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/create-tv-alert")
+async def api_create_tv_alert(request: Request):
+    """Navigate TradingView to the given ticker and create a squeeze alert via Alt/Option+A."""
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        cfg = STATE.cfg
+        threading.Thread(target=workflow_create_tv_alert, args=(ticker, cfg),
+                         daemon=True, name=f"tvalert-{ticker}").start()
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)

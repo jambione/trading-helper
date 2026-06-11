@@ -11,6 +11,7 @@
  */
 
 import { subscribe, selectTicker, get } from './store.js?v=49';
+import { api } from './api.js?v=49';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
@@ -21,6 +22,10 @@ const _prevBursts   = {};   // ticker → last known mention_burst bool
 // ── Auto-Add toggle state ──────────────────────────────────────
 const _AUTO_ADD_KEY = 'ss:auto-add';
 let _autoAddEl = null;   // checkbox input element
+
+// ── Auto-Alert toggle state ────────────────────────────────────
+const _AUTO_ALERT_KEY = 'ss:auto-alert';
+let _autoAlertEl = null;
 
 /** Read persisted toggle state and wire up change handler. */
 function _initAutoAdd() {
@@ -43,6 +48,35 @@ function _initAutoAdd() {
 /** Returns true when the Auto-Add toggle is switched on. */
 function _autoAddEnabled() {
   return _autoAddEl?.checked === true;
+}
+
+/** Wire up the Auto-Alert toggle (create TradingView alert on burst). */
+function _initAutoAlert() {
+  const label = document.getElementById('auto-alert-checkbox')?.closest('.auto-alert-toggle');
+  _autoAlertEl = document.getElementById('auto-alert-checkbox');
+  if (!_autoAlertEl) return;
+  const saved = localStorage.getItem(_AUTO_ALERT_KEY) === 'true';
+  _autoAlertEl.checked = saved;
+  if (label) label.classList.toggle('is-on', saved);
+  _autoAlertEl.addEventListener('change', () => {
+    const on = _autoAlertEl.checked;
+    localStorage.setItem(_AUTO_ALERT_KEY, String(on));
+    if (label) label.classList.toggle('is-on', on);
+  });
+}
+
+/** Returns true when the Auto-Alert toggle is switched on. */
+function _autoAlertEnabled() {
+  return _autoAlertEl?.checked === true;
+}
+
+/** Call the dashboard's create-tv-alert endpoint for a ticker. */
+async function _agentAlert(ticker) {
+  try {
+    await api.createTVAlert(ticker);
+  } catch {
+    // Server-side automation unavailable — skip silently
+  }
 }
 
 /**
@@ -70,11 +104,11 @@ async function _agentAdd(ticker) {
 
 export function init() {
   subscribe('tickers', _check);
-  // Wire the Auto-Add toggle after DOM is ready
+  const _onReady = () => { _initAutoAdd(); _initAutoAlert(); };
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initAutoAdd);
+    document.addEventListener('DOMContentLoaded', _onReady);
   } else {
-    _initAutoAdd();
+    _onReady();
   }
 }
 
@@ -143,7 +177,8 @@ function _check(rows) {
       _beep('burst');
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       _notifyBurst(row);
-      if (_autoAddEnabled()) _agentAdd(row.ticker);
+      if (_autoAddEnabled())  _agentAdd(row.ticker);
+      if (_autoAlertEnabled()) _agentAlert(row.ticker);
     }
 
     _prevStatuses[row.ticker] = row.status;
