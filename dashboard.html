@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=50" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=51" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -150,6 +150,20 @@
             <a href="https://paypal.me/brasfieldjonathan" target="_blank" rel="noopener" class="donate-pill donate-pill--paypal">🅿 PayPal</a>
             <a href="https://patreon.com/BrasfieldMomentum" target="_blank" rel="noopener" class="donate-pill donate-pill--patreon">🧡 Patreon</a>
         </div>
+
+        <!-- ── TRADING ENGINE (owner only — shown via body.user-jmb CSS) ── -->
+        <section data-panel="engine" class="engine-bar">
+            <div class="engine-header">
+                <span class="panel-title">Trading Engine</span>
+                <div data-engine-status class="engine-status"></div>
+                <div class="engine-actions">
+                    <button data-engine-settings-btn class="btn btn--ghost btn--sm">⚙ Settings</button>
+                    <button data-engine-report-btn class="btn btn--ghost btn--sm">📊 Report</button>
+                    <button data-engine-restart-btn class="btn btn--ghost btn--sm">⟳ Restart</button>
+                </div>
+            </div>
+            <div data-engine-body class="engine-body hidden"></div>
+        </section>
 
         <main class="main-grid">
             <!-- ── LEFT: Discord Alerts (OCR source) ──────────────── -->
@@ -616,7 +630,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=50"></script>
+        <script type="module" src="/static/js/app.js?v=51"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

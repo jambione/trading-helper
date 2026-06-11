@@ -5,20 +5,21 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=50';
-import { subscribe, set }                        from './store.js?v=50';
-import { init as initTranscription }             from './transcription.js?v=50';
-import { init as initTickers }                   from './tickers.js?v=50';
-import { init as initTradingView }               from './tradingview.js?v=50';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=50';
-import { init as initResizer }                   from './resizer.js?v=50';
-import * as controls                             from './controls.js?v=50';
-import * as notifications                        from './notifications.js?v=50';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=50';
-import { init as initNews }                      from './news.js?v=50';
-import { init as initLeaderboard }               from './leaderboard.js?v=50';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=50';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=50';
+import { connect, on, api }                      from './api.js?v=51';
+import { subscribe, set }                        from './store.js?v=51';
+import { init as initTranscription }             from './transcription.js?v=51';
+import { init as initTickers }                   from './tickers.js?v=51';
+import { init as initTradingView }               from './tradingview.js?v=51';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=51';
+import { init as initResizer }                   from './resizer.js?v=51';
+import * as controls                             from './controls.js?v=51';
+import * as notifications                        from './notifications.js?v=51';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=51';
+import { init as initNews }                      from './news.js?v=51';
+import { init as initLeaderboard }               from './leaderboard.js?v=51';
+import { init as initEngine }                    from './engine.js?v=51';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=51';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=51';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -107,6 +108,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
+  try { initEngine(document.querySelector('[data-panel="engine"]')); }           catch (e) { console.error('[app] initEngine', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
   }
@@ -174,7 +176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=50');
+    const m = await import('./admin.js?v=51');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -228,6 +230,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.config)                     update.config       = snap.config;
     if (snap.discord)                    update.discord      = snap.discord;
     if (snap.news         !== undefined) update.news         = snap.news;
+    if (snap.engine)                     update.engine       = snap.engine;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);
   });

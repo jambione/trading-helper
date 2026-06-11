@@ -6,7 +6,7 @@
  * Squeeze alerts show the ticker and price-level chips.
  */
 
-import { subscribe } from './store.js?v=50';
+import { subscribe } from './store.js?v=51';
 
 let _regularBox = null;
 let _squeezeBox = null;

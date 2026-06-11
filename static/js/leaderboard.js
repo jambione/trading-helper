@@ -6,7 +6,7 @@
  * between the header and the main panel grid.
  */
 
-import { subscribe } from './store.js?v=50';
+import { subscribe } from './store.js?v=51';
 
 let _barEl = null;
 

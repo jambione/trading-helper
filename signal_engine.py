@@ -118,6 +118,11 @@ from finnhub_stream import register_trade_callback
 from realtime_bars import RealtimeBarAggregator
 
 # ── Load signal_engine.env ────────────────────────────────────────────────────
+# Keys loaded FROM THE FILE (not the shell) are tracked so a dashboard-requested
+# restart can drop them from os.environ before re-exec — otherwise the inherited
+# environment would shadow the freshly edited file ("env always wins").
+_ENV_FILE_KEYS: list = []
+
 def _load_env_file(path: Path):
     """
     Parse KEY=VALUE lines from an env file and inject into os.environ.
@@ -138,9 +143,17 @@ def _load_env_file(path: Path):
                 os.environ[key] = value
                 loaded.append(key)
     if loaded:
+        _ENV_FILE_KEYS.extend(loaded)
         print(f"[ENV] Loaded {len(loaded)} setting(s) from signal_engine.env")
 
 _load_env_file(_HERE / "signal_engine.env")
+
+# Touched by the dashboard's "Restart Engine" button (POST /api/engine/restart).
+# The main loop notices the flag, closes positions cleanly is NOT attempted —
+# positions survive via the startup adoption/reconcile — and re-execs itself so
+# the freshly edited signal_engine.env takes effect.
+RESTART_FLAG = _HERE / "engine_restart.flag"
+RESTART_FLAG.unlink(missing_ok=True)   # stale flag from a previous run
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -2240,6 +2253,21 @@ class SignalEngine:
         while True:
             try:
                 cycle_start = time.time()
+
+                # 0. Dashboard-requested restart: re-exec with a clean env so
+                #    the edited signal_engine.env is re-read. Same PID, so
+                #    start_all's process handle and log pipes stay valid.
+                if RESTART_FLAG.exists():
+                    print("\n[ENGINE] 🔄 restart requested by dashboard — "
+                          "re-executing to reload signal_engine.env\n", flush=True)
+                    try:
+                        RESTART_FLAG.unlink()
+                    except Exception:
+                        pass
+                    self._write_signal_state()
+                    for key in _ENV_FILE_KEYS:
+                        os.environ.pop(key, None)
+                    os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())])
 
                 # 1. Poll the dashboard only every DASHBOARD_POLL_INTERVAL seconds.
                 #    Its sole purpose here is detecting newly highlighted tickers.

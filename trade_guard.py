@@ -66,7 +66,11 @@ class TradeGuard:
         self.daily_loss_limit   = max(0.0, float(daily_loss_limit))
         self.max_trades_per_day = max(0, int(max_trades_per_day))
         self.pdt_protect        = pdt_protect if pdt_protect in ("warn", "block", "off") else "warn"
-        self.state_file = state_file or (Path(__file__).parent / "trade_guard_state.json")
+        # TRADE_GUARD_STATE_FILE env override exists so the test suite can never
+        # pollute the real daily P&L / PDT counters (tests/conftest.py sets it).
+        self.state_file = state_file or Path(
+            os.getenv("TRADE_GUARD_STATE_FILE", "")
+            or (Path(__file__).parent / "trade_guard_state.json"))
 
         # date          : ET day the daily counters belong to
         # realized_pnl  : $ closed P&L today

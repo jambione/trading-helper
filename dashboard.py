@@ -58,6 +58,7 @@ from auth import (check_credentials, create_token, verify_token, is_auth_require
 from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
+import engine_env
 import version
 
 from email_service import send_suggestion_email, send_login_email
@@ -868,6 +869,14 @@ def _snapshot() -> dict:
             "tickers": rows,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
+            # Trading-engine status — trader mode + risk guard written by
+            # signal_engine into signal_state.json; rendered by the Engine panel.
+            "engine": {
+                "strategy": sig.get("strategy"),
+                "updated":  sig.get("updated"),
+                "trader":   sig.get("trader"),
+                "risk":     sig.get("risk"),
+            },
             "version": {
                 "dashboard":       version.get_version(),
                 "engine":          sig.get("version"),
@@ -1246,6 +1255,128 @@ async def api_tv_webhook(request: Request):
 @app.get("/api/tradingview/status")
 async def api_tv_status():
     return JSONResponse(tv_status())
+
+
+# ── Trading-engine control (Engine panel) ─────────────────────────────────────
+
+_ENGINE_RESTART_FLAG = Path(__file__).parent / "engine_restart.flag"
+
+
+def _engine_control_allowed(request: Request) -> bool:
+    """
+    Mutating engine endpoints (settings writes, restart) are allowed for:
+      • direct localhost requests (the local dashboard UI), or
+      • requests carrying engine_control_secret (X-Engine-Secret header or
+        ?secret=) set in config/bot_config.json.
+    Requests through the Cloudflare tunnel LOOK local (the tunnel client runs
+    on this machine), so proxy headers mark them as remote. This is stricter
+    than the rest of the API on purpose: these endpoints move real settings
+    on a system that trades money.
+    """
+    secret = str(STATE.cfg.get("engine_control_secret", "")).strip()
+    if secret:
+        token = (request.headers.get("X-Engine-Secret", "")
+                 or request.query_params.get("secret", ""))
+        if token == secret:
+            return True
+    via_proxy = bool(request.headers.get("CF-Connecting-IP")
+                     or request.headers.get("X-Forwarded-For"))
+    host = request.client.host if request.client else ""
+    return (not via_proxy) and host in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+@app.get("/api/engine/config")
+async def api_engine_config_get():
+    """Current whitelisted signal_engine.env values (no credentials)."""
+    loop   = asyncio.get_running_loop()
+    values = await loop.run_in_executor(None, engine_env.read_engine_env)
+    return JSONResponse({"ok": True, "values": values})
+
+
+@app.post("/api/engine/config")
+async def api_engine_config_set(request: Request):
+    """
+    Update whitelisted signal_engine.env keys. Body: {"KEY": value, ...}.
+    Values are validated (TRADER_MODE=live is always rejected). Changes take
+    effect after an engine restart (/api/engine/restart).
+    """
+    if not _engine_control_allowed(request):
+        return JSONResponse({"ok": False, "error": "Engine control requires localhost "
+                             "or the engine control secret"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict) or not body:
+        return JSONResponse({"ok": False, "error": "Expected {KEY: value, ...}"}, status_code=400)
+
+    loop = asyncio.get_running_loop()
+    try:
+        updated = await loop.run_in_executor(
+            None, lambda: engine_env.update_engine_env(body))
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    log.info(f"[ENGINE] settings updated via dashboard: {', '.join(updated)}")
+    return JSONResponse({"ok": True, "updated": updated, "restart_required": True})
+
+
+@app.post("/api/engine/restart")
+async def api_engine_restart(request: Request):
+    """Ask the signal engine to re-exec itself (reloads signal_engine.env)."""
+    if not _engine_control_allowed(request):
+        return JSONResponse({"ok": False, "error": "Engine control requires localhost "
+                             "or the engine control secret"}, status_code=403)
+    _ENGINE_RESTART_FLAG.touch()
+    log.info("[ENGINE] restart requested via dashboard")
+    return JSONResponse({"ok": True, "note": "engine restarts within ~1s"})
+
+
+_paper_report_mod = None
+
+
+def _get_paper_report():
+    """Lazy-import tools/paper_report.py (tools/ is not a package)."""
+    global _paper_report_mod
+    if _paper_report_mod is None:
+        import importlib.util
+        path = Path(__file__).parent / "tools" / "paper_report.py"
+        spec = importlib.util.spec_from_file_location("paper_report", path)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _paper_report_mod = mod
+    return _paper_report_mod
+
+
+@app.get("/api/engine/report")
+async def api_engine_report(request: Request):
+    """
+    Paper/live performance report from signal_log.json — the same numbers as
+    tools/paper_report.py --json, served for the Engine panel's report view.
+    Query: days (default 14), size ($/trade for $ figures, default TRADE_AMOUNT).
+    """
+    try:
+        days = int(request.query_params.get("days", "14"))
+    except ValueError:
+        days = 14
+    try:
+        size = float(request.query_params.get("size", "0")) or None
+    except ValueError:
+        size = None
+    if size is None:
+        env  = engine_env.read_engine_env()
+        size = float(env.get("TRADE_AMOUNT") or 500)
+
+    def _build():
+        pr = _get_paper_report()
+        closed, open_pos = pr.load_trades(pr.LOG_FILE, days, None)
+        return pr.build_json(closed, open_pos, size)
+
+    loop = asyncio.get_running_loop()
+    try:
+        report = await loop.run_in_executor(None, _build)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, "days": days, "size": size, "report": report})
 
 
 @app.post("/api/ticker-log/clear")
