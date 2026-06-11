@@ -1770,6 +1770,12 @@ class SignalEngine:
         st = three_ind.evaluate_state(a, i, THREE_IND_PARAMS)
         ts.three_ind_state = st
 
+        # A setup with 2 of 3 conditions aligned has shown promise — extend its
+        # watch window to EXPIRY_WARM (the 3ind analogue of the momentum
+        # engine's positive-histogram rule, which never runs in this mode).
+        if st.get("buy_pct", 0) >= 67:
+            ts.ever_positive_hist = True
+
         price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
         if price <= 0:
             return

@@ -116,3 +116,26 @@ def test_three_indicator_buy_blocked_by_guard(monkeypatch, tmp_path):
     se.SignalEngine._eval_three_indicator(fake, ts, df)
     assert calls == []           # buy vetoed
     assert not ts.in_position
+
+
+def test_two_of_three_conditions_extend_expiry(monkeypatch):
+    """A 2/3-aligned setup must earn the EXPIRY_WARM window, not die at 3 min."""
+    import types
+    import numpy as np
+    import pandas as pd
+
+    monkeypatch.setattr(se.three_ind, "compute_indicators", lambda df, p: df)
+    monkeypatch.setattr(se.three_ind, "to_arrays", lambda df: {"close": np.zeros(60)})
+    monkeypatch.setattr(se.three_ind, "evaluate_state",
+                        lambda a, i, p: {"buy": False, "sell": False, "buy_pct": 67})
+
+    fake = types.SimpleNamespace(active={})
+    ts = se.TickerState("AAA")
+    ts.last_price = 2.0
+    df = pd.DataFrame({"close": [2.0] * 60, "open": [2.0] * 60,
+                       "high": [2.0] * 60, "low": [2.0] * 60,
+                       "volume": [1.0] * 60})
+
+    assert ts.expiry_seconds() == se.EXPIRY_COLD
+    se.SignalEngine._eval_three_indicator(fake, ts, df)
+    assert ts.expiry_seconds() == se.EXPIRY_WARM
