@@ -27,6 +27,7 @@
   "mention_alert_window": 10,
   "discord_ocr_enabled": true,
   "tv_webhook_secret": "",
+  "engine_control_secret": "brasfield-trading",
   "strategy": "multiple_os",
   "paper": true,
   "tickers": [],
@@ -50,18 +51,9 @@
   "pyramid_gain_pct": 0.05,
   "pyramid_rsi_max": 68,
   "pyramid_size_pct": 0.1,
-  "no_new_buys_before": [
-    10,
-    0
-  ],
-  "no_new_buys_after": [
-    15,
-    30
-  ],
-  "eod_liquidate_at": [
-    16,
-    0
-  ],
+  "no_new_buys_before": [10, 0],
+  "no_new_buys_after": [15, 30],
+  "eod_liquidate_at": [16, 0],
   "use_float_filter": false,
   "max_float_million": 50,
   "micro_float_threshold": 10,
@@ -71,10 +63,7 @@
   "partial_exit_pct": 0.06,
   "partial_exit_qty_pct": 0.5,
   "auto_schedule": true,
-  "market_open_at": [
-    9,
-    15
-  ],
+  "market_open_at": [9, 15],
   "trending_max_price": 5,
   "wr_oversold": -75,
   "wr_overbought": -20,
@@ -92,10 +81,7 @@
   "rmi_ma_fast": 5,
   "precheck_threshold": -40,
   "pre_market_enabled": true,
-  "pre_market_start": [
-    4,
-    0
-  ],
+  "pre_market_start": [4, 0],
   "pre_market_limit_offset_pct": 0.002,
   "pre_market_volume_surge_mult": 0.3,
   "use_atr_sizing": true,
@@ -120,10 +106,7 @@
   "momentum_quality_rsi_min": 25,
   "momentum_quality_rsi_max": 85,
   "rte_max_entry_extension_pct": 0.03,
-  "etf_tickers": [
-    "SQQQ",
-    "UVXY"
-  ],
+  "etf_tickers": ["SQQQ", "UVXY"],
   "ticker_overrides": {
     "GMEX": {
       "rte_min_boxes": 2

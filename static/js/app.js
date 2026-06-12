@@ -5,21 +5,21 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=52';
-import { subscribe, set }                        from './store.js?v=52';
-import { init as initTranscription }             from './transcription.js?v=52';
-import { init as initTickers }                   from './tickers.js?v=52';
-import { init as initTradingView }               from './tradingview.js?v=52';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=52';
-import { init as initResizer }                   from './resizer.js?v=52';
-import * as controls                             from './controls.js?v=52';
-import * as notifications                        from './notifications.js?v=52';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=52';
-import { init as initNews }                      from './news.js?v=52';
-import { init as initLeaderboard }               from './leaderboard.js?v=52';
-import { init as initEngine }                    from './engine.js?v=52';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=52';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=52';
+import { connect, on, api }                      from './api.js?v=53';
+import { subscribe, set }                        from './store.js?v=53';
+import { init as initTranscription }             from './transcription.js?v=53';
+import { init as initTickers }                   from './tickers.js?v=53';
+import { init as initTradingView }               from './tradingview.js?v=53';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=53';
+import { init as initResizer }                   from './resizer.js?v=53';
+import * as controls                             from './controls.js?v=53';
+import * as notifications                        from './notifications.js?v=53';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=53';
+import { init as initNews }                      from './news.js?v=53';
+import { init as initLeaderboard }               from './leaderboard.js?v=53';
+import { init as initEngine }                    from './engine.js?v=53';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=53';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=53';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -180,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=52');
+    const m = await import('./admin.js?v=53');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

@@ -1,8 +1,7 @@
 /**
  * notifications.js — BUY signal alerts
  *
- * Single responsibility: watch for status transitions to BUY and alert the user
- * via browser Notification API and a short Web Audio beep.
+ * Alerts the user via in-page toasts, browser Notification API, and audio beep.
  * Also auto-selects the ticker in TradingView on first BUY transition.
  *
  * Auto-Add: when the #auto-add-checkbox toggle is enabled (user=jmb only),
@@ -10,11 +9,68 @@
  * Webull and TradingView on every mention_burst or BUY alert.
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=52';
-import { api } from './api.js?v=52';
+import { subscribe, selectTicker, get } from './store.js?v=53';
+import { api } from './api.js?v=53';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
+
+// ── In-page toast system ───────────────────────────────────────
+
+let _toastContainer = null;
+
+function _getContainer() {
+  if (!_toastContainer) {
+    _toastContainer = document.getElementById('toast-container');
+    if (!_toastContainer) {
+      _toastContainer = document.createElement('div');
+      _toastContainer.id = 'toast-container';
+      document.body.appendChild(_toastContainer);
+    }
+  }
+  return _toastContainer;
+}
+
+/**
+ * Show an in-page toast.
+ * @param {string} title  - Bold headline (e.g. "BUY  VSME")
+ * @param {string} sub    - Subtitle line (e.g. "$1.23  ·  RSI 28")
+ * @param {'buy'|'burst'|'sell'|'info'} type
+ * @param {number} duration - Auto-dismiss ms (default 6000)
+ */
+export function showToast(title, sub = '', type = 'info', duration = 6000) {
+  const container = _getContainer();
+  const icons = { buy: '▲', burst: '🔥', sell: '▼', info: 'ℹ' };
+  const el = document.createElement('div');
+  el.className = `toast toast--${type}`;
+  el.style.position = 'relative';
+  el.innerHTML = `
+    <span class="toast-icon">${icons[type] ?? 'ℹ'}</span>
+    <span class="toast-body">
+      <span class="toast-title">${title}</span>
+      ${sub ? `<span class="toast-sub">${sub}</span>` : ''}
+    </span>
+    <div class="toast-progress" style="width:100%"></div>
+  `;
+
+  container.appendChild(el);
+
+  // rAF defers the width change one frame so the CSS transition fires;
+  // setting width in the same frame as appendChild skips the transition.
+  const bar = el.querySelector('.toast-progress');
+  requestAnimationFrame(() => {
+    bar.style.transitionDuration = `${duration}ms`;
+    bar.style.width = '0%';
+  });
+
+  const dismiss = () => {
+    el.classList.add('toast--dismissing');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  };
+
+  const timer = setTimeout(dismiss, duration);
+  el.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
+}
 
 const _prevStatuses = {};   // ticker → last known status
 const _prevBursts   = {};   // ticker → last known mention_burst bool
@@ -168,6 +224,15 @@ function _check(rows) {
     if (row.status === 'BUY' && prevStatus !== undefined && prevStatus !== 'BUY') {
       _beep('buy');
       _notify(row, 'buy');
+      showToast(
+        `BUY  ${row.ticker}`,
+        [
+          row.price    != null ? `$${row.price.toFixed(2)}`      : '',
+          row.cm_rsi   != null ? `RSI ${row.cm_rsi.toFixed(0)}`  : '',
+          row.rte_fast != null ? `%R ${row.rte_fast.toFixed(0)}` : '',
+        ].filter(Boolean).join('  ·  '),
+        'buy',
+      );
       if (!currentSelected) selectTicker(row.ticker);
       if (_autoAddEnabled()) _agentAdd(row.ticker);
     }
@@ -177,6 +242,12 @@ function _check(rows) {
       _beep('burst');
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       _notifyBurst(row);
+      showToast(
+        `🔥 ${row.ticker}  ${row.mention_window ?? ''}x mentions`,
+        row.price != null ? `$${row.price.toFixed(2)}  ·  rapid burst` : 'rapid burst',
+        'burst',
+        8000,
+      );
       if (_autoAddEnabled())  _agentAdd(row.ticker);
       if (_autoAlertEnabled()) _agentAlert(row.ticker);
     }

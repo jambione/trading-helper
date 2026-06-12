@@ -2427,3 +2427,77 @@ body.engine-visible .engine-bar { display: block; }
 .eng-row--red td   { color: #f87171; }
 
 body.mobile .engine-bar { display: none !important; }
+
+/* ── In-page toasts ─────────────────────────────────────────── */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  backdrop-filter: blur(16px);
+  border: 1px solid;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 220px;
+  max-width: 340px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.45);
+  animation: toast-in 0.22s ease;
+  cursor: pointer;
+}
+.toast--buy {
+  background: rgba(74,222,128,0.10);
+  border-color: var(--buy-border);
+  color: var(--buy);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.45), 0 0 18px var(--buy-glow);
+}
+.toast--burst {
+  background: rgba(249,115,22,0.10);
+  border-color: rgba(249,115,22,0.35);
+  color: #fb923c;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.45), 0 0 18px rgba(249,115,22,0.18);
+}
+.toast--sell {
+  background: rgba(251,113,133,0.10);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.toast--info {
+  background: var(--surface);
+  border-color: var(--border-hi);
+  color: var(--text);
+}
+.toast-icon { font-size: 18px; flex-shrink: 0; }
+.toast-body { display: flex; flex-direction: column; gap: 2px; }
+.toast-title { font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+.toast-sub   { font-size: 11px; opacity: 0.75; font-family: var(--font-sans); }
+.toast-progress {
+  position: absolute;
+  bottom: 0; left: 0;
+  height: 2px;
+  border-radius: 0 0 10px 10px;
+  background: currentColor;
+  opacity: 0.4;
+  transition: width linear;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0) scale(1);    max-height: 80px; margin-bottom: 0; }
+  to   { opacity: 0; transform: translateY(8px) scale(0.95); max-height: 0;   margin-bottom: -10px; }
+}
+.toast--dismissing { animation: toast-out 0.22s ease forwards; }

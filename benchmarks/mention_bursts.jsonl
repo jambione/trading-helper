@@ -1,2 +1,9 @@
 {"ticker": "ATHE", "time": "2026-06-12T06:08:34Z", "unix": 1781244514.3, "price": null, "window_count": 2}
 {"ticker": "TST", "time": "2026-06-12T06:08:34Z", "unix": 1781244514.3, "price": null, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-06-12T06:09:17Z", "unix": 1781244557.1, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-06-12T06:09:17Z", "unix": 1781244557.1, "price": null, "window_count": 2}
+{"ticker": "EDHL", "time": "2026-06-12T06:23:18Z", "unix": 1781245399.0, "price": 8.63, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-06-12T06:26:44Z", "unix": 1781245604.0, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-06-12T06:26:44Z", "unix": 1781245604.0, "price": null, "window_count": 2}
+{"ticker": "MTEN", "time": "2026-06-12T06:28:48Z", "unix": 1781245728.9, "price": 2.29, "window_count": 2}
+{"ticker": "EDHL", "time": "2026-06-12T06:28:58Z", "unix": 1781245738.6, "price": 5.98, "window_count": 2}
