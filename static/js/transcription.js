@@ -1,101 +1,102 @@
 /**
- * transcription.js — Live transcript panel component
+ * transcription.js — Discord Alerts panel component
  *
- * Single responsibility: render transcript lines with recognized-ticker highlighting.
- * Subscribes to `tickers` (for the known-symbol set) and `transcriber` (for lines).
+ * Renders two columns: regular alerts (left) and squeeze alerts (right).
+ * Regular alerts show alert type, price, and volume.
+ * Squeeze alerts show the ticker and price-level chips.
  */
 
-import { subscribe } from './store.js?v=38';
+import { subscribe } from './store.js?v=52';
 
-let _box = null;                  // scrollable transcript container
-let _known = new Set();           // current watchlist symbols for highlighting
-let _lastLineCount = 0;           // track rendered lines for incremental updates
-let _lastLine = '';               // last rendered line text; detects sliding-window shifts
+let _regularBox = null;
+let _squeezeBox = null;
+let _known = new Set();
+
+let _lastRegularCount = -1;
+let _lastRegularKey   = '';
+let _lastSqueezeCount = -1;
+let _lastSqueezeKey   = '';
 
 export function init(panelEl) {
-  _box = panelEl.querySelector('[data-transcript-box]');
+  _regularBox = panelEl.querySelector('[data-regular-box]');
+  _squeezeBox = panelEl.querySelector('[data-squeeze-box]');
 
-  // Keep known-ticker set in sync so highlighting reflects the live watchlist
   subscribe('tickers', rows => {
     _known = new Set(rows.map(r => r.ticker));
   });
 
-  subscribe('transcriber', tx => _render(tx.lines ?? []));
+  subscribe('discord', d => {
+    const all     = d.alerts ?? [];
+    const regular = all.filter(a => !a.burst);
+    const squeeze = all.filter(a =>  a.burst);
+    _renderFeed(_regularBox, regular, false);
+    _renderFeed(_squeezeBox, squeeze, true);
+  });
+
 }
 
-// ── Rendering ─────────────────────────────────────────────────
+// ── Rendering ──────────────────────────────────────────────────
 
-function _render(lines) {
-  if (!_box) return;
+function _renderFeed(box, alerts, isSqueeze) {
+  if (!box) return;
 
-  if (!lines.length) {
-    if (_lastLineCount !== 0) {
-      _box.innerHTML = '<span class="tx-placeholder">Waiting for transcription…</span>';
-      _lastLineCount = 0;
-      _lastLine = '';
+  if (!alerts.length) {
+    const placeholder = isSqueeze ? 'No squeezes…' : 'Waiting…';
+    const lastCount   = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
+    if (lastCount !== 0) {
+      box.innerHTML = `<span class="tx-placeholder">${placeholder}</span>`;
+      if (isSqueeze) { _lastSqueezeCount = 0; _lastSqueezeKey = ''; }
+      else           { _lastRegularCount = 0; _lastRegularKey = ''; }
     }
     return;
   }
 
-  const tail = lines[lines.length - 1];
+  const tail    = alerts[alerts.length - 1];
+  const tailKey = `${tail.ts}|${tail.ticker}`;
+  const lastCount = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
+  const lastKey   = isSqueeze ? _lastSqueezeKey   : _lastRegularKey;
 
-  // No change at all — skip DOM work
-  if (tail === _lastLine && lines.length === _lastLineCount) return;
+  if (tailKey === lastKey && alerts.length === lastCount) return;
 
-  const atBottom = _box.scrollHeight - _box.scrollTop - _box.clientHeight < 60;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const render   = isSqueeze ? _renderSqueeze : _renderRegular;
 
-  if (lines.length > _lastLineCount && _lastLineCount > 0) {
-    // Pure growth: append only the new lines
-    _box.insertAdjacentHTML('beforeend',
-      lines.slice(_lastLineCount).map(_renderLine).join(''));
+  if (alerts.length > lastCount && lastCount > 0) {
+    box.insertAdjacentHTML('beforeend', alerts.slice(lastCount).map(render).join(''));
   } else {
-    // First render, clear, count shrank, or sliding-window shift — full re-render
-    _box.innerHTML = lines.map(_renderLine).join('');
+    box.innerHTML = alerts.map(render).join('');
   }
 
-  _lastLineCount = lines.length;
-  _lastLine = tail;
-  if (atBottom) _box.scrollTop = _box.scrollHeight;
+  if (isSqueeze) { _lastSqueezeCount = alerts.length; _lastSqueezeKey = tailKey; }
+  else           { _lastRegularCount = alerts.length; _lastRegularKey = tailKey; }
+
+  if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
-function _renderLine(line) {
-  // Error / stack trace
-  if (line.includes('Traceback') || line.includes('Error:') || line.startsWith('  File')) {
-    return `<div class="tx-error">${_esc(line)}</div>`;
-  }
-
-  // [LOG] ticker-extraction events
-  if (line.includes('[LOG]')) {
-    return `<div class="tx-log">${_highlight(_esc(line))}</div>`;
-  }
-
-  // Standard timestamped line: [HH:MM:SS] text…
-  const m = line.match(/^\[(\d{2}:\d{2}:\d{2})\] ([\s\S]*)$/);
-  if (m) {
-    const ts   = `<span class="tx-ts">${_esc(m[1])}</span>`;
-    const body = _highlight(_esc(m[2]));
-    return `<div class="tx-line">${ts} ${body}</div>`;
-  }
-
-  // Status / startup line (no timestamp)
-  return `<div class="tx-status">${_esc(line)}</div>`;
+function _renderRegular(a) {
+  const ts       = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
+  const ticker   = `<strong class="tx-ticker">${_esc(a.ticker || '')}</strong>`;
+  const typeRow  = a.alert_type
+    ? `<div class="tx-alert-type">${_esc(a.alert_type)}</div>` : '';
+  const price    = a.price  != null ? `<span class="tx-price">$${Number(a.price).toFixed(2)}</span>` : '';
+  const vol      = a.volume != null ? `<span class="tx-vol">${_fmtVol(a.volume)}</span>` : '';
+  const metaRow  = (price || vol) ? `<div class="tx-meta-row">${price}${vol}</div>` : '';
+  return `<div class="tx-line">${ts}${ticker}${typeRow}${metaRow}</div>`;
 }
 
-/**
- * Bold any 2-5 uppercase-letter token that is in the live watchlist.
- * Also highlights the "Big volume spike detected" alert phrase.
- * Runs on already-escaped HTML so it only matches text content.
- */
-function _highlight(html) {
-  let result = html.replace(/\b([A-Z]{2,5})\b/g, m =>
-    _known.has(m)
-      ? `<strong class="tx-ticker">${m}</strong>`
-      : m
-  );
-  result = result.replace(/big volume spike detected/gi, m =>
-    `<span class="tx-keyword">${m}</span>`
-  );
-  return result;
+function _renderSqueeze(a) {
+  const ts     = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
+  const ticker = `<strong class="tx-ticker tx-ticker--squeeze">${_esc(a.ticker || '')}</strong>`;
+  const levels = (a.levels || []).filter(l => !isNaN(Number(l))).map(l => `<span class="tx-level-chip">$${Number(l).toFixed(2)}</span>`).join('');
+  const levRow = levels ? `<div class="tx-levels">${levels}</div>` : '';
+  return `<div class="tx-line tx-line--squeeze">${ts}${ticker}${levRow}</div>`;
+}
+
+function _fmtVol(v) {
+  v = Number(v);
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M vol';
+  if (v >= 1_000)     return Math.round(v / 1_000) + 'K vol';
+  return v + ' vol';
 }
 
 function _esc(s) {

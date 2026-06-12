@@ -63,6 +63,17 @@ FINNHUB_STATE  = FinnhubState()
 _STREAM_THREAD = None
 _pending_subs: _queue.Queue = _queue.Queue()
 
+# Optional per-trade callbacks. Each is invoked fn(symbol, price, volume, ts_ms)
+# on every trade — used by realtime_bars to aggregate live OHLCV bars. Kept
+# separate from FINNHUB_STATE so subscribers see individual trades, not just the
+# collapsed last price.
+_trade_callbacks: list = []
+
+
+def register_trade_callback(fn):
+    """Register fn(symbol, price, volume, ts_ms), called on every incoming trade."""
+    _trade_callbacks.append(fn)
+
 
 # ── Dynamic subscription ──────────────────────────────────────
 
@@ -134,6 +145,11 @@ async def _finnhub_stream(api_key: str, tickers: list):
                                     FINNHUB_STATE.last_trade[sym] = {
                                         "price": price, "volume": vol, "timestamp": ts
                                     }
+                                    for cb in _trade_callbacks:
+                                        try:
+                                            cb(sym, price, vol, ts)
+                                        except Exception:
+                                            pass
                     except json.JSONDecodeError:
                         continue
                     except Exception as e:

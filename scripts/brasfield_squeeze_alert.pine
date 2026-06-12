@@ -1,0 +1,77 @@
+// Brasfield Squeeze Alert — fires a webhook to the trading-helper dashboard
+// when a TTM-style squeeze releases to the upside on the current chart ticker.
+//
+// Setup:
+//   1. Open TradingView, add this indicator to any chart.
+//   2. Right-click the indicator pane → "Add alert on Brasfield Squeeze Alert..."
+//   3. Condition: "Squeeze Fire Long"
+//   4. Notifications: enable "Webhook URL"
+//   5. Webhook URL:
+//        https://trading.jbrasfield.com/api/tradingview/webhook?secret=YOUR_SECRET
+//      (set tv_webhook_secret in config/bot_config.json to the same value)
+//   6. Message (paste exactly):
+//        {"ticker":"{{ticker}}","close":{{close}},"interval":"{{interval}}"}
+//   7. Save the alert. It will POST to your dashboard every time a squeeze fires.
+//
+// The dashboard endpoint (/api/tradingview/webhook) receives the alert and fires
+// it as a burst — identical to a Discord "close over" squeeze alert — so the
+// same toast + mention tracking logic applies.
+
+//@version=5
+indicator("Brasfield Squeeze Alert", shorttitle="BSA", overlay=false)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+bb_length = input.int(20,  "Bollinger Band Length",   minval=1)
+bb_mult   = input.float(2.0, "BB StdDev Multiplier",  minval=0.1, step=0.1)
+kc_length = input.int(20,  "Keltner Channel Length",  minval=1)
+kc_mult   = input.float(1.5, "KC ATR Multiplier",     minval=0.1, step=0.1)
+mom_length = input.int(12, "Momentum Lookback",        minval=1)
+
+// ── Bollinger Bands ───────────────────────────────────────────────────────────
+bb_basis  = ta.sma(close, bb_length)
+bb_dev    = bb_mult * ta.stdev(close, bb_length)
+bb_upper  = bb_basis + bb_dev
+bb_lower  = bb_basis - bb_dev
+
+// ── Keltner Channel (ATR-based) ───────────────────────────────────────────────
+kc_basis  = ta.sma(close, kc_length)
+kc_range  = ta.atr(kc_length)
+kc_upper  = kc_basis + kc_range * kc_mult
+kc_lower  = kc_basis - kc_range * kc_mult
+
+// ── Squeeze state ─────────────────────────────────────────────────────────────
+// Squeeze ON  = BB fully inside KC (momentum compressed)
+// Squeeze OFF = BB has expanded outside KC (squeeze released)
+sqz_on    = bb_lower > kc_lower and bb_upper < kc_upper
+sqz_off   = not sqz_on
+
+// ── Momentum histogram (TTM-style linear regression) ─────────────────────────
+mid       = math.avg(math.avg(ta.highest(high, mom_length), ta.lowest(low, mom_length)),
+                     ta.sma(close, mom_length))
+momentum  = ta.linreg(close - mid, mom_length, 0)
+
+// ── Alert condition ───────────────────────────────────────────────────────────
+// Fires on the FIRST bar the squeeze releases upward:
+//   - squeeze just turned off (sqz_on was true last bar, now false)
+//   - momentum is positive and increasing
+fired_long = sqz_off and sqz_on[1] and momentum > 0 and momentum > momentum[1]
+
+alertcondition(
+     fired_long,
+     title   = "Squeeze Fire Long",
+     message = '{"ticker":"{{ticker}}","close":{{close}},"interval":"{{interval}}"}'
+)
+
+// ── Visuals ───────────────────────────────────────────────────────────────────
+mom_color = momentum >= 0
+         ? (momentum > momentum[1] ? color.lime   : color.new(color.green, 30))
+         : (momentum < momentum[1] ? color.red     : color.new(color.maroon, 30))
+
+plot(momentum, "Momentum", color=mom_color, style=plot.style_histogram, linewidth=4)
+
+// Grey background = squeeze compressed; yellow flash = squeeze just fired
+bgcolor(sqz_on   ? color.new(color.gray,   88) : na, title="Squeeze On")
+bgcolor(fired_long ? color.new(color.yellow, 70) : na, title="Squeeze Fire")
+
+// Reference zero line
+hline(0, "Zero", color=color.new(color.white, 60), linestyle=hline.style_dashed)

@@ -5,9 +5,8 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=38';
-import { get } from './store.js?v=38';
-import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=38';
+import { api } from './api.js?v=52';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=52';
 
 let _backdrop = null;
 let _saveBtn  = null;
@@ -46,16 +45,12 @@ export function init(backdropEl) {
 
   // Save
   _saveBtn.addEventListener('click', _save);
-
-  // Audio device refresh
-  backdropEl.querySelector('[data-refresh-devices]')
-    ?.addEventListener('click', _loadAudioDevices);
 }
 
 export async function open() {
   _backdrop.classList.add('open');
   _set('cfg-backend-url', getBackendUrl());
-  await Promise.all([_loadConfig(), _loadAudioDevices()]);
+  await _loadConfig();
 }
 
 export function close() {
@@ -93,40 +88,12 @@ async function _loadConfig() {
   }
 }
 
-// ── Load audio devices ─────────────────────────────────────────
-
-async function _loadAudioDevices() {
-  const sel = document.getElementById('cfg-device-index');
-  if (!sel) return;
-
-  sel.innerHTML = '<option value="">Loading…</option>';
-  try {
-    const { ok, devices = [], error } = await api.audioDevices();
-    if (!ok && error) {
-      sel.innerHTML = `<option value="">${_esc(error)}</option>`;
-      return;
-    }
-    const current = get('config').device_index;
-    sel.innerHTML = '<option value="">— system default —</option>';
-    for (const d of devices) {
-      const opt = document.createElement('option');
-      opt.value    = d.index;
-      opt.textContent = `[${d.index}] ${d.name}${d.loopback ? ' ⟳ LOOPBACK' : ''}`;
-      if (d.index === current) opt.selected = true;
-      sel.appendChild(opt);
-    }
-  } catch {
-    sel.innerHTML = '<option value="">Failed to load devices</option>';
-  }
-}
-
 // ── Save ───────────────────────────────────────────────────────
 
 async function _save() {
   const body = {
     bar_timeframe:            _strVal('cfg-timeframe'),
     bar_count:                _numVal('cfg-bar-count'),
-    device_index:             _deviceVal('cfg-device-index'),
     tv_chart_url:             _strVal('cfg-tv-url'),
     mention_alert_threshold:  _numVal('cfg-mention-threshold'),
     mention_alert_window:     _numVal('cfg-mention-window'),
@@ -183,7 +150,6 @@ function _val(id) {
 function _numVal(id)    { const v = _val(id); return v !== '' ? +v : undefined; }
 function _strVal(id)    { return _val(id) || undefined; }
 function _pwdVal(id)    { const v = _val(id).trim(); return v || undefined; }
-function _deviceVal(id) { const v = _val(id); return v !== '' ? +v : null; }
 
 function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -1,0 +1,13 @@
+# Scanner watchlist — OPTIONAL persistent bias for the spell-transcription pipeline.
+#
+# You normally do NOT need this: the adaptive segmenter makes Whisper hear the
+# spelled letters correctly on its own. This file is only a safety net for a
+# ticker the engine still mis-hears — list it here and the pipeline will (1) bias
+# the ASR prompt toward it and (2) fuzzy-correct near-miss spells to it.
+#
+# One ticker per line; blank lines and #-comments ignored; case-insensitive.
+# Empty by default (nothing hardcoded). Edits apply within ~10s, no restart.
+
+# Example (uncomment / add your own only if needed):
+# ELPW
+# MCRP

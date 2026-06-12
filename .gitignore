@@ -1,10 +1,28 @@
 secrets.json
+.DS_Store
 __pycache__/
 *.pyc
 *.pyo
 debug.log
 *.log
+
+# Large media & generated data — kept locally under samples/, not tracked
+*.mp3
+*.m4a
+backtest_trades.csv
+backtest_results.csv
 transcription/__pycache__/
 venv/
 .venv/
-transcription/wb_watchlist.json*.pyc
+transcription/wb_watchlist.json
+# Signal engine runtime state (regenerated every few seconds)
+signal_state.json
+
+# Local control script artifacts
+.trading.pids
+logs/
+
+# Spell-pipeline learned-correction runtime state (per-machine, regenerated)
+config/learned_corrections.json
+config/pending_corrections.json
+trade_guard_state.json

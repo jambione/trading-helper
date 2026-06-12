@@ -10,7 +10,8 @@
  * Webull and TradingView on every mention_burst or BUY alert.
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=38';
+import { subscribe, selectTicker, get } from './store.js?v=52';
+import { api } from './api.js?v=52';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
@@ -21,6 +22,10 @@ const _prevBursts   = {};   // ticker → last known mention_burst bool
 // ── Auto-Add toggle state ──────────────────────────────────────
 const _AUTO_ADD_KEY = 'ss:auto-add';
 let _autoAddEl = null;   // checkbox input element
+
+// ── Auto-Alert toggle state ────────────────────────────────────
+const _AUTO_ALERT_KEY = 'ss:auto-alert';
+let _autoAlertEl = null;
 
 /** Read persisted toggle state and wire up change handler. */
 function _initAutoAdd() {
@@ -43,6 +48,35 @@ function _initAutoAdd() {
 /** Returns true when the Auto-Add toggle is switched on. */
 function _autoAddEnabled() {
   return _autoAddEl?.checked === true;
+}
+
+/** Wire up the Auto-Alert toggle (create TradingView alert on burst). */
+function _initAutoAlert() {
+  const label = document.getElementById('auto-alert-checkbox')?.closest('.auto-alert-toggle');
+  _autoAlertEl = document.getElementById('auto-alert-checkbox');
+  if (!_autoAlertEl) return;
+  const saved = localStorage.getItem(_AUTO_ALERT_KEY) === 'true';
+  _autoAlertEl.checked = saved;
+  if (label) label.classList.toggle('is-on', saved);
+  _autoAlertEl.addEventListener('change', () => {
+    const on = _autoAlertEl.checked;
+    localStorage.setItem(_AUTO_ALERT_KEY, String(on));
+    if (label) label.classList.toggle('is-on', on);
+  });
+}
+
+/** Returns true when the Auto-Alert toggle is switched on. */
+function _autoAlertEnabled() {
+  return _autoAlertEl?.checked === true;
+}
+
+/** Call the dashboard's create-tv-alert endpoint for a ticker. */
+async function _agentAlert(ticker) {
+  try {
+    await api.createTVAlert(ticker);
+  } catch {
+    // Server-side automation unavailable — skip silently
+  }
 }
 
 /**
@@ -70,24 +104,56 @@ async function _agentAdd(ticker) {
 
 export function init() {
   subscribe('tickers', _check);
-  // Wire the Auto-Add toggle after DOM is ready
+  const _onReady = () => { _initAutoAdd(); _initAutoAlert(); };
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initAutoAdd);
+    document.addEventListener('DOMContentLoaded', _onReady);
   } else {
-    _initAutoAdd();
+    _onReady();
   }
 }
 
 /** Request browser notification permission. Returns true if granted. */
 export async function requestPermission() {
   if (typeof Notification === 'undefined') return false;
-  if (Notification.permission === 'granted') { _enabled = true; return true; }
+  if (Notification.permission === 'granted') { _enabled = true; _setupPushSubscription(); return true; }
   const result = await Notification.requestPermission();
   _enabled = result === 'granted';
+  if (_enabled) _setupPushSubscription();
   return _enabled;
 }
 
 export function isEnabled() { return _enabled; }
+
+// ── Web Push subscription ─────────────────────────────────────
+
+function _urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const b64     = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw     = atob(b64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function _setupPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg  = await navigator.serviceWorker.ready;
+    const resp = await fetch('/api/push/vapid-public-key');
+    if (!resp.ok) return;
+    const { key } = await resp.json();
+    if (!key) return;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: _urlBase64ToUint8Array(key),
+    });
+    await fetch('/api/push/subscribe', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(sub),
+    });
+  } catch (e) {
+    console.warn('[notifications] push subscription failed', e);
+  }
+}
 
 // ── Internal ──────────────────────────────────────────────────
 
@@ -109,8 +175,10 @@ function _check(rows) {
     // Mention burst alert — only on rising edge (false → true)
     if (row.mention_burst && prevBurst === false) {
       _beep('burst');
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       _notifyBurst(row);
-      if (_autoAddEnabled()) _agentAdd(row.ticker);
+      if (_autoAddEnabled())  _agentAdd(row.ticker);
+      if (_autoAlertEnabled()) _agentAlert(row.ticker);
     }
 
     _prevStatuses[row.ticker] = row.status;

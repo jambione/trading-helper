@@ -5,21 +5,50 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=39';
-import { subscribe, set }                        from './store.js?v=38';
-import { init as initTranscription }             from './transcription.js?v=38';
-import { init as initTickers }                   from './tickers.js?v=38';
-import { init as initTradingView }               from './tradingview.js?v=38';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=38';
-import { init as initResizer }                   from './resizer.js?v=38';
-import * as controls                             from './controls.js?v=38';
-import * as notifications                        from './notifications.js?v=38';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=38';
-import { init as initNews }                      from './news.js?v=38';
-import { init as initLeaderboard }               from './leaderboard.js?v=40';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=39';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=38';
+import { connect, on, api }                      from './api.js?v=52';
+import { subscribe, set }                        from './store.js?v=52';
+import { init as initTranscription }             from './transcription.js?v=52';
+import { init as initTickers }                   from './tickers.js?v=52';
+import { init as initTradingView }               from './tradingview.js?v=52';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=52';
+import { init as initResizer }                   from './resizer.js?v=52';
+import * as controls                             from './controls.js?v=52';
+import * as notifications                        from './notifications.js?v=52';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=52';
+import { init as initNews }                      from './news.js?v=52';
+import { init as initLeaderboard }               from './leaderboard.js?v=52';
+import { init as initEngine }                    from './engine.js?v=52';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=52';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=52';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
+
+// Build badge — shows which code the dashboard and the signal engine are each
+// running, so a stale or mismatched process is obvious at a glance. Amber when
+// they differ, the engine is stale (>30s since its last write), or it's off.
+function _renderBuildBadge(v) {
+  const el = document.querySelector('[data-build-badge]');
+  if (!el) return;
+  const dash = v.dashboard || '?';
+  const eng  = v.engine || null;
+  let stale = true;
+  if (v.engine_updated) {
+    const age = (Date.now() - Date.parse(v.engine_updated)) / 1000;
+    stale = !(age >= 0 && age < 30);
+  }
+  const mismatch = eng && eng !== dash;
+  const engTxt   = eng ? `engine ${eng}${v.engine_strategy ? ' · ' + v.engine_strategy : ''}` : 'engine off';
+  const ok       = eng && !mismatch && !stale;
+  el.textContent = `${dash} · ${(eng && stale) ? '⚠ ' : ''}${engTxt}`;
+  el.className   = `build-badge ${ok ? 'build-badge--ok' : 'build-badge--warn'}`;
+  el.title = [
+    `dashboard build: ${dash}`,
+    `engine build: ${eng || '(not running)'}`,
+    v.engine_strategy ? `engine strategy: ${v.engine_strategy}` : '',
+    v.engine_started  ? `engine started: ${v.engine_started}` : '',
+    v.engine_updated  ? `engine last write: ${v.engine_updated}${(eng && stale) ? '  (STALE — engine not writing)' : ''}` : '',
+    mismatch ? '⚠ dashboard and engine are on DIFFERENT builds — restart the engine' : '',
+  ].filter(Boolean).join('\n');
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
 
@@ -68,19 +97,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.classList.remove('user-jmb');
   }
 
-  // Hosted mode: transcript + settings are localhost-only features.
+  // Hosted mode: settings is a localhost-only feature.
   // Use _isLocal directly so this works regardless of auth settings.
   if (!_isLocal) document.body.classList.add('hosted');
 
+  // Trading Engine panel: owner-only when hosted, but localhost IS the owner's
+  // machine — always show it there (the engine API already trusts localhost).
+  if (_isLocal) document.body.classList.add('engine-visible');
+
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  // Transcription is localhost-only. Admin on remote does not get it.
-  if (_isLocal) {
-    try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
-  }
+  // Discord Alerts panel is server-fed (WebSocket), so it works hosted too.
+  try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
+  try { initEngine(document.querySelector('[data-panel="engine"]')); }           catch (e) { console.error('[app] initEngine', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
   }
@@ -117,17 +149,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) { console.error('[app] initHotkeys', e); }
 
   // ── Wire button actions ──────────────────────────────────────
-  const txBtn     = document.querySelector('[data-tx-btn]');
   const clrWlBtn  = document.querySelector('[data-clear-watchlist-btn]');
-  const clrTxBtn  = document.querySelector('[data-clear-transcript-btn]');
   const settBtn   = document.querySelector('[data-settings-btn]');
   const adminBtn  = document.querySelector('[data-admin-btn]');
   const notifBtn  = document.querySelector('[data-notif-btn]');
   const logoutBtn = document.querySelector('[data-logout-btn]');
 
-  txBtn    ?.addEventListener('click', () => controls.toggleTranscriber(txBtn));
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
-  clrTxBtn ?.addEventListener('click', () => controls.clearTranscript());
   settBtn  ?.addEventListener('click', openConfig);
   adminBtn ?.addEventListener('click', openAdmin);
   logoutBtn?.addEventListener('click', logout);
@@ -152,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=39');
+    const m = await import('./admin.js?v=52');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -204,9 +232,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const update = {};
     if (snap.tickers      !== undefined) update.tickers      = snap.tickers;
     if (snap.config)                     update.config       = snap.config;
-    if (snap.transcriber)                update.transcriber  = snap.transcriber;
+    if (snap.discord)                    update.discord      = snap.discord;
     if (snap.news         !== undefined) update.news         = snap.news;
+    if (snap.engine)                     update.engine       = snap.engine;
     if (Object.keys(update).length)      set(update);
+    if (snap.version)                    _renderBuildBadge(snap.version);
   });
 
   on('connected', connected => set({ connected }));
@@ -219,30 +249,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // ── Store → transcription controls ──────────────────────────
-  subscribe('transcriber', tx => {
+  // ── Store → Discord OCR source status ───────────────────────
+  subscribe('discord', d => {
     const dot   = document.querySelector('[data-tx-dot]');
     const lbl   = document.querySelector('[data-tx-label]');
     const count = document.querySelector('[data-tx-count]');
+    const live  = !!d.running;
 
-    if (dot) dot.className = `tx-dot${tx.running ? ' tx-dot--on' : ''}`;
+    if (dot) dot.className = `tx-dot${live ? ' tx-dot--on' : ''}`;
     if (lbl) {
-      lbl.textContent = tx.running ? 'LISTENING' : 'STOPPED';
-      lbl.className   = `tx-label${tx.running ? ' tx-label--on' : ''}`;
-    }
-
-    if (txBtn && !txBtn.disabled) {
-      txBtn.textContent = tx.running ? 'Stop Transcription' : 'Start Transcription';
-      txBtn.className   = `tx-btn ${tx.running ? 'tx-btn--stop' : 'tx-btn--start'}`;
+      lbl.textContent = live ? 'LIVE' : 'OFFLINE';
+      lbl.className   = `tx-label${live ? ' tx-label--on' : ''}`;
     }
 
     if (count) {
-      const n = tx.count ?? 0;
+      const n = d.count ?? 0;
       count.textContent = `${n} ticker${n !== 1 ? 's' : ''} captured today`;
     }
 
     const audioStatus = document.querySelector('[data-audio-status]');
-    if (audioStatus) audioStatus.textContent = tx.running ? 'Listening' : 'Stopped';
+    if (audioStatus) audioStatus.textContent = live ? 'Live' : 'Offline';
   });
 
   // ── Store → status bar ───────────────────────────────────────

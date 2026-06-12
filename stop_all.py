@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop the Signal Scanner dashboard and transcriber.
+"""Stop the Signal Scanner dashboard, signal engine, and Discord OCR source.
 
 Cleanly terminates all child processes started by start_all.py.
 """
@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -41,11 +42,28 @@ def kill_process(pattern: str, grace_period: int = 2) -> None:
         pass
 
 
+def _clear_dashboard() -> None:
+    """Clear the watchlist via the dashboard API before shutdown."""
+    try:
+        req = urllib.request.Request(
+            "http://localhost:8888/api/ticker-log/clear",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=3)
+        print("✓ Dashboard cleared.")
+    except Exception:
+        pass  # Dashboard may not be running
+
+
 def main() -> None:
     print("Stopping Signal Scanner...\n")
 
+    _clear_dashboard()
     kill_process("dashboard.py", grace_period=2)
-    kill_process("transcribe_action.py", grace_period=1)
+    kill_process("signal_engine.py", grace_period=1)
+    kill_process("discord_source.py", grace_period=1)
     kill_process("start_all.py", grace_period=1)
 
     print("✓ All processes stopped.")
