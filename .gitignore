@@ -7,4 +7,4 @@ debug.log
 transcription/__pycache__/
 venv/
 .venv/
-transcription/wb_watchlist.json
+transcription/wb_watchlist.json*.pyc
