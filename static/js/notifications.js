@@ -3,14 +3,15 @@
  *
  * Alerts the user via in-page toasts, browser Notification API, and audio beep.
  * Also auto-selects the ticker in TradingView on first BUY transition.
+ * Clicking a toast adds the ticker to Webull + TradingView via the local agent.
  *
  * Auto-Add: when the #auto-add-checkbox toggle is enabled (user=jmb only),
- * fires a POST to the local Windows agent (port 8889) to add the ticker to
+ * fires a POST to the local macOS agent (port 8889) to add the ticker to
  * Webull and TradingView on every mention_burst or BUY alert.
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=53';
-import { api } from './api.js?v=53';
+import { subscribe, selectTicker, get } from './store.js?v=56';
+import { api } from './api.js?v=56';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
@@ -33,12 +34,13 @@ function _getContainer() {
 
 /**
  * Show an in-page toast.
- * @param {string} title  - Bold headline (e.g. "BUY  VSME")
- * @param {string} sub    - Subtitle line (e.g. "$1.23  ·  RSI 28")
+ * @param {string} title
+ * @param {string} sub
  * @param {'buy'|'burst'|'sell'|'info'} type
- * @param {number} duration - Auto-dismiss ms (default 6000)
+ * @param {number} duration  - auto-dismiss ms
+ * @param {Function|null} onClickFn  - called when the toast is clicked
  */
-export function showToast(title, sub = '', type = 'info', duration = 6000) {
+export function showToast(title, sub = '', type = 'info', duration = 6000, onClickFn = null) {
   const container = _getContainer();
   const icons = { buy: '▲', burst: '🔥', sell: '▼', info: 'ℹ' };
   const el = document.createElement('div');
@@ -55,8 +57,6 @@ export function showToast(title, sub = '', type = 'info', duration = 6000) {
 
   container.appendChild(el);
 
-  // rAF defers the width change one frame so the CSS transition fires;
-  // setting width in the same frame as appendChild skips the transition.
   const bar = el.querySelector('.toast-progress');
   requestAnimationFrame(() => {
     bar.style.transitionDuration = `${duration}ms`;
@@ -69,8 +69,13 @@ export function showToast(title, sub = '', type = 'info', duration = 6000) {
   };
 
   const timer = setTimeout(dismiss, duration);
-  el.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
+  el.addEventListener('click', () => {
+    clearTimeout(timer);
+    dismiss();
+    if (onClickFn) onClickFn();
+  });
 }
+
 
 const _prevStatuses = {};   // ticker → last known status
 const _prevBursts   = {};   // ticker → last known mention_burst bool
@@ -141,21 +146,17 @@ async function _agentAlert(ticker) {
  * Silently skips if the agent is not running.
  */
 async function _agentAdd(ticker) {
-  const _post = async (path) => {
-    try {
-      const resp = await fetch(`http://127.0.0.1:8889${path}`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ticker }),
-        signal:  AbortSignal.timeout(5000),
-      });
-      if (!resp.ok) console.warn(`[notifications] agent ${path} returned`, resp.status);
-    } catch {
-      // Agent not running — skip silently
-    }
-  };
-  await _post('/add-wb');
-  await _post('/add-tv');
+  try {
+    const resp = await fetch('http://127.0.0.1:8889/add', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ ticker, mode: 'both' }),
+      signal:  AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) console.warn(`[notifications] agent /add returned`, resp.status);
+  } catch {
+    // Agent not running — skip silently
+  }
 }
 
 export function init() {
@@ -217,42 +218,47 @@ function _check(rows) {
   const currentSelected = get('selectedTicker');
 
   for (const row of rows) {
+    const sp        = row.signal_proximity || {};
+    const sigStatus = sp.status ?? null;
     const prevStatus = _prevStatuses[row.ticker];
     const prevBurst  = _prevBursts[row.ticker];
 
-    // BUY signal alert — only on genuine transition
-    if (row.status === 'BUY' && prevStatus !== undefined && prevStatus !== 'BUY') {
+    // BUY signal alert — only on genuine transition to buy_zone
+    if (sigStatus === 'buy_zone' && prevStatus !== undefined && prevStatus !== 'buy_zone') {
       _beep('buy');
       _notify(row, 'buy');
       showToast(
         `BUY  ${row.ticker}`,
         [
-          row.price    != null ? `$${row.price.toFixed(2)}`      : '',
-          row.cm_rsi   != null ? `RSI ${row.cm_rsi.toFixed(0)}`  : '',
-          row.rte_fast != null ? `%R ${row.rte_fast.toFixed(0)}` : '',
+          row.price != null ? `$${row.price.toFixed(2)}`    : '',
+          sp.cm_rsi != null ? `RSI ${sp.cm_rsi.toFixed(0)}` : '',
+          sp.pctr   != null ? `%R ${sp.pctr.toFixed(0)}`    : '',
         ].filter(Boolean).join('  ·  '),
         'buy',
+        6000,
+        () => _agentAdd(row.ticker),
       );
       if (!currentSelected) selectTicker(row.ticker);
       if (_autoAddEnabled()) _agentAdd(row.ticker);
     }
 
-    // Mention burst alert — only on rising edge (false → true)
-    if (row.mention_burst && prevBurst === false) {
+    // Mention burst alert — on first detection and on rising edge
+    if (row.mention_burst && prevBurst !== true) {
       _beep('burst');
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       _notifyBurst(row);
       showToast(
         `🔥 ${row.ticker}  ${row.mention_window ?? ''}x mentions`,
-        row.price != null ? `$${row.price.toFixed(2)}  ·  rapid burst` : 'rapid burst',
+        row.price != null ? `$${row.price.toFixed(2)}  ·  tap to add` : 'tap to add',
         'burst',
         8000,
+        () => _agentAdd(row.ticker),
       );
       if (_autoAddEnabled())  _agentAdd(row.ticker);
       if (_autoAlertEnabled()) _agentAlert(row.ticker);
     }
 
-    _prevStatuses[row.ticker] = row.status;
+    _prevStatuses[row.ticker] = sigStatus;
     _prevBursts[row.ticker]   = row.mention_burst ?? false;
   }
 }
@@ -260,12 +266,12 @@ function _check(rows) {
 function _notify(row, type = 'buy') {
   if (!_enabled) return;
   try {
+    const sp = row.signal_proximity || {};
     const n = new Notification(`BUY  ${row.ticker}`, {
       body: [
-        row.price    != null ? `$${row.price.toFixed(2)}`       : '',
-        row.rte_fast != null ? `%R ${row.rte_fast.toFixed(0)}`  : '',
-        row.cm_rsi   != null ? `RSI ${row.cm_rsi.toFixed(0)}`   : '',
-        row.streak   >= 1    ? `streak ${row.streak}`           : '',
+        row.price  != null ? `$${row.price.toFixed(2)}`      : '',
+        sp.pctr    != null ? `%R ${sp.pctr.toFixed(0)}`      : '',
+        sp.cm_rsi  != null ? `RSI ${sp.cm_rsi.toFixed(0)}`   : '',
       ].filter(Boolean).join('  ·  '),
       tag:               `buy-${row.ticker}`,
       requireInteraction: false,

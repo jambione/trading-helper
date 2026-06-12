@@ -132,19 +132,14 @@ _NOTIFIER = shutil.which("terminal-notifier")
 
 
 def _notify_mac(title: str, message: str, subtitle: str = "",
-                sound: str = "Glass", group: str = "", open_url: str = "",
-                execute: str = "") -> None:
+                sound: str = "Glass", group: str = "", open_url: str = "") -> None:
     """
     Post a native macOS notification banner.
 
     Prefers terminal-notifier (app-branded, coalesces by -group so repeat alerts
-    for one ticker replace each other). The click action is one of:
-      - execute  → run this shell command on click (-execute). Takes priority.
-      - open_url → open this URL on click (-open); falls back to the dashboard.
-    -execute and -open are mutually exclusive (one click action), so when
-    `execute` is set it wins. Falls back to `osascript display notification` if
-    terminal-notifier is not installed — note the fallback cannot run a command
-    on click, so it just shows the banner. Fire-and-forget — never raises.
+    for one ticker replace each other). Clicking opens open_url (defaults to the
+    dashboard). Falls back to `osascript display notification` if terminal-notifier
+    is not installed. Fire-and-forget — never raises.
     """
     if not _IS_MAC:
         print(f"  [DRY RUN] NOTIFY → {title}: {message}")
@@ -156,11 +151,8 @@ def _notify_mac(title: str, message: str, subtitle: str = "",
                 "-title",    title,
                 "-message",  message,
                 "-sound",    sound,
+                "-open",     open_url or DASHBOARD_URL,
             ]
-            if execute:
-                cmd += ["-execute", execute]
-            else:
-                cmd += ["-open", open_url or DASHBOARD_URL]
             if subtitle:
                 cmd += ["-subtitle", subtitle]
             if group:
@@ -500,18 +492,6 @@ def _fetch_state() -> dict | None:
         return None
 
 
-def _add_command(ticker: str) -> str:
-    """
-    Shell command for a toast's -execute action: curl the agent's own /add
-    endpoint so clicking the toast adds the ticker to Webull + TradingView.
-    Runs locally against this agent (PORT) — fire-and-forget, output discarded.
-    """
-    return (
-        f'curl -s "http://localhost:{PORT}/add?ticker={ticker}&mode=both" '
-        f'>/dev/null 2>&1'
-    )
-
-
 def _alert_listener():
     """
     Polls the dashboard every POLL_INTERVAL seconds.
@@ -529,7 +509,8 @@ def _alert_listener():
             for row in state.get("tickers", []):
                 sym    = row.get("ticker", "")
                 burst  = row.get("mention_burst", False)
-                status = row.get("status", "")
+                sp     = row.get("signal_proximity") or {}
+                status = sp.get("status", "")
 
                 prev_burst  = _prev_bursts.get(sym)
                 prev_status = _prev_statuses.get(sym)
@@ -543,21 +524,18 @@ def _alert_listener():
                         subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
                         sound="Ping",
                         group=f"burst-{sym}",
-                        # Click the toast → add this ticker to TradingView + Webull
-                        execute=_add_command(sym),
                     )
                     if AUTO_ADD:
                         _enqueue(sym)
 
-                if status == "BUY" and prev_status is not None and prev_status != "BUY":
+                if status == "buy_zone" and prev_status is not None and prev_status != "buy_zone":
                     print(f"  📈 BUY signal: {sym}")
                     price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
                     _notify_mac(
                         f"📈 BUY  {sym}",
-                        f"{price}click to add to TV + WB",
+                        f"{price}signal aligning",
                         sound="Glass",
                         group=f"buy-{sym}",
-                        execute=_add_command(sym),
                     )
                     if AUTO_ADD:
                         _enqueue(sym)
@@ -599,7 +577,7 @@ class AgentHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/add":
-            # Triggered by a toast click (terminal-notifier -execute → curl).
+            # Manual add: curl http://localhost:8889/add?ticker=NVDA&mode=both
             qs     = parse_qs(parsed.query)
             ticker = (qs.get("ticker", [""])[0]).strip().upper()
             mode   = (qs.get("mode",   ["both"])[0]).strip().lower()
@@ -639,11 +617,18 @@ class AgentHandler(BaseHTTPRequestHandler):
 
         ticker = data.get("ticker", "").strip().upper()
 
-        if path in ("/add-wb", "/add-tv"):
+        if path in ("/add", "/add-wb", "/add-tv"):
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
-            mode = "wb" if path == "/add-wb" else "tv"
+            if path == "/add-wb":
+                mode = "wb"
+            elif path == "/add-tv":
+                mode = "tv"
+            else:
+                mode = data.get("mode", "both").strip().lower()
+                if mode not in ("wb", "tv", "both"):
+                    mode = "both"
             _enqueue(ticker, mode)
             self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
         else:
@@ -674,11 +659,10 @@ if __name__ == "__main__":
         print("   (the agent must be running for the click to reach /add)")
         _notify_mac(
             "🔥 TSLA  burst",
-            "7x mentions — click to add to TV + WB",
+            "7x mentions",
             subtitle="$240.50",
             sound="Ping",
             group="burst-TSLA",
-            execute=_add_command("TSLA"),
         )
         print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
         print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
