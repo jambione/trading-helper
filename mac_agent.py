@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -126,46 +125,6 @@ def _osascript(script: str) -> tuple[int, str]:
     r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return r.returncode, r.stdout.strip()
 
-
-# Resolve terminal-notifier once at import. None → fall back to osascript.
-_NOTIFIER = shutil.which("terminal-notifier")
-
-
-def _notify_mac(title: str, message: str, subtitle: str = "",
-                sound: str = "Glass", group: str = "", open_url: str = "") -> None:
-    """
-    Post a native macOS notification banner.
-
-    Prefers terminal-notifier (app-branded, coalesces by -group so repeat alerts
-    for one ticker replace each other). Clicking opens open_url (defaults to the
-    dashboard). Falls back to `osascript display notification` if terminal-notifier
-    is not installed. Fire-and-forget — never raises.
-    """
-    if not _IS_MAC:
-        print(f"  [DRY RUN] NOTIFY → {title}: {message}")
-        return
-    try:
-        if _NOTIFIER:
-            cmd = [
-                _NOTIFIER,
-                "-title",    title,
-                "-message",  message,
-                "-sound",    sound,
-                "-open",     open_url or DASHBOARD_URL,
-            ]
-            if subtitle:
-                cmd += ["-subtitle", subtitle]
-            if group:
-                cmd += ["-group", group]
-            subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        else:
-            sub = f'subtitle "{subtitle}" ' if subtitle else ""
-            _osascript(
-                f'display notification "{message}" with title "{title}" '
-                f'{sub}sound name "{sound}"'
-            )
-    except Exception as e:
-        print(f"  ⚠️  notify failed: {e}")
 
 
 def _app_is_running(app_name: str) -> bool:
@@ -518,25 +477,11 @@ def _alert_listener():
                 if burst and prev_burst is False:
                     count = row.get("mention_window", 0)
                     print(f"  🔥 Burst detected: {sym}  (mention_window={count})")
-                    _notify_mac(
-                        f"🔥 {sym}  burst",
-                        f"{count}x mentions — click to add to TV + WB",
-                        subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
-                        sound="Ping",
-                        group=f"burst-{sym}",
-                    )
                     if AUTO_ADD:
                         _enqueue(sym)
 
                 if status == "buy_zone" and prev_status is not None and prev_status != "buy_zone":
                     print(f"  📈 BUY signal: {sym}")
-                    price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
-                    _notify_mac(
-                        f"📈 BUY  {sym}",
-                        f"{price}signal aligning",
-                        sound="Glass",
-                        group=f"buy-{sym}",
-                    )
                     if AUTO_ADD:
                         _enqueue(sym)
 
@@ -651,23 +596,6 @@ class AgentHandler(BaseHTTPRequestHandler):
 PORT = 8889
 
 if __name__ == "__main__":
-    # --test-toast: fire a sample burst through the real notify path, then exit.
-    # If nothing pops on screen, check System Settings → Notifications →
-    # terminal-notifier (alert style must be Banners/Alerts, not None).
-    if "--test-toast" in sys.argv:
-        print("🔔 Firing test burst notification via _notify_mac …")
-        print("   (the agent must be running for the click to reach /add)")
-        _notify_mac(
-            "🔥 TSLA  burst",
-            "7x mentions",
-            subtitle="$240.50",
-            sound="Ping",
-            group="burst-TSLA",
-        )
-        print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
-        print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
-        print("   not the code — the notification still lands in Notification Center.")
-        sys.exit(0)
 
     print(f"\n{'='*56}")
     print(f"  WB+TV Agent (macOS)  v{VERSION}")
