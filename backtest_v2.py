@@ -57,6 +57,120 @@ import numpy as np
 import pandas as pd
 import requests
 
+
+# ── Synthetic data generator (--demo mode) ────────────────────────────────────
+
+def generate_synthetic_bars(n_days: int = 63, seed: int = 42,
+                             price_start: float = 2.50) -> pd.DataFrame:
+    """
+    Adversarial synthetic 1-minute OHLCV bars for a sub-$5 momentum stock.
+
+    Four regimes (chosen to stress-test the signal engine):
+      CHOPPY       (60%) — mean-reverting noise, false MACD signals, whipsaws
+      BULL_REAL    (15%) — genuine sustained uptrend, RVOL spike, 60% win probability
+      BULL_TRAP    (12%) — looks like momentum (RVOL spike) but reverses mid-wave
+      BEAR         (13%) — sustained downtrend — system should stay out
+
+    Key adversarial features:
+      • Bull traps fire RVOL 3-5x (same as real) so the RVOL filter gets tested
+      • Choppy periods create frequent false MACD histogram positives
+      • Overnight gaps ±1-4% disrupt indicator state
+      • Spread noise makes stop-loss realistic (intrabar lows below close)
+    """
+    rng          = np.random.default_rng(seed)
+    bars_per_day = 390
+    n_bars       = n_days * bars_per_day
+    avg_vol      = 80_000
+
+    # ── Regime sequence ────────────────────────────────────────────────────────
+    CHOPPY, BULL_REAL, BULL_TRAP, BEAR = 0, 1, 2, 3
+    regime_arr = np.zeros(n_bars, dtype=int)
+    i = 0
+    while i < n_bars:
+        r = rng.random()
+        if r < 0.60:
+            length = int(rng.integers(3, 12))
+            regime_arr[i:min(i+length, n_bars)] = CHOPPY
+        elif r < 0.75:
+            length = int(rng.integers(10, 30))   # real bull: 10-29 bars
+            regime_arr[i:min(i+length, n_bars)] = BULL_REAL
+        elif r < 0.87:
+            length = int(rng.integers(5, 18))    # trap: looks good then dies
+            regime_arr[i:min(i+length, n_bars)] = BULL_TRAP
+        else:
+            length = int(rng.integers(8, 25))    # bear: sustained down
+            regime_arr[i:min(i+length, n_bars)] = BEAR
+        i += length
+
+    # ── Price simulation ───────────────────────────────────────────────────────
+    close_arr  = np.empty(n_bars)
+    open_arr   = np.empty(n_bars)
+    high_arr   = np.empty(n_bars)
+    low_arr    = np.empty(n_bars)
+    volume_arr = np.empty(n_bars, dtype=int)
+
+    price = price_start
+    for k in range(n_bars):
+        if k % bars_per_day == 0:
+            gap   = rng.normal(0, 0.020)          # ±2% overnight gap
+            price = max(0.30, price * (1 + gap))
+
+        reg = regime_arr[k]
+
+        if reg == CHOPPY:
+            # Noisy mean-reverting — lots of false MACD positives
+            ret = rng.normal(0.0001, 0.0012)      # tiny positive bias
+            vol = int(avg_vol * rng.lognormal(-0.2, 0.5))
+            spread_mult = rng.uniform(1.0, 3.0)
+
+        elif reg == BULL_REAL:
+            # Genuine uptrend — sustained drift
+            ret = rng.normal(0.0025, 0.0018)      # +0.25%/bar avg
+            vol = int(avg_vol * rng.uniform(3.0, 7.0))
+            spread_mult = rng.uniform(0.5, 1.5)
+
+        elif reg == BULL_TRAP:
+            # First half looks bullish, second half reverses
+            half = int(rng.integers(5, 18)) // 2
+            frac = (k % half) / max(half, 1)
+            if frac < 0.5:
+                ret = rng.normal(0.0020, 0.0020)  # initial pump
+            else:
+                ret = rng.normal(-0.0030, 0.0025) # reversal dump
+            vol = int(avg_vol * rng.uniform(3.0, 5.0))  # high vol on both
+            spread_mult = rng.uniform(1.5, 4.0)   # wide spreads
+
+        else:  # BEAR
+            ret = rng.normal(-0.0020, 0.0018)     # -0.20%/bar
+            vol = int(avg_vol * rng.lognormal(0.3, 0.4))
+            spread_mult = rng.uniform(0.8, 2.0)
+
+        open_p  = price
+        close_p = max(0.01, price * (1.0 + ret))
+        move    = abs(close_p - open_p)
+        spread  = (move + price * 0.0005) * spread_mult
+        high_p  = max(open_p, close_p) + spread * rng.uniform(0.3, 1.0)
+        low_p   = max(0.01, min(open_p, close_p) - spread * rng.uniform(0.3, 1.0))
+
+        open_arr[k]   = round(open_p,  4)
+        close_arr[k]  = round(close_p, 4)
+        high_arr[k]   = round(high_p,  4)
+        low_arr[k]    = round(low_p,   4)
+        volume_arr[k] = max(100, vol)
+        price         = close_p
+
+    # ── Timestamps ────────────────────────────────────────────────────────────
+    base = datetime(2026, 1, 2, 14, 30, 0, tzinfo=timezone.utc)
+    times = [
+        (base + timedelta(minutes=d * 1440 + m)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for d in range(n_days) for m in range(bars_per_day)
+    ]
+
+    return pd.DataFrame({
+        "time": times, "open": open_arr, "high": high_arr,
+        "low": low_arr, "close": close_arr, "volume": volume_arr,
+    })
+
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from signals import rsi as calc_rsi, compute_macd
@@ -385,9 +499,9 @@ def calc_metrics(trades: list[dict]) -> dict:
 
     win_rate = len(wins) / n * 100
 
-    gross_win  = sum(wins)         if wins   else 0.0
-    gross_loss = abs(sum(losses))  if losses else 1e-9
-    profit_factor = gross_win / gross_loss
+    gross_win     = sum(wins)        if wins   else 0.0
+    gross_loss    = abs(sum(losses)) if losses else None
+    profit_factor = min(gross_win / gross_loss, 50.0) if gross_loss else 50.0
 
     avg_win  = sum(wins)   / len(wins)   if wins   else 0.0
     avg_loss = sum(losses) / len(losses) if losses else 0.0
@@ -438,8 +552,8 @@ def _score(win_rate: float, profit_factor: float, sharpe: float,
     Rewards: high win rate, high profit factor, positive Sharpe.
     Penalises: long losing streaks, large drawdowns, insufficient sample.
     """
-    if n_trades < 10:
-        return 0.0   # statistically meaningless
+    if n_trades < 30:
+        return 0.0   # fewer than 30 trades is not statistically meaningful
 
     wr_pts  = min(win_rate, 80)              # 0–80 pts  (80 = 80% win rate)
     pf_pts  = min(profit_factor * 15, 30)   # 0–30 pts  (2.0 PF → 30)
@@ -451,7 +565,7 @@ def _score(win_rate: float, profit_factor: float, sharpe: float,
 
 # ── Sweep helpers ─────────────────────────────────────────────────────────────
 
-def _expand_grid(grid: dict) -> list[dict]:
+def _expand_grid(grid: dict, max_combos: int = 0) -> list[dict]:
     """Expand a grid dict into a flat list of parameter dicts."""
     keys = list(grid.keys())
     vals = [grid[k] for k in keys]
@@ -465,12 +579,19 @@ def _expand_grid(grid: dict) -> list[dict]:
         if "rvol_min" not in d:
             d["rvol_min"] = BASELINE["rvol_min"]
         combos.append(d)
+    # Cap grid size to avoid multi-minute Phase 2 runs
+    if max_combos and len(combos) > max_combos:
+        rng = np.random.default_rng(0)
+        idx = rng.choice(len(combos), size=max_combos, replace=False)
+        combos = [combos[i] for i in sorted(idx)]
     return combos
 
 
+_PHASE2_MAX = 600   # cap narrow sweep to keep runtime under 30s
+
 def run_sweep(symbol: str, df: pd.DataFrame, grid: dict,
-              label: str) -> list[dict]:
-    combos = _expand_grid(grid)
+              label: str, max_combos: int = 0) -> list[dict]:
+    combos = _expand_grid(grid, max_combos=max_combos)
     print(f"  [{label}] {len(combos)} combos…", end="", flush=True)
 
     # Pre-compute indicators once per unique MACD config
@@ -690,6 +811,138 @@ def save_csv(rows: list[dict], out_dir: Path):
         print(f"  📄  Trades   → {tout}")
 
 
+# ── Per-symbol excellence loop (shared by live and demo modes) ───────────────
+
+def _run_symbol_loop(symbol: str, df,           # df=None triggers synthetic gen
+                     api_key, secret_key, args,
+                     demo: bool = False,
+                     seed_offset: int = 0,
+                     all_rows: list = None):
+    if all_rows is None:
+        all_rows = []
+
+    if demo:
+        n_days  = args.months * 21
+        n_seeds = getattr(args, "seeds", 3)
+
+        # Aggregate metrics across seeds for robustness
+        phase1_agg: dict[str, list] = {}
+        for seed in range(n_seeds):
+            print(f"\n{'═'*72}")
+            print(f"  EXCELLENCE LOOP — {symbol}  [SYNTHETIC seed={seed + seed_offset}]")
+            print(f"{'═'*72}")
+            synth_df             = generate_synthetic_bars(n_days=n_days,
+                                                           seed=seed + seed_offset)
+            train_df, test_df    = train_test_split(synth_df)
+            print(f"  {len(synth_df):,} synthetic bars  "
+                  f"train={len(train_df):,}  test={len(test_df):,}\n")
+            _run_one_seed(symbol, train_df, test_df, args, all_rows,
+                          seed=seed, phase1_agg=phase1_agg, demo=True)
+    else:
+        print(f"\n{'═'*72}")
+        print(f"  EXCELLENCE LOOP — {symbol}")
+        print(f"{'═'*72}")
+        print(f"  {len(df):,} bars  "
+              f"({df['time'].iloc[0][:10]} → {df['time'].iloc[-1][:10]})")
+        train_df, test_df = train_test_split(df)
+        print(f"  Train: {len(train_df):,} bars  |  "
+              f"Held-out test: {len(test_df):,} bars\n")
+        _run_one_seed(symbol, train_df, test_df, args, all_rows,
+                      seed=0, phase1_agg=None, demo=False)
+
+
+def _run_one_seed(symbol: str, train_df: pd.DataFrame, test_df: pd.DataFrame,
+                  args, all_rows: list, seed: int,
+                  phase1_agg: Optional[dict], demo: bool):
+    seed_tag = f" [seed {seed}]" if demo else ""
+
+    # ── Baseline A ───────────────────────────────────────────────────────────
+    print(f"  ── Baseline (A): current signal_engine.env{seed_tag} ──")
+    base_df      = add_indicators(train_df,
+                                  BASELINE["macd_fast"],
+                                  BASELINE["macd_slow"],
+                                  BASELINE["macd_sig"])
+    base_metrics = calc_metrics(simulate(base_df, BASELINE))
+    print(
+        f"  WR={base_metrics['win_rate']}%  "
+        f"PF={base_metrics['profit_factor']}  "
+        f"Sh={base_metrics['sharpe']}  "
+        f"DD={base_metrics['max_dd']}%  "
+        f"CL={base_metrics['max_cl']}  "
+        f"n={base_metrics['trades']}  "
+        f"Score={base_metrics['score']}"
+    )
+    all_rows.append({"symbol": symbol, "phase": f"baseline{seed_tag}",
+                     **BASELINE, **base_metrics})
+
+    # ── Phase 1: Broad sweep ─────────────────────────────────────────────────
+    print(f"\n  ── Phase 1: Broad Sweep (768 combos){seed_tag} ──")
+    p1 = run_sweep(symbol, train_df, BROAD_GRID, "Phase1")
+    for r in p1[:25]:
+        all_rows.append({**r, "phase": f"phase1{seed_tag}"})
+    print_phase(p1, f"Phase 1 — {symbol}{seed_tag}", top_n=args.top)
+    top15 = p1[:15]
+
+    # ── Phase 2: Narrow sweep ────────────────────────────────────────────────
+    print(f"\n  ── Phase 2: Narrow Sweep (fine-tuning top-15){seed_tag} ──")
+    narrow_grid = build_narrow_grid(top15)
+    p2          = run_sweep(symbol, train_df, narrow_grid, "Phase2",
+                            max_combos=_PHASE2_MAX)
+    for r in p2[:25]:
+        all_rows.append({**r, "phase": f"phase2{seed_tag}"})
+    print_phase(p2, f"Phase 2 — {symbol}{seed_tag}", top_n=args.top)
+    top5 = p2[:5]
+
+    # ── Phase 3: Out-of-sample validation ────────────────────────────────────
+    print(f"\n  ── Phase 3: Validation on held-out test data{seed_tag} ──")
+    val_results: list[dict] = []
+    for p in top5:
+        params = {k: p[k] for k in [
+            "hist_confirm", "rsi_buy_max", "rsi_sell_ob",
+            "stop_loss", "take_profit", "min_hold_bars", "max_hold_bars",
+            "use_rvol", "rvol_min", "macd_fast", "macd_slow", "macd_sig",
+        ]}
+        df_val  = add_indicators(test_df,
+                                 params["macd_fast"],
+                                 params["macd_slow"],
+                                 params["macd_sig"])
+        trades  = simulate(df_val, params)
+        metrics = calc_metrics(trades)
+        row     = {"symbol": symbol, "phase": f"validate{seed_tag}",
+                   **params, **metrics, "_trades": trades}
+        val_results.append(row)
+        all_rows.append(row)
+
+    val_results.sort(key=lambda r: r["score"], reverse=True)
+    print_phase(val_results, f"Phase 3 Validation — {symbol}{seed_tag}", top_n=5)
+
+    # ── A/B Comparison ───────────────────────────────────────────────────────
+    if val_results:
+        best_val = val_results[0]
+
+        base_test_df     = add_indicators(test_df,
+                                          BASELINE["macd_fast"],
+                                          BASELINE["macd_slow"],
+                                          BASELINE["macd_sig"])
+        base_test_metrics = calc_metrics(simulate(base_test_df, BASELINE))
+
+        a_label = (
+            f"Baseline (hc={BASELINE['hist_confirm']}  "
+            f"rsi<{BASELINE['rsi_buy_max']}  "
+            f"SL={BASELINE['stop_loss']*100:.1f}%  "
+            f"TP={BASELINE['take_profit']*100:.1f}%)"
+        )
+        b_label = (
+            f"Best B (hc={best_val['hist_confirm']}  "
+            f"rsi<{best_val['rsi_buy_max']}  "
+            f"SL={best_val['stop_loss']*100:.1f}%  "
+            f"TP={best_val['take_profit']*100:.1f}%  "
+            f"RVOL={'on' if best_val.get('use_rvol') else 'off'})"
+        )
+        print_ab(a_label, base_test_metrics, b_label, best_val)
+        print_recommendation(best_val, f"Phase 3 validated{seed_tag}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -701,14 +954,35 @@ def main():
                         help="Months of bar history (default: 3)")
     parser.add_argument("--top", type=int, default=10,
                         help="Top N configs to show per phase (default: 10)")
+    parser.add_argument("--demo", action="store_true",
+                        help="Use synthetic data (no Alpaca connection needed)")
+    parser.add_argument("--seeds", type=int, default=3,
+                        help="Number of synthetic seeds to average over (--demo only, default: 3)")
     args = parser.parse_args()
 
+    all_rows: list[dict] = []
+
+    if args.demo:
+        # ── Demo mode: synthetic data, no network needed ─────────────────────
+        print("\n  [DEMO MODE] Running on synthetic sub-$5 momentum stock data")
+        print(f"  Generating {args.months * 21} trading days × 390 bars, "
+              f"{args.seeds} independent seeds\n")
+        symbols = [t.upper() for t in args.tickers]
+        for sym_idx, symbol in enumerate(symbols):
+            _run_symbol_loop(symbol, None, None, None, args,
+                             demo=True, seed_offset=sym_idx * 100,
+                             all_rows=all_rows)
+        if all_rows:
+            save_csv(all_rows, _HERE)
+        print("\n  ✅  Excellence loop complete.\n")
+        return
+
+    # ── Live mode: Alpaca data ────────────────────────────────────────────────
     api_key, secret_key = _load_creds()
     if not api_key or not secret_key:
         print("❌  Alpaca credentials not found — set in signal_engine.env")
+        print("    Tip: run with --demo to benchmark on synthetic data instead")
         sys.exit(1)
-
-    all_rows: list[dict] = []
 
     for symbol in [t.upper() for t in args.tickers]:
         print(f"\n{'═'*72}")
@@ -719,103 +993,8 @@ def main():
         if df is None or len(df) < 300:
             print(f"  ⚠️  Not enough data for {symbol} — skipping")
             continue
-
-        print(f"  {len(df):,} bars  "
-              f"({df['time'].iloc[0][:10]} → {df['time'].iloc[-1][:10]})")
-
-        train_df, test_df = train_test_split(df, test_frac=0.30)
-        print(f"  Train: {len(train_df):,} bars  |  "
-              f"Held-out test: {len(test_df):,} bars\n")
-
-        # ── Baseline A ───────────────────────────────────────────────────────
-        print("  ── Baseline (A): current signal_engine.env ──")
-        base_df  = add_indicators(train_df,
-                                  BASELINE["macd_fast"],
-                                  BASELINE["macd_slow"],
-                                  BASELINE["macd_sig"])
-        base_trades  = simulate(base_df, BASELINE)
-        base_metrics = calc_metrics(base_trades)
-        print(
-            f"  WR={base_metrics['win_rate']}%  "
-            f"PF={base_metrics['profit_factor']}  "
-            f"Sh={base_metrics['sharpe']}  "
-            f"DD={base_metrics['max_dd']}%  "
-            f"CL={base_metrics['max_cl']}  "
-            f"n={base_metrics['trades']}  "
-            f"Score={base_metrics['score']}"
-        )
-        all_rows.append({"symbol": symbol, "phase": "baseline",
-                         **BASELINE, **base_metrics})
-
-        # ── Phase 1: Broad sweep ─────────────────────────────────────────────
-        print("\n  ── Phase 1: Broad Sweep (768 combos on training data) ──")
-        p1 = run_sweep(symbol, train_df, BROAD_GRID, "Phase1-Broad")
-        for r in p1[:25]:
-            all_rows.append({**r, "phase": "phase1"})
-        print_phase(p1, f"Phase 1 — {symbol}", top_n=args.top)
-        top15 = p1[:15]
-
-        # ── Phase 2: Narrow sweep ────────────────────────────────────────────
-        print("\n  ── Phase 2: Narrow Sweep (fine-tuning top-15 Phase-1 winners) ──")
-        narrow_grid = build_narrow_grid(top15)
-        p2          = run_sweep(symbol, train_df, narrow_grid, "Phase2-Narrow")
-        for r in p2[:25]:
-            all_rows.append({**r, "phase": "phase2"})
-        print_phase(p2, f"Phase 2 — {symbol}", top_n=args.top)
-        top5 = p2[:5]
-
-        # ── Phase 3: Out-of-sample validation ───────────────────────────────
-        print("\n  ── Phase 3: Validation on held-out test data ──")
-        val_results: list[dict] = []
-        for p in top5:
-            params = {k: p[k] for k in [
-                "hist_confirm", "rsi_buy_max", "rsi_sell_ob",
-                "stop_loss", "take_profit", "min_hold_bars", "max_hold_bars",
-                "use_rvol", "rvol_min", "macd_fast", "macd_slow", "macd_sig",
-            ]}
-            df_val  = add_indicators(test_df,
-                                     params["macd_fast"],
-                                     params["macd_slow"],
-                                     params["macd_sig"])
-            trades  = simulate(df_val, params)
-            metrics = calc_metrics(trades)
-            row     = {"symbol": symbol, "phase": "validate",
-                       **params, **metrics, "_trades": trades}
-            val_results.append(row)
-            all_rows.append(row)
-
-        val_results.sort(key=lambda r: r["score"], reverse=True)
-        print_phase(val_results, f"Phase 3 Validation — {symbol}", top_n=5)
-
-        # ── A/B Comparison ───────────────────────────────────────────────────
-        if val_results:
-            best_val = val_results[0]
-
-            # Also run baseline on test data for fair A/B
-            base_test_df  = add_indicators(test_df,
-                                           BASELINE["macd_fast"],
-                                           BASELINE["macd_slow"],
-                                           BASELINE["macd_sig"])
-            base_test_trades  = simulate(base_test_df, BASELINE)
-            base_test_metrics = calc_metrics(base_test_trades)
-
-            a_label = (
-                f"Baseline (hc={BASELINE['hist_confirm']}  "
-                f"rsi<{BASELINE['rsi_buy_max']}  "
-                f"SL={BASELINE['stop_loss']*100:.1f}%  "
-                f"TP={BASELINE['take_profit']*100:.1f}%)"
-            )
-            b_label = (
-                f"Best B (hc={best_val['hist_confirm']}  "
-                f"rsi<{best_val['rsi_buy_max']}  "
-                f"SL={best_val['stop_loss']*100:.1f}%  "
-                f"TP={best_val['take_profit']*100:.1f}%  "
-                f"RVOL={'on' if best_val.get('use_rvol') else 'off'})"
-            )
-            print_ab(a_label, base_test_metrics, b_label, best_val)
-
-            # ── Recommendation ────────────────────────────────────────────────
-            print_recommendation(best_val, f"Phase 3 validated on {symbol}")
+        _run_symbol_loop(symbol, df, api_key, secret_key, args,
+                         demo=False, all_rows=all_rows)
 
     # ── Save CSVs ─────────────────────────────────────────────────────────────
     if all_rows:
