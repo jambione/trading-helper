@@ -21,17 +21,28 @@ echo "  Brasfield Trading — Startup"
 echo "============================================"
 echo ""
 
-# ── 1. Start the local stack (dashboard + engine + tunnel) ────────────────────
-echo "[1/4] ./trading start"
+# ── 1. Start the local stack (dashboard + signal engine + tunnel) ─────────────
+echo "[1/4] ./trading start  (dashboard + signal engine + Discord OCR + tunnel)"
 ./trading start
 
-# Make sure the backend is actually answering before we drive Discord.
+# Wait for the dashboard to answer, then confirm the signal engine is up.
 echo "      Waiting for backend at $BACKEND ..."
 for i in $(seq 1 60); do
     curl -s "$BACKEND/api/meta" > /dev/null 2>&1 && { echo "      ✓ Backend up (${i}s)."; break; }
     sleep 1
     [ "$i" -eq 60 ] && echo "      ⚠ Backend not responding after 60s — continuing anyway."
 done
+
+echo "      Verifying signal engine (paper trading)..."
+sleep 2
+ENG_RESP=$(curl -s "$BACKEND/api/state" 2>/dev/null)
+ENG_MODE=$(echo "$ENG_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version',{}).get('engine_strategy','') or '')" 2>/dev/null || true)
+ENG_VER=$(echo "$ENG_RESP"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version',{}).get('engine','') or '')" 2>/dev/null || true)
+if [ -n "$ENG_VER" ]; then
+    echo "      ✓ Signal engine running  (build $ENG_VER · strategy $ENG_MODE)"
+else
+    echo "      ⚠ Signal engine not reporting yet — check logs/engine.log"
+fi
 
 # ── 2. Discord — open -daytrading-alerts and dock the window right for OCR ────
 echo ""
