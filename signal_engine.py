@@ -138,7 +138,9 @@ def _load_env_file(path: Path):
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            value = value.strip()
+            # Strip trailing inline comments ("KEY=value  # note") — secret
+            # allowlist pragmas live on the value line and must not pollute it.
+            value = value.split(" #", 1)[0].strip()
             if key and key not in os.environ:
                 os.environ[key] = value
                 loaded.append(key)
@@ -278,6 +280,13 @@ REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
 # Minimum seconds to hold a three_indicator position before a strategy reversal
 # may close it — guards against per-second buy/sell flip-flop on the forming bar.
 THREE_IND_MIN_HOLD = int(os.getenv("THREE_IND_MIN_HOLD", "30"))
+
+# Require a mention burst (is_hot) before a 3-indicator BUY may fire.
+# The 2026-06-12 A/B benchmarks (benchmarks/ab_bench_*.csv) showed the
+# indicator entry has NO standalone edge on the alert-pool microcaps — every
+# config lost money. The catalyst is the candidate edge; the indicators time
+# it. Pinned compare tickers are exempt (they exist for TV validation).
+THREE_IND_REQUIRE_HOT = os.getenv("THREE_IND_REQUIRE_HOT", "0") in ("1", "true", "yes")
 
 # Strategy parameters. Every key in strategy_three_indicator.DEFAULT_PARAMS can
 # be overridden from the environment as THREE_IND_<PARAM> (upper-cased), e.g.
@@ -1782,6 +1791,12 @@ class SignalEngine:
 
         if not ts.in_position:
             if not st["buy"]:
+                return
+            # Catalyst gate: on alert-pool names the burst IS the edge —
+            # indicator-only entries backtested negative across all configs.
+            if THREE_IND_REQUIRE_HOT and not ts.is_hot and not ts.pinned:
+                print(f"  [{ticker_tag(ts.ticker)}] ⏸ 3IND buy signal but no mention "
+                      f"burst (THREE_IND_REQUIRE_HOT) — waiting for the catalyst")
                 return
             if MAX_PRICE > 0 and price > MAX_PRICE:
                 return

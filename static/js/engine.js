@@ -54,7 +54,9 @@ const FIELD_GROUPS = [
     { key: 'THREE_IND_CONFIRM_WINDOW',  label: 'Confirm window (bars)',  type: 'number' },
     { key: 'THREE_IND_TREND_LOOKBACK',  label: 'Trend lookback (bars)',  type: 'number' },
     { key: 'THREE_IND_EXIT_MODE',       label: 'Exit mode',              type: 'select',
-      options: ['any', 'all'] },
+      options: ['all', 'any'], hint: 'benchmarks: all beat any everywhere' },
+    { key: 'THREE_IND_REQUIRE_HOT',     label: 'Require mention burst',  type: 'select',
+      options: ['1', '0'], hint: 'catalyst gate — indicator-only entries lost on microcaps' },
     { key: 'THREE_IND_MIN_HOLD',        label: 'Min hold (sec)',         type: 'number' },
   ]},
 ];

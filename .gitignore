@@ -26,3 +26,4 @@ logs/
 config/learned_corrections.json
 config/pending_corrections.json
 trade_guard_state.json
+benchmarks/mention_bursts.jsonl

@@ -139,3 +139,36 @@ def test_two_of_three_conditions_extend_expiry(monkeypatch):
     assert ts.expiry_seconds() == se.EXPIRY_COLD
     se.SignalEngine._eval_three_indicator(fake, ts, df)
     assert ts.expiry_seconds() == se.EXPIRY_WARM
+
+
+def test_catalyst_gate_blocks_cold_buys(monkeypatch):
+    """THREE_IND_REQUIRE_HOT: a 3IND buy without a mention burst must not fire."""
+    import types
+    import numpy as np
+    import pandas as pd
+
+    calls = []
+    monkeypatch.setattr(se, "log_buy", lambda **k: calls.append(k["ticker"]))
+    monkeypatch.setattr(se, "THREE_IND_REQUIRE_HOT", True)
+    monkeypatch.setattr(se, "MAX_PRICE", 0.0)
+    monkeypatch.setattr(se, "MAX_TOTAL_EXPOSURE", 0.0)
+    monkeypatch.setattr(se.three_ind, "compute_indicators", lambda df, p: df)
+    monkeypatch.setattr(se.three_ind, "to_arrays", lambda df: {"close": np.zeros(60)})
+    monkeypatch.setattr(se.three_ind, "evaluate_state",
+                        lambda a, i, p: {"buy": True, "sell": False, "buy_pct": 100})
+
+    fake = types.SimpleNamespace(active={})
+    df = pd.DataFrame({"close": [2.0] * 60, "open": [2.0] * 60,
+                       "high": [2.0] * 60, "low": [2.0] * 60,
+                       "volume": [1.0] * 60})
+
+    cold = se.TickerState("AAA")
+    cold.last_price = 2.0
+    se.SignalEngine._eval_three_indicator(fake, cold, df)
+    assert calls == [] and not cold.in_position      # no burst → no buy
+
+    hot = se.TickerState("BBB")
+    hot.last_price = 2.0
+    hot.is_hot = True
+    se.SignalEngine._eval_three_indicator(fake, hot, df)
+    assert calls == ["BBB"] and hot.in_position      # burst → buy fires

@@ -188,8 +188,9 @@ def _load_env(path: Path):
                 continue
             k, _, v = line.partition("=")
             k = k.strip()
+            v = v.split(" #", 1)[0].strip()   # drop inline comments
             if k and k not in os.environ:
-                os.environ[k] = v.strip()
+                os.environ[k] = v
 
 _load_env(_HERE / "signal_engine.env")
 
@@ -715,7 +716,7 @@ def print_ab(a_label: str, a_m: dict, b_label: str, b_m: dict):
     delta = ab_compare(a_m, b_m)
     print()
     print("=" * 72)
-    print(f"  A/B COMPARISON")
+    print("  A/B COMPARISON")
     print(f"  A = {a_label}")
     print(f"  B = {b_label}")
     print("=" * 72)

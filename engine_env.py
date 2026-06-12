@@ -48,6 +48,7 @@ ENGINE_SAFE_KEYS: dict[str, str] = {
     "PDT_PROTECT":            "pdt_mode",
     # 3-indicator strategy parameters
     "THREE_IND_EXIT_MODE":          "exit_mode",
+    "THREE_IND_REQUIRE_HOT":        "flag01",
     "THREE_IND_CM_RSI_LENGTH":      "pos_int",
     "THREE_IND_CM_RSI_BUY_MAX":     "pos_float",
     "THREE_IND_CM_RSI_SELL_MIN":    "pos_float",

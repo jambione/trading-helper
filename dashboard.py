@@ -205,11 +205,38 @@ def _track_mention(ticker: str):
     if len(STATE.mention_ts[ticker]) >= threshold and ticker not in STATE.push_notified:
         STATE.push_notified.add(ticker)
         price = STATE.tickers.get(ticker, {}).get("price")
+        _archive_burst(ticker, price, len(STATE.mention_ts[ticker]))
         threading.Thread(
             target=_send_push_notifications,
             args=(ticker, price),
             daemon=True,
         ).start()
+
+
+_BURST_LOG = Path(__file__).parent / "benchmarks" / "mention_bursts.jsonl"
+
+
+def _archive_burst(ticker: str, price, window_count: int):
+    """
+    Append every mention burst to an append-only JSONL archive.
+
+    This is the missing dataset for the excellence loop: backtests showed the
+    3-indicator entry has no standalone edge on alert-pool microcaps — the
+    catalyst (the burst) is the candidate edge. Replaying catalyst-gated
+    entries needs burst timestamps, which the in-memory state doesn't keep.
+    """
+    try:
+        _BURST_LOG.parent.mkdir(exist_ok=True)
+        with open(_BURST_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ticker": ticker,
+                "time":   datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "unix":   round(time.time(), 1),
+                "price":  price,
+                "window_count": window_count,
+            }) + "\n")
+    except Exception as e:
+        log.warning(f"[BURST] archive failed: {e}")
 
 
 def _mention_window_count(ticker: str) -> int:
