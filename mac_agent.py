@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -125,6 +126,51 @@ def _osascript(script: str) -> tuple[int, str]:
     r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return r.returncode, r.stdout.strip()
 
+
+# Resolve terminal-notifier once at import. None → fall back to osascript.
+_NOTIFIER = shutil.which("terminal-notifier")
+
+
+def _notify_mac(title: str, message: str, subtitle: str = "",
+                sound: str = "Glass", group: str = "", open_url: str = "",
+                execute: str = "") -> None:
+    """
+    Post a native macOS notification banner.
+
+    Prefers terminal-notifier (app-branded, coalesces by -group so repeat alerts
+    for one ticker replace each other). When execute is set, clicking runs that
+    shell command silently (no browser tab). When open_url is set, clicking opens
+    that URL. Falls back to `osascript display notification` if terminal-notifier
+    is not installed. Fire-and-forget — never raises.
+    """
+    if not _IS_MAC:
+        print(f"  [DRY RUN] NOTIFY → {title}: {message}")
+        return
+    try:
+        if _NOTIFIER:
+            cmd = [
+                _NOTIFIER,
+                "-title",    title,
+                "-message",  message,
+                "-sound",    sound,
+            ]
+            if execute:
+                cmd += ["-execute", execute]
+            else:
+                cmd += ["-open", open_url or (f"{DASHBOARD_URL}/?user={DASHBOARD_USER}" if DASHBOARD_USER else DASHBOARD_URL)]
+            if subtitle:
+                cmd += ["-subtitle", subtitle]
+            if group:
+                cmd += ["-group", group]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        else:
+            sub = f'subtitle "{subtitle}" ' if subtitle else ""
+            _osascript(
+                f'display notification "{message}" with title "{title}" '
+                f'{sub}sound name "{sound}"'
+            )
+    except Exception as e:
+        print(f"  ⚠️  notify failed: {e}")
 
 
 def _app_is_running(app_name: str) -> bool:
@@ -290,11 +336,13 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     _pag.press("escape")
     time.sleep(0.2)
 
-    # Click the centre of the content area to ensure the chart has keyboard focus.
-    # We can't query the window rect without extra deps, so use the screen centre
-    # as a reasonable approximation (works for full-screen or maximised browsers).
+    # Click the chart canvas to ensure it has keyboard focus.
+    # Layout: Brave = left 45% of screen; TV right panel (watchlist) ≈ right 45%
+    # of the Brave window. Clicking at 15% of screen width (~1/3 of Brave's width)
+    # lands solidly on the chart canvas and avoids the right panel.
     sw, sh = _pag.size()
-    _pag.click(sw // 2, sh // 2)
+    _pag.click(int(sw * 0.15), sh // 2)
+    time.sleep(0.2)
     time.sleep(0.3)
 
     # Type ticker — TradingView opens symbol search on first keypress
@@ -477,11 +525,27 @@ def _alert_listener():
                 if burst and prev_burst is False:
                     count = row.get("mention_window", 0)
                     print(f"  🔥 Burst detected: {sym}  (mention_window={count})")
+                    _notify_mac(
+                        f"🔥 {sym}  burst",
+                        f"{count}x mentions — click to add to TV + WB",
+                        subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
+                        sound="Ping",
+                        group=f"burst-{sym}",
+                        execute=f"curl -s 'http://localhost:8889/add?ticker={sym}&mode=both'",
+                    )
                     if AUTO_ADD:
                         _enqueue(sym)
 
                 if status == "buy_zone" and prev_status is not None and prev_status != "buy_zone":
                     print(f"  📈 BUY signal: {sym}")
+                    price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
+                    _notify_mac(
+                        f"📈 BUY  {sym}",
+                        f"{price}signal aligning",
+                        sound="Glass",
+                        group=f"buy-{sym}",
+                        execute=f"curl -s 'http://localhost:8889/add?ticker={sym}&mode=both'",
+                    )
                     if AUTO_ADD:
                         _enqueue(sym)
 
@@ -596,6 +660,24 @@ class AgentHandler(BaseHTTPRequestHandler):
 PORT = 8889
 
 if __name__ == "__main__":
+    # --test-toast: fire a sample burst through the real notify path, then exit.
+    # If nothing pops on screen, check System Settings → Notifications →
+    # terminal-notifier (alert style must be Banners/Alerts, not None).
+    if "--test-toast" in sys.argv:
+        print("🔔 Firing test burst notification via _notify_mac …")
+        print("   (the agent must be running for the click to reach /add)")
+        _notify_mac(
+            "🔥 TSLA  burst",
+            "7x mentions",
+            subtitle="$240.50",
+            sound="Ping",
+            group="burst-TSLA",
+            execute="curl -s 'http://localhost:8889/add?ticker=TSLA&mode=both'",
+        )
+        print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
+        print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
+        print("   not the code — the notification still lands in Notification Center.")
+        sys.exit(0)
 
     print(f"\n{'='*56}")
     print(f"  WB+TV Agent (macOS)  v{VERSION}")
