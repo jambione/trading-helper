@@ -13,14 +13,13 @@ tell application "Finder"
     set screenH to item 4 of screenBounds
 end tell
 
--- Brave takes ~45%; Discord fills the remaining ~55% on the right.
--- Ratio derived from screenshot: Brave≈661px, Discord≈809px on 1470px screen.
-set leftW  to (screenW * 0.45) as integer
+-- Brave takes 70% on the left; Discord fills the remaining 30% on the right.
+set leftW  to (screenW * 0.70) as integer
 set rightX to leftW
 set rightW to screenW - leftW
 
 -- ── Brave Browser ────────────────────────────────────────────────────────────
--- Goal: TradingView pinned as tab 1, Brave sized to the left 45% of screen.
+-- Goal: TradingView pinned as tab 1, Brave sized to the left 70% of screen.
 -- Strategy:
 --   • If TV is already tab 1 → skip (already pinned from a prior session).
 --   • If TV is open elsewhere → activate that tab, then pin via Tab menu once.
@@ -80,7 +79,7 @@ tell application "System Events"
     end tell
 end tell
 
--- Size Brave to the left 45% of the screen
+-- Size Brave to the left 70% of the screen
 tell application "System Events"
     tell process "Brave Browser"
         set position of front window to {0, 0}
