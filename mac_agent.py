@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -127,50 +127,38 @@ def _osascript(script: str) -> tuple[int, str]:
     return r.returncode, r.stdout.strip()
 
 
-# Resolve terminal-notifier once at import. None → fall back to osascript.
-_NOTIFIER = shutil.which("terminal-notifier")
+# BrasfieldNotifier.app listens here (see mac_notifier/notifier.swift). It posts
+# native banners via the modern UNUserNotificationCenter API — the only path that
+# works on macOS 26 (terminal-notifier/osascript use the removed NSUserNotification
+# API) — and runs the add-to-TV+WB workflow when a banner is clicked.
+NOTIFIER_PORT = 8890
 
 
 def _notify_mac(title: str, message: str, subtitle: str = "",
-                sound: str = "Glass", group: str = "", open_url: str = "",
-                execute: str = "") -> None:
+                ticker: str = "") -> None:
     """
-    Post a native macOS notification banner.
+    Post a native macOS notification banner via BrasfieldNotifier.app.
 
-    Prefers terminal-notifier (app-branded, coalesces by -group so repeat alerts
-    for one ticker replace each other). When execute is set, clicking runs that
-    shell command silently (no browser tab). When open_url is set, clicking opens
-    that URL. Falls back to `osascript display notification` if terminal-notifier
-    is not installed. Fire-and-forget — never raises.
+    Sends one line of JSON to the notifier on 127.0.0.1:NOTIFIER_PORT. When
+    `ticker` is set, clicking the banner fires the add-to-TradingView+Webull
+    workflow back on this agent (no browser tab opens). Fire-and-forget — never
+    raises; if the notifier isn't running the alert is simply skipped (the
+    terminal log line still prints at the call site).
     """
     if not _IS_MAC:
         print(f"  [DRY RUN] NOTIFY → {title}: {message}")
         return
+    payload = json.dumps({
+        "title":    title,
+        "body":     message,
+        "subtitle": subtitle,
+        "ticker":   ticker,
+    }) + "\n"
     try:
-        if _NOTIFIER:
-            cmd = [
-                _NOTIFIER,
-                "-title",    title,
-                "-message",  message,
-                "-sound",    sound,
-            ]
-            if execute:
-                cmd += ["-execute", execute]
-            else:
-                cmd += ["-open", open_url or (f"{DASHBOARD_URL}/?user={DASHBOARD_USER}" if DASHBOARD_USER else DASHBOARD_URL)]
-            if subtitle:
-                cmd += ["-subtitle", subtitle]
-            if group:
-                cmd += ["-group", group]
-            subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        else:
-            sub = f'subtitle "{subtitle}" ' if subtitle else ""
-            _osascript(
-                f'display notification "{message}" with title "{title}" '
-                f'{sub}sound name "{sound}"'
-            )
-    except Exception as e:
-        print(f"  ⚠️  notify failed: {e}")
+        with socket.create_connection(("127.0.0.1", NOTIFIER_PORT), timeout=2) as s:
+            s.sendall(payload.encode())
+    except OSError as e:
+        print(f"  ⚠️  notifier not reachable on :{NOTIFIER_PORT} ({e}) — banner skipped")
 
 
 def _app_is_running(app_name: str) -> bool:
@@ -529,9 +517,7 @@ def _alert_listener():
                         f"🔥 {sym}  burst",
                         f"{count}x mentions — click to add to TV + WB",
                         subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
-                        sound="Ping",
-                        group=f"burst-{sym}",
-                        execute=f"curl -s 'http://localhost:8889/add?ticker={sym}&mode=both'",
+                        ticker=sym,
                     )
                     if AUTO_ADD:
                         _enqueue(sym)
@@ -541,10 +527,8 @@ def _alert_listener():
                     price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
                     _notify_mac(
                         f"📈 BUY  {sym}",
-                        f"{price}signal aligning",
-                        sound="Glass",
-                        group=f"buy-{sym}",
-                        execute=f"curl -s 'http://localhost:8889/add?ticker={sym}&mode=both'",
+                        f"{price}signal aligning — click to add to TV + WB",
+                        ticker=sym,
                     )
                     if AUTO_ADD:
                         _enqueue(sym)
@@ -661,22 +645,21 @@ PORT = 8889
 
 if __name__ == "__main__":
     # --test-toast: fire a sample burst through the real notify path, then exit.
-    # If nothing pops on screen, check System Settings → Notifications →
-    # terminal-notifier (alert style must be Banners/Alerts, not None).
+    # Requires BrasfieldNotifier.app running (startup.command launches it; or run
+    # `open BrasfieldNotifier.app`). If no banner pops, check System Settings →
+    # Notifications → Brasfield Trading: Allow on, Alert Style Banners/Alerts,
+    # and "Summarize notifications" OFF (Scheduled Summary diverts banners to
+    # Notification Center).
     if "--test-toast" in sys.argv:
-        print("🔔 Firing test burst notification via _notify_mac …")
-        print("   (the agent must be running for the click to reach /add)")
+        print("🔔 Firing test burst notification via BrasfieldNotifier …")
+        print("   (the agent must be running for a click to reach /add)")
         _notify_mac(
             "🔥 TSLA  burst",
-            "7x mentions",
+            "7x mentions — click to add to TV + WB",
             subtitle="$240.50",
-            sound="Ping",
-            group="burst-TSLA",
-            execute="curl -s 'http://localhost:8889/add?ticker=TSLA&mode=both'",
+            ticker="TSLA",
         )
-        print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
-        print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
-        print("   not the code — the notification still lands in Notification Center.")
+        print(f"   sent to notifier on 127.0.0.1:{NOTIFIER_PORT}")
         sys.exit(0)
 
     print(f"\n{'='*56}")

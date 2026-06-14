@@ -22,7 +22,7 @@ echo "============================================"
 echo ""
 
 # ── 1. Start the local stack (dashboard + signal engine + tunnel) ─────────────
-echo "[1/4] ./trading start  (dashboard + signal engine + Discord OCR + tunnel)"
+echo "[1/5] ./trading start  (dashboard + signal engine + Discord OCR + tunnel)"
 ./trading start
 
 # Wait for the dashboard to answer, then confirm the signal engine is up.
@@ -46,7 +46,7 @@ fi
 
 # ── 2. Discord — open -daytrading-alerts and dock the window right for OCR ────
 echo ""
-echo "[2/4] Opening Discord → -daytrading-alerts (docked right)..."
+echo "[2/5] Opening Discord → -daytrading-alerts (docked right)..."
 "$REPO/venv/bin/python" "$REPO/open_discord_alerts.py" \
     && echo "      ✓ Discord alert channel docked right." \
     || echo "      ⚠ Could not auto-open — open -daytrading-alerts and dock it right manually."
@@ -62,14 +62,27 @@ else
     echo "      ✗ Could not reach backend. Response: ${RESPONSE:-(empty)}"
 fi
 
-# ── 3. Arrange windows (background — fires after mac_agent starts) ───────────
+# ── 3. Native toast notifier (BrasfieldNotifier.app) ─────────────────────────
+# Posts macOS banners for bursts/BUYs and runs add-to-TV+WB on click. Build it
+# once with scripts/build_notifier.sh; launch here if present.
 echo ""
-echo "[3/4] Scheduling window arrangement in 6 s..."
+echo "[3/5] Launching toast notifier (BrasfieldNotifier.app)..."
+if [ -d "$REPO/BrasfieldNotifier.app" ]; then
+    open "$REPO/BrasfieldNotifier.app" \
+        && echo "      ✓ Notifier launched (listening on :8890)." \
+        || echo "      ⚠ Could not launch notifier."
+else
+    echo "      ⚠ BrasfieldNotifier.app not found — build it: scripts/build_notifier.sh"
+fi
+
+# ── 4. Arrange windows (background — fires after mac_agent starts) ───────────
+echo ""
+echo "[4/5] Scheduling window arrangement in 6 s..."
 bash "$REPO/scripts/arrange_windows.sh" 6 &
 
-# ── 4. macOS TradingView/Webull agent (foreground — keeps this window open) ────
+# ── 5. macOS TradingView/Webull agent (foreground — keeps this window open) ────
 echo ""
-echo "[4/4] Launching macOS TradingView/Webull agent (mac_agent.sh)..."
+echo "[5/5] Launching macOS TradingView/Webull agent (mac_agent.sh)..."
 echo "      Keep this window open while trading. Close it (or Ctrl+C) to stop the agent."
 echo ""
 cd "$REPO"
