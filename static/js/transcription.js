@@ -115,6 +115,7 @@ function _renderSentEvent(e) {
 function _shortSource(src) {
   if (src === 'hv_alert') return 'HV';
   if (src === 'tv_chart') return 'TV';
+  if (src === 'scanner')  return 'SCN';
   if (src === 'chat')     return '';
   return src.slice(0, 4).toUpperCase();
 }

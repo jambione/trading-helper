@@ -2574,3 +2574,10 @@ body.mobile .engine-bar { display: none !important; }
   to   { opacity: 0; transform: translateY(8px) scale(0.95); max-height: 0;   margin-bottom: -10px; }
 }
 .toast--dismissing { animation: toast-out 0.22s ease forwards; }
+
+/* ── Hidden elements (user preference) ────────────────────── */
+.donate-bar                                              { display: none !important; }
+body.user-jmb .engine-bar,
+body.engine-visible .engine-bar                         { display: none !important; }
+[data-signal-bar]                                       { display: none !important; }
+.alert-col--regular                                     { display: none !important; }

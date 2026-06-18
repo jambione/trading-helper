@@ -129,6 +129,78 @@ class _TvState:
         self.pending_ticker = None
 
 
+# ── Market Update scanner table detection ─────────────────────────────────────
+# Discord periodically posts "Market Update" images with scanner tables:
+#   Momentum+HOD | Volume Breakout | Price Spike | Gap Up
+# Vision OCR reads the table text inline. We detect the sentinel, track which
+# column we're in (column headers are readable text in the image), and emit a
+# scanner SentimentEvent per ticker. Scores map to column strength:
+#   Momentum+HOD 0.80 (making new highs)   → triggers mention boost (≥0.7)
+#   Gap Up       0.75                       → triggers mention boost
+#   Vol Breakout 0.60 (unusual volume)
+#   Price Spike  0.55 (direction ambiguous)
+
+_MARKET_UPDATE_RE = re.compile(r'\bmarket\s+update\b', re.IGNORECASE)
+
+_SCANNER_COL_RE = re.compile(
+    r'(?P<momentum>\bmomentum\b)|'
+    r'(?P<gap_up>\bgap\s+up\b)|'
+    r'(?P<volume>\bvolume\b.*\bbreakout\b|\bbreakout\b.*\bvolume\b)|'
+    r'(?P<spike>\bprice\b.*\bspike\b|\bspike\b.*\bprice\b)',
+    re.IGNORECASE,
+)
+
+_SCANNER_SCORES = {
+    "momentum": 0.80,
+    "gap_up":   0.75,
+    "volume":   0.60,
+    "spike":    0.55,
+}
+
+
+class _ScannerState:
+    def __init__(self):
+        self.active    = False
+        self.col_score = 0.65   # default when no column header has been matched yet
+
+
+def _update_scanner_state(line: str, scanner_state: "_ScannerState",
+                          new_sentiment: list, seen: dict, t0: float) -> bool:
+    """Detect Market Update scanner tables and emit per-ticker scanner sentiment.
+
+    Called for every non-alert OCR line. Returns True when the line was
+    consumed by the scanner so the caller can skip other parsers.
+    """
+    if _MARKET_UPDATE_RE.search(line):
+        scanner_state.active    = True
+        scanner_state.col_score = 0.65
+        return True
+
+    if not scanner_state.active:
+        return False
+
+    cm = _SCANNER_COL_RE.search(line)
+    if cm:
+        for grp, score in _SCANNER_SCORES.items():
+            if cm.group(grp):
+                scanner_state.col_score = score
+                break
+        return True
+
+    tkr = _first_valid_ticker(line)
+    if not tkr:
+        return False
+
+    sig = _signature(line)
+    if sig in seen:
+        return True
+    seen[sig] = t0
+
+    new_sentiment.append(
+        SentimentEvent(tkr, scanner_state.col_score, "scanner", line.strip()[:80], t0))
+    return True
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def _load_config() -> dict:
@@ -447,7 +519,8 @@ def main() -> None:
         fail_streak = 0
         new_alerts: list[dict] = []
         new_sentiment: list[SentimentEvent] = []
-        tv_state = _TvState()   # resets each scan
+        tv_state      = _TvState()       # resets each scan
+        scanner_state = _ScannerState()  # resets each scan
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
         for line in lines:
             sig = _signature(line)
@@ -466,7 +539,7 @@ def main() -> None:
                     first_frame.setdefault(ticker, alert)
                 continue
 
-            # Non-alert line: try the three sentiment parsers.
+            # Non-alert line: try sentiment parsers in order.
             m_ticker, m_score, _ = parse_market_signal(line)
             if m_score != 0.0:
                 if sig in seen:
@@ -477,6 +550,9 @@ def main() -> None:
                 continue
 
             _update_tv_state(line, tv_state, new_sentiment, seen, t0)
+
+            if _update_scanner_state(line, scanner_state, new_sentiment, seen, t0):
+                continue
 
             c_ticker, c_score, c_raw = parse_chat_sentiment(line)
             if c_score != 0.0:

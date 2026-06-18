@@ -262,3 +262,84 @@ def test_market_sentiment_no_ticker_no_mention():
     with d.STATE.lock:
         total = sum(d.STATE.mention_daily.values())
     assert total == 0
+
+
+# ── Section F — Scanner table detection ──────────────────────────────────────
+
+def _run_scanner(lines: list[str]) -> list[ds.SentimentEvent]:
+    """Drive _update_scanner_state across a list of OCR lines, return events."""
+    scanner_state = ds._ScannerState()
+    events: list[ds.SentimentEvent] = []
+    seen: dict = {}
+    t0 = time.time()
+    for line in lines:
+        ds._update_scanner_state(line, scanner_state, events, seen, t0)
+    return events
+
+
+def test_scanner_inactive_by_default():
+    events = _run_scanner(["EHGO 4.72 +18%"])
+    assert events == []
+
+
+def test_market_update_activates_scanner():
+    scanner_state = ds._ScannerState()
+    assert not scanner_state.active
+    ds._update_scanner_state("Market Update 12:00 PM", scanner_state, [], {}, time.time())
+    assert scanner_state.active
+
+
+def test_scanner_emits_ticker_after_sentinel():
+    events = _run_scanner(["Market Update", "EHGO 4.72"])
+    assert len(events) == 1
+    assert events[0].ticker == "EHGO"
+    assert events[0].source == "scanner"
+
+
+def test_scanner_momentum_col_score():
+    events = _run_scanner(["Market Update", "Momentum+HOD", "EHGO 4.72"])
+    assert len(events) == 1
+    assert events[0].score == 0.80
+
+
+def test_scanner_gap_up_col_score():
+    events = _run_scanner(["Market Update", "Gap Up", "EHGO 4.72"])
+    assert len(events) == 1
+    assert events[0].score == 0.75
+
+
+def test_scanner_volume_breakout_col_score():
+    events = _run_scanner(["Market Update", "Volume Breakout", "EHGO 4.72"])
+    assert len(events) == 1
+    assert events[0].score == 0.60
+
+
+def test_scanner_price_spike_col_score():
+    events = _run_scanner(["Market Update", "Price Spike", "EHGO 4.72"])
+    assert len(events) == 1
+    assert events[0].score == 0.55
+
+
+def test_scanner_dedup_same_line():
+    scanner_state = ds._ScannerState()
+    scanner_state.active = True
+    events: list = []
+    seen: dict = {}
+    t0 = time.time()
+    ds._update_scanner_state("EHGO 4.72", scanner_state, events, seen, t0)
+    ds._update_scanner_state("EHGO 4.72", scanner_state, events, seen, t0)
+    assert len(events) == 1
+
+
+def test_scanner_momentum_ticker_adds_mention():
+    d.ingest_discord_alerts([], [_ev("EHGO", 0.80, "scanner")])
+    with d.STATE.lock:
+        count = d.STATE.mention_daily.get("EHGO", 0)
+    assert count >= 1
+
+
+def test_scanner_price_spike_does_not_add_mention():
+    d.ingest_discord_alerts([], [_ev("EHGO", 0.55, "scanner")])
+    with d.STATE.lock:
+        count = d.STATE.mention_daily.get("EHGO", 0)
+    assert count == 0
