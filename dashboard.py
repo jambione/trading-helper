@@ -112,11 +112,17 @@ class _State:
         # Web Push — subscriptions loaded from disk at startup, notified set resets daily
         self.push_subscriptions: list = []
         self.push_notified: set       = set()
+        # Sentiment — rolling direction signal from the Discord OCR source.
+        # sentiment_events: ticker (or None for market) → [event dict, ...]
+        self.sentiment_events: dict = {}
+        self.sentiment_feed:   deque = deque(maxlen=_MAX_DISCORD_ALERTS)
 
 # Discord OCR feed sizing + liveness window. The source pings every poll
 # (~2.5s); if we haven't heard from it within this window it's considered down.
 _MAX_DISCORD_ALERTS = 60
 _DISCORD_STALE_SEC  = 15.0
+# Sentiment events older than this drop out of the recency-weighted mean.
+_SENTIMENT_WINDOW_SEC = 30 * 60
 
 STATE = _State()
 
@@ -245,6 +251,40 @@ def _mention_window_count(ticker: str) -> int:
     window = float(STATE.cfg.get("mention_alert_window", 10))
     ts     = STATE.mention_ts.get(ticker, [])
     return sum(1 for t in ts if now - t <= window)
+
+
+# ── Sentiment ─────────────────────────────────────────────────────────────────
+
+def _prune_sentiment(key):
+    """Drop events older than _SENTIMENT_WINDOW_SEC. Must hold STATE.lock."""
+    evs = STATE.sentiment_events.get(key)
+    if not evs:
+        return
+    now = time.time()
+    STATE.sentiment_events[key] = [e for e in evs if now - e["ts"] <= _SENTIMENT_WINDOW_SEC]
+
+
+def _ticker_sentiment(key) -> dict:
+    """Recency-weighted mean sentiment for a ticker (or None = market).
+    Must hold STATE.lock."""
+    _prune_sentiment(key)
+    evs = STATE.sentiment_events.get(key) or []
+    if not evs:
+        return {"score": 0.0, "count": 0, "last_ts": None, "source": ""}
+    now = time.time()
+    num = den = 0.0
+    for e in evs:
+        age_min = (now - e["ts"]) / 60.0
+        w       = max(0.3, 1.0 - age_min / 30.0 * 0.7)
+        num    += e["score"] * w
+        den    += w
+    last = max(evs, key=lambda e: e["ts"])
+    return {
+        "score":   round(num / den, 4) if den else 0.0,
+        "count":   len(evs),
+        "last_ts": last["ts"],
+        "source":  last.get("source", ""),
+    }
 
 
 # ── Web Push ──────────────────────────────────────────────────────────────────
@@ -524,15 +564,19 @@ def refresh_ticker_timestamps(tickers: list[str]):
 # like the old transcriber did (watchlist add + _track_mention → burst), and is
 # recorded in a rolling feed the dashboard renders.
 
-def ingest_discord_alerts(alerts: list[dict]) -> int:
+def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
     """Record captured Discord alerts: add each ticker to the watchlist, count a
     mention (for burst detection), and append to the live feed. Returns the
-    number accepted. Always stamps discord_last_ts (so an empty list is a valid
-    heartbeat). Each alert: {"ticker": str, "line": str, "burst": bool}.
+    number of alerts accepted. Always stamps discord_last_ts (so an empty list is
+    a valid heartbeat). Each alert: {"ticker": str, "line": str, "burst": bool}.
+
+    sentiment is a list of SentimentEvent dicts (ticker/score/source/raw/ts);
+    near-zero scores are dropped, the rest stored per-ticker for the rolling mean.
 
     A "burst" alert (e.g. a 'Squeeze Potential Alert') injects a full burst's
     worth of mentions at once (mention_alert_threshold) so the existing burst
     toast fires immediately — i.e. it simulates a mention spike."""
+    sentiment = sentiment or []
     threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
     accepted = 0
     for a in alerts:
@@ -556,6 +600,38 @@ def ingest_discord_alerts(alerts: list[dict]) -> int:
                 "levels":     a.get("levels") or [],
             })
         accepted += 1
+
+    with STATE.lock:
+        for ev in sentiment:
+            try:
+                score = float(ev.get("score", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if abs(score) < 0.05:
+                continue
+            tkr = ev.get("ticker")
+            key = tkr.upper() if isinstance(tkr, str) and tkr else None
+            rec = {
+                "ticker": key,
+                "score":  score,
+                "source": str(ev.get("source") or ""),
+                "raw":    str(ev.get("raw") or "")[:160],
+                "ts":     float(ev.get("ts") or time.time()),
+            }
+            STATE.sentiment_events.setdefault(key, []).append(rec)
+            STATE.sentiment_feed.append({
+                "ts":     datetime.now(ET).strftime("%H:%M:%S"),
+                "ticker": key,
+                "score":  round(score, 3),
+                "source": rec["source"],
+                "raw":    rec["raw"][:80],
+            })
+            # High-confidence ticker sentiment boosts mentions (drives burst detection).
+            # Skip hv_alert (SPY direction alerts fire every minute and would flood SPY).
+            if key and abs(score) >= 0.7 and rec["source"] != "hv_alert":
+                add_ticker_to_log(key)
+                _track_mention(key)
+
     with STATE.lock:
         STATE.discord_last_ts = time.time()
     return accepted
@@ -859,7 +935,11 @@ def _snapshot() -> dict:
             d["mention_count"]  = STATE.mention_daily.get(t, 0)
             d["mention_window"] = window_count
             d["mention_burst"]  = window_count >= threshold
+            sent = _ticker_sentiment(t)
+            if sent["count"] > 0:
+                d["sentiment"] = sent
             rows.append(d)
+        market_sent = _ticker_sentiment(None)
         def _row_sort_key(r):
             in_mention = r["ticker"] in mention_rank
             rank  = mention_rank.get(r["ticker"], 999)
@@ -894,6 +974,7 @@ def _snapshot() -> dict:
                 "alerts":  tv_feed,
             },
             "tickers": rows,
+            "market_sentiment": market_sent,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
             # Trading-engine status — trader mode + risk guard written by
@@ -1025,6 +1106,7 @@ def _mention_reset_worker():
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
                     STATE.push_notified.clear()
+                    STATE.sentiment_events.clear()
                     log.info("[MENTIONS] Daily reset — new calendar day")
 
                 elif 930 <= hhmm <= 935 and not STATE.mention_market_opened:
@@ -1032,6 +1114,7 @@ def _mention_reset_worker():
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
                     STATE.push_notified.clear()
+                    STATE.sentiment_events.clear()
                     log.info("[MENTIONS] Daily reset — market open window")
 
                 elif 1605 <= hhmm <= 1610 and not close_reset_fired:
@@ -1039,6 +1122,7 @@ def _mention_reset_worker():
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
                     STATE.push_notified.clear()
+                    STATE.sentiment_events.clear()
                     log.info("[MENTIONS] Daily reset — market close window")
 
                 elif hhmm > 1610 and close_reset_fired:
@@ -1233,10 +1317,14 @@ async def api_discord_ingest(request: Request):
         alerts = body.get("alerts", [])
         if not isinstance(alerts, list):
             return JSONResponse({"ok": False, "error": "alerts must be a list"}, status_code=400)
+        sentiment = body.get("sentiment", [])
+        if not isinstance(sentiment, list):
+            sentiment = []
     except Exception:
-        alerts = []
+        alerts    = []
+        sentiment = []
     loop = asyncio.get_running_loop()
-    accepted = await loop.run_in_executor(None, lambda: ingest_discord_alerts(alerts))
+    accepted = await loop.run_in_executor(None, lambda: ingest_discord_alerts(alerts, sentiment))
     return JSONResponse({"ok": True, "accepted": accepted})
 
 

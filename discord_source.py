@@ -48,6 +48,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 # Pure-stdlib ticker validation — single source of truth for the NASDAQ/NYSE
@@ -69,6 +70,63 @@ _ALERT_MARKER = re.compile(r">>+")
 # These have no arrow marker; "close over" is the signature. We treat them as a
 # strong catalyst → fire the burst toast immediately (see ingest, "burst" flag).
 _SQUEEZE_MARKER = re.compile(r"(?i)\bclose\s+over\b")
+
+
+# ── Sentiment extraction ──────────────────────────────────────────────────────
+# Three non-alert content types in the channel become a rolling sentiment signal:
+# bot market-direction alerts, human chat, and TradingView chart labels.
+
+@dataclass
+class SentimentEvent:
+    ticker: str | None
+    score:  float
+    source: str      # "hv_alert" | "chat" | "tv_chart"
+    raw:    str
+    ts:     float
+
+
+_HV_RE = re.compile(
+    r'(?P<bull>🟢|HIGH\s+VOLUME\s+BULLISH)|(?P<bear>🔴|HIGH\s+VOLUME\s+BEARISH)',
+    re.IGNORECASE,
+)
+_CHAT_RE = re.compile(
+    r'^\[?\d{1,2}:\d{2}\s*[AP]M\]?'
+    r'(?P<user>[^:]{2,60})'
+    r':\s*(?P<body>.+)$',
+    re.IGNORECASE,
+)
+_TV_TREND_RE    = re.compile(r'TREND\s*:\s*(?P<trend>LONG|SHORT)', re.IGNORECASE)
+_TV_STRATEGY_RE = re.compile(r'STRATEGY\s*:\s*(?P<strat>BULLISH|BEARISH)', re.IGNORECASE)
+
+_CHAT_SKIP = frozenset({"HOD", "LOD", "PDT", "ATH", "AM", "PM", "EST", "ETF",
+                        "IPO", "HALT", "SEC", "FDA", "CEO", "BULL", "BEAR"})
+
+_BULLISH_KW = {
+    "breakout": 1.0, "breaking out": 1.0, "ripping": 1.0, "mooning": 1.0,
+    "red to green": 0.9, "new high": 0.9, "bounce": 0.7, "bouncing": 0.7,
+    "hod": 0.8, "green": 0.6, "buying": 0.6, "long": 0.7, "bullish": 1.0,
+    "calls": 0.8, "holding": 0.4, "support": 0.4, "running": 0.7,
+    "flat to green": 0.8, "red to flat": 0.5, "loading": 0.6, "strong": 0.5,
+}
+_BEARISH_KW = {
+    "breakdown": -1.0, "dumping": -1.0, "tanking": -1.0, "bearish": -1.0,
+    "all out": -0.7, "selling": -0.7, "loss": -0.6, "sold": -0.6,
+    "choppy": -0.5, "chop": -0.4, "red": -0.5, "down": -0.4,
+    "fading": -0.6, "rejected": -0.7, "failed": -0.6, "stopped": -0.5,
+    "short": -0.8, "puts": -0.8, "dump": -1.0, "lod": -0.8, "weak": -0.5,
+}
+_EMOJI_SCORES = {
+    "🚀": 1.0, "📈": 0.9, "🟢": 0.6, "🔥": 0.7, "💃": 0.5, "🙌": 0.5,
+    "📉": -0.9, "🔴": -0.6, "💀": -0.7, "😱": -0.5,
+}
+# Sorted longest-first so multi-word phrases match before their component words.
+_KW_SORTED = sorted({**_BULLISH_KW, **_BEARISH_KW}.items(), key=lambda kv: -len(kv[0]))
+
+
+class _TvState:
+    def __init__(self):
+        self.pending_trend  = None
+        self.pending_ticker = None
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -153,6 +211,72 @@ def parse_alert_line(line: str) -> tuple[str, str, dict] | tuple[None, None, dic
     return None, None, {}
 
 
+def _first_valid_ticker(text: str) -> str | None:
+    for tok in text.split():
+        alpha = re.sub(r"[^A-Za-z]", "", tok).upper()
+        if 2 <= len(alpha) <= 5 and alpha not in _CHAT_SKIP and is_valid_ticker(alpha):
+            return alpha
+    return None
+
+
+def _score_text(body: str, original_line: str) -> float:
+    body_l  = body.lower()
+    raw_sum = 0.0
+    for phrase, val in _KW_SORTED:
+        if phrase in body_l:
+            raw_sum += val
+            body_l   = body_l.replace(phrase, " ")   # consume so sub-words can't re-match
+    for emoji, val in _EMOJI_SCORES.items():
+        if emoji in original_line:
+            raw_sum += val
+    return max(-1.0, min(1.0, raw_sum / 3.0))
+
+
+def parse_market_signal(line: str) -> tuple[str | None, float, str]:
+    m = _HV_RE.search(line)
+    if not m:
+        return None, 0.0, ""
+    score = 1.0 if m.group("bull") else -1.0
+    return "SPY", score, ""
+
+
+def parse_chat_sentiment(line: str) -> tuple[str | None, float, str]:
+    m = _CHAT_RE.match(line)
+    if not m:
+        return None, 0.0, ""
+    body = m.group("body")
+    if ">>>>>" in body or "bb live alert" in body.lower():
+        return None, 0.0, ""
+    ticker = _first_valid_ticker(body)
+    score  = _score_text(body, line)
+    if abs(score) < 0.15:
+        return None, 0.0, ""
+    return ticker, score, body.strip()
+
+
+def _update_tv_state(line: str, tv_state: "_TvState",
+                     new_sentiment: list, seen: dict, t0: float) -> None:
+    """Pair TREND + STRATEGY chart labels across consecutive OCR lines into a
+    tv_chart sentiment event. The ticker comes from the chart header line that
+    precedes the labels. Cross-scan dedupe is gated on the STRATEGY line's
+    signature so a chart visible across polls only fires once."""
+    tkr = _first_valid_ticker(line)
+    if tkr:
+        tv_state.pending_ticker = tkr
+    if _TV_TREND_RE.search(line):
+        tv_state.pending_trend = True
+        return
+    sm = _TV_STRATEGY_RE.search(line)
+    if sm and tv_state.pending_trend is not None:
+        sig = _signature(line)
+        if sig not in seen:
+            seen[sig] = t0
+            score = 1.0 if sm.group("strat").upper() == "BULLISH" else -1.0
+            new_sentiment.append(
+                SentimentEvent(tv_state.pending_ticker, score, "tv_chart", line.strip(), t0))
+        tv_state.pending_trend = None
+
+
 def _signature(line: str) -> str:
     """Stable de-dupe key: collapse to lower-case alphanumerics so OCR jitter in
     spacing/punctuation doesn't make the same on-screen alert look 'new'. The
@@ -195,7 +319,7 @@ def _run_ocr(cmd: list[str]) -> tuple[list[str], bool]:
         print("[discord] OCR timed out", flush=True)
         return [], False
     if out.returncode != 0:
-        lines = [l for l in (out.stderr or "").strip().splitlines() if l.strip()]
+        lines = [ln for ln in (out.stderr or "").strip().splitlines() if ln.strip()]
         if not lines:
             detail = str(out.returncode)
         elif len(lines) <= 2:
@@ -207,12 +331,14 @@ def _run_ocr(cmd: list[str]) -> tuple[list[str], bool]:
     return [ln for ln in out.stdout.splitlines() if ln.strip()], True
 
 
-def _post_ingest(alerts: list[dict]) -> None:
+def _post_ingest(alerts: list[dict], sentiment: list) -> None:
     """POST this poll's newly-captured alerts (and an implicit heartbeat) to the
     dashboard. Sent every poll even when empty so the dashboard knows the source
-    is alive. Each alert drives the mention system + the live feed downstream."""
+    is alive. Each alert drives the mention system + the live feed downstream.
+    sentiment carries SentimentEvent records (market/chat/chart direction)."""
     try:
-        body = json.dumps({"alerts": alerts}).encode()
+        body = json.dumps({"alerts": alerts,
+                           "sentiment": [asdict(e) for e in sentiment]}).encode()
         req  = urllib.request.Request(
             f"{DASHBOARD_URL}/api/discord/ingest",
             data=body,
@@ -320,22 +446,45 @@ def main() -> None:
 
         fail_streak = 0
         new_alerts: list[dict] = []
+        new_sentiment: list[SentimentEvent] = []
+        tv_state = _TvState()   # resets each scan
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
         for line in lines:
-            ticker, kind, meta = parse_alert_line(line)
-            if not ticker:
-                continue
             sig = _signature(line)
-            if sig in seen:
+            ticker, kind, meta = parse_alert_line(line)
+            if ticker:
+                if sig in seen:
+                    continue
+                seen[sig] = t0
+                tv_state.pending_ticker = ticker
+                # A squeeze breakout is a strong catalyst → ask the dashboard to
+                # fire the burst toast immediately (simulate a mention burst).
+                alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze", **meta}
+                if primed:
+                    new_alerts.append(alert)
+                else:
+                    first_frame.setdefault(ticker, alert)
                 continue
-            seen[sig] = t0
-            # A squeeze breakout is a strong catalyst → ask the dashboard to fire
-            # the burst toast immediately (simulate a mention burst).
-            alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze", **meta}
-            if primed:
-                new_alerts.append(alert)
-            else:
-                first_frame.setdefault(ticker, alert)
+
+            # Non-alert line: try the three sentiment parsers.
+            m_ticker, m_score, _ = parse_market_signal(line)
+            if m_score != 0.0:
+                if sig in seen:
+                    continue
+                seen[sig] = t0
+                new_sentiment.append(
+                    SentimentEvent(m_ticker, m_score, "hv_alert", line.strip(), t0))
+                continue
+
+            _update_tv_state(line, tv_state, new_sentiment, seen, t0)
+
+            c_ticker, c_score, c_raw = parse_chat_sentiment(line)
+            if c_score != 0.0:
+                if sig in seen:
+                    continue
+                seen[sig] = t0
+                new_sentiment.append(
+                    SentimentEvent(c_ticker, c_score, "chat", c_raw, t0))
         if not primed:
             primed = True
             new_alerts = list(first_frame.values())
@@ -343,7 +492,7 @@ def main() -> None:
                   "watching for new alerts…", flush=True)
         # POST every poll (even with no new alerts) — it doubles as a heartbeat
         # so the dashboard can show the source is alive on a quiet market.
-        _post_ingest(new_alerts)
+        _post_ingest(new_alerts, new_sentiment)
         elapsed = time.time() - t0
         time.sleep(max(0.0, poll_sec - elapsed))
 
