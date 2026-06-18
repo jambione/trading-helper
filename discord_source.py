@@ -156,29 +156,52 @@ _SCANNER_SCORES = {
     "volume":   0.60,
     "spike":    0.55,
 }
+_SCANNER_DEFAULT = 0.60   # used only when a strict row appears before any header
+
+# A genuine scanner table row is "TICKER $price ±pct%" and NOTHING else — a
+# leading ticker, a price-like number, then a signed percentage. Requiring both
+# a price AND a percent is what rejects the chat/alert noise (e.g. "BB LIVE
+# Alerts", ">>>>> 1 Minute High Price = 41.83", "Set alerts below key levels"):
+# none of those carry a "$price ±pct%" tail, so none can be misread as tickers.
+_SCANNER_ROW_RE = re.compile(
+    r'^\s*([A-Z]{2,5})\s+\$?\d[\d,]*\.?\d*\s+[+\-]?\d[\d.]*\s*%')
+
+# Lines that close the scanner table: an alert arrow or a "[H:MM AM]user:" chat
+# prefix means we've scrolled past the Market Update image into other messages.
+_SCANNER_BOUNDARY_RE = re.compile(r'>>+|^\[?\d{1,2}:\d{2}\s*[AP]M\]?', re.IGNORECASE)
 
 
 class _ScannerState:
     def __init__(self):
         self.active    = False
-        self.col_score = 0.65   # default when no column header has been matched yet
+        self.col_score = None   # set from a matched column header; None = none yet
 
 
 def _update_scanner_state(line: str, scanner_state: "_ScannerState",
                           new_sentiment: list, seen: dict, t0: float) -> bool:
     """Detect Market Update scanner tables and emit per-ticker scanner sentiment.
 
-    Called for every non-alert OCR line. Returns True when the line was
-    consumed by the scanner so the caller can skip other parsers.
+    Strict by design: a line is only emitted as a scanner ticker when the table
+    is active AND the line matches the "TICKER $price ±pct%" row shape exactly.
+    Alert/chat boundary lines close the table. Returns True when the line was
+    consumed by the scanner so the caller can skip the other parsers.
     """
     if _MARKET_UPDATE_RE.search(line):
         scanner_state.active    = True
-        scanner_state.col_score = 0.65
+        scanner_state.col_score = None
         return True
 
     if not scanner_state.active:
         return False
 
+    # Hit a non-scanner message → the table has ended. Close it and let the
+    # other parsers (chat) have this line.
+    if _SCANNER_BOUNDARY_RE.search(line):
+        scanner_state.active    = False
+        scanner_state.col_score = None
+        return False
+
+    # Column header → remember the strength for the rows that follow.
     cm = _SCANNER_COL_RE.search(line)
     if cm:
         for grp, score in _SCANNER_SCORES.items():
@@ -187,8 +210,11 @@ def _update_scanner_state(line: str, scanner_state: "_ScannerState",
                 break
         return True
 
-    tkr = _first_valid_ticker(line)
-    if not tkr:
+    rm = _SCANNER_ROW_RE.match(line)
+    if not rm:
+        return False
+    tkr = rm.group(1)
+    if not is_valid_ticker(tkr) or tkr in _CHAT_SKIP:
         return False
 
     sig = _signature(line)
@@ -196,8 +222,9 @@ def _update_scanner_state(line: str, scanner_state: "_ScannerState",
         return True
     seen[sig] = t0
 
+    score = scanner_state.col_score if scanner_state.col_score is not None else _SCANNER_DEFAULT
     new_sentiment.append(
-        SentimentEvent(tkr, scanner_state.col_score, "scanner", line.strip()[:80], t0))
+        SentimentEvent(tkr, score, "scanner", line.strip()[:80], t0))
     return True
 
 
@@ -519,7 +546,6 @@ def main() -> None:
         fail_streak = 0
         new_alerts: list[dict] = []
         new_sentiment: list[SentimentEvent] = []
-        tv_state      = _TvState()       # resets each scan
         scanner_state = _ScannerState()  # resets each scan
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
         for line in lines:
@@ -529,7 +555,6 @@ def main() -> None:
                 if sig in seen:
                     continue
                 seen[sig] = t0
-                tv_state.pending_ticker = ticker
                 # A squeeze breakout is a strong catalyst → ask the dashboard to
                 # fire the burst toast immediately (simulate a mention burst).
                 alert = {"ticker": ticker, "line": line, "burst": kind == "squeeze", **meta}
@@ -539,18 +564,9 @@ def main() -> None:
                     first_frame.setdefault(ticker, alert)
                 continue
 
-            # Non-alert line: try sentiment parsers in order.
-            m_ticker, m_score, _ = parse_market_signal(line)
-            if m_score != 0.0:
-                if sig in seen:
-                    continue
-                seen[sig] = t0
-                new_sentiment.append(
-                    SentimentEvent(m_ticker, m_score, "hv_alert", line.strip(), t0))
-                continue
-
-            _update_tv_state(line, tv_state, new_sentiment, seen, t0)
-
+            # Non-alert line: sentiment comes only from Market Update scanner
+            # tables and human chat (HV SPY direction + TV chart labels are
+            # intentionally not surfaced — too noisy / not per-ticker actionable).
             if _update_scanner_state(line, scanner_state, new_sentiment, seen, t0):
                 continue
 

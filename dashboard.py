@@ -287,6 +287,20 @@ def _ticker_sentiment(key) -> dict:
     }
 
 
+def _ranked_sentiment(limit: int = 12) -> list[dict]:
+    """All real tickers with recent sentiment, sorted strongest-first.
+    Drives the dashboard's Sentiment column. Must hold STATE.lock."""
+    ranked = []
+    for key in list(STATE.sentiment_events.keys()):
+        if not key:               # skip the None (general-market) bucket
+            continue
+        s = _ticker_sentiment(key)
+        if s["count"] > 0:
+            ranked.append({"ticker": key, "score": s["score"], "count": s["count"]})
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    return ranked[:limit]
+
+
 # ── Web Push ──────────────────────────────────────────────────────────────────
 
 def _load_push_subscriptions() -> list:
@@ -967,10 +981,7 @@ def _snapshot() -> dict:
                            and (now_ts - STATE.discord_last_ts) <= _DISCORD_STALE_SEC,
                 "last_ts": STATE.discord_last_ts,
                 "alerts":  list(STATE.discord_alerts),
-                "sentiment_feed": [
-                    {**e, "ts_str": e["ts"][:5]}
-                    for e in STATE.sentiment_feed
-                ],
+                "sentiment_ranked": _ranked_sentiment(),
                 "count":   len(tickers),
             },
             "tradingview": {

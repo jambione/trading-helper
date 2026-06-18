@@ -980,39 +980,31 @@ body.mobile .icon-btn {
 
 .alert-col--sentiment .alert-col-header { color: #a78bfa; }
 
-.tx-sent-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px; }
+/* Ranked sentiment rows: ticker on the left, color-coded score on the right.
+   Whole row is clickable → fires a burst alert for that ticker. */
+.tx-sent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.tx-sent-row:hover        { background: rgba(167, 139, 250, 0.12); }
+.tx-sent-row--firing      { background: rgba(167, 139, 250, 0.28); }
 
 .tx-sent-score {
   font-weight: 700;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 .tx-sent-score--bull { color: #34d399; }
 .tx-sent-score--bear { color: #f87171; }
 .tx-sent-score--flat { color: var(--text-muted); }
 
-.tx-sent-ticker { color: #a78bfa; font-weight: 600; }
-.tx-sent-ticker--mkt { color: var(--text-muted); font-style: italic; font-weight: 400; }
-
-.tx-sent-source {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  opacity: 0.7;
-}
-
-.tx-sent-raw {
-  font-size: 10px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-basis: 100%;
-  margin-top: 1px;
-  opacity: 0.75;
-}
+.tx-sent-ticker { color: #a78bfa; font-weight: 700; }
 
 /* Market sentiment pill (panel header) */
 .tx-header-right {

@@ -1,34 +1,28 @@
 /**
  * transcription.js — Discord Alerts panel component
  *
- * Renders three columns: regular alerts, squeeze alerts, and a sentiment feed.
- * The panel header also shows a live market-direction sentiment pill.
+ * Renders three columns: regular alerts, squeeze alerts, and a ranked sentiment
+ * list. Sentiment tickers come only from human chat + Market Update scanner
+ * tables; clicking one fires a burst alert.
  */
 
-import { subscribe } from './store.js?v=57';
+import { subscribe } from './store.js?v=58';
+import { api }       from './api.js?v=58';
 
 let _regularBox    = null;
 let _squeezeBox    = null;
 let _sentimentBox  = null;
-let _marketSentEl  = null;
-let _known = new Set();
 
 let _lastRegularCount  = -1;
 let _lastRegularKey    = '';
 let _lastSqueezeCount  = -1;
 let _lastSqueezeKey    = '';
-let _lastSentCount     = -1;
 let _lastSentKey       = '';
 
 export function init(panelEl) {
   _regularBox   = panelEl.querySelector('[data-regular-box]');
   _squeezeBox   = panelEl.querySelector('[data-squeeze-box]');
   _sentimentBox = panelEl.querySelector('[data-sentiment-box]');
-  _marketSentEl = panelEl.querySelector('[data-market-sent]');
-
-  subscribe('tickers', rows => {
-    _known = new Set(rows.map(r => r.ticker));
-  });
 
   subscribe('discord', d => {
     const all     = d.alerts ?? [];
@@ -36,88 +30,55 @@ export function init(panelEl) {
     const squeeze = all.filter(a =>  a.burst);
     _renderFeed(_regularBox, regular, 'regular');
     _renderFeed(_squeezeBox, squeeze, 'squeeze');
-    _renderSentimentFeed(d.sentiment_feed ?? []);
-  });
-
-  subscribe('market_sentiment', ms => {
-    _renderMarketSentPill(ms);
+    _renderSentimentRanked(d.sentiment_ranked ?? []);
   });
 }
 
-// ── Market sentiment pill ──────────────────────────────────
+// ── Ranked sentiment column ────────────────────────────────
+// A short list of tickers ordered strongest-bullish first. Click a row to fire
+// a burst alert for that ticker (same seam as clicking a watchlist ticker).
 
-function _renderMarketSentPill(ms) {
-  if (!_marketSentEl) return;
-  const count = ms?.count ?? 0;
-  const score = ms?.score ?? 0;
-  if (count === 0) {
-    _marketSentEl.hidden = true;
-    return;
-  }
-  const abs   = Math.abs(score);
-  const dir   = score >= 0.1 ? 'bull' : score <= -0.1 ? 'bear' : 'flat';
-  const arrow = dir === 'bull' ? '▲' : dir === 'bear' ? '▼' : '—';
-  const label = `${arrow} SPY ${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
-
-  _marketSentEl.hidden    = false;
-  _marketSentEl.textContent = label;
-  _marketSentEl.className = `market-sent-pill market-sent-pill--${dir}`;
-  _marketSentEl.title     = `${count} signal${count !== 1 ? 's' : ''} in last 30 min`;
-}
-
-// ── Sentiment feed column ──────────────────────────────────
-
-function _renderSentimentFeed(events) {
+function _renderSentimentRanked(ranked) {
   if (!_sentimentBox) return;
 
-  if (!events.length) {
-    if (_lastSentCount !== 0) {
+  if (!ranked.length) {
+    if (_lastSentKey !== '∅') {
       _sentimentBox.innerHTML = '<span class="tx-placeholder">No signals…</span>';
-      _lastSentCount = 0;
-      _lastSentKey   = '';
+      _lastSentKey = '∅';
     }
     return;
   }
 
-  const tail    = events[events.length - 1];
-  const tailKey = `${tail.ts}|${tail.ticker}`;
+  // Cheap change-detect: ticker+score signature so we only re-render on change.
+  const key = ranked.map(r => `${r.ticker}:${r.score}`).join('|');
+  if (key === _lastSentKey) return;
+  _lastSentKey = key;
 
-  if (tailKey === _lastSentKey && events.length === _lastSentCount) return;
-
-  const atBottom = _sentimentBox.scrollHeight - _sentimentBox.scrollTop - _sentimentBox.clientHeight < 60;
-
-  if (events.length > _lastSentCount && _lastSentCount > 0) {
-    _sentimentBox.insertAdjacentHTML('beforeend', events.slice(_lastSentCount).map(_renderSentEvent).join(''));
-  } else {
-    _sentimentBox.innerHTML = events.map(_renderSentEvent).join('');
-  }
-
-  _lastSentCount = events.length;
-  _lastSentKey   = tailKey;
-
-  if (atBottom) _sentimentBox.scrollTop = _sentimentBox.scrollHeight;
+  _sentimentBox.innerHTML = ranked.map(_renderSentRow).join('');
+  _sentimentBox.querySelectorAll('[data-sent-ticker]').forEach(el => {
+    el.addEventListener('click', () => _fireBurst(el, el.dataset.sentTicker));
+  });
 }
 
-function _renderSentEvent(e) {
-  const ts      = `<span class="tx-ts">${_esc(e.ts_str || '')}</span>`;
-  const score   = e.score ?? 0;
-  const dir     = score >= 0.05 ? 'bull' : score <= -0.05 ? 'bear' : 'flat';
+function _renderSentRow(r) {
+  const score    = r.score ?? 0;
+  const dir      = score >= 0.05 ? 'bull' : score <= -0.05 ? 'bear' : 'flat';
   const scoreTxt = `${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
-  const scoreSp = `<span class="tx-sent-score tx-sent-score--${dir}">${scoreTxt}</span>`;
-  const tkr     = e.ticker
-    ? `<strong class="tx-sent-ticker">${_esc(e.ticker)}</strong>`
-    : `<span class="tx-sent-ticker tx-sent-ticker--mkt">mkt</span>`;
-  const src     = `<span class="tx-sent-source">${_esc(_shortSource(e.source || ''))}</span>`;
-  const raw     = e.raw ? `<span class="tx-sent-raw">${_esc(e.raw.slice(0, 45))}</span>` : '';
-  return `<div class="tx-line tx-sent-row">${ts}${tkr}${scoreSp}${src}${raw}</div>`;
+  const tkr      = `<strong class="tx-sent-ticker">${_esc(r.ticker)}</strong>`;
+  const scoreSp  = `<span class="tx-sent-score tx-sent-score--${dir}">${scoreTxt}</span>`;
+  return `<div class="tx-line tx-sent-row" data-sent-ticker="${_esc(r.ticker)}" `
+       + `title="Click to fire a burst alert for ${_esc(r.ticker)}">${tkr}${scoreSp}</div>`;
 }
 
-function _shortSource(src) {
-  if (src === 'hv_alert') return 'HV';
-  if (src === 'tv_chart') return 'TV';
-  if (src === 'scanner')  return 'SCN';
-  if (src === 'chat')     return '';
-  return src.slice(0, 4).toUpperCase();
+async function _fireBurst(el, ticker) {
+  el.classList.add('tx-sent-row--firing');
+  try {
+    await api.burstAlert(ticker);
+  } catch (err) {
+    console.error('[sentiment] burst alert failed', err);
+  } finally {
+    setTimeout(() => el.classList.remove('tx-sent-row--firing'), 800);
+  }
 }
 
 // ── Alert feed columns (regular + squeeze) ─────────────────

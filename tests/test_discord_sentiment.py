@@ -225,6 +225,38 @@ def test_snapshot_ticker_sentiment_only_when_present(monkeypatch):
     assert "sentiment" not in rows["AAPL"]
 
 
+# ── Section D2 — Ranked sentiment ────────────────────────────────────────────
+
+def test_ranked_sentiment_sorted_desc():
+    d.ingest_discord_alerts([], [
+        _ev("AAA", 0.3, "chat"),
+        _ev("BBB", 0.9, "chat"),
+        _ev("CCC", -0.4, "scanner"),
+    ])
+    with d.STATE.lock:
+        ranked = d._ranked_sentiment()
+    assert [r["ticker"] for r in ranked] == ["BBB", "AAA", "CCC"]
+    assert ranked[0]["score"] > ranked[1]["score"] > ranked[2]["score"]
+
+
+def test_ranked_sentiment_excludes_market_none_bucket():
+    d.ingest_discord_alerts([], [_ev(None, -0.8, "chat"), _ev("EHGO", 0.5, "chat")])
+    with d.STATE.lock:
+        ranked = d._ranked_sentiment()
+    assert [r["ticker"] for r in ranked] == ["EHGO"]
+
+
+def test_ranked_sentiment_in_snapshot(monkeypatch):
+    monkeypatch.setattr(d, "load_tickers", lambda: [])
+    monkeypatch.setattr(d, "load_news", lambda: [])
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
+    d.ingest_discord_alerts([], [_ev("EHGO", 0.8, "chat")])
+
+    snap = d._snapshot()
+    assert "sentiment_ranked" in snap["discord"]
+    assert snap["discord"]["sentiment_ranked"][0]["ticker"] == "EHGO"
+
+
 # ── Section E — High sentiment boosts mentions ────────────────────────────────
 
 def test_high_chat_sentiment_adds_mention():
@@ -264,7 +296,14 @@ def test_market_sentiment_no_ticker_no_mention():
     assert total == 0
 
 
-# ── Section F — Scanner table detection ──────────────────────────────────────
+# ── Section F — Scanner table detection (strict) ─────────────────────────────
+# Strict contract: scanner only emits a ticker when the table is active AND the
+# line is exactly "TICKER $price ±pct%". Lines with words, alert arrows, or chat
+# timestamps are rejected (and arrows/chat close the table) — this is what kills
+# the BB/HIGH/KEY/FOR misread noise.
+
+_ROW = "EHGO $4.72 +18.2%"   # a canonical strict scanner row
+
 
 def _run_scanner(lines: list[str]) -> list[ds.SentimentEvent]:
     """Drive _update_scanner_state across a list of OCR lines, return events."""
@@ -278,7 +317,8 @@ def _run_scanner(lines: list[str]) -> list[ds.SentimentEvent]:
 
 
 def test_scanner_inactive_by_default():
-    events = _run_scanner(["EHGO 4.72 +18%"])
+    # Even a perfectly-shaped row emits nothing until Market Update activates it.
+    events = _run_scanner([_ROW])
     assert events == []
 
 
@@ -289,35 +329,58 @@ def test_market_update_activates_scanner():
     assert scanner_state.active
 
 
-def test_scanner_emits_ticker_after_sentinel():
-    events = _run_scanner(["Market Update", "EHGO 4.72"])
+def test_scanner_emits_strict_row_after_sentinel():
+    events = _run_scanner(["Market Update", _ROW])
     assert len(events) == 1
     assert events[0].ticker == "EHGO"
     assert events[0].source == "scanner"
 
 
+def test_scanner_rejects_chat_alert_noise():
+    # The exact lines from the live noise screenshot must produce NO events.
+    events = _run_scanner([
+        "Market Update",
+        "BB LIVE Alerts",
+        ">>>>> 1 Minute High Price = 41.83",
+        "Set alerts below key levels to",
+        "Trendy Tickers: CRVO - CQ",
+    ])
+    assert events == []
+
+
+def test_scanner_boundary_closes_table():
+    # An alert arrow line ends the table; a strict row AFTER it is not captured.
+    events = _run_scanner(["Market Update", ">>>>> done", _ROW])
+    assert events == []
+
+
 def test_scanner_momentum_col_score():
-    events = _run_scanner(["Market Update", "Momentum+HOD", "EHGO 4.72"])
+    events = _run_scanner(["Market Update", "Momentum+HOD", _ROW])
     assert len(events) == 1
     assert events[0].score == 0.80
 
 
 def test_scanner_gap_up_col_score():
-    events = _run_scanner(["Market Update", "Gap Up", "EHGO 4.72"])
+    events = _run_scanner(["Market Update", "Gap Up", _ROW])
     assert len(events) == 1
     assert events[0].score == 0.75
 
 
 def test_scanner_volume_breakout_col_score():
-    events = _run_scanner(["Market Update", "Volume Breakout", "EHGO 4.72"])
+    events = _run_scanner(["Market Update", "Volume Breakout", _ROW])
     assert len(events) == 1
     assert events[0].score == 0.60
 
 
 def test_scanner_price_spike_col_score():
-    events = _run_scanner(["Market Update", "Price Spike", "EHGO 4.72"])
+    events = _run_scanner(["Market Update", "Price Spike", _ROW])
     assert len(events) == 1
     assert events[0].score == 0.55
+
+
+def test_scanner_default_score_without_header():
+    events = _run_scanner(["Market Update", _ROW])
+    assert events[0].score == ds._SCANNER_DEFAULT
 
 
 def test_scanner_dedup_same_line():
@@ -326,8 +389,8 @@ def test_scanner_dedup_same_line():
     events: list = []
     seen: dict = {}
     t0 = time.time()
-    ds._update_scanner_state("EHGO 4.72", scanner_state, events, seen, t0)
-    ds._update_scanner_state("EHGO 4.72", scanner_state, events, seen, t0)
+    ds._update_scanner_state(_ROW, scanner_state, events, seen, t0)
+    ds._update_scanner_state(_ROW, scanner_state, events, seen, t0)
     assert len(events) == 1
 
 
