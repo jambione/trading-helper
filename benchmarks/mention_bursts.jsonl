@@ -85,3 +85,4 @@
 {"ticker": "SPY", "time": "2026-06-13T23:05:17Z", "unix": 1781391917.4, "price": 741.75, "window_count": 2}
 {"ticker": "DBGI", "time": "2026-06-13T23:05:54Z", "unix": 1781391954.9, "price": null, "window_count": 2}
 {"ticker": "TNMG", "time": "2026-06-13T23:05:54Z", "unix": 1781391954.9, "price": 0.6499, "window_count": 2}
+{"ticker": "ATPC", "time": "2026-06-17T20:39:39Z", "unix": 1781728779.9, "price": 2.73, "window_count": 2}

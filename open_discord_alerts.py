@@ -24,9 +24,9 @@ import pyautogui
 
 pyautogui.FAILSAFE = False
 
-# -daytrading-alerts (the BB LIVE alert feed the OCR source reads).
+# alerts + general messages channel (alerts + sentiment source).
 SERVER_ID          = "822849028395892788"
-DEFAULT_CHANNEL_ID = "1221585227214884938"
+DEFAULT_CHANNEL_ID = "839203064014831646"
 
 
 def get_discord_window():
@@ -100,7 +100,7 @@ def dock_right():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--channel-id', default=DEFAULT_CHANNEL_ID,
-                        help=f'Discord channel id to open (default: {DEFAULT_CHANNEL_ID} = -daytrading-alerts)')
+                        help=f'Discord channel id to open (default: {DEFAULT_CHANNEL_ID})')
     parser.add_argument('--no-dock', dest='dock', action='store_false', default=True,
                         help="Open the channel but don't move/resize the window")
     args = parser.parse_args()
