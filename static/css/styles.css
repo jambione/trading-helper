@@ -973,6 +973,79 @@ body.mobile .icon-btn {
 
 .tx-ticker--squeeze { color: #f59e0b; }
 
+/* ── Sentiment column ──────────────────────────────────────── */
+.alert-col--squeeze { border-right: 1px solid var(--border); }
+
+.alert-col--sentiment { flex: 0.9; }
+
+.alert-col--sentiment .alert-col-header { color: #a78bfa; }
+
+.tx-sent-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px; }
+
+.tx-sent-score {
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.tx-sent-score--bull { color: #34d399; }
+.tx-sent-score--bear { color: #f87171; }
+.tx-sent-score--flat { color: var(--text-muted); }
+
+.tx-sent-ticker { color: #a78bfa; font-weight: 600; }
+.tx-sent-ticker--mkt { color: var(--text-muted); font-style: italic; font-weight: 400; }
+
+.tx-sent-source {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.tx-sent-raw {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-basis: 100%;
+  margin-top: 1px;
+  opacity: 0.75;
+}
+
+/* Market sentiment pill (panel header) */
+.tx-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.market-sent-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.market-sent-pill--bull {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.25);
+}
+.market-sent-pill--bear {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.25);
+}
+.market-sent-pill--flat {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
 .tx-levels {
   display: flex;
   flex-wrap: wrap;

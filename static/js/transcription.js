@@ -1,25 +1,30 @@
 /**
  * transcription.js — Discord Alerts panel component
  *
- * Renders two columns: regular alerts (left) and squeeze alerts (right).
- * Regular alerts show alert type, price, and volume.
- * Squeeze alerts show the ticker and price-level chips.
+ * Renders three columns: regular alerts, squeeze alerts, and a sentiment feed.
+ * The panel header also shows a live market-direction sentiment pill.
  */
 
-import { subscribe } from './store.js?v=56';
+import { subscribe } from './store.js?v=57';
 
-let _regularBox = null;
-let _squeezeBox = null;
+let _regularBox    = null;
+let _squeezeBox    = null;
+let _sentimentBox  = null;
+let _marketSentEl  = null;
 let _known = new Set();
 
-let _lastRegularCount = -1;
-let _lastRegularKey   = '';
-let _lastSqueezeCount = -1;
-let _lastSqueezeKey   = '';
+let _lastRegularCount  = -1;
+let _lastRegularKey    = '';
+let _lastSqueezeCount  = -1;
+let _lastSqueezeKey    = '';
+let _lastSentCount     = -1;
+let _lastSentKey       = '';
 
 export function init(panelEl) {
-  _regularBox = panelEl.querySelector('[data-regular-box]');
-  _squeezeBox = panelEl.querySelector('[data-squeeze-box]');
+  _regularBox   = panelEl.querySelector('[data-regular-box]');
+  _squeezeBox   = panelEl.querySelector('[data-squeeze-box]');
+  _sentimentBox = panelEl.querySelector('[data-sentiment-box]');
+  _marketSentEl = panelEl.querySelector('[data-market-sent]');
 
   subscribe('tickers', rows => {
     _known = new Set(rows.map(r => r.ticker));
@@ -29,20 +34,102 @@ export function init(panelEl) {
     const all     = d.alerts ?? [];
     const regular = all.filter(a => !a.burst);
     const squeeze = all.filter(a =>  a.burst);
-    _renderFeed(_regularBox, regular, false);
-    _renderFeed(_squeezeBox, squeeze, true);
+    _renderFeed(_regularBox, regular, 'regular');
+    _renderFeed(_squeezeBox, squeeze, 'squeeze');
+    _renderSentimentFeed(d.sentiment_feed ?? []);
   });
 
+  subscribe('market_sentiment', ms => {
+    _renderMarketSentPill(ms);
+  });
 }
 
-// ── Rendering ──────────────────────────────────────────────────
+// ── Market sentiment pill ──────────────────────────────────
 
-function _renderFeed(box, alerts, isSqueeze) {
+function _renderMarketSentPill(ms) {
+  if (!_marketSentEl) return;
+  const count = ms?.count ?? 0;
+  const score = ms?.score ?? 0;
+  if (count === 0) {
+    _marketSentEl.hidden = true;
+    return;
+  }
+  const abs   = Math.abs(score);
+  const dir   = score >= 0.1 ? 'bull' : score <= -0.1 ? 'bear' : 'flat';
+  const arrow = dir === 'bull' ? '▲' : dir === 'bear' ? '▼' : '—';
+  const label = `${arrow} SPY ${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
+
+  _marketSentEl.hidden    = false;
+  _marketSentEl.textContent = label;
+  _marketSentEl.className = `market-sent-pill market-sent-pill--${dir}`;
+  _marketSentEl.title     = `${count} signal${count !== 1 ? 's' : ''} in last 30 min`;
+}
+
+// ── Sentiment feed column ──────────────────────────────────
+
+function _renderSentimentFeed(events) {
+  if (!_sentimentBox) return;
+
+  if (!events.length) {
+    if (_lastSentCount !== 0) {
+      _sentimentBox.innerHTML = '<span class="tx-placeholder">No signals…</span>';
+      _lastSentCount = 0;
+      _lastSentKey   = '';
+    }
+    return;
+  }
+
+  const tail    = events[events.length - 1];
+  const tailKey = `${tail.ts}|${tail.ticker}`;
+
+  if (tailKey === _lastSentKey && events.length === _lastSentCount) return;
+
+  const atBottom = _sentimentBox.scrollHeight - _sentimentBox.scrollTop - _sentimentBox.clientHeight < 60;
+
+  if (events.length > _lastSentCount && _lastSentCount > 0) {
+    _sentimentBox.insertAdjacentHTML('beforeend', events.slice(_lastSentCount).map(_renderSentEvent).join(''));
+  } else {
+    _sentimentBox.innerHTML = events.map(_renderSentEvent).join('');
+  }
+
+  _lastSentCount = events.length;
+  _lastSentKey   = tailKey;
+
+  if (atBottom) _sentimentBox.scrollTop = _sentimentBox.scrollHeight;
+}
+
+function _renderSentEvent(e) {
+  const ts      = `<span class="tx-ts">${_esc(e.ts_str || '')}</span>`;
+  const score   = e.score ?? 0;
+  const dir     = score >= 0.05 ? 'bull' : score <= -0.05 ? 'bear' : 'flat';
+  const scoreTxt = `${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
+  const scoreSp = `<span class="tx-sent-score tx-sent-score--${dir}">${scoreTxt}</span>`;
+  const tkr     = e.ticker
+    ? `<strong class="tx-sent-ticker">${_esc(e.ticker)}</strong>`
+    : `<span class="tx-sent-ticker tx-sent-ticker--mkt">mkt</span>`;
+  const src     = `<span class="tx-sent-source">${_esc(_shortSource(e.source || ''))}</span>`;
+  const raw     = e.raw ? `<span class="tx-sent-raw">${_esc(e.raw.slice(0, 45))}</span>` : '';
+  return `<div class="tx-line tx-sent-row">${ts}${tkr}${scoreSp}${src}${raw}</div>`;
+}
+
+function _shortSource(src) {
+  if (src === 'hv_alert') return 'HV';
+  if (src === 'tv_chart') return 'TV';
+  if (src === 'chat')     return '';
+  return src.slice(0, 4).toUpperCase();
+}
+
+// ── Alert feed columns (regular + squeeze) ─────────────────
+
+function _renderFeed(box, alerts, type) {
   if (!box) return;
+
+  const isSqueeze   = type === 'squeeze';
+  const lastCount   = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
+  const lastKey     = isSqueeze ? _lastSqueezeKey   : _lastRegularKey;
 
   if (!alerts.length) {
     const placeholder = isSqueeze ? 'No squeezes…' : 'Waiting…';
-    const lastCount   = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
     if (lastCount !== 0) {
       box.innerHTML = `<span class="tx-placeholder">${placeholder}</span>`;
       if (isSqueeze) { _lastSqueezeCount = 0; _lastSqueezeKey = ''; }
@@ -53,8 +140,6 @@ function _renderFeed(box, alerts, isSqueeze) {
 
   const tail    = alerts[alerts.length - 1];
   const tailKey = `${tail.ts}|${tail.ticker}`;
-  const lastCount = isSqueeze ? _lastSqueezeCount : _lastRegularCount;
-  const lastKey   = isSqueeze ? _lastSqueezeKey   : _lastRegularKey;
 
   if (tailKey === lastKey && alerts.length === lastCount) return;
 

@@ -967,6 +967,10 @@ def _snapshot() -> dict:
                            and (now_ts - STATE.discord_last_ts) <= _DISCORD_STALE_SEC,
                 "last_ts": STATE.discord_last_ts,
                 "alerts":  list(STATE.discord_alerts),
+                "sentiment_feed": [
+                    {**e, "ts_str": e["ts"][:5]}
+                    for e in STATE.sentiment_feed
+                ],
                 "count":   len(tickers),
             },
             "tradingview": {

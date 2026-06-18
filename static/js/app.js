@@ -5,21 +5,21 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=56';
-import { subscribe, set }                        from './store.js?v=56';
-import { init as initTranscription }             from './transcription.js?v=56';
-import { init as initTickers }                   from './tickers.js?v=56';
-import { init as initTradingView }               from './tradingview.js?v=56';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=56';
-import { init as initResizer }                   from './resizer.js?v=56';
-import * as controls                             from './controls.js?v=56';
-import * as notifications                        from './notifications.js?v=56';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=56';
-import { init as initNews }                      from './news.js?v=56';
-import { init as initLeaderboard }               from './leaderboard.js?v=56';
-import { init as initEngine }                    from './engine.js?v=56';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=56';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=56';
+import { connect, on, api }                      from './api.js?v=57';
+import { subscribe, set }                        from './store.js?v=57';
+import { init as initTranscription }             from './transcription.js?v=57';
+import { init as initTickers }                   from './tickers.js?v=57';
+import { init as initTradingView }               from './tradingview.js?v=57';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=57';
+import { init as initResizer }                   from './resizer.js?v=57';
+import * as controls                             from './controls.js?v=57';
+import * as notifications                        from './notifications.js?v=57';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=57';
+import { init as initNews }                      from './news.js?v=57';
+import { init as initLeaderboard }               from './leaderboard.js?v=57';
+import { init as initEngine }                    from './engine.js?v=57';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=57';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=57';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 
 // Build badge — shows which code the dashboard and the signal engine are each
@@ -180,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=56');
+    const m = await import('./admin.js?v=57');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -230,11 +230,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ── WebSocket → store (snapshot ingest) ──────────────────────
   on('message', snap => {
     const update = {};
-    if (snap.tickers      !== undefined) update.tickers      = snap.tickers;
-    if (snap.config)                     update.config       = snap.config;
-    if (snap.discord)                    update.discord      = snap.discord;
-    if (snap.news         !== undefined) update.news         = snap.news;
-    if (snap.engine)                     update.engine       = snap.engine;
+    if (snap.tickers           !== undefined) update.tickers          = snap.tickers;
+    if (snap.config)                          update.config            = snap.config;
+    if (snap.discord)                         update.discord           = snap.discord;
+    if (snap.market_sentiment  !== undefined) update.market_sentiment  = snap.market_sentiment;
+    if (snap.news              !== undefined) update.news              = snap.news;
+    if (snap.engine)                          update.engine            = snap.engine;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);
   });

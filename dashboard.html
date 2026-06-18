@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=56" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=57" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -170,9 +170,12 @@
             <section data-panel="transcript" class="panel panel-transcript">
                 <div class="panel-header">
                     <span class="panel-title">Discord Alerts</span>
-                    <div class="tx-status-row">
-                        <div data-tx-dot class="tx-dot"></div>
-                        <span data-tx-label class="tx-label">OFFLINE</span>
+                    <div class="tx-header-right">
+                        <span data-market-sent class="market-sent-pill market-sent-pill--flat" hidden></span>
+                        <div class="tx-status-row">
+                            <div data-tx-dot class="tx-dot"></div>
+                            <span data-tx-label class="tx-label">OFFLINE</span>
+                        </div>
                     </div>
                 </div>
 
@@ -195,6 +198,12 @@
                         <div class="alert-col-header">Squeeze</div>
                         <div data-squeeze-box class="transcript-box">
                             <span class="tx-placeholder">No squeezes…</span>
+                        </div>
+                    </div>
+                    <div class="alert-col alert-col--sentiment">
+                        <div class="alert-col-header">Sentiment</div>
+                        <div data-sentiment-box class="transcript-box">
+                            <span class="tx-placeholder">No signals…</span>
                         </div>
                     </div>
                 </div>
@@ -630,7 +639,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=56"></script>
+        <script type="module" src="/static/js/app.js?v=57"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
