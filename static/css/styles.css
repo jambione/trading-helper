@@ -1357,6 +1357,31 @@ body.mobile .icon-btn {
   animation: burst-pulse 1s ease-in-out 3;
 }
 
+/* Confluence: 2+ independent sources agree on this ticker — the strong-setup
+   flag. Gold so it reads as "premium", distinct from mention (amber) / burst
+   (red). Position-independent: keyed on ticker identity, not screen layout. */
+.confluence-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  background: rgba(250, 204, 21, 0.16);
+  color: #fcd34d;
+  border: 1px solid rgba(250, 204, 21, 0.34);
+  cursor: help;
+}
+.row-confluent {
+  border-left: 3px solid #facc15 !important;
+  padding-left: 6px !important;
+  background: rgba(250, 204, 21, 0.08);
+}
+
 /* Feedback badge on Settings button */
 .feedback-badge {
   display: inline-block;

@@ -296,6 +296,69 @@ def test_market_sentiment_no_ticker_no_mention():
     assert total == 0
 
 
+# ── Section E2 — Confluence (multi-source corroboration) ─────────────────────
+
+def test_confluence_sources_single_source_is_one():
+    d.ingest_discord_alerts([], [_ev("EHGO", 0.5, "chat")])
+    with d.STATE.lock:
+        assert d._confluence_sources("EHGO") == ["chat"]
+
+
+def test_confluence_scanner_plus_chat():
+    d.ingest_discord_alerts([], [_ev("EHGO", 0.5, "chat"), _ev("EHGO", 0.6, "scanner")])
+    with d.STATE.lock:
+        srcs = d._confluence_sources("EHGO")
+    assert set(srcs) == {"chat", "scanner"}
+
+
+def test_confluence_chat_plus_alert():
+    d.ingest_discord_alerts(
+        [{"ticker": "EHGO", "line": "EHGO spike >>>>> 1.23"}],
+        [_ev("EHGO", 0.5, "chat")],
+    )
+    with d.STATE.lock:
+        srcs = d._confluence_sources("EHGO")
+    assert set(srcs) == {"chat", "alert"}
+
+
+def test_confluence_squeeze_source():
+    d.ingest_discord_alerts(
+        [{"ticker": "EHGO", "line": "EHGO close over 5", "burst": True}],
+        [_ev("EHGO", 0.5, "scanner")],
+    )
+    with d.STATE.lock:
+        srcs = d._confluence_sources("EHGO")
+    assert set(srcs) == {"scanner", "squeeze"}
+
+
+def test_confluence_boosts_mention_below_threshold():
+    # Scanner (0.60) + chat (0.50): neither clears the 0.7 bar alone, but their
+    # confluence must still boost the mention count.
+    d.ingest_discord_alerts([], [_ev("WXYZ", 0.6, "scanner"), _ev("WXYZ", 0.5, "chat")])
+    with d.STATE.lock:
+        assert d.STATE.mention_daily.get("WXYZ", 0) >= 1
+
+
+def test_no_confluence_no_boost_below_threshold():
+    # A single weak scanner hit (0.60, one source) must NOT boost mentions.
+    d.ingest_discord_alerts([], [_ev("WXYZ", 0.6, "scanner")])
+    with d.STATE.lock:
+        assert d.STATE.mention_daily.get("WXYZ", 0) == 0
+
+
+def test_confluence_in_snapshot(monkeypatch):
+    monkeypatch.setattr(d, "load_tickers", lambda: ["EHGO"])
+    monkeypatch.setattr(d, "load_news", lambda: [])
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
+    monkeypatch.setattr(d, "refresh_ticker_timestamps", lambda t: None)
+    d.ingest_discord_alerts([], [_ev("EHGO", 0.5, "chat"), _ev("EHGO", 0.6, "scanner")])
+
+    snap = d._snapshot()
+    row = next(r for r in snap["tickers"] if r["ticker"] == "EHGO")
+    assert row["confluence"]["count"] == 2
+    assert set(row["confluence"]["sources"]) == {"chat", "scanner"}
+
+
 # ── Section F — Scanner table detection (strict) ─────────────────────────────
 # Strict contract: scanner only emits a ticker when the table is active AND the
 # line is exactly "TICKER $price ±pct%". Lines with words, alert arrows, or chat

@@ -6,8 +6,8 @@
  * tables; clicking one fires a burst alert.
  */
 
-import { subscribe } from './store.js?v=58';
-import { api }       from './api.js?v=58';
+import { subscribe } from './store.js?v=59';
+import { api }       from './api.js?v=59';
 
 let _regularBox    = null;
 let _squeezeBox    = null;

@@ -301,6 +301,33 @@ def _ranked_sentiment(limit: int = 12) -> list[dict]:
     return ranked[:limit]
 
 
+# ── Confluence ────────────────────────────────────────────────────────────────
+# A ticker corroborated by several INDEPENDENT producers — a Market Update
+# scanner row, human chat, a bot alert, a squeeze — is a far stronger setup than
+# any single source. We surface (and boost) that overlap. Mentions are NOT a
+# source here: they're downstream of the others, so counting them would be
+# circular.
+
+_CONFLUENCE_SENT_SOURCES = ("chat", "scanner")
+
+
+def _confluence_sources(ticker) -> list[str]:
+    """Distinct independent signal sources currently active for `ticker`
+    (subset of {"scanner","chat","alert","squeeze"}). Must hold STATE.lock."""
+    if not ticker:
+        return []
+    srcs = set()
+    _prune_sentiment(ticker)
+    for e in STATE.sentiment_events.get(ticker) or []:
+        s = e.get("source")
+        if s in _CONFLUENCE_SENT_SOURCES:
+            srcs.add(s)
+    for a in STATE.discord_alerts:
+        if a.get("ticker") == ticker:
+            srcs.add("squeeze" if a.get("burst") else "alert")
+    return sorted(srcs)
+
+
 # ── Web Push ──────────────────────────────────────────────────────────────────
 
 def _load_push_subscriptions() -> list:
@@ -640,11 +667,17 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
                 "source": rec["source"],
                 "raw":    rec["raw"][:80],
             })
-            # High-confidence ticker sentiment boosts mentions (drives burst detection).
-            # Skip hv_alert (SPY direction alerts fire every minute and would flood SPY).
-            if key and abs(score) >= 0.7 and rec["source"] != "hv_alert":
-                add_ticker_to_log(key)
-                _track_mention(key)
+            # Boost mentions (drives burst detection) when EITHER a single source
+            # is high-confidence (|score| ≥ 0.7) OR the ticker is corroborated by
+            # 2+ independent sources (e.g. a Market Update scanner row AND chat) —
+            # confluence is a strong setup even when no single score clears 0.7.
+            # Skip hv_alert (SPY direction fires every minute and would flood SPY).
+            if key and rec["source"] != "hv_alert":
+                strong    = abs(score) >= 0.7
+                confluent = len(_confluence_sources(key)) >= 2
+                if strong or confluent:
+                    add_ticker_to_log(key)
+                    _track_mention(key)
 
     with STATE.lock:
         STATE.discord_last_ts = time.time()
@@ -952,6 +985,9 @@ def _snapshot() -> dict:
             sent = _ticker_sentiment(t)
             if sent["count"] > 0:
                 d["sentiment"] = sent
+            conf = _confluence_sources(t)
+            if len(conf) >= 2:
+                d["confluence"] = {"sources": conf, "count": len(conf)}
             rows.append(d)
         market_sent = _ticker_sentiment(None)
         def _row_sort_key(r):

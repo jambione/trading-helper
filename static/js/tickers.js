@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=58';
-import { api } from './api.js?v=58';
+import { subscribe, selectTicker, get } from './store.js?v=59';
+import { api } from './api.js?v=59';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -268,7 +268,10 @@ async function _copyTicker(btn, ticker) {
 
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
-  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}${row.mention_burst ? ' row-burst' : ''}`;
+  const confluent = (row.confluence?.count ?? 0) >= 2;
+  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`
+              + `${row.mention_burst ? ' row-burst' : ''}`
+              + `${confluent ? ' row-confluent' : ''}`;
 
   // Update mention badge
   const tickerCell = el.querySelector('.cell-ticker');
@@ -286,6 +289,21 @@ function _updateRow(el, row) {
       badge.className   = `mention-badge${row.mention_burst ? ' mentions-burst' : ' mentions-active'}`;
     } else if (badge) {
       badge.remove();
+    }
+
+    // Confluence badge — keep it in sync (the mention-badge lives here too).
+    let cbadge = tickerCell.querySelector('.confluence-badge');
+    if (confluent) {
+      const names = (row.confluence.sources || []).map(s => _CONF_LABELS[s] || s).join(' + ');
+      if (!cbadge) {
+        cbadge = document.createElement('span');
+        cbadge.className = 'confluence-badge';
+        tickerCell.appendChild(cbadge);
+      }
+      cbadge.textContent = `⚡${row.confluence.count}`;
+      cbadge.title       = `Confluence: ${names}`;
+    } else if (cbadge) {
+      cbadge.remove();
     }
   }
 
@@ -452,6 +470,17 @@ function _signalBarHTML(row) {
   </div>`;
 }
 
+// Confluence = same ticker corroborated by 2+ independent producers (Market
+// Update scanner, chat, alert, squeeze). Position-independent — it keys on the
+// ticker text, not where anything sits on screen.
+const _CONF_LABELS = { scanner: 'Market Update', chat: 'Chat', alert: 'Alert', squeeze: 'Squeeze' };
+
+function _confluenceBadge(conf) {
+  if (!conf || (conf.count ?? 0) < 2) return '';
+  const names = (conf.sources || []).map(s => _CONF_LABELS[s] || s).join(' + ');
+  return `<span class="confluence-badge" title="Confluence: ${names}">⚡${conf.count}</span>`;
+}
+
 function _rowHTML(row) {
   const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
   const chgCls = _chgClass(row.pct_change ?? null);
@@ -465,6 +494,7 @@ function _rowHTML(row) {
     <div class="cell-ticker">
       ${row.ticker}
       ${mentionTxt ? `<span class="mention-badge${mentionCls}" title="${row.mention_count ?? 0} today">${mentionTxt}</span>` : ''}
+      ${_confluenceBadge(row.confluence)}
     </div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
