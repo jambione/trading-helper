@@ -156,17 +156,17 @@ def is_valid_ticker(sym: str) -> bool:
 def extract_tickers(text: str) -> dict[str, int]:
     """Return {ticker: count} for all valid NASDAQ/NYSE tickers found in text.
 
-    Company names (e.g. "apple", "nvidia") are expanded to their symbols before
-    scanning. Word-boundary matching prevents "intel" firing on "intelligence".
+    Company names (e.g. "apple", "nvidia") are replaced with their ticker symbols
+    before scanning so each mention is counted exactly once. Replacing rather than
+    appending prevents double-counting when the company name equals its own ticker
+    (e.g. "META", "NIO", "UBER").
     """
-    extra: list[str] = [
-        _COMPANY_NAMES[m.group(1).lower()] for m in _COMPANY_RE.finditer(text)
-    ]
-    if extra:
-        text = text + " " + " ".join(extra)
+    expanded = _COMPANY_RE.sub(
+        lambda m: _COMPANY_NAMES[m.group(1).lower()], text
+    )
 
     counts: dict[str, int] = {}
-    for m in _TICKER_RE.finditer(text):
+    for m in _TICKER_RE.finditer(expanded):
         t = m.group(1)
         if t in _VALID_TICKERS and t not in _TICKER_STOPWORDS:
             counts[t] = counts.get(t, 0) + 1

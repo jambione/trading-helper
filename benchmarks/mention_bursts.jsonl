@@ -86,3 +86,15 @@
 {"ticker": "DBGI", "time": "2026-06-13T23:05:54Z", "unix": 1781391954.9, "price": null, "window_count": 2}
 {"ticker": "TNMG", "time": "2026-06-13T23:05:54Z", "unix": 1781391954.9, "price": 0.6499, "window_count": 2}
 {"ticker": "ATPC", "time": "2026-06-17T20:39:39Z", "unix": 1781728779.9, "price": 2.73, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-06-18T00:43:53Z", "unix": 1781743433.5, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-06-18T00:43:53Z", "unix": 1781743433.5, "price": null, "window_count": 2}
+{"ticker": "TSLA", "time": "2026-06-18T00:45:07Z", "unix": 1781743507.6, "price": null, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-06-18T00:45:07Z", "unix": 1781743507.7, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-06-18T00:45:07Z", "unix": 1781743507.7, "price": null, "window_count": 2}
+{"ticker": "TSLA", "time": "2026-06-18T00:45:36Z", "unix": 1781743536.6, "price": null, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-06-18T00:47:13Z", "unix": 1781743633.2, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-06-18T00:47:13Z", "unix": 1781743633.2, "price": null, "window_count": 2}
+{"ticker": "TSLA", "time": "2026-06-18T00:47:13Z", "unix": 1781743633.2, "price": null, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-06-18T00:51:13Z", "unix": 1781743873.6, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-06-18T00:51:13Z", "unix": 1781743873.6, "price": null, "window_count": 2}
+{"ticker": "TSLA", "time": "2026-06-18T00:51:13Z", "unix": 1781743873.6, "price": null, "window_count": 2}
