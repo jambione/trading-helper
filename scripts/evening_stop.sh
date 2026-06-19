@@ -4,7 +4,7 @@
 #   1. Quit Discord (closes the alert window the OCR source reads)
 #   2. Kill the trading server (dashboard + engine + Discord OCR source + tunnel)
 
-REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
+REPO="/Users/jambimac/repo/trading-helper"
 BACKEND="http://localhost:8888"
 
 echo ""

@@ -9,7 +9,7 @@
 # Source of truth lives in the repo at scripts/shutdown.command; a copy sits on the
 # Desktop for double-click convenience.
 
-REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
+REPO="/Users/jambimac/repo/trading-helper"
 BACKEND="http://localhost:8888"
 
 cd "$REPO" || { echo "❌ Could not cd to $REPO"; echo "Press any key to close."; read -r -n1; exit 1; }
