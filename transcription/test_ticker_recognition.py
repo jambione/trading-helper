@@ -1,147 +1,86 @@
 #!/usr/bin/env python3
 """
-Test ticker recognition improvements.
+Tests for ticker extraction — company-name expansion, stopword filtering,
+and plain ALL-CAPS symbol recognition.
 
 Run with:
-  cd transcription
-  python test_ticker_recognition.py
+  venv/bin/python -m pytest transcription/test_ticker_recognition.py -q
 """
 
 import sys
 from pathlib import Path
 
-# Add parent dir to path so we can import the (ASR-free) ticker logic
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ticker_extract import normalize_transcript, extract_tickers
+from ticker_extract import extract_tickers
 
 
-def test_normalize_transcript():
-    """Test transcript normalization with various input formats."""
-    
-    test_cases = [
-        # (input, expected_contains)
-        ("E L P W", "ELPW"),
-        ("E L P W E L P W", "ELPW"),  # Repetition
-        ("E L P W E L P W E L P W", "ELPW"),  # Triple repetition
-        ("echo lima papa whiskey", "ELPW"),  # NATO phonetic
-        ("echo lima papa whiskey echo lima papa whiskey", "ELPW"),  # NATO repeated
-        ("E-L-P-W", "ELPW"),  # Hyphenated
-        ("E.L.P.W", "ELPW"),  # Dotted
-        ("E, L, P, W", "ELPW"),  # Comma-separated
-        ("AAPL", "AAPL"),  # Already a ticker
-        ("apple", "apple"),  # Company name (handled by extract_tickers, not normalize)
-    ]
-    
-    print("=" * 60)
-    print("NORMALIZE_TRANSCRIPT TESTS")
-    print("=" * 60)
-    
-    passed = 0
-    failed = 0
-    
-    for input_text, expected in test_cases:
-        result = normalize_transcript(input_text)
-        success = expected.upper() in result.upper()
-        status = "✓ PASS" if success else "✗ FAIL"
-        passed += success
-        failed += not success
-        
-        print(f"{status} | Input: {input_text!r:<45} → {result!r}")
-        if not success:
-            print(f"       Expected to contain: {expected!r}")
-    
-    print(f"\nNormalize Results: {passed} passed, {failed} failed")
-    return failed == 0
+def test_plain_symbol():
+    assert "AAPL" in extract_tickers("I will buy AAPL today")
 
 
-def test_extract_tickers():
-    """Test ticker extraction from normalized transcripts."""
-    
-    test_cases = [
-        # (normalized_text, expected_tickers_or_partial_match)
-        ("I will buy AAPL today", ["AAPL"]),
-        ("Sell ELPW at 50", ["ELPW"]),  # Your example case
-        ("ELPW repeated ELPW", ["ELPW"]),  # Should dedup
-        ("TSLA and NVDA breakout", ["TSLA", "NVDA"]),
-        ("sell the DIS and hold QQQ", ["DIS", "QQQ"]),
-        ("I want to buy apple stock", ["AAPL"]),  # Company name
-        ("Facebook and Netflix", ["META", "NFLX"]),  # Multiple company names
-        ("This IS NOT a ticker", []),  # Stop words filtered
-    ]
-    
-    print("\n" + "=" * 60)
-    print("EXTRACT_TICKERS TESTS")
-    print("=" * 60)
-    
-    passed = 0
-    failed = 0
-    
-    for text, expected in test_cases:
-        result = extract_tickers(text)
-        
-        # Check if we got all expected tickers
-        success = all(t in result for t in expected) and len(result) == len(expected)
-        status = "✓ PASS" if success else "✗ FAIL"
-        passed += success
-        failed += not success
-        
-        print(f"{status} | Text: {text!r:<40}")
-        print(f"       Expected: {expected}")
-        print(f"       Got:      {result}")
-    
-    print(f"\nExtract Results: {passed} passed, {failed} failed")
-    return failed == 0
+def test_multiple_symbols():
+    result = extract_tickers("TSLA and NVDA breakout")
+    assert "TSLA" in result and "NVDA" in result
 
 
-def test_end_to_end():
-    """Test the complete pipeline: normalize then extract."""
-    
-    test_cases = [
-        # (raw_transcript, expected_tickers)
-        ("buy E L P W at market", ["ELPW"]),
-        ("sell E L P W E L P W now", ["ELPW"]),
-        ("echo lima papa whiskey echo lima papa whiskey", ["ELPW"]),
-        ("buy AAPL sell TSLA", ["AAPL", "TSLA"]),
-        ("I like apple and tesla", ["AAPL", "TSLA"]),
-    ]
-    
-    print("\n" + "=" * 60)
-    print("END-TO-END TESTS (normalize → extract)")
-    print("=" * 60)
-    
-    passed = 0
-    failed = 0
-    
-    for raw, expected in test_cases:
-        normalized = normalize_transcript(raw)
-        result = extract_tickers(normalized)
-        
-        success = all(t in result for t in expected) and len(result) == len(expected)
-        status = "✓ PASS" if success else "✗ FAIL"
-        passed += success
-        failed += not success
-        
-        print(f"{status} | Raw: {raw!r}")
-        print(f"       Normalized: {normalized!r}")
-        print(f"       Expected: {expected}")
-        print(f"       Got:      {result}")
-    
-    print(f"\nEnd-to-End Results: {passed} passed, {failed} failed")
-    return failed == 0
+def test_company_name_expansion():
+    assert extract_tickers("I want to buy apple stock") == {"AAPL": 1}
+
+
+def test_multiple_company_names():
+    result = extract_tickers("Facebook and Netflix")
+    assert "META" in result and "NFLX" in result
+
+
+def test_stopwords_filtered():
+    result = extract_tickers("This IS NOT a ticker")
+    assert result == {}
+
+
+def test_dedup_counts_correctly():
+    result = extract_tickers("ELPW repeated ELPW")
+    assert result.get("ELPW", 0) == 2
+
+
+def test_sell_line():
+    result = extract_tickers("Sell ELPW at 50")
+    assert "ELPW" in result
+
+
+def test_mixed_case_company_and_symbol():
+    result = extract_tickers("buy AAPL sell TSLA")
+    assert "AAPL" in result and "TSLA" in result
+
+
+# ── Double-count regression tests ─────────────────────────────────────────────
+# Tickers whose lowercase matches a _COMPANY_NAMES key (META, NIO, UBER, etc.)
+# were previously counted twice: once by the ticker regex and once via the
+# company-name expansion that appended a duplicate to the text.
+
+def test_meta_ticker_not_double_counted():
+    assert extract_tickers("META earnings")["META"] == 1
+
+
+def test_nio_ticker_not_double_counted():
+    assert extract_tickers("NIO moving higher")["NIO"] == 1
+
+
+def test_uber_ticker_not_double_counted():
+    assert extract_tickers("UBER up today")["UBER"] == 1
+
+
+def test_company_name_and_ticker_both_in_text():
+    # "facebook" expands to META; "META" already there → should count 2, not 3.
+    result = extract_tickers("facebook and META reported earnings")
+    assert result.get("META", 0) == 2
+
+
+def test_company_name_only_counts_once():
+    # "facebook" alone → META exactly 1.
+    assert extract_tickers("facebook results") == {"META": 1}
 
 
 if __name__ == "__main__":
-    all_pass = True
-    
-    all_pass &= test_normalize_transcript()
-    all_pass &= test_extract_tickers()
-    all_pass &= test_end_to_end()
-    
-    print("\n" + "=" * 60)
-    if all_pass:
-        print("✓ All tests passed!")
-        sys.exit(0)
-    else:
-        print("✗ Some tests failed")
-        sys.exit(1)
+    import pytest
+    raise SystemExit(pytest.main([__file__, "-v"]))

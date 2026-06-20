@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # morning_start.sh
 # Automates the morning trading setup:
-#   1. Start backend server if not already running
-#   2. Open Discord → Stock Scanners & Alerts, click Join Voice + Watch Stream
-#   3. Start transcription via the dashboard API
+#   1. Start backend server if not already running (also launches the Discord OCR source)
+#   2. Open Discord → Stock Scanners & Alerts so the alert channel is on screen
+#   3. Verify the Discord OCR source is live via the dashboard API
 #
-# Audio: transcription uses ScreenCaptureKit (no BlackHole / Multi-Output Device needed).
+# Source: the ticker source is screen OCR of the Discord alert channel (discord_source.py,
+# auto-started by start_all.py). The Discord window must stay visible (not minimized).
 
 REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
 BACKEND="http://localhost:8888"
@@ -37,25 +38,24 @@ else
     done
 fi
 
-# ── 2. Open Discord → right channel, click Join Voice + Watch Stream ──────────
-echo "[2/3] Opening Discord → Stock Scanners & Alerts..."
-python3 "$REPO/click_join_voice.py" \
-    && echo "      ✓ Joined voice channel + Watch Stream." \
-    || echo "      ⚠ Could not auto-click — please join manually."
+# ── 2. Open Discord → -daytrading-alerts and dock right for OCR ───────────────
+echo "[2/3] Opening Discord → -daytrading-alerts (docked right)..."
+"$REPO/venv/bin/python" "$REPO/open_discord_alerts.py" \
+    && echo "      ✓ Discord alert channel docked right." \
+    || echo "      ⚠ Could not auto-open — open -daytrading-alerts and dock it right manually."
 
-# ── 3. Start transcription ────────────────────────────────────────────────────
-echo "[3/3] Starting transcription..."
+# ── 3. Verify the Discord OCR source is live ──────────────────────────────────
+echo "[3/3] Verifying Discord OCR source..."
 sleep 2
-RESPONSE=$(curl -s -X POST "$BACKEND/api/transcriber/start" 2>/dev/null)
+RESPONSE=$(curl -s "$BACKEND/api/discord/status" 2>/dev/null)
 
-# Python JSON can include a space after the colon ("running": true) or not
+# "running": true means discord_source.py is alive and sending heartbeats.
 if echo "$RESPONSE" | grep -qE '"running":\s*true'; then
-    echo "      ✓ Transcription started."
-elif echo "$RESPONSE" | grep -qE '"running":\s*false'; then
-    echo "      ⚠ Transcription did not start. Response: $RESPONSE"
+    echo "      ✓ Discord OCR source is live."
+elif [ -n "$RESPONSE" ]; then
+    echo "      ⚠ OCR source not live yet (it starts with the server). Response: $RESPONSE"
 else
     echo "      ✗ Could not reach backend at $BACKEND"
-    echo "      Response was: ${RESPONSE:-(empty)}"
 fi
 
 echo ""

@@ -4,11 +4,13 @@
 Both processes run together; Ctrl+C or either process exiting stops both.
 Uses venv when available, otherwise falls back to the system python3.
 """
+import json
 import os
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 VENV_BIN = os.path.join(ROOT, "venv", "bin")
@@ -20,14 +22,31 @@ if not os.path.isfile(VENV_PYTHON):
     VENV_PYTHON = shutil.which("python3") or sys.executable
 
 
+class _ProcExited(Exception):
+    """Raised internally when any managed subprocess exits, to break the wait loop."""
+
+
 def _stream(proc: subprocess.Popen, label: str) -> None:
-    assert proc.stdout
+    if proc.stdout is None:
+        raise RuntimeError(f"[{label}] subprocess stdout is None — cannot stream output")
+
     for raw in iter(proc.stdout.readline, b''):
         sys.stdout.write(f'{label} {raw.decode(errors="replace")}')
         sys.stdout.flush()
 
 
+def _load_cfg() -> dict:
+    try:
+        cfg_path = os.path.join(ROOT, 'config', 'bot_config.json')
+        with open(cfg_path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def main() -> None:
+    cfg = _load_cfg()
+
     utf8_env = {
         **os.environ,
         'PYTHONUTF8': '1',
@@ -45,8 +64,14 @@ def main() -> None:
     )
     threading.Thread(target=_stream, args=(dashboard, '[dashboard]'), daemon=True).start()
 
-    # ── Signal engine — give dashboard a moment to bind port 8888 ─────────────
-    time.sleep(3)
+    # ── Signal engine — wait for dashboard to accept connections ─────────────
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen("http://localhost:8888/api/meta", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.25)
     engine = subprocess.Popen(
         [VENV_PYTHON, 'signal_engine.py'],
         cwd=ROOT,
@@ -56,26 +81,43 @@ def main() -> None:
     )
     threading.Thread(target=_stream, args=(engine, '[engine]  '), daemon=True).start()
 
+    procs = {'dashboard': dashboard, 'engine': engine}
+
     print('Dashboard     ->  http://localhost:8888')
     print('Signal engine ->  running (logs prefixed [engine])')
-    print('Press Ctrl+C to stop both.\n')
+
+    # ── Discord OCR source — only launched when enabled in config ─────────────
+    if cfg.get('discord_ocr_enabled', False):
+        discord = subprocess.Popen(
+            [VENV_PYTHON, 'discord_source.py'],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=utf8_env,
+        )
+        threading.Thread(target=_stream, args=(discord, '[discord] '), daemon=True).start()
+        procs['discord'] = discord
+        print('Discord OCR   ->  running (logs prefixed [discord])')
+    else:
+        print('Discord OCR   ->  disabled (set discord_ocr_enabled: true in config/bot_config.json)')
+
+    print('Press Ctrl+C to stop all.\n')
 
     try:
         while True:
-            if dashboard.poll() is not None:
-                print(f'\n[dashboard] exited with code {dashboard.returncode}')
-                break
-            if engine.poll() is not None:
-                print(f'\n[engine] exited with code {engine.returncode}')
-                break
+            for name, proc in procs.items():
+                if proc.poll() is not None:
+                    print(f'\n[{name}] exited with code {proc.returncode}')
+                    raise _ProcExited
             threading.Event().wait(1)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, _ProcExited):
         print('\nStopping...')
     finally:
-        for proc in (engine, dashboard):
+        ordered = [p for n, p in procs.items() if n != 'dashboard'] + [dashboard]
+        for proc in ordered:
             if proc.poll() is None:
                 proc.terminate()
-        for proc in (engine, dashboard):
+        for proc in ordered:
             try:
                 proc.wait(timeout=5)
             except (KeyboardInterrupt, subprocess.TimeoutExpired):

@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -127,53 +127,38 @@ def _osascript(script: str) -> tuple[int, str]:
     return r.returncode, r.stdout.strip()
 
 
-# Resolve terminal-notifier once at import. None → fall back to osascript.
-_NOTIFIER = shutil.which("terminal-notifier")
+# BrasfieldNotifier.app listens here (see mac_notifier/notifier.swift). It posts
+# native banners via the modern UNUserNotificationCenter API — the only path that
+# works on macOS 26 (terminal-notifier/osascript use the removed NSUserNotification
+# API) — and runs the add-to-TV+WB workflow when a banner is clicked.
+NOTIFIER_PORT = 8890
 
 
 def _notify_mac(title: str, message: str, subtitle: str = "",
-                sound: str = "Glass", group: str = "", open_url: str = "",
-                execute: str = "") -> None:
+                ticker: str = "") -> None:
     """
-    Post a native macOS notification banner.
+    Post a native macOS notification banner via BrasfieldNotifier.app.
 
-    Prefers terminal-notifier (app-branded, coalesces by -group so repeat alerts
-    for one ticker replace each other). The click action is one of:
-      - execute  → run this shell command on click (-execute). Takes priority.
-      - open_url → open this URL on click (-open); falls back to the dashboard.
-    -execute and -open are mutually exclusive (one click action), so when
-    `execute` is set it wins. Falls back to `osascript display notification` if
-    terminal-notifier is not installed — note the fallback cannot run a command
-    on click, so it just shows the banner. Fire-and-forget — never raises.
+    Sends one line of JSON to the notifier on 127.0.0.1:NOTIFIER_PORT. When
+    `ticker` is set, clicking the banner fires the add-to-TradingView+Webull
+    workflow back on this agent (no browser tab opens). Fire-and-forget — never
+    raises; if the notifier isn't running the alert is simply skipped (the
+    terminal log line still prints at the call site).
     """
     if not _IS_MAC:
         print(f"  [DRY RUN] NOTIFY → {title}: {message}")
         return
+    payload = json.dumps({
+        "title":    title,
+        "body":     message,
+        "subtitle": subtitle,
+        "ticker":   ticker,
+    }) + "\n"
     try:
-        if _NOTIFIER:
-            cmd = [
-                _NOTIFIER,
-                "-title",    title,
-                "-message",  message,
-                "-sound",    sound,
-            ]
-            if execute:
-                cmd += ["-execute", execute]
-            else:
-                cmd += ["-open", open_url or DASHBOARD_URL]
-            if subtitle:
-                cmd += ["-subtitle", subtitle]
-            if group:
-                cmd += ["-group", group]
-            subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        else:
-            sub = f'subtitle "{subtitle}" ' if subtitle else ""
-            _osascript(
-                f'display notification "{message}" with title "{title}" '
-                f'{sub}sound name "{sound}"'
-            )
-    except Exception as e:
-        print(f"  ⚠️  notify failed: {e}")
+        with socket.create_connection(("127.0.0.1", NOTIFIER_PORT), timeout=2) as s:
+            s.sendall(payload.encode())
+    except OSError as e:
+        print(f"  ⚠️  notifier not reachable on :{NOTIFIER_PORT} ({e}) — banner skipped")
 
 
 def _app_is_running(app_name: str) -> bool:
@@ -339,11 +324,13 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     _pag.press("escape")
     time.sleep(0.2)
 
-    # Click the centre of the content area to ensure the chart has keyboard focus.
-    # We can't query the window rect without extra deps, so use the screen centre
-    # as a reasonable approximation (works for full-screen or maximised browsers).
+    # Click the chart canvas to ensure it has keyboard focus.
+    # Layout: Brave = left 45% of screen; TV right panel (watchlist) ≈ right 45%
+    # of the Brave window. Clicking at 15% of screen width (~1/3 of Brave's width)
+    # lands solidly on the chart canvas and avoids the right panel.
     sw, sh = _pag.size()
-    _pag.click(sw // 2, sh // 2)
+    _pag.click(int(sw * 0.15), sh // 2)
+    time.sleep(0.2)
     time.sleep(0.3)
 
     # Type ticker — TradingView opens symbol search on first keypress
@@ -500,18 +487,6 @@ def _fetch_state() -> dict | None:
         return None
 
 
-def _add_command(ticker: str) -> str:
-    """
-    Shell command for a toast's -execute action: curl the agent's own /add
-    endpoint so clicking the toast adds the ticker to Webull + TradingView.
-    Runs locally against this agent (PORT) — fire-and-forget, output discarded.
-    """
-    return (
-        f'curl -s "http://localhost:{PORT}/add?ticker={ticker}&mode=both" '
-        f'>/dev/null 2>&1'
-    )
-
-
 def _alert_listener():
     """
     Polls the dashboard every POLL_INTERVAL seconds.
@@ -529,7 +504,8 @@ def _alert_listener():
             for row in state.get("tickers", []):
                 sym    = row.get("ticker", "")
                 burst  = row.get("mention_burst", False)
-                status = row.get("status", "")
+                sp     = row.get("signal_proximity") or {}
+                status = sp.get("status", "")
 
                 prev_burst  = _prev_bursts.get(sym)
                 prev_status = _prev_statuses.get(sym)
@@ -541,23 +517,18 @@ def _alert_listener():
                         f"🔥 {sym}  burst",
                         f"{count}x mentions — click to add to TV + WB",
                         subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
-                        sound="Ping",
-                        group=f"burst-{sym}",
-                        # Click the toast → add this ticker to TradingView + Webull
-                        execute=_add_command(sym),
+                        ticker=sym,
                     )
                     if AUTO_ADD:
                         _enqueue(sym)
 
-                if status == "BUY" and prev_status is not None and prev_status != "BUY":
+                if status == "buy_zone" and prev_status is not None and prev_status != "buy_zone":
                     print(f"  📈 BUY signal: {sym}")
                     price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
                     _notify_mac(
                         f"📈 BUY  {sym}",
-                        f"{price}click to add to TV + WB",
-                        sound="Glass",
-                        group=f"buy-{sym}",
-                        execute=_add_command(sym),
+                        f"{price}signal aligning — click to add to TV + WB",
+                        ticker=sym,
                     )
                     if AUTO_ADD:
                         _enqueue(sym)
@@ -599,7 +570,7 @@ class AgentHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/add":
-            # Triggered by a toast click (terminal-notifier -execute → curl).
+            # Manual add: curl http://localhost:8889/add?ticker=NVDA&mode=both
             qs     = parse_qs(parsed.query)
             ticker = (qs.get("ticker", [""])[0]).strip().upper()
             mode   = (qs.get("mode",   ["both"])[0]).strip().lower()
@@ -639,11 +610,18 @@ class AgentHandler(BaseHTTPRequestHandler):
 
         ticker = data.get("ticker", "").strip().upper()
 
-        if path in ("/add-wb", "/add-tv"):
+        if path in ("/add", "/add-wb", "/add-tv"):
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
-            mode = "wb" if path == "/add-wb" else "tv"
+            if path == "/add-wb":
+                mode = "wb"
+            elif path == "/add-tv":
+                mode = "tv"
+            else:
+                mode = data.get("mode", "both").strip().lower()
+                if mode not in ("wb", "tv", "both"):
+                    mode = "both"
             _enqueue(ticker, mode)
             self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
         else:
@@ -667,22 +645,21 @@ PORT = 8889
 
 if __name__ == "__main__":
     # --test-toast: fire a sample burst through the real notify path, then exit.
-    # If nothing pops on screen, check System Settings → Notifications →
-    # terminal-notifier (alert style must be Banners/Alerts, not None).
+    # Requires BrasfieldNotifier.app running (startup.command launches it; or run
+    # `open BrasfieldNotifier.app`). If no banner pops, check System Settings →
+    # Notifications → Brasfield Trading: Allow on, Alert Style Banners/Alerts,
+    # and "Summarize notifications" OFF (Scheduled Summary diverts banners to
+    # Notification Center).
     if "--test-toast" in sys.argv:
-        print("🔔 Firing test burst notification via _notify_mac …")
-        print("   (the agent must be running for the click to reach /add)")
+        print("🔔 Firing test burst notification via BrasfieldNotifier …")
+        print("   (the agent must be running for a click to reach /add)")
         _notify_mac(
             "🔥 TSLA  burst",
             "7x mentions — click to add to TV + WB",
             subtitle="$240.50",
-            sound="Ping",
-            group="burst-TSLA",
-            execute=_add_command("TSLA"),
+            ticker="TSLA",
         )
-        print(f"   notifier: {'terminal-notifier' if _NOTIFIER else 'osascript fallback'}")
-        print("   If no banner appeared, it's a macOS alert-style/Focus setting,")
-        print("   not the code — the notification still lands in Notification Center.")
+        print(f"   sent to notifier on 127.0.0.1:{NOTIFIER_PORT}")
         sys.exit(0)
 
     print(f"\n{'='*56}")

@@ -77,6 +77,7 @@ __version__ = "1.7"
 import json
 import os
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,6 +97,7 @@ from signals import (
 
 # ── Import Alpaca trader module (optional — activated by TRADER_MODE) ─────────
 import alpaca_trader
+import trade_guard
 import version
 
 # ── Import Finnhub WebSocket stream ───────────────────────────────────────────
@@ -116,6 +118,11 @@ from finnhub_stream import register_trade_callback
 from realtime_bars import RealtimeBarAggregator
 
 # ── Load signal_engine.env ────────────────────────────────────────────────────
+# Keys loaded FROM THE FILE (not the shell) are tracked so a dashboard-requested
+# restart can drop them from os.environ before re-exec — otherwise the inherited
+# environment would shadow the freshly edited file ("env always wins").
+_ENV_FILE_KEYS: list = []
+
 def _load_env_file(path: Path):
     """
     Parse KEY=VALUE lines from an env file and inject into os.environ.
@@ -131,14 +138,24 @@ def _load_env_file(path: Path):
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            value = value.strip()
+            # Strip trailing inline comments ("KEY=value  # note") — secret
+            # allowlist pragmas live on the value line and must not pollute it.
+            value = value.split(" #", 1)[0].strip()
             if key and key not in os.environ:
                 os.environ[key] = value
                 loaded.append(key)
     if loaded:
+        _ENV_FILE_KEYS.extend(loaded)
         print(f"[ENV] Loaded {len(loaded)} setting(s) from signal_engine.env")
 
 _load_env_file(_HERE / "signal_engine.env")
+
+# Touched by the dashboard's "Restart Engine" button (POST /api/engine/restart).
+# The main loop notices the flag, closes positions cleanly is NOT attempted —
+# positions survive via the startup adoption/reconcile — and re-execs itself so
+# the freshly edited signal_engine.env takes effect.
+RESTART_FLAG = _HERE / "engine_restart.flag"
+RESTART_FLAG.unlink(missing_ok=True)   # stale flag from a previous run
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -264,9 +281,62 @@ REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
 # may close it — guards against per-second buy/sell flip-flop on the forming bar.
 THREE_IND_MIN_HOLD = int(os.getenv("THREE_IND_MIN_HOLD", "30"))
 
-# Strategy parameters (defaults from the module; exit mode overridable).
-THREE_IND_PARAMS = three_ind.params(
-    exit_mode=os.getenv("THREE_IND_EXIT_MODE", "any").lower(),
+# Require a mention burst (is_hot) before a 3-indicator BUY may fire.
+# The 2026-06-12 A/B benchmarks (benchmarks/ab_bench_*.csv) showed the
+# indicator entry has NO standalone edge on the alert-pool microcaps — every
+# config lost money. The catalyst is the candidate edge; the indicators time
+# it. Pinned compare tickers are exempt (they exist for TV validation).
+THREE_IND_REQUIRE_HOT = os.getenv("THREE_IND_REQUIRE_HOT", "0") in ("1", "true", "yes")
+
+# Strategy parameters. Every key in strategy_three_indicator.DEFAULT_PARAMS can
+# be overridden from the environment as THREE_IND_<PARAM> (upper-cased), e.g.
+#   THREE_IND_CM_RSI_BUY_MAX=35  THREE_IND_MACD_SEP_MULT=1.2
+# so the live engine can be synced to the exact settings on the TradingView chart.
+def _three_ind_env_params() -> dict:
+    overrides = {"exit_mode": os.getenv("THREE_IND_EXIT_MODE", "any").lower()}
+    for key, default in three_ind.DEFAULT_PARAMS.items():
+        if key == "exit_mode":
+            continue
+        raw = os.getenv(f"THREE_IND_{key.upper()}")
+        if raw is None:
+            continue
+        try:
+            if isinstance(default, int):
+                overrides[key] = int(float(raw))
+            elif isinstance(default, float):
+                overrides[key] = float(raw)
+            else:
+                overrides[key] = raw
+            print(f"[CFG] 3ind param override: {key} = {overrides[key]}")
+        except ValueError:
+            print(f"[CFG] Ignoring invalid THREE_IND_{key.upper()}={raw!r}")
+    return overrides
+
+THREE_IND_PARAMS = three_ind.params(**_three_ind_env_params())
+
+# ── Pinned compare tickers ────────────────────────────────────────────────────
+# Comma-separated symbols that are tracked from startup, never expire, and are
+# evaluated on the forming bar every second — for side-by-side validation of
+# the 3-indicator port against the live TradingView chart.
+COMPARE_TICKERS = [s.strip().upper() for s in os.getenv("COMPARE_TICKERS", "").split(",")
+                   if s.strip()]
+
+# ── Trade guard (risk layer) ──────────────────────────────────────────────────
+# DAILY_LOSS_LIMIT    — $ of realized loss in one ET day that halts new buys (0 = off)
+# MAX_TRADES_PER_DAY  — cap on round-trips per ET day (0 = off)
+# PDT_PROTECT         — warn | block | off : pattern-day-trader protection for
+#                       margin accounts under $25k (3 day-trades per 5 business days)
+# RECONCILE_INTERVAL_S — seconds between engine↔Alpaca position reconciliations
+DAILY_LOSS_LIMIT     = float(os.getenv("DAILY_LOSS_LIMIT",    "0"))
+MAX_TRADES_PER_DAY   = int(os.getenv("MAX_TRADES_PER_DAY",    "0"))
+PDT_PROTECT          = os.getenv("PDT_PROTECT", "warn").lower().strip()
+RECONCILE_INTERVAL_S = int(os.getenv("RECONCILE_INTERVAL_S",  "60"))
+
+# Account-level risk guard — gates every BUY, records every closed trade.
+GUARD = trade_guard.TradeGuard(
+    daily_loss_limit   = DAILY_LOSS_LIMIT,
+    max_trades_per_day = MAX_TRADES_PER_DAY,
+    pdt_protect        = PDT_PROTECT,
 )
 
 # ── Alert strategy (STRATEGY_MODE=alert) ──────────────────────────────────────
@@ -498,7 +568,28 @@ def _append_log(entry: dict):
     entries.append(entry)
     if len(entries) > LOG_MAX_ENTRIES:
         entries = entries[-LOG_MAX_ENTRIES:]
-    LOG_FILE.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=LOG_FILE.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2)
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
+        Path(tmp_path).replace(LOG_FILE)
+        tmp_path = None
+    except Exception as e:
+        print(f"  [engine] failed to write signal log: {e}", flush=True)
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 def log_buy(ticker: str, price: float, rsi: float, hist: float,
             priority: bool = False, mention_velocity: int = 0,
@@ -530,8 +621,20 @@ def log_buy(ticker: str, price: float, rsi: float, hist: float,
     print(f"\n  {'='*60}")
     print(f"  🟢 BUY  {ticker}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]{prio_tag}")
     print(f"  {'='*60}\n")
-    # Forward to Alpaca trader if enabled (off / paper / live)
-    alpaca_trader.buy(ticker=ticker, price=price, rsi=rsi, hist=hist)
+    # Forward to Alpaca trader if enabled (off / paper / live).
+    # Returns the order result so callers can schedule a fill-price rebase.
+    return alpaca_trader.buy(ticker=ticker, price=price, rsi=rsi, hist=hist)
+
+
+def track_fill(ts: "TickerState", order) -> None:
+    """
+    Schedule a fill-price check a few seconds after a real BUY order was
+    submitted, so TP/SL bands get rebased to the actual filled_avg_price.
+    No-op when the trader is off (order is None / not ok).
+    """
+    if isinstance(order, dict) and order.get("ok") and order.get("order_id"):
+        ts.pending_order_id = order["order_id"]
+        ts.fill_check_at    = time.time() + 3.0
 
 
 def log_sell(ticker: str, price: float, buy_price: float,
@@ -550,6 +653,9 @@ def log_sell(ticker: str, price: float, buy_price: float,
     print(f"\n  {'='*60}")
     print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  [{reason}]  hist={hist:+.4f}  [{ts}]")
     print(f"  {'='*60}\n")
+    # Feed the risk guard (daily P&L kill switch + PDT day-trade counting)
+    pnl_dollars = (price - buy_price) / buy_price * TRADE_AMOUNT if buy_price else 0.0
+    GUARD.record_close(pnl_dollars=pnl_dollars, buy_time_iso=buy_time)
     # Forward to Alpaca trader if enabled
     alpaca_trader.sell(ticker=ticker, price=price, rsi=rsi, hist=hist,
                        buy_price=buy_price)
@@ -567,11 +673,14 @@ class TickerState:
       • In a position — never expires, held until SELL fires
     """
 
-    def __init__(self, ticker: str, fetch_offset_s: float = 0):
+    def __init__(self, ticker: str, fetch_offset_s: float = 0, pinned: bool = False):
         self.ticker      = ticker
         self.fetch_offset_s = fetch_offset_s
         self.added_ts    = time.time()
         self.in_position = False
+        # Pinned compare tickers (COMPARE_TICKERS) never expire and are
+        # evaluated on the forming bar every second for TV side-by-side checks.
+        self.pinned      = pinned
 
         # Position data
         self.buy_price: Optional[float] = None
@@ -624,14 +733,21 @@ class TickerState:
         self.mention_velocity: int    = 0
         self.is_hot: bool             = False
         self.priority_buy: bool       = False
-        self._last_raw_count: int     = 0
+        self._last_raw_count: Optional[int] = None  # None = baseline not yet seeded
         self.went_hot: bool             = False  # True once this ticker was ever hot
         self.cooled_at: Optional[float] = None  # timestamp when it last lost hotness
         self.buy_time_ts: Optional[float] = None  # time.time() of last BUY (for min hold)
 
+        # Fill reconciliation — set when a BUY order is submitted; a few seconds
+        # later the engine looks the order up and rebases buy_price to the real
+        # filled_avg_price so TP/SL bands measure from the actual entry.
+        self.pending_order_id: Optional[str] = None
+        self.fill_check_at: Optional[float]  = None
+
         # Live indicator values — updated each bar fetch / proximity check
         self.last_atr:  Optional[float] = None
         self.last_vwap: Optional[float] = None
+        self._last_computed_price: Optional[float] = None  # guards live-recompute throttle
 
         # Dynamic exit levels — set at BUY time, cleared on sell
         self.dyn_stop:  Optional[float] = None  # price to trigger stop-loss
@@ -663,9 +779,13 @@ class TickerState:
 
     def time_left_s(self) -> float:
         """Seconds remaining before expiry (if no position)."""
+        if self.cooled_at is not None:
+            return max(0.0, EXPIRY_COOLED - (time.time() - self.cooled_at))
         return max(0.0, self.expiry_seconds() - self.age_s())
 
     def is_expired(self) -> bool:
+        if self.pinned:
+            return False   # pinned compare tickers never expire
         if self.in_position:
             return False   # never expire an open position
         # Hot ticker that cooled off — drop it after EXPIRY_COOLED seconds
@@ -887,6 +1007,7 @@ class TickerState:
 
         return {
             "strategy":       "three_indicator",
+            "pinned":         self.pinned,
             "price":          round(self.last_price, 4) if self.last_price else None,
             "proximity_pct":  pct,
             "status":         status,
@@ -1131,7 +1252,7 @@ class TickerState:
         if prev is not None:
             if hist > 0 and hist > prev:
                 # ── Histogram growing ──────────────────────────────────────────
-                self.hist_grow_count = min(self.hist_grow_count + 1, HIST_CONFIRM_BARS + 1)
+                self.hist_grow_count = min(self.hist_grow_count + 1, HIST_CONFIRM_BARS)
                 if self.hist_grow_count >= HIST_CONFIRM_BARS and not self.hist_growing:
                     print(f"  [{ticker_tag(self.ticker)}] 📈 histogram CONFIRMED GROWING"
                           f"  ({self.hist_grow_count} bars)  hist={hist:+.4f}"
@@ -1229,8 +1350,14 @@ class TickerState:
             if not filters_ok:
                 print(f"  [{ticker_tag(self.ticker)}] 🚫 BUY filtered — {', '.join(filter_reasons)}")
 
+        guard_ok = True
         if self.hist_growing and not self.in_position and rsi_ok_for_buy and price_ok and filters_ok and exposure_ok:
-            log_buy(
+            guard_ok, guard_why = GUARD.allow_buy()
+            if not guard_ok:
+                print(f"  [{ticker_tag(self.ticker)}] 🛡️ BUY blocked — {guard_why}")
+
+        if guard_ok and self.hist_growing and not self.in_position and rsi_ok_for_buy and price_ok and filters_ok and exposure_ok:
+            order = log_buy(
                 ticker           = self.ticker,
                 price            = price,
                 rsi              = rsi,
@@ -1246,6 +1373,7 @@ class TickerState:
             self.buy_time     = _now_iso()
             self.buy_time_ts  = time.time()
             self.priority_buy = self.is_hot   # record how we entered
+            track_fill(self, order)
 
             # Compute dynamic exit levels at the moment of entry
             self.dyn_stop = None
@@ -1335,6 +1463,38 @@ class SignalEngine:
                   f"min_hold={ALERT_MIN_HOLD}s, trader={TRADER_MODE})")
             print("[STRATEGY] the catalyst is the buy; exits are the validated trail+hard-stop recipe")
 
+        # Pin compare tickers from startup — never expire and get realtime
+        # forming-bar evaluation, for side-by-side validation against TradingView.
+        for i, sym in enumerate(COMPARE_TICKERS):
+            self.active[sym] = TickerState(sym, fetch_offset_s=i * BAR_STAGGER, pinned=True)
+            self._known_mentioned.add(sym)
+            if self.finnhub_key:
+                request_subscribe([sym])
+            print(f"  📌 PINNED {sym} — compare ticker (never expires, realtime eval)")
+
+        # Adopt open Alpaca positions left over from a previous run so the
+        # backstop exits (SL/TP/strategy sell) protect them across restarts.
+        # buy_time restarts at adoption — min-hold timers begin again, but the
+        # entry price is the true avg_entry_price so exit bands are correct.
+        self._last_reconcile: float = 0.0
+        if alpaca_trader.is_active():
+            for sym, pos in (alpaca_trader.get_open_positions() or {}).items():
+                ts = self.active.get(sym)
+                if ts is None:
+                    offset = self._stagger_index * BAR_STAGGER
+                    self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
+                    ts = TickerState(sym, fetch_offset_s=offset)
+                    self.active[sym] = ts
+                    self._known_mentioned.add(sym)
+                    if self.finnhub_key:
+                        request_subscribe([sym])
+                ts.in_position = True
+                ts.buy_price   = pos["avg_entry_price"]
+                ts.buy_time    = _now_iso()
+                ts.buy_time_ts = time.time()
+                print(f"  ♻️  ADOPTED {sym} — open Alpaca position "
+                      f"{pos['qty']} @ ${pos['avg_entry_price']:.4f} (exits armed)")
+
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
 
@@ -1405,12 +1565,16 @@ class SignalEngine:
             # If only a boolean is available we count each poll as 1 mention.
             if sym in self.active and row.get("mentioned"):
                 ts = self.active[sym]
-                raw_count = row.get("mentions") or row.get("mention_count")
+                raw_count = row.get("mentions") if row.get("mentions") is not None else row.get("mention_count")
                 if isinstance(raw_count, (int, float)) and raw_count > 0:
-                    delta = int(raw_count) - ts._last_raw_count
-                    ts._last_raw_count = int(raw_count)
-                    if delta > 0:
-                        ts.update_mention_velocity(delta)
+                    raw = int(raw_count)
+                    if ts._last_raw_count is None:
+                        ts._last_raw_count = raw  # seed baseline; don't fire on first sight
+                    else:
+                        delta = raw - ts._last_raw_count
+                        ts._last_raw_count = raw
+                        if delta > 0:
+                            ts.update_mention_velocity(delta)
                 else:
                     # Boolean "mentioned" only — each 5-second poll counts as 1
                     ts.update_mention_velocity(1)
@@ -1425,7 +1589,8 @@ class SignalEngine:
                 if sym in self.active:
                     continue  # already tracking
 
-                if len(self.active) >= MAX_ACTIVE_TICKERS:
+                # Pinned compare tickers don't count against the cap
+                if sum(1 for t in self.active.values() if not t.pinned) >= MAX_ACTIVE_TICKERS:
                     print(f"  [ENGINE] ⚠️  active list full ({MAX_ACTIVE_TICKERS}) "
                           f"— skipping {sym}")
                     continue
@@ -1468,7 +1633,7 @@ class SignalEngine:
         """
         now = time.time()
         dt  = datetime.now(timezone.utc)
-        current_minute   = int(now // 60)               # ever-increasing minute counter
+        current_minute   = int(now // 60)               # used for logging / last_bar_minute stamp
         secs_past_minute = dt.second + dt.microsecond / 1_000_000  # 0–59.999
 
         if ts.last_bar_minute == -1:
@@ -1476,14 +1641,14 @@ class SignalEngine:
             if now - ts.last_bar_fetch < BAR_REFRESH:
                 return
         else:
-            # ── Subsequent fetches: wait for next minute boundary ─────────
-            # Fire 5 s into the new minute + this ticker's stagger offset.
-            # E.g. stagger=0 → fires at :05, stagger=5 → :10, stagger=10 → :15
+            # ── Subsequent fetches: elapsed-time guard + stagger slot ─────
+            # Using elapsed time (not minute counter) so NTP adjustments or
+            # clock steps backward don't permanently block future fetches.
             fire_at = 5 + ts.fetch_offset_s
-            if current_minute <= ts.last_bar_minute:
-                return   # same minute we already fetched — nothing new yet
+            if (now - ts.last_bar_fetch) < 55:
+                return   # not yet ~1 minute since last fetch
             if secs_past_minute < fire_at:
-                return   # new minute opened but our stagger slot hasn't arrived
+                return   # stagger slot not reached yet in this minute
 
         print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars  "
               f"(minute={current_minute} secs={secs_past_minute:.1f})")
@@ -1541,9 +1706,14 @@ class SignalEngine:
         # Prefer Finnhub live price; fall back to last dashboard poll value,
         # then finally the last bar's close price.
         fh_price = get_latest_price(ts.ticker)
-        price    = fh_price if fh_price is not None else (
-                   ts.last_price if ts.last_price is not None else
-                   float(df["close"].iloc[-1]))
+        if fh_price is not None:
+            price = fh_price
+        elif ts.last_price is not None:
+            price = ts.last_price
+        elif len(df) > 0 and "close" in df.columns:
+            price = float(df["close"].iloc[-1])
+        else:
+            price = 0.0
         if fh_price is not None:
             ts.last_price = fh_price   # keep in sync
 
@@ -1609,6 +1779,12 @@ class SignalEngine:
         st = three_ind.evaluate_state(a, i, THREE_IND_PARAMS)
         ts.three_ind_state = st
 
+        # A setup with 2 of 3 conditions aligned has shown promise — extend its
+        # watch window to EXPIRY_WARM (the 3ind analogue of the momentum
+        # engine's positive-histogram rule, which never runs in this mode).
+        if st.get("buy_pct", 0) >= 67:
+            ts.ever_positive_hist = True
+
         price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
         if price <= 0:
             return
@@ -1616,14 +1792,24 @@ class SignalEngine:
         if not ts.in_position:
             if not st["buy"]:
                 return
+            # Catalyst gate: on alert-pool names the burst IS the edge —
+            # indicator-only entries backtested negative across all configs.
+            if THREE_IND_REQUIRE_HOT and not ts.is_hot and not ts.pinned:
+                print(f"  [{ticker_tag(ts.ticker)}] ⏸ 3IND buy signal but no mention "
+                      f"burst (THREE_IND_REQUIRE_HOT) — waiting for the catalyst")
+                return
             if MAX_PRICE > 0 and price > MAX_PRICE:
                 return
             if MAX_TOTAL_EXPOSURE > 0:
                 open_pos = sum(1 for t in self.active.values() if t.in_position)
                 if open_pos * TRADE_AMOUNT >= MAX_TOTAL_EXPOSURE:
                     return
+            guard_ok, guard_why = GUARD.allow_buy()
+            if not guard_ok:
+                print(f"  [{ticker_tag(ts.ticker)}] 🛡️ BUY blocked — {guard_why}")
+                return
             print(f"  [{ticker_tag(ts.ticker)}] ✅ 3IND BUY signal  price=${price:.2f}")
-            log_buy(
+            order = log_buy(
                 ticker=ts.ticker, price=price,
                 rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
                 priority=ts.is_hot, mention_velocity=ts.mention_velocity,
@@ -1634,6 +1820,7 @@ class SignalEngine:
             ts.buy_time     = _now_iso()
             ts.buy_time_ts  = time.time()
             ts.priority_buy = ts.is_hot
+            track_fill(ts, order)
         else:
             # Hold guard against per-second flip-flop on the forming bar.
             if ts.buy_time_ts and (time.time() - ts.buy_time_ts) < THREE_IND_MIN_HOLD:
@@ -1687,9 +1874,14 @@ class SignalEngine:
                           f"price ${price:.2f} below prior close ${prev_close:.2f} (falling)")
                     return
 
+            guard_ok, guard_why = GUARD.allow_buy()
+            if not guard_ok:
+                print(f"  [{ticker_tag(ts.ticker)}] 🛡️ BUY blocked — {guard_why}")
+                return
+
             print(f"  [{ticker_tag(ts.ticker)}] ✅ ALERT BUY  price=${price:.2f}  "
                   f"velocity={ts.mention_velocity}  (mention burst)")
-            log_buy(
+            order = log_buy(
                 ticker=ts.ticker, price=price,
                 rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
                 priority=True, mention_velocity=ts.mention_velocity,
@@ -1701,6 +1893,7 @@ class SignalEngine:
             ts.buy_time_ts    = time.time()
             ts.priority_buy   = True
             ts.high_since_buy = price
+            track_fill(ts, order)
             return
 
         # ── EXIT: trailing stop + hard stop ──────────────────────────────────
@@ -1755,6 +1948,35 @@ class SignalEngine:
         fh_price = get_latest_price(ts.ticker)
         if fh_price is not None:
             ts.last_price = fh_price
+
+        # ── Fill-price rebase ──────────────────────────────────────────────────
+        # A few seconds after a BUY order is submitted, look it up and rebase
+        # buy_price to the actual filled_avg_price — with a 1-2% take-profit,
+        # slippage on the entry can otherwise eat the whole target.
+        if ts.pending_order_id and ts.fill_check_at and time.time() >= ts.fill_check_at:
+            o = alpaca_trader.get_order(ts.pending_order_id)
+            if o and o.get("filled_avg_price"):
+                fill = o["filled_avg_price"]
+                if ts.in_position and ts.buy_price and fill > 0:
+                    if abs(fill - ts.buy_price) / ts.buy_price >= 0.0005:
+                        print(f"  [{ticker_tag(ts.ticker)}] 🧾 fill rebase — "
+                              f"entry ${ts.buy_price:.4f} → ${fill:.4f}")
+                    ts.buy_price = fill
+                ts.pending_order_id = None
+                ts.fill_check_at    = None
+            elif o and o.get("status") in ("OrderStatus.CANCELED", "canceled",
+                                           "OrderStatus.EXPIRED", "expired",
+                                           "OrderStatus.REJECTED", "rejected"):
+                print(f"  [{ticker_tag(ts.ticker)}] ⚠️  BUY order {o['status']} — "
+                      f"position will be cleared by the next reconcile")
+                ts.pending_order_id = None
+                ts.fill_check_at    = None
+            elif ts.buy_time_ts and time.time() - ts.buy_time_ts > 60:
+                # Not filled after a minute — stop polling; reconcile takes over
+                ts.pending_order_id = None
+                ts.fill_check_at    = None
+            else:
+                ts.fill_check_at = time.time() + 3.0   # not filled yet — retry
 
         # ── Alert mode: entry on the mention burst, exit on trailing/hard stop.
         # Runs every second on the live price and bypasses the momentum-specific
@@ -1837,39 +2059,53 @@ class SignalEngine:
         # For HOT tickers we also run the full momentum/BUY check on the live
         # values — no waiting up to 60 s for the next confirmed bar to close.
         if ts.cached_df is not None and ts.last_price is not None:
-            try:
-                df_live = ts.cached_df.copy()
-                df_live.at[df_live.index[-1], "close"] = ts.last_price
-                rsi_live, hist_live, atr_live, vwap_live, rvol_live, cm_rsi_live, obv_live = compute_indicators(df_live)
-                ts.last_rsi       = rsi_live
-                ts.last_hist      = hist_live
-                if atr_live  > 0: ts.last_atr  = atr_live
-                if vwap_live > 0: ts.last_vwap = vwap_live
-                ts.last_rvol      = rvol_live
-                ts.last_cm_rsi_ok = cm_rsi_live
-                ts.last_obv_ok    = obv_live
+            # Skip the full recompute when price hasn't moved more than half a cent —
+            # indicators are unchanged and the DataFrame copy + compute is expensive.
+            price_moved = (
+                ts._last_computed_price is None or
+                abs(ts.last_price - ts._last_computed_price) >= 0.005
+            )
+            if price_moved:
+                try:
+                    ts._last_computed_price = ts.last_price
+                    df_live = ts.cached_df.copy()
+                    df_live.at[df_live.index[-1], "close"] = ts.last_price
+                    rsi_live, hist_live, atr_live, vwap_live, rvol_live, cm_rsi_live, obv_live = compute_indicators(df_live)
+                    ts.last_rsi       = rsi_live
+                    ts.last_hist      = hist_live
+                    if atr_live  > 0: ts.last_atr  = atr_live
+                    if vwap_live > 0: ts.last_vwap = vwap_live
+                    ts.last_rvol      = rvol_live
+                    ts.last_cm_rsi_ok = cm_rsi_live
+                    ts.last_obv_ok    = obv_live
 
-                # Hot tickers get real-time momentum checks so the BUY fires
-                # the moment MACD starts growing — not up to a minute later.
-                # Normal tickers still wait for confirmed bar closes to avoid
-                # false signals from mid-candle histogram fluctuations.
-                if ts.is_hot and ts.bars_fetched:
-                    if STRATEGY_MODE == "three_indicator":
-                        # Evaluate the 3-indicator rule on the realtime forming
-                        # candle (aggregator when enabled, else the live-price
-                        # injected cache) — TradingView-style intra-bar updates.
-                        self._eval_three_indicator(ts, self._strategy_df(ts, df_live))
-                    else:
-                        open_pos = sum(1 for t in self.active.values() if t.in_position)
-                        ts.update_momentum(
-                            hist           = hist_live,
-                            price          = ts.last_price,
-                            rsi            = rsi_live,
-                            open_positions = open_pos,
-                        )
+                    # Hot tickers get real-time momentum checks so the BUY fires
+                    # the moment MACD starts growing — not up to a minute later.
+                    # Normal tickers still wait for confirmed bar closes to avoid
+                    # false signals from mid-candle histogram fluctuations.
+                    # In 3-indicator mode, pinned compare tickers (TV side-by-side)
+                    # and open positions (so the strategy SELL isn't up to a
+                    # minute late) are also evaluated on the forming bar.
+                    realtime_eval = ts.is_hot or (
+                        STRATEGY_MODE == "three_indicator"
+                        and (ts.pinned or ts.in_position))
+                    if realtime_eval and ts.bars_fetched:
+                        if STRATEGY_MODE == "three_indicator":
+                            # Evaluate the 3-indicator rule on the realtime forming
+                            # candle (aggregator when enabled, else the live-price
+                            # injected cache) — TradingView-style intra-bar updates.
+                            self._eval_three_indicator(ts, self._strategy_df(ts, df_live))
+                        else:
+                            open_pos = sum(1 for t in self.active.values() if t.in_position)
+                            ts.update_momentum(
+                                hist           = hist_live,
+                                price          = ts.last_price,
+                                rsi            = rsi_live,
+                                open_positions = open_pos,
+                            )
 
-            except Exception:
-                pass   # keep last known values if recompute fails
+                except Exception as e:
+                    print(f"  [engine] live recompute error for {ts.ticker}: {e}", flush=True)
 
         ts.check_count += 1
         print(ts.proximity_summary())
@@ -1898,6 +2134,60 @@ class SignalEngine:
             # Allow re-adding if the ticker gets mentioned again later
             self._known_mentioned.discard(sym)
 
+    # ── Position reconciliation ───────────────────────────────────────────────
+
+    def _reconcile_positions(self):
+        """
+        Engine ↔ Alpaca position sync, every RECONCILE_INTERVAL_S seconds:
+          • engine-open but Alpaca-flat → the position was closed outside the
+            engine (Alpaca UI, rejected/expired order) — clear local state so
+            the engine doesn't manage a phantom position.
+          • Alpaca-open but engine-flat → adopt it so backstop exits protect it.
+        Buys younger than the grace period are skipped — a just-submitted
+        notional order can take a few seconds to appear as a position.
+        """
+        positions = alpaca_trader.get_open_positions()
+        if positions is None:
+            return   # trader off or API error — nothing trustworthy to sync to
+
+        GRACE_S = 120
+        now = time.time()
+
+        for sym, ts in self.active.items():
+            if ts.in_position and sym not in positions:
+                if ts.buy_time_ts and now - ts.buy_time_ts < GRACE_S:
+                    continue
+                print(f"  [{ticker_tag(sym)}] ♻️  reconcile — Alpaca shows no position "
+                      f"(closed externally?). Clearing local position state.")
+                ts.in_position      = False
+                ts.buy_price        = None
+                ts.buy_time         = None
+                ts.buy_time_ts      = None
+                ts.dyn_stop         = None
+                ts.dyn_take         = None
+                ts.high_since_buy   = None
+                ts.priority_buy     = False
+                ts.pending_order_id = None
+                ts.fill_check_at    = None
+
+        for sym, pos in positions.items():
+            ts = self.active.get(sym)
+            if ts is None:
+                offset = self._stagger_index * BAR_STAGGER
+                self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
+                ts = TickerState(sym, fetch_offset_s=offset)
+                self.active[sym] = ts
+                self._known_mentioned.add(sym)
+                if self.finnhub_key:
+                    request_subscribe([sym])
+            if not ts.in_position:
+                ts.in_position = True
+                ts.buy_price   = pos["avg_entry_price"]
+                ts.buy_time    = _now_iso()
+                ts.buy_time_ts = now
+                print(f"  [{ticker_tag(sym)}] ♻️  reconcile — adopted Alpaca position "
+                      f"{pos['qty']} @ ${pos['avg_entry_price']:.4f} (exits armed)")
+
     # ── Signal state persistence ──────────────────────────────────────────────
 
     def _write_signal_state(self):
@@ -1919,11 +2209,24 @@ class SignalEngine:
         }
         """
         try:
+            open_pos = sum(1 for t in self.active.values() if t.in_position)
             payload = {
                 "updated": _now_iso(),
                 "version": version.get_version(),   # which engine build is running
                 "started": self._started,           # when this engine booted
                 "strategy": STRATEGY_MODE,
+                "trader": {
+                    "mode":         TRADER_MODE,
+                    "trade_amount": TRADE_AMOUNT,
+                },
+                # Risk guard snapshot — kill switch, daily P&L, PDT counters —
+                # plus live exposure, for the dashboard's engine panel.
+                "risk": {
+                    **GUARD.state(),
+                    "open_positions":     open_pos,
+                    "exposure":           round(open_pos * TRADE_AMOUNT, 2),
+                    "max_total_exposure": MAX_TOTAL_EXPOSURE,
+                },
                 "tickers": {
                     sym: ts.proximity_state()
                     for sym, ts in self.active.items()
@@ -1972,6 +2275,21 @@ class SignalEngine:
             try:
                 cycle_start = time.time()
 
+                # 0. Dashboard-requested restart: re-exec with a clean env so
+                #    the edited signal_engine.env is re-read. Same PID, so
+                #    start_all's process handle and log pipes stay valid.
+                if RESTART_FLAG.exists():
+                    print("\n[ENGINE] 🔄 restart requested by dashboard — "
+                          "re-executing to reload signal_engine.env\n", flush=True)
+                    try:
+                        RESTART_FLAG.unlink()
+                    except Exception:
+                        pass
+                    self._write_signal_state()
+                    for key in _ENV_FILE_KEYS:
+                        os.environ.pop(key, None)
+                    os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())])
+
                 # 1. Poll the dashboard only every DASHBOARD_POLL_INTERVAL seconds.
                 #    Its sole purpose here is detecting newly highlighted tickers.
                 #    Real-time prices come from Finnhub WebSocket.
@@ -1992,6 +2310,11 @@ class SignalEngine:
 
                 # 3. Drop expired tickers
                 self._expire_tickers()
+
+                # 3b. Reconcile engine positions with Alpaca reality
+                if now - self._last_reconcile >= RECONCILE_INTERVAL_S:
+                    self._reconcile_positions()
+                    self._last_reconcile = time.time()
 
                 # 4. Write signal_state.json so the dashboard can render
                 #    the visual proximity bars (throttled to every SIGNAL_STATE_INTERVAL s)

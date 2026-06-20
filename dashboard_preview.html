@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Two-Column Alert Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #050714;
+  --bg-deep: #03050f;
+  --surface: rgba(14,18,38,0.72);
+  --card: rgba(20,26,50,0.55);
+  --card-hi: rgba(34,44,78,0.72);
+  --border: rgba(140,165,220,0.08);
+  --border-hi: rgba(160,195,255,0.18);
+  --text: #c8d4ee;
+  --text-dim: #7a8cb4;
+  --text-muted: #4d5c80;
+  --text-bright: #f0f6ff;
+  --accent: #5eead4;
+  --accent-2: #8b5cf6;
+  --accent-3: #38bdf8;
+  --buy: #4ade80;
+  --cold: #233152;
+  --warning: #f59e0b;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Inter', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.demo-wrapper {
+  width: 100%;
+  max-width: 760px;
+}
+
+.demo-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+/* Panel glass card */
+.panel {
+  background: rgba(14,18,38,0.65);
+  border: 1px solid var(--border-hi);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.panel-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--buy);
+  box-shadow: 0 0 6px var(--buy);
+  flex-shrink: 0;
+}
+
+/* Two-column alert layout */
+.alert-columns {
+  display: flex;
+  height: 420px;
+  overflow: hidden;
+}
+
+.alert-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.alert-col--regular {
+  border-right: 1px solid var(--border);
+}
+
+.alert-col-header {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.alert-col--squeeze .alert-col-header {
+  color: #f59e0b;
+}
+
+/* Scrollable box */
+.transcript-box {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.transcript-box::-webkit-scrollbar { width: 3px; }
+.transcript-box::-webkit-scrollbar-track { background: transparent; }
+.transcript-box::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+/* Alert card rows */
+.tx-line {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  transition: background 0.15s;
+}
+.tx-line:last-child { border-bottom: none; }
+.tx-line:hover { background: rgba(255,255,255,0.025); }
+
+.tx-line--new {
+  animation: flash-in 0.4s ease;
+}
+
+@keyframes flash-in {
+  from { background: rgba(94,234,212,0.08); }
+  to   { background: transparent; }
+}
+
+.tx-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tx-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--cold);
+  flex-shrink: 0;
+}
+.tx-dot--hot { background: var(--buy); box-shadow: 0 0 5px var(--buy); }
+.tx-dot--warm { background: #fbbf24; }
+
+.tx-ticker {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: 0.02em;
+}
+
+.tx-time {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.tx-alert-type {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tx-meta-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+  align-items: center;
+}
+
+.tx-price {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.tx-vol {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+/* Squeeze cards */
+.tx-line--squeeze { border-left: 2px solid #f59e0b; padding-left: 6px; }
+.tx-ticker--squeeze { color: #f59e0b; }
+
+.tx-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.tx-level-chip {
+  background: rgba(245,158,11,0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245,158,11,0.3);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.tx-squeeze-label {
+  font-size: 9px;
+  color: rgba(245,158,11,0.7);
+  margin-top: 1px;
+  letter-spacing: 0.02em;
+}
+</style>
+</head>
+<body>
+<div class="demo-wrapper">
+  <div class="demo-label">Alert Columns — Two-Column Layout Preview (Test Data)</div>
+
+  <div class="panel">
+    <div class="panel-title-bar">
+      <div class="status-dot"></div>
+      Discord OCR — Live Alerts
+    </div>
+
+    <div class="alert-columns">
+
+      <!-- LEFT COLUMN: Regular Alerts -->
+      <div class="alert-col alert-col--regular">
+        <div class="alert-col-header">Alerts</div>
+        <div class="transcript-box">
+
+          <div class="tx-line tx-line--new">
+            <div class="tx-status-row">
+              <div class="tx-dot tx-dot--hot"></div>
+              <span class="tx-ticker">NVDA</span>
+              <span class="tx-time">9:47 AM</span>
+            </div>
+            <div class="tx-alert-type">Price Volatility Spike</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$138.72</span>
+              <span class="tx-vol">Vol 4,821,300</span>
+            </div>
+          </div>
+
+          <div class="tx-line tx-line--new">
+            <div class="tx-status-row">
+              <div class="tx-dot tx-dot--hot"></div>
+              <span class="tx-ticker">SPY</span>
+              <span class="tx-time">9:46 AM</span>
+            </div>
+            <div class="tx-alert-type">New Weekly Low</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$537.20</span>
+              <span class="tx-vol">Vol 12,400,000</span>
+            </div>
+          </div>
+
+          <div class="tx-line">
+            <div class="tx-status-row">
+              <div class="tx-dot tx-dot--warm"></div>
+              <span class="tx-ticker">MTEN</span>
+              <span class="tx-time">9:44 AM</span>
+            </div>
+            <div class="tx-alert-type">New Daily High</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$3.18</span>
+              <span class="tx-vol">Vol 2,100,000</span>
+            </div>
+          </div>
+
+          <div class="tx-line">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker">AAPL</span>
+              <span class="tx-time">9:43 AM</span>
+            </div>
+            <div class="tx-alert-type">1 Min High Price</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$211.44</span>
+              <span class="tx-vol">Vol 987,600</span>
+            </div>
+          </div>
+
+          <div class="tx-line">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker">DXF</span>
+              <span class="tx-time">9:41 AM</span>
+            </div>
+            <div class="tx-alert-type">New Daily High</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$0.6379</span>
+            </div>
+          </div>
+
+          <div class="tx-line">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker">TSLA</span>
+              <span class="tx-time">9:39 AM</span>
+            </div>
+            <div class="tx-alert-type">Price Volatility Spike</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$248.90</span>
+              <span class="tx-vol">Vol 8,340,200</span>
+            </div>
+          </div>
+
+          <div class="tx-line">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker">INHD</span>
+              <span class="tx-time">9:37 AM</span>
+            </div>
+            <div class="tx-alert-type">1 Min High Price</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$41.83</span>
+              <span class="tx-vol">Vol 550,000</span>
+            </div>
+          </div>
+
+          <div class="tx-line">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker">AMD</span>
+              <span class="tx-time">9:35 AM</span>
+            </div>
+            <div class="tx-alert-type">Volume Spike Alert</div>
+            <div class="tx-meta-row">
+              <span class="tx-price">$162.33</span>
+              <span class="tx-vol">Vol 3,200,000</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: Squeeze Alerts -->
+      <div class="alert-col alert-col--squeeze">
+        <div class="alert-col-header">Squeeze</div>
+        <div class="transcript-box">
+
+          <div class="tx-line tx-line--squeeze tx-line--new">
+            <div class="tx-status-row">
+              <div class="tx-dot tx-dot--hot"></div>
+              <span class="tx-ticker tx-ticker--squeeze">ATHE</span>
+              <span class="tx-time">9:47 AM</span>
+            </div>
+            <div class="tx-squeeze-label">Close Over</div>
+            <div class="tx-levels">
+              <span class="tx-level-chip">6.78</span>
+              <span class="tx-level-chip">7.00</span>
+              <span class="tx-level-chip">7.50</span>
+            </div>
+          </div>
+
+          <div class="tx-line tx-line--squeeze tx-line--new">
+            <div class="tx-status-row">
+              <div class="tx-dot tx-dot--warm"></div>
+              <span class="tx-ticker tx-ticker--squeeze">SOXS</span>
+              <span class="tx-time">9:44 AM</span>
+            </div>
+            <div class="tx-squeeze-label">Close Over</div>
+            <div class="tx-levels">
+              <span class="tx-level-chip">14.20</span>
+              <span class="tx-level-chip">14.85</span>
+            </div>
+          </div>
+
+          <div class="tx-line tx-line--squeeze">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker tx-ticker--squeeze">NVAX</span>
+              <span class="tx-time">9:41 AM</span>
+            </div>
+            <div class="tx-squeeze-label">Close Over</div>
+            <div class="tx-levels">
+              <span class="tx-level-chip">7.10</span>
+              <span class="tx-level-chip">7.55</span>
+              <span class="tx-level-chip">8.00</span>
+              <span class="tx-level-chip">8.40</span>
+            </div>
+          </div>
+
+          <div class="tx-line tx-line--squeeze">
+            <div class="tx-status-row">
+              <div class="tx-dot"></div>
+              <span class="tx-ticker tx-ticker--squeeze">MULN</span>
+              <span class="tx-time">9:38 AM</span>
+            </div>
+            <div class="tx-squeeze-label">Close Over</div>
+            <div class="tx-levels">
+              <span class="tx-level-chip">0.42</span>
+              <span class="tx-level-chip">0.50</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /.alert-columns -->
+  </div><!-- /.panel -->
+</div>
+</body>
+</html>

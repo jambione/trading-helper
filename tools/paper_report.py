@@ -35,6 +35,9 @@ import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 LOG_FILE = Path(__file__).resolve().parent.parent / "signal_log.json"  # repo root
 
@@ -172,6 +175,12 @@ def _group_stats(trades: list[dict], key_fn, size: float) -> dict[str, dict]:
     return {k: stats(v, size) for k, v in groups.items()}
 
 
+def _et_day(t: dict) -> str:
+    """ET calendar date of the trade's sell time (trading-day grouping)."""
+    ts = _parse_ts(t.get("sell_time") or "")
+    return ts.astimezone(_ET).strftime("%Y-%m-%d") if ts else "unknown"
+
+
 # ── Rendering ─────────────────────────────────────────────────────────────────
 
 def _fmt_pct(v) -> str:
@@ -191,7 +200,8 @@ def _line(label: str, s: dict, size: float):
             f"${s['total_dollar']:>10,.0f}  PF {pf}")
 
 
-def render(closed: list[dict], open_pos: list[dict], size: float):
+def render(closed: list[dict], open_pos: list[dict], size: float,
+           show_daily: bool = False):
     print("=" * 78)
     print("  PAPER FORWARD-TEST REPORT")
     print("=" * 78)
@@ -247,6 +257,27 @@ def render(closed: list[dict], open_pos: list[dict], size: float):
     for tkr, s in sorted(by_tkr.items(), key=lambda kv: kv[1]["total_pnl_pct"], reverse=True):
         print(_line(tkr, s, size))
 
+    # ── By day — the compounding decision view ───────────────────────────────
+    # "Is it consistent enough to raise TRADE_AMOUNT?" lives here: green days
+    # vs red days, day-by-day. Enable with --daily.
+    if show_daily:
+        print("-" * 78)
+        print("  BY DAY (ET trading date)")
+        by_day = _group_stats(closed, _et_day, size)
+        green = red = 0
+        for day in sorted(by_day):
+            s = by_day[day]
+            if s["total_pnl_pct"] > 0:
+                green += 1
+            elif s["trades"]:
+                red += 1
+            print(_line(day, s, size))
+        total_days = green + red
+        if total_days:
+            print(f"  {'─' * 74}")
+            print(f"  Green days: {green}/{total_days} ({green / total_days * 100:.0f}%)   "
+                  f"avg $/day: ${overall['total_dollar'] / total_days:,.2f}")
+
     # ── Open positions ────────────────────────────────────────────────────────
     if open_pos:
         print("-" * 78)
@@ -265,6 +296,7 @@ def build_json(closed: list[dict], open_pos: list[dict], size: float) -> dict:
         "by_entry": _group_stats(closed, lambda t: "hot" if t["hot"] else "cold", size),
         "by_reason": _group_stats(closed, lambda t: t["reason"], size),
         "by_ticker": _group_stats(closed, lambda t: t["ticker"], size),
+        "by_day": _group_stats(closed, _et_day, size),
         "open_positions": [
             {"ticker": b.get("ticker"), "entry": b.get("price"),
              "time": b.get("time"), "hot": bool(b.get("priority"))}
@@ -279,6 +311,8 @@ def main():
     ap.add_argument("--ticker", type=str, default=None, help="Filter to one symbol")
     ap.add_argument("--size", type=float, default=10000, help="$ per trade for dollar P&L (default 10000)")
     ap.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    ap.add_argument("--daily", action="store_true",
+                    help="Per-day P&L breakdown (the raise-TRADE_AMOUNT view)")
     ap.add_argument("--file", type=str, default=str(LOG_FILE), help="Path to signal_log.json")
     args = ap.parse_args()
 
@@ -287,7 +321,7 @@ def main():
     if args.json:
         print(json.dumps(build_json(closed, open_pos, args.size), indent=2))
     else:
-        render(closed, open_pos, args.size)
+        render(closed, open_pos, args.size, show_daily=args.daily)
 
 
 if __name__ == "__main__":

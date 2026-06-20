@@ -1,5 +1,5 @@
 tunnel: 56c84116-0ef0-47c7-bbea-25634d765487
-credentials-file: /Users/jonathanbrasfield/.cloudflared/56c84116-0ef0-47c7-bbea-25634d765487.json
+credentials-file: /Users/jambimac/.cloudflared/56c84116-0ef0-47c7-bbea-25634d765487.json
 
 ingress:
   - hostname: trading.jbrasfield.com

@@ -1,0 +1,18 @@
+variant,trades,win_rate,avg_pnl,total_pnl,pf,sharpe,max_dd,max_cl,avg_win,avg_loss,expectancy_dollar,score,halfA_avg,halfB_avg,robust,exits
+A:prod SL1/TP2 any,858,28.6,-0.073,-62.25,0.57,-0.179,46.9,19,0.33,-0.234,-0.36,0.0,-0.107,-0.037,False,reversal:237/838  stop_loss:0/12  take_profit:8/8
+B1:exit=all,359,39.6,-0.01,-3.7,0.98,-0.008,25.4,9,1.518,-1.01,-0.05,14.3,-0.223,0.134,False,reversal:48/60  stop_loss:0/205  take_profit:94/94
+B2:no TP (reversal+SL),857,28.5,-0.038,-32.94,0.77,-0.039,45.9,19,0.452,-0.234,-0.19,0.0,-0.107,0.031,False,reversal:244/845  stop_loss:0/12
+B3:SL1/TP3,857,28.5,-0.068,-57.98,0.6,-0.155,46.7,19,0.349,-0.234,-0.34,0.0,-0.107,-0.027,False,reversal:239/840  stop_loss:0/12  take_profit:5/5
+B4:SL0.5/TP1.5 tight,864,27.7,-0.074,-64.05,0.54,-0.209,47.8,19,0.311,-0.221,-0.37,0.0,-0.102,-0.046,False,reversal:225/784  stop_loss:0/66  take_profit:14/14
+B5:SL1.5/TP2,856,28.5,-0.076,-65.36,0.55,-0.183,48.6,19,0.331,-0.239,-0.38,0.0,-0.11,-0.043,False,reversal:236/841  stop_loss:0/7  take_profit:8/8
+B6:SL2/TP2 symmetric,856,28.5,-0.078,-66.53,0.55,-0.184,49.2,19,0.331,-0.241,-0.39,0.0,-0.111,-0.045,False,reversal:236/847  stop_loss:0/1  take_profit:8/8
+B7:sep1.5 strict entry,437,30.7,-0.071,-30.96,0.58,-0.175,28.6,20,0.318,-0.243,-0.35,0.0,-0.113,-0.028,False,reversal:128/426  stop_loss:0/5  take_profit:6/6
+B8:sep0.5 loose entry,1707,25.8,-0.08,-136.49,0.51,-0.215,75.2,26,0.327,-0.222,-0.4,0.0,-0.098,-0.062,False,reversal:426/1670  stop_loss:0/22  take_profit:15/15
+B9:cw4 fresh cross,103,40.8,-0.015,-1.57,0.92,-0.029,6.9,10,0.425,-0.318,-0.08,27.6,-0.122,0.107,False,reversal:39/98  stop_loss:0/2  take_profit:3/3
+B10:cm35 deeper dip,651,29.0,-0.07,-45.69,0.58,-0.171,37.3,18,0.33,-0.234,-0.35,0.0,-0.111,-0.028,False,reversal:183/638  stop_loss:0/7  take_profit:6/6
+C1:all SL1/TP1.5,391,42.2,-0.069,-27.04,0.88,-0.061,32.8,9,1.213,-1.005,-0.35,15.4,-0.236,0.046,False,reversal:42/56  stop_loss:0/212  take_profit:123/123
+C2:all SL0.75/TP1.5,446,35.9,-0.066,-29.33,0.87,-0.066,34.3,11,1.211,-0.78,-0.33,8.9,-0.207,0.036,False,reversal:40/49  stop_loss:0/277  take_profit:120/120
+C3:all SL1/TP3,324,34.3,-0.004,-1.36,0.99,-0.003,33.3,12,1.934,-1.014,-0.02,9.2,-0.283,0.18,False,reversal:58/69  stop_loss:0/202  take_profit:53/53
+C4:all+sep1.5,251,39.4,-0.027,-6.75,0.96,-0.021,30.3,8,1.501,-1.022,-0.13,13.8,-0.219,0.116,False,reversal:38/43  stop_loss:0/147  take_profit:61/61
+C5:all+cw4,85,36.5,0.04,3.38,1.06,0.028,15.4,14,1.907,-1.032,0.2,17.2,-0.327,0.382,False,reversal:1/2  stop_loss:0/53  take_profit:30/30
+C6:all no TP,229,31.0,0.281,64.3,1.4,0.075,31.4,12,3.159,-1.013,1.4,12.8,-0.26,0.817,False,reversal:71/80  stop_loss:0/149

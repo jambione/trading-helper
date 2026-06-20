@@ -1,0 +1,72 @@
+# Benchmarks — Excellence Loop Results
+
+Append-only record. Every config change to the live engine should cite a row here.
+
+---
+
+## 2026-06-12 — A/B series #1 (3-indicator strategy, `tools/ab_bench.py`)
+
+**Method:** pooled trades across ticker sets, 2mo of 1-min RTH bars (Alpaca IEX,
+split-adjusted), signal-on-close → fill-next-open + adverse slippage,
+end-of-data positions excluded. Anti-curve-fit: split-half robustness (edge
+must hold on both halves of the ticker pool). 17 variants.
+Raw CSVs: `benchmarks/ab_bench_2026-06-12*.csv`.
+
+### Run 1 — Discord alert pool (11 microcaps, 25bps slip)
+VSME EDHL PIII SLE WOK ORGN AUUD QUCY TOPS TWAV IONZ
+
+| verdict | detail |
+|---|---|
+| ❌ ALL 17 variants negative | best: B2 −0.45%/trade; production config (SL1/TP2, exit=any): **−0.63%/trade, 19.7% WR, PF 0.33** |
+| Stop-loss exits dominate | 73 of 127 baseline exits were the −1% stop; 0% of stop exits won |
+| No config robust | both ticker halves negative everywhere |
+
+**Conclusion: the 3-indicator entry has NO standalone edge on alert-pool
+microcaps.** Caveat: IEX bars on these names are very sparse (some tickers
+~300 bars in 2 months), which degrades indicator quality — but the direction
+is consistent across 17 configs and both halves.
+
+### Run 2 — Liquid pool (AAPL MSFT NVDA TSLA AMD META SPY QQQ, 5bps slip)
+
+| verdict | detail |
+|---|---|
+| 🔑 `exit_mode=any` is the bug | 913/931 baseline exits = instant "reversal"; avg loss ≈ round-trip slippage. One of the 3 reversal conditions is ~always true in the backward window right after entry |
+| ✅ `exit_mode=all` flips expectancy positive | C6 (all, SL1, no TP): **+0.31%/trade, PF 1.51, robust ✓** · C4 (all+sep1.5, SL1/TP2): **+0.17%/trade, 48.8% WR, PF 1.34, DD 9.3%, robust ✓** |
+
+### Run 3 — Out-of-sample liquid pool (GOOG AMZN NFLX AVGO JPM XOM COST INTC, 5bps)
+
+| verdict | detail |
+|---|---|
+| ⚠️ C-family edge shrinks to ~breakeven | C3 PF 0.99 · C4 PF 0.96 · C6 +0.28%/trade PF 1.40 but not split-half robust |
+| `all` ≫ `any` confirmed everywhere | baseline PF 0.57 vs exit=all PF 0.98 on the same data |
+
+### Run 4 — Momentum strategy excellence loop (`backtest_v2.py`, IONZ WOK QUCY, 2mo)
+
+| verdict | detail |
+|---|---|
+| Baselines ~breakeven | PF 0.91–0.94, WR ~30% on train |
+| One validated bright spot | IONZ held-out: hc=1, rsi<75, SL1/TP3.5, RVOL on → WR 48.1%, PF 1.94, DD 3.9% — single-ticker, treat as anecdote not edge |
+
+## Changes applied from this series
+
+1. `THREE_IND_EXIT_MODE=all` — beat `any` on every dataset tested (the single
+   clearest result of the whole series)
+2. `THREE_IND_REQUIRE_HOT=1` — catalyst gate: 3ind buys now require a mention
+   burst; indicator-only entries lost in all 17 microcap configs
+3. Mention bursts now archived to `benchmarks/mention_bursts.jsonl`
+   (dashboard `_archive_burst`) — the missing dataset for replaying
+   catalyst-gated entries in a future loop iteration
+4. Env-loader bug fixed: inline ` # comments` on env values were being read
+   into credentials (broke Alpaca auth in backtests; latent in the engine)
+
+## Open items for the next loop iteration
+
+- After ~2–4 weeks of burst archive + paper trades: replay catalyst-gated
+  entries against bars fetched around each burst timestamp (the test we could
+  not run today — no historical burst data existed)
+- Paper-trade exit-reason breakdown (`paper_report.py --daily`) vs these
+  backtest numbers — live fills on microcaps will be worse than 25bps on bad
+  days; verify the gap
+- If catalyst-gated trades remain negative in paper after ≥30 trades, the
+  small-consistent-profit mission is better served on liquid names (C4-style
+  config) than on the alert pool

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 dashboard.py — Signal Scanner
-Ties together transcription, real-time prices, and signals.
+Ties together the Discord OCR alert source, real-time prices, and signals.
   http://localhost:8888
 """
 
@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import zipfile
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -38,8 +39,8 @@ def _free_port(port: int):
                 pass
         if pids:
             time.sleep(0.5)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[STARTUP] Warning: could not free port 8888: {e}", file=sys.stderr)
 
 
 _free_port(8888)
@@ -57,21 +58,14 @@ from auth import (check_credentials, create_token, verify_token, is_auth_require
 from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
+import engine_env
 import version
 
-# Learned-correction store (shared with the transcriber): the dashboard validates
-# and writes user one-click corrections; the transcriber publishes the pending
-# (high-count unresolved) tokens for the UI to offer.
-sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from spell_pipeline import add_correction, load_corrections   # noqa: E402
-_CORRECTIONS_FILE = Path(__file__).parent / "config" / "learned_corrections.json"
-_PENDING_FILE     = Path(__file__).parent / "config" / "pending_corrections.json"
 from email_service import send_suggestion_email, send_login_email
 import alpaca_api as _api
 
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent / "transcription"))
-from workflows import workflow_add_wb, workflow_add_brave_tv, workflow_add_wb_and_tv
+sys.path.insert(0, str(Path(__file__).parent / "transcription"))
+from workflows import workflow_add_wb, workflow_add_brave_tv, workflow_add_wb_and_tv, workflow_create_tv_alert
 from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
@@ -81,13 +75,11 @@ from finnhub_stream import (
 
 ET                 = ZoneInfo("America/New_York")
 PORT               = 8888
-_TICKER_RE         = re.compile(r'\b([A-Z]{2,5})\b')
-_SPEECH_LINE_RE    = re.compile(r'^\[(\d{2}:\d{2}:\d{2})\] ')
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
-TRANSCRIBER_SCRIPT = Path("transcription/transcribe_action.py")
 NEWS_FILE          = Path("news.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
+PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -101,28 +93,36 @@ class _State:
         self.cfg              = load_config()
         self.data_client      = None
         self.tickers: dict    = {}   # ticker → {price, price_ts, day_open, pct_change}
-        self.transcriber      = None # subprocess.Popen or None
-        self.transcript_lines = []   # in-memory only, never written to disk
-        self.transcriber_metrics = {
-            "queue_drops": 0,
-            "ollama_timeouts": 0,
-            "ollama_failures": 0,
-            "ollama_retry_ok": 0,
-            "queue_size": 0,
-            "queue_capacity": 16,
-            "workers": 0,
-            "ollama_ready": False,
-        }
+        # Discord OCR source feed — the dashboard's only ticker producer. ingest()
+        # appends captured alerts here and stamps discord_last_ts so the UI can
+        # render a live feed + a 'source alive' status (in-memory only).
+        self.discord_alerts: deque = deque(maxlen=_MAX_DISCORD_ALERTS)
+        self.discord_last_ts: float = 0.0
+        # TradingView webhook feed — a second independent signal source. Each
+        # inbound webhook fires as a burst and is tracked separately so the UI
+        # can show both sources and their agreement.
+        self.tv_alerts: deque = deque(maxlen=_MAX_DISCORD_ALERTS)
+        self.tv_last_ts: float = 0.0
         # Mention tracking — resets on server restart (fresh each trading day)
         self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
         self.mention_daily: dict = {}  # ticker → int  daily total count
         from datetime import date as _date
         self.mention_reset_date: str  = str(_date.today())
         self.mention_market_opened: bool = False
+        # Web Push — subscriptions loaded from disk at startup, notified set resets daily
+        self.push_subscriptions: list = []
+        self.push_notified: set       = set()
+        # Sentiment — rolling direction signal from the Discord OCR source.
+        # sentiment_events: ticker (or None for market) → [event dict, ...]
+        self.sentiment_events: dict = {}
+        self.sentiment_feed:   deque = deque(maxlen=_MAX_DISCORD_ALERTS)
 
-    @property
-    def transcriber_running(self) -> bool:
-        return self.transcriber is not None and self.transcriber.poll() is None
+# Discord OCR feed sizing + liveness window. The source pings every poll
+# (~2.5s); if we haven't heard from it within this window it's considered down.
+_MAX_DISCORD_ALERTS = 60
+_DISCORD_STALE_SEC  = 15.0
+# Sentiment events older than this drop out of the recency-weighted mean.
+_SENTIMENT_WINDOW_SEC = 30 * 60
 
 STATE = _State()
 
@@ -151,10 +151,7 @@ def load_news() -> list:
 
 def save_news(items: list) -> None:
     """Write items list to news.json and invalidate the cache."""
-    NEWS_FILE.write_text(
-        json.dumps(items, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _atomic_write_json(NEWS_FILE, items)
     _news_cache["mtime"] = -1.0
 
 
@@ -209,6 +206,44 @@ def _track_mention(ticker: str):
     STATE.mention_ts[ticker] = [t for t in ts if now - t <= window]
     STATE.mention_daily[ticker] = STATE.mention_daily.get(ticker, 0) + 1
 
+    # Dispatch Web Push on burst threshold (rising edge only)
+    threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
+    if len(STATE.mention_ts[ticker]) >= threshold and ticker not in STATE.push_notified:
+        STATE.push_notified.add(ticker)
+        price = STATE.tickers.get(ticker, {}).get("price")
+        _archive_burst(ticker, price, len(STATE.mention_ts[ticker]))
+        threading.Thread(
+            target=_send_push_notifications,
+            args=(ticker, price),
+            daemon=True,
+        ).start()
+
+
+_BURST_LOG = Path(__file__).parent / "benchmarks" / "mention_bursts.jsonl"
+
+
+def _archive_burst(ticker: str, price, window_count: int):
+    """
+    Append every mention burst to an append-only JSONL archive.
+
+    This is the missing dataset for the excellence loop: backtests showed the
+    3-indicator entry has no standalone edge on alert-pool microcaps — the
+    catalyst (the burst) is the candidate edge. Replaying catalyst-gated
+    entries needs burst timestamps, which the in-memory state doesn't keep.
+    """
+    try:
+        _BURST_LOG.parent.mkdir(exist_ok=True)
+        with open(_BURST_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ticker": ticker,
+                "time":   datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "unix":   round(time.time(), 1),
+                "price":  price,
+                "window_count": window_count,
+            }) + "\n")
+    except Exception as e:
+        log.warning(f"[BURST] archive failed: {e}")
+
 
 def _mention_window_count(ticker: str) -> int:
     """Current mention count within the rolling window. Thread-safe read."""
@@ -218,13 +253,201 @@ def _mention_window_count(ticker: str) -> int:
     return sum(1 for t in ts if now - t <= window)
 
 
+# ── Sentiment ─────────────────────────────────────────────────────────────────
+
+def _prune_sentiment(key):
+    """Drop events older than _SENTIMENT_WINDOW_SEC. Must hold STATE.lock."""
+    evs = STATE.sentiment_events.get(key)
+    if not evs:
+        return
+    now = time.time()
+    STATE.sentiment_events[key] = [e for e in evs if now - e["ts"] <= _SENTIMENT_WINDOW_SEC]
+
+
+def _ticker_sentiment(key) -> dict:
+    """Recency-weighted mean sentiment for a ticker (or None = market).
+    Must hold STATE.lock."""
+    _prune_sentiment(key)
+    evs = STATE.sentiment_events.get(key) or []
+    if not evs:
+        return {"score": 0.0, "count": 0, "last_ts": None, "source": ""}
+    now = time.time()
+    num = den = 0.0
+    for e in evs:
+        age_min = (now - e["ts"]) / 60.0
+        w       = max(0.3, 1.0 - age_min / 30.0 * 0.7)
+        num    += e["score"] * w
+        den    += w
+    last = max(evs, key=lambda e: e["ts"])
+    return {
+        "score":   round(num / den, 4) if den else 0.0,
+        "count":   len(evs),
+        "last_ts": last["ts"],
+        "source":  last.get("source", ""),
+    }
+
+
+def _ranked_sentiment(limit: int = 12) -> list[dict]:
+    """All real tickers with recent sentiment, sorted strongest-first.
+    Drives the dashboard's Sentiment column. Must hold STATE.lock."""
+    ranked = []
+    for key in list(STATE.sentiment_events.keys()):
+        if not key:               # skip the None (general-market) bucket
+            continue
+        s = _ticker_sentiment(key)
+        if s["count"] > 0:
+            ranked.append({"ticker": key, "score": s["score"], "count": s["count"]})
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    return ranked[:limit]
+
+
+# ── Confluence ────────────────────────────────────────────────────────────────
+# A ticker corroborated by several INDEPENDENT producers — a Market Update
+# scanner row, human chat, a bot alert, a squeeze — is a far stronger setup than
+# any single source. We surface (and boost) that overlap. Mentions are NOT a
+# source here: they're downstream of the others, so counting them would be
+# circular.
+
+_CONFLUENCE_SENT_SOURCES = ("chat", "scanner")
+
+
+def _confluence_sources(ticker) -> list[str]:
+    """Distinct independent signal sources currently active for `ticker`
+    (subset of {"scanner","chat","alert","squeeze"}). Must hold STATE.lock."""
+    if not ticker:
+        return []
+    srcs = set()
+    _prune_sentiment(ticker)
+    for e in STATE.sentiment_events.get(ticker) or []:
+        s = e.get("source")
+        if s in _CONFLUENCE_SENT_SOURCES:
+            srcs.add(s)
+    for a in STATE.discord_alerts:
+        if a.get("ticker") == ticker:
+            srcs.add("squeeze" if a.get("burst") else "alert")
+    return sorted(srcs)
+
+
+# ── Web Push ──────────────────────────────────────────────────────────────────
+
+def _load_push_subscriptions() -> list:
+    try:
+        if not PUSH_SUBS_FILE.exists():
+            return []
+        return json.loads(PUSH_SUBS_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning(f"[PUSH] Failed to load subscriptions: {e}")
+        return []
+
+
+def _save_push_subscriptions(subs: list) -> None:
+    _atomic_write_json(PUSH_SUBS_FILE, subs)
+
+
+def _generate_or_load_vapid_keys():
+    """Auto-generate VAPID keys on first run and save to secrets.json."""
+    if STATE.cfg.get("push_vapid_public_key") and STATE.cfg.get("push_vapid_private_key"):
+        return
+    try:
+        from py_vapid import Vapid
+        from cryptography.hazmat.primitives import serialization
+        import base64
+
+        v = Vapid()
+        v.generate_keys()
+        private_pem = v.private_pem().decode("utf-8")
+        pub_bytes   = v.public_key.public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,  # 65-byte uncompressed point required by browsers
+        )
+        public_b64 = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
+
+        STATE.cfg["push_vapid_public_key"]  = public_b64
+        STATE.cfg["push_vapid_private_key"] = private_pem
+        save_config(STATE.cfg)
+        log.info("[PUSH] Generated new VAPID keys")
+    except Exception as e:
+        log.warning(f"[PUSH] Failed to generate VAPID keys: {e}")
+
+
+def _send_push_notifications(ticker: str, price) -> None:
+    """Send Web Push burst alert to all subscribers; prune stale endpoints."""
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return
+
+    private_pem = STATE.cfg.get("push_vapid_private_key", "")
+    contact     = STATE.cfg.get("push_contact_email") or "admin@localhost"
+    if not private_pem:
+        return
+
+    price_str = f"${price:.2f}  · " if price else ""
+    payload = json.dumps({
+        "title": f"🔥 {ticker} Burst",
+        "body":  f"{price_str}Rapid mentions detected",
+        "tag":   f"burst-{ticker}",
+        "url":   "/",
+    })
+
+    # Snapshot under lock then release — HTTP calls must not hold STATE.lock
+    with STATE.lock:
+        subs = list(STATE.push_subscriptions)
+
+    stale = []
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=private_pem,
+                vapid_claims={"sub": f"mailto:{contact}"},
+            )
+        except WebPushException as e:
+            if e.response is not None and e.response.status_code in (404, 410):
+                stale.append(sub)  # 404/410 = browser revoked or expired subscription
+            else:
+                log.warning(f"[PUSH] WebPushException for {ticker}: {e}")
+        except Exception as e:
+            log.warning(f"[PUSH] push failed for {ticker}: {e}")
+
+    if stale:
+        with STATE.lock:
+            STATE.push_subscriptions = [s for s in STATE.push_subscriptions if s not in stale]
+            pruned = list(STATE.push_subscriptions)  # capture inside lock before releasing
+        _save_push_subscriptions(pruned)
+
+
 # ── Ticker log ────────────────────────────────────────────────────────────────
 # File format: [{"ticker": "AAPL", "added": "2026-05-07T09:30:00-04:00"}, ...]
 # Backward-compat: plain strings are migrated to objects on first read.
 
+def _atomic_write_json(path: Path, data) -> None:
+    """Write JSON atomically via tmpfile + rename so a crash mid-write never corrupts the file."""
+    import json as _json, tempfile as _tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        fd, tmp_path = _tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                _json.dump(data, f, indent=2)
+        except Exception:
+            os.close(fd)
+            raise
+        Path(tmp_path).replace(path)
+        tmp_path = None
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
 TICKER_MAX_AGE = 15 * 60  # seconds — entries older than this are auto-purged
 
 _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
+_ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/writes
 
 
 def load_tickers() -> list:
@@ -234,71 +457,71 @@ def load_tickers() -> list:
     so the on-disk file is always up-to-date. Caches by mtime to keep I/O cheap
     at the 10 Hz poll rate used by the price loop.
     """
-    if not TICKER_LOG.exists():
-        _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
-        return []
-    try:
-        import json as _json
-        mtime = TICKER_LOG.stat().st_mtime
-        if mtime == _ticker_cache["mtime"]:
-            return list(_ticker_cache["tickers"])
-
-        raw = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
-        if not isinstance(raw, list):
+    with _ticker_lock:
+        if not TICKER_LOG.exists():
+            _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
             return []
-
-        now_ts  = time.time()
-        now_iso = datetime.now(ET).isoformat(timespec="seconds")
-        cutoff  = now_ts - TICKER_MAX_AGE
-
-        kept    = []
-        changed = False   # True if any entry was purged or migrated from old format
-
-        for item in raw:
-            if isinstance(item, str):
-                t, added = item.strip().upper(), now_iso
-                changed = True          # migrate plain string → object
-            elif isinstance(item, dict):
-                t     = str(item.get("ticker", "")).strip().upper()
-                added = item.get("added", now_iso)
-            else:
-                changed = True
-                continue
-
-            if not (2 <= len(t) <= 5 and t.isalpha()):
-                changed = True
-                continue
-
-            try:
-                added_ts = datetime.fromisoformat(added).timestamp()
-            except Exception:
-                added_ts = now_ts       # unparseable → treat as fresh
-
-            if added_ts >= cutoff:
-                kept.append({"ticker": t, "added": added})
-            else:
-                changed = True
-                log.debug(f"[TICKER] Purged stale {t}")
-
-        if changed:
-            TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
-            TICKER_LOG.write_text(_json.dumps(kept, indent=2), encoding="utf-8")
+        try:
+            import json as _json
             mtime = TICKER_LOG.stat().st_mtime
+            if mtime == _ticker_cache["mtime"]:
+                return list(_ticker_cache["tickers"])
 
-        tickers = [e["ticker"] for e in kept]
-        _ticker_cache.update(mtime=mtime, tickers=tickers, entries=kept)
-        return tickers
-    except Exception:
-        return []
+            raw = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
+            if not isinstance(raw, list):
+                return []
+
+            now_ts  = time.time()
+            now_iso = datetime.now(ET).isoformat(timespec="seconds")
+            cutoff  = now_ts - TICKER_MAX_AGE
+
+            kept    = []
+            changed = False   # True if any entry was purged or migrated from old format
+
+            for item in raw:
+                if isinstance(item, str):
+                    t, added = item.strip().upper(), now_iso
+                    changed = True          # migrate plain string → object
+                elif isinstance(item, dict):
+                    t     = str(item.get("ticker", "")).strip().upper()
+                    added = item.get("added", now_iso)
+                else:
+                    changed = True
+                    continue
+
+                if not (2 <= len(t) <= 5 and t.isalpha()):
+                    changed = True
+                    continue
+
+                try:
+                    added_ts = datetime.fromisoformat(added).timestamp()
+                except Exception:
+                    added_ts = now_ts       # unparseable → treat as fresh
+
+                if added_ts >= cutoff:
+                    kept.append({"ticker": t, "added": added})
+                else:
+                    changed = True
+                    log.debug(f"[TICKER] Purged stale {t}")
+
+            if changed:
+                _atomic_write_json(TICKER_LOG, kept)
+                mtime = TICKER_LOG.stat().st_mtime
+
+            tickers = [e["ticker"] for e in kept]
+            _ticker_cache.update(mtime=mtime, tickers=tickers, entries=kept)
+            return tickers
+        except Exception:
+            return []
 
 
 def clear_ticker_log():
-    try:
-        import json as _json
-        TICKER_LOG.write_text(_json.dumps([]), encoding="utf-8")
-        _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
-    except Exception:
-        pass
+    with _ticker_lock:
+        try:
+            _atomic_write_json(TICKER_LOG, [])
+            _ticker_cache.update(mtime=-1.0, tickers=[], entries=[])
+        except Exception:
+            pass
     with STATE.lock:
         STATE.tickers.clear()
         STATE.mention_ts.clear()
@@ -308,41 +531,40 @@ def clear_ticker_log():
 def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
     """Add a single ticker. Returns (ok, is_new) — is_new is False when already present."""
     ticker = ticker.upper()
-    try:
-        import json as _json
-        load_tickers()   # refresh cache + purge stale
-        if ticker in _ticker_cache["tickers"]:
-            return True, False
-        now_iso = datetime.now(ET).isoformat(timespec="seconds")
-        entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
-        TICKER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
-        _ticker_cache["mtime"] = -1.0   # force re-read on next load
-        return True, True
-    except Exception as e:
-        log.error(f"[TICKER] Add {ticker} failed: {e}")
-        return False, False
+    with _ticker_lock:
+        try:
+            load_tickers()   # refresh cache + purge stale
+            if ticker in _ticker_cache["tickers"]:
+                return True, False
+            now_iso = datetime.now(ET).isoformat(timespec="seconds")
+            entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
+            _atomic_write_json(TICKER_LOG, entries)
+            _ticker_cache["mtime"] = -1.0   # force re-read on next load
+            return True, True
+        except Exception as e:
+            log.error(f"[TICKER] Add {ticker} failed: {e}")
+            return False, False
 
 
 def remove_ticker_from_log(ticker: str) -> bool:
     """Remove a single ticker from the watchlist and internal state."""
     ticker = ticker.upper()
-    try:
-        import json as _json
-        load_tickers()   # refresh cache + purge stale
-        if ticker not in _ticker_cache["tickers"]:
+    with _ticker_lock:
+        try:
+            load_tickers()   # refresh cache + purge stale
+            if ticker not in _ticker_cache["tickers"]:
+                return True
+            entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
+            _atomic_write_json(TICKER_LOG, entries)
+            _ticker_cache["mtime"] = -1.0
+            with STATE.lock:
+                STATE.tickers.pop(ticker, None)
+                STATE.mention_ts.pop(ticker, None)
+                STATE.mention_daily.pop(ticker, None)
             return True
-        entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
-        _ticker_cache["mtime"] = -1.0
-        with STATE.lock:
-            STATE.tickers.pop(ticker, None)
-            STATE.mention_ts.pop(ticker, None)
-            STATE.mention_daily.pop(ticker, None)
-        return True
-    except Exception as e:
-        log.error(f"[TICKER] Remove {ticker} failed: {e}")
-        return False
+        except Exception as e:
+            log.error(f"[TICKER] Remove {ticker} failed: {e}")
+            return False
 
 
 def refresh_ticker_timestamps(tickers: list[str]):
@@ -354,110 +576,165 @@ def refresh_ticker_timestamps(tickers: list[str]):
     """
     if not tickers:
         return
-    import json as _json
-    load_tickers()   # ensure cache is fresh
-    entries  = list(_ticker_cache["entries"])
-    now_ts   = time.time()
-    now_iso  = datetime.now(ET).isoformat(timespec="seconds")
-    refresh  = set(tickers)
-    changed  = False
-    for e in entries:
-        if e["ticker"] not in refresh:
+    with _ticker_lock:
+        load_tickers()   # ensure cache is fresh
+        entries  = list(_ticker_cache["entries"])
+        now_ts   = time.time()
+        now_iso  = datetime.now(ET).isoformat(timespec="seconds")
+        refresh  = set(tickers)
+        changed  = False
+        for e in entries:
+            if e["ticker"] not in refresh:
+                continue
+            try:
+                age = now_ts - datetime.fromisoformat(e["added"]).timestamp()
+            except Exception:
+                age = 9999
+            if age > 30:
+                e["added"] = now_iso
+                changed = True
+        if changed:
+            _atomic_write_json(TICKER_LOG, entries)
+            _ticker_cache.update(mtime=-1.0, entries=entries,
+                                 tickers=[e["ticker"] for e in entries])
+
+
+# ── Discord OCR source ingest ───────────────────────────────────────────────
+# The Discord OCR producer (discord_source.py) POSTs here every poll: any newly
+# captured alerts plus a heartbeat. Each alert drives the mention system exactly
+# like the old transcriber did (watchlist add + _track_mention → burst), and is
+# recorded in a rolling feed the dashboard renders.
+
+def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
+    """Record captured Discord alerts: add each ticker to the watchlist, count a
+    mention (for burst detection), and append to the live feed. Returns the
+    number of alerts accepted. Always stamps discord_last_ts (so an empty list is
+    a valid heartbeat). Each alert: {"ticker": str, "line": str, "burst": bool}.
+
+    sentiment is a list of SentimentEvent dicts (ticker/score/source/raw/ts);
+    near-zero scores are dropped, the rest stored per-ticker for the rolling mean.
+
+    A "burst" alert (e.g. a 'Squeeze Potential Alert') injects a full burst's
+    worth of mentions at once (mention_alert_threshold) so the existing burst
+    toast fires immediately — i.e. it simulates a mention spike."""
+    sentiment = sentiment or []
+    threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
+    accepted = 0
+    for a in alerts:
+        ticker = str(a.get("ticker", "")).strip().upper()
+        line   = str(a.get("line", "")).strip()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
             continue
-        try:
-            age = now_ts - datetime.fromisoformat(e["added"]).timestamp()
-        except Exception:
-            age = 9999
-        if age > 30:
-            e["added"] = now_iso
-            changed = True
-    if changed:
-        TICKER_LOG.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
-        _ticker_cache.update(mtime=-1.0, entries=entries,
-                             tickers=[e["ticker"] for e in entries])
-
-
-# ── Transcription subprocess ──────────────────────────────────────────────────
-
-_MAX_TRANSCRIPT_LINES = 200
-
-
-_METRICS_RE = re.compile(r'^\[METRICS\]\s+(\{.*\})\s*$')
-
-
-def _stdout_reader(proc: subprocess.Popen):
-    try:
-        for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            if not line:
-                continue
-            m = _METRICS_RE.match(line)
-            if m:
-                try:
-                    metrics = json.loads(m.group(1))
-                    with STATE.lock:
-                        STATE.transcriber_metrics = metrics
-                except Exception:
-                    pass
-                continue
-            with STATE.lock:
-                STATE.transcript_lines.append(line)
-                if len(STATE.transcript_lines) > _MAX_TRANSCRIPT_LINES:
-                    STATE.transcript_lines = STATE.transcript_lines[-_MAX_TRANSCRIPT_LINES:]
-    except Exception:
-        pass
-
-
-def read_transcript_lines(n: int = 60) -> list:
-    with STATE.lock:
-        return list(STATE.transcript_lines[-n:])
-
-
-def clear_transcript():
-    with STATE.lock:
-        STATE.transcript_lines.clear()
-
-
-def start_transcriber() -> dict:
-    if STATE.transcriber_running:
-        return {"ok": False, "msg": "already running"}
-    clear_transcript()
-    args = [sys.executable, "-u", str(TRANSCRIBER_SCRIPT)]
-    device = STATE.cfg.get("device_index")
-    if device is not None:
-        args += ["--device", str(int(device))]
-    try:
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-        if STATE.cfg.get("spell_pipeline"):
-            env["SPELL_PIPELINE"] = "1"   # experimental segment+recognize path
-        proc = subprocess.Popen(
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # merge stderr so errors appear in transcript panel
-            cwd=Path(__file__).parent,
-            env=env,
-        )
+        add_ticker_to_log(ticker)
+        hits = threshold if a.get("burst") else 1
         with STATE.lock:
-            STATE.transcriber = proc
-        threading.Thread(target=_stdout_reader, args=(proc,), daemon=True, name="tx-reader").start()
-        log.info(f"[TX] Started pid={proc.pid}")
-        return {"ok": True}
-    except Exception as e:
-        log.error(f"[TX] Start failed: {e}")
-        return {"ok": False, "msg": str(e)}
+            for _ in range(hits):
+                _track_mention(ticker)
+            STATE.discord_alerts.append({
+                "ts":         datetime.now(ET).strftime("%H:%M:%S"),
+                "ticker":     ticker,
+                "line":       line[:160],
+                "burst":      bool(a.get("burst")),
+                "alert_type": str(a.get("alert_type") or ""),
+                "price":      a.get("price"),
+                "volume":     a.get("volume"),
+                "levels":     a.get("levels") or [],
+            })
+        accepted += 1
 
-
-def stop_transcriber():
     with STATE.lock:
-        proc, STATE.transcriber = STATE.transcriber, None
-    if proc and proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    log.info("[TX] Stopped")
+        for ev in sentiment:
+            try:
+                score = float(ev.get("score", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if abs(score) < 0.05:
+                continue
+            tkr = ev.get("ticker")
+            key = tkr.upper() if isinstance(tkr, str) and tkr else None
+            rec = {
+                "ticker": key,
+                "score":  score,
+                "source": str(ev.get("source") or ""),
+                "raw":    str(ev.get("raw") or "")[:160],
+                "ts":     float(ev.get("ts") or time.time()),
+            }
+            STATE.sentiment_events.setdefault(key, []).append(rec)
+            STATE.sentiment_feed.append({
+                "ts":     datetime.now(ET).strftime("%H:%M:%S"),
+                "ticker": key,
+                "score":  round(score, 3),
+                "source": rec["source"],
+                "raw":    rec["raw"][:80],
+            })
+            # Boost mentions (drives burst detection) when EITHER a single source
+            # is high-confidence (|score| ≥ 0.7) OR the ticker is corroborated by
+            # 2+ independent sources (e.g. a Market Update scanner row AND chat) —
+            # confluence is a strong setup even when no single score clears 0.7.
+            # Skip hv_alert (SPY direction fires every minute and would flood SPY).
+            if key and rec["source"] != "hv_alert":
+                strong    = abs(score) >= 0.7
+                confluent = len(_confluence_sources(key)) >= 2
+                if strong or confluent:
+                    add_ticker_to_log(key)
+                    _track_mention(key)
+
+    with STATE.lock:
+        STATE.discord_last_ts = time.time()
+    return accepted
+
+
+def discord_status() -> dict:
+    """Snapshot of the OCR source for the UI: alive flag + recent alert feed."""
+    with STATE.lock:
+        last  = STATE.discord_last_ts
+        feed  = list(STATE.discord_alerts)
+    return {
+        "running":   bool(last) and (time.time() - last) <= _DISCORD_STALE_SEC,
+        "last_ts":   last,
+        "alerts":    feed,
+    }
+
+
+# ── TradingView webhook ingest ────────────────────────────────────────────────
+# TradingView POSTs here when a Pine Script alertcondition fires.
+# Expected payload: {"ticker": "AAPL", "close": 150.23, "interval": "1"}
+# TradingView prepends the exchange to the ticker (e.g. "NASDAQ:AAPL") —
+# we strip it before validation.
+
+def ingest_tv_alert(ticker: str, close: float, interval: str) -> bool:
+    """Record one TradingView squeeze alert. Always fires as a full burst
+    (the TV Pine Script only alerts when the squeeze has already confirmed).
+    Returns True if the alert was accepted."""
+    ticker = ticker.strip().upper()
+    # Strip exchange prefix ("NASDAQ:AAPL" → "AAPL")
+    if ":" in ticker:
+        ticker = ticker.split(":")[-1]
+    if not ticker or not ticker.isalpha() or len(ticker) > 5:
+        return False
+    threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
+    label = f"${close:.2f}" if close else ""
+    line  = f"TV squeeze {label} ({interval}m)".strip()
+    add_ticker_to_log(ticker)
+    with STATE.lock:
+        for _ in range(threshold):
+            _track_mention(ticker)
+        STATE.tv_alerts.append({
+            "ts":     datetime.now(ET).strftime("%H:%M:%S"),
+            "ticker": ticker,
+            "close":  close,
+            "line":   line,
+        })
+        STATE.tv_last_ts = time.time()
+    return True
+
+
+def tv_status() -> dict:
+    """Snapshot of the TradingView webhook source for the UI."""
+    with STATE.lock:
+        last = STATE.tv_last_ts
+        feed = list(STATE.tv_alerts)
+    return {"last_ts": last, "alerts": feed}
 
 
 # ── Price polling ─────────────────────────────────────────────────────────────
@@ -502,12 +779,18 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
         if to_poll:
             log.info(f"[PRICE] Extended hours REST poll for {len(to_poll)} tickers: {to_poll}")
 
+        fail_streak = 0
         for ticker in to_poll:
             try:
                 q = _fh_rest_quote(api_key, ticker)
                 if not q.get("ok"):
-                    time.sleep(0.1)
+                    fail_streak += 1
+                    if fail_streak >= 3:
+                        log.warning("[PRICE] Finnhub REST: %d consecutive failures — aborting cycle", fail_streak)
+                        break
+                    time.sleep(0.1 * fail_streak)
                     continue
+                fail_streak = 0
                 price = float(q.get("c", 0))
                 if price > 0:
                     FINNHUB_STATE.update_price(ticker, price)
@@ -517,8 +800,12 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
                             entry = STATE.tickers.setdefault(ticker, {})
                             entry["day_open"] = round(day_open, 4)
                 time.sleep(0.1)
-            except Exception:
-                pass
+            except Exception as e:
+                fail_streak += 1
+                log.debug("[PRICE] Finnhub REST error for %s: %s", ticker, e)
+                if fail_streak >= 3:
+                    log.warning("[PRICE] Finnhub REST: %d consecutive errors — aborting cycle", fail_streak)
+                    break
     finally:
         _finnhub_rest_running = False
 
@@ -527,6 +814,7 @@ def _price_loop():
     global _alpaca_fallback_running, _finnhub_rest_running
     last_alpaca_poll    = 0
     last_fh_rest_poll   = 0
+    _fail_streak        = 0
     _prev_tickers: set  = set(load_tickers())  # seed from file; avoids first-run flood
     while True:
         try:
@@ -594,8 +882,13 @@ def _price_loop():
                         entry["price"]    = round(p, 4)
                         entry["price_ts"] = ts
 
+            _fail_streak = 0
         except Exception as e:
-            log.debug(f"[PRICE] {e}")
+            _fail_streak += 1
+            if _fail_streak in (1, 5, 25) or _fail_streak % 50 == 0:
+                log.warning("[PRICE] loop error (%d consecutive): %s", _fail_streak, e)
+            else:
+                log.debug("[PRICE] %s", e)
         time.sleep(0.1)  # 10Hz — Finnhub ticks are picked up within 100ms
 
 
@@ -606,25 +899,31 @@ def _vol_loop():
     Runs every 60 seconds in a background thread and writes into STATE.tickers
     so the values flow through to the /api/state response automatically.
     """
+    _BATCH = 50
     while True:
         try:
             tickers = load_tickers()
             if tickers:
                 import yfinance as yf
-                tks = yf.Tickers(" ".join(tickers))
                 vol_data: dict = {}
-                for sym in tickers:
+                for i in range(0, len(tickers), _BATCH):
+                    batch = tickers[i:i + _BATCH]
                     try:
-                        fi = tks.tickers[sym].fast_info
-                        day_vol = int(getattr(fi, "last_volume", 0) or 0)
-                        avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
-                        if day_vol > 0:
-                            vol_data[sym] = {
-                                "day_vol": day_vol,
-                                "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
-                            }
-                    except Exception:
-                        pass
+                        tks = yf.Tickers(" ".join(batch))
+                        for sym in batch:
+                            try:
+                                fi = tks.tickers[sym].fast_info
+                                day_vol = int(getattr(fi, "last_volume", 0) or 0)
+                                avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
+                                if day_vol > 0:
+                                    vol_data[sym] = {
+                                        "day_vol": day_vol,
+                                        "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
+                                    }
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        log.debug("[VOL] batch %d-%d failed: %s", i, i + _BATCH, e)
                 with STATE.lock:
                     for sym, vd in vol_data.items():
                         STATE.tickers.setdefault(sym, {}).update(vd)
@@ -636,31 +935,22 @@ def _vol_loop():
 
 # ── Mention detection ─────────────────────────────────────────────────────────
 
-def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0) -> dict:
-    """Return {ticker: rank} for up to 3 watchlist tickers spoken in the last
-    window_s seconds.  Rank 0 = most recently mentioned."""
-    now = datetime.now()
-    seen: list[str] = []
-    for line in reversed(tx_lines):
-        m = _SPEECH_LINE_RE.match(line)
-        if not m:
-            continue
-        ts = m.group(1)
-        try:
-            line_time = now.replace(
-                hour=int(ts[0:2]), minute=int(ts[3:5]), second=int(ts[6:8]), microsecond=0
-            )
-            if (now - line_time).total_seconds() > window_s:
-                break  # lines are chronological; everything older can be skipped
-        except ValueError:
-            continue
-        for sym in _TICKER_RE.findall(line):
-            if sym in ticker_set and sym not in seen:
-                seen.append(sym)
-                if len(seen) == 3:
-                    return {s: i for i, s in enumerate(seen)}
-
-    return {s: i for i, s in enumerate(seen)}
+def _build_mention_rank(ticker_set: set, window_s: float = 30.0) -> dict:
+    """Return {ticker: rank} for up to 3 watchlist tickers mentioned in the last
+    window_s seconds (rank 0 = most recently mentioned). Driven by the mention
+    store (STATE.mention_ts) that the Discord OCR source feeds — this is what
+    floats a freshly-alerted ticker to the top of the watchlist."""
+    now = time.time()
+    recent: list[tuple[float, str]] = []   # (most-recent mention ts, ticker)
+    with STATE.lock:
+        for t, times in STATE.mention_ts.items():
+            if t not in ticker_set or not times:
+                continue
+            last = max(times)
+            if now - last <= window_s:
+                recent.append((last, t))
+    recent.sort(reverse=True)               # most recent first
+    return {t: i for i, (_, t) in enumerate(recent[:3])}
 
 
 # ── State snapshot ────────────────────────────────────────────────────────────
@@ -668,10 +958,9 @@ def _build_mention_rank(tx_lines: list, ticker_set: set, window_s: float = 30.0)
 def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
-    # Read transcript lines BEFORE acquiring STATE.lock — read_transcript_lines also
-    # acquires STATE.lock, and threading.Lock is non-reentrant; nested acquisition deadlocks.
-    tx_lines = read_transcript_lines(30)
-    mention_rank = _build_mention_rank(tx_lines, set(tickers))
+    # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
+    # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
+    mention_rank = _build_mention_rank(set(tickers))
     if mention_rank:
         refresh_ticker_timestamps(list(mention_rank.keys()))
 
@@ -687,14 +976,20 @@ def _snapshot() -> dict:
             price    = d.get("price")
             day_open = d.get("day_open")
             d["pct_change"] = round((price - day_open) / day_open * 100, 2) if (price and day_open and day_open > 0) else None
-            # Mention counts — prune stale timestamps in-place
-            ts = STATE.mention_ts.get(t, [])
-            ts = [tm for tm in ts if now_ts - tm <= m_window]
-            STATE.mention_ts[t] = ts
+            # Mention counts — count in-window entries without rebuilding the list;
+            # _track_mention() prunes at write time so this path stays read-only.
+            window_count        = sum(1 for tm in STATE.mention_ts.get(t, []) if now_ts - tm <= m_window)
             d["mention_count"]  = STATE.mention_daily.get(t, 0)
-            d["mention_window"] = len(ts)
-            d["mention_burst"]  = len(ts) >= threshold
+            d["mention_window"] = window_count
+            d["mention_burst"]  = window_count >= threshold
+            sent = _ticker_sentiment(t)
+            if sent["count"] > 0:
+                d["sentiment"] = sent
+            conf = _confluence_sources(t)
+            if len(conf) >= 2:
+                d["confluence"] = {"sources": conf, "count": len(conf)}
             rows.append(d)
+        market_sent = _ticker_sentiment(None)
         def _row_sort_key(r):
             in_mention = r["ticker"] in mention_rank
             rank  = mention_rank.get(r["ticker"], 999)
@@ -713,16 +1008,34 @@ def _snapshot() -> dict:
                 if sp:
                     r["signal_proximity"] = sp
 
+        tv_last = STATE.tv_last_ts
+        tv_feed = list(STATE.tv_alerts)
+
         return {
-            "transcriber": {
-                "running": STATE.transcriber_running,
-                "lines":   tx_lines,
+            "discord": {
+                "running": bool(STATE.discord_last_ts)
+                           and (now_ts - STATE.discord_last_ts) <= _DISCORD_STALE_SEC,
+                "last_ts": STATE.discord_last_ts,
+                "alerts":  list(STATE.discord_alerts),
+                "sentiment_ranked": _ranked_sentiment(),
                 "count":   len(tickers),
-                "metrics": dict(STATE.transcriber_metrics),
+            },
+            "tradingview": {
+                "last_ts": tv_last,
+                "alerts":  tv_feed,
             },
             "tickers": rows,
+            "market_sentiment": market_sent,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
+            # Trading-engine status — trader mode + risk guard written by
+            # signal_engine into signal_state.json; rendered by the Engine panel.
+            "engine": {
+                "strategy": sig.get("strategy"),
+                "updated":  sig.get("updated"),
+                "trader":   sig.get("trader"),
+                "risk":     sig.get("risk"),
+            },
             "version": {
                 "dashboard":       version.get_version(),
                 "engine":          sig.get("version"),
@@ -843,18 +1156,24 @@ def _mention_reset_worker():
                     close_reset_fired = False
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
+                    STATE.push_notified.clear()
+                    STATE.sentiment_events.clear()
                     log.info("[MENTIONS] Daily reset — new calendar day")
 
                 elif 930 <= hhmm <= 935 and not STATE.mention_market_opened:
                     STATE.mention_market_opened = True
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
+                    STATE.push_notified.clear()
+                    STATE.sentiment_events.clear()
                     log.info("[MENTIONS] Daily reset — market open window")
 
                 elif 1605 <= hhmm <= 1610 and not close_reset_fired:
                     close_reset_fired = True
                     STATE.mention_daily.clear()
                     STATE.mention_ts.clear()
+                    STATE.push_notified.clear()
+                    STATE.sentiment_events.clear()
                     log.info("[MENTIONS] Daily reset — market close window")
 
                 elif hhmm > 1610 and close_reset_fired:
@@ -889,6 +1208,10 @@ async def _startup():
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
     threading.Thread(target=_vol_loop, daemon=True, name="vol").start()
     threading.Thread(target=_mention_reset_worker, daemon=True, name="mention-reset").start()
+
+    _generate_or_load_vapid_keys()
+    STATE.push_subscriptions = _load_push_subscriptions()
+    log.info(f"[PUSH] Loaded {len(STATE.push_subscriptions)} push subscription(s)")
 
 
 @app.get("/")
@@ -1034,90 +1357,198 @@ async def api_save_news(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
-@app.post("/api/transcriber/start")
-async def api_tx_start():
+@app.post("/api/discord/ingest")
+async def api_discord_ingest(request: Request):
+    """The Discord OCR source POSTs here each poll: any newly-captured alerts
+    plus an implicit heartbeat. Body: {"alerts": [{"ticker","line"}, ...]}.
+    Each alert feeds the mention system (watchlist add + burst) and the live
+    feed; an empty list is a valid heartbeat that keeps the source 'alive'."""
+    try:
+        body   = await request.json()
+        alerts = body.get("alerts", [])
+        if not isinstance(alerts, list):
+            return JSONResponse({"ok": False, "error": "alerts must be a list"}, status_code=400)
+        sentiment = body.get("sentiment", [])
+        if not isinstance(sentiment, list):
+            sentiment = []
+    except Exception:
+        alerts    = []
+        sentiment = []
+    loop = asyncio.get_running_loop()
+    accepted = await loop.run_in_executor(None, lambda: ingest_discord_alerts(alerts, sentiment))
+    return JSONResponse({"ok": True, "accepted": accepted})
+
+
+@app.get("/api/discord/status")
+async def api_discord_status():
+    return JSONResponse(discord_status())
+
+
+@app.post("/api/tradingview/webhook")
+async def api_tv_webhook(request: Request):
+    """Receive TradingView Pine Script alerts.
+
+    Configure your TV alert with:
+      Webhook URL:  https://trading.jbrasfield.com/api/tradingview/webhook?secret=<your_secret>
+      Message:      {"ticker":"{{ticker}}","close":{{close}},"interval":"{{interval}}"}
+
+    Set tv_webhook_secret in config/bot_config.json to validate the secret param.
+    Leave it blank to accept all incoming webhooks (not recommended on public internet).
+    """
+    secret = str(STATE.cfg.get("tv_webhook_secret", "")).strip()
+    if secret:
+        token = (request.query_params.get("secret", "")
+                 or request.headers.get("X-Webhook-Secret", ""))
+        if token != secret:
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+
+    ticker   = str(body.get("ticker", "")).strip()
+    close    = float(body.get("close", 0) or 0)
+    interval = str(body.get("interval", "")).strip()
+
+    loop = asyncio.get_running_loop()
+    ok   = await loop.run_in_executor(None, lambda: ingest_tv_alert(ticker, close, interval))
+    if not ok:
+        return JSONResponse({"ok": False, "error": "Invalid ticker"}, status_code=400)
+    return JSONResponse({"ok": True, "ticker": ticker.split(":")[-1].upper()})
+
+
+@app.get("/api/tradingview/status")
+async def api_tv_status():
+    return JSONResponse(tv_status())
+
+
+# ── Trading-engine control (Engine panel) ─────────────────────────────────────
+
+_ENGINE_RESTART_FLAG = Path(__file__).parent / "engine_restart.flag"
+
+
+def _engine_control_allowed(request: Request) -> bool:
+    """
+    Mutating engine endpoints (settings writes, restart) are allowed for:
+      • direct localhost requests (the local dashboard UI), or
+      • requests carrying engine_control_secret (X-Engine-Secret header or
+        ?secret=) set in config/bot_config.json.
+    Requests through the Cloudflare tunnel LOOK local (the tunnel client runs
+    on this machine), so proxy headers mark them as remote. This is stricter
+    than the rest of the API on purpose: these endpoints move real settings
+    on a system that trades money.
+    """
+    secret = str(STATE.cfg.get("engine_control_secret", "")).strip()
+    if secret:
+        token = (request.headers.get("X-Engine-Secret", "")
+                 or request.query_params.get("secret", ""))
+        if token == secret:
+            return True
+    via_proxy = bool(request.headers.get("CF-Connecting-IP")
+                     or request.headers.get("X-Forwarded-For"))
+    host = request.client.host if request.client else ""
+    return (not via_proxy) and host in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+@app.get("/api/engine/config")
+async def api_engine_config_get():
+    """Current whitelisted signal_engine.env values (no credentials)."""
     loop   = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, start_transcriber)
-    return JSONResponse({**result, "running": STATE.transcriber_running})
+    values = await loop.run_in_executor(None, engine_env.read_engine_env)
+    return JSONResponse({"ok": True, "values": values})
 
 
-@app.post("/api/transcriber/stop")
-async def api_tx_stop():
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, stop_transcriber)
-    return JSONResponse({"ok": True, "running": False})
-
-
-@app.get("/api/transcriber/mode")
-async def api_tx_mode_get():
-    return JSONResponse({
-        "spell_pipeline": bool(STATE.cfg.get("spell_pipeline")),
-        "running": STATE.transcriber_running,
-    })
-
-
-@app.post("/api/transcriber/mode")
-async def api_tx_mode_set(request: Request):
-    """Toggle the experimental spell pipeline. The flag is applied at transcriber
-    launch, so if it's running we restart it to take effect."""
+@app.post("/api/engine/config")
+async def api_engine_config_set(request: Request):
+    """
+    Update whitelisted signal_engine.env keys. Body: {"KEY": value, ...}.
+    Values are validated (TRADER_MODE=live is always rejected). Changes take
+    effect after an engine restart (/api/engine/restart).
+    """
+    if not _engine_control_allowed(request):
+        return JSONResponse({"ok": False, "error": "Engine control requires localhost "
+                             "or the engine control secret"}, status_code=403)
     try:
         body = await request.json()
-        enabled = bool(body.get("spell_pipeline"))
     except Exception:
-        return JSONResponse({"ok": False, "error": "bad body"}, status_code=400)
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict) or not body:
+        return JSONResponse({"ok": False, "error": "Expected {KEY: value, ...}"}, status_code=400)
 
-    with STATE.lock:
-        STATE.cfg["spell_pipeline"] = enabled
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: save_config(dict(STATE.cfg)))
-
-    restarted = False
-    if STATE.transcriber_running:                       # restart to apply the flag
-        await loop.run_in_executor(None, stop_transcriber)
-        await loop.run_in_executor(None, start_transcriber)
-        restarted = True
-    return JSONResponse({"ok": True, "spell_pipeline": enabled,
-                         "restarted": restarted, "running": STATE.transcriber_running})
-
-
-@app.get("/api/transcriber/corrections")
-async def api_corrections_get():
-    """Current learned corrections + pending high-count unresolved tokens (which
-    the spell pipeline keeps getting wrong) for one-click mapping."""
     try:
-        pending = json.loads(_PENDING_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pending = []
-    return JSONResponse({"corrections": load_corrections(_CORRECTIONS_FILE), "pending": pending})
+        updated = await loop.run_in_executor(
+            None, lambda: engine_env.update_engine_env(body))
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    log.info(f"[ENGINE] settings updated via dashboard: {', '.join(updated)}")
+    return JSONResponse({"ok": True, "updated": updated, "restart_required": True})
 
 
-@app.post("/api/transcriber/corrections")
-async def api_corrections_set(request: Request):
-    """User maps a mis-heard token to the right ticker once; it sticks forever.
-    The transcriber reloads the store within ~10s (no restart)."""
+@app.post("/api/engine/restart")
+async def api_engine_restart(request: Request):
+    """Ask the signal engine to re-exec itself (reloads signal_engine.env)."""
+    if not _engine_control_allowed(request):
+        return JSONResponse({"ok": False, "error": "Engine control requires localhost "
+                             "or the engine control secret"}, status_code=403)
+    _ENGINE_RESTART_FLAG.touch()
+    log.info("[ENGINE] restart requested via dashboard")
+    return JSONResponse({"ok": True, "note": "engine restarts within ~1s"})
+
+
+_paper_report_mod = None
+
+
+def _get_paper_report():
+    """Lazy-import tools/paper_report.py (tools/ is not a package)."""
+    global _paper_report_mod
+    if _paper_report_mod is None:
+        import importlib.util
+        path = Path(__file__).parent / "tools" / "paper_report.py"
+        spec = importlib.util.spec_from_file_location("paper_report", path)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _paper_report_mod = mod
+    return _paper_report_mod
+
+
+@app.get("/api/engine/report")
+async def api_engine_report(request: Request):
+    """
+    Paper/live performance report from signal_log.json — the same numbers as
+    tools/paper_report.py --json, served for the Engine panel's report view.
+    Query: days (default 14), size ($/trade for $ figures, default TRADE_AMOUNT).
+    """
     try:
-        body = await request.json()
-        frm = str(body.get("from", "")).strip().upper()
-        to  = str(body.get("to", "")).strip().upper()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "bad body"}, status_code=400)
-    ok = add_correction(_CORRECTIONS_FILE, frm, to)
-    return JSONResponse(
-        {"ok": ok, "from": frm, "to": to, "corrections": load_corrections(_CORRECTIONS_FILE),
-         "error": None if ok else "target must be a real ticker"},
-        status_code=200 if ok else 400)
+        days = int(request.query_params.get("days", "14"))
+    except ValueError:
+        days = 14
+    try:
+        size = float(request.query_params.get("size", "0")) or None
+    except ValueError:
+        size = None
+    if size is None:
+        env  = engine_env.read_engine_env()
+        size = float(env.get("TRADE_AMOUNT") or 500)
+
+    def _build():
+        pr = _get_paper_report()
+        closed, open_pos = pr.load_trades(pr.LOG_FILE, days, None)
+        return pr.build_json(closed, open_pos, size)
+
+    loop = asyncio.get_running_loop()
+    try:
+        report = await loop.run_in_executor(None, _build)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, "days": days, "size": size, "report": report})
 
 
 @app.post("/api/ticker-log/clear")
 async def api_clear():
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, clear_ticker_log)
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/transcript/clear")
-async def api_transcript_clear():
-    await asyncio.get_running_loop().run_in_executor(None, clear_transcript)
     return JSONResponse({"ok": True})
 
 
@@ -1151,6 +1582,23 @@ async def api_mention_ticker(request: Request):
             return JSONResponse({"ok": False, "error": "Missing ticker"}, status_code=400)
         with STATE.lock:
             for _ in range(count):
+                _track_mention(ticker)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/tickers/burst")
+async def api_burst_ticker(request: Request):
+    """Manually fire a burst alert for a ticker (injects threshold mentions at once)."""
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        threshold = int(STATE.cfg.get("mention_alert_threshold", 2))
+        with STATE.lock:
+            for _ in range(threshold):
                 _track_mention(ticker)
         return JSONResponse({"ok": True})
     except Exception as e:
@@ -1215,6 +1663,22 @@ async def api_add_wb_tv(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
+@app.post("/api/tickers/create-tv-alert")
+async def api_create_tv_alert(request: Request):
+    """Navigate TradingView to the given ticker and create a squeeze alert via Alt/Option+A."""
+    try:
+        body   = await request.json()
+        ticker = str(body.get("ticker", "")).strip().upper()
+        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+            return JSONResponse({"ok": False, "error": "Invalid ticker symbol"}, status_code=400)
+        cfg = STATE.cfg
+        threading.Thread(target=workflow_create_tv_alert, args=(ticker, cfg),
+                         daemon=True, name=f"tvalert-{ticker}").start()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
 @app.post("/api/tickers/add-bulk")
 async def api_add_bulk(request: Request):
     try:
@@ -1226,7 +1690,7 @@ async def api_add_bulk(request: Request):
         added = []
         for item in raw[:100]:          # safety cap
             t = str(item).strip().upper()
-            if not t or not t.isalpha() or not (1 <= len(t) <= 5):
+            if not t or not t.isalpha() or not (2 <= len(t) <= 5):
                 continue
             ok, is_new = await loop.run_in_executor(None, lambda t=t: add_ticker_to_log(t))
             if ok and is_new:
@@ -1234,32 +1698,6 @@ async def api_add_bulk(request: Request):
         return JSONResponse({"ok": True, "added": len(added), "tickers": added})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
-
-
-@app.get("/api/audio-devices")
-async def api_audio_devices():
-    def _list():
-        try:
-            if sys.platform == "win32":
-                import pyaudiowpatch as _pa_mod
-            else:
-                import pyaudio as _pa_mod
-            p = _pa_mod.PyAudio()
-            devices = []
-            for i in range(p.get_device_count()):
-                dev = p.get_device_info_by_index(i)
-                if dev["maxInputChannels"] > 0:
-                    devices.append({
-                        "index":    i,
-                        "name":     dev["name"],
-                        "loopback": "loopback" in dev["name"].lower(),
-                    })
-            p.terminate()
-            return {"ok": True, "devices": devices}
-        except Exception as e:
-            return {"ok": False, "error": str(e), "devices": []}
-    result = await asyncio.get_running_loop().run_in_executor(None, _list)
-    return JSONResponse(result)
 
 
 @app.get("/api/config")
@@ -1296,6 +1734,47 @@ async def api_config_save(request: Request):
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.get("/api/push/vapid-public-key")
+async def api_push_vapid_key():
+    key = STATE.cfg.get("push_vapid_public_key", "")
+    if not key:
+        return JSONResponse({"error": "VAPID not configured"}, status_code=503)
+    return JSONResponse({"key": key})
+
+
+@app.post("/api/push/subscribe")
+async def api_push_subscribe(request: Request):
+    try:
+        sub = await request.json()
+        if not isinstance(sub, dict) or "endpoint" not in sub:
+            return JSONResponse({"error": "invalid subscription"}, status_code=400)
+        with STATE.lock:
+            if not any(s.get("endpoint") == sub.get("endpoint") for s in STATE.push_subscriptions):
+                STATE.push_subscriptions.append(sub)
+                _save_push_subscriptions(STATE.push_subscriptions)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        log.warning(f"[PUSH] subscribe error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/push/subscribe")
+async def api_push_unsubscribe(request: Request):
+    try:
+        body     = await request.json()
+        endpoint = body.get("endpoint", "")
+        with STATE.lock:
+            before = len(STATE.push_subscriptions)
+            STATE.push_subscriptions = [
+                s for s in STATE.push_subscriptions if s.get("endpoint") != endpoint
+            ]
+            if len(STATE.push_subscriptions) != before:
+                _save_push_subscriptions(STATE.push_subscriptions)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/meta")
@@ -1381,7 +1860,8 @@ async def api_get_ticker_feed():
         items = json.loads(TICKER_FEED_FILE.read_text(encoding="utf-8")) if TICKER_FEED_FILE.exists() else []
         return JSONResponse({"items": items})
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        log.warning("[TICKER-FEED] corrupted ticker_feed.json, returning empty list: %s", e)
+        return JSONResponse({"items": []})
 
 
 @app.post("/api/ticker-feed")
@@ -1399,10 +1879,7 @@ async def api_save_ticker_feed(request: Request):
                 t = "info"
             sanitised.append({"type": t, "text": str(item.get("text", "")).strip()})
         sanitised = [i for i in sanitised if i["text"]]  # drop blank entries
-        TICKER_FEED_FILE.write_text(
-            json.dumps(sanitised, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(TICKER_FEED_FILE, sanitised)
         return JSONResponse({"ok": True, "count": len(sanitised)})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -1450,7 +1927,9 @@ def _agent_version() -> str:
         src = (Path(__file__).parent / "windows_agent.py").read_text(encoding="utf-8")
         for line in src.splitlines():
             if line.startswith("VERSION"):
-                return line.split('"')[1]
+                m = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', line)
+                if m:
+                    return m.group(1)
     except Exception:
         pass
     return "0.0.0"

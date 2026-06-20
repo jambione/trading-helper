@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=46" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=59" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -115,6 +115,15 @@
                     <span class="auto-add-label">Auto-Add</span>
                 </label>
 
+                <!-- Auto-Alert toggle: visible to user=jmb only -->
+                <label class="auto-alert-toggle jmb-only" title="Auto-create TradingView squeeze alert when a burst fires">
+                    <input type="checkbox" id="auto-alert-checkbox" />
+                    <span class="auto-add-track">
+                        <span class="auto-add-thumb"></span>
+                    </span>
+                    <span class="auto-add-label">Auto-Alert</span>
+                </label>
+
                 <button data-logout-btn class="btn btn--ghost btn--danger auth-ui" title="Sign out">
                     ⏻ Sign Out
                 </button>
@@ -142,61 +151,58 @@
             <a href="https://patreon.com/BrasfieldMomentum" target="_blank" rel="noopener" class="donate-pill donate-pill--patreon">🧡 Patreon</a>
         </div>
 
+        <!-- ── TRADING ENGINE (owner only — shown via body.user-jmb CSS) ── -->
+        <section data-panel="engine" class="engine-bar">
+            <div class="engine-header">
+                <span class="panel-title">Trading Engine</span>
+                <div data-engine-status class="engine-status"></div>
+                <div class="engine-actions">
+                    <button data-engine-settings-btn class="btn btn--ghost btn--sm">⚙ Settings</button>
+                    <button data-engine-report-btn class="btn btn--ghost btn--sm">📊 Report</button>
+                    <button data-engine-restart-btn class="btn btn--ghost btn--sm">⟳ Restart</button>
+                </div>
+            </div>
+            <div data-engine-body class="engine-body hidden"></div>
+        </section>
+
         <main class="main-grid">
-            <!-- ── LEFT: Live Transcript ─────────────────────────── -->
+            <!-- ── LEFT: Discord Alerts (OCR source) ──────────────── -->
             <section data-panel="transcript" class="panel panel-transcript">
                 <div class="panel-header">
-                    <span class="panel-title">Live Transcript</span>
+                    <span class="panel-title">Discord Alerts</span>
                     <div class="tx-status-row">
                         <div data-tx-dot class="tx-dot"></div>
-                        <span data-tx-label class="tx-label">STOPPED</span>
+                        <span data-tx-label class="tx-label">OFFLINE</span>
                     </div>
                 </div>
 
                 <div class="tx-controls">
-                    <button data-tx-btn class="tx-btn tx-btn--start">
-                        Start Transcription
-                    </button>
                     <div class="tx-meta">
                         <span data-tx-count class="tx-count"
                             >0 tickers captured today</span
                         >
-                        <button
-                            data-clear-transcript-btn
-                            class="btn btn--ghost btn--sm"
-                        >
-                            Clear
-                        </button>
-                    </div>
-                    <label
-                        class="tx-mode-toggle"
-                        title="Experimental: silence-segmentation + recognize pipeline instead of fixed 1.5s chunks. Restarts the transcriber to apply."
-                    >
-                        <input type="checkbox" id="spell-pipeline-checkbox" data-spell-toggle />
-                        <span>Spell pipeline (beta)</span>
-                    </label>
-
-                    <!-- Learned corrections: map a consistently mis-heard token to
-                         the right ticker once; it sticks forever. Shown only with
-                         the spell pipeline on. -->
-                    <div class="tx-corrections" data-corrections hidden>
-                        <div class="tx-corr-pending" data-corr-pending></div>
-                        <form class="tx-corr-form" data-corr-form>
-                            <input type="text" data-corr-from placeholder="heard"
-                                   maxlength="6" autocomplete="off" spellcheck="false" />
-                            <span>&rarr;</span>
-                            <input type="text" data-corr-to placeholder="ticker"
-                                   maxlength="5" autocomplete="off" spellcheck="false" />
-                            <button type="submit" class="btn btn--ghost btn--sm">Map</button>
-                        </form>
-                        <div class="tx-corr-list" data-corr-list></div>
                     </div>
                 </div>
 
-                <div data-transcript-box class="transcript-box">
-                    <span class="tx-placeholder"
-                        >Waiting for transcription…</span
-                    >
+                <div class="alert-columns">
+                    <div class="alert-col alert-col--regular">
+                        <div class="alert-col-header">Alerts</div>
+                        <div data-regular-box class="transcript-box">
+                            <span class="tx-placeholder">Waiting…</span>
+                        </div>
+                    </div>
+                    <div class="alert-col alert-col--squeeze">
+                        <div class="alert-col-header">Squeeze</div>
+                        <div data-squeeze-box class="transcript-box">
+                            <span class="tx-placeholder">No squeezes…</span>
+                        </div>
+                    </div>
+                    <div class="alert-col alert-col--sentiment">
+                        <div class="alert-col-header">Sentiment</div>
+                        <div data-sentiment-box class="transcript-box">
+                            <span class="tx-placeholder">No signals…</span>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -244,38 +250,6 @@
 
                 <div data-ticker-rows class="watchlist-rows"></div>
             </section>
-
-            <!-- ── RESIZER: drag handle between watchlist and chart ── -->
-            <div
-                class="panel-resizer"
-                id="ticker-tv-resizer"
-                aria-hidden="true"
-            ></div>
-
-            <!-- ── RIGHT: TradingView Chart ──────────────────────── -->
-            <section data-panel="tradingview" class="panel panel-tradingview">
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">Chart</span>
-                        <span
-                            data-tv-symbol
-                            class="tv-symbol-badge"
-                            style="display: none"
-                        ></span>
-                    </div>
-                </div>
-
-                <div data-tv-placeholder class="tv-placeholder">
-                    <span>Select a ticker to load chart</span>
-                </div>
-
-                <div data-tv-widget class="tv-widget-wrap hidden">
-                    <div
-                        id="tv_chart_container"
-                        style="height: 100%; width: 100%"
-                    ></div>
-                </div>
-            </section>
         </main>
 
         <!-- ═══════════════════════════════════════════════════════════
@@ -302,9 +276,9 @@
                 <span class="status-audio-section">
                     <span class="status-divider">|</span>
                     <span class="status-item">
-                        <span class="status-label">Audio</span>
+                        <span class="status-label">Discord</span>
                         <span data-audio-status class="status-value"
-                            >Stopped</span
+                            >Offline</span
                         >
                     </span>
                 </span>
@@ -331,7 +305,6 @@
                         API Keys
                     </button>
                     <button class="tab-btn" data-tab-btn="data">Data</button>
-                    <button class="tab-btn" data-tab-btn="audio">Audio</button>
                     <button class="tab-btn" data-tab-btn="connection">
                         Connection
                     </button>
@@ -447,33 +420,6 @@
                                     placeholder="10"
                                 />
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- ── Tab: Audio ────────────────────────────── -->
-                    <div class="tab-panel hidden" data-tab-panel="audio">
-                        <div class="form-group">
-                            <label for="cfg-device-index"
-                                >Audio Input Device</label
-                            >
-                            <div class="input-row">
-                                <select id="cfg-device-index">
-                                    <option value="">Loading…</option>
-                                </select>
-                                <button
-                                    data-refresh-devices
-                                    class="btn btn--ghost btn--sm"
-                                    title="Refresh device list"
-                                >
-                                    ↺
-                                </button>
-                            </div>
-                        </div>
-                        <div class="device-hint">
-                            Devices marked <strong>⟳ LOOPBACK</strong> capture
-                            system audio playing through your speakers — ideal
-                            for transcribing financial media. Mic devices
-                            capture your voice directly.
                         </div>
                     </div>
 
@@ -690,7 +636,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=48"></script>
+        <script type="module" src="/static/js/app.js?v=59"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
@@ -790,5 +736,6 @@
                 setInterval(tick, 1000);
             })();
         </script>
+        <div id="toast-container"></div>
     </body>
 </html>

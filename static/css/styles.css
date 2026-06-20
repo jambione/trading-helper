@@ -333,7 +333,7 @@ body::after {
   .hdr {
     flex-wrap: wrap;
     height: auto;
-    padding: 10px 14px;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
     row-gap: 8px;
   }
   .hdr-brand  { flex: 1; min-width: 0; }
@@ -343,7 +343,7 @@ body::after {
 body.mobile .hdr {
   flex-wrap: wrap;
   height: auto;
-  padding: 10px 14px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
   row-gap: 8px;
 }
 body.mobile .hdr-brand  { flex: 1; min-width: 0; }
@@ -465,14 +465,15 @@ body.hosted.user-jmb .admin-settings-hide { display: none !important; }
   box-shadow: 0 0 14px rgba(94, 234, 212, 0.20) !important;
 }
 
-/* ── Hosted mode — transcript column + settings hidden ──────── */
-body.hosted [data-panel="transcript"]   { display: none; }
+/* ── Hosted mode — transcript controls + settings hidden ──────
+   The Discord Alerts panel itself stays visible (server-fed), but its
+   audio/transcript controls are localhost-only. */
 body.hosted [data-tx-btn]               { display: none; }
 body.hosted [data-clear-transcript-btn] { display: none; }
 body.hosted .status-audio-section       { display: none; }
 body.hosted [data-tab-btn="audio"]      { display: none; }
 body.hosted [data-settings-btn]         { display: none; }
-body.hosted .main-grid               { grid-template-columns: 240px 6px 1fr; }
+body.hosted .main-grid               { grid-template-columns: 1fr 1fr; }
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
@@ -538,6 +539,33 @@ body.mobile .auto-add-toggle { display: none !important; }
 }
 .auto-add-toggle.is-on .auto-add-label {
   background: linear-gradient(90deg, var(--aurora-1), var(--aurora-3));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ── Auto-Alert toggle (amber — distinct from teal Auto-Add) ─── */
+body.mobile .auto-alert-toggle { display: none !important; }
+
+.auto-alert-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 10px 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-hi);
+  background: rgba(255,255,255,0.02);
+  transition: all 0.2s var(--ease-out);
+}
+.auto-alert-toggle:hover { border-color: rgba(245, 158, 11, 0.4); }
+.auto-alert-toggle input[type="checkbox"] { display: none; }
+.auto-alert-toggle.is-on .auto-add-track {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.40);
+}
+.auto-alert-toggle.is-on .auto-add-label {
+  background: linear-gradient(90deg, #f59e0b, #f97316);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -753,13 +781,29 @@ body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
 
+/* ── Mobile: safe-area bottom (notched iPhones) ────────────── */
+body.mobile .status-bar {
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  height: auto;
+  min-height: var(--statusbar-h);
+}
+
+/* ── Mobile: 44px minimum touch targets ────────────────────── */
+body.mobile button,
+body.mobile [role="button"],
+body.mobile .hdr-btn,
+body.mobile .icon-btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
 /* ════════════════════════════════════════════════════════════
    MAIN GRID
 ═════════════════════════════════════════════════════════════ */
 .main-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 200px 230px 6px 1fr;
+  grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
   gap: 0;
@@ -858,6 +902,159 @@ body.mobile .cell-chg    { font-size: 13px; }
 
 /* ── Transcript panel ───────────────────────────────────────── */
 .panel-transcript { /* glass — inherits from .panel */ }
+
+/* ── Two-column alert layout ───────────────────────────────── */
+.alert-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.alert-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.alert-col--regular {
+  border-right: 1px solid var(--border);
+}
+
+.alert-col-header {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.alert-col--squeeze .alert-col-header {
+  color: #f59e0b;
+}
+
+/* Regular alert card rows */
+.tx-alert-type {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tx-meta-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+  align-items: center;
+}
+
+.tx-price {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.tx-vol {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* Squeeze alert card rows */
+.tx-line--squeeze { border-left: 2px solid #f59e0b; padding-left: 4px; }
+
+.tx-ticker--squeeze { color: #f59e0b; }
+
+/* ── Sentiment column ──────────────────────────────────────── */
+.alert-col--squeeze { border-right: 1px solid var(--border); }
+
+.alert-col--sentiment { flex: 0.9; }
+
+.alert-col--sentiment .alert-col-header { color: #a78bfa; }
+
+/* Ranked sentiment rows: ticker on the left, color-coded score on the right.
+   Whole row is clickable → fires a burst alert for that ticker. */
+.tx-sent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.tx-sent-row:hover        { background: rgba(167, 139, 250, 0.12); }
+.tx-sent-row--firing      { background: rgba(167, 139, 250, 0.28); }
+
+.tx-sent-score {
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.tx-sent-score--bull { color: #34d399; }
+.tx-sent-score--bear { color: #f87171; }
+.tx-sent-score--flat { color: var(--text-muted); }
+
+.tx-sent-ticker { color: #a78bfa; font-weight: 700; }
+
+/* Market sentiment pill (panel header) */
+.tx-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.market-sent-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.market-sent-pill--bull {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.25);
+}
+.market-sent-pill--bear {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.25);
+}
+.market-sent-pill--flat {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.tx-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.tx-level-chip {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
 
 .tx-status-row {
   display: flex;
@@ -1160,6 +1357,31 @@ body.mobile .cell-chg    { font-size: 13px; }
   animation: burst-pulse 1s ease-in-out 3;
 }
 
+/* Confluence: 2+ independent sources agree on this ticker — the strong-setup
+   flag. Gold so it reads as "premium", distinct from mention (amber) / burst
+   (red). Position-independent: keyed on ticker identity, not screen layout. */
+.confluence-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  background: rgba(250, 204, 21, 0.16);
+  color: #fcd34d;
+  border: 1px solid rgba(250, 204, 21, 0.34);
+  cursor: help;
+}
+.row-confluent {
+  border-left: 3px solid #facc15 !important;
+  padding-left: 6px !important;
+  background: rgba(250, 204, 21, 0.08);
+}
+
 /* Feedback badge on Settings button */
 .feedback-badge {
   display: inline-block;
@@ -1245,6 +1467,14 @@ body.mobile .cell-chg    { font-size: 13px; }
   font-weight: 700;
   color: var(--text-bright);
   letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.cell-ticker:hover {
+  color: var(--accent);
+}
+.cell-ticker--firing {
+  color: #f59e0b;
 }
 .cell-price {
   font-family: var(--font-mono);
@@ -2181,3 +2411,190 @@ body.mobile .lb-item:nth-child(n+4) { display: none; }
   white-space: nowrap;
   letter-spacing: 0.03em;
 }
+
+/* ── Trading Engine panel (owner only) ──────────────────────── */
+.engine-bar {
+  display: none;            /* owner (user-jmb) or localhost (engine-visible) */
+  margin: 0 14px 10px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+body.user-jmb .engine-bar,
+body.engine-visible .engine-bar { display: block; }
+
+.engine-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.engine-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.engine-actions { display: flex; gap: 6px; }
+
+.eng-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-hi);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.eng-chip--ok    { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
+.eng-chip--warn  { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); }
+.eng-chip--live  { color: #f87171; border-color: rgba(248, 113, 113, 0.5); font-weight: 700; }
+.eng-chip--paper { color: var(--accent-3); border-color: rgba(56, 189, 248, 0.4); }
+.eng-chip--off   { color: var(--text-muted); }
+
+.engine-body { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+
+.eng-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+.eng-group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.eng-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0;
+}
+.eng-label { flex: 1; font-size: 12px; color: var(--text-dim); }
+.eng-field input, .eng-field select {
+  width: 110px;
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.eng-hint { font-size: 10px; color: var(--text-muted); }
+
+.eng-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.eng-note { font-size: 12px; color: var(--text-dim); }
+.eng-note--err { color: #f87171; }
+
+.eng-report-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.eng-tables { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+.eng-table { border-collapse: collapse; font-family: var(--font-mono); font-size: 11px; }
+.eng-table th, .eng-table td {
+  padding: 3px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.eng-table th:first-child, .eng-table td:first-child { text-align: left; }
+.eng-table th { color: var(--text-muted); text-transform: uppercase; font-size: 10px; }
+.eng-row--green td { color: #4ade80; }
+.eng-row--red td   { color: #f87171; }
+
+body.mobile .engine-bar { display: none !important; }
+
+/* ── In-page toasts ─────────────────────────────────────────── */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  backdrop-filter: blur(16px);
+  border: 1px solid;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 220px;
+  max-width: 340px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.45);
+  animation: toast-in 0.22s ease;
+  cursor: pointer;
+}
+.toast--buy {
+  background: rgba(74,222,128,0.10);
+  border-color: var(--buy-border);
+  color: var(--buy);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.45), 0 0 18px var(--buy-glow);
+}
+.toast--burst {
+  background: rgba(249,115,22,0.10);
+  border-color: rgba(249,115,22,0.35);
+  color: #fb923c;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.45), 0 0 18px rgba(249,115,22,0.18);
+}
+.toast--sell {
+  background: rgba(251,113,133,0.10);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.toast--info {
+  background: var(--surface);
+  border-color: var(--border-hi);
+  color: var(--text);
+}
+.toast-icon { font-size: 18px; flex-shrink: 0; }
+.toast-body { display: flex; flex-direction: column; gap: 2px; }
+.toast-title { font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+.toast-sub   { font-size: 11px; opacity: 0.75; font-family: var(--font-sans); }
+.toast-progress {
+  position: absolute;
+  bottom: 0; left: 0;
+  height: 2px;
+  border-radius: 0 0 10px 10px;
+  background: currentColor;
+  opacity: 0.4;
+  transition: width linear;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0) scale(1);    max-height: 80px; margin-bottom: 0; }
+  to   { opacity: 0; transform: translateY(8px) scale(0.95); max-height: 0;   margin-bottom: -10px; }
+}
+.toast--dismissing { animation: toast-out 0.22s ease forwards; }
+
+/* ── Hidden elements (user preference) ────────────────────── */
+.donate-bar                                              { display: none !important; }
+body.user-jmb .engine-bar,
+body.engine-visible .engine-bar                         { display: none !important; }
+[data-signal-bar]                                       { display: none !important; }
+.alert-col--regular                                     { display: none !important; }

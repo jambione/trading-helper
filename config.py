@@ -5,7 +5,8 @@ from pathlib import Path
 
 CONFIG_FILE  = Path(__file__).parent / "config" / "bot_config.json"
 SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
-SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key"]
+SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key",
+                "push_vapid_private_key", "push_contact_email"]
 
 DEFAULT_CONFIG = {
     # ── API credentials ──────────────────────────────────────
@@ -50,18 +51,17 @@ DEFAULT_CONFIG = {
     "wr_length": 14,
 
     # ── TradingView ──────────────────────────────────────────
-    "tv_chart_url": "https://www.tradingview.com/chart/",
-    "brave_tv_tab": 1,    # tab number (1-9) holding TradingView in Brave
+    "tv_chart_url":     "https://www.tradingview.com/chart/",
+    "brave_tv_tab":     1,    # tab number (1-9) holding TradingView in Brave
+    "tv_browser_macos": "Brave Browser",  # browser name for macOS alert automation
 
-    # Transcription
-    "device_index": None,
-    # Experimental two-stage "spell pipeline" (silence-segmentation + recognize)
-    # for the transcriber. Off = classic 1.5s fixed-chunk path. Applied at
-    # transcriber launch (toggling restarts it). See transcription/spell_pipeline.py.
-    "spell_pipeline": False,
+    # ── Discord OCR source (the ticker source) ───────────────
+    "discord_ocr_poll_sec": 2.5,    # seconds between OCR captures
+    "discord_window_owner": "Discord",
+    "discord_window_title": "",     # optional window-title substring filter
 
     # ── Mention burst alerts ─────────────────────────────────
-    "mention_alert_threshold": 5,   # mentions within window to trigger alert
+    "mention_alert_threshold": 2,   # mentions within window to trigger alert
     "mention_alert_window":    10,  # rolling window in seconds
 }
 
@@ -80,11 +80,14 @@ SAFE_CONFIG_KEYS = [
     "wr_length",
     "tv_chart_url",
     "brave_tv_tab",
+    "tv_browser_macos",
     "strategy",
-    "device_index",
-    "spell_pipeline",
+    "discord_ocr_poll_sec",
+    "discord_window_owner",
+    "discord_window_title",
     "mention_alert_threshold",
     "mention_alert_window",
+    "push_vapid_public_key",
 ]
 
 
@@ -112,20 +115,28 @@ def load_config() -> dict:
 
 
 def _write_json(path: Path, data: dict):
+    tmp_path = None
     try:
         tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            Path(tmp_path).replace(path)
         except Exception:
+            try:
+                os.close(tmp_fd)
+            except Exception:
+                pass
+            raise
+        Path(tmp_path).replace(path)
+        tmp_path = None   # rename succeeded — nothing to clean up
+    except Exception as e:
+        print(f"[CFG] Failed to save {path.name}: {e}")
+    finally:
+        if tmp_path:
             try:
                 os.unlink(tmp_path)
             except Exception:
                 pass
-            raise
-    except Exception as e:
-        print(f"[CFG] Failed to save {path.name}: {e}")
 
 
 def save_config(cfg: dict):
