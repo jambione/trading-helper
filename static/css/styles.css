@@ -8,15 +8,15 @@
 
 /* ── Design tokens ──────────────────────────────────────────── */
 :root {
-  /* Color hierarchy — dark core, medium-navy chrome */
-  --bg:            #0a0f1e;   /* body / grid background — near-black navy  */
-  --bg-deep:       #060b14;   /* deepest: scrollable empty space            */
-  --surface:       #111827;   /* panel body background                      */
-  --surface-solid: #111827;
-  --card:          #182035;   /* alert cards, watchlist rows                */
-  --card-hi:       #1e2a42;   /* card hover / active state                  */
-  --nav:           #1c2541;   /* header bar, footer, leaderboard            */
-  --nav2:          #1e2a48;   /* panel headers, engine bar, sub-chrome      */
+  /* Color hierarchy — brownish-dark aurora */
+  --bg:            #0d0b15;   /* body / grid background — near-black        */
+  --bg-deep:       #09080f;   /* deepest: scrollable empty space            */
+  --surface:       #141220;   /* panel body background                      */
+  --surface-solid: #141220;
+  --card:          #1c1a2c;   /* alert cards, watchlist rows                */
+  --card-hi:       #231f38;   /* card hover / active state                  */
+  --nav:           #1a1828;   /* header bar, footer, leaderboard            */
+  --nav2:          #201e30;   /* panel headers, engine bar, sub-chrome      */
 
   /* Borders */
   --border:        rgba(255, 255, 255, 0.06);
