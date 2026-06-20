@@ -2503,3 +2503,8 @@ body.user-jmb .engine-bar,
 body.engine-visible .engine-bar                         { display: none !important; }
 [data-signal-bar]                                       { display: none !important; }
 .alert-col--regular                                     { display: none !important; }
+[data-notif-btn]                                        { display: none !important; }
+.auto-add-toggle                                        { display: none !important; }
+.auto-alert-toggle                                      { display: none !important; }
+.tx-status-row                                          { display: none !important; }
+.tx-controls                                            { display: none !important; }
