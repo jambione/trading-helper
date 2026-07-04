@@ -749,10 +749,71 @@ body.mobile .auto-alert-toggle { display: none !important; }
   .cell-chg    { font-size: 13px; }
 }
 
-body.mobile .main-grid                 { grid-template-columns: 1fr !important; }
-body.mobile [data-panel="transcript"]  { display: none !important; }
 body.mobile [data-panel="tradingview"] { display: none !important; }
 body.mobile #ticker-tv-resizer         { display: none !important; }
+
+/* ── Mobile: swipeable pager (Momentum ⇄ Swing) ─────────────────
+   The grid becomes a horizontal scroll-snap strip: Momentum is slide 1
+   (leftmost, shown first), the Swing column is slide 2. The tab bar mirrors
+   and drives the scroll position (mobilePager.js). */
+.mobile-pager-tabs { display: none; }
+body.mobile .mobile-pager-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px 0;
+}
+body.mobile .mobile-pager-tab {
+  flex: 1 1 0;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 0;
+  cursor: pointer;
+  transition: color .15s, background .15s, border-color .15s;
+}
+body.mobile .mobile-pager-tab.is-active {
+  color: var(--accent-2);
+  background: var(--goldbg);
+  border-color: var(--goldbor);
+}
+
+body.mobile .main-grid {
+  display: flex !important;
+  flex-direction: row;
+  grid-template-columns: none !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  gap: 10px;
+  padding: 8px 10px 10px;
+}
+body.mobile .main-grid::-webkit-scrollbar { display: none; }
+
+body.mobile .main-grid > [data-panel="tickers"],
+body.mobile .main-grid > [data-panel="transcript"] {
+  display: flex !important;
+  flex: 0 0 100%;
+  width: 100%;
+  min-width: 100%;
+  margin: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+body.mobile .main-grid > [data-panel="tickers"]    { order: 1; }  /* Momentum first */
+body.mobile .main-grid > [data-panel="transcript"] { order: 2; }  /* Swing second  */
+
+/* Swing slide shows ONLY the swing column (its own "Swing" header stands in for
+   the panel title, which we hide along with the alerts/squeeze columns). */
+body.mobile [data-panel="transcript"] > .panel-header,
+body.mobile [data-panel="transcript"] .tx-controls,
+body.mobile [data-panel="transcript"] .alert-col--regular,
+body.mobile [data-panel="transcript"] .alert-col--squeeze { display: none !important; }
+body.mobile [data-panel="transcript"] .alert-col--swing   { border: 0; }
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
 body.mobile .watchlist-cols { grid-template-columns: 1fr 76px 64px 52px; }
 body.mobile .cell-ticker { font-size: 15px; }
