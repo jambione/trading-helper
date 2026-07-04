@@ -113,10 +113,24 @@ def test_reject_low_rel_vol():
     assert fs.score_candidate(_candidate(rel_vol=1.0), CFG) is None
 
 
-def test_reject_eps_growth_outside_window():
-    assert fs.score_candidate(_candidate(eps_growth=1.2), CFG) is None
-    assert fs.score_candidate(_candidate(eps_growth=5.0), CFG) is None
-    assert fs.score_candidate(_candidate(eps_growth=2.5), CFG) is not None
+def test_eps_growth_is_scoring_only_not_a_gate():
+    # EPS-growth no longer hard-rejects (it's a weak free-tier proxy); values outside
+    # the old 2–3× band still qualify and simply score lower.
+    assert fs.score_candidate(_candidate(eps_growth=1.2), CFG) is not None
+    assert fs.score_candidate(_candidate(eps_growth=5.0), CFG) is not None
+    lo = fs.score_candidate(_candidate(eps_growth=1.0), CFG)
+    hi = fs.score_candidate(_candidate(eps_growth=3.0), CFG)
+    assert hi > lo
+
+
+def test_reject_uncovered_instrument_when_finnhub_succeeded():
+    # skipped=[] means Finnhub answered; no fundamentals at all → ETF/uncovered → drop.
+    c = _candidate(pe=None, pb=None, rating=None, eps_growth=None, rr=None, skipped=[])
+    assert fs.score_candidate(c, CFG) is None
+    # …but if the fields are merely degraded (skipped populated), keep it.
+    c2 = _candidate(pe=None, pb=None, rating=None, eps_growth=None, rr=None,
+                    skipped=["metric", "rating"])
+    assert fs.score_candidate(c2, CFG) is not None
 
 
 def test_reject_weak_rating():

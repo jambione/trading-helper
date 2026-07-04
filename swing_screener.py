@@ -9,11 +9,14 @@ Data sources (no paid third party — uses what the app already has):
     analyst consensus (stock/recommendation), and the earnings calendar.
 
 Funnel (quota-aware — Finnhub free tier is ~60 calls/min):
-  1. Universe = curated liquid names + Alpaca movers (losers/most-actives).
-  2. One batched Alpaca daily-bars pull → compute technicals locally → keep only
-     names passing the cheap technical gate (price < ceiling, oversold+turning,
-     rel-vol). Alpaca serves bars for the whole market — no symbol whitelist.
-  3. For the survivors only, pull Finnhub fundamentals/rating/earnings.
+  1. Universe = every tradable US equity (~13k, swing_full_market) unless a
+     swing_universe.json override or narrow mode is set. Curated names + Alpaca
+     movers are the fallback.
+  2. Batched Alpaca daily-bars pull → compute technicals locally → keep only names
+     passing the cheap technical gate (price < ceiling, min $-volume liquidity
+     floor, oversold+turning, rel-vol). Alpaca serves bars for the whole market.
+  3. Rank survivors by technical strength, then pull Finnhub fundamentals/rating/
+     earnings for the top swing_enrich_cap only (protects the Finnhub quota).
   4. Score, rank, write swing_candidates.json. The dashboard overlays live
      Discord confluence at serve time.
 
@@ -167,11 +170,38 @@ def fetch_daily_bars(sym: str, cfg: dict) -> pd.DataFrame:
 
 # ── Universe ──────────────────────────────────────────────────────────────────
 
+_ASSET_CACHE: list[str] | None = None
+
+
+def all_tradable_symbols(cfg: dict) -> list[str]:
+    """Every active, tradable US equity symbol from Alpaca (~13k). Cached for the
+    process lifetime — the tradable set barely moves intraday. The liquidity floor
+    and price ceiling downstream trim the illiquid/expensive junk this pulls in."""
+    global _ASSET_CACHE
+    if _ASSET_CACHE is not None:
+        return _ASSET_CACHE
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import GetAssetsRequest
+        from alpaca.trading.enums import AssetClass, AssetStatus
+        tc = TradingClient(cfg.get("api_key", ""), cfg.get("secret_key", ""), paper=True)
+        assets = tc.get_all_assets(GetAssetsRequest(status=AssetStatus.ACTIVE,
+                                                    asset_class=AssetClass.US_EQUITY))
+        # skip pair symbols (e.g. "BTC/USD" shape) — bars endpoint chokes on them
+        _ASSET_CACHE = [a.symbol for a in assets if a.tradable and "/" not in a.symbol]
+        return _ASSET_CACHE
+    except Exception as e:
+        log.warning("[swing] full-market asset list failed (%s) — using curated universe", e)
+        return []
+
+
 def screen_universe(cfg: dict) -> list[str]:
-    """Curated liquid names + Alpaca movers (losers where oversold bounces live,
-    plus most-actives), deduped. swing_universe.json overrides entirely. The price
-    ceiling and every other criterion are enforced downstream from bars/fundamentals
-    we fetch anyway."""
+    """Symbol universe to screen, in priority order:
+      1. swing_universe.json, if present — an explicit override, used verbatim.
+      2. Full market (~13k tradable US equities) when swing_full_market is on.
+      3. Curated liquid names + Alpaca movers (fallback / narrow mode).
+    Deduped. The price ceiling, liquidity floor, and every other criterion are
+    enforced downstream from bars/fundamentals we fetch anyway."""
     if UNIVERSE_FILE.exists():
         try:
             syms = json.loads(UNIVERSE_FILE.read_text(encoding="utf-8"))
@@ -179,6 +209,12 @@ def screen_universe(cfg: dict) -> list[str]:
                 return [str(s).upper() for s in syms]
         except Exception as e:
             log.warning("[swing] bad swing_universe.json (%s) — using default", e)
+
+    if cfg.get("swing_full_market", True):
+        full = all_tradable_symbols(cfg)
+        if full:
+            return full
+        # else fall through to the curated+movers list below
 
     syms: list[str] = list(DEFAULT_UNIVERSE)
     max_price = float(cfg.get("swing_max_price", 100.0))
@@ -236,6 +272,9 @@ def _technicals(df: pd.DataFrame, cfg: dict) -> dict:
 
     rel_vol = float(calc_rvol(df).iloc[-1])
     support = float(df["low"].tail(20).min())
+    # 20-day average dollar volume — the liquidity floor that keeps illiquid junk
+    # out of the full-market universe.
+    avg_dollar_vol = float((df["close"] * df["volume"]).tail(20).mean())
 
     return {
         "price": round(close_now, 2),
@@ -245,6 +284,7 @@ def _technicals(df: pd.DataFrame, cfg: dict) -> dict:
         "reversal_signals": reversal_signals,
         "rel_vol": round(rel_vol, 2),
         "support": round(support, 2),
+        "avg_dollar_vol": round(avg_dollar_vol, 0),
     }
 
 
@@ -337,11 +377,22 @@ def _technical_gate(c: dict, cfg: dict) -> bool:
     price = c.get("price")
     if price is None or price >= float(cfg.get("swing_max_price", 100.0)):
         return False
+    if c.get("avg_dollar_vol") is not None and \
+            c["avg_dollar_vol"] < float(cfg.get("swing_min_dollar_vol", 5_000_000.0)):
+        return False
     if c.get("rsi") is not None and not c.get("reversal_confirmed"):
         return False
     if c.get("rel_vol") is not None and c["rel_vol"] < float(cfg.get("swing_rel_vol_min", 1.5)):
         return False
     return True
+
+
+def _survivor_rank(c: dict, cfg: dict) -> float:
+    """Cheap bars-only ranking used to pick which survivors get the (rate-limited)
+    Finnhub enrichment when the universe is huge: deeper oversold + higher rel-vol
+    first."""
+    oversold_thr = float(cfg.get("swing_rsi_oversold", 30.0))
+    return max(0.0, oversold_thr - (c.get("rsi") or oversold_thr)) + min(3.0, c.get("rel_vol") or 1.0)
 
 
 def _rating_ok(rating: str | None, minimum: str) -> bool:
@@ -362,12 +413,17 @@ def score_candidate(c: dict, cfg: dict) -> float | None:
         return None
     if c.get("rel_vol") is not None and c["rel_vol"] < float(cfg.get("swing_rel_vol_min", 1.5)):
         return None
-    eps_g = c.get("eps_growth")
-    if eps_g is not None and not (
-        float(cfg.get("swing_min_eps_growth", 2.0)) <= eps_g <= float(cfg.get("swing_max_eps_growth", 3.0))
-    ):
-        return None
+    # EPS-growth (peTTM/forwardPE) is a weak free-tier proxy and is a poor hard
+    # filter against an oversold-value universe — it only feeds the score below.
     if not _rating_ok(c.get("rating"), str(cfg.get("swing_min_rating", "Buy"))):
+        return None
+    # Finnhub answered (nothing skipped) but returned no fundamentals at all → an
+    # ETF/uncovered ticker, which the full-market universe drags in. The strategy is
+    # about balance-sheet stocks, so drop it. (Genuinely gated names keep `skipped`
+    # populated and still pass, preserving graceful degradation.)
+    if not c.get("skipped") and not any(
+        c.get(k) is not None for k in ("pe", "pb", "rating", "eps_growth")
+    ):
         return None
 
     oversold_thr = float(cfg.get("swing_rsi_oversold", 30.0))
@@ -397,6 +453,109 @@ def enrich(sym: str, cfg: dict) -> dict | None:
     return add_fundamentals(sym, c, cfg)
 
 
+# ── Ad-hoc "does this symbol pass our filters?" evaluation ────────────────────
+
+def _check(name: str, ok: bool, detail: str, kind: str = "gate") -> dict:
+    return {"name": name, "pass": bool(ok), "detail": detail, "kind": kind}
+
+
+def _evaluate_checks(c: dict, cfg: dict) -> list[dict]:
+    """Per-criterion breakdown for the dashboard's symbol-checker. `kind="gate"`
+    checks decide qualification (mirroring _technical_gate + score_candidate);
+    `kind="info"` checks are scoring signals shown for context. A None (degraded)
+    value passes its gate — same graceful-degradation rule the screener uses."""
+    checks: list[dict] = []
+
+    max_price = float(cfg.get("swing_max_price", 100.0))
+    price = c.get("price")
+    checks.append(_check("Price under ceiling",
+        price is not None and price < max_price,
+        f"${price} vs < ${max_price:g}" if price is not None else "no price"))
+
+    min_dv = float(cfg.get("swing_min_dollar_vol", 5_000_000.0))
+    dv = c.get("avg_dollar_vol")
+    checks.append(_check("Liquidity — 20d avg $-vol",
+        dv is not None and dv >= min_dv,
+        f"${dv / 1e6:.1f}M vs ≥ ${min_dv / 1e6:g}M" if dv is not None else "no data"))
+
+    checks.append(_check("Oversold reversal confirmed",
+        bool(c.get("reversal_confirmed")),
+        f"RSI {c.get('rsi')}, signals: {', '.join(c.get('reversal_signals') or []) or 'none'}"))
+
+    rv_min = float(cfg.get("swing_rel_vol_min", 1.5))
+    rv = c.get("rel_vol")
+    checks.append(_check("Relative volume",
+        rv is not None and rv >= rv_min,
+        f"{rv}× vs ≥ {rv_min:g}×" if rv is not None else "no data"))
+
+    min_rr = float(cfg.get("swing_min_rr", 2.0))
+    rr = c.get("rr")
+    checks.append(_check("Reward:risk",
+        rr is None or rr >= min_rr,
+        f"{rr} vs ≥ {min_rr:g}" if rr is not None else "n/a — target/support unavailable"))
+
+    min_rating = str(cfg.get("swing_min_rating", "Buy"))
+    rating = c.get("rating")
+    checks.append(_check("Analyst rating",
+        _rating_ok(rating, min_rating),
+        f"{rating or 'unknown'} vs ≥ {min_rating}"))
+
+    covered = bool(c.get("skipped")) or any(
+        c.get(k) is not None for k in ("pe", "pb", "rating", "eps_growth"))
+    checks.append(_check("Has fundamentals (not an ETF)",
+        covered,
+        "covered stock" if covered else "no fundamentals — looks like an ETF/uncovered"))
+
+    # Informational scoring signals (never block qualification).
+    eps = c.get("eps_growth")
+    checks.append(_check("EPS-growth proxy",
+        True,
+        f"{eps}× (scoring only)" if eps is not None else "unavailable", kind="info"))
+    checks.append(_check("Earnings in window",
+        True,
+        "yes — score penalty" if c.get("earnings_in_window") else "no", kind="info"))
+    checks.append(_check("Recent analyst upgrade",
+        True,
+        "yes — score bonus" if c.get("recent_upgrade") else "no", kind="info"))
+    return checks
+
+
+def evaluate(sym: str, cfg: dict) -> dict:
+    """Run one symbol through the full pipeline and return a per-filter reading —
+    including the symbols the screener would silently drop. Used by the dashboard's
+    'check symbols' box."""
+    sym = str(sym).upper().strip()
+    if not sym:
+        return {"ticker": sym, "ok": False, "error": "empty symbol", "checks": []}
+
+    df = fetch_daily_bars(sym, cfg)
+    if df.empty:
+        return {"ticker": sym, "ok": False,
+                "error": "no price data — unknown or untradable symbol", "checks": []}
+    tech = _technicals(df, cfg)
+    if not tech:
+        return {"ticker": sym, "ok": False,
+                "error": "insufficient history (<30 daily bars)", "checks": []}
+
+    c: dict = {"ticker": sym, "skipped": [], **tech}
+    try:
+        add_fundamentals(sym, c, cfg)
+    except Exception as e:
+        log.warning("[swing] evaluate %s fundamentals error: %s", sym, e)
+        c["skipped"].append("fundamentals")
+
+    checks = _evaluate_checks(c, cfg)
+    ok = all(ch["pass"] for ch in checks if ch["kind"] == "gate")
+    return {
+        "ticker": sym, "ok": ok, "score": score_candidate(c, cfg),
+        "price": c.get("price"), "rsi": c.get("rsi"), "rel_vol": c.get("rel_vol"),
+        "avg_dollar_vol": c.get("avg_dollar_vol"), "rr": c.get("rr"),
+        "rating": c.get("rating"), "eps_growth": c.get("eps_growth"),
+        "reversal_confirmed": c.get("reversal_confirmed"),
+        "checks": checks,
+    }
+
+
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def run_screen(cfg: dict) -> list[dict]:
@@ -416,6 +575,11 @@ def run_screen(cfg: dict) -> list[dict]:
         if _technical_gate(c, cfg):
             survivors.append(c)
     log.info("[swing] technical survivors=%d", len(survivors))
+
+    # With a full-market universe there can be far more survivors than the Finnhub
+    # enrich cap — rank by technical strength so the best names get fundamentals,
+    # not an arbitrary dict-order slice.
+    survivors.sort(key=lambda c: _survivor_rank(c, cfg), reverse=True)
 
     scored: list[dict] = []
     for c in survivors[: int(cfg.get("swing_enrich_cap", 40))]:

@@ -6,12 +6,15 @@
  * technicals + Finnhub fundamentals); clicking one adds the ticker to the watchlist.
  */
 
-import { subscribe } from './store.js?v=61';
-import { api }       from './api.js?v=61';
+import { subscribe } from './store.js?v=62';
+import { api }       from './api.js?v=62';
 
 let _regularBox    = null;
 let _squeezeBox    = null;
 let _swingBox      = null;
+let _checkForm     = null;
+let _checkInput    = null;
+let _checkResults  = null;
 
 let _lastRegularCount  = -1;
 let _lastRegularKey    = '';
@@ -55,6 +58,74 @@ export function init(panelEl) {
       }
     });
   }
+
+  // Ad-hoc symbol checker — test any tickers against the swing filters on demand.
+  _checkForm    = panelEl.querySelector('[data-swing-check-form]');
+  _checkInput   = panelEl.querySelector('[data-swing-check-input]');
+  _checkResults = panelEl.querySelector('[data-swing-check-results]');
+  if (_checkForm) {
+    _checkForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const symbols = (_checkInput.value || '').trim();
+      if (!symbols) return;
+      _checkForm.classList.add('swing-check--busy');
+      _renderCheckMessage('Checking…');
+      try {
+        const { results = [] } = await api.checkSwing(symbols);
+        _renderCheckResults(results);
+      } catch (err) {
+        console.error('[swing] check failed', err);
+        _renderCheckMessage('Check failed — try again.');
+      } finally {
+        _checkForm.classList.remove('swing-check--busy');
+      }
+    });
+  }
+}
+
+// ── Ad-hoc symbol checker ──────────────────────────────────
+
+function _renderCheckMessage(msg) {
+  if (!_checkResults) return;
+  _checkResults.hidden = false;
+  _checkResults.innerHTML = `<div class="swing-check-msg">${_esc(msg)}</div>`;
+}
+
+function _renderCheckResults(results) {
+  if (!_checkResults) return;
+  if (!results.length) { _checkResults.hidden = true; return; }
+  _checkResults.hidden = false;
+  _checkResults.innerHTML =
+      `<button class="swing-check-close" data-swing-check-close title="Dismiss">×</button>`
+    + results.map(_renderCheckCard).join('');
+  const close = _checkResults.querySelector('[data-swing-check-close]');
+  if (close) close.addEventListener('click', () => { _checkResults.hidden = true; });
+}
+
+function _renderCheckCard(r) {
+  if (r.error) {
+    return `<div class="swing-check-card swing-check-card--err">`
+         + `<div class="swing-check-head"><strong>${_esc(r.ticker)}</strong>`
+         + `<span class="swing-check-verdict swing-check-verdict--err">${_esc(r.error)}</span></div></div>`;
+  }
+  const verdict = r.ok
+    ? `<span class="swing-check-verdict swing-check-verdict--pass">✓ Qualifies${r.score != null ? ` · ${r.score}` : ''}</span>`
+    : `<span class="swing-check-verdict swing-check-verdict--fail">✗ No</span>`;
+  const price = r.price != null ? `<span class="swing-check-price">$${_esc(String(r.price))}</span>` : '';
+
+  const rows = (r.checks || []).map(ch => {
+    const icon = ch.kind === 'info' ? '·' : (ch.pass ? '✓' : '✗');
+    const cls  = ch.kind === 'info' ? 'swing-check-row--info'
+                                    : (ch.pass ? 'swing-check-row--pass' : 'swing-check-row--fail');
+    return `<div class="swing-check-row ${cls}">`
+         + `<span class="swing-check-icon">${icon}</span>`
+         + `<span class="swing-check-name">${_esc(ch.name)}</span>`
+         + `<span class="swing-check-detail">${_esc(ch.detail)}</span></div>`;
+  }).join('');
+
+  return `<div class="swing-check-card">`
+       + `<div class="swing-check-head"><strong>${_esc(r.ticker)}</strong>${price}${verdict}</div>`
+       + `<div class="swing-check-rows">${rows}</div></div>`;
 }
 
 // ── Swing-candidate column ─────────────────────────────────

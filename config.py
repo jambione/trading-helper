@@ -70,10 +70,12 @@ DEFAULT_CONFIG = {
     # confirm fundamentals for the technical survivors. Discord confluence is
     # overlaid live by the dashboard.
     "swing_screener_enabled":     False,  # launch swing_screener.py from start_all
+    "swing_full_market":          True,   # screen every tradable US equity (~13k) vs a curated list
+    "swing_min_dollar_vol":   5000000.0,  # 20-day avg $-volume floor — drops illiquid junk from full market
     "swing_max_price":            100.0,  # hard price ceiling ($)
     "swing_rsi_oversold":         30.0,   # RSI(14) below this = oversold
-    "swing_min_eps_growth":       2.0,    # projected EPS-growth multiple floor (peTTM/forwardPE)
-    "swing_max_eps_growth":       3.0,    # …and ceiling (3×)
+    "swing_min_eps_growth":       2.0,    # EPS-growth proxy (peTTM/forwardPE) — SCORING signal, not a hard gate
+    "swing_max_eps_growth":       3.0,    # …retained for scoring/config; no longer rejects candidates
     "swing_min_rating":           "Buy",  # min analyst consensus (Buy|Strong Buy)
     "swing_rel_vol_min":          1.5,    # today's vol ÷ 20-day avg floor
     "swing_min_rr":               2.0,    # min reward:risk (upside-to-52wk-high ÷ downside)
@@ -111,6 +113,8 @@ SAFE_CONFIG_KEYS = [
     "mention_alert_window",
     "push_vapid_public_key",
     "swing_screener_enabled",
+    "swing_full_market",
+    "swing_min_dollar_vol",
     "swing_max_price",
     "swing_rsi_oversold",
     "swing_min_eps_growth",

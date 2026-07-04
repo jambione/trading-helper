@@ -1393,6 +1393,35 @@ async def api_swing_refresh():
     return JSONResponse({"ok": True, "status": "started"})
 
 
+@app.post("/api/swing/check")
+async def api_swing_check(request: Request):
+    """Evaluate arbitrary user-entered symbols against the swing filters and return
+    a per-criterion reading for each — including symbols the screener would drop.
+    Runs off the event loop since bars/fundamentals fetches block."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = str(body.get("symbols", ""))
+    # split on commas/whitespace, dedupe (order-preserving), cap to protect Finnhub quota
+    seen: dict[str, None] = {}
+    for tok in re.split(r"[,\s]+", raw.upper()):
+        if tok:
+            seen.setdefault(tok, None)
+    symbols = list(seen)[:25]
+    if not symbols:
+        return JSONResponse({"results": []})
+
+    def _run():
+        import swing_screener
+        cfg = load_config()
+        return [swing_screener.evaluate(s, cfg) for s in symbols]
+
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(None, _run)
+    return JSONResponse({"results": results})
+
+
 @app.post("/api/news")
 async def api_save_news(request: Request):
     """Overwrite news.json with the posted items array (admin only)."""

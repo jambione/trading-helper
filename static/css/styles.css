@@ -965,6 +965,101 @@ body.mobile .icon-btn {
 .swing-refresh-btn--spin { animation: swing-spin 1s linear infinite; }
 @keyframes swing-spin { to { transform: rotate(360deg); } }
 
+/* Ad-hoc symbol checker: textbox + on-demand per-filter reading. */
+.swing-check {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.swing-check-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  color: var(--text-bright);
+  font-size: 11px;
+  padding: 4px 6px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.swing-check-input:focus { border-color: var(--accent-border); }
+.swing-check-input::placeholder { color: var(--text-muted); }
+.swing-check-btn {
+  flex: 0 0 auto;
+  background: var(--goldbg);
+  border: 1px solid var(--goldbor);
+  border-radius: 4px;
+  color: var(--accent-2);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 9px;
+  transition: background 0.12s, opacity 0.12s;
+}
+.swing-check-btn:hover { background: var(--accent-glow); }
+.swing-check--busy .swing-check-btn { opacity: 0.5; pointer-events: none; }
+
+.swing-check-results {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: 5px;
+  padding: 6px;
+  margin-bottom: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.swing-check-close {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.swing-check-close:hover { color: var(--text-bright); }
+.swing-check-msg { color: var(--text-dim); font-size: 11px; padding: 2px 4px; }
+
+.swing-check-card { padding: 3px 2px 6px; }
+.swing-check-card + .swing-check-card { border-top: 1px solid var(--border); margin-top: 4px; }
+.swing-check-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.swing-check-head strong { color: var(--text-bright); font-size: 12px; }
+.swing-check-price { color: var(--text-dim); font-size: 11px; }
+.swing-check-verdict {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.swing-check-verdict--pass { color: var(--buy);    background: rgba(74, 222, 128, 0.12); }
+.swing-check-verdict--fail { color: var(--danger); background: var(--danger-bg); }
+.swing-check-verdict--err  { color: var(--text-muted); background: none; margin-left: auto; font-weight: 400; }
+
+.swing-check-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 2px 5px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  padding: 1px 0;
+}
+.swing-check-icon { text-align: center; }
+.swing-check-name { color: var(--text-dim); }
+.swing-check-detail { grid-column: 2; color: var(--text-muted); }
+.swing-check-row--pass .swing-check-icon { color: var(--buy); }
+.swing-check-row--fail .swing-check-icon { color: var(--danger); }
+.swing-check-row--fail .swing-check-name { color: var(--text-bright); }
+.swing-check-row--info .swing-check-icon { color: var(--text-muted); }
+
 /* Swing-candidate rows: ticker + price on top, indicator chips, then tags.
    Whole row is clickable → adds the ticker to the watchlist. */
 .tx-swing-row {
