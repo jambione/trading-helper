@@ -158,13 +158,17 @@ _SCANNER_SCORES = {
 }
 _SCANNER_DEFAULT = 0.60   # used only when a strict row appears before any header
 
-# A genuine scanner table row is "TICKER $price ±pct%" and NOTHING else — a
-# leading ticker, a price-like number, then a signed percentage. Requiring both
-# a price AND a percent is what rejects the chat/alert noise (e.g. "BB LIVE
-# Alerts", ">>>>> 1 Minute High Price = 41.83", "Set alerts below key levels"):
-# none of those carry a "$price ±pct%" tail, so none can be misread as tickers.
+# A genuine scanner table row is "TICKER price pct" — a leading ticker
+# followed by two separate numeric tokens (a price-like number, then a
+# signed change). That two-number shape is what rejects the chat/alert noise
+# (e.g. "BB LIVE Alerts", ">>>>> 1 Minute High Price = 41.83", "Set alerts
+# below key levels"): none of those carry two adjacent numbers, so none can
+# be misread as tickers. The "$", thousands comma, decimal point, and "%"
+# are all optional because Vision OCR frequently drops or misreads exactly
+# those glyphs on scanner rows — treating them as required turned normal OCR
+# jitter into silently-dropped tickers.
 _SCANNER_ROW_RE = re.compile(
-    r'^\s*([A-Z]{2,5})\s+\$?\d[\d,]*\.?\d*\s+[+\-]?\d[\d.]*\s*%')
+    r'^\s*([A-Z]{2,5})\s+\$?\d[\d,]*\.?\d*\s*[+\-]?\d[\d.]*\s*%?')
 
 # Lines that close the scanner table: an alert arrow or a "[H:MM AM]user:" chat
 # prefix means we've scrolled past the Market Update image into other messages.

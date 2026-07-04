@@ -329,9 +329,12 @@ def test_confluence_in_snapshot(monkeypatch):
 
 # ── Section F — Scanner table detection (strict) ─────────────────────────────
 # Strict contract: scanner only emits a ticker when the table is active AND the
-# line is exactly "TICKER $price ±pct%". Lines with words, alert arrows, or chat
-# timestamps are rejected (and arrows/chat close the table) — this is what kills
-# the BB/HIGH/KEY/FOR misread noise.
+# line has a leading ticker followed by two numeric tokens (price, then a
+# signed change) — "TICKER price pct", with "$", comma, decimal point, and "%"
+# all optional since Vision OCR frequently drops or misreads those glyphs.
+# Lines with words, alert arrows, or chat timestamps are rejected (and
+# arrows/chat close the table) — this is what kills the BB/HIGH/KEY/FOR
+# misread noise.
 
 _ROW = "EHGO $4.72 +18.2%"   # a canonical strict scanner row
 

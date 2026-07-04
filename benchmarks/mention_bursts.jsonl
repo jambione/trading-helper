@@ -98,3 +98,6 @@
 {"ticker": "ATHE", "time": "2026-06-18T00:51:13Z", "unix": 1781743873.6, "price": null, "window_count": 2}
 {"ticker": "TST", "time": "2026-06-18T00:51:13Z", "unix": 1781743873.6, "price": null, "window_count": 2}
 {"ticker": "TSLA", "time": "2026-06-18T00:51:13Z", "unix": 1781743873.6, "price": null, "window_count": 2}
+{"ticker": "YMAT", "time": "2026-07-04T09:17:31Z", "unix": 1783156651.7, "price": null, "window_count": 2}
+{"ticker": "YMAT", "time": "2026-07-04T09:25:40Z", "unix": 1783157140.0, "price": 0.5011, "window_count": 2}
+{"ticker": "LHSW", "time": "2026-07-04T09:25:42Z", "unix": 1783157142.5, "price": null, "window_count": 2}
