@@ -5,23 +5,23 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=63';
-import { subscribe, set }                        from './store.js?v=63';
-import { init as initTranscription }             from './transcription.js?v=63';
-import { init as initTickers }                   from './tickers.js?v=63';
-import { init as initTradingView }               from './tradingview.js?v=63';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=63';
-import { init as initResizer }                   from './resizer.js?v=63';
-import * as controls                             from './controls.js?v=63';
-import * as notifications                        from './notifications.js?v=63';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=63';
-import { init as initNews }                      from './news.js?v=63';
-import { init as initLeaderboard }               from './leaderboard.js?v=63';
-import { init as initEngine }                    from './engine.js?v=63';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=63';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=63';
+import { connect, on, api }                      from './api.js?v=64';
+import { subscribe, set }                        from './store.js?v=64';
+import { init as initTranscription }             from './transcription.js?v=64';
+import { init as initTickers }                   from './tickers.js?v=64';
+import { init as initTradingView }               from './tradingview.js?v=64';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=64';
+import { init as initResizer }                   from './resizer.js?v=64';
+import * as controls                             from './controls.js?v=64';
+import * as notifications                        from './notifications.js?v=64';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=64';
+import { init as initNews }                      from './news.js?v=64';
+import { init as initLeaderboard }               from './leaderboard.js?v=64';
+import { init as initEngine }                    from './engine.js?v=64';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=64';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=64';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=63';
+import { init as initMobilePager }                from './mobilePager.js?v=64';
 
 // Build badge — shows which code the dashboard and the signal engine are each
 // running, so a stale or mismatched process is obvious at a glance. Amber when
@@ -182,7 +182,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=63');
+    const m = await import('./admin.js?v=64');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -237,6 +237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.discord)                         update.discord           = snap.discord;
     if (snap.news              !== undefined) update.news              = snap.news;
     if (snap.engine)                          update.engine            = snap.engine;
+    if (snap.swing             !== undefined) update.swing             = snap.swing;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);
   });

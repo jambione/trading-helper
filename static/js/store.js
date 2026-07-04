@@ -10,6 +10,7 @@ const _state = {
   scan_running:   false,
   scan_ts:        '',
   tickers:        /** @type {Object[]} */ ([]),
+  swing:          /** @type {Object[]} */ ([]),
   transcriber: {
     running: false,
     lines:   /** @type {string[]} */ ([]),
