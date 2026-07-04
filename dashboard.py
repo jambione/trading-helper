@@ -77,6 +77,7 @@ ET                 = ZoneInfo("America/New_York")
 PORT               = 8888
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
 NEWS_FILE          = Path("news.json")
+SWING_FILE         = Path("swing_candidates.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
 PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
@@ -153,6 +154,32 @@ def save_news(items: list) -> None:
     """Write items list to news.json and invalidate the cache."""
     _atomic_write_json(NEWS_FILE, items)
     _news_cache["mtime"] = -1.0
+
+
+# ── Swing candidates ─────────────────────────────────────────────────────────
+# Written by swing_screener.py (FMP screen + our-own-signals confirmation).
+# The dashboard reads them and, at serve time, overlays LIVE Discord confluence.
+
+_swing_cache: dict = {"mtime": -1.0, "candidates": []}
+
+def load_swing() -> list:
+    """Read swing_candidates.json, cache by mtime. Returns the candidate list."""
+    try:
+        if not SWING_FILE.exists():
+            return []
+        mtime = SWING_FILE.stat().st_mtime
+        if mtime == _swing_cache["mtime"]:
+            return _swing_cache["candidates"]
+        import json as _json
+        data = _json.loads(SWING_FILE.read_text(encoding="utf-8"))
+        candidates = data.get("candidates", []) if isinstance(data, dict) else []
+        if not isinstance(candidates, list):
+            candidates = []
+        _swing_cache.update(mtime=mtime, candidates=candidates)
+        return candidates
+    except Exception as e:
+        log.warning(f"[SWING] Failed to load swing_candidates.json: {e}")
+        return []
 
 
 # ── Suggestions ──────────────────────────────────────────────────────────────
@@ -285,20 +312,6 @@ def _ticker_sentiment(key) -> dict:
         "last_ts": last["ts"],
         "source":  last.get("source", ""),
     }
-
-
-def _ranked_sentiment(limit: int = 12) -> list[dict]:
-    """All real tickers with recent sentiment, sorted strongest-first.
-    Drives the dashboard's Sentiment column. Must hold STATE.lock."""
-    ranked = []
-    for key in list(STATE.sentiment_events.keys()):
-        if not key:               # skip the None (general-market) bucket
-            continue
-        s = _ticker_sentiment(key)
-        if s["count"] > 0:
-            ranked.append({"ticker": key, "score": s["score"], "count": s["count"]})
-    ranked.sort(key=lambda r: r["score"], reverse=True)
-    return ranked[:limit]
 
 
 # ── Confluence ────────────────────────────────────────────────────────────────
@@ -958,6 +971,7 @@ def _build_mention_rank(ticker_set: set, window_s: float = 30.0) -> dict:
 def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
+    swing    = load_swing()   # file read — confluence overlay applied under lock below
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
     # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
     mention_rank = _build_mention_rank(set(tickers))
@@ -997,6 +1011,18 @@ def _snapshot() -> dict:
             return (0 if in_mention else 1, rank, price)
         rows.sort(key=_row_sort_key)
 
+        # Swing candidates — overlay LIVE Discord confluence onto the screener's
+        # cached rows. A candidate that's also being talked about right now in the
+        # Discord feed is a stronger setup; reuse the exact confluence system the
+        # watchlist ⚡ badge uses so both stay consistent.
+        swing_rows = []
+        for c in swing:
+            row = dict(c)
+            conf = _confluence_sources(c.get("ticker"))
+            if len(conf) >= 2:
+                row["confluence"] = {"sources": conf, "count": len(conf)}
+            swing_rows.append(row)
+
         # Merge signal-engine proximity + build badge. Done here (not just in the
         # /api/state HTTP handler) so the WebSocket stream — which the frontend
         # actually consumes — carries signal_proximity and the version too.
@@ -1017,7 +1043,6 @@ def _snapshot() -> dict:
                            and (now_ts - STATE.discord_last_ts) <= _DISCORD_STALE_SEC,
                 "last_ts": STATE.discord_last_ts,
                 "alerts":  list(STATE.discord_alerts),
-                "sentiment_ranked": _ranked_sentiment(),
                 "count":   len(tickers),
             },
             "tradingview": {
@@ -1026,6 +1051,7 @@ def _snapshot() -> dict:
             },
             "tickers": rows,
             "market_sentiment": market_sent,
+            "swing":   swing_rows,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
             # Trading-engine status — trader mode + risk guard written by
@@ -1331,6 +1357,40 @@ def _load_signal_state() -> Optional[dict]:
 @app.get("/api/news")
 async def api_news():
     return JSONResponse({"items": load_news()})
+
+
+@app.get("/api/swing")
+async def api_swing():
+    """Swing-trade candidates from swing_candidates.json (written by the screener).
+    Mostly for debugging — the frontend consumes the `swing` slice of /api/state."""
+    return JSONResponse({"candidates": load_swing()})
+
+
+# One screen at a time — the refresh button and the scheduled process both call
+# run_screen; this guard stops overlapping runs from double-hitting the APIs.
+_swing_refresh_lock = threading.Lock()
+
+@app.post("/api/swing/refresh")
+async def api_swing_refresh():
+    """Trigger an on-demand swing screen (the dashboard refresh button). Runs the
+    same run_screen the scheduled process uses, in a worker thread so the request
+    returns promptly; the next /api/state poll picks up the fresh candidates."""
+    if not _swing_refresh_lock.acquire(blocking=False):
+        return JSONResponse({"ok": False, "status": "already-running"}, status_code=409)
+
+    def _run():
+        try:
+            import swing_screener
+            swing_screener.run_screen(load_config())
+            _swing_cache["mtime"] = -1.0          # force reload on next serve
+        except Exception as e:
+            log.warning(f"[SWING] refresh failed: {e}")
+        finally:
+            _swing_refresh_lock.release()
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run)
+    return JSONResponse({"ok": True, "status": "started"})
 
 
 @app.post("/api/news")

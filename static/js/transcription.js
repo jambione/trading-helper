@@ -1,28 +1,28 @@
 /**
  * transcription.js — Discord Alerts panel component
  *
- * Renders three columns: regular alerts, squeeze alerts, and a ranked sentiment
- * list. Sentiment tickers come only from human chat + Market Update scanner
- * tables; clicking one fires a burst alert.
+ * Renders three columns: regular alerts, squeeze alerts, and a swing-candidate
+ * list. Swing candidates come from the screener (swing_candidates.json — Alpaca
+ * technicals + Finnhub fundamentals); clicking one adds the ticker to the watchlist.
  */
 
-import { subscribe } from './store.js?v=59';
-import { api }       from './api.js?v=59';
+import { subscribe } from './store.js?v=61';
+import { api }       from './api.js?v=61';
 
 let _regularBox    = null;
 let _squeezeBox    = null;
-let _sentimentBox  = null;
+let _swingBox      = null;
 
 let _lastRegularCount  = -1;
 let _lastRegularKey    = '';
 let _lastSqueezeCount  = -1;
 let _lastSqueezeKey    = '';
-let _lastSentKey       = '';
+let _lastSwingKey      = '';
 
 export function init(panelEl) {
   _regularBox   = panelEl.querySelector('[data-regular-box]');
   _squeezeBox   = panelEl.querySelector('[data-squeeze-box]');
-  _sentimentBox = panelEl.querySelector('[data-sentiment-box]');
+  _swingBox     = panelEl.querySelector('[data-swing-box]');
 
   subscribe('discord', d => {
     const all     = d.alerts ?? [];
@@ -30,54 +30,98 @@ export function init(panelEl) {
     const squeeze = all.filter(a =>  a.burst);
     _renderFeed(_regularBox, regular, 'regular');
     _renderFeed(_squeezeBox, squeeze, 'squeeze');
-    _renderSentimentRanked(d.sentiment_ranked ?? []);
   });
+
+  // Swing candidates arrive as their own top-level state slice.
+  subscribe('swing', rows => _renderSwing(rows ?? []));
+
+  // Manual refresh button — triggers an on-demand screen; fresh candidates arrive
+  // on the next /api/state poll.
+  const refreshBtn = panelEl.querySelector('[data-swing-refresh]');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.classList.add('swing-refresh-btn--spin');
+      refreshBtn.disabled = true;
+      try {
+        await api.refreshSwing();
+      } catch (err) {
+        console.error('[swing] refresh failed', err);
+      } finally {
+        // Screen takes a few seconds; keep the spinner briefly, then re-enable.
+        setTimeout(() => {
+          refreshBtn.classList.remove('swing-refresh-btn--spin');
+          refreshBtn.disabled = false;
+        }, 4000);
+      }
+    });
+  }
 }
 
-// ── Ranked sentiment column ────────────────────────────────
-// A short list of tickers ordered strongest-bullish first. Click a row to fire
-// a burst alert for that ticker (same seam as clicking a watchlist ticker).
+// ── Swing-candidate column ─────────────────────────────────
+// Screener output, ranked strongest-first. Each row shows the confirmation signals
+// (RSI, rating, EPS growth, R:R) plus tags for reversal / upgrade / earnings / ⚡
+// confluence. Click a row to add the ticker to the watchlist.
 
-function _renderSentimentRanked(ranked) {
-  if (!_sentimentBox) return;
+function _renderSwing(rows) {
+  if (!_swingBox) return;
 
-  if (!ranked.length) {
-    if (_lastSentKey !== '∅') {
-      _sentimentBox.innerHTML = '<span class="tx-placeholder">No signals…</span>';
-      _lastSentKey = '∅';
+  if (!rows.length) {
+    if (_lastSwingKey !== '∅') {
+      _swingBox.innerHTML = '<span class="tx-placeholder">No candidates…</span>';
+      _lastSwingKey = '∅';
     }
     return;
   }
 
   // Cheap change-detect: ticker+score signature so we only re-render on change.
-  const key = ranked.map(r => `${r.ticker}:${r.score}`).join('|');
-  if (key === _lastSentKey) return;
-  _lastSentKey = key;
+  const key = rows.map(r => `${r.ticker}:${r.score}`).join('|');
+  if (key === _lastSwingKey) return;
+  _lastSwingKey = key;
 
-  _sentimentBox.innerHTML = ranked.map(_renderSentRow).join('');
-  _sentimentBox.querySelectorAll('[data-sent-ticker]').forEach(el => {
-    el.addEventListener('click', () => _fireBurst(el, el.dataset.sentTicker));
+  _swingBox.innerHTML = rows.map(_renderSwingRow).join('');
+  _swingBox.querySelectorAll('[data-swing-ticker]').forEach(el => {
+    el.addEventListener('click', () => _addSwing(el, el.dataset.swingTicker));
   });
 }
 
-function _renderSentRow(r) {
-  const score    = r.score ?? 0;
-  const dir      = score >= 0.05 ? 'bull' : score <= -0.05 ? 'bear' : 'flat';
-  const scoreTxt = `${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
-  const tkr      = `<strong class="tx-sent-ticker">${_esc(r.ticker)}</strong>`;
-  const scoreSp  = `<span class="tx-sent-score tx-sent-score--${dir}">${scoreTxt}</span>`;
-  return `<div class="tx-line tx-sent-row" data-sent-ticker="${_esc(r.ticker)}" `
-       + `title="Click to fire a burst alert for ${_esc(r.ticker)}">${tkr}${scoreSp}</div>`;
+function _renderSwingRow(r) {
+  const skipped = new Set(r.skipped || []);
+  const tkr   = `<strong class="tx-swing-ticker">${_esc(r.ticker)}</strong>`;
+  const price = r.price != null ? `<span class="tx-swing-price">$${r.price}</span>` : '';
+
+  const chips = [];
+  if (r.rsi != null)        chips.push(_chip('RSI', r.rsi, false));
+  if (r.rating)             chips.push(_chip('★', r.rating, skipped.has('rating')));
+  if (r.eps_growth != null) chips.push(_chip('EPS', `${r.eps_growth}×`, skipped.has('metric')));
+  if (r.rr != null)         chips.push(_chip('R:R', r.rr, skipped.has('metric')));
+
+  const tags = [];
+  if (r.reversal_confirmed)  tags.push('<span class="tx-swing-tag tx-swing-tag--rev" title="Oversold and turning up">🔄 turning</span>');
+  if (r.recent_upgrade)      tags.push('<span class="tx-swing-tag tx-swing-tag--up" title="Analyst rating improving month-over-month">▲ improving</span>');
+  if (r.confluence?.count)   tags.push(`<span class="tx-swing-tag tx-swing-tag--conf" title="Also live in Discord: ${_esc((r.confluence.sources||[]).join(', '))}">⚡ ${r.confluence.count}</span>`);
+  if (r.earnings_in_window)  tags.push('<span class="tx-swing-tag tx-swing-tag--earn" title="Earnings inside the swing window — risk">⚠ earnings</span>');
+
+  return `<div class="tx-line tx-swing-row" data-swing-ticker="${_esc(r.ticker)}" `
+       + `title="Click to add ${_esc(r.ticker)} to the watchlist">`
+       + `<div class="tx-swing-head">${tkr}${price}</div>`
+       + `<div class="tx-swing-chips">${chips.join('')}</div>`
+       + (tags.length ? `<div class="tx-swing-tags">${tags.join('')}</div>` : '')
+       + `</div>`;
 }
 
-async function _fireBurst(el, ticker) {
-  el.classList.add('tx-sent-row--firing');
+function _chip(label, val, degraded) {
+  const cls = degraded ? 'tx-swing-chip tx-swing-chip--degraded' : 'tx-swing-chip';
+  return `<span class="${cls}"><em>${_esc(label)}</em> ${_esc(String(val))}</span>`;
+}
+
+async function _addSwing(el, ticker) {
+  el.classList.add('tx-swing-row--firing');
   try {
-    await api.burstAlert(ticker);
+    await api.addTicker(ticker);
   } catch (err) {
-    console.error('[sentiment] burst alert failed', err);
+    console.error('[swing] add to watchlist failed', err);
   } finally {
-    setTimeout(() => el.classList.remove('tx-sent-row--firing'), 800);
+    setTimeout(() => el.classList.remove('tx-swing-row--firing'), 800);
   }
 }
 

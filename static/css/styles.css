@@ -940,43 +940,82 @@ body.mobile .icon-btn {
 /* ── Sentiment column ──────────────────────────────────────── */
 .alert-col--squeeze { border-right: 1px solid var(--border); }
 
-.alert-col--sentiment { flex: 0.9; }
+.alert-col--swing { flex: 1.1; }
 
-.alert-col--sentiment .alert-col-header { color: #a78bfa; }
-
-/* Ranked sentiment rows: ticker on the left, color-coded score on the right.
-   Whole row is clickable → fires a burst alert for that ticker. */
-.tx-sent-row {
+.alert-col--swing .alert-col-header {
+  color: #38bdf8;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  background: var(--card);
-  border: 1px solid var(--border-hi);
-  border-left: 3px solid #6366f1;
-  border-radius: var(--r-sm);
+}
+
+.swing-refresh-btn {
+  background: none;
+  border: none;
+  color: #38bdf8;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.75;
+  transition: opacity 0.12s;
+}
+.swing-refresh-btn:hover:not(:disabled) { opacity: 1; }
+.swing-refresh-btn:disabled { cursor: default; opacity: 0.5; }
+.swing-refresh-btn--spin { animation: swing-spin 1s linear infinite; }
+@keyframes swing-spin { to { transform: rotate(360deg); } }
+
+/* Swing-candidate rows: ticker + price on top, indicator chips, then tags.
+   Whole row is clickable → adds the ticker to the watchlist. */
+.tx-swing-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 5px;
+  border-radius: 4px;
   cursor: pointer;
   transition: background 0.12s;
+  border-bottom: 1px solid var(--border);
 }
-.tx-sent-row:hover        { background: rgba(99, 102, 241, 0.10); border-color: rgba(99,102,241,0.3); }
-.tx-sent-row--firing      { background: rgba(99, 102, 241, 0.20); }
+.tx-swing-row:hover   { background: rgba(56, 189, 248, 0.12); }
+.tx-swing-row--firing { background: rgba(56, 189, 248, 0.28); }
 
-.tx-sent-score {
-  font-weight: 700;
+.tx-swing-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tx-swing-ticker { color: #38bdf8; font-weight: 700; }
+.tx-swing-price  { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+
+.tx-swing-chips,
+.tx-swing-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tx-swing-chip {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
 }
-.tx-sent-score--bull { color: #34d399; }
-.tx-sent-score--bear { color: #f87171; }
-.tx-sent-score--flat { color: var(--text-muted); }
+.tx-swing-chip em { color: var(--text-muted); font-style: normal; margin-right: 2px; }
+.tx-swing-chip--degraded { opacity: 0.45; }
 
-.tx-sent-ticker {
-  color: var(--text-bright);
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 700;
+.tx-swing-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
 }
+.tx-swing-tag--rev  { background: rgba(52, 211, 153, 0.16); color: #34d399; }
+.tx-swing-tag--up   { background: rgba(56, 189, 248, 0.16); color: #38bdf8; }
+.tx-swing-tag--conf { background: rgba(250, 204, 21, 0.16); color: #facc15; }
+.tx-swing-tag--earn { background: rgba(248, 113, 113, 0.16); color: #f87171; }
 
 /* Market sentiment pill (panel header) */
 .tx-header-right {

@@ -101,6 +101,21 @@ def main() -> None:
     else:
         print('Discord OCR   ->  disabled (set discord_ocr_enabled: true in config/bot_config.json)')
 
+    # ── Swing screener — only launched when enabled in config ─────────────────
+    if cfg.get('swing_screener_enabled', False):
+        swing = subprocess.Popen(
+            [VENV_PYTHON, 'swing_screener.py'],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=utf8_env,
+        )
+        threading.Thread(target=_stream, args=(swing, '[swing]   '), daemon=True).start()
+        procs['swing'] = swing
+        print('Swing screener->  running (scheduled runs; logs prefixed [swing])')
+    else:
+        print('Swing screener->  disabled (set swing_screener_enabled: true in config/bot_config.json)')
+
     print('Press Ctrl+C to stop all.\n')
 
     try:

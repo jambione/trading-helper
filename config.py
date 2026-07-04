@@ -63,6 +63,28 @@ DEFAULT_CONFIG = {
     # ── Mention burst alerts ─────────────────────────────────
     "mention_alert_threshold": 2,   # mentions within window to trigger alert
     "mention_alert_window":    10,  # rolling window in seconds
+
+    # ── Swing screener (Alpaca bars + Finnhub fundamentals) ──
+    # Funnel: Alpaca daily bars (universe + technicals: oversold / reversal /
+    # rel-vol / support), then Finnhub stock/metric + recommendation + earnings
+    # confirm fundamentals for the technical survivors. Discord confluence is
+    # overlaid live by the dashboard.
+    "swing_screener_enabled":     False,  # launch swing_screener.py from start_all
+    "swing_max_price":            100.0,  # hard price ceiling ($)
+    "swing_rsi_oversold":         30.0,   # RSI(14) below this = oversold
+    "swing_min_eps_growth":       2.0,    # projected EPS-growth multiple floor (peTTM/forwardPE)
+    "swing_max_eps_growth":       3.0,    # …and ceiling (3×)
+    "swing_min_rating":           "Buy",  # min analyst consensus (Buy|Strong Buy)
+    "swing_rel_vol_min":          1.5,    # today's vol ÷ 20-day avg floor
+    "swing_min_rr":               2.0,    # min reward:risk (upside-to-52wk-high ÷ downside)
+    "swing_earnings_window_days":  14,    # flag earnings inside this window
+    "swing_bar_lookback_days":    150,    # calendar days of daily bars to pull (≈100 sessions)
+    # Scheduled runs (ET, HH:MM) — early morning, midday, night. NOT a constant
+    # loop: the screener sleeps between these times. A dashboard button also
+    # triggers an on-demand refresh.
+    "swing_run_times":            ["08:00", "12:30", "20:00"],
+    "swing_limit":                12,     # candidates kept in swing_candidates.json
+    "swing_enrich_cap":           40,     # max technical survivors sent to Finnhub (quota)
 }
 
 # Keys the dashboard API is allowed to update
@@ -88,6 +110,19 @@ SAFE_CONFIG_KEYS = [
     "mention_alert_threshold",
     "mention_alert_window",
     "push_vapid_public_key",
+    "swing_screener_enabled",
+    "swing_max_price",
+    "swing_rsi_oversold",
+    "swing_min_eps_growth",
+    "swing_max_eps_growth",
+    "swing_min_rating",
+    "swing_rel_vol_min",
+    "swing_min_rr",
+    "swing_earnings_window_days",
+    "swing_bar_lookback_days",
+    "swing_run_times",
+    "swing_limit",
+    "swing_enrich_cap",
 ]
 
 

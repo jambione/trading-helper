@@ -225,38 +225,6 @@ def test_snapshot_ticker_sentiment_only_when_present(monkeypatch):
     assert "sentiment" not in rows["AAPL"]
 
 
-# ── Section D2 — Ranked sentiment ────────────────────────────────────────────
-
-def test_ranked_sentiment_sorted_desc():
-    d.ingest_discord_alerts([], [
-        _ev("AAA", 0.3, "chat"),
-        _ev("BBB", 0.9, "chat"),
-        _ev("CCC", -0.4, "scanner"),
-    ])
-    with d.STATE.lock:
-        ranked = d._ranked_sentiment()
-    assert [r["ticker"] for r in ranked] == ["BBB", "AAA", "CCC"]
-    assert ranked[0]["score"] > ranked[1]["score"] > ranked[2]["score"]
-
-
-def test_ranked_sentiment_excludes_market_none_bucket():
-    d.ingest_discord_alerts([], [_ev(None, -0.8, "chat"), _ev("EHGO", 0.5, "chat")])
-    with d.STATE.lock:
-        ranked = d._ranked_sentiment()
-    assert [r["ticker"] for r in ranked] == ["EHGO"]
-
-
-def test_ranked_sentiment_in_snapshot(monkeypatch):
-    monkeypatch.setattr(d, "load_tickers", lambda: [])
-    monkeypatch.setattr(d, "load_news", lambda: [])
-    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
-    d.ingest_discord_alerts([], [_ev("EHGO", 0.8, "chat")])
-
-    snap = d._snapshot()
-    assert "sentiment_ranked" in snap["discord"]
-    assert snap["discord"]["sentiment_ranked"][0]["ticker"] == "EHGO"
-
-
 # ── Section E — High sentiment boosts mentions ────────────────────────────────
 
 def test_high_chat_sentiment_adds_mention():
