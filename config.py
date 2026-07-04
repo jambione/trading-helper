@@ -73,11 +73,13 @@ DEFAULT_CONFIG = {
     "swing_full_market":          True,   # screen every tradable US equity (~13k) vs a curated list
     "swing_min_dollar_vol":   5000000.0,  # 20-day avg $-volume floor — drops illiquid junk from full market
     "swing_max_price":            100.0,  # hard price ceiling ($)
-    "swing_rsi_oversold":         30.0,   # RSI(14) below this = oversold
+    "swing_rsi_oversold":         30.0,   # hard gate: RSI(14) must be below this (oversold) —
+                                           # also feeds the reversal-signal color tier
     "swing_min_eps_growth":       2.0,    # EPS-growth proxy (peTTM/forwardPE) — SCORING signal, not a hard gate
     "swing_max_eps_growth":       3.0,    # …retained for scoring/config; no longer rejects candidates
     "swing_min_rating":           "Buy",  # min analyst consensus (Buy|Strong Buy)
-    "swing_rel_vol_min":          1.5,    # today's vol ÷ 20-day avg floor
+    "swing_rel_vol_entry":        1.0,    # hard gate: today's vol ÷ 20-day avg must exceed this
+    "swing_rel_vol_min":          1.5,    # "high" rel-vol color tier — no longer a hard gate
     "swing_min_rr":               2.0,    # min reward:risk (upside-to-52wk-high ÷ downside)
     "swing_earnings_window_days":  14,    # flag earnings inside this window
     "swing_bar_lookback_days":    150,    # calendar days of daily bars to pull (≈100 sessions)
@@ -86,7 +88,9 @@ DEFAULT_CONFIG = {
     # triggers an on-demand refresh.
     "swing_run_times":            ["08:00", "12:30", "20:00"],
     "swing_limit":                12,     # candidates kept in swing_candidates.json
-    "swing_enrich_cap":           40,     # max technical survivors sent to Finnhub (quota)
+    "swing_enrich_cap":           90,     # max technical survivors sent to Finnhub — calls are now
+                                           # paced to the free-tier ~60/min limit, so a full run takes
+                                           # a few minutes rather than bursting past the quota
 }
 
 # Keys the dashboard API is allowed to update
@@ -120,6 +124,7 @@ SAFE_CONFIG_KEYS = [
     "swing_min_eps_growth",
     "swing_max_eps_growth",
     "swing_min_rating",
+    "swing_rel_vol_entry",
     "swing_rel_vol_min",
     "swing_min_rr",
     "swing_earnings_window_days",

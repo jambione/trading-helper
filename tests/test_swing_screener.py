@@ -27,7 +27,8 @@ import dashboard as d         # noqa: E402
 CFG = dict(
     swing_max_price=100.0, swing_rsi_oversold=30.0,
     swing_min_eps_growth=2.0, swing_max_eps_growth=3.0,
-    swing_min_rating="Buy", swing_rel_vol_min=1.5, swing_min_rr=2.0,
+    swing_min_rating="Buy", swing_rel_vol_entry=1.0, swing_rel_vol_min=1.5,
+    swing_min_rr=2.0,
     swing_earnings_window_days=14, swing_limit=12, swing_enrich_cap=40,
     ema_short=8, macd_fast=12, macd_slow=26, macd_signal=9,
 )
@@ -53,6 +54,7 @@ def test_reversal_hook_up_confirms():
     assert t["oversold"] is True
     assert t["reversal_confirmed"] is True
     assert "rsi_hook" in t["reversal_signals"]
+    assert t["signal_tier"] in ("partial", "full")
 
 
 def test_reversal_still_falling_rejected():
@@ -61,6 +63,7 @@ def test_reversal_still_falling_rejected():
     assert t["oversold"] is True
     assert t["reversal_confirmed"] is False
     assert t["reversal_signals"] == []
+    assert t["signal_tier"] == "none"
 
 
 def test_not_oversold_not_confirmed():
@@ -68,6 +71,20 @@ def test_not_oversold_not_confirmed():
     t = fs._technicals(_bars(closes), CFG)
     assert t["oversold"] is False
     assert t["reversal_confirmed"] is False
+
+
+def test_signal_tier_thresholds():
+    assert fs._signal_tier([]) == "none"
+    assert fs._signal_tier(["rsi_hook"]) == "partial"
+    assert fs._signal_tier(["rsi_hook", "macd_turn"]) == "partial"
+    assert fs._signal_tier(["rsi_hook", "macd_turn", "ema_reclaim"]) == "full"
+
+
+def test_rel_vol_tier_thresholds():
+    assert fs._rel_vol_tier(0.8, CFG) == "none"
+    assert fs._rel_vol_tier(1.2, CFG) == "low"
+    assert fs._rel_vol_tier(1.5, CFG) == "high"
+    assert fs._rel_vol_tier(2.0, CFG) == "high"
 
 
 def test_rel_vol_and_support():
@@ -101,8 +118,17 @@ def test_reject_over_price_ceiling():
     assert fs.score_candidate(_candidate(price=120.0), CFG) is None
 
 
-def test_reject_no_reversal():
-    assert fs.score_candidate(_candidate(reversal_confirmed=False), CFG) is None
+def test_no_reversal_no_longer_rejects():
+    # Oversold RSI is still the hard gate, but reversal-signal count is no longer
+    # required to pass — a candidate with no reversal signals still qualifies (as
+    # long as it's oversold), it just renders with no color tier on the frontend.
+    assert fs.score_candidate(
+        _candidate(reversal_confirmed=False, reversal_signals=[]), CFG) is not None
+
+
+def test_reject_non_oversold_rsi():
+    assert fs.score_candidate(_candidate(rsi=35.0), CFG) is None
+    assert fs.score_candidate(_candidate(rsi=29.9), CFG) is not None
 
 
 def test_reject_low_rr():
@@ -111,6 +137,19 @@ def test_reject_low_rr():
 
 def test_reject_low_rel_vol():
     assert fs.score_candidate(_candidate(rel_vol=1.0), CFG) is None
+
+
+def test_partial_rel_vol_now_qualifies():
+    # Previously required rel_vol >= 1.5 to pass at all; now > 1.0 qualifies and
+    # 1.0-1.5 just renders in the "low" (yellow) color tier instead of "high" (green).
+    assert fs.score_candidate(_candidate(rel_vol=1.2), CFG) is not None
+
+
+def test_more_signals_score_higher():
+    lo = fs.score_candidate(_candidate(reversal_signals=["rsi_hook"]), CFG)
+    hi = fs.score_candidate(
+        _candidate(reversal_signals=["rsi_hook", "macd_turn", "ema_reclaim"]), CFG)
+    assert hi > lo
 
 
 def test_eps_growth_is_scoring_only_not_a_gate():
@@ -153,8 +192,29 @@ def test_upgrade_boost_and_earnings_penalty():
 def test_technical_gate():
     assert fs._technical_gate(_candidate(), CFG) is True
     assert fs._technical_gate(_candidate(price=120.0), CFG) is False
-    assert fs._technical_gate(_candidate(reversal_confirmed=False), CFG) is False
+    assert fs._technical_gate(_candidate(reversal_confirmed=False, reversal_signals=[]), CFG) is True
+    assert fs._technical_gate(_candidate(rsi=35.0), CFG) is False    # not oversold
+    assert fs._technical_gate(_candidate(rsi=29.9), CFG) is True     # oversold
     assert fs._technical_gate(_candidate(rel_vol=1.0), CFG) is False
+    assert fs._technical_gate(_candidate(rel_vol=1.2), CFG) is True
+
+
+# ── Finnhub rate-limit throttle ────────────────────────────────────────────────
+
+def test_finnhub_throttle_paces_calls_over_the_limit(monkeypatch):
+    fs._finnhub_call_times.clear()
+    fake_now = [0.0]
+    monkeypatch.setattr(fs.time, "monotonic", lambda: fake_now[0])
+    slept = []
+    monkeypatch.setattr(fs.time, "sleep", lambda s: slept.append(s))
+
+    for _ in range(fs._FINNHUB_MAX_PER_MIN):
+        fs._finnhub_throttle()
+    assert slept == []                # under the limit — no waiting yet
+
+    fs._finnhub_throttle()             # one over the limit → must wait out the window
+    assert len(slept) == 1
+    assert slept[0] > 0
 
 
 # ── Analyst consensus + trend (Finnhub recommendation) ────────────────────────
@@ -227,9 +287,38 @@ def test_enrich_graceful_degrade(monkeypatch):
     assert fs.score_candidate(c, CFG) is not None   # degraded fields don't reject
 
 
+def test_add_fundamentals_discards_implausible_52wk_high(monkeypatch):
+    # Dual-listed names (e.g. GFI's JSE ZAR-cents, RELX's LSE GBp-pence) can
+    # return a 52WeekHigh wildly out of scale for our USD price, which used to
+    # blow the reward:risk score up 100-1000x. Guard against it instead.
+    def fake_finnhub(path, cfg, **params):
+        if path == "stock/metric":
+            return {"metric": {"52WeekHigh": 3500.0}}   # ~100x a $35 price
+        return {} if path != "stock/recommendation" else []
+    monkeypatch.setattr(fs, "_finnhub_get", fake_finnhub)
+
+    c = {"ticker": "GFI", "skipped": [], "price": 35.44, "support": 31.35}
+    fs.add_fundamentals("GFI", c, CFG)
+    assert c["target"] is None
+    assert c["rr"] is None
+
+
+def test_add_fundamentals_keeps_plausible_52wk_high(monkeypatch):
+    def fake_finnhub(path, cfg, **params):
+        if path == "stock/metric":
+            return {"metric": {"52WeekHigh": 90.0}}     # ~2.5x a $35 price — plausible
+        return {} if path != "stock/recommendation" else []
+    monkeypatch.setattr(fs, "_finnhub_get", fake_finnhub)
+
+    c = {"ticker": "XYZ", "skipped": [], "price": 35.44, "support": 31.35}
+    fs.add_fundamentals("XYZ", c, CFG)
+    assert c["target"] == 90.0
+    assert c["rr"] is not None
+
+
 def test_enrich_gated_out_before_fundamentals(monkeypatch):
-    # A non-oversold uptrend fails the technical gate → enrich returns None and
-    # never spends Finnhub calls.
+    # A steady uptrend keeps RSI well above the oversold threshold → fails the
+    # technical gate → enrich returns None and never spends Finnhub calls.
     up = _bars([50 + i for i in range(40)])
     monkeypatch.setattr(fs, "fetch_daily_bars", lambda sym, cfg: up.copy())
     called = {"finnhub": False}

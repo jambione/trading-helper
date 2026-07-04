@@ -8,15 +8,17 @@ Data sources (no paid third party — uses what the app already has):
   • Finnhub — fundamentals (stock/metric: PE, PB, current ratio, debt/equity),
     analyst consensus (stock/recommendation), and the earnings calendar.
 
-Funnel (quota-aware — Finnhub free tier is ~60 calls/min):
+Funnel (quota-aware — Finnhub free tier is ~60 calls/min, paced by _finnhub_throttle):
   1. Universe = every tradable US equity (~13k, swing_full_market) unless a
      swing_universe.json override or narrow mode is set. Curated names + Alpaca
      movers are the fallback.
   2. Batched Alpaca daily-bars pull → compute technicals locally → keep only names
      passing the cheap technical gate (price < ceiling, min $-volume liquidity
-     floor, oversold+turning, rel-vol). Alpaca serves bars for the whole market.
-  3. Rank survivors by technical strength, then pull Finnhub fundamentals/rating/
-     earnings for the top swing_enrich_cap only (protects the Finnhub quota).
+     floor, oversold RSI < swing_rsi_oversold, rel-vol > swing_rel_vol_entry).
+     Reversal-signal count and rel-vol are no longer hard-required beyond that —
+     they drive the frontend's color tier (signal_tier / rel_vol_tier) instead.
+  3. Rank survivors by technical strength, pull Finnhub fundamentals/rating/
+     earnings for the top swing_enrich_cap only — paced to stay under quota.
   4. Score, rank, write swing_candidates.json. The dashboard overlays live
      Discord confluence at serve time.
 
@@ -34,10 +36,12 @@ Standalone:  python swing_screener.py --once
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
@@ -83,9 +87,31 @@ class _Degraded(Exception):
 
 # ── Finnhub HTTP ──────────────────────────────────────────────────────────────
 
+# Free-tier ceiling is ~60 calls/min; each enriched candidate costs up to 3
+# calls (metric, recommendation, earnings). Without pacing, a run burns through
+# the whole per-minute budget in a burst and the rest of the run just degrades
+# on 429s — this throttle spaces calls out so swing_enrich_cap candidates
+# actually get real data instead of silently-skipped fields.
+_FINNHUB_MAX_PER_MIN = 55
+_finnhub_call_times: collections.deque = collections.deque()
+_finnhub_lock = threading.Lock()
+
+
+def _finnhub_throttle() -> None:
+    with _finnhub_lock:
+        now = time.monotonic()
+        while _finnhub_call_times and now - _finnhub_call_times[0] >= 60:
+            _finnhub_call_times.popleft()
+        wait = 60 - (now - _finnhub_call_times[0]) if len(_finnhub_call_times) >= _FINNHUB_MAX_PER_MIN else 0.0
+        _finnhub_call_times.append(now + wait)
+    if wait > 0:
+        time.sleep(wait)
+
+
 def _finnhub_get(path: str, cfg: dict, **params):
     """GET a Finnhub endpoint. Raises _Degraded on 401/402/403/429 so one gated
     field never sinks a candidate."""
+    _finnhub_throttle()
     params["token"] = cfg.get("finnhub_key", "")
     try:
         r = requests.get(f"{FINNHUB_BASE}/{path}", params=params, timeout=_HTTP_TIMEOUT)
@@ -282,10 +308,30 @@ def _technicals(df: pd.DataFrame, cfg: dict) -> dict:
         "oversold": oversold,
         "reversal_confirmed": oversold and bool(reversal_signals),
         "reversal_signals": reversal_signals,
+        "signal_tier": _signal_tier(reversal_signals),
         "rel_vol": round(rel_vol, 2),
+        "rel_vol_tier": _rel_vol_tier(rel_vol, cfg),
         "support": round(support, 2),
         "avg_dollar_vol": round(avg_dollar_vol, 0),
     }
+
+
+def _signal_tier(reversal_signals: list) -> str:
+    """Ticker-name color tier: 'full' (all 3 reversal signals), 'partial' (1-2),
+    or 'none'. Purely a display signal — RSI<70 is the only hard gate now, so a
+    candidate with no signals can still qualify and just renders uncolored."""
+    n = len(reversal_signals)
+    return "full" if n >= 3 else "partial" if n >= 1 else "none"
+
+
+def _rel_vol_tier(rel_vol: float, cfg: dict) -> str:
+    """RVOL chip color tier: 'high' (>= swing_rel_vol_min), 'low' (> swing_rel_vol_entry),
+    or 'none'. Independent of signal_tier."""
+    if rel_vol >= float(cfg.get("swing_rel_vol_min", 1.5)):
+        return "high"
+    if rel_vol > float(cfg.get("swing_rel_vol_entry", 1.0)):
+        return "low"
+    return "none"
 
 
 # ── Finnhub fundamentals ──────────────────────────────────────────────────────
@@ -321,8 +367,17 @@ def add_fundamentals(sym: str, c: dict, cfg: dict) -> dict:
         c["recent_upgrade"] = False
 
     # Reward:risk — target = 52-week high (Finnhub price targets are premium)
-    c["target"] = wk52_high
     price, support = c.get("price"), c.get("support")
+    # Dual-listed names (an ADR vs. a primary listing in another currency/unit)
+    # can return a 52WeekHigh wildly out of scale for our USD price — e.g. GFI's
+    # JSE ZAR-cents or RELX's LSE GBp-pence blow the reward:risk score up by
+    # 100-1000x. A real 52-week high on our sub-swing_max_price universe won't
+    # plausibly run more than ~5x the current price.
+    if wk52_high and price and wk52_high > price * 5:
+        log.warning("[swing] %s: implausible 52WeekHigh %.2f vs price %.2f (>5x) — discarding",
+                    sym, wk52_high, price)
+        wk52_high = None
+    c["target"] = wk52_high
     if wk52_high and price and support and price > support and wk52_high > price:
         c["rr"] = round((wk52_high - price) / (price - support), 2)
     else:
@@ -380,19 +435,21 @@ def _technical_gate(c: dict, cfg: dict) -> bool:
     if c.get("avg_dollar_vol") is not None and \
             c["avg_dollar_vol"] < float(cfg.get("swing_min_dollar_vol", 5_000_000.0)):
         return False
-    if c.get("rsi") is not None and not c.get("reversal_confirmed"):
+    if c.get("rsi") is not None and c["rsi"] >= float(cfg.get("swing_rsi_oversold", 30.0)):
         return False
-    if c.get("rel_vol") is not None and c["rel_vol"] < float(cfg.get("swing_rel_vol_min", 1.5)):
+    if c.get("rel_vol") is not None and c["rel_vol"] <= float(cfg.get("swing_rel_vol_entry", 1.0)):
         return False
     return True
 
 
 def _survivor_rank(c: dict, cfg: dict) -> float:
     """Cheap bars-only ranking used to pick which survivors get the (rate-limited)
-    Finnhub enrichment when the universe is huge: deeper oversold + higher rel-vol
-    first."""
+    Finnhub enrichment when the universe is huge: deeper oversold + more reversal
+    signals + higher rel-vol first."""
     oversold_thr = float(cfg.get("swing_rsi_oversold", 30.0))
-    return max(0.0, oversold_thr - (c.get("rsi") or oversold_thr)) + min(3.0, c.get("rel_vol") or 1.0)
+    return (max(0.0, oversold_thr - (c.get("rsi") or oversold_thr))
+            + len(c.get("reversal_signals") or []) * 1.0
+            + min(3.0, c.get("rel_vol") or 1.0))
 
 
 def _rating_ok(rating: str | None, minimum: str) -> bool:
@@ -407,11 +464,11 @@ def score_candidate(c: dict, cfg: dict) -> float | None:
     price = c.get("price")
     if price is None or price >= float(cfg.get("swing_max_price", 100.0)):
         return None
-    if c.get("rsi") is not None and not c.get("reversal_confirmed"):
+    if c.get("rsi") is not None and c["rsi"] >= float(cfg.get("swing_rsi_oversold", 30.0)):
         return None
     if c.get("rr") is not None and c["rr"] < float(cfg.get("swing_min_rr", 2.0)):
         return None
-    if c.get("rel_vol") is not None and c["rel_vol"] < float(cfg.get("swing_rel_vol_min", 1.5)):
+    if c.get("rel_vol") is not None and c["rel_vol"] <= float(cfg.get("swing_rel_vol_entry", 1.0)):
         return None
     # EPS-growth (peTTM/forwardPE) is a weak free-tier proxy and is a poor hard
     # filter against an oversold-value universe — it only feeds the score below.
@@ -429,6 +486,7 @@ def score_candidate(c: dict, cfg: dict) -> float | None:
     oversold_thr = float(cfg.get("swing_rsi_oversold", 30.0))
     score = 0.0
     score += max(0.0, oversold_thr - (c.get("rsi") or oversold_thr))
+    score += len(c.get("reversal_signals") or []) * 1.5
     score += _RATING_RANK.get((c.get("rating") or "").lower(), 2)
     score += (c.get("rr") or 0.0)
     score += (c.get("eps_growth") or 0.0)
@@ -478,15 +536,24 @@ def _evaluate_checks(c: dict, cfg: dict) -> list[dict]:
         dv is not None and dv >= min_dv,
         f"${dv / 1e6:.1f}M vs ≥ ${min_dv / 1e6:g}M" if dv is not None else "no data"))
 
-    checks.append(_check("Oversold reversal confirmed",
-        bool(c.get("reversal_confirmed")),
-        f"RSI {c.get('rsi')}, signals: {', '.join(c.get('reversal_signals') or []) or 'none'}"))
+    oversold_thr = float(cfg.get("swing_rsi_oversold", 30.0))
+    rsi = c.get("rsi")
+    checks.append(_check("Oversold — RSI",
+        rsi is not None and rsi < oversold_thr,
+        f"RSI {rsi} vs < {oversold_thr:g}" if rsi is not None else "no data"))
 
+    checks.append(_check("Reversal signals (color tier)",
+        True,
+        f"{c.get('signal_tier', 'none')} — {', '.join(c.get('reversal_signals') or []) or 'none'}",
+        kind="info"))
+
+    rv_entry = float(cfg.get("swing_rel_vol_entry", 1.0))
     rv_min = float(cfg.get("swing_rel_vol_min", 1.5))
     rv = c.get("rel_vol")
     checks.append(_check("Relative volume",
-        rv is not None and rv >= rv_min,
-        f"{rv}× vs ≥ {rv_min:g}×" if rv is not None else "no data"))
+        rv is not None and rv > rv_entry,
+        f"{rv}× vs > {rv_entry:g}× ({c.get('rel_vol_tier', 'none')} tier, green ≥ {rv_min:g}×)"
+        if rv is not None else "no data"))
 
     min_rr = float(cfg.get("swing_min_rr", 2.0))
     rr = c.get("rr")
@@ -552,6 +619,7 @@ def evaluate(sym: str, cfg: dict) -> dict:
         "avg_dollar_vol": c.get("avg_dollar_vol"), "rr": c.get("rr"),
         "rating": c.get("rating"), "eps_growth": c.get("eps_growth"),
         "reversal_confirmed": c.get("reversal_confirmed"),
+        "signal_tier": c.get("signal_tier"), "rel_vol_tier": c.get("rel_vol_tier"),
         "checks": checks,
     }
 

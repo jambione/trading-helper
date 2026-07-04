@@ -156,12 +156,15 @@ function _renderSwing(rows) {
 }
 
 function _renderSwingRow(r) {
-  const skipped = new Set(r.skipped || []);
-  const tkr   = `<strong class="tx-swing-ticker">${_esc(r.ticker)}</strong>`;
+  const skipped  = new Set(r.skipped || []);
+  const tierCls  = r.signal_tier === 'full' ? ' tx-swing-ticker--full'
+                 : r.signal_tier === 'partial' ? ' tx-swing-ticker--partial' : '';
+  const tkr   = `<strong class="tx-swing-ticker${tierCls}">${_esc(r.ticker)}</strong>`;
   const price = r.price != null ? `<span class="tx-swing-price">$${r.price}</span>` : '';
 
   const chips = [];
   if (r.rsi != null)        chips.push(_chip('RSI', r.rsi, false));
+  if (r.rel_vol != null)    chips.push(_chip('RVOL', `${r.rel_vol}×`, false, r.rel_vol_tier));
   if (r.rating)             chips.push(_chip('★', r.rating, skipped.has('rating')));
   if (r.eps_growth != null) chips.push(_chip('EPS', `${r.eps_growth}×`, skipped.has('metric')));
   if (r.rr != null)         chips.push(_chip('R:R', r.rr, skipped.has('metric')));
@@ -180,8 +183,11 @@ function _renderSwingRow(r) {
        + `</div>`;
 }
 
-function _chip(label, val, degraded) {
-  const cls = degraded ? 'tx-swing-chip tx-swing-chip--degraded' : 'tx-swing-chip';
+function _chip(label, val, degraded, tier) {
+  let cls = 'tx-swing-chip';
+  if (degraded)          cls += ' tx-swing-chip--degraded';
+  if (tier === 'high')   cls += ' tx-swing-chip--high';
+  else if (tier === 'low') cls += ' tx-swing-chip--low';
   return `<span class="${cls}"><em>${_esc(label)}</em> ${_esc(String(val))}</span>`;
 }
 

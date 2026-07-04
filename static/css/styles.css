@@ -1143,6 +1143,8 @@ body.mobile .icon-btn {
   gap: 8px;
 }
 .tx-swing-ticker { color: #38bdf8; font-weight: 700; }
+.tx-swing-ticker--full    { color: #34d399; }  /* all 3 reversal signals hit */
+.tx-swing-ticker--partial { color: #facc15; }  /* 1-2 of 3 reversal signals hit */
 .tx-swing-price  { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 
 .tx-swing-chips,
@@ -1161,6 +1163,8 @@ body.mobile .icon-btn {
 }
 .tx-swing-chip em { color: var(--text-muted); font-style: normal; margin-right: 2px; }
 .tx-swing-chip--degraded { opacity: 0.45; }
+.tx-swing-chip--high { background: rgba(52, 211, 153, 0.16); color: #34d399; }   /* rel-vol >= swing_rel_vol_min */
+.tx-swing-chip--low  { background: rgba(250, 204, 21, 0.16); color: #facc15; }   /* rel-vol > swing_rel_vol_entry */
 
 .tx-swing-tag {
   font-size: 10px;
