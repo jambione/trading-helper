@@ -137,4 +137,96 @@ def test_signature_distinguishes_successive_alerts_by_price():
     assert ds._signature(a) != ds._signature(b)
 
 
+# ── parse_scanner_cards: new mobile-style Scanner Alert! cards ───────────────
+
+def test_scanner_card_wok_price_and_float_split_lines():
+    lines = [
+        "8:00 AM APP",
+        "Scanner Alert! [ELITE]",
+        "$WOK Price Spike!",
+        "Price",
+        "$251",
+        "Float Size",
+        "2.42M",
+    ]
+    cards, used = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["ticker"] == "WOK"
+    assert c["kind"] == "scanner_card"
+    assert c["alert_type"] == "Price Spike"
+    assert c["price"] == 251.0
+    assert c["float_size"] == pytest.approx(2.42e6)
+    assert c["scanner_tier"] == "ELITE"
+    assert "WOK" in c["line"] and "251" in c["line"]
+
+
+def test_scanner_card_lucy_float_only():
+    """Some cards omit Price and only show Float Size."""
+    lines = [
+        "8:00 AM APP",
+        "Scanner Alert! [ELITE]",
+        "$LUCY Price Spike!",
+        "Float Size",
+        "5.14M",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["ticker"] == "LUCY"
+    assert c["alert_type"] == "Price Spike"
+    assert c["price"] is None
+    assert c["float_size"] == pytest.approx(5.14e6)
+    assert c["scanner_tier"] == "ELITE"
+
+
+def test_scanner_card_inline_fields_single_line():
+    line = "$WOK Price Spike! Price $251 Float Size 2.42M"
+    cards, _ = ds.parse_scanner_cards(["Scanner Alert! [ELITE]", line])
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["ticker"] == "WOK"
+    assert c["price"] == 251.0
+    assert c["float_size"] == pytest.approx(2.42e6)
+
+
+def test_scanner_card_headline_without_dollar_sign():
+    lines = [
+        "Scanner Alert! [ELITE]",
+        "LUCY Price Spike!",
+        "Float Size 5.14M",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    assert cards[0]["ticker"] == "LUCY"
+
+
+def test_scanner_card_signature_ignores_display_line_jitter():
+    card_a = {
+        "ticker": "WOK", "alert_type": "Price Spike", "scanner_tier": "ELITE",
+        "price": 251.0, "float_size": 2_420_000,
+        "line": "[ELITE] $WOK Price Spike! | Price $251 | Float 2.42M",
+    }
+    card_b = dict(card_a)
+    card_b["line"] = "[ELITE] $WOK Price Spike! | Float 2.42M"
+    card_b["price"] = None
+    assert ds._scanner_card_signature(card_a) == ds._scanner_card_signature(card_b)
+
+
+def test_scanner_card_does_not_duplicate_with_classic_arrow_alert():
+    lines = [
+        "INHD Price Volatility Spike! >>>>> 1 Minute High Price = 41.83",
+        "Scanner Alert! [ELITE]",
+        "$WOK Price Spike!",
+        "Float Size",
+        "2.42M",
+    ]
+    cards, card_used = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    assert cards[0]["ticker"] == "WOK"
+    tkr, kind, _ = ds.parse_alert_line(lines[0])
+    assert (tkr, kind) == ("INHD", "alert")
+    assert 0 not in card_used
+
+
 import pytest

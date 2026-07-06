@@ -117,10 +117,15 @@ class _State:
         # sentiment_events: ticker (or None for market) → [event dict, ...]
         self.sentiment_events: dict = {}
         self.sentiment_feed:   deque = deque(maxlen=_MAX_DISCORD_ALERTS)
+        # Scanner Price Spike cards — dedicated feed for the UI strip + JSONL archive.
+        self.price_spikes: deque = deque(maxlen=_MAX_PRICE_SPIKES)
+        self.price_spike_base_ts: dict = {}  # base de-dupe key → first-seen unix time
 
 # Discord OCR feed sizing + liveness window. The source pings every poll
 # (~2.5s); if we haven't heard from it within this window it's considered down.
 _MAX_DISCORD_ALERTS = 60
+_MAX_PRICE_SPIKES   = 40
+_SPIKE_TTL_SEC = 3 * 60   # price spikes live 3 min, then drop from UI + de-dupe
 _DISCORD_STALE_SEC  = 15.0
 # Sentiment events older than this drop out of the recency-weighted mean.
 _SENTIMENT_WINDOW_SEC = 30 * 60
@@ -246,7 +251,137 @@ def _track_mention(ticker: str):
         ).start()
 
 
-_BURST_LOG = Path(__file__).parent / "benchmarks" / "mention_bursts.jsonl"
+_BURST_LOG      = Path(__file__).parent / "benchmarks" / "mention_bursts.jsonl"
+_PRICE_SPIKE_LOG = Path(__file__).parent / "benchmarks" / "price_spikes.jsonl"
+
+
+def _is_price_spike_alert(a: dict) -> bool:
+    """True for Discord OCR price-spike alerts (scanner cards or classic spike lines)."""
+    if a.get("burst"):
+        return False
+    if a.get("price_spike"):
+        return True
+    alert_type = str(a.get("alert_type") or "").lower()
+    return "spike" in alert_type
+
+
+def _price_spike_base_key(ticker: str, a: dict) -> str:
+    """Scanner-card identity — ticker + alert type + tier (OCR-jitter proof)."""
+    alert_type = re.sub(
+        r"[^A-Za-z0-9]", "", str(a.get("alert_type") or ""),
+    ).lower()
+    tier = str(a.get("scanner_tier") or "").upper()
+    return f"sc|{ticker}|{alert_type}|{tier}".lower()
+
+
+def _price_spike_line_key(ticker: str, a: dict) -> str:
+    """Classic >>>>> spike lines — include normalised text so successive spikes differ."""
+    line = re.sub(r"[^A-Za-z0-9]", "", str(a.get("line") or "")).lower()
+    return f"ln|{ticker}|{line[:100]}"
+
+
+def _is_scanner_price_spike(a: dict) -> bool:
+    return bool(a.get("price_spike") or a.get("scanner_tier") or a.get("float_size") is not None)
+
+
+def _prune_expired_price_spikes(now: float | None = None) -> None:
+    """Remove price spikes and de-dupe keys older than _SPIKE_TTL_SEC. Hold STATE.lock."""
+    now = now or time.time()
+    cutoff = now - _SPIKE_TTL_SEC
+    keep = [r for r in STATE.price_spikes if float(r.get("unix", 0)) > cutoff]
+    STATE.price_spikes.clear()
+    for rec in keep:
+        STATE.price_spikes.append(rec)
+    for key, ts in list(STATE.price_spike_base_ts.items()):
+        if ts <= cutoff:
+            del STATE.price_spike_base_ts[key]
+
+
+def _price_spike_is_duplicate(ticker: str, a: dict) -> bool:
+    """Return True when this spike was already ingested recently."""
+    now = time.time()
+    with STATE.lock:
+        _prune_expired_price_spikes(now)
+        if _is_scanner_price_spike(a):
+            base = _price_spike_base_key(ticker, a)
+            last = STATE.price_spike_base_ts.get(base, 0)
+        else:
+            last = STATE.price_spike_base_ts.get(_price_spike_line_key(ticker, a), 0)
+    return bool(last and now - last < _SPIKE_TTL_SEC)
+
+
+def _mark_price_spike_seen(ticker: str, a: dict) -> None:
+    """Record that this spike was ingested. Must hold STATE.lock."""
+    if _is_scanner_price_spike(a):
+        STATE.price_spike_base_ts[_price_spike_base_key(ticker, a)] = time.time()
+    else:
+        STATE.price_spike_base_ts[_price_spike_line_key(ticker, a)] = time.time()
+
+
+def _archive_price_spike(rec: dict) -> None:
+    """Append every price-spike alert to an append-only JSONL archive."""
+    try:
+        _PRICE_SPIKE_LOG.parent.mkdir(exist_ok=True)
+        with open(_PRICE_SPIKE_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception as e:
+        log.warning("[SPIKE] archive failed: %s", e)
+
+
+def _send_price_spike_push(ticker: str, price, float_size, tier: str) -> None:
+    """Send Web Push for a scanner price-spike alert."""
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return
+
+    private_pem = STATE.cfg.get("push_vapid_private_key", "")
+    contact     = STATE.cfg.get("push_contact_email") or "admin@localhost"
+    if not private_pem:
+        return
+
+    parts = []
+    if price is not None:
+        parts.append(f"${float(price):.2f}")
+    if float_size is not None:
+        if float_size >= 1e6:
+            parts.append(f"Float {float_size / 1e6:.2f}M")
+        elif float_size >= 1e3:
+            parts.append(f"Float {float_size / 1e3:.1f}K")
+    if tier:
+        parts.append(tier)
+    body = " · ".join(parts) if parts else "Scanner price spike"
+
+    payload = json.dumps({
+        "title": f"⚡ {ticker} Price Spike",
+        "body":  body,
+        "tag":   f"spike-{ticker}-{int(time.time())}",
+        "url":   "/",
+    })
+
+    with STATE.lock:
+        subs = list(STATE.push_subscriptions)
+
+    stale = []
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=private_pem,
+                vapid_claims={"sub": f"mailto:{contact}"},
+            )
+        except WebPushException as e:
+            if e.response is not None and e.response.status_code in (404, 410):
+                stale.append(sub)
+        except Exception:
+            pass
+
+    if stale:
+        with STATE.lock:
+            STATE.push_subscriptions = [
+                s for s in STATE.push_subscriptions if s not in stale
+            ]
 
 
 def _archive_burst(ticker: str, price, window_count: int):
@@ -638,21 +773,58 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
         line   = str(a.get("line", "")).strip()
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
             continue
+        is_spike = _is_price_spike_alert(a)
+        if is_spike and _price_spike_is_duplicate(ticker, a):
+            continue
         add_ticker_to_log(ticker)
         hits = threshold if a.get("burst") else 1
+        spike_rec = None
         with STATE.lock:
+            if is_spike:
+                _mark_price_spike_seen(ticker, a)
             for _ in range(hits):
                 _track_mention(ticker)
-            STATE.discord_alerts.append({
-                "ts":         datetime.now(ET).strftime("%H:%M:%S"),
-                "ticker":     ticker,
-                "line":       line[:160],
-                "burst":      bool(a.get("burst")),
-                "alert_type": str(a.get("alert_type") or ""),
-                "price":      a.get("price"),
-                "volume":     a.get("volume"),
-                "levels":     a.get("levels") or [],
-            })
+            alert_rec = {
+                "ts":           datetime.now(ET).strftime("%H:%M:%S"),
+                "ticker":       ticker,
+                "line":         line[:160],
+                "burst":        bool(a.get("burst")),
+                "price_spike":  is_spike,
+                "alert_type":   str(a.get("alert_type") or ""),
+                "price":        a.get("price"),
+                "volume":       a.get("volume"),
+                "float_size":   a.get("float_size"),
+                "scanner_tier": str(a.get("scanner_tier") or ""),
+                "levels":       a.get("levels") or [],
+            }
+            STATE.discord_alerts.append(alert_rec)
+            if is_spike:
+                spike_price = a.get("price")
+                if spike_price is None:
+                    spike_price = STATE.tickers.get(ticker, {}).get("price")
+                spike_rec = {
+                    "ts":           alert_rec["ts"],
+                    "unix":         round(time.time(), 1),
+                    "ticker":       ticker,
+                    "alert_type":   alert_rec["alert_type"],
+                    "price":        spike_price,
+                    "float_size":   a.get("float_size"),
+                    "scanner_tier": alert_rec["scanner_tier"],
+                    "line":         line[:160],
+                }
+                STATE.price_spikes.append(spike_rec)
+        if spike_rec:
+            _archive_price_spike(spike_rec)
+            threading.Thread(
+                target=_send_price_spike_push,
+                args=(
+                    ticker,
+                    spike_rec.get("price"),
+                    spike_rec.get("float_size"),
+                    spike_rec.get("scanner_tier") or "",
+                ),
+                daemon=True,
+            ).start()
         accepted += 1
 
     with STATE.lock:
@@ -1037,6 +1209,8 @@ def _snapshot() -> dict:
         tv_last = STATE.tv_last_ts
         tv_feed = list(STATE.tv_alerts)
 
+        _prune_expired_price_spikes(now_ts)
+
         return {
             "discord": {
                 "running": bool(STATE.discord_last_ts)
@@ -1045,6 +1219,7 @@ def _snapshot() -> dict:
                 "alerts":  list(STATE.discord_alerts),
                 "count":   len(tickers),
             },
+            "price_spikes": list(STATE.price_spikes),
             "tradingview": {
                 "last_ts": tv_last,
                 "alerts":  tv_feed,

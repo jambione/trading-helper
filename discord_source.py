@@ -15,10 +15,17 @@ So everything downstream (mention tracking → burst detection → signal engine
 toasts/charts) is driven identically to transcription — this is just a cleaner,
 second producer that runs ALONGSIDE the transcriber.
 
-Alert format (ticker is always the first token, line contains ">>>>>"):
+Alert formats:
+  Classic (ticker is the first token, line contains ">>>>>"):
     INHD Price Volatility Spike! >>>>> 1 Minute High Price = 41.83, ...
     SPY  NEW WEEKLY LOW          >>>>> Price: $739.20 | Bar Low: ...
     DXF  New Daily High          >>>>> Current Price = 0.6379
+
+  Scanner Alert! card (new mobile-style layout, often spans multiple OCR lines):
+    Scanner Alert! [ELITE]
+    $WOK Price Spike!
+    Price          Float Size
+    $251           2.42M
 
 Setup:
   1. Build the OCR helper (one time):   swiftc discord_ocr.swift -o discord_ocr
@@ -290,6 +297,254 @@ def _parse_squeeze_levels(line: str) -> list[float]:
     return levels
 
 
+# ── Scanner Alert! card parsing (new mobile-style layout) ────────────────────
+# Compact cards posted by the scanner bot. Vision OCR often splits the label/
+# value pairs onto separate lines, so we scan a short window after the headline.
+
+_SCANNER_ALERT_HEADER_RE = re.compile(
+    r"Scanner\s+Alert!\s*(?:\[(?P<tier>[A-Z]+)\])?",
+    re.I,
+)
+
+_SCANNER_CARD_HEADLINE_RE = re.compile(
+    r"^\s*\$?(?P<ticker>[A-Z]{2,5})\s+(?P<alert_type>.+?)\s*!?\s*$",
+    re.I,
+)
+
+# Timestamp / channel noise that often precedes a card in the OCR stream.
+_SCANNER_NOISE_RE = re.compile(
+    r"^\d{1,2}:\d{2}\s*[AP]M(?:\s+APP)?$|^(?:Day\s+Trading|APP)$",
+    re.I,
+)
+
+_SCANNER_ALERT_TYPE_RE = re.compile(
+    r"(?i)(?:price\s+)?(?:volatility\s+)?spike|new\s+daily|new\s+weekly|"
+    r"gap\s+up|volume\s+breakout|momentum|halts?|resume",
+)
+
+_SCANNER_PRICE_KV_RE = re.compile(
+    r"(?i)\bPrice\s*:?\s*\$?([\d,]+\.?\d*)",
+)
+
+_SCANNER_FLOAT_KV_RE = re.compile(
+    r"(?i)Float\s*Size\s*:?\s*\$?([\d,.]+)\s*([KMB])?\b",
+)
+
+_PRICE_LABEL_ONLY_RE = re.compile(r"^Price\s*:?\s*$", re.I)
+_FLOAT_LABEL_ONLY_RE = re.compile(r"^Float\s*Size\s*:?\s*$", re.I)
+
+_NUMERIC_VALUE_RE = re.compile(
+    r"^\$?([\d,.]+)\s*([KMB])?\s*$",
+    re.I,
+)
+
+
+def _parse_scaled_number(num_str: str, suffix: str = "") -> float | None:
+    """Parse a human-readable number like 2.42M / 150K into a float."""
+    try:
+        val = float(num_str.replace(",", ""))
+    except ValueError:
+        return None
+    mult = {"K": 1e3, "M": 1e6, "B": 1e9}.get((suffix or "").upper(), 1.0)
+    return val * mult
+
+
+def _scanner_field_window_end(lines: list[str], start: int, end: int) -> int:
+    """Stop before the next card headline/header so fields don't bleed across alerts."""
+    limit = min(end, len(lines))
+    for i in range(start, limit):
+        text = lines[i].strip()
+        if not text or _SCANNER_NOISE_RE.match(text):
+            continue
+        if i > start and (
+            _SCANNER_ALERT_HEADER_RE.search(text)
+            or (
+                _SCANNER_CARD_HEADLINE_RE.match(text)
+                and _SCANNER_ALERT_TYPE_RE.search(
+                    _SCANNER_CARD_HEADLINE_RE.match(text).group("alert_type")  # type: ignore[union-attr]
+                )
+            )
+        ):
+            return i
+    return limit
+
+
+def _extract_price_float_from_lines(
+    lines: list[str], start: int, end: int,
+) -> tuple[float | None, float | None, set[int]]:
+    """Scan a slice of OCR lines for Price and Float Size fields."""
+    used: set[int] = set()
+    price: float | None = None
+    float_size: float | None = None
+    end = _scanner_field_window_end(lines, start, end)
+    window = [(i, lines[i].strip()) for i in range(start, end)
+              if lines[i].strip() and not _SCANNER_NOISE_RE.match(lines[i].strip())]
+
+    blob = " ".join(text for _, text in window)
+    pm = _SCANNER_PRICE_KV_RE.search(blob)
+    if pm:
+        try:
+            price = float(pm.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    fm = _SCANNER_FLOAT_KV_RE.search(blob)
+    if fm:
+        float_size = _parse_scaled_number(fm.group(1), fm.group(2) or "")
+
+    for idx, (i, text) in enumerate(window):
+        if price is None and _PRICE_LABEL_ONLY_RE.match(text):
+            for j, nxt in window[idx + 1:]:
+                vm = _NUMERIC_VALUE_RE.match(nxt)
+                if vm and not (vm.group(2) or "").upper():
+                    parsed = _parse_scaled_number(vm.group(1), "")
+                    if parsed is not None:
+                        price = parsed
+                        used.update({i, j})
+                        break
+        if float_size is None and _FLOAT_LABEL_ONLY_RE.match(text):
+            for j, nxt in window[idx + 1:]:
+                vm = _NUMERIC_VALUE_RE.match(nxt)
+                if vm:
+                    parsed = _parse_scaled_number(vm.group(1), vm.group(2) or "")
+                    if parsed is not None:
+                        float_size = parsed
+                        used.update({i, j})
+                        break
+
+    return price, float_size, used
+
+
+def _scanner_card_summary(
+    ticker: str, alert_type: str, price: float | None,
+    float_size: float | None, tier: str | None,
+) -> str:
+    parts = [f"${ticker} {alert_type}!"]
+    if price is not None:
+        parts.append(f"Price ${price:g}")
+    if float_size is not None:
+        if float_size >= 1e6:
+            parts.append(f"Float {float_size / 1e6:.2f}M")
+        elif float_size >= 1e3:
+            parts.append(f"Float {float_size / 1e3:.1f}K")
+        else:
+            parts.append(f"Float {float_size:g}")
+    summary = " | ".join(parts)
+    return f"[{tier}] {summary}" if tier else summary
+
+
+def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
+    """Parse new-style Scanner Alert! cards that may span multiple OCR lines.
+
+    Returns (cards, used_line_indices). Each card dict has:
+      ticker, kind, line, alert_type, price, float_size, scanner_tier, volume
+    """
+    cards: list[dict] = []
+    used: set[int] = set()
+    n = len(lines)
+
+    def _emit_card(
+        headline_idx: int, tier: str | None, header_idx: int | None,
+        require_fields: bool,
+    ) -> bool:
+        hm = _SCANNER_CARD_HEADLINE_RE.match(lines[headline_idx].strip())
+        if not hm:
+            return False
+        ticker = hm.group("ticker").upper()
+        if not is_valid_ticker(ticker):
+            return False
+
+        alert_type = re.sub(
+            r"[!?.,]+$", "", hm.group("alert_type").strip(),
+        ).strip().title()
+
+        # Include the headline line — OCR sometimes keeps Price/Float inline there.
+        field_start = headline_idx
+        field_end = min(headline_idx + 8, n)
+        price, float_size, field_used = _extract_price_float_from_lines(
+            lines, field_start, field_end,
+        )
+        field_used.discard(headline_idx)
+
+        if require_fields and price is None and float_size is None:
+            return False
+
+        used.add(headline_idx)
+        used.update(field_used)
+        if header_idx is not None:
+            used.add(header_idx)
+
+        cards.append({
+            "ticker":       ticker,
+            "kind":         "scanner_card",
+            "line":         _scanner_card_summary(
+                ticker, alert_type, price, float_size, tier,
+            ),
+            "alert_type":   alert_type,
+            "price":        price,
+            "float_size":   float_size,
+            "scanner_tier": tier,
+            "volume":       None,
+        })
+        return True
+
+    i = 0
+    while i < n:
+        if i in used:
+            i += 1
+            continue
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        hdr = _SCANNER_ALERT_HEADER_RE.search(line)
+        if hdr:
+            tier = (hdr.group("tier") or "").upper() or None
+            headline_idx = None
+            for j in range(i + 1, min(i + 5, n)):
+                if j in used:
+                    continue
+                if _SCANNER_CARD_HEADLINE_RE.match(lines[j].strip()):
+                    headline_idx = j
+                    break
+            if headline_idx is not None:
+                _emit_card(headline_idx, tier, i, require_fields=False)
+            else:
+                used.add(i)
+            i += 1
+            continue
+
+        hm = _SCANNER_CARD_HEADLINE_RE.match(line)
+        if hm and _SCANNER_ALERT_TYPE_RE.search(hm.group("alert_type")):
+            prev_has_header = any(
+                _SCANNER_ALERT_HEADER_RE.search(lines[j].strip())
+                for j in range(max(0, i - 3), i)
+                if j not in used
+            )
+            if not prev_has_header:
+                _emit_card(i, None, None, require_fields=True)
+        i += 1
+
+    return cards, used
+
+
+def _scanner_card_to_alert(card: dict) -> dict:
+    """Normalise a parsed scanner card into the dashboard ingest alert shape."""
+    alert_type = str(card.get("alert_type") or "")
+    price_spike = bool(re.search(r"(?i)spike", alert_type))
+    return {
+        "ticker":       card["ticker"],
+        "line":         card["line"],
+        "burst":        False,
+        "alert_type":   alert_type or None,
+        "price":        card.get("price"),
+        "volume":       card.get("volume"),
+        "float_size":   card.get("float_size"),
+        "scanner_tier": card.get("scanner_tier"),
+        "price_spike":  price_spike,
+    }
+
+
 def parse_alert_line(line: str) -> tuple[str, str, dict] | tuple[None, None, dict]:
     """Parse one OCR line into (ticker, kind, meta), or (None, None, {}) if it
     isn't an alert. kind is "squeeze" or "alert". meta contains:
@@ -386,6 +641,20 @@ def _signature(line: str) -> str:
     embedded price keeps successive same-ticker alerts distinct (so repeated
     spikes are each counted, which is what drives burst detection)."""
     return re.sub(r"[^A-Za-z0-9]", "", line).lower()
+
+
+def _scanner_card_signature(card: dict) -> str:
+    """Stable de-dupe key for Scanner Alert! cards.
+
+    Ticker + alert type + tier only — deliberately ignores price/float/line text so
+    OCR cannot re-fire the same on-screen card when one poll reads Price and the
+    next reads Float Size. Session TTL in the main loop prevents duplicates."""
+    ticker = str(card.get("ticker", "")).upper()
+    alert_type = re.sub(
+        r"[^A-Za-z0-9]", "", str(card.get("alert_type") or ""),
+    ).lower()
+    tier = str(card.get("scanner_tier") or "").upper()
+    return f"sc|{ticker}|{alert_type}|{tier}".lower()
 
 
 # ── OCR + delivery ────────────────────────────────────────────────────────────
@@ -488,6 +757,9 @@ def check() -> int:
         print("[discord] VERDICT: ✗ OCR process failed — see error above.")
         return 1
     alerts = []
+    cards, _ = parse_scanner_cards(lines)
+    for card in cards:
+        alerts.append((card["ticker"], card["kind"], card["line"]))
     for ln in lines:
         tkr, kind, _ = parse_alert_line(ln)
         if tkr:
@@ -504,7 +776,12 @@ def check() -> int:
         return 2
     print(f"[discord] parsed {len(alerts)} alert(s):")
     for tkr, kind, ln in alerts:
-        tag = "🔥burst" if kind == "squeeze" else "mention"
+        if kind == "squeeze":
+            tag = "🔥burst"
+        elif kind == "scanner_card":
+            tag = "scanner"
+        else:
+            tag = "mention"
         print(f"   {tkr:6} {tag:8} <=  {ln[:70]}")
     print("[discord] VERDICT: ✓ working — these tickers would post as they newly appear "
           "(squeeze alerts fire the burst toast).")
@@ -552,7 +829,21 @@ def main() -> None:
         new_sentiment: list[SentimentEvent] = []
         scanner_state = _ScannerState()  # resets each scan
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
-        for line in lines:
+        cards, card_used = parse_scanner_cards(lines)
+        for card in cards:
+            sig = _scanner_card_signature(card)
+            if sig in seen:
+                continue
+            seen[sig] = t0
+            alert = _scanner_card_to_alert(card)
+            if primed:
+                new_alerts.append(alert)
+            else:
+                first_frame.setdefault(card["ticker"], alert)
+
+        for idx, line in enumerate(lines):
+            if idx in card_used:
+                continue
             sig = _signature(line)
             ticker, kind, meta = parse_alert_line(line)
             if ticker:

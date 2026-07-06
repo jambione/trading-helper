@@ -11,6 +11,7 @@ const _state = {
   scan_ts:        '',
   tickers:        /** @type {Object[]} */ ([]),
   swing:          /** @type {Object[]} */ ([]),
+  price_spikes:   /** @type {Object[]} */ ([]),
   transcriber: {
     running: false,
     lines:   /** @type {string[]} */ ([]),

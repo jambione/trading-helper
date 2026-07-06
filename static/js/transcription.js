@@ -242,14 +242,26 @@ function _renderFeed(box, alerts, type) {
 }
 
 function _renderRegular(a) {
+  const spikeCls = a.price_spike ? ' tx-line--spike' : '';
   const ts       = `<span class="tx-ts">${_esc(a.ts || '')}</span>`;
   const ticker   = `<strong class="tx-ticker">${_esc(a.ticker || '')}</strong>`;
+  const tier     = a.scanner_tier
+    ? `<span class="tx-tier">${_esc(a.scanner_tier)}</span>` : '';
   const typeRow  = a.alert_type
     ? `<div class="tx-alert-type">${_esc(a.alert_type)}</div>` : '';
   const price    = a.price  != null ? `<span class="tx-price">$${Number(a.price).toFixed(2)}</span>` : '';
   const vol      = a.volume != null ? `<span class="tx-vol">${_fmtVol(a.volume)}</span>` : '';
-  const metaRow  = (price || vol) ? `<div class="tx-meta-row">${price}${vol}</div>` : '';
-  return `<div class="tx-line">${ts}${ticker}${typeRow}${metaRow}</div>`;
+  const flt      = a.float_size != null ? `<span class="tx-float">${_fmtFloat(a.float_size)}</span>` : '';
+  const metaRow  = (price || vol || flt || tier)
+    ? `<div class="tx-meta-row">${tier}${price}${flt}${vol}</div>` : '';
+  return `<div class="tx-line${spikeCls}">${ts}${ticker}${typeRow}${metaRow}</div>`;
+}
+
+function _fmtFloat(v) {
+  v = Number(v);
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(2) + 'M float';
+  if (v >= 1_000)     return (v / 1_000).toFixed(1) + 'K float';
+  return v + ' float';
 }
 
 function _renderSqueeze(a) {

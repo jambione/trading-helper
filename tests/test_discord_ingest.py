@@ -31,6 +31,8 @@ def _clean_state(monkeypatch):
         d.STATE.mention_daily.clear()
         d.STATE.discord_alerts.clear()
         d.STATE.discord_last_ts = 0.0
+        d.STATE.price_spikes.clear()
+        d.STATE.price_spike_base_ts.clear()
     yield
 
 
@@ -104,6 +106,80 @@ def test_alert_deque_drops_oldest_at_capacity():
     assert len(st["alerts"]) == cap
     # The most recent entry should be tick (cap+4); the oldest were evicted.
     assert f"tick {cap + 4}" in st["alerts"][-1]["line"]
+
+
+def test_price_spike_ingested_only_once(monkeypatch):
+    monkeypatch.setattr(d, "_archive_price_spike", lambda rec: None)
+    monkeypatch.setattr(d, "_send_price_spike_push", lambda *a, **k: None)
+    alert = {
+        "ticker": "LUCY",
+        "line": "[ELITE] $LUCY Price Spike! | Float 5.14M",
+        "alert_type": "Price Spike",
+        "float_size": 5_140_000,
+        "scanner_tier": "ELITE",
+        "price_spike": True,
+    }
+    assert d.ingest_discord_alerts([alert]) == 1
+    assert d.ingest_discord_alerts([alert]) == 0
+    assert d.ingest_discord_alerts([dict(alert, line="different summary line")]) == 0
+    with d.STATE.lock:
+        assert d.STATE.mention_daily["LUCY"] == 1
+        assert len(d.STATE.price_spikes) == 1
+
+
+def test_price_spikes_expire_after_3_minutes(monkeypatch):
+    monkeypatch.setattr(d, "_archive_price_spike", lambda rec: None)
+    monkeypatch.setattr(d, "_send_price_spike_push", lambda *a, **k: None)
+    monkeypatch.setattr(d, "load_tickers", lambda: [])
+    monkeypatch.setattr(d, "load_news", lambda: [])
+    monkeypatch.setattr(d, "load_swing", lambda: [])
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
+    alert = {
+        "ticker": "WOK",
+        "line": "[ELITE] $WOK Price Spike! | Price $251",
+        "alert_type": "Price Spike",
+        "price": 251.0,
+        "scanner_tier": "ELITE",
+        "price_spike": True,
+    }
+    d.ingest_discord_alerts([alert])
+    stale = time.time() - (d._SPIKE_TTL_SEC + 1)
+    with d.STATE.lock:
+        for rec in d.STATE.price_spikes:
+            rec["unix"] = stale
+        for key in list(d.STATE.price_spike_base_ts):
+            d.STATE.price_spike_base_ts[key] = stale
+    snap = d._snapshot()
+    assert snap["price_spikes"] == []
+    # De-dupe cleared too — same spike can ingest again after expiry.
+    assert d.ingest_discord_alerts([alert]) == 1
+
+
+def test_price_spike_records_mention_feed_and_snapshot(monkeypatch):
+    monkeypatch.setattr(d, "_archive_price_spike", lambda rec: None)
+    monkeypatch.setattr(d, "_send_price_spike_push", lambda *a, **k: None)
+    n = d.ingest_discord_alerts([{
+        "ticker": "LUCY",
+        "line": "[ELITE] $LUCY Price Spike! | Float 5.14M",
+        "alert_type": "Price Spike",
+        "float_size": 5_140_000,
+        "scanner_tier": "ELITE",
+        "price_spike": True,
+    }])
+    assert n == 1
+    with d.STATE.lock:
+        assert d.STATE.mention_daily["LUCY"] == 1
+        spikes = list(d.STATE.price_spikes)
+        assert spikes[-1]["ticker"] == "LUCY"
+        assert spikes[-1]["float_size"] == 5_140_000
+        assert d.STATE.discord_alerts[-1]["price_spike"] is True
+
+    monkeypatch.setattr(d, "load_tickers", lambda: ["LUCY"])
+    monkeypatch.setattr(d, "load_news", lambda: [])
+    monkeypatch.setattr(d, "load_swing", lambda: [])
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
+    snap = d._snapshot()
+    assert any(s["ticker"] == "LUCY" for s in snap["price_spikes"])
 
 
 def test_snapshot_exposes_discord_block_not_transcriber(monkeypatch):

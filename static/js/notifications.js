@@ -79,6 +79,8 @@ export function showToast(title, sub = '', type = 'info', duration = 6000, onCli
 
 const _prevStatuses = {};   // ticker → last known status
 const _prevBursts   = {};   // ticker → last known mention_burst bool
+const _seenSpikes   = new Set();  // dedupe price-spike toasts within session
+let _spikesPrimed   = false;
 
 // ── Auto-Add toggle state ──────────────────────────────────────
 const _AUTO_ADD_KEY = 'ss:auto-add';
@@ -159,8 +161,48 @@ async function _agentAdd(ticker) {
   }
 }
 
+function _spikeKey(r) {
+  const type = String(r.alert_type || 'spike').replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const tier = String(r.scanner_tier || '').toUpperCase();
+  return `sc|${r.ticker}|${type}|${tier}`.toLowerCase();
+}
+
+function _checkPriceSpikes(rows) {
+  if (!_spikesPrimed) {
+    rows.forEach(r => _seenSpikes.add(_spikeKey(r)));
+    _spikesPrimed = true;
+    return;
+  }
+  for (const r of rows) {
+    const key = _spikeKey(r);
+    if (_seenSpikes.has(key)) continue;
+    _seenSpikes.add(key);
+
+    const parts = [];
+    if (r.price != null) parts.push(`$${Number(r.price).toFixed(2)}`);
+    if (r.float_size != null) {
+      const n = Number(r.float_size);
+      parts.push(n >= 1e6 ? `${(n / 1e6).toFixed(2)}M float` : `${n} float`);
+    }
+    if (r.scanner_tier) parts.push(r.scanner_tier);
+    const sub = parts.length ? parts.join('  ·  ') : (r.alert_type || 'tap to view');
+
+    _beep('burst');
+    showToast(
+      `⚡ ${r.ticker}  Price Spike`,
+      sub,
+      'burst',
+      8000,
+      () => _agentAdd(r.ticker),
+    );
+    if (_autoAddEnabled()) _agentAdd(r.ticker);
+    selectTicker(r.ticker);
+  }
+}
+
 export function init() {
   subscribe('tickers', _check);
+  subscribe('price_spikes', _checkPriceSpikes);
   const _onReady = () => { _initAutoAdd(); _initAutoAlert(); };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _onReady);

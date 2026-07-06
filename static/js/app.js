@@ -17,6 +17,7 @@ import * as notifications                        from './notifications.js?v=64';
 import { isAuthenticated, logout, getQueryUser } from './auth.js?v=64';
 import { init as initNews }                      from './news.js?v=64';
 import { init as initLeaderboard }               from './leaderboard.js?v=64';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=64';
 import { init as initEngine }                    from './engine.js?v=64';
 import { init as initAdmin, open as openAdmin }  from './admin.js?v=64';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=64';
@@ -113,6 +114,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
+  try { initPriceSpikes(document.querySelector('[data-price-spikes]')); }        catch (e) { console.error('[app] initPriceSpikes', e); }
   try { initEngine(document.querySelector('[data-panel="engine"]')); }           catch (e) { console.error('[app] initEngine', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
@@ -238,6 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.news              !== undefined) update.news              = snap.news;
     if (snap.engine)                          update.engine            = snap.engine;
     if (snap.swing             !== undefined) update.swing             = snap.swing;
+    if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);
   });

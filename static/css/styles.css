@@ -1914,6 +1914,111 @@ body.mobile .icon-btn {
   font-size: 13px;
   line-height: 1;
 }
+/* ════════════════════════════════════════════════════════════
+   PRICE SPIKE BAR  —  scanner alert feed under leaderboard
+═════════════════════════════════════════════════════════════ */
+.price-spike-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 18px;
+  background: rgba(201, 160, 68, 0.06);
+  border-bottom: 1px solid rgba(201, 160, 68, 0.18);
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 34px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.price-spike-bar::-webkit-scrollbar { display: none; }
+.ps-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e8b84a;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ps-items {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  overflow: hidden;
+}
+.ps-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.ps-item {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(232, 184, 74, 0.35);
+  border-radius: 999px;
+  padding: 3px 10px 3px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: all 0.2s var(--ease-out);
+}
+.ps-item:hover {
+  border-color: rgba(232, 184, 74, 0.7);
+  background: rgba(232, 184, 74, 0.12);
+  transform: translateY(-1px);
+}
+.ps-ts {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.ps-ticker {
+  font-weight: 700;
+  color: #f0c96a;
+}
+.ps-tier {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9ba5b4;
+  background: rgba(255,255,255,0.06);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.ps-type {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.ps-price, .ps-float {
+  font-size: 10px;
+  color: var(--text);
+}
+.tx-line--spike {
+  border-left: 3px solid rgba(232, 184, 74, 0.75);
+  padding-left: 8px;
+}
+.tx-tier {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ba5b4;
+  margin-right: 6px;
+}
+.tx-float {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
 .lb-rank-num {
   font-size: 11px;
   font-weight: 700;
