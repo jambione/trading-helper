@@ -52,3 +52,4 @@ webull-l2/test_region*.png
 webull-l2/test_window.png
 config/webull_bridge.json
 conf/
+webull_trade_sdk.log*

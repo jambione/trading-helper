@@ -120,11 +120,25 @@ class WebullMarketData(MarketDataProvider):
                 log.warning("[WEBULL] get_quotes %s -> HTTP %s: %s",
                             symbol, res.status_code, res.text[:200])
                 return None
-            book = parse_depth_payload(res.json())
+            payload = res.json()
+            if isinstance(payload, list):     # API wraps single symbol in a list
+                payload = payload[0] if payload else {}
+            book = parse_depth_payload(payload)
             if book:
                 self._last[symbol] = book
             return book
-        except Exception:
+        except Exception as e:
+            # without the OpenAPI Advanced Quotes subscription the API
+            # rejects depth>1 ("depth not more than 1") — fall back to
+            # top-of-book so the stance engine keeps working (L1 imbalance,
+            # no wall detection) until the subscription is added
+            if self.depth > 1 and "depth not more than 1" in str(e):
+                log.warning(
+                    "[WEBULL] no OpenAPI Advanced Quotes subscription — "
+                    "falling back to depth=1 (top-of-book). Subscribe at "
+                    "developer.webull.com for full L2.")
+                self.depth = 1
+                return self._fetch(symbol)
             log.exception("[WEBULL] get_quotes %s failed", symbol)
             return None
 
