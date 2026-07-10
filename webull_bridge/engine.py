@@ -119,6 +119,43 @@ class BridgeManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._state: dict[str, dict] = {}
         self._subs: dict[str, set[asyncio.Queue]] = {}
+        self._auto_task: asyncio.Task | None = None
+
+    # ── auto-watch: keep an engine running for every momentum ticker ──
+
+    def start_auto_watch(self, get_symbols):
+        """Sync the engine set to `get_symbols()` (the dashboard's momentum
+        ticker list) so every symbol has a live stance before it's opened.
+        Symbols a client is actively streaming are never auto-unwatched."""
+        if not self.cfg.get("auto_watch", True) or self._auto_task:
+            return
+        self._auto_task = asyncio.create_task(
+            self._auto_watch_loop(get_symbols), name="l2-auto-watch")
+
+    def sync_symbols(self, symbols: list[str]):
+        """One sync pass — factored out of the loop for testability."""
+        limit = int(self.cfg.get("max_engines", 8))
+        target = [s.upper() for s in symbols][:limit]
+        # keep anything a client is currently streaming
+        keep = set(target) | {s for s, subs in self._subs.items() if subs}
+        for symbol in list(self._tasks):
+            if symbol not in keep:
+                self.unwatch(symbol)
+        for symbol in target:
+            if len(self._tasks) >= limit and symbol not in self._tasks:
+                continue
+            self.watch(symbol)
+
+    async def _auto_watch_loop(self, get_symbols):
+        interval = float(self.cfg.get("auto_watch_interval", 15))
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                symbols = await loop.run_in_executor(None, get_symbols)
+                self.sync_symbols(list(symbols or []))
+            except Exception:
+                log.exception("[L2] auto-watch sync failed")
+            await asyncio.sleep(interval)
 
     # ── watch lifecycle ──────────────────────────────────────────────
 
@@ -156,6 +193,9 @@ class BridgeManager:
         self._subs.get(symbol.upper(), set()).discard(q)
 
     async def shutdown(self):
+        if self._auto_task:
+            self._auto_task.cancel()
+            self._auto_task = None
         for symbol in list(self._tasks):
             self.unwatch(symbol)
 

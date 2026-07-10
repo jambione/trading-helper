@@ -1259,6 +1259,14 @@ from webull_bridge.routes import router as _webull_router, get_manager as _get_b
 app.include_router(_webull_router)
 
 
+@app.on_event("startup")
+async def _bridge_startup():
+    # run an L2 engine for every momentum ticker so each symbol already
+    # has a live stance when the phone opens it (load_tickers is defined
+    # later in this module; resolved at call time)
+    _get_bridge().start_auto_watch(lambda: load_tickers())
+
+
 @app.on_event("shutdown")
 async def _bridge_shutdown():
     await _get_bridge().shutdown()

@@ -21,7 +21,16 @@ DEFAULTS = {
     "stream_hz": 3.0,
 
     # max simultaneously monitored symbols (each runs its own engine task)
-    "max_engines": 8,
+    "max_engines": 12,
+
+    # keep an engine running for every momentum ticker (newest first,
+    # capped by max_engines) so the list shows stances and monitors open warm
+    "auto_watch": True,
+    "auto_watch_interval": 15,
+
+    # webull provider: total depth-poll budget across all engines (req/sec);
+    # per-symbol interval stretches automatically as engines are added
+    "webull_max_rps": 6.0,
 
     # ── signal thresholds (mirror webull-l2/config.json) ──
     "imbalance_buy": 1.8,

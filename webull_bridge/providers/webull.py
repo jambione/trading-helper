@@ -101,9 +101,16 @@ class WebullMarketData(MarketDataProvider):
         self.cfg = cfg
         self.client = DataClient(_make_api_client(cfg))
         self.poll = float(cfg.get("webull_poll_sec", 0.5))
+        self.max_rps = float(cfg.get("webull_max_rps", 6.0))
         self.depth = int(cfg.get("webull_depth_levels", 10))
         self.category = cfg.get("webull_category", "US_STOCK")
         self._last: dict[str, L2Book] = {}
+        self._active = 0   # live subscribe_depth generators
+
+    def _interval(self) -> float:
+        """Per-symbol poll interval, stretched so the combined request
+        rate across all active engines stays under webull_max_rps."""
+        return max(self.poll, max(self._active, 1) / self.max_rps)
 
     def _fetch(self, symbol: str) -> Optional[L2Book]:
         try:
@@ -125,21 +132,26 @@ class WebullMarketData(MarketDataProvider):
         symbol = symbol.upper()
         loop = asyncio.get_running_loop()
         misses = 0
-        while True:
-            t0 = time.time()
-            book = await loop.run_in_executor(None, self._fetch, symbol)
-            if book is not None:
-                misses = 0
-                yield book
-            else:
-                # back off while the API is unhappy (rate limit, closed
-                # market, bad symbol) instead of hammering it
-                misses += 1
-                if misses in (5, 50) or misses % 200 == 0:
-                    log.warning("[WEBULL] %s: %d consecutive empty reads",
-                                symbol, misses)
-            delay = self.poll if misses < 5 else min(self.poll * misses, 10.0)
-            await asyncio.sleep(max(0.0, delay - (time.time() - t0)))
+        self._active += 1
+        try:
+            while True:
+                t0 = time.time()
+                book = await loop.run_in_executor(None, self._fetch, symbol)
+                if book is not None:
+                    misses = 0
+                    yield book
+                else:
+                    # back off while the API is unhappy (rate limit, closed
+                    # market, bad symbol) instead of hammering it
+                    misses += 1
+                    if misses in (5, 50) or misses % 200 == 0:
+                        log.warning("[WEBULL] %s: %d consecutive empty reads",
+                                    symbol, misses)
+                base = self._interval()
+                delay = base if misses < 5 else min(base * misses, 10.0)
+                await asyncio.sleep(max(0.0, delay - (time.time() - t0)))
+        finally:
+            self._active -= 1
 
     async def snapshot(self, symbol: str) -> Optional[L2Book]:
         symbol = symbol.upper()

@@ -141,6 +141,34 @@ def test_mock_broker_limit_and_cancel(cfg):
     asyncio.run(run())
 
 
+# ── auto-watch sync ──────────────────────────────────────────────────────
+
+
+def test_auto_watch_sync(cfg):
+    """sync_symbols keeps engines matched to the ticker list, respects the
+    engine cap, and never drops a symbol a client is streaming."""
+    from webull_bridge.engine import BridgeManager
+
+    async def run():
+        m = BridgeManager({**cfg, "max_engines": 3})
+        m.sync_symbols(["SKYQ", "TSLA", "AMD", "NVDA"])   # NVDA over cap
+        assert m.watching() == ["AMD", "SKYQ", "TSLA"]
+
+        # a client streams TSLA; the ticker list moves on without it
+        q = m.subscribe("TSLA")
+        m.sync_symbols(["SKYQ", "NVDA"])
+        assert "TSLA" in m.watching()          # protected by the subscriber
+        assert "AMD" not in m.watching()       # dropped
+        assert {"SKYQ", "NVDA"} <= set(m.watching())
+
+        m.unsubscribe("TSLA", q)
+        m.sync_symbols(["SKYQ", "NVDA"])
+        assert "TSLA" not in m.watching()      # released once unsubscribed
+        await m.shutdown()
+
+    asyncio.run(run())
+
+
 # ── webull depth payload parser ──────────────────────────────────────────
 
 
