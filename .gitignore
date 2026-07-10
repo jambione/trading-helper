@@ -51,3 +51,4 @@ webull-l2/debug_*.txt
 webull-l2/test_region*.png
 webull-l2/test_window.png
 config/webull_bridge.json
+conf/
