@@ -1254,6 +1254,15 @@ def _snapshot() -> dict:
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# L2 monitor + broker endpoints for the Mobile Trader iPhone app
+from webull_bridge.routes import router as _webull_router, get_manager as _get_bridge  # noqa: E402
+app.include_router(_webull_router)
+
+
+@app.on_event("shutdown")
+async def _bridge_shutdown():
+    await _get_bridge().shutdown()
+
 
 # ── Active session tracker ────────────────────────────────────────────────────
 
