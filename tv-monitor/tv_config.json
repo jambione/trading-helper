@@ -1,0 +1,6 @@
+{
+  "panels": {},
+  "poll_interval": 1.0,
+  "fire_interval": 5.0,
+  "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+}

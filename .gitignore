@@ -34,3 +34,19 @@ benchmarks/mention_bursts.jsonl
 
 # Built notifier app (build with scripts/build_notifier.sh)
 BrasfieldNotifier.app/
+
+# TV/L2 OCR monitors — runtime state, logs, and calibration debug artifacts
+monitor_layout.json
+tv_state.json
+l2_state.json
+tv-monitor/tv_log.csv
+tv-monitor/tv_test_result.txt
+tv-monitor/tv_panel_*.png
+tv-monitor/tv_test_window.png
+webull-l2/l2_log.csv
+webull-l2/trades.csv
+webull-l2/test_locate_result.txt
+webull-l2/debug_*.png
+webull-l2/debug_*.txt
+webull-l2/test_region*.png
+webull-l2/test_window.png

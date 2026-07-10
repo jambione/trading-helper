@@ -9,3 +9,10 @@ httpx>=0.27
 yfinance>=0.2.50
 pyautogui
 pywebpush>=2.0
+mss
+opencv-python
+pytesseract
+rich
+plyer
+pygetwindow
+pywin32

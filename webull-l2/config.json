@@ -1,0 +1,36 @@
+{
+  "region_mode": "auto",
+  "region": {
+    "left": 5475,
+    "top": 642,
+    "width": 284,
+    "height": 331
+  },
+  "poll_interval": 0.35,
+  "imbalance_buy": 1.8,
+  "imbalance_sell": 0.55,
+  "confirm_reads": 3,
+  "max_spread_pct": 1.0,
+  "wall_multiple": 4.0,
+  "alert_cooldown": 30,
+  "target_pct": 2.0,
+  "stop_pct": 1.0,
+  "trail_pct": 0.8,
+  "min_room_pct": 1.0,
+  "momentum_reads": 6,
+  "trend_window": 300,
+  "max_downtrend_pct": 0.2,
+  "flat_sell_alerts": false,
+  "symbol_refresh": 30,
+  "long_window": 60,
+  "long_confirm_secs": 20,
+  "sound": false,
+  "toast": false,
+  "csv_log": true,
+  "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+  "llm": {
+    "enabled": false,
+    "interval": 45,
+    "model": "claude-haiku-4-5"
+  }
+}
