@@ -18,7 +18,8 @@ ET = ZoneInfo("America/New_York")
 NOW = datetime(2026, 7, 10, 9, 50, tzinfo=ET)   # Friday, 20 min after open
 
 KNOBS = {"min_price": 1.5, "max_price": 60.0, "min_rvol": 1.5,
-         "max_spread_pct": 0.35, "min_dollar_min": 25000.0,
+         "max_spread_pct": 0.35, "pm_max_spread_pct": 1.0,
+         "min_dollar_min": 25000.0,
          "max_candidates": 25, "refresh_sec": 150.0, "avg_days": 10}
 
 
@@ -46,14 +47,27 @@ def minute_df(start="2026-07-10 09:30", bars=20, base=10.5, drift=0.01,
 def test_session_windows():
     def label(h, m, day=10):     # 2026-07-10 is a Friday
         return mf.session_window(datetime(2026, 7, day, h, m, tzinfo=ET))[0]
-    assert label(8, 0) == "PRE-MARKET"
-    assert label(9, 35) == "OPENING RANGE"
-    assert label(9, 50) == "PRIME WINDOW"
-    assert label(10, 45) == "LATE MORNING"
-    assert label(12, 30) == "MIDDAY CHOP"
-    assert label(15, 30) == "POWER HOUR"
+    assert label(5, 0) == "PRE-MARKET SCAN"
+    assert label(6, 45) == "T1 FUNNEL"
+    assert label(7, 30) == "TRANCHE 1"
+    assert label(8, 25) == "T2 FUNNEL"
+    assert label(8, 45) == "TRANCHE 2"
+    assert label(9, 27) == "T3 FUNNEL"
+    assert label(9, 50) == "TRANCHE 3"
+    assert label(11, 0) == "WIND-DOWN"
+    assert label(13, 30) == "EXITS ONLY"
     assert label(20, 0) == "CLOSED"
     assert label(10, 0, day=11) == "CLOSED"      # Saturday
+
+
+def test_next_shot_countdown():
+    def shot(h, m, day=10):
+        return mf.next_shot(datetime(2026, 7, day, h, m, tzinfo=ET))
+    assert shot(6, 0) == ("TRANCHE 1", 60)
+    assert shot(7, 30) == ("TRANCHE 2", 60)
+    assert shot(9, 0) == ("TRANCHE 3", 30)
+    assert shot(9, 30) is None                   # last shot fired
+    assert shot(8, 0, day=11) is None            # Saturday
 
 
 # ── volume curve ────────────────────────────────────────────────────────────
@@ -129,6 +143,30 @@ def test_premarket_no_pace_rejects():
     assert "illiquid" not in row["rejects"]
     # premarket gap read from last trade vs prior close
     assert row["gap_pct"] == pytest.approx(row["chg_pct"])
+
+
+def test_premarket_spread_uses_looser_ceiling():
+    """0.6% is fatal in-session but normal at 7:00 — only >1% rejects."""
+    pre_now = datetime(2026, 7, 10, 7, 5, tzinfo=ET)
+    pm = minute_df(start="2026-07-10 06:30", bars=30, vol_per_bar=2_000)
+    ok = mf.evaluate("GAP", daily_df(), pm,
+                     quote=(10.60, 10.665), now_et=pre_now, knobs=KNOBS)
+    assert "spread" not in ok["rejects"]
+    wide = mf.evaluate("GAP", daily_df(), pm,
+                       quote=(10.00, 10.15), now_et=pre_now, knobs=KNOBS)
+    assert "spread" in wide["rejects"]
+
+
+def test_dollar_per_min_is_wall_clock():
+    """Sparse premarket bars: 6 bars in the last 15 min is 15 wall-clock
+    minutes of tape, not 6 — pace must not be inflated by missing bars."""
+    pre_now = datetime(2026, 7, 10, 7, 0, tzinfo=ET)
+    idx = pd.date_range("2026-07-10 06:48", periods=6, freq="2min", tz=ET)
+    m = pd.DataFrame({"open": 10.0, "high": 10.02, "low": 9.98,
+                      "close": 10.0, "volume": 3_000.0}, index=idx)
+    row = mf.evaluate("THIN", daily_df(), m, quote=None,
+                      now_et=pre_now, knobs=KNOBS)
+    assert row["dollar_min"] == pytest.approx(6 * 3_000 * 10.0 / 15.0)
 
 
 def test_missing_data_rejected():

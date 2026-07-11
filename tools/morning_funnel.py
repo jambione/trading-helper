@@ -37,7 +37,7 @@ sys.path.insert(0, str(ROOT))
 from config import load_config                              # noqa: E402
 from alpaca_api import connect_data_client, _get_feed_arg   # noqa: E402
 from signals import williams_pr, vwap_calc                  # noqa: E402
-from session_clock import ET, session_window                # noqa: E402,F401
+from session_clock import ET, next_shot, session_window     # noqa: E402,F401
 
 OPEN_MIN = 9 * 60 + 30          # 9:30 ET in minutes-of-day
 
@@ -117,6 +117,7 @@ def knobs_from_cfg(cfg: dict) -> dict:
         "max_price":       float(g("funnel_max_price", 60.0)),
         "min_rvol":        float(g("funnel_min_rvol", 1.5)),
         "max_spread_pct":  float(g("funnel_max_spread_pct", 0.35)),
+        "pm_max_spread_pct": float(g("funnel_pm_max_spread_pct", 1.0)),
         "min_dollar_min":  float(g("funnel_min_dollar_per_min", 25000.0)),
         "max_candidates":  int(g("funnel_max_candidates", 25)),
         "refresh_sec":     float(g("funnel_refresh_sec", 150.0)),
@@ -174,7 +175,10 @@ def evaluate(sym: str, daily: pd.DataFrame | None, minutes: pd.DataFrame | None,
 
     if avg_vol > 0:
         row["rvol"] = float(m["volume"].sum()) / (avg_vol * expected_fraction(mins_open))
-    row["dollar_min"] = float((m["close"] * m["volume"]).tail(10).mean())
+    # dollar volume per wall-clock minute over the last 15 min — bar-only
+    # minutes (sparse premarket tape) must not inflate the pace
+    recent = m[m_et >= now_et - timedelta(minutes=15)]
+    row["dollar_min"] = float((recent["close"] * recent["volume"]).sum()) / 15.0
 
     if quote:
         bid, ask = quote
@@ -206,7 +210,11 @@ def evaluate(sym: str, daily: pd.DataFrame | None, minutes: pd.DataFrame | None,
     # ── hard tradeability rejects ──
     if not (knobs["min_price"] <= price <= knobs["max_price"]):
         row["rejects"].append("price")
-    if row["spread_pct"] is not None and row["spread_pct"] > knobs["max_spread_pct"]:
+    # premarket books are naturally wide — 0.35% would reject the whole list
+    # at 7:00, so a looser ceiling applies until the open
+    max_spread = (knobs.get("pm_max_spread_pct", 1.0) if mins_open < 0
+                  else knobs["max_spread_pct"])
+    if row["spread_pct"] is not None and row["spread_pct"] > max_spread:
         row["rejects"].append("spread")
     if mins_open >= 10:                    # premarket pace is too noisy to reject on
         if row["rvol"] is not None and row["rvol"] < knobs["min_rvol"]:
@@ -312,7 +320,7 @@ def _fmt(v, spec="{:.1f}", dash="—"):
     return dash if v is None else spec.format(v)
 
 
-def build_view(rows: list, now_et: datetime):
+def build_view(rows: list, now_et: datetime, feed: str = "IEX"):
     from rich.table import Table
     from rich.panel import Panel
     from rich.console import Group
@@ -323,6 +331,15 @@ def build_view(rows: list, now_et: datetime):
     head.append(f" {now_et.strftime('%H:%M:%S')} ET   ", style="bold")
     head.append(f"{label}", style=f"bold {color}")
     head.append(f" — {guide}", style=color)
+    shot = next_shot(now_et)
+    if shot:
+        shot_label, mins = shot
+        eta = f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
+        head.append(f"   {shot_label} in {eta}", style="bold cyan")
+    premarket = now_et.hour * 60 + now_et.minute < OPEN_MIN
+    if premarket and str(feed).upper() != "SIP":
+        head.append("\n IEX feed: premarket RVOL/$K-MIN understate the full tape"
+                    " — treat them as floors, not truth", style="dim")
 
     t = Table(title="MORNING FUNNEL", title_style="bold cyan",
               header_style="bold", pad_edge=False)
@@ -408,9 +425,11 @@ def main() -> int:
     console.print(f"[dim]funnel watching {len(candidates)}: "
                   f"{' '.join(candidates)}[/dim]")
 
+    feed = str(cfg.get("data_feed", "IEX"))
+
     if args.once:
         console.print(build_view(scan_once(client, candidates, cfg, knobs),
-                                 datetime.now(ET)))
+                                 datetime.now(ET), feed))
         return 0
 
     from rich.live import Live
@@ -419,7 +438,7 @@ def main() -> int:
             candidates = gather_candidates(args.tickers, ROOT,
                                            knobs["max_candidates"]) or candidates
             rows = scan_once(client, candidates, cfg, knobs)
-            live.update(build_view(rows, datetime.now(ET)), refresh=True)
+            live.update(build_view(rows, datetime.now(ET), feed), refresh=True)
             time.sleep(knobs["refresh_sec"])
 
 

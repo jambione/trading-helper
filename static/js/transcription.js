@@ -6,8 +6,8 @@
  * technicals + Finnhub fundamentals); clicking one adds the ticker to the watchlist.
  */
 
-import { subscribe } from './store.js?v=64';
-import { api }       from './api.js?v=64';
+import { subscribe } from './store.js?v=65';
+import { api }       from './api.js?v=65';
 
 let _regularBox    = null;
 let _squeezeBox    = null;

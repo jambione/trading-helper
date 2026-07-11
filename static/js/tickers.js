@@ -6,11 +6,12 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=64';
-import { api } from './api.js?v=64';
+import { subscribe, selectTicker, get } from './store.js?v=65';
+import { api } from './api.js?v=65';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
+let _suggestEl  = null;   // <div data-funnel-suggest> — funnel banner
 let _prevPrices = {};     // ticker → last price (for flash detection)
 let _sortCol    = 'price';
 let _sortDir    = 1;      // 1 = ascending, -1 = descending
@@ -49,8 +50,9 @@ export function clearCopiedTickers() {
 }
 
 export function init(panelEl) {
-  _rowsEl  = panelEl.querySelector('[data-ticker-rows]');
-  _countEl = panelEl.querySelector('[data-ticker-count]');
+  _rowsEl    = panelEl.querySelector('[data-ticker-rows]');
+  _countEl   = panelEl.querySelector('[data-ticker-count]');
+  _suggestEl = panelEl.querySelector('[data-funnel-suggest]');
 
   // Wire sortable column headers
   panelEl.querySelectorAll('[data-sort-col]').forEach(h => {
@@ -71,6 +73,7 @@ export function init(panelEl) {
 
   subscribe('tickers',        rows   => _renderTable(rows));
   subscribe('selectedTicker', ticker => _highlightSelected(ticker));
+  subscribe('funnel',         f      => _renderFunnel(f));
 
   _loadCopiedTickers();
 }
@@ -305,6 +308,20 @@ function _updateRow(el, row) {
     } else if (cbadge) {
       cbadge.remove();
     }
+
+    // Funnel score badge — rebuild from the template so state colour + reject
+    // fallback stay correct as the scan updates.
+    const fhtml  = _funnelBadge(row.funnel);
+    let   fbadge = tickerCell.querySelector('.funnel-badge');
+    if (fhtml) {
+      const tmp = document.createElement('span');
+      tmp.innerHTML = fhtml;
+      const nb = tmp.firstElementChild;
+      if (fbadge) fbadge.replaceWith(nb);
+      else        tickerCell.appendChild(nb);
+    } else if (fbadge) {
+      fbadge.remove();
+    }
   }
 
   const priceEl = el.querySelector('[data-price]');
@@ -481,6 +498,21 @@ function _confluenceBadge(conf) {
   return `<span class="confluence-badge" title="Confluence: ${names}">⚡${conf.count}</span>`;
 }
 
+// Morning-funnel chart-readiness → CSS tier. Same states morning_funnel emits.
+const _FUNNEL_STATE_CLS = { READY: 'fn-ready', EARLY: 'fn-early', WEAK: 'fn-weak', EXTENDED: 'fn-ext' };
+
+// Inline per-row funnel score: a small pill coloured by readiness state, or a
+// muted ✕ when the funnel hard-rejected the ticker (price/spread/liquidity).
+function _funnelBadge(f) {
+  if (!f) return '';
+  if (f.rejects && f.rejects.length) {
+    return `<span class="funnel-badge funnel-badge--rej" title="Funnel: rejected — ${f.rejects.join(', ')}">✕</span>`;
+  }
+  const cls   = _FUNNEL_STATE_CLS[f.state] || '';
+  const title = `Funnel ${f.score} · ${f.state}${f.rvol != null ? ` · RVOL ${f.rvol}x` : ''}`;
+  return `<span class="funnel-badge ${cls}" title="${title}">${f.score}</span>`;
+}
+
 function _rowHTML(row) {
   const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
   const chgCls = _chgClass(row.pct_change ?? null);
@@ -495,6 +527,7 @@ function _rowHTML(row) {
       ${row.ticker}
       ${mentionTxt ? `<span class="mention-badge${mentionCls}" title="${row.mention_count ?? 0} today">${mentionTxt}</span>` : ''}
       ${_confluenceBadge(row.confluence)}
+      ${_funnelBadge(row.funnel)}
     </div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
@@ -505,6 +538,86 @@ function _rowHTML(row) {
     </div>
   </div>
   ${_signalBarHTML(row)}`;
+}
+
+// ── Funnel suggestion banner ───────────────────────────────────
+// Renders the auto-ranked pick above the watchlist. Only rebuilds when the
+// meaningful content changes (not on every price tick) so the Send button's
+// transient state survives, and so it's cheap under the 4Hz snapshot stream.
+
+let _lastFunnelKey = null;
+
+function _fmtMins(m) {
+  return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m`;
+}
+
+function _renderFunnel(f) {
+  if (!_suggestEl) return;
+  if (!f || (!f.session && !f.top && !f.waiting)) {
+    _suggestEl.classList.add('hidden');
+    _suggestEl.innerHTML = '';
+    _lastFunnelKey = null;
+    return;
+  }
+
+  const key = JSON.stringify({ t: f.top, s: f.session, w: f.waiting, st: f.stale });
+  if (key === _lastFunnelKey) return;   // no meaningful change — keep DOM as-is
+  _lastFunnelKey = key;
+
+  const sess = f.session || {};
+  const shot = sess.next_shot;
+  const shotTxt = shot ? ` · next ${shot.label} in ${_fmtMins(shot.mins)}` : '';
+  const sessLine = `<div class="funnel-session">${sess.label || 'FUNNEL'}${shotTxt}</div>`;
+
+  let body;
+  const top = f.top;
+  if (f.waiting) {
+    body = `<div class="funnel-pick funnel-pick--empty">⏳ Ranking candidates…</div>`;
+  } else if (!top) {
+    body = `<div class="funnel-pick funnel-pick--empty">No tradeable candidate right now</div>`;
+  } else {
+    const cls   = _FUNNEL_STATE_CLS[top.state] || '';
+    const chg   = top.chg_pct != null ? `${top.chg_pct >= 0 ? '+' : ''}${top.chg_pct}%` : '';
+    const rvol  = top.rvol != null ? `${top.rvol}x` : '';
+    const meta  = [top.state, chg, rvol].filter(Boolean).join(' · ');
+    const stale = f.stale ? ' funnel-pick--stale' : '';
+    body = `<div class="funnel-pick${stale}">
+      <div class="funnel-pick-main">
+        <span class="funnel-pick-label">${top.suggest ? '▶ Point monitors at' : 'Leading'}</span>
+        <span class="funnel-pick-sym">${top.sym}</span>
+        <span class="funnel-badge ${cls}" title="Funnel score">${top.score}</span>
+      </div>
+      <div class="funnel-pick-meta">${meta}${f.stale ? ' · stale' : ''}</div>
+      ${top.suggest
+        ? `<button class="btn btn--sm funnel-send" data-funnel-send="${top.sym}">Send to monitors</button>`
+        : ''}
+    </div>`;
+  }
+
+  _suggestEl.innerHTML = sessLine + body;
+  _suggestEl.classList.remove('hidden');
+  const btn = _suggestEl.querySelector('[data-funnel-send]');
+  if (btn) btn.addEventListener('click', () => _sendToMonitors(btn));
+}
+
+async function _sendToMonitors(btn) {
+  const sym = btn.dataset.funnelSend;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  selectTicker(sym);   // also point the dashboard's TradingView panel at it
+  try {
+    await api.addToWBAndTV(sym);
+    btn.textContent = '✓ Sent';
+  } catch (err) {
+    console.error('Failed to send to monitors', err);
+    btn.textContent = '! Retry';
+    btn.disabled = false;
+    return;
+  }
+  setTimeout(() => {
+    if (btn.isConnected) { btn.textContent = orig; btn.disabled = false; }
+  }, 2500);
 }
 
 // ── Selection highlight ────────────────────────────────────────

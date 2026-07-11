@@ -58,6 +58,7 @@ from auth import (check_credentials, create_token, verify_token, is_auth_require
 from login_log import record_login, get_log as get_login_log
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
+from session_clock import session_window, next_shot
 import engine_env
 import version
 
@@ -120,6 +121,11 @@ class _State:
         # Scanner Price Spike cards — dedicated feed for the UI strip + JSONL archive.
         self.price_spikes: deque = deque(maxlen=_MAX_PRICE_SPIKES)
         self.price_spike_base_ts: dict = {}  # base de-dupe key → first-seen unix time
+        # Morning funnel — background rank of tradeable candidates for the single
+        # monitor slot. Written by _funnel_loop() on a slow cadence (network calls),
+        # read by _snapshot() at no cost so the 4Hz snapshot path never blocks.
+        self.funnel_rows: list  = []   # ranked row dicts from morning_funnel.scan_once
+        self.funnel_ts:   float = 0.0  # unix time of the last completed scan
 
 # Discord OCR feed sizing + liveness window. The source pings every poll
 # (~2.5s); if we haven't heard from it within this window it's considered down.
@@ -1140,6 +1146,48 @@ def _build_mention_rank(ticker_set: set, window_s: float = 30.0) -> dict:
 
 # ── State snapshot ────────────────────────────────────────────────────────────
 
+def _round_or_none(v, ndigits=2):
+    """Coerce to a rounded float, or None if not numeric (also flattens numpy)."""
+    try:
+        return round(float(v), ndigits)
+    except (TypeError, ValueError):
+        return None
+
+
+def _funnel_snapshot(f_rows: list, f_ts: float, now_ts: float,
+                     now_et, cfg: dict) -> dict:
+    """Build the funnel banner payload: current session window + the leading
+    tradeable pick. `top` is the highest-scoring row with no hard rejects;
+    `suggest` gates the one-click 'send to monitors' button on a score floor."""
+    label, guide, color = session_window(now_et)
+    shot = next_shot(now_et)
+    top = next((r for r in f_rows if not r.get("rejects")), None)
+    suggest_min = float(cfg.get("funnel_suggest_min", 60))
+    refresh     = max(float(cfg.get("funnel_refresh_sec", 150.0)), _FUNNEL_MIN_REFRESH)
+    top_out = None
+    if top:
+        score = round(float(top.get("score") or 0))
+        top_out = {
+            "sym":     top.get("sym"),
+            "score":   score,
+            "state":   top.get("state"),
+            "chg_pct": _round_or_none(top.get("chg_pct"), 1),
+            "rvol":    _round_or_none(top.get("rvol"), 1),
+            "suggest": score >= suggest_min,
+        }
+    return {
+        "ts":      f_ts or None,
+        "waiting": not f_ts,
+        "stale":   bool(f_ts) and (now_ts - f_ts) > max(refresh * 2, 120),
+        "ranked":  sum(1 for r in f_rows if not r.get("rejects")),
+        "session": {
+            "label": label, "guide": guide, "color": color,
+            "next_shot": ({"label": shot[0], "mins": shot[1]} if shot else None),
+        },
+        "top": top_out,
+    }
+
+
 def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
@@ -1152,8 +1200,11 @@ def _snapshot() -> dict:
 
     with STATE.lock:
         now_ts    = time.time()
+        now_et    = datetime.now(ET)
         threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
         m_window  = float(STATE.cfg.get("mention_alert_window", 10))
+        f_rows    = list(STATE.funnel_rows)     # funnel overlay (see below)
+        f_ts      = STATE.funnel_ts
         rows = []
         for t in tickers:
             d = dict(STATE.tickers.get(t, {}))
@@ -1175,6 +1226,20 @@ def _snapshot() -> dict:
             if len(conf) >= 2:
                 d["confluence"] = {"sources": conf, "count": len(conf)}
             rows.append(d)
+
+        # Morning-funnel overlay — attach the compact per-symbol score to any
+        # watchlist row the funnel also ranked, so the badge reads inline.
+        funnel_by_sym = {r.get("sym"): r for r in f_rows}
+        for r in rows:
+            fr = funnel_by_sym.get(r["ticker"])
+            if fr:
+                r["funnel"] = {
+                    "score":   round(float(fr.get("score") or 0)),
+                    "state":   fr.get("state"),
+                    "rvol":    _round_or_none(fr.get("rvol"), 1),
+                    "rejects": list(fr.get("rejects") or []),
+                }
+
         market_sent = _ticker_sentiment(None)
         def _row_sort_key(r):
             in_mention = r["ticker"] in mention_rank
@@ -1225,6 +1290,7 @@ def _snapshot() -> dict:
                 "alerts":  tv_feed,
             },
             "tickers": rows,
+            "funnel":  _funnel_snapshot(f_rows, f_ts, now_ts, now_et, STATE.cfg),
             "market_sentiment": market_sent,
             "swing":   swing_rows,
             "news":    news,
@@ -1402,6 +1468,45 @@ def _mention_reset_worker():
 
         time.sleep(30)
 
+# ── Morning funnel — auto-rank candidates for the monitor slot ────────────────
+# Runs the same scoring as tools/morning_funnel.py, but in-process: it reuses
+# the already-connected Alpaca client and the live watchlist so the dashboard
+# surfaces "point the monitors at SYM" without the separate CLI window. The scan
+# makes network calls, so it lives on its own slow cadence and only deposits
+# results on STATE; _snapshot() reads the cached rows for free.
+
+_FUNNEL_MIN_REFRESH = 30.0   # floor on refresh cadence regardless of config
+
+def _funnel_loop():
+    try:
+        import tools.morning_funnel as mf   # lazy: pulls pandas into this thread only
+    except Exception as e:
+        log.warning(f"[FUNNEL] disabled — import failed: {e}")
+        return
+    from datetime import datetime as _dt
+    from session_clock import ET as _ET
+    while True:
+        refresh = _FUNNEL_MIN_REFRESH
+        try:
+            cfg    = STATE.cfg
+            client = STATE.data_client
+            refresh = max(float(cfg.get("funnel_refresh_sec", 150.0)), _FUNNEL_MIN_REFRESH)
+            if client is None:          # Alpaca not connected yet — retry soon
+                time.sleep(5)
+                continue
+            knobs = mf.knobs_from_cfg(cfg)
+            # gather_candidates merges the live watchlist (wb_watchlist.json),
+            # funnel_watchlist.txt, and swing_candidates.json — same sources the CLI uses.
+            cands = mf.gather_candidates([], mf.ROOT, knobs["max_candidates"])
+            rows  = mf.scan_once(client, cands, cfg, knobs, _dt.now(_ET)) if cands else []
+            with STATE.lock:
+                STATE.funnel_rows = rows
+                STATE.funnel_ts   = time.time()
+        except Exception as e:
+            log.warning(f"[FUNNEL] scan error: {e}")
+        time.sleep(refresh)
+
+
 @app.on_event("startup")
 async def _startup():
     loop = asyncio.get_running_loop()
@@ -1426,6 +1531,7 @@ async def _startup():
     threading.Thread(target=_price_loop, daemon=True, name="price").start()
     threading.Thread(target=_vol_loop, daemon=True, name="vol").start()
     threading.Thread(target=_mention_reset_worker, daemon=True, name="mention-reset").start()
+    threading.Thread(target=_funnel_loop, daemon=True, name="funnel").start()
 
     _generate_or_load_vapid_keys()
     STATE.push_subscriptions = _load_push_subscriptions()

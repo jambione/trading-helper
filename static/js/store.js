@@ -10,6 +10,7 @@ const _state = {
   scan_running:   false,
   scan_ts:        '',
   tickers:        /** @type {Object[]} */ ([]),
+  funnel:         /** @type {Object} */ ({}),
   swing:          /** @type {Object[]} */ ([]),
   price_spikes:   /** @type {Object[]} */ ([]),
   transcriber: {
