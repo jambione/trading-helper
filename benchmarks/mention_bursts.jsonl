@@ -106,3 +106,8 @@
 {"ticker": "WOK", "time": "2026-07-10T16:28:28Z", "unix": 1783700908.5, "price": null, "window_count": 2}
 {"ticker": "TSLA", "time": "2026-07-10T16:28:28Z", "unix": 1783700908.5, "price": null, "window_count": 2}
 {"ticker": "EHGO", "time": "2026-07-10T16:28:28Z", "unix": 1783700908.5, "price": null, "window_count": 2}
+{"ticker": "ATHE", "time": "2026-07-11T13:25:19Z", "unix": 1783776319.1, "price": null, "window_count": 2}
+{"ticker": "TST", "time": "2026-07-11T13:25:19Z", "unix": 1783776319.1, "price": null, "window_count": 2}
+{"ticker": "WOK", "time": "2026-07-11T13:25:19Z", "unix": 1783776319.2, "price": null, "window_count": 2}
+{"ticker": "TSLA", "time": "2026-07-11T13:25:19Z", "unix": 1783776319.2, "price": null, "window_count": 2}
+{"ticker": "EHGO", "time": "2026-07-11T13:25:19Z", "unix": 1783776319.2, "price": null, "window_count": 2}

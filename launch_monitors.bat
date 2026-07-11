@@ -12,7 +12,9 @@ REM ============================================================================
 
 REM ── locate a Python interpreter ─────────────────────────────────────────────
 set "PYEXE="
-if exist "%~dp0venv\Scripts\python.exe" (
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PYEXE=%~dp0.venv\Scripts\python.exe"
+) else if exist "%~dp0venv\Scripts\python.exe" (
     set "PYEXE=%~dp0venv\Scripts\python.exe"
 ) else (
     where python >nul 2>&1

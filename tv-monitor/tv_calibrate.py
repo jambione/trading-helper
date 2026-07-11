@@ -3,7 +3,7 @@
     1. STAR   (0..100 oscillator)      - drag over the full panel height
     2. HEART  (0..-100 exhaustion)     - full panel height
     3. CHECK  (MACD)                   - full panel height
-    4. FIRE   (label panel)            - full panel height
+    4. FIRE   (LazyBear squeeze momentum) - full panel height
 
 Drag each region; the overlay tells you which one is next. Esc skips a
 panel, closing the window cancels. Regions save to tv_config.json.

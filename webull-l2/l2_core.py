@@ -477,10 +477,38 @@ class PaperTrader:
         self.entry: float | None = None
         self.entry_ts: float | None = None
         self.hwm: float | None = None
+        self.real = False                    # anchored to a broker position
+        self._real_key: tuple | None = None  # (qty, avg_price) anchored to
+        self._real_muted: tuple | None = None  # already alerted this state
 
     @property
     def in_position(self) -> bool:
         return self.entry is not None
+
+    def sync_real(self, pos: dict | None, book: L2Book) -> str | None:
+        """Anchor exits to a real broker position (position_state.json).
+
+        pos = {'qty', 'avg_price'} for the monitored symbol, or None when
+        the broker holds nothing in it. A real anchor replaces any virtual
+        entry, so TAKE_PROFIT/STOP/TRAIL fire off the actual fill price.
+        After an exit alert the same (qty, avg) is muted so a still-open
+        broker position doesn't re-alert every read; adding shares (new
+        avg) or re-entering re-arms it. Returns a note when the anchor
+        changes, else None."""
+        if pos and float(pos.get("avg_price") or 0) > 0:
+            key = (float(pos.get("qty") or 0), float(pos["avg_price"]))
+            if self._real_muted == key or self._real_key == key:
+                return None
+            self.entry, self.entry_ts = key[1], book.ts
+            self.hwm = book.best_bid
+            self.real, self._real_key = True, key
+            self._real_muted = None
+            return f"exits anchored to real fill @ {key[1]:.3f} x{key[0]:g}"
+        if self.real:
+            self.entry = self.entry_ts = self.hwm = None
+            self.real, self._real_key = False, None
+            return "broker flat — real anchor cleared"
+        return None
 
     def unrealized_pct(self, book: L2Book) -> float:
         if not self.in_position:
@@ -524,5 +552,8 @@ class PaperTrader:
         if action is None:
             return None, None
         trade = Trade(self.entry_ts, self.entry, book.ts, bid, up, reason)
+        if self.real:   # one alert per broker position state
+            self._real_muted = self._real_key
         self.entry = self.entry_ts = self.hwm = None
+        self.real, self._real_key = False, None
         return Signal(action, reason, bid, book.imbalance, ts=book.ts), trade

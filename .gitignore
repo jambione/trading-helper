@@ -39,6 +39,7 @@ BrasfieldNotifier.app/
 monitor_layout.json
 tv_state.json
 l2_state.json
+position_state.json
 tv-monitor/tv_log.csv
 tv-monitor/tv_test_result.txt
 tv-monitor/tv_panel_*.png

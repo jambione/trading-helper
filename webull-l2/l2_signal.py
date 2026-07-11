@@ -40,6 +40,13 @@ from l2_core import (L2Book, LongView, PaperTrader, Signal, SignalEngine,
                      Trade, WallTracker, market_bias, parse_l2_text,
                      playbook, project_price)
 
+# shared session clock (repo root) — optional: monitor runs fine without it
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from session_clock import session_line
+except Exception:                                       # noqa: BLE001
+    session_line = None
+
 # Make this process DPI-aware so pygetwindow's window coordinates and
 # mss's captured pixels are in the SAME coordinate space. Without this,
 # Windows display scaling (125%/150%) makes the auto-located region land
@@ -56,6 +63,7 @@ if sys.platform == "win32":
 
 HERE = Path(__file__).parent
 CONFIG_PATH = HERE / "config.json"
+POS_STATE = HERE.parent / "position_state.json"   # scripts/position_feed.py
 
 TESS_CFG = "--psm 6 -c tessedit_char_whitelist=0123456789.,K"
 
@@ -66,6 +74,27 @@ def load_config() -> dict:
     if tp and os.path.exists(tp):
         pytesseract.pytesseract.tesseract_cmd = tp
     return cfg
+
+
+def read_real_position(symbol: str | None) -> dict | None:
+    """The broker position for `symbol` from the position feed, or None.
+
+    None also covers feed missing/stale/error — callers must not treat
+    that as 'flat', so sync only happens when the feed is fresh and ok."""
+    if not symbol:
+        return None
+    try:
+        d = json.loads(POS_STATE.read_text())
+        if not d.get("ok") or time.time() - d.get("ts", 0) > 30:
+            return None
+        sym = symbol.upper()
+        for p in d.get("positions", []):
+            ps = str(p.get("symbol", "")).upper()
+            if ps == sym or ps.startswith(sym) or sym.startswith(ps):
+                return p
+        return {}   # feed fresh, symbol not held -> broker flat for us
+    except Exception:
+        return None
 
 
 def preprocess(img: np.ndarray) -> np.ndarray:
@@ -551,6 +580,8 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
                     f"   {hz:.1f} reads/s   ok:{reads} miss:{misses}",
               expand=False)
     t.add_column("Metric"), t.add_column("Value", justify="right")
+    if session_line:
+        t.add_row("⏱ Session", session_line())
     if book:
         # one-glance verdict, always the first thing you see
         score, label, why = market_bias(book, trend1, trend5)
@@ -640,8 +671,10 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
         if trader and trader.in_position:
             up = trader.unrealized_pct(book)
             pc = "green" if up >= 0 else "red"
+            tag = ("REAL LONG" if getattr(trader, "real", False)
+                   else "paper LONG")
             t.add_row("Position",
-                      f"[{pc}]LONG @ {trader.entry:.3f}   "
+                      f"[{pc}]{tag} @ {trader.entry:.3f}   "
                       f"uPnL {up:+.2f}%   peak {trader.peak_pct():+.2f}%[/{pc}]")
         else:
             t.add_row("Position", "flat")
@@ -679,11 +712,22 @@ def main():
 
     console.print("[bold]Starting — Ctrl+C to stop.[/bold] "
                   "Keep the L2 panel visible and unobstructed.")
+
+    # real-position feed runs as a daemon thread so it lives and dies
+    # with this window; exits then anchor to actual broker fills
+    sys.path.insert(0, str(HERE.parent))
+    try:
+        from webull_bridge.position_feed import start_daemon
+        if start_daemon():
+            console.print("[dim]position feed on — exits anchor to real "
+                          "broker fills[/dim]")
+    except Exception as e:
+        console.print(f"[dim]position feed unavailable: {e}[/dim]")
     tracker = RegionTracker(cfg, console)
 
     def _symbol_refresher():
         # keeps the displayed ticker current when you switch stocks
-        with mss.mss() as s2:
+        with mss.MSS() as s2:
             while True:
                 time.sleep(cfg.get("symbol_refresh", 30))
                 rect = tracker.win_rect
@@ -697,7 +741,7 @@ def main():
                     pass
 
     threading.Thread(target=_symbol_refresher, daemon=True).start()
-    with mss.mss() as sct, Live(render(None, None, 0, 0, 0),
+    with mss.MSS() as sct, Live(render(None, None, 0, 0, 0),
                                 console=console, refresh_per_second=4) as live:
         while True:
             t0 = time.time()
@@ -712,6 +756,11 @@ def main():
                 reads += 1
                 book = b
                 sig = engine.update(b)
+                # anchor exits to the real broker position when the feed
+                # is fresh (None = feed unknown -> leave the trader alone)
+                real = read_real_position(tracker.symbol)
+                if real is not None:
+                    trader.sync_real(real or None, b)
                 exit_sig, trade = trader.update(b, sig)
                 # exit alerts take priority (they're anchored to your entry)
                 show = exit_sig or sig
@@ -764,7 +813,12 @@ def main():
                         "imbalance": round(b.imbalance, 2),
                         "price": round(proj[0], 4) if proj else None,
                         "proj": round(proj[1], 4) if proj else None,
-                        "stance": lv["stance"] if lv else None}))
+                        "stance": lv["stance"] if lv else None,
+                        "pos": ({"real": trader.real,
+                                 "entry": round(trader.entry, 4),
+                                 "upnl": round(trader.unrealized_pct(b), 2),
+                                 "peak": round(trader.peak_pct(), 2)}
+                                if trader.in_position else None)}))
                 except Exception:
                     pass
                 if trade:

@@ -14,6 +14,13 @@ DEFAULTS = {
     # "mock" until Webull OpenAPI credentials are approved, then "webull"
     "provider": "mock",
 
+    # override either half of the provider pair independently, e.g.
+    # broker_provider "webull" (real positions/orders) while
+    # market_data_provider stays "mock" because the account has no
+    # OpenAPI Advanced Quotes subscription for L2 depth
+    "market_data_provider": "",
+    "broker_provider": "",
+
     # hard server-side safety cap on order notional value (USD)
     "max_order_value": 1000.0,
 
@@ -31,6 +38,9 @@ DEFAULTS = {
     # webull provider: total depth-poll budget across all engines (req/sec);
     # per-symbol interval stretches automatically as engines are added
     "webull_max_rps": 6.0,
+
+    # scripts/position_feed.py: seconds between broker position polls
+    "position_poll_sec": 5.0,
 
     # ── signal thresholds (mirror webull-l2/config.json) ──
     "imbalance_buy": 1.8,

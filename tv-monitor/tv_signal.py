@@ -1,8 +1,9 @@
-"""TradingView 4-indicator monitor (star / heart / check / fire).
+"""TradingView indicator monitor (star / heart / fire, optional check).
 
-Reads the calibrated panel regions ~1x/second by pixel position + OCR,
-applies your hierarchy (heart = regime, check = strength, star = timing,
-fire = context) and shows one verdict.
+Reads the calibrated panel regions ~1x/second by pixel position,
+applies your hierarchy (heart = regime, fire = LazyBear squeeze momentum
+for strength + context, star = timing; check/MACD fills the strength
+slot instead if the layout still has it) and shows one verdict.
 
 Setup: python tv_calibrate.py   (once, with the chart visible)
 Run:   python tv_signal.py
@@ -29,7 +30,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 from tv_core import (Trail, combine, master_verdict, read_check, read_heart,
-                     read_star, rightmost_data_x)
+                     read_squeeze, read_star, rightmost_data_x, trend5)
+
+# shared session clock (repo root) — optional: monitor runs fine without it
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from session_clock import session_line
+except Exception:                                       # noqa: BLE001
+    session_line = None
 
 if sys.platform == "win32":
     import ctypes
@@ -44,10 +52,6 @@ if sys.platform == "win32":
 HERE = Path(__file__).parent
 CONFIG_PATH = HERE / "tv_config.json"
 
-FIRE_WORDS = {"BULL": "BULL UP", "REVERSE": "REVERSE", "SHORT": "SHORT "
-              "SELLERS CONTROL"}
-
-
 def load_config() -> dict:
     cfg = json.loads(CONFIG_PATH.read_text())
     tp = cfg.get("tesseract_path",
@@ -58,38 +62,60 @@ def load_config() -> dict:
     return cfg
 
 
-def read_fire(img: np.ndarray) -> str | None:
-    """OCR the whole fire panel: the TREND STRENGTH widget (the actual
-    big picture) plus the newest signal label."""
-    import re
-    gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
-    if np.median(gray) < 127:
-        gray = 255 - gray
-    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    text = pytesseract.image_to_string(th, config="--psm 11").upper()
+class SqueezeTracker:
+    """Adds the one piece of memory raw read_squeeze() readings lack:
+    black->gray on the zero line means the squeeze just FIRED - that's
+    LazyBear's entry signal."""
 
-    parts = []
-    if "STRONG BULLISH" in text:
-        parts.append("STRONG BULLISH")
-    elif "BULLISH" in text and "BEARISH" not in text:
-        parts.append("BULLISH")
-    elif "WEAK" in text or "BEARISH" in text:
-        parts.append("WEAK/BEARISH")
-    m = re.search(r"(\d)\s*/\s*4", text)
-    if m:
-        parts.append(f"{m.group(1)}/4 trends up")
-    if "WITH TREND" in text:
-        parts.append("with trend")
-    elif "AGAINST" in text:
-        parts.append("against trend")
-    # newest signal bubble, if any is legible
-    for pat, label in (("BULL UP", "BULL UP"), ("REVERSE UP", "rev up"),
-                       ("REVERSE DOWN", "rev down"),
-                       ("SHORT SELLER", "short sellers ctl")):
-        if pat in text:
-            parts.append(label)
-            break
-    return ", ".join(parts) or None
+    FIRED_SHOW = 180.0   # keep announcing a fire for this many seconds
+    ARM_READS = 3        # consecutive 'on' reads before a release counts
+    CANCEL_MOM = 0.5     # momentum through zero the other way kills it
+
+    def __init__(self):
+        self.state: str | None = None
+        self.on_reads = 0
+        self.fired_dir: str | None = None
+        self.fired_at = 0.0
+
+    def update(self, sq: dict | None, now: float) -> dict | None:
+        """read_squeeze() fields + 'fired'/'fired_ago' (for combine)."""
+        if sq is None:
+            return None
+        if sq["squeeze"] == "on":
+            if self.state != "on":
+                self.fired_dir, self.fired_at = None, 0.0
+            self.state = "on"
+            self.on_reads += 1
+        elif sq["squeeze"] == "off":
+            if self.state == "on" and self.on_reads >= self.ARM_READS:
+                self.fired_dir = "LONG" if sq["mom"] > 0 else "SHORT"
+                self.fired_at = now
+            self.state = "off"
+            self.on_reads = 0
+        # a fired call is only alive while momentum stays on its side
+        if ((self.fired_dir == "LONG" and sq["mom"] < -self.CANCEL_MOM)
+                or (self.fired_dir == "SHORT"
+                    and sq["mom"] > self.CANCEL_MOM)):
+            self.fired_dir = None
+        out = dict(sq)
+        out["fired"] = out["fired_ago"] = None
+        if self.fired_dir and now - self.fired_at < self.FIRED_SHOW:
+            out["fired"] = self.fired_dir
+            out["fired_ago"] = int(now - self.fired_at)
+        return out
+
+    @staticmethod
+    def label(info: dict | None) -> str | None:
+        if info is None:
+            return None
+        parts = []
+        if info["fired"]:
+            parts.append(f"FIRED {info['fired']} {info['fired_ago']}s ago")
+        elif info["squeeze"] == "on":
+            parts.append("squeeze ON - coiling")
+        parts.append(f"mom {info['mom']:+.1f}% "
+                     + ("building" if info["building"] else "fading"))
+        return ", ".join(parts)
 
 
 # ------------------------------------------------------- auto locate --------
@@ -153,8 +179,10 @@ def find_tv_windows() -> list[dict]:
 
 def _assign_panels(toks: list) -> dict | None:
     """toks = [(y, value)] of axis labels sorted top->bottom. Uses the
-    known scales: star 100..0, heart 0..-100, fire 1..-1, check between
-    heart and fire. Returns {name: (top_y, bottom_y)} or None."""
+    known scales: star 100..0, heart 0..-100. check and fire (squeeze)
+    have dynamic scales, so they come from the divider lines instead;
+    the 1..-1 probe below only matches the legacy fire widget.
+    Returns {name: (top_y, bottom_y)} or None."""
     def first(pred, start=0):
         for i in range(start, len(toks)):
             if pred(toks[i][1]):
@@ -188,12 +216,28 @@ def _assign_panels(toks: list) -> dict | None:
 
     out = {"star": (toks[i_star][0], toks[i_sbot][0]),
            "heart": (toks[i_htop][0], toks[i_hbot][0])}
-    mid = toks[i_hbot + 1:i_ftop] if i_ftop is not None \
-        else toks[i_hbot + 1:]
-    if len(mid) >= 2:
-        out["check"] = (mid[0][0], mid[-1][0])
-    if i_ftop is not None and i_fbot is not None:
+    if i_ftop is not None and i_fbot is not None:   # legacy 1..-1 fire
         out["fire"] = (toks[i_ftop][0], toks[i_fbot][0])
+        mid = toks[i_hbot + 1:i_ftop]
+        if len(mid) >= 2:
+            out["check"] = (mid[0][0], mid[-1][0])
+        return out
+    # check (MACD) and fire (squeeze) both have dynamic +x..0..-x
+    # scales: each panel's labels run positive to negative, so a
+    # negative label followed by a positive one marks the boundary.
+    # A single group means only the squeeze is on the chart (the MACD
+    # panel was dropped from the layout).
+    mid = toks[i_hbot + 1:]
+    split = None
+    for i in range(len(mid) - 1):
+        if mid[i][1] < 0 and mid[i + 1][1] > 0:
+            split = i + 1
+            break
+    if split is not None and split >= 2 and len(mid) - split >= 2:
+        out["check"] = (mid[0][0], mid[split - 1][0])
+        out["fire"] = (mid[split][0], mid[-1][0])
+    elif len(mid) >= 2:
+        out["fire"] = (mid[0][0], mid[-1][0])
     return out
 
 
@@ -279,19 +323,26 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
     panels = {"star": region(*assign["star"]),
               "heart": region(*assign["heart"])}
 
-    # check/fire: between divider lines below the heart panel
+    # check/fire: axis-label extents snapped outward to the enclosing
+    # divider lines. Charts show extra/double dividers (8 seen on a
+    # 4-panel layout), so consecutive-divider counting is unreliable -
+    # the labels say WHICH panel, the nearest divider says its edge.
     y_start = int(assign["heart"][1]) + 6
     divs = _panel_dividers(gray_full, y_start, H - 40, px0, px1)
-    if len(divs) >= 2:
+
+    def refine(ty, by):
+        top = max((d for d in divs if d <= ty + 8), default=ty - 6)
+        bot = min((d for d in divs if d >= by - 8), default=by + 6)
+        return region(top + 3, bot - 3)
+
+    if "check" in assign or "fire" in assign:
+        for k in ("check", "fire"):
+            if k in assign:
+                panels[k] = refine(*assign[k])
+    elif len(divs) >= 2:   # no usable labels at all
         panels["check"] = region(divs[0] + 3, divs[1] - 3)
         if len(divs) >= 3:
             panels["fire"] = region(divs[1] + 3, divs[2] - 3)
-        else:
-            panels["fire"] = region(divs[1] + 3,
-                                    min(H - 45, divs[1] + 3 +
-                                        (divs[1] - divs[0])))
-    elif "check" in assign:
-        panels["check"] = region(*assign["check"])
 
     return {k: v for k, v in panels.items() if v["height"] >= 15} or None
 
@@ -344,6 +395,13 @@ class TVTracker:
 L2_STATE = HERE.parent / "l2_state.json"
 TV_STATE = HERE.parent / "tv_state.json"
 
+TREND_WIN = 300.0    # the "5m" trend lookback
+TREND_MIN = 240.0    # history needed before a trail may vote
+
+
+def drift5(tr: Trail) -> float | None:
+    return tr.slope(TREND_WIN) if tr.span() >= TREND_MIN else None
+
 
 def read_l2_state() -> dict | None:
     """Latest state published by the Webull L2 monitor (if running)."""
@@ -378,6 +436,18 @@ def banner(res, master: dict | None = None) -> Panel:
         elif v == "EXECUTE SELL":
             txt, style, border = "▼ ▼ ▼   E X E C U T E   S E L L   ▼ ▼ ▼", \
                 "bold white on red", "red"
+        elif v == "EXIT NOW":
+            txt, style, border = "▼ ▼ ▼   E X I T   N O W   ▼ ▼ ▼", \
+                "bold white on red", "red"
+        elif v.startswith("TAKE PROFIT"):
+            txt, style, border = "$ $ $   T A K E   P R O F I T   $ $ $", \
+                "bold black on gold1", "gold1"
+        elif v.startswith("TIGHTEN"):
+            txt, style, border = f"◆  {v} — protect the position", \
+                "bold black on dark_orange", "dark_orange"
+        elif v.startswith("HOLD"):
+            txt, style, border = f"◈  {v}", \
+                "bold black on green", "green"
         elif v.startswith("CONFLICT"):
             txt, style, border = "◆  CONFLICT — chart vs tape — HOLD", \
                 "bold black on dark_orange", "dark_orange"
@@ -416,14 +486,38 @@ def banner(res, master: dict | None = None) -> Panel:
                  border_style=border, padding=(1, 1))
 
 
-def render(star, heart, check, fire_label, res, hz, misses,
+def squeeze_text(sq: dict | None) -> str:
+    """Color-coded squeeze reading: direction by color, conviction by
+    brightness, badges for the coil / fire states."""
+    if not sq:
+        return "[dim]no read[/dim]"
+    mc = "green" if sq["mom"] > 0 else "red" if sq["mom"] < 0 else "yellow"
+    if sq["building"]:
+        mom = f"mom [bold {mc}]{sq['mom']:+.1f}%[/bold {mc}] " \
+              f"[{mc}]building[/{mc}]"
+    else:
+        mom = f"mom [dim {mc}]{sq['mom']:+.1f}% fading[/dim {mc}]"
+    if sq["fired"]:
+        fc = "green" if sq["fired"] == "LONG" else "red"
+        tc = "black" if fc == "green" else "white"
+        return (f"[bold {tc} on {fc}] FIRED {sq['fired']} [/] "
+                f"[dim]{sq['fired_ago']}s ago[/dim]  {mom}")
+    if sq["squeeze"] == "on":
+        return f"[bold black on yellow] SQUEEZE ON [/] coiling  {mom}"
+    return mom
+
+
+def render(star, heart, check, sq, res, hz, misses,
            symbol: str | None = None, l2: dict | None = None,
-           master: dict | None = None, mism: bool = False) -> Group:
+           master: dict | None = None, mism: bool = False,
+           trend: dict | None = None) -> Group:
     t = Table(title=f"TradingView Monitor [bold cyan]{symbol or '?'}"
                     f"[/bold cyan]   {hz:.1f} reads/s   miss:{misses}",
               expand=False)
     t.add_column("Indicator"), t.add_column("Reading", justify="left")
 
+    if session_line:
+        t.add_row("⏱ Session", session_line())
     if master:
         mc = ("green" if "BUY" in master["verdict"]
               else "red" if "SELL" in master["verdict"]
@@ -474,14 +568,24 @@ def render(star, heart, check, fire_label, res, hz, misses,
                   f"[dim](-100 = exhausted/buy-zone)[/dim]")
     else:
         t.add_row("♥ Exhaustion", "[dim]no read[/dim]")
-    if check:
+    if check:   # only on layouts that still carry a MACD panel
         gc = "green" if check["gap"] > 0 else "red"
         t.add_row("✓ MACD (strength)",
                   f"[{gc}]gap {check['gap']:+.1f}%[/{gc}] "
                   f"[dim](signal vs MA; wider = stronger)[/dim]")
+    t.add_row("🔥 Squeeze (strength+context)", squeeze_text(sq))
+    if trend:
+        tc = {"up": "green", "down": "red"}.get(trend["dir"], "yellow")
+        arrow = {"up": "▲", "down": "▼"}.get(trend["dir"], "→")
+        det = "  ".join(f"{k} {v:+.1f}" for k, v in
+                        (("heart", trend["heart"]), ("mom", trend["mom"]),
+                         ("rsi", trend["star"])) if v is not None)
+        t.add_row("📈 Trend (5m)",
+                  f"[bold {tc}]{arrow} {trend['dir'].upper()}"
+                  f"[/bold {tc}]  [dim]{det}[/dim]")
     else:
-        t.add_row("✓ MACD", "[dim]no read[/dim]")
-    t.add_row("🔥 Big Picture (context)", fire_label or "[dim]quiet[/dim]")
+        t.add_row("📈 Trend (5m)", "[dim]warming up (needs ~5 min "
+                                   "on this symbol)[/dim]")
     return Group(banner(res, master), t)
 
 
@@ -491,7 +595,9 @@ def main():
     console = Console()
     tracker = TVTracker(cfg, console)
 
-    trails = {"star": Trail(), "heart": Trail(), "gap": Trail()}
+    trails = {"star": Trail(), "heart": Trail(), "gap": Trail(),
+              "mom": Trail()}
+    cur_sym: str | None = None
     logf = open(HERE / "tv_log.csv", "a", newline="")
     logw = csv.writer(logf)
     if logf.tell() == 0:
@@ -500,12 +606,11 @@ def main():
 
     misses = 0
     stamps: list[float] = []
-    fire_label = None
-    fire_next = 0.0
+    squeeze = SqueezeTracker()
 
     console.print("[bold]TradingView monitor - Ctrl+C to stop.[/bold] "
                   "Keep the chart visible on screen.")
-    with mss.mss() as sct, Live(console=console,
+    with mss.MSS() as sct, Live(console=console,
                                 refresh_per_second=2) as live:
         while True:
             t0 = time.time()
@@ -515,7 +620,12 @@ def main():
                                    misses, tracker.symbol))
                 time.sleep(2.0)
                 continue
-            star = heart = check = None
+            if tracker.symbol and tracker.symbol != cur_sym:
+                if cur_sym is not None:   # new ticker: drop old history
+                    trails = {k: Trail() for k in trails}
+                    squeeze = SqueezeTracker()
+                cur_sym = tracker.symbol
+            star = heart = check = sq_info = fire_label = None
             try:
                 if "star" in panels:
                     star = read_star(np.asarray(sct.grab(panels["star"])))
@@ -523,10 +633,10 @@ def main():
                     heart = read_heart(np.asarray(sct.grab(panels["heart"])))
                 if "check" in panels:
                     check = read_check(np.asarray(sct.grab(panels["check"])))
-                if "fire" in panels and t0 >= fire_next:
-                    fire_label = read_fire(
-                        np.asarray(sct.grab(panels["fire"])))
-                    fire_next = t0 + cfg.get("fire_interval", 5.0)
+                if "fire" in panels:
+                    sq_info = squeeze.update(read_squeeze(
+                        np.asarray(sct.grab(panels["fire"]))), t0)
+                    fire_label = SqueezeTracker.label(sq_info)
             except Exception:
                 misses += 1
 
@@ -537,16 +647,20 @@ def main():
                 trails["heart"].add(hv, t0)
             if check:
                 trails["gap"].add(check["gap"], t0)
-            ok = bool(star or heart or check)
+            if sq_info:
+                trails["mom"].add(sq_info["mom"], t0)
+            ok = bool(star or heart or check or sq_info)
             tracker.report(ok)
             if not ok:
                 misses += 1
 
+            tr5 = trend5(drift5(trails["heart"]), drift5(trails["mom"]),
+                         drift5(trails["star"]))
             res = combine(star, heart, check,
                           trails["star"].slope(10),
                           trails["heart"].slope(30),
                           trails["gap"].slope(15),
-                          fire_label)
+                          sq_info, tr5)
 
             # bridge: merge with live L2 order flow when available
             l2 = read_l2_state()
@@ -574,9 +688,9 @@ def main():
 
             stamps.append(t0)
             stamps[:] = [s for s in stamps if t0 - s <= 5]
-            live.update(render(star, heart, check, fire_label, res,
+            live.update(render(star, heart, check, sq_info, res,
                                len(stamps) / 5.0, misses, tracker.symbol,
-                               l2, master, mism))
+                               l2, master, mism, tr5))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 

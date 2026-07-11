@@ -8,8 +8,10 @@ Panels (screen regions calibrated once with tv_calibrate.py):
           (money being made). Falling toward -100 with blue shading =
           bearish. Lines converging = transition.
   check - MACD: signal line vs MA line. Wider gap = stronger call,
-          sign gives direction.
-  fire  - custom bull/bear labels (context only).
+          sign gives direction. Optional - dropped from the layout.
+  fire  - LazyBear Squeeze Momentum: histogram = momentum (fills the
+          strength slot when there is no MACD panel), zero-line
+          crosses = squeeze state (black on / gray off = fired).
 """
 from __future__ import annotations
 
@@ -139,6 +141,64 @@ def read_check(img: np.ndarray) -> dict | None:
     return {"gap": 100.0 * (ma - sig) / h}   # signal above MA -> positive
 
 
+def read_squeeze(img: np.ndarray) -> dict | None:
+    """LazyBear Squeeze Momentum panel (the fire slot).
+
+    {'mom':      newest histogram bar as % of panel height (+up / -down),
+     'building': True = momentum strengthening (lime / bright red bar),
+                 False = fading (dark green / maroon),
+     'squeeze':  'on' (black zero-line crosses - coiling),
+                 'off' (gray crosses), or None if unreadable}
+
+    The axis scale is dynamic (depends on symbol/volatility), so momentum
+    is measured as bar length relative to the panel, like the MACD gap.
+    """
+    h = img.shape[0]
+    b, g, r = _split(img)
+    grn = g - np.maximum(r, b) > 40    # lime #0f0 and green #080
+    red = r - np.maximum(g, b) > 40    # red #f00 and maroon #800
+    xs = np.where((grn | red).any(axis=0))[0]
+    if not len(xs):
+        return None
+    x_end = int(xs[-1])
+
+    # zero line = where the bars grow from: green bottoms / red tops
+    zeros: list[int] = []
+    gcols = grn.any(axis=0)
+    if gcols.any():
+        zeros += (h - 1 - np.argmax(grn[::-1, :], axis=0))[gcols].tolist()
+    rcols = red.any(axis=0)
+    if rcols.any():
+        zeros += np.argmax(red, axis=0)[rcols].tolist()
+    zero_y = float(np.median(zeros))
+
+    # newest bar: direction from dominant family, length from its extent
+    strip = slice(max(0, x_end - 5), x_end + 1)
+    gpix, rpix = int(grn[:, strip].sum()), int(red[:, strip].sum())
+    if gpix >= rpix:
+        rows = np.where(grn[:, strip].any(axis=1))[0]
+        mom = 100.0 * (zero_y - rows.min()) / h
+        chan = g[:, strip][grn[:, strip]]
+    else:
+        rows = np.where(red[:, strip].any(axis=1))[0]
+        mom = -100.0 * (rows.max() - zero_y) / h
+        chan = r[:, strip][red[:, strip]]
+    building = bool(chan.mean() > 190)   # bright shade = strengthening
+
+    # squeeze state: cross color on the zero line at the newest bars
+    y0, y1 = max(0, int(zero_y) - 3), min(h, int(zero_y) + 4)
+    band = img[y0:y1, max(0, x_end - 12):x_end + 1].astype(int)
+    bb, bg_, br = band[..., 0], band[..., 1], band[..., 2]
+    mx = np.maximum(np.maximum(br, bg_), bb)
+    mn = np.minimum(np.minimum(br, bg_), bb)
+    gray_ct = int(((mn > 90) & (mx < 210) & (mx - mn < 30)).sum())
+    black_ct = int((mx < 12).sum())      # true black; dark bg is ~34
+    squeeze = None
+    if max(gray_ct, black_ct) >= 4:
+        squeeze = "off" if gray_ct >= black_ct else "on"
+    return {"mom": mom, "building": building, "squeeze": squeeze}
+
+
 # --------------------------------------------------------- state + slope ----
 
 class Trail:
@@ -162,6 +222,30 @@ class Trail:
             return None
         return v_last - base[1]
 
+    def span(self) -> float:
+        """Seconds of history currently held."""
+        return self.q[-1][0] - self.q[0][0] if len(self.q) >= 2 else 0.0
+
+
+def trend5(heart_d: float | None, mom_d: float | None,
+           star_d: float | None) -> dict | None:
+    """5-minute trend from indicator drifts (each = change over 300s,
+    None until that trail has enough history). Heart is the regime
+    layer, so it votes double. {'dir': up|down|flat, 'score': -4..4}."""
+    if heart_d is None and mom_d is None and star_d is None:
+        return None
+    score = 0
+    if heart_d is not None:
+        score += 2 if heart_d > 5 else -2 if heart_d < -5 else 0
+    if mom_d is not None:
+        score += 1 if mom_d > 2 else -1 if mom_d < -2 else 0
+    if star_d is not None:
+        score += 1 if star_d > 10 else -1 if star_d < -10 else 0
+    return {"dir": ("up" if score >= 2 else
+                    "down" if score <= -2 else "flat"),
+            "score": score, "heart": heart_d, "mom": mom_d,
+            "star": star_d}
+
 
 # -------------------------------------------------------------- verdict -----
 
@@ -170,7 +254,14 @@ def master_verdict(tv_verdict: str, l2: dict | None) -> dict | None:
     flow (the trigger). l2 = {'bias': -100..100, 'play': playbook verdict}.
 
     EXECUTE only when both agree; a bullish chart with a selling tape is
-    a conflict, not an entry."""
+    a conflict, not an entry.
+
+    When the L2 monitor reports an open position (l2['pos'], anchored to
+    the real broker fill by the position feed), the verdict flips from
+    entry-mode to exit-mode: exits act on the FIRST strong contrary
+    evidence instead of waiting for everything to align the way entries
+    do — by the time chart and tape both confirm, the move has usually
+    given most of it back."""
     if not l2:
         return None
     bull_tv = "BUY" in tv_verdict
@@ -179,6 +270,32 @@ def master_verdict(tv_verdict: str, l2: dict | None) -> dict | None:
     play = str(l2.get("play", ""))
     l2_bull = bias >= 25 or play in ("LONG_TRIGGER", "LONG_SETUP")
     l2_bear = bias <= -25 or play == "BEAR_CRACK"
+
+    pos = l2.get("pos")
+    if pos:
+        up = pos.get("upnl") or 0.0
+        anchor = (f"{'real' if pos.get('real') else 'paper'} entry "
+                  f"{pos.get('entry')}, uPnL {up:+.2f}%")
+        if bear_tv and l2_bear:
+            return {"verdict": "EXIT NOW",
+                    "why": f"chart and tape both turned — {anchor}"}
+        if l2_bear:
+            if up > 0:
+                return {"verdict": "TAKE PROFIT — tape turned",
+                        "why": f"order flow selling while green — {anchor}"}
+            return {"verdict": "TIGHTEN — tape selling",
+                    "why": f"flow turned against a red position — {anchor}"}
+        if bear_tv:
+            if up > 0:
+                return {"verdict": "TAKE PROFIT — chart turned",
+                        "why": f"chart bearish while green — {anchor}"}
+            return {"verdict": "TIGHTEN — chart bearish",
+                    "why": f"chart turned but tape holding — {anchor}"}
+        if bull_tv and l2_bull:
+            return {"verdict": "HOLD — trend intact",
+                    "why": f"chart and tape still bullish — {anchor}"}
+        return {"verdict": "HOLD — no exit signal",
+                "why": f"no bearish evidence yet — {anchor}"}
 
     if bull_tv and l2_bull:
         return {"verdict": "EXECUTE BUY",
@@ -203,9 +320,16 @@ def master_verdict(tv_verdict: str, l2: dict | None) -> dict | None:
 
 def combine(star: dict | None, heart: dict | None, check: dict | None,
             star_slope: float | None, heart_slope: float | None,
-            gap_slope: float | None, fire_label: str | None = None) -> dict:
-    """The user's hierarchy: heart = regime, check = strength,
-    star = timing, fire = context only."""
+            gap_slope: float | None, squeeze: dict | None = None,
+            trend: dict | None = None) -> dict:
+    """The user's hierarchy: heart = regime, strength = check (MACD) or
+    the squeeze momentum when the chart carries no MACD panel,
+    star = timing, squeeze state (coiling/fired) = context.
+
+    squeeze = SqueezeTracker.update() output: read_squeeze() fields
+    plus 'fired' ('LONG'/'SHORT'/None) and 'fired_ago' seconds.
+    trend = trend5() output; an opposing 5m trend demotes STRONG
+    verdicts but never blocks the regime layer outright."""
     reasons = []
 
     # regime from heart (exhaustion) - THE deciding layer
@@ -228,7 +352,8 @@ def combine(star: dict | None, heart: dict | None, check: dict | None,
             regime = "mixed"
             reasons.append("exhaustion: no clear regime")
 
-    # strength from check (MACD) - second opinion
+    # strength: check (MACD) when present, else the squeeze momentum
+    # bar - same class of signal, so it inherits the second-opinion slot
     direction = strength = None
     if check:
         gap = check["gap"]
@@ -237,6 +362,12 @@ def combine(star: dict | None, heart: dict | None, check: dict | None,
         widen = (gap_slope or 0) * (1 if gap >= 0 else -1) > 0
         reasons.append(f"MACD: {direction} gap {gap:+.1f}%"
                        + (" widening" if widen else ""))
+    elif squeeze:
+        mom = squeeze["mom"]
+        direction = "bull" if mom > 0.5 else "bear" if mom < -0.5 else "flat"
+        strength = abs(mom)
+        reasons.append(f"squeeze mom: {direction} {mom:+.1f}% "
+                       + ("building" if squeeze["building"] else "fading"))
 
     # timing from star (RSI) - lowest weight
     timing = "flat"
@@ -249,8 +380,12 @@ def combine(star: dict | None, heart: dict | None, check: dict | None,
                        f"{'rising' if (star_slope or 0) > 0 else 'falling'}"
                        + (f", {star['color']}" if star["color"] != "none"
                           else ""))
-    if fire_label:
-        reasons.append(f"big picture: {fire_label}")
+    if squeeze:
+        if squeeze.get("fired"):
+            reasons.append(f"squeeze FIRED {squeeze['fired']} "
+                           f"{squeeze.get('fired_ago', 0)}s ago")
+        elif squeeze.get("squeeze") == "on":
+            reasons.append("squeeze ON - coiling for a move")
 
     # verdict hierarchy: exhaustion > MACD > RSI
     if regime == "bullish":
@@ -275,6 +410,15 @@ def combine(star: dict | None, heart: dict | None, check: dict | None,
             verdict = "LEAN SELL (no regime backing)"
         else:
             verdict = "WAIT"
+
+    if trend:
+        reasons.append(f"5m trend: {trend['dir']}")
+        if verdict == "STRONG BUY" and trend["dir"] == "down":
+            verdict = "BUY"
+            reasons.append("demoted - against the 5m trend")
+        elif verdict == "STRONG SELL" and trend["dir"] == "up":
+            verdict = "SELL"
+            reasons.append("demoted - against the 5m trend")
     return {"verdict": verdict, "regime": regime, "timing": timing,
             "direction": direction, "strength": strength,
             "reasons": reasons}
