@@ -1,5 +1,12 @@
 {
   "panels": {},
+  "slots_panels": {},
+  "pins": {},
+  "grid": "auto",
+  "symbol_refresh": 20,
+  "leader_margin": 1.5,
+  "leader_confirm_reads": 5,
+  "leader_beep": true,
   "poll_interval": 1.0,
   "fire_interval": 5.0,
   "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"

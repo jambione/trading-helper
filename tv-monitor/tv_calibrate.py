@@ -8,9 +8,14 @@
 Drag each region; the overlay tells you which one is next. Esc skips a
 panel, closing the window cancels. Regions save to tv_config.json.
 
+Multi-chart grids: run once per chart with --slot N (1..4, reading
+order) — regions land in slots_panels["N"]. Without --slot they go to
+the legacy single-chart "panels" key, exactly as before.
+
 IMPORTANT: drag the PLOT AREA only (not the price axis on the right),
 and full panel height so values map to the right scale.
 """
+import argparse
 import json
 import sys
 import tkinter as tk
@@ -39,6 +44,12 @@ def virtual_screen():
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--slot", type=int, default=None,
+                    help="grid cell 1..4 (reading order); omit for the "
+                         "legacy single-chart layout")
+    slot = ap.parse_args().slot
+
     root = tk.Tk()
     vx, vy, vw, vh = virtual_screen()
     root.overrideredirect(True)
@@ -67,9 +78,15 @@ def main():
         root.destroy()
         cfg = (json.loads(CONFIG_PATH.read_text())
                if CONFIG_PATH.exists() else {})
-        cfg["panels"] = regions
+        if slot is None:
+            cfg["panels"] = regions
+            where = "panels"
+        else:
+            cfg.setdefault("slots_panels", {})[str(slot)] = regions
+            where = f'slots_panels["{slot}"]'
         CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
-        print(f"Saved {len(regions)} panel regions to {CONFIG_PATH}:")
+        print(f"Saved {len(regions)} panel regions to {CONFIG_PATH} "
+              f"({where}):")
         for k, v in regions.items():
             print(f"  {k}: {v}")
 

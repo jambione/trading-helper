@@ -29,8 +29,9 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-from tv_core import (Trail, combine, master_verdict, read_check, read_heart,
-                     read_squeeze, read_star, rightmost_data_x, trend5)
+from tv_core import (LeaderTracker, Trail, bullish_score, combine,
+                     grid_cells, master_verdict, read_check, read_heart,
+                     read_squeeze, read_star, trend5)
 
 # shared session clock (repo root) — optional: monitor runs fine without it
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -175,6 +176,46 @@ def find_tv_windows() -> list[dict]:
     user32.EnumWindows(cb, 0)
     return [(r, t) for _, _, r, t in
             sorted(results, key=lambda x: (x[0], x[1]))]
+
+
+# chart-furniture words the legend OCR must never mistake for a ticker
+_NOT_TICKERS = {"O", "H", "L", "C", "D", "W", "M", "VOL", "OHLC", "USD",
+                "NYSE", "NASDAQ", "CBOE", "ONE", "BATS", "ARCA", "AMEX",
+                "OTC", "UTC", "EST", "EDT", "AM", "PM", "ET", "ADD",
+                "COMPARE", "UNNAMED"}
+
+
+def _ocr_symbol(strip: np.ndarray) -> str | None:
+    """OCR an already-cropped legend strip for a ticker token."""
+    gray = cv2.cvtColor(np.ascontiguousarray(strip), cv2.COLOR_BGRA2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    if np.median(gray) < 127:
+        gray = 255 - gray
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    txt = pytesseract.image_to_string(
+        th, config="--psm 7 -c tessedit_char_whitelist="
+                   "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    for tok in txt.split():
+        if 1 <= len(tok) <= 6 and tok not in _NOT_TICKERS:
+            return tok
+    return None
+
+
+def detect_slot_symbol(img: np.ndarray) -> str | None:
+    """Ticker of one chart cell, read from its legend (top-left strip):
+    TradingView titles cells like 'NVDA · 1 · Cboe One'. The window
+    title can't help here - it only names the ACTIVE chart of a grid."""
+    h, w = img.shape[:2]
+    if h < 20 or w < 80:
+        return None
+    return _ocr_symbol(img[:min(44, h), :int(w * 0.45)])
+
+
+def legend_rect(rect: dict) -> dict:
+    """Screen region of a cell's legend strip, for cheap re-OCR without
+    grabbing the whole cell."""
+    return {"left": rect["left"], "top": rect["top"],
+            "width": max(80, int(rect["width"] * 0.45)), "height": 44}
 
 
 def _assign_panels(toks: list) -> dict | None:
@@ -347,23 +388,104 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
     return {k: v for k, v in panels.items() if v["height"] >= 15} or None
 
 
+class Slot:
+    """One chart cell: its screen regions plus the per-symbol memory
+    (trails, squeeze arming) that was global back when the monitor
+    watched a single chart."""
+
+    def __init__(self, idx: int, rect: dict | None, panels: dict,
+                 pin: str | None = None):
+        self.idx = idx
+        self.rect = rect          # cell screen rect (None = manual regions)
+        self.panels = panels
+        self.pin = pin            # config-pinned symbol, beats OCR
+        self.ocr_sym: str | None = None
+        self.symbol: str | None = pin
+        self.trails = {"star": Trail(), "heart": Trail(), "gap": Trail(),
+                       "mom": Trail()}
+        self.squeeze = SqueezeTracker()
+        # newest reads, kept for render / state / log
+        self.star = self.heart = self.check = None
+        self.sq: dict | None = None
+        self.res: dict | None = None
+        self.trend: dict | None = None
+        self.score = 0.0
+
+    @property
+    def mismatch(self) -> bool:
+        """Pinned symbol disagrees with what the legend OCR sees."""
+        return bool(self.pin and self.ocr_sym and self.pin != self.ocr_sym)
+
+    def set_symbol(self, sym: str | None):
+        """New ticker in this cell -> its history is someone else's."""
+        if sym and sym != self.symbol:
+            if self.symbol is not None:
+                self.trails = {k: Trail() for k in self.trails}
+                self.squeeze = SqueezeTracker()
+            self.symbol = sym
+
+
 class TVTracker:
-    """Auto-locates the panels; falls back to tv_calibrate regions."""
+    """Auto-locates chart cells and their panels; falls back to the
+    tv_calibrate regions. One TradingView window may carry 1, 2, or 4
+    charts - each candidate grid is confirmed by actually finding the
+    indicator axis labels inside its cells."""
 
     MISS_LIMIT = 5
+    _LAYOUTS = {"1x1": (1, 1), "1x2": (1, 2), "2x1": (2, 1), "2x2": (2, 2)}
+    _AUTO_ORDER = ("2x2", "1x2", "2x1", "1x1")
 
     def __init__(self, cfg: dict, console=None):
-        self.manual = cfg.get("panels") or None
+        self.grid = str(cfg.get("grid", "auto"))
+        self.manual = self._manual_slots(cfg)
         self.console = console
-        self.cached: dict | None = None
+        self.cached: list[dict] | None = None  # [{rect, panels, symbol}]
         self.win_rect = None
         self.misses = 0
-        self.symbol: str | None = None
+        self.title_symbol: str | None = None
+
+    @staticmethod
+    def _manual_slots(cfg: dict) -> list[dict] | None:
+        sp = cfg.get("slots_panels") or {}
+        if sp:
+            return [{"rect": None, "panels": p, "symbol": None}
+                    for _, p in sorted(sp.items())]
+        if cfg.get("panels"):
+            return [{"rect": None, "panels": cfg["panels"], "symbol": None}]
+        return None
 
     def report(self, ok: bool):
         self.misses = 0 if ok else self.misses + 1
 
-    def get(self, sct) -> dict | None:
+    def _locate_slots(self, win_img: np.ndarray, rect: dict) -> list[dict]:
+        """Try grid layouts (most charts first) and keep the first where
+        enough cells carry the panel fingerprint - 3 of 4 counts (one
+        cell may be an empty/odd chart), 2 of 2, or the whole window."""
+        H, W = win_img.shape[:2]
+        layouts = ([self.grid] if self.grid in self._LAYOUTS
+                   else self._AUTO_ORDER)
+        for name in layouts:
+            rows, cols = self._LAYOUTS[name]
+            slots = []
+            for cell in grid_cells(W, H, rows, cols):
+                sub = np.ascontiguousarray(
+                    win_img[cell["top"]:cell["top"] + cell["height"],
+                            cell["left"]:cell["left"] + cell["width"]])
+                sub_rect = {"left": rect["left"] + cell["left"],
+                            "top": rect["top"] + cell["top"],
+                            "width": cell["width"],
+                            "height": cell["height"]}
+                panels = locate_tv_panels(sub, sub_rect)
+                if panels:
+                    slots.append({"rect": sub_rect, "panels": panels,
+                                  "symbol": detect_slot_symbol(sub)})
+            n = rows * cols
+            need = 1 if n == 1 else max(2, -(-n * 3 // 4))  # ceil(0.75n)
+            if len(slots) >= need:
+                return slots
+        return []
+
+    def get(self, sct) -> list[dict] | None:
         cands = find_tv_windows()
         if not cands:
             return self.cached or self.manual
@@ -371,7 +493,7 @@ class TVTracker:
         for _, title in cands:
             m = _TICKER_TITLE.match(title)
             if m:
-                self.symbol = m.group(0).split()[0]
+                self.title_symbol = m.group(0).split()[0]
                 break
         if (self.cached and self.win_rect in [r for r, _ in cands]
                 and self.misses < self.MISS_LIMIT):
@@ -380,12 +502,13 @@ class TVTracker:
         # that fingerprint only exists on the TradingView chart
         for rect, _ in cands[:3]:
             img = np.asarray(sct.grab(rect))
-            panels = locate_tv_panels(img, rect)
-            if panels:
-                if panels != self.cached and self.console:
+            slots = self._locate_slots(img, rect)
+            if slots:
+                if self.console and (self.cached is None
+                                     or len(slots) != len(self.cached)):
                     self.console.print(
-                        f"[dim]TV panels located: {sorted(panels)}[/dim]")
-                self.cached, self.win_rect = panels, rect
+                        f"[dim]TV grid located: {len(slots)} chart(s)[/dim]")
+                self.cached, self.win_rect = slots, rect
                 self.misses = 0
                 return self.cached
         self.misses = 0
@@ -507,10 +630,63 @@ def squeeze_text(sq: dict | None) -> str:
     return mom
 
 
-def render(star, heart, check, sq, res, hz, misses,
-           symbol: str | None = None, l2: dict | None = None,
-           master: dict | None = None, mism: bool = False,
-           trend: dict | None = None) -> Group:
+def leader_strip(lead: str | None, score: float | None,
+                 l2_sym: str | None) -> Panel:
+    """Which chart deserves the Webull window right now."""
+    if not lead:
+        return Panel(Align.center(
+            "[dim]no bullish leader on the grid[/dim]"),
+            border_style="grey50", padding=(0, 1))
+    txt = f"[bold cyan]🎯 LEADER  {lead}[/bold cyan]"
+    if score is not None:
+        txt += f"  [green]{score:+.1f}[/green]"
+    if l2_sym and not _sym_match(l2_sym, lead):
+        txt += (f"    [bold black on yellow]  SWITCH WEBULL → {lead}  [/]"
+                f"  [dim]L2 is on {l2_sym}[/dim]")
+    elif l2_sym:
+        txt += "    [dim]webull on target[/dim]"
+    return Panel(Align.center(txt), border_style="cyan", padding=(0, 1))
+
+
+def slots_table(slots: list[Slot], lead: str | None,
+                l2_sym: str | None) -> Table:
+    """One row per chart cell - the grid at a glance."""
+    t = Table(expand=False)
+    t.add_column("Slot"), t.add_column("Symbol"), t.add_column("Verdict")
+    t.add_column("5m"), t.add_column("Score", justify="right")
+    t.add_column("")
+    for s in slots:
+        v = s.res["verdict"] if s.res else "—"
+        c = ("green" if "BUY" in v else "red" if "SELL" in v
+             else "cyan" if v.startswith("WATCH") else "yellow")
+        tr = s.trend["dir"] if s.trend else None
+        ta = {"up": "[green]▲ up[/green]", "down": "[red]▼ down[/red]",
+              "flat": "[yellow]→ flat[/yellow]"}.get(tr, "[dim]…[/dim]")
+        tags = []
+        if s.symbol and lead and _sym_match(s.symbol, lead):
+            tags.append("🎯")
+        if s.symbol and l2_sym and _sym_match(l2_sym, s.symbol):
+            tags.append("⚡L2")
+        if s.mismatch:
+            tags.append(f"[red]pin {s.pin} ≠ ocr {s.ocr_sym}[/red]")
+        t.add_row(str(s.idx), f"[bold cyan]{s.symbol or '?'}[/bold cyan]",
+                  f"[{c}]{v}[/{c}]", ta, f"{s.score:+.1f}", " ".join(tags))
+    return t
+
+
+def detail_table(s: Slot | None, hz: float, misses: int,
+                 l2: dict | None = None, master: dict | None = None,
+                 l2_note: str | None = None,
+                 symbol: str | None = None) -> Table:
+    """Per-indicator readout for the focus slot (the chart the Webull
+    window is on, else the leader)."""
+    star = s.star if s else None
+    heart = s.heart if s else None
+    check = s.check if s else None
+    sq = s.sq if s else None
+    res = s.res if s else None
+    trend = s.trend if s else None
+    symbol = (s.symbol if s else None) or symbol
     t = Table(title=f"TradingView Monitor [bold cyan]{symbol or '?'}"
                     f"[/bold cyan]   {hz:.1f} reads/s   miss:{misses}",
               expand=False)
@@ -540,7 +716,7 @@ def render(star, heart, check, sq, res, hz, misses,
                   f"imb {l2.get('imbalance', '—')}  "
                   f"play {l2.get('play', '—')}{pxs}  "
                   f"[cyan]{l2.get('symbol') or '?'}[/cyan]"
-                  + ("  [bold red]SYMBOL MISMATCH[/bold red]" if mism
+                  + (f"  [bold red]{l2_note}[/bold red]" if l2_note
                      else ""))
     else:
         t.add_row("⚡ Order flow (L2)",
@@ -586,111 +762,232 @@ def render(star, heart, check, sq, res, hz, misses,
     else:
         t.add_row("📈 Trend (5m)", "[dim]warming up (needs ~5 min "
                                    "on this symbol)[/dim]")
-    return Group(banner(res, master), t)
+    return t
+
+
+def open_log():
+    """tv_log.csv, now with a symbol column; a pre-grid file (old header)
+    is rotated aside rather than mixed."""
+    path = HERE / "tv_log.csv"
+    try:
+        if path.exists():
+            head = path.open().readline()
+            if head and "symbol" not in head:
+                path.replace(HERE / "tv_log.old.csv")
+    except OSError:
+        pass
+    f = open(path, "a", newline="")
+    w = csv.writer(f)
+    if f.tell() == 0:
+        w.writerow(["time", "symbol", "star", "star_color", "heart_w",
+                    "heart_b", "shade", "gap", "fire", "verdict"])
+    return f, w
+
+
+def _beep():
+    if sys.platform == "win32":
+        try:
+            import winsound
+            winsound.Beep(880, 180)
+        except Exception:
+            pass
+
+
+def sync_slots(slots: list[Slot], found: list[dict],
+               pins: dict[str, str]) -> list[Slot]:
+    """Bind Slot state to the located cells. A changed cell count means
+    the layout changed - start fresh; otherwise keep each slot's trails
+    and just refresh its regions."""
+    if len(slots) != len(found):
+        slots = []
+        for i, f in enumerate(found):
+            s = Slot(i + 1, f.get("rect"), f["panels"],
+                     pin=pins.get(str(i + 1)))
+            s.ocr_sym = f.get("symbol")
+            slots.append(s)
+    else:
+        for s, f in zip(slots, found):
+            s.rect, s.panels = f.get("rect"), f["panels"]
+            # locate-time OCR is consumed once; the periodic legend
+            # re-read owns ocr_sym afterwards
+            seed = f.pop("symbol", None)
+            if seed:
+                s.ocr_sym = seed
+    return slots
+
+
+def refresh_slot_symbols(slots: list[Slot], sct):
+    """Re-OCR each cell's legend strip (slow cadence, off the hot path)."""
+    for s in slots:
+        if s.rect is None:
+            continue
+        try:
+            sym = _ocr_symbol(np.asarray(sct.grab(legend_rect(s.rect))))
+        except Exception:
+            continue
+        if sym:
+            s.ocr_sym = sym
+
+
+def read_slot(s: Slot, sct, t0: float) -> bool:
+    """Grab this cell's panels and refresh its verdict/trend/score.
+    Returns True when anything was readable."""
+    star = heart = check = sq_info = None
+    p = s.panels
+    try:
+        if "star" in p:
+            star = read_star(np.asarray(sct.grab(p["star"])))
+        if "heart" in p:
+            heart = read_heart(np.asarray(sct.grab(p["heart"])))
+        if "check" in p:
+            check = read_check(np.asarray(sct.grab(p["check"])))
+        if "fire" in p:
+            sq_info = s.squeeze.update(
+                read_squeeze(np.asarray(sct.grab(p["fire"]))), t0)
+    except Exception:
+        pass
+
+    if star:
+        s.trails["star"].add(star["value"], t0)
+    if heart:
+        hv = heart["w"] if heart["w"] is not None else heart["b"]
+        s.trails["heart"].add(hv, t0)
+    if check:
+        s.trails["gap"].add(check["gap"], t0)
+    if sq_info:
+        s.trails["mom"].add(sq_info["mom"], t0)
+
+    s.trend = trend5(drift5(s.trails["heart"]), drift5(s.trails["mom"]),
+                     drift5(s.trails["star"]))
+    s.res = combine(star, heart, check,
+                    s.trails["star"].slope(10),
+                    s.trails["heart"].slope(30),
+                    s.trails["gap"].slope(15),
+                    sq_info, s.trend)
+    s.star, s.heart, s.check, s.sq = star, heart, check, sq_info
+    s.score = bullish_score(s.res["verdict"], s.trend, s.sq)
+    return bool(star or heart or check or sq_info)
 
 
 def main():
     cfg = load_config()
     interval = cfg.get("poll_interval", 1.0)
+    sym_refresh = float(cfg.get("symbol_refresh", 20.0))
+    pins = {str(k): str(v).upper()
+            for k, v in (cfg.get("pins") or {}).items()}
+    beep_on = bool(cfg.get("leader_beep", True))
     console = Console()
     tracker = TVTracker(cfg, console)
+    leader = LeaderTracker(float(cfg.get("leader_margin", 1.5)),
+                           int(cfg.get("leader_confirm_reads", 5)))
 
-    trails = {"star": Trail(), "heart": Trail(), "gap": Trail(),
-              "mom": Trail()}
-    cur_sym: str | None = None
-    logf = open(HERE / "tv_log.csv", "a", newline="")
-    logw = csv.writer(logf)
-    if logf.tell() == 0:
-        logw.writerow(["time", "star", "star_color", "heart_w", "heart_b",
-                       "shade", "gap", "fire", "verdict"])
-
+    slots: list[Slot] = []
+    logf, logw = open_log()
     misses = 0
     stamps: list[float] = []
-    squeeze = SqueezeTracker()
+    last_sym = 0.0
+    prev_lead: str | None = None
 
     console.print("[bold]TradingView monitor - Ctrl+C to stop.[/bold] "
-                  "Keep the chart visible on screen.")
+                  "Keep the chart(s) visible on screen.")
     with mss.MSS() as sct, Live(console=console,
                                 refresh_per_second=2) as live:
         while True:
             t0 = time.time()
-            panels = tracker.get(sct) or {}
-            if not panels:
-                live.update(render(None, None, None, None, None, 0.0,
-                                   misses, tracker.symbol))
+            found = tracker.get(sct) or []
+            if not found:
+                live.update(Group(
+                    banner(None, None),
+                    detail_table(None, 0.0, misses,
+                                 symbol=tracker.title_symbol)))
                 time.sleep(2.0)
                 continue
-            if tracker.symbol and tracker.symbol != cur_sym:
-                if cur_sym is not None:   # new ticker: drop old history
-                    trails = {k: Trail() for k in trails}
-                    squeeze = SqueezeTracker()
-                cur_sym = tracker.symbol
-            star = heart = check = sq_info = fire_label = None
-            try:
-                if "star" in panels:
-                    star = read_star(np.asarray(sct.grab(panels["star"])))
-                if "heart" in panels:
-                    heart = read_heart(np.asarray(sct.grab(panels["heart"])))
-                if "check" in panels:
-                    check = read_check(np.asarray(sct.grab(panels["check"])))
-                if "fire" in panels:
-                    sq_info = squeeze.update(read_squeeze(
-                        np.asarray(sct.grab(panels["fire"]))), t0)
-                    fire_label = SqueezeTracker.label(sq_info)
-            except Exception:
+            slots = sync_slots(slots, found, pins)
+            single = len(slots) == 1
+            if t0 - last_sym >= sym_refresh:
+                last_sym = t0
+                refresh_slot_symbols(slots, sct)
+            for s in slots:
+                s.set_symbol(s.pin or s.ocr_sym
+                             or (tracker.title_symbol if single else None))
+
+            ok_any = False
+            for s in slots:
+                ok_any = read_slot(s, sct, t0) or ok_any
+            tracker.report(ok_any)
+            if not ok_any:
                 misses += 1
 
-            if star:
-                trails["star"].add(star["value"], t0)
-            if heart:
-                hv = heart["w"] if heart["w"] is not None else heart["b"]
-                trails["heart"].add(hv, t0)
-            if check:
-                trails["gap"].add(check["gap"], t0)
-            if sq_info:
-                trails["mom"].add(sq_info["mom"], t0)
-            ok = bool(star or heart or check or sq_info)
-            tracker.report(ok)
-            if not ok:
-                misses += 1
+            # leader election: who deserves the Webull window
+            scores = {s.symbol: s.score
+                      for s in slots if s.symbol and s.res}
+            lead = leader.update(scores)
+            if beep_on and lead and lead != prev_lead:
+                _beep()
+            prev_lead = lead
 
-            tr5 = trend5(drift5(trails["heart"]), drift5(trails["mom"]),
-                         drift5(trails["star"]))
-            res = combine(star, heart, check,
-                          trails["star"].slope(10),
-                          trails["heart"].slope(30),
-                          trails["gap"].slope(15),
-                          sq_info, tr5)
-
-            # bridge: merge with live L2 order flow when available
+            # bridge: the slot the Webull window is on gets the MASTER
+            # verdict (entry + position/exit logic); anywhere else the
+            # leader strip tells you where to point it
             l2 = read_l2_state()
-            mism = bool(l2 and not _sym_match(l2.get("symbol"),
-                                              tracker.symbol))
-            master = (None if (l2 is None or mism)
-                      else master_verdict(res["verdict"], l2))
+            l2_sym = l2.get("symbol") if l2 else None
+            l2_slot = (next((s for s in slots if s.symbol
+                             and _sym_match(l2_sym, s.symbol)), None)
+                       if l2_sym else None)
+            lead_slot = (next((s for s in slots if s.symbol
+                               and _sym_match(s.symbol, lead)), None)
+                         if lead else None)
+            focus = l2_slot or lead_slot or (slots[0] if single else None)
+            master = (master_verdict(l2_slot.res["verdict"], l2)
+                      if l2_slot and l2_slot.res else None)
+            l2_note = (f"L2 on {l2_sym or '?'} — not in grid"
+                       if l2 and not l2_slot else None)
+
+            symbols_out = {}
+            for s in slots:
+                if s.symbol and s.res:
+                    symbols_out[s.symbol] = {
+                        "slot": s.idx, "verdict": s.res["verdict"],
+                        "score": round(s.score, 2),
+                        "trend": s.trend["dir"] if s.trend else None}
             try:
                 TV_STATE.write_text(json.dumps(
-                    {"ts": t0, "symbol": tracker.symbol,
-                     "verdict": res["verdict"]}))
+                    {"ts": t0, "leader": lead, "l2_symbol": l2_sym,
+                     "symbols": symbols_out,
+                     # back-compat: the focus slot mirrors the old
+                     # single-symbol fields
+                     "symbol": focus.symbol if focus else lead,
+                     "verdict": (focus.res["verdict"]
+                                 if focus and focus.res else None)}))
             except Exception:
                 pass
 
-            logw.writerow([
-                datetime.now().isoformat(timespec="seconds"),
-                fmt(star and star["value"], ".1f", ""),
-                star["color"] if star else "",
-                fmt(heart and heart["w"], ".1f", ""),
-                fmt(heart and heart["b"], ".1f", ""),
-                heart["shade"] if heart else "",
-                fmt(check and check["gap"], ".2f", ""),
-                fire_label or "", res["verdict"]])
+            for s in slots:
+                if not s.res:
+                    continue
+                logw.writerow([
+                    datetime.now().isoformat(timespec="seconds"),
+                    s.symbol or "",
+                    fmt(s.star and s.star["value"], ".1f", ""),
+                    s.star["color"] if s.star else "",
+                    fmt(s.heart and s.heart["w"], ".1f", ""),
+                    fmt(s.heart and s.heart["b"], ".1f", ""),
+                    s.heart["shade"] if s.heart else "",
+                    fmt(s.check and s.check["gap"], ".2f", ""),
+                    SqueezeTracker.label(s.sq) or "", s.res["verdict"]])
             logf.flush()
 
             stamps.append(t0)
-            stamps[:] = [s for s in stamps if t0 - s <= 5]
-            live.update(render(star, heart, check, sq_info, res,
-                               len(stamps) / 5.0, misses, tracker.symbol,
-                               l2, master, mism, tr5))
+            stamps[:] = [x for x in stamps if t0 - x <= 5]
+            parts = [banner(focus.res if focus else None, master)]
+            if not single or (lead and l2_sym
+                              and not _sym_match(l2_sym, lead)):
+                parts.append(leader_strip(lead, scores.get(lead), l2_sym))
+            if not single:
+                parts.append(slots_table(slots, lead, l2_sym))
+            parts.append(detail_table(focus, len(stamps) / 5.0, misses,
+                                      l2, master, l2_note))
+            live.update(Group(*parts))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 

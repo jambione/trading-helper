@@ -247,6 +247,89 @@ def trend5(heart_d: float | None, mom_d: float | None,
             "star": star_d}
 
 
+# ------------------------------------------------------ grid + leader -------
+
+def grid_cells(w: int, h: int, rows: int, cols: int) -> list[dict]:
+    """Equal RxC split of a window into chart cells, reading order
+    (left-to-right, top-to-bottom). Cells are window-relative
+    {'left','top','width','height'} — the caller anchors them to the
+    screen. TradingView multi-chart layouts tile equally by default."""
+    cells = []
+    ys = [round(h * r / rows) for r in range(rows + 1)]
+    xs = [round(w * c / cols) for c in range(cols + 1)]
+    for r in range(rows):
+        for c in range(cols):
+            cells.append({"left": xs[c], "top": ys[r],
+                          "width": xs[c + 1] - xs[c],
+                          "height": ys[r + 1] - ys[r]})
+    return cells
+
+
+# verdict base for ranking: how loudly combine() is saying "long here".
+# Order matters — startswith, longest phrases first.
+_VERDICT_BASE = (("STRONG BUY", 5.0), ("LEAN BUY", 3.0), ("BUY", 4.0),
+                 ("WATCH", 2.0), ("STRONG SELL", -5.0), ("LEAN SELL", -3.0),
+                 ("SELL", -4.0))
+
+FIRED_FRESH = 120.0   # a squeeze fire only tilts the score this long
+
+
+def bullish_score(verdict: str, trend: dict | None = None,
+                  sq: dict | None = None) -> float:
+    """How much this chart deserves the Webull window. The combine()
+    verdict is the base; the 5m trend and squeeze state tilt it.
+    Range roughly -12..+12."""
+    score = 0.0
+    for prefix, base in _VERDICT_BASE:
+        if verdict.startswith(prefix):
+            score = base
+            break
+    if trend:
+        score += trend.get("score") or 0
+    if sq:
+        if sq.get("fired") and (sq.get("fired_ago") or 0) <= FIRED_FRESH:
+            score += 2.0 if sq["fired"] == "LONG" else -2.0
+        if sq.get("building"):
+            mom = sq.get("mom") or 0.0
+            score += 1.0 if mom > 0 else -1.0 if mom < 0 else 0.0
+    return score
+
+
+class LeaderTracker:
+    """Names the chart that deserves the Webull window. A challenger must
+    beat the sitting leader by `margin` for `confirm` consecutive reads —
+    flapping between two hot charts is worse than being five seconds
+    late. A vacant seat (no leader, leader left the grid, or leader went
+    bearish) is filled immediately."""
+
+    def __init__(self, margin: float = 1.5, confirm: int = 5):
+        self.margin = margin
+        self.confirm = max(1, int(confirm))
+        self.leader: str | None = None
+        self._challenger: str | None = None
+        self._streak = 0
+
+    def update(self, scores: dict[str, float]) -> str | None:
+        """scores = {symbol: bullish_score}. Returns the current leader,
+        None when nothing on the grid is bullish (score > 0)."""
+        bulls = {s: v for s, v in scores.items() if v > 0}
+        cur = self.leader
+        if cur is None or cur not in scores or scores[cur] <= 0:
+            self.leader = max(bulls, key=bulls.get) if bulls else None
+            self._challenger, self._streak = None, 0
+            return self.leader
+        top = max(bulls, key=bulls.get) if bulls else None
+        if top and top != cur and bulls[top] >= scores[cur] + self.margin:
+            self._streak = self._streak + 1 if top == self._challenger else 1
+            self._challenger = top
+            if self._streak >= self.confirm:
+                self.leader = top
+                self._challenger, self._streak = None, 0
+        else:
+            self._challenger, self._streak = None, 0
+        return self.leader
+
+
 # -------------------------------------------------------------- verdict -----
 
 def master_verdict(tv_verdict: str, l2: dict | None) -> dict | None:
