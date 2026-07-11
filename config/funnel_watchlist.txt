@@ -1,0 +1,11 @@
+# Morning funnel watchlist — candidates for tools/morning_funnel.py.
+#
+# One ticker per line (or space/comma separated); # comments ignored.
+# These are merged AFTER command-line tickers and BEFORE the live
+# mention list (transcription/wb_watchlist.json) and the swing
+# screener output (swing_candidates.json). Edit any time — the funnel
+# re-reads this file on every refresh.
+#
+# Example:
+# HOLO
+# SPRC ZCMD
