@@ -4,6 +4,7 @@
   "pins": {},
   "grid": "auto",
   "symbol_refresh": 20,
+  "relocate_interval": 60,
   "leader_margin": 1.5,
   "leader_confirm_reads": 5,
   "leader_beep": true,

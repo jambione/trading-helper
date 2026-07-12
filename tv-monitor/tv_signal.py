@@ -635,6 +635,13 @@ class TVTracker:
         self.win_rect = None
         self.misses = 0
         self.title_symbol: str | None = None
+        # re-locate on a slow timer as well, so re-arranging the indicator
+        # panels inside a chart (which doesn't change the window rect and
+        # may still read plausible-but-wrong values) is picked up within
+        # one interval. 0 disables it. This is the ONLY periodic cost; it
+        # runs inside the monitor loop, so it stops when the monitor does.
+        self.relocate_interval = float(cfg.get("relocate_interval", 60.0))
+        self._last_locate = 0.0
 
     @staticmethod
     def _manual_slots(cfg: dict) -> list[dict] | None:
@@ -702,8 +709,14 @@ class TVTracker:
             if m:
                 self.title_symbol = m.group(0).split()[0]
                 break
+        now = time.time()
+        # a slow timer forces a re-locate even when the window rect is
+        # unchanged and reads still "succeed" (see relocate_interval); the
+        # rect-mismatch / MISS_LIMIT triggers keep re-trying every poll.
+        stale = (self.relocate_interval > 0
+                 and now - self._last_locate >= self.relocate_interval)
         if (self.cached and self.win_rect in [r for r, _ in cands]
-                and self.misses < self.MISS_LIMIT):
+                and self.misses < self.MISS_LIMIT and not stale):
             return self.cached
         # confirm candidates by actually finding the panel axis labels -
         # that fingerprint only exists on the TradingView chart
@@ -717,8 +730,12 @@ class TVTracker:
                         f"[dim]TV grid located: {len(slots)} chart(s)[/dim]")
                 self.cached, self.win_rect = slots, rect
                 self.misses = 0
+                self._last_locate = now
                 return self.cached
+        # keep the last good grid on a failed (re)locate; stamp the timer
+        # so a timed refresh doesn't re-run the OCR every single poll
         self.misses = 0
+        self._last_locate = now
         return self.cached or self.manual
 
 
