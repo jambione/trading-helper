@@ -16,6 +16,7 @@ import contextlib
 import csv
 import io
 import json
+import re
 import sys
 import threading
 import time
@@ -250,12 +251,19 @@ def detect_chart_grid(win_img: np.ndarray) -> list[dict] | None:
          and sm[max(0, y - 60):y + 60].mean() < gapline),
         key=lambda y: (sm[max(0, y - 60):y + 60].mean(), abs(y - mid)))
 
-    # never let the top row reach into the toolbar - its symbol-search box
-    # would otherwise be OCR'd as the cell's ticker. The last full-width
-    # ridge in the top ~9% is the toolbar/pane border.
-    tb = max([y for y in _ridges(g, "h", bg, min_fill=0.9) if y < 0.09 * H],
+    # the top row must start at the PANE top (just below the toolbar), not
+    # at the candles: the legend floats at the pane top and the candles can
+    # sit far below it when the chart is zoomed so the price action is low
+    # (backing off ct2 by PAD then missed the legend entirely -> the cell
+    # OCR'd blank candle area). The pane top is the lowest full-width ridge
+    # above the charts - full-width (spans the sidebar too) so a chart's own
+    # price gridline can't be mistaken for it. Anchoring here also keeps the
+    # top clear of the toolbar's symbol-search box. Only when no such ridge
+    # is found (unusual theme) do we fall back to the candle-relative guess.
+    tb = max([y for y in _ridges(g, "h", bg, min_fill=0.9) if y < 0.14 * H],
              default=0)
-    top, bot = max(0, ct2 - pad, tb + 5), min(H - 25, cb2 + 120)
+    top = tb + 5 if tb else max(0, ct2 - pad)
+    bot = min(H - 25, cb2 + 120)
     xcuts = [cl] + ([col] if col else []) + [right]
 
     def grid(row):
@@ -350,33 +358,107 @@ _NOT_TICKERS = {"O", "H", "L", "C", "D", "W", "M", "VOL", "OHLC", "USD",
 # pane top - so the OCR takes the TOP-most ticker token it finds.
 _LEGEND_H = 210
 
+# the exchange tag that closes every legend line ('ZBAO · 1 · NASDAQ').
+# It's the anchor that tells the real ticker apart from OCR noise: the
+# ticker is the left-most token on the SAME line as one of these.
+_EXCHANGES = {"NASDAQ", "NYSE", "CBOE", "BATS", "ARCA", "AMEX", "OTC",
+              "ARCX"}
+_TICKER_RUN = re.compile(r"[A-Za-z]{1,6}")
+
+
+def _blank_logo_badge(gray: np.ndarray) -> np.ndarray:
+    """Zero out the symbol's logo disc at the far-left of the legend.
+
+    Some tickers show a bright white/coloured badge before the text
+    (e.g. ZBAO); a dim grey one is harmless, but a bright one biases the
+    global OTSU threshold so the whole legend line OCRs to garbage (ZBAO
+    read as 'IO'). Detected as bright connected-components confined to
+    the left margin, then blanked up to their right edge - data-driven,
+    so it never clips the ticker regardless of capture resolution.
+    `gray` is pre-inversion (light text/badge on dark), modified in-place.
+    """
+    w = gray.shape[1]
+    bright = (gray > max(150, int(gray.max() * 0.5))).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(bright, 8)
+    cut = 0
+    for i in range(1, n):
+        x, _, bw, _, area = stats[i]
+        if area >= 15 and x < 0.06 * w and (x + bw) < 0.17 * w:
+            cut = max(cut, x + bw)
+    if cut:
+        gray[:, :min(cut + 6, int(0.17 * w))] = 0
+    return gray
+
+
+def _line_candidates(th: np.ndarray, psm: int) -> tuple[list, list]:
+    """(exchange-anchored, plain) ticker candidates from one OCR pass.
+
+    Each entry is (top_y, ticker) = a legend line's left-most ticker
+    token; it's 'exchange-anchored' when an exchange tag ('... NASDAQ')
+    shares that line."""
+    d = pytesseract.image_to_data(th, config=f"--psm {psm}",
+                                  output_type=pytesseract.Output.DICT)
+    lines: dict = {}
+    for i, word in enumerate(d["text"]):
+        if not word.strip():
+            continue
+        key = (d["block_num"][i], d["par_num"][i], d["line_num"][i])
+        lines.setdefault(key, []).append((d["left"][i], d["top"][i], word))
+    exch_anchored: list = []
+    plain: list = []
+    for words in lines.values():
+        words.sort()
+        runs = []
+        has_exchange = False
+        for x, y, word in words:
+            # 'ZCMD·1·NASDAQ' can come back glued as 'ZCMD-1-NASDAQ';
+            # split into letter runs and keep the ticker-shaped ones.
+            for run in _TICKER_RUN.findall(word):
+                tok = run.upper()
+                if tok in _EXCHANGES:
+                    has_exchange = True
+                if 2 <= len(tok) <= 6 and tok not in _NOT_TICKERS:
+                    runs.append((x, y, tok))
+        if not runs:
+            continue
+        runs.sort()
+        (exch_anchored if has_exchange else plain).append(
+            (runs[0][1], runs[0][2]))
+    return exch_anchored, plain
+
 
 def _ocr_symbol(strip: np.ndarray) -> str | None:
-    """Top-most ticker-shaped token in a legend strip. Positional OCR so
-    the legend line ('ZCMD · 1 · NASDAQ') wins over the BUY/SELL and
-    'Enters Oversold' text lower in the same strip. No char whitelist -
-    the interpunct separators must survive so tesseract splits the legend
-    into words instead of gluing them into one blob; each word is then
-    reduced to its letters."""
+    """Ticker read from a legend strip ('ZCMD · 1 · NASDAQ').
+
+    Positional OCR: the interpunct separators must survive (no char
+    whitelist) so tesseract splits the legend into words; each word is
+    reduced to its letter runs. Selection prefers the left-most ticker
+    on the SAME line as the exchange tag - that anchor beats OCR noise
+    like a mis-read badge or a 'BUY'/'Enters Oversold' overlay lower in
+    the strip. Falls back to the top-most ticker token when no exchange
+    tag was legible.
+
+    Two page-segmentation passes are merged: psm 11 (sparse) gives clean
+    positions when it fires, but silently returns nothing on some larger
+    legend crops (the SELL/BUY boxes throw it off); psm 6 (uniform block)
+    reads those as one glued 'TICKER-1-NASDAQ' line and covers the gap."""
     gray = cv2.cvtColor(np.ascontiguousarray(strip), cv2.COLOR_BGRA2GRAY)
     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    gray = _blank_logo_badge(gray)
     if np.median(gray) < 127:
         gray = 255 - gray
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    d = pytesseract.image_to_data(th, config="--psm 11",
-                                  output_type=pytesseract.Output.DICT)
-    best = None
-    for i, word in enumerate(d["text"]):
-        # 'ZCMD·1·NASDAQ' comes back as one word 'ZCMD-1-NASDAQ'; split
-        # it into letter runs and take the first ticker-shaped one.
-        for run in __import__("re").findall(r"[A-Za-z]{2,6}", word):
-            tok = run.upper()
-            if tok not in _NOT_TICKERS:
-                y = d["top"][i]
-                if best is None or y < best[0]:
-                    best = (y, tok)
-                break
-    return best[1] if best else None
+    exch_anchored: list = []
+    plain: list = []
+    for psm in (11, 6):
+        ex, pl = _line_candidates(th, psm)
+        exch_anchored += ex
+        plain += pl
+    pool = exch_anchored or plain
+    if not pool:
+        return None
+    pool.sort()                       # top-most wins within the chosen pool
+    return pool[0][1]
 
 
 def detect_slot_symbol(img: np.ndarray) -> str | None:
@@ -1105,16 +1187,20 @@ def read_slot(s: Slot, sct, t0: float) -> bool:
 
 
 class WebullHotkey:
-    """Press a slot number (1-9) to load that chart's symbol into Webull
-    via the existing windows_agent workflow. A daemon thread reads the
-    keys - so the render loop never blocks - and runs the send there too
-    (it steals focus for ~2s and prints, which we swallow so the Rich Live
-    display stays clean). Windows-only; a no-op if the workflow import
-    failed, in which case the on-screen hint is hidden."""
+    """Press a slot number (1-9) to load that chart's symbol into Webull,
+    or SPACE to load the current grid leader, via the existing
+    windows_agent workflow. A daemon thread reads the keys - so the render
+    loop never blocks - and runs the send there too (it steals focus for
+    ~2s and prints, which we swallow so the Rich Live display stays clean).
+    Windows-only; a no-op if the workflow import failed, in which case the
+    on-screen hint is hidden."""
+
+    SPACE = " "
 
     def __init__(self):
         self.enabled = sys.platform == "win32" and workflow_add_wb is not None
         self._by_key: dict[str, str] = {}
+        self._leader: str | None = None
         self._status = ""
         self._lock = threading.Lock()
         if self.enabled:
@@ -1125,6 +1211,11 @@ class WebullHotkey:
         with self._lock:
             self._by_key = {str(s.idx): s.symbol for s in slots
                             if s.symbol and 1 <= s.idx <= 9}
+
+    def set_leader(self, sym: str | None):
+        """The symbol SPACE will send (the current elected leader)."""
+        with self._lock:
+            self._leader = sym
 
     def status(self) -> str:
         with self._lock:
@@ -1145,10 +1236,14 @@ class WebullHotkey:
             except Exception:                            # noqa: BLE001
                 return                                   # no real console
             with self._lock:
-                sym = self._by_key.get(ch)
+                sym = (self._leader if ch == self.SPACE
+                       else self._by_key.get(ch))
             if not sym:
+                if ch == self.SPACE:
+                    self._set("no leader to send")
                 continue
-            self._set(f"sending {sym} to Webull ...")
+            where = "leader" if ch == self.SPACE else "chart"
+            self._set(f"sending {where} {sym} to Webull ...")
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
                     ok = workflow_add_wb(sym)
@@ -1217,6 +1312,7 @@ def main():
             scores = {s.symbol: s.score
                       for s in slots if s.symbol and s.res}
             lead = leader.update(scores)
+            hotkeys.set_leader(lead)
             if beep_on and lead and lead != prev_lead:
                 _beep()
             prev_lead = lead
@@ -1284,8 +1380,8 @@ def main():
                                       l2, master, l2_note))
             if hotkeys.enabled:
                 st = hotkeys.status()
-                hint = (f"[dim]keys 1-{max(1, len(slots))}: "
-                        "load that chart into Webull[/dim]")
+                hint = (f"[dim]keys 1-{max(1, len(slots))}: load that chart "
+                        "into Webull   ·   space: load the leader[/dim]")
                 parts.append(Panel(
                     Align.center(hint + (f"     [bold green]{st}[/bold green]"
                                          if st else "")),
