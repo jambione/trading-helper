@@ -119,6 +119,150 @@ class SqueezeTracker:
         return ", ".join(parts)
 
 
+# --------------------------------------------- chart-grid separators --------
+# TradingView draws thin uniform lines a touch brighter than the chart
+# background between chart cells (and at the sidebar edge). Finding those
+# lines locates the real cell boundaries no matter the window size or
+# position, and lets us drop the watchlist/detail sidebar entirely -
+# unlike an equal geometric split, which assumes the charts fill the
+# window edge to edge.
+
+
+def _candle_mask(win_img: np.ndarray) -> np.ndarray:
+    """Saturated red/green pixels - candle bodies. The crosshair, axis
+    text and the grey watchlist don't register, so this isolates where
+    the actual charts are regardless of overlays."""
+    b, g, r = (win_img[..., 0].astype(int), win_img[..., 1].astype(int),
+               win_img[..., 2].astype(int))
+    return (r - np.maximum(g, b) > 40) | (g - np.maximum(r, b) > 40)
+
+
+def _ridges(gray: np.ndarray, axis: str, bg: float,
+            min_fill: float = 0.82, max_w: int = 14) -> list[int]:
+    """Centers of thin, bright, nearly-full-span lines (cell dividers,
+    sidebar borders, toolbars). Fill-based and width-limited, so a
+    transient crosshair crossing a divider doesn't hide it and a broad
+    bright region isn't mistaken for one. axis='v' finds vertical lines,
+    'h' horizontal."""
+    band = (gray > bg + 2) & (gray < bg + 75)
+    fill = band.mean(axis=0 if axis == "v" else 1)
+    idx = np.where(fill >= min_fill)[0]
+    groups: list[list[int]] = []
+    for i in idx:
+        if groups and i - groups[-1][-1] <= 3:
+            groups[-1].append(int(i))
+        else:
+            groups.append([int(i)])
+    return [grp[len(grp) // 2] for grp in groups if len(grp) <= max_w]
+
+
+def _mid_split(ridges: list[int], lo: int, hi: int,
+               tol: float = 0.2) -> int | None:
+    """The ridge nearest the midpoint of [lo, hi], accepted only if it
+    lands within tol of it - the interior split of an equal 2-way grid.
+    Immune to the extra dividers inside each chart, which sit nowhere
+    near the halfway line."""
+    mid = (lo + hi) / 2
+    inside = [x for x in ridges if lo + 40 < x < hi - 40]
+    if not inside:
+        return None
+    best = min(inside, key=lambda x: abs(x - mid))
+    return best if abs(best - mid) <= tol * (hi - lo) else None
+
+
+def detect_chart_grid(win_img: np.ndarray) -> list[dict] | None:
+    """Window-relative cell rects, derived live so the grid follows any
+    resize/move. The chart area is found from candle density (not the
+    window edges), which drops the right-hand watchlist/detail sidebar;
+    the row/column splits snap to divider ridges at the grid midpoints.
+    Returns None when the chart area or an expected split is unclear -
+    the caller then falls back to the equal-split layouts."""
+    g = cv2.cvtColor(win_img, cv2.COLOR_BGRA2GRAY).astype(float)
+    H, W = g.shape
+    bg = float(np.median(g))
+    cand = _candle_mask(win_img)
+    colc = cand.sum(axis=0).astype(float)
+    rowc = cand.sum(axis=1).astype(float)
+    if colc.max() < 20 or rowc.max() < 20:
+        return None
+    xs = np.where(colc > colc.max() * 0.15)[0]
+    ys = np.where(rowc > rowc.max() * 0.15)[0]
+    if len(xs) < 50 or len(ys) < 50:
+        return None
+    cl = int(xs.min())
+    ct, cb = int(ys.min()), int(ys.max())
+
+    def dens(a, b):
+        a, b = max(0, a), min(W, b)
+        return float(colc[a:b].mean()) if b > a else 0.0
+
+    # the chart area's right edge: the first vertical ridge with charts on
+    # its left but not its right (the sidebar border). Ridges with candles
+    # on BOTH sides are interior column splits.
+    vrid = _ridges(g, "v", bg)
+    floor = colc.max() * 0.05
+    right = W
+    col_splits = []
+    for x in vrid:
+        if x <= cl + 60 or x >= W - 5:
+            continue
+        left_d, right_d = dens(x - 300, x - 20), dens(x + 20, x + 300)
+        if left_d > floor and right_d < left_d * 0.2:
+            right = x
+            break
+        if left_d > floor and right_d > left_d * 0.4:
+            col_splits.append(x)
+    col_splits = [x for x in col_splits if x < right]
+
+    col = _mid_split(col_splits, cl, right)
+
+    # a chart-ROW divider is a full-width ridge sitting in a candle-free
+    # band (no price candles crowding it). So are the top/bottom borders
+    # and a chart's own oscillator gaps, so we can't pin the split from
+    # geometry alone - we hand the candidates (most gap-like first, plus
+    # the no-split case) to the caller, which keeps the grid whose cells
+    # actually carry the panels. The legend floats just above the price
+    # candles, so each row's top backs off by PAD to keep it in frame.
+    rc = _candle_mask(win_img)[:, cl:right].sum(axis=1).astype(float)
+    sm = np.convolve(rc, np.ones(31) / 31, mode="same")
+    content = np.where(sm > 0.12 * sm.max())[0]
+    if len(content) < 100:
+        return None
+    ct2, cb2 = int(content[0]), int(content[-1])
+    pad, mid = 150, (ct2 + cb2) / 2
+    gapline = 0.2 * float(np.median(sm[ct2:cb2]))
+
+    hrid = _ridges(np.ascontiguousarray(g[:, cl:right]), "h", bg,
+                   min_fill=0.9)
+    row_cands = sorted(
+        (y for y in hrid if ct2 + 120 < y < cb2 - 120
+         and sm[max(0, y - 60):y + 60].mean() < gapline),
+        key=lambda y: (sm[max(0, y - 60):y + 60].mean(), abs(y - mid)))
+
+    # never let the top row reach into the toolbar - its symbol-search box
+    # would otherwise be OCR'd as the cell's ticker. The last full-width
+    # ridge in the top ~9% is the toolbar/pane border.
+    tb = max([y for y in _ridges(g, "h", bg, min_fill=0.9) if y < 0.09 * H],
+             default=0)
+    top, bot = max(0, ct2 - pad, tb + 5), min(H - 25, cb2 + 120)
+    xcuts = [cl] + ([col] if col else []) + [right]
+
+    def grid(row):
+        yc = [top] + ([row] if row else []) + [bot]
+        cells = [{"left": xcuts[j], "top": yc[i],
+                  "width": xcuts[j + 1] - xcuts[j],
+                  "height": yc[i + 1] - yc[i]}
+                 for i in range(len(yc) - 1)
+                 for j in range(len(xcuts) - 1)]
+        return [c for c in cells
+                if c["width"] >= 120 and c["height"] >= 120]
+
+    # candidate grids, best-first: split rows (most gap-like divider
+    # first), then the no-split fallback
+    grids = [grid(r) for r in row_cands[:2]] + [grid(None)]
+    return [g for g in grids if g] or None
+
+
 # ------------------------------------------------------- auto locate --------
 
 _BROWSERS = ("chrome", "brave", "msedge", "firefox", "opera", "vivaldi")
@@ -178,108 +322,161 @@ def find_tv_windows() -> list[dict]:
             sorted(results, key=lambda x: (x[0], x[1]))]
 
 
-# chart-furniture words the legend OCR must never mistake for a ticker
+# chart-furniture words the legend OCR must never mistake for a ticker:
+# exchanges, OHLC letters, and the strategy/annotation overlays that sit
+# in the same top-left strip as the legend (BUY/SELL boxes, "Enters
+# Oversold" tags).
 _NOT_TICKERS = {"O", "H", "L", "C", "D", "W", "M", "VOL", "OHLC", "USD",
                 "NYSE", "NASDAQ", "CBOE", "ONE", "BATS", "ARCA", "AMEX",
                 "OTC", "UTC", "EST", "EDT", "AM", "PM", "ET", "ADD",
-                "COMPARE", "UNNAMED"}
+                "COMPARE", "UNNAMED", "UNNAME", "BUY", "SELL", "ENTERS",
+                "OVERSOLD", "OVERBOUGHT", "INC", "LTD", "CORP", "RTH",
+                "ETH", "ADJ", "SAVE", "PUBLISH", "TRADE", "REPLAY", "ALERT",
+                "INDICATORS"}
+
+# the legend band reaches down to just above the candles - deeper than a
+# single line, since TradingView floats the legend a little below the
+# pane top - so the OCR takes the TOP-most ticker token it finds.
+_LEGEND_H = 210
 
 
 def _ocr_symbol(strip: np.ndarray) -> str | None:
-    """OCR an already-cropped legend strip for a ticker token."""
+    """Top-most ticker-shaped token in a legend strip. Positional OCR so
+    the legend line ('ZCMD · 1 · NASDAQ') wins over the BUY/SELL and
+    'Enters Oversold' text lower in the same strip. No char whitelist -
+    the interpunct separators must survive so tesseract splits the legend
+    into words instead of gluing them into one blob; each word is then
+    reduced to its letters."""
     gray = cv2.cvtColor(np.ascontiguousarray(strip), cv2.COLOR_BGRA2GRAY)
     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     if np.median(gray) < 127:
         gray = 255 - gray
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    txt = pytesseract.image_to_string(
-        th, config="--psm 7 -c tessedit_char_whitelist="
-                   "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    for tok in txt.split():
-        if 1 <= len(tok) <= 6 and tok not in _NOT_TICKERS:
-            return tok
-    return None
+    d = pytesseract.image_to_data(th, config="--psm 11",
+                                  output_type=pytesseract.Output.DICT)
+    best = None
+    for i, word in enumerate(d["text"]):
+        # 'ZCMD·1·NASDAQ' comes back as one word 'ZCMD-1-NASDAQ'; split
+        # it into letter runs and take the first ticker-shaped one.
+        for run in __import__("re").findall(r"[A-Za-z]{2,6}", word):
+            tok = run.upper()
+            if tok not in _NOT_TICKERS:
+                y = d["top"][i]
+                if best is None or y < best[0]:
+                    best = (y, tok)
+                break
+    return best[1] if best else None
 
 
 def detect_slot_symbol(img: np.ndarray) -> str | None:
     """Ticker of one chart cell, read from its legend (top-left strip):
-    TradingView titles cells like 'NVDA · 1 · Cboe One'. The window
-    title can't help here - it only names the ACTIVE chart of a grid."""
+    TradingView titles cells like 'ZCMD · 1 · NASDAQ'. The window title
+    can't help here - it only names the ACTIVE chart of a grid."""
     h, w = img.shape[:2]
     if h < 20 or w < 80:
         return None
-    return _ocr_symbol(img[:min(44, h), :int(w * 0.45)])
+    return _ocr_symbol(img[:min(_LEGEND_H, h), :int(w * 0.45)])
 
 
 def legend_rect(rect: dict) -> dict:
     """Screen region of a cell's legend strip, for cheap re-OCR without
     grabbing the whole cell."""
     return {"left": rect["left"], "top": rect["top"],
-            "width": max(80, int(rect["width"] * 0.45)), "height": 44}
+            "width": max(80, int(rect["width"] * 0.45)),
+            "height": min(_LEGEND_H, rect["height"])}
+
+
+def _is_gridline(v: float) -> bool:
+    """A round multiple-of-10 axis label (0, 10, ... 100, -100) - the
+    fixed RSI/exhaustion gridlines, as opposed to a live value tag like
+    -45.1 or a mis-OCR'd blob like 32730."""
+    return abs(v) <= 100.5 and abs(v - round(v / 10) * 10) < 1.0
+
+
+def _fit_scale(pts: list[tuple[float, float]]) -> tuple[float, float] | None:
+    """Least-squares y = a*value + b over (y, value) gridline labels, so
+    the full 0..100 (or 0..-100) scale is recovered even when only, say,
+    the 90 and 10 lines are labelled. a must be < 0 (screen y grows as
+    the value falls); None if degenerate."""
+    if len(pts) < 2:
+        return None
+    ys = np.array([p[0] for p in pts], float)
+    vs = np.array([p[1] for p in pts], float)
+    if vs.max() - vs.min() < 5:
+        return None
+    a, b = np.polyfit(vs, ys, 1)
+    return (float(a), float(b)) if a < -0.05 else None
+
+
+def _axis_columns(toks: list) -> list[tuple[int, list]]:
+    """Cluster (y, x, value) labels into vertical axis columns, best
+    column first (the one with the most oscillator gridlines - that's
+    the indicator axis, not the price ladder or a stray watchlist)."""
+    cols: list[list] = []
+    for y, x, v in sorted(toks, key=lambda t: t[1]):
+        for c in cols:
+            if abs(c[0] - x) < 60:
+                c[1].append((y, v))
+                break
+        else:
+            cols.append([x, [(y, v)]])
+    return sorted(((int(c[0]), sorted(c[1])) for c in cols),
+                  key=lambda c: -sum(_is_gridline(v) for _, v in c[1]))
 
 
 def _assign_panels(toks: list) -> dict | None:
-    """toks = [(y, value)] of axis labels sorted top->bottom. Uses the
-    known scales: star 100..0, heart 0..-100. check and fire (squeeze)
-    have dynamic scales, so they come from the divider lines instead;
-    the 1..-1 probe below only matches the legacy fire widget.
-    Returns {name: (top_y, bottom_y)} or None."""
-    def first(pred, start=0):
-        for i in range(start, len(toks)):
-            if pred(toks[i][1]):
-                return i
-        return None
+    """toks = [(y, value)] of ONE axis column, sorted top->bottom.
 
-    def prev(pred, start):
-        for i in range(start, -1, -1):
-            if pred(toks[i][1]):
-                return i
-        return None
+    star (0..100) and heart (0..-100) have fixed scales, but TradingView
+    thins the gridline labels in a small cell and OCR is noisy (a 100 can
+    come back as 400), so either panel's labels may be missing on a given
+    frame. We linear-fit whichever panel HAS labels and derive the other
+    as the equal-height band adjacent to it. Deriving heart from star (or
+    vice-versa) only borrows the pixel HEIGHT; each panel's own labels set
+    its position whenever they're legible. Star is the lowest-weight
+    indicator, so inferring it costs little; heart/regime stays
+    label-calibrated whenever its own labels are present. Returns
+    {name: (top_y, bottom_y)} keyed to value 100/0 (star) and 0/-100
+    (heart), or None when neither panel can be anchored."""
+    zeros = sorted(y for y, v in toks if abs(v) < 0.6)
+    star_gl = [(y, v) for y, v in toks if _is_gridline(v) and 5 <= v <= 100]
+    heart_gl = [(y, v) for y, v in toks if _is_gridline(v) and -100 <= v <= -5]
 
-    # anchor on heart's unique -100 label (price panels never have it),
-    # then walk UP: heart-top zero, star-bottom zero, star's ~100.
-    # Immune to stocks trading near $100.
-    i_hbot = first(lambda v: v <= -95)
-    if i_hbot is None:
-        return None
-    i_htop = prev(lambda v: abs(v) < 0.5, i_hbot - 1)
-    if i_htop is None:
-        return None
-    i_sbot = prev(lambda v: abs(v) < 0.5, i_htop - 1)
-    if i_sbot is None:
-        return None
-    i_star = prev(lambda v: 95 <= v <= 105, i_sbot - 1)
-    if i_star is None:
-        return None
-    i_ftop = first(lambda v: 0.95 <= v <= 1.05, i_hbot + 1)
-    i_fbot = (first(lambda v: -1.05 <= v <= -0.95, i_ftop + 1)
-              if i_ftop is not None else None)
+    # star: its gridlines, plus the top-most 0 line (star sits above heart)
+    star_pts = star_gl + ([(zeros[0], 0.0)] if zeros else [])
+    sfit = _fit_scale(star_pts)
+    s_top = s_bot = None
+    if sfit:
+        a, b = sfit
+        s_top, s_bot = a * 100 + b, b
+        if s_bot - s_top < 12:
+            s_top = s_bot = None
 
-    out = {"star": (toks[i_star][0], toks[i_sbot][0]),
-           "heart": (toks[i_htop][0], toks[i_hbot][0])}
-    if i_ftop is not None and i_fbot is not None:   # legacy 1..-1 fire
-        out["fire"] = (toks[i_ftop][0], toks[i_fbot][0])
-        mid = toks[i_hbot + 1:i_ftop]
-        if len(mid) >= 2:
-            out["check"] = (mid[0][0], mid[-1][0])
-        return out
-    # check (MACD) and fire (squeeze) both have dynamic +x..0..-x
-    # scales: each panel's labels run positive to negative, so a
-    # negative label followed by a positive one marks the boundary.
-    # A single group means only the squeeze is on the chart (the MACD
-    # panel was dropped from the layout).
-    mid = toks[i_hbot + 1:]
-    split = None
-    for i in range(len(mid) - 1):
-        if mid[i][1] < 0 and mid[i + 1][1] > 0:
-            split = i + 1
-            break
-    if split is not None and split >= 2 and len(mid) - split >= 2:
-        out["check"] = (mid[0][0], mid[split - 1][0])
-        out["fire"] = (mid[split][0], mid[-1][0])
-    elif len(mid) >= 2:
-        out["fire"] = (mid[0][0], mid[-1][0])
-    return out
+    # heart: its gridlines, plus its OWN 0 line - the zero just above the
+    # -100 label, not the fire panel's 0 that sits below it
+    h_bot_y = max((y for y, v in heart_gl), default=None)
+    h_zero = max((y for y in zeros if h_bot_y is None or y < h_bot_y),
+                 default=None)
+    heart_pts = heart_gl + ([(h_zero, 0.0)] if h_zero is not None else [])
+    hfit = _fit_scale(heart_pts)
+    h_top = h_bot = None
+    if hfit:
+        ha, hb = hfit
+        h_top, h_bot = hb, ha * -100 + hb
+        if h_bot - h_top < 12:
+            h_top = h_bot = None
+
+    if s_top is None and h_top is None:
+        return None
+    if s_top is None:                           # derive star above heart
+        ppu = (h_bot - h_top) / 100.0
+        s_bot = h_top
+        s_top = s_bot - ppu * 100
+    elif h_top is None:                         # derive heart below star
+        ppu = (s_bot - s_top) / 100.0
+        h_top = s_bot
+        h_bot = h_top + ppu * 100
+    return {"star": (s_top, s_bot), "heart": (h_top, h_bot)}
 
 
 def _panel_dividers(gray: np.ndarray, y0: int, y1: int, x0: int,
@@ -312,10 +509,15 @@ def _panel_dividers(gray: np.ndarray, y0: int, y1: int, x0: int,
 
 
 def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
-    """Find the indicator column by its -100 axis label (only the heart
-    panel has one), read star/heart bounds from their fixed scales, then
-    find check/fire boundaries from the panel divider lines. Works with
-    sidebars/watchlists to the right of the chart."""
+    """Locate the indicator panels for one chart. The star (0..100) and
+    heart (0..-100) bounds come from a linear fit of whatever axis
+    gridlines are visible (see _assign_panels), so a compressed cell that
+    only labels the 90/10 lines still resolves. A chart that exposes no
+    legible oscillator gridline is dropped rather than guessed - a
+    mis-scaled regime read is worse than a missing one. The fire (LazyBear
+    squeeze) panel sits just below heart and self-scales, so its edges
+    come from the panel divider lines. Works with a sidebar to the right
+    of the chart."""
     H, W = win_img.shape[:2]
     gray_full = cv2.cvtColor(win_img, cv2.COLOR_BGRA2GRAY)
     x_crop = int(W * 0.5)
@@ -338,12 +540,12 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
         toks.append((d["top"][i] + d["height"][i] / 2,
                      x_crop + d["left"][i], v))
 
-    # anchor: a <=-95 token whose x-column also contains star's 100..0
+    # pick the axis column with the most oscillator gridlines, then fit
+    # its star/heart scales; try the next-best column if a fit fails
     assign = anchor_x = None
-    for ay, ax, av in sorted(t for t in toks if t[2] <= -95):
-        col = sorted((y, v) for y, x, v in toks if abs(x - ax) < 60)
+    for ax, col in _axis_columns(toks):
         a = _assign_panels(col)
-        if a and "star" in a and "heart" in a:
+        if a:
             assign, anchor_x = a, ax
             break
     if assign is None:
@@ -364,26 +566,16 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
     panels = {"star": region(*assign["star"]),
               "heart": region(*assign["heart"])}
 
-    # check/fire: axis-label extents snapped outward to the enclosing
-    # divider lines. Charts show extra/double dividers (8 seen on a
-    # 4-panel layout), so consecutive-divider counting is unreliable -
-    # the labels say WHICH panel, the nearest divider says its edge.
-    y_start = int(assign["heart"][1]) + 6
-    divs = _panel_dividers(gray_full, y_start, H - 40, px0, px1)
-
-    def refine(ty, by):
-        top = max((d for d in divs if d <= ty + 8), default=ty - 6)
-        bot = min((d for d in divs if d >= by - 8), default=by + 6)
-        return region(top + 3, bot - 3)
-
-    if "check" in assign or "fire" in assign:
-        for k in ("check", "fire"):
-            if k in assign:
-                panels[k] = refine(*assign[k])
-    elif len(divs) >= 2:   # no usable labels at all
-        panels["check"] = region(divs[0] + 3, divs[1] - 3)
-        if len(divs) >= 3:
-            panels["fire"] = region(divs[1] + 3, divs[2] - 3)
+    # fire (squeeze) is the panel just below heart. Its scale is dynamic,
+    # so read_squeeze self-scales - we only need to enclose it: the first
+    # divider at/under heart's bottom to the next one (or the cell floor).
+    h_bot = assign["heart"][1]
+    divs = _panel_dividers(gray_full, max(0, int(h_bot) - 4), H - 30,
+                           px0, px1)
+    f_top = min((dv for dv in divs if dv >= h_bot - 2), default=int(h_bot) + 4)
+    f_bot = min((dv for dv in divs if dv > f_top + 20), default=H - 30)
+    if f_bot - f_top >= 15:
+        panels["fire"] = region(f_top + 3, f_bot - 3)
 
     return {k: v for k, v in panels.items() if v["height"] >= 15} or None
 
@@ -457,31 +649,46 @@ class TVTracker:
     def report(self, ok: bool):
         self.misses = 0 if ok else self.misses + 1
 
+    @staticmethod
+    def _need(n: int) -> int:
+        """How many cells must carry the panel fingerprint to accept a
+        layout: all of a 1-chart window, else ceil(0.75n) (one cell may
+        be an empty/odd chart)."""
+        return 1 if n == 1 else max(2, -(-n * 3 // 4))
+
+    def _probe(self, win_img: np.ndarray, rect: dict,
+               cells: list[dict]) -> list[dict]:
+        slots = []
+        for cell in cells:
+            sub = np.ascontiguousarray(
+                win_img[cell["top"]:cell["top"] + cell["height"],
+                        cell["left"]:cell["left"] + cell["width"]])
+            sub_rect = {"left": rect["left"] + cell["left"],
+                        "top": rect["top"] + cell["top"],
+                        "width": cell["width"], "height": cell["height"]}
+            panels = locate_tv_panels(sub, sub_rect)
+            if panels:
+                slots.append({"rect": sub_rect, "panels": panels,
+                              "symbol": detect_slot_symbol(sub)})
+        return slots
+
     def _locate_slots(self, win_img: np.ndarray, rect: dict) -> list[dict]:
-        """Try grid layouts (most charts first) and keep the first where
-        enough cells carry the panel fingerprint - 3 of 4 counts (one
-        cell may be an empty/odd chart), 2 of 2, or the whole window."""
+        """Locate the chart cells. In auto mode the live separator lines
+        come first (they track any resize/move and drop the right-hand
+        sidebar); if that doesn't pan out we fall back to equal-split
+        layouts, most charts first."""
+        if self.grid == "auto":
+            for cells in detect_chart_grid(win_img) or []:
+                slots = self._probe(win_img, rect, cells)
+                if len(slots) >= self._need(len(cells)):
+                    return slots
         H, W = win_img.shape[:2]
         layouts = ([self.grid] if self.grid in self._LAYOUTS
                    else self._AUTO_ORDER)
         for name in layouts:
             rows, cols = self._LAYOUTS[name]
-            slots = []
-            for cell in grid_cells(W, H, rows, cols):
-                sub = np.ascontiguousarray(
-                    win_img[cell["top"]:cell["top"] + cell["height"],
-                            cell["left"]:cell["left"] + cell["width"]])
-                sub_rect = {"left": rect["left"] + cell["left"],
-                            "top": rect["top"] + cell["top"],
-                            "width": cell["width"],
-                            "height": cell["height"]}
-                panels = locate_tv_panels(sub, sub_rect)
-                if panels:
-                    slots.append({"rect": sub_rect, "panels": panels,
-                                  "symbol": detect_slot_symbol(sub)})
-            n = rows * cols
-            need = 1 if n == 1 else max(2, -(-n * 3 // 4))  # ceil(0.75n)
-            if len(slots) >= need:
+            slots = self._probe(win_img, rect, grid_cells(W, H, rows, cols))
+            if len(slots) >= self._need(rows * cols):
                 return slots
         return []
 
