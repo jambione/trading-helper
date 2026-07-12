@@ -26,7 +26,22 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\frontend\\\\src\\\\components\\\\\" -File | Select-Object -ExpandProperty Name)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\frontend\\\\src\\\\components\\\\AlertRow\" -ErrorAction SilentlyContinue)",
       "Bash(Select-Object -ExpandProperty FullName)",
-      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\backend\\\\\" -Recurse -File | Select-Object FullName)"
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\jonmb\\\\repos\\\\trading-scanners\\\\backend\\\\\" -Recurse -File | Select-Object FullName)",
+      "Bash(python -c \"import tv_signal; print\\('import OK; workflow_add_wb loaded:', tv_signal.workflow_add_wb is not None\\)\")",
+      "Bash(python -m pytest ../tests/test_tv_grid.py -q)",
+      "Bash(python -c \"import tv_signal; print\\('import OK'\\)\")",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(../.venv/Scripts/python.exe tv_test_grid.py)",
+      "Bash(../.venv/Scripts/python.exe -c \"import tv_signal; print\\('import OK'\\)\")",
+      "Bash(git -C .. status --short tv-monitor/)",
+      "Bash(../.venv/Scripts/python.exe -m ruff check tv_signal.py)",
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbg2.py)",
+      "Bash(../.venv/Scripts/python.exe _dbg3.py)",
+      "Bash(../.venv/Scripts/python.exe _dbg4.py)",
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe tv_test_grid.py)",
+      "Bash(../.venv/Scripts/python.exe -c \"import tv_signal; from tv_signal import WebullHotkey; h=WebullHotkey.__new__\\(WebullHotkey\\); print\\('SPACE=', repr\\(WebullHotkey.SPACE\\)\\); print\\('import OK'\\)\")",
+      "Bash(../.venv/Scripts/python.exe -c \"import tv_signal; from tv_signal import WebullHotkey; print\\('SPACE=', repr\\(WebullHotkey.SPACE\\)\\); print\\('import OK'\\)\")"
     ]
   }
 }
