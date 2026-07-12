@@ -12,9 +12,12 @@ The chart must stay VISIBLE on screen - a hidden browser tab can't be read.
 """
 from __future__ import annotations
 
+import contextlib
 import csv
+import io
 import json
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +42,14 @@ try:
     from session_clock import session_line
 except Exception:                                       # noqa: BLE001
     session_line = None
+
+# optional Webull symbol-load workflow (repo root). The monitor runs fine
+# without it - non-Windows, or the automation deps aren't installed - in
+# which case the 1-4 hotkeys are simply disabled.
+try:
+    from windows_agent import workflow_add_wb
+except Exception:                                       # noqa: BLE001
+    workflow_add_wb = None
 
 if sys.platform == "win32":
     import ctypes
@@ -1093,6 +1104,60 @@ def read_slot(s: Slot, sct, t0: float) -> bool:
     return bool(star or heart or check or sq_info)
 
 
+class WebullHotkey:
+    """Press a slot number (1-9) to load that chart's symbol into Webull
+    via the existing windows_agent workflow. A daemon thread reads the
+    keys - so the render loop never blocks - and runs the send there too
+    (it steals focus for ~2s and prints, which we swallow so the Rich Live
+    display stays clean). Windows-only; a no-op if the workflow import
+    failed, in which case the on-screen hint is hidden."""
+
+    def __init__(self):
+        self.enabled = sys.platform == "win32" and workflow_add_wb is not None
+        self._by_key: dict[str, str] = {}
+        self._status = ""
+        self._lock = threading.Lock()
+        if self.enabled:
+            threading.Thread(target=self._reader, daemon=True).start()
+
+    def update(self, slots: list["Slot"]):
+        """Refresh the key -> symbol map from the current grid each poll."""
+        with self._lock:
+            self._by_key = {str(s.idx): s.symbol for s in slots
+                            if s.symbol and 1 <= s.idx <= 9}
+
+    def status(self) -> str:
+        with self._lock:
+            return self._status
+
+    def _set(self, msg: str):
+        with self._lock:
+            self._status = f"{datetime.now():%H:%M:%S}  {msg}"
+
+    def _reader(self):
+        try:
+            import msvcrt
+        except Exception:                                # noqa: BLE001
+            return
+        while True:
+            try:
+                ch = msvcrt.getwch()
+            except Exception:                            # noqa: BLE001
+                return                                   # no real console
+            with self._lock:
+                sym = self._by_key.get(ch)
+            if not sym:
+                continue
+            self._set(f"sending {sym} to Webull ...")
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    ok = workflow_add_wb(sym)
+                self._set(f"Webull now on {sym}" if ok
+                          else f"Webull send FAILED for {sym}")
+            except Exception as e:                       # noqa: BLE001
+                self._set(f"Webull send error: {e}")
+
+
 def main():
     cfg = load_config()
     interval = cfg.get("poll_interval", 1.0)
@@ -1104,6 +1169,7 @@ def main():
     tracker = TVTracker(cfg, console)
     leader = LeaderTracker(float(cfg.get("leader_margin", 1.5)),
                            int(cfg.get("leader_confirm_reads", 5)))
+    hotkeys = WebullHotkey()
 
     slots: list[Slot] = []
     logf, logw = open_log()
@@ -1132,8 +1198,13 @@ def main():
                 last_sym = t0
                 refresh_slot_symbols(slots, sct)
             for s in slots:
-                s.set_symbol(s.pin or s.ocr_sym
-                             or (tracker.title_symbol if single else None))
+                # a single chart's window title is authoritative and beats
+                # a whole-window OCR that can catch a browser tab ("YouTube");
+                # in a grid the title only names the active cell, so OCR leads
+                s.set_symbol(s.pin
+                             or (tracker.title_symbol if single else None)
+                             or s.ocr_sym)
+            hotkeys.update(slots)
 
             ok_any = False
             for s in slots:
@@ -1211,6 +1282,14 @@ def main():
                 parts.append(slots_table(slots, lead, l2_sym))
             parts.append(detail_table(focus, len(stamps) / 5.0, misses,
                                       l2, master, l2_note))
+            if hotkeys.enabled:
+                st = hotkeys.status()
+                hint = (f"[dim]keys 1-{max(1, len(slots))}: "
+                        "load that chart into Webull[/dim]")
+                parts.append(Panel(
+                    Align.center(hint + (f"     [bold green]{st}[/bold green]"
+                                         if st else "")),
+                    border_style="grey37", padding=(0, 1)))
             live.update(Group(*parts))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
