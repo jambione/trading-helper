@@ -41,7 +41,11 @@
       "Bash(../.venv/Scripts/python.exe _dbg4.py)",
       "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe tv_test_grid.py)",
       "Bash(../.venv/Scripts/python.exe -c \"import tv_signal; from tv_signal import WebullHotkey; h=WebullHotkey.__new__\\(WebullHotkey\\); print\\('SPACE=', repr\\(WebullHotkey.SPACE\\)\\); print\\('import OK'\\)\")",
-      "Bash(../.venv/Scripts/python.exe -c \"import tv_signal; from tv_signal import WebullHotkey; print\\('SPACE=', repr\\(WebullHotkey.SPACE\\)\\); print\\('import OK'\\)\")"
+      "Bash(../.venv/Scripts/python.exe -c \"import tv_signal; from tv_signal import WebullHotkey; print\\('SPACE=', repr\\(WebullHotkey.SPACE\\)\\); print\\('import OK'\\)\")",
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgfire.py)",
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgdiv.py)",
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgcrop.py)",
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgsq.py)"
     ]
   }
 }

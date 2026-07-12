@@ -659,14 +659,21 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
     panels = {"star": region(*assign["star"]),
               "heart": region(*assign["heart"])}
 
-    # fire (squeeze) is the panel just below heart. Its scale is dynamic,
-    # so read_squeeze self-scales - we only need to enclose it: the first
-    # divider at/under heart's bottom to the next one (or the cell floor).
+    # fire (squeeze) is the panel just below heart and the LAST oscillator
+    # in this layout. Its top is the divider at/under heart's bottom; its
+    # bottom is the chart floor. We do NOT stop at the next divider: the
+    # momentum panel's own gridlines (0 / +/-1.0) and the squeeze zero line
+    # read as uniform horizontal lines too, and a replay control bar adds
+    # more - snapping to the first of those truncated the panel to a sliver
+    # ABOVE the histogram bars, so read_squeeze saw no green/red and
+    # returned None. read_squeeze self-scales and keys off the newest bar,
+    # so enclosing empty space (time axis, replay bar) below the bars is
+    # harmless; clipping the bars is not.
     h_bot = assign["heart"][1]
     divs = _panel_dividers(gray_full, max(0, int(h_bot) - 4), H - 30,
                            px0, px1)
     f_top = min((dv for dv in divs if dv >= h_bot - 2), default=int(h_bot) + 4)
-    f_bot = min((dv for dv in divs if dv > f_top + 20), default=H - 30)
+    f_bot = H - 30
     if f_bot - f_top >= 15:
         panels["fire"] = region(f_top + 3, f_bot - 3)
 
