@@ -48,6 +48,8 @@ tv-monitor/tv_test_grid.png
 tv-monitor/tv_test_grid.txt
 webull-l2/l2_log.csv
 webull-l2/trades.csv
+webull-l2/*-old-*.csv
+webull-l2/ts_*.png
 webull-l2/test_locate_result.txt
 webull-l2/debug_*.png
 webull-l2/debug_*.txt

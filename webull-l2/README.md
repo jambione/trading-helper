@@ -21,13 +21,46 @@ python l2_signal.py
 
 Live terminal dashboard shows bid/ask, spread, 10-level sizes, imbalance, and detected walls. On a signal you get a triple beep (high = BUY, low = SELL), a Windows toast, and a CSV entry in `l2_log.csv`.
 
+## The one signal to watch: 5m CONFIDENCE
+
+The big banner at the top is the whole point — everything in the table below is supporting detail. It reads e.g. `GO / HOLD LONG · confidence ●●● (3/3) · 2m03s`.
+
+Confidence is **agreement of independent, hard-to-spoof evidence**, not the magnitude of any single meter. Three pillars each vote long / short / neutral:
+
+- **trend** — the 5-minute robust drift (where price actually went)
+- **tape** — 60s executed buy/sell dominance from Time&Sales (real money; can't be spoofed; abstains under 8 prints)
+- **vwap** — price above / below the session VWAP (who controls the day)
+
+The direction is the majority; the dots show how many agree. **3/3 = size up, 2/3 = normal, split or <2 = STAND ASIDE** no matter how extreme one meter looks. Hysteresis (`long_confirm_secs`) holds the stance so it doesn't flicker, and the small `trend ▲ tape ▲ vwap ▲` line under it shows the one-glance why.
+
+Imbalance is deliberately **not** a confidence pillar — it's resting displayed size, the one input spoofers fake. It stays a detail row, not your focus signal.
+
+## Time & Sales (the tape)
+
+Keep the Webull **Time&Sales** widget visible next to the L2 panel. A background thread locates it, OCRs the prints (tolerating the merged columns OCR produces), and sides each print by color, then by the quote rule (at/above ask = buy, at/below bid = sell) and tick rule for the uncolored ones. That feeds the tape pillar, the `Tape 1m/5m` rows, the true volume-weighted `VWAP` row, and a tape veto in the playbook. Toggle with `ts_enabled`; tune `ts_poll` (0.6s).
+
 ## How signals work
 
 - **Imbalance** = total bid size / total ask size across visible levels.
-- **BUY**: imbalance ≥ `imbalance_buy` (1.8) for `confirm_reads` (3) consecutive reads, spread ≤ `max_spread_pct`, and no large ask wall sitting at the best ask.
+- **BUY**: imbalance ≥ `imbalance_buy` (1.8) for `confirm_reads` (3) consecutive reads, spread ≤ `max_spread_pct`, no large ask wall at the best ask, price not falling, **and the executed tape isn't selling** (`tape_gate_entries`, veto when 60s tape dominance ≤ −`tape_dom_min` with ≥8 prints). The tape veto is the spoof filter the old imbalance-only entry was missing — it's what produced 52 stop-outs in the paper log.
 - **SELL**: imbalance ≤ `imbalance_sell` (0.55) for 3 consecutive reads.
 - **Walls**: any level ≥ `wall_multiple` (4×) the median size on its side.
 - `alert_cooldown` (30s) prevents spam. Tune everything in `config.json`.
+
+## Symbol switching & re-measuring
+
+- When you switch tickers in Webull, all per-symbol state (trend history, streaks, walls, tape, any virtual position) is wiped so the new stock starts clean. Symbol detection needs two consecutive readings to switch, so one OCR misread of the ticker can't nuke your history.
+- `trades.csv` and `l2_log.csv` now carry a `symbol` column (old files are auto-archived as `*-old-<stamp>.csv` on the schema change). Run `python trade_stats.py` after a few sessions to see win rate / avg PnL by exit reason, day, and symbol — with the glitchy `|pnl|>10%` rows split out. Use `--all` to include archived files.
+
+## 5m view integrity
+
+The 5-minute trend/projection drive the confidence signal, bias, and playbook, so they're guarded:
+
+- **Coverage gate**: the 5m trend shows `…` (with a `warming: X.Xm of 5m` note) until `trend_min_coverage` (60%) of the window actually has data. No more calling 40 seconds of history a "5-minute trend" — the playbook stays STAND ASIDE until the read is real.
+- **Robust endpoints**: trend and projection use median mids over a band at each end of the window instead of two raw samples, so one surviving OCR misread can't swing them.
+- **Glitch gate**: a frame whose mid jumps more than `glitch_jump_pct` (1.5%) from the recent median is held back unless `glitch_confirm` (2) consecutive reads land there. Real spikes pass one frame later; single-frame garbage never enters history. Dropped frames show as `glitch:N` in the title.
+- **5m sparkline**: the price row charts median mids per time bucket across the whole trend window (the shape you're trading), not just the last ~15 seconds of reads.
+- **Frame skip**: when the captured panel's pixels are byte-identical to the previous poll, Tesseract is skipped and the last parse is re-stamped — a large CPU saving on quiet tape, which keeps the effective read rate up.
 
 ## Tuning tips
 

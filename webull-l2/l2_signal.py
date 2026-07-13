@@ -23,6 +23,7 @@ import os
 import sys
 import threading
 import time
+import zlib
 from datetime import datetime
 from pathlib import Path
 
@@ -36,9 +37,10 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-from l2_core import (L2Book, LongView, PaperTrader, Signal, SignalEngine,
-                     Trade, WallTracker, market_bias, parse_l2_text,
-                     playbook, project_price)
+from l2_core import (GlitchGate, L2Book, LongView, PaperTrader, Signal,
+                     SignalEngine, Trade, WallTracker, _median, market_bias,
+                     parse_l2_text, playbook, project_price)
+from tape_core import Tape, classify_rgb, parse_tape_line
 
 # shared session clock (repo root) — optional: monitor runs fine without it
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,6 +68,9 @@ CONFIG_PATH = HERE / "config.json"
 POS_STATE = HERE.parent / "position_state.json"   # scripts/position_feed.py
 
 TESS_CFG = "--psm 6 -c tessedit_char_whitelist=0123456789.,K"
+# Time&Sales rows need ':' for timestamps; '--' (exch/cond column) is
+# whitelisted away so rows parse as "time price size".
+TS_TESS_CFG = "--psm 6 -c tessedit_char_whitelist=0123456789.:,K"
 
 
 def load_config() -> dict:
@@ -113,7 +118,10 @@ def preprocess(img: np.ndarray) -> np.ndarray:
 
 
 def ocr_book(sct, region: dict) -> L2Book | None:
-    raw = np.asarray(sct.grab(region))
+    return ocr_image(np.asarray(sct.grab(region)))
+
+
+def ocr_image(raw: np.ndarray) -> L2Book | None:
     # image_to_data gives word boxes; rebuild rows with explicit spaces so
     # narrow column gaps can't merge numbers together.
     d = pytesseract.image_to_data(preprocess(raw), config=TESS_CFG,
@@ -366,6 +374,20 @@ class RegionTracker:
         self.bad_anchors = 0
         self.manual_until = 0.0
         self.symbol: str | None = None
+        self._sym_cand: str | None = None
+
+    def note_symbol(self, sym: str | None):
+        """Adopt a detected symbol with hysteresis: switching wipes all
+        per-symbol state upstream, so a CHANGE needs two consecutive
+        readings of the same new ticker — one OCR misread (VEE for VEEE)
+        must not nuke 5 minutes of history. First detection is instant."""
+        if not sym or sym == self.symbol:
+            self._sym_cand = None
+            return
+        if self.symbol is None or sym == self._sym_cand:
+            self.symbol, self._sym_cand = sym, None
+        else:
+            self._sym_cand = sym
 
     def report(self, ok: bool):
         if ok:
@@ -407,9 +429,7 @@ class RegionTracker:
         found = locate_l2_region(img, rect,
                                  HERE if self.debug else None)
         try:
-            sym = detect_symbol(img)
-            if sym:
-                self.symbol = sym
+            self.note_symbol(detect_symbol(img))
         except Exception:
             pass
         if self.debug:
@@ -431,6 +451,202 @@ class RegionTracker:
         elif self.region is None:
             self.region = self.manual
         return self.region
+
+
+# ---------------------------------------------------------- time & sales ----
+
+def locate_ts_region(win_img: np.ndarray, win_rect: dict) -> dict | None:
+    """Find the Time&Sales widget inside a screenshot of the Webull window
+    and return the screen region of the print rows below its tab.
+
+    Anchor is the 'Time&Sales' tab text (any OCR token containing 'sales');
+    the region runs from there down to the Trade/TurboTrader/Ladder tab row
+    when visible, and right to the window edge minus the scrollbar.
+
+    Adaptive threshold, not Otsu: the tab text is dim grey on dark and an
+    Otsu pass over the whole window erases it entirely (the bright tape
+    rows dominate the histogram); 3x + local threshold reads it clean."""
+    gray = cv2.cvtColor(win_img, cv2.COLOR_BGRA2GRAY)
+    scale = 3
+    gray = cv2.resize(gray, None, fx=scale, fy=scale,
+                      interpolation=cv2.INTER_CUBIC)
+    dark = np.median(gray) < 127
+    for g in ([255 - gray, gray] if dark else [gray, 255 - gray]):
+        th = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY, 41, 15)
+        d = pytesseract.image_to_data(th, config="--psm 11",
+                                      output_type=pytesseract.Output.DICT)
+        words = [(d["text"][i].strip().lower(), d["left"][i], d["top"][i],
+                  d["width"][i], d["height"][i])
+                 for i in range(len(d["text"])) if d["text"][i].strip()]
+        anchors = [w for w in words if "sales" in w[0]]
+        if not anchors:
+            continue
+        a = min(anchors, key=lambda w: w[2])   # topmost 'sales' token
+        h = a[4]
+        left = max(0, a[1] - h)
+        right = th.shape[1] - int(1.5 * h)     # leave the scrollbar out
+        top = a[2] + int(h * 2.2)              # skip the tab bar underline
+        height = int(h * 1.9 * 18)             # ~18 print rows
+        tabs = [w[2] for w in words
+                if w[0] in ("trade", "turbotrader", "ladder")
+                and w[2] > a[2]]
+        if tabs:
+            height = min(height, min(tabs) - top - h // 2)
+        region = {
+            "left": win_rect["left"] + left // scale,
+            "top": win_rect["top"] + top // scale,
+            "width": (right - left) // scale,
+            "height": height // scale,
+        }
+        region["width"] = min(region["width"], win_rect["left"]
+                              + win_rect["width"] - region["left"])
+        region["height"] = min(region["height"], win_rect["top"]
+                               + win_rect["height"] - region["top"])
+        if region["width"] >= 80 and region["height"] >= 40:
+            return region
+    return None
+
+
+def _row_side(raw: np.ndarray, y0: int, y1: int) -> str:
+    """Aggressor side from the row's pixels in the RAW (color) frame.
+    Uses every clearly-colored pixel in the row band, so it works for
+    colored text on dark AND for the solid-highlight big-print rows
+    where the text itself is white."""
+    strip = raw[max(0, y0):max(y0 + 1, y1), :, :3].astype(np.int16)
+    b, g, r = strip[..., 0], strip[..., 1], strip[..., 2]   # mss is BGRA
+    colored = np.abs(r - g) > 40
+    if int(colored.sum()) < 20:
+        return "N"
+    return classify_rgb(float(r[colored].mean()), float(g[colored].mean()),
+                        float(b[colored].mean()))
+
+
+def tape_rows(raw: np.ndarray) -> list:
+    """OCR one Time&Sales frame -> [(hh:mm:ss, price, size, side)],
+    top-down (newest print first), garbled rows skipped.
+
+    Two passes: rows that parse unambiguously establish the going price,
+    which then resolves the merged price/size blobs OCR produces when the
+    columns touch ('138.40313' -> 138.40 x 313, not 138.403 x 13)."""
+    th = preprocess(raw)                       # 3x upscale, binarized
+    d = pytesseract.image_to_data(th, config=TS_TESS_CFG,
+                                  output_type=pytesseract.Output.DICT)
+    lines: dict[tuple, list] = {}
+    for i, word in enumerate(d["text"]):
+        word = word.strip()
+        if not word:
+            continue
+        key = (d["block_num"][i], d["par_num"][i], d["line_num"][i])
+        lines.setdefault(key, []).append(
+            (d["left"][i], d["top"][i], d["height"][i], word))
+    entries = []                               # (text, y0, y1) top-down
+    for words in sorted(lines.values(), key=lambda ws: min(w[1] for w in ws)):
+        entries.append((" ".join(w[3] for w in sorted(words)),
+                        min(w[1] for w in words) // 3,      # raw coords
+                        max(w[1] + w[2] for w in words) // 3))
+    first = [parse_tape_line(t) for t, _, _ in entries]
+    prices = [p[1] for p in first if p]
+    hint = _median(prices) if prices else None
+    # every price in the widget shares one decimal width; learn it from
+    # the clean rows so merged blobs split deterministically
+    decs = []
+    for (t, _, _), p in zip(entries, first):
+        if p:
+            for d0 in (4, 3, 2):     # longest first: '1.3350' beats '1.33'
+                if f"{p[1]:.{d0}f}" in t:
+                    decs.append(d0)
+                    break
+    dec = max(set(decs), key=decs.count) if decs else None
+    rows = []
+    for parsed, (text, y0, y1) in zip(first, entries):
+        if parsed is None and hint is not None:
+            parsed = parse_tape_line(text, hint, dec)
+        if parsed:
+            rows.append((*parsed, _row_side(raw, y0, y1)))
+    return rows
+
+
+class TapeReader:
+    """Daemon thread that captures the Time&Sales widget, OCRs the prints
+    with per-row color side-detection, and feeds a Tape aggregator. Runs
+    independently of the L2 loop so a slow tape read can never stall the
+    book, and skips OCR entirely when the tape pixels haven't changed."""
+
+    def __init__(self, cfg: dict, console=None):
+        self.enabled = bool(cfg.get("ts_enabled", True))
+        self.poll = float(cfg.get("ts_poll", 0.6))
+        self.manual = cfg.get("ts_region")
+        self.console = console
+        self.tape = Tape()
+        self.lock = threading.Lock()
+        self.region: dict | None = None
+        self.ok = 0
+        self.miss = 0
+        self._misses_row = 0
+        self._win_rect: dict | None = None
+        self._frame_key: int | None = None
+        self._quote: tuple | None = None       # (bid, ask, ts) from L2 loop
+        if self.enabled:
+            threading.Thread(target=self._run, daemon=True).start()
+
+    def set_quote(self, bid: float, ask: float, ts: float):
+        """Latest L2 touch, used to side uncolored prints (quote rule)."""
+        with self.lock:
+            self._quote = (bid, ask, ts)
+
+    def snapshot(self, now: float) -> dict:
+        with self.lock:
+            return {"on": self.region is not None and self.ok > 0,
+                    "m1": self.tape.metrics(now, 60),
+                    "m5": self.tape.metrics(now, 300),
+                    "vwap": self.tape.vwap(),
+                    "since": self.tape.started,
+                    "ok": self.ok, "miss": self.miss}
+
+    def reset(self):
+        with self.lock:
+            self.tape.reset()
+
+    def _run(self):
+        with mss.MSS() as sct:
+            while True:
+                t0 = time.time()
+                try:
+                    self._step(sct, t0)
+                except Exception:                          # noqa: BLE001
+                    pass   # never let the tape thread die on a bad frame
+                time.sleep(max(0.0, self.poll - (time.time() - t0)))
+
+    def _step(self, sct, now: float):
+        rect = find_webull_window()
+        if rect and (self.region is None or rect != self._win_rect
+                     or self._misses_row >= 5):
+            found = locate_ts_region(np.asarray(sct.grab(rect)), rect)
+            if found and found != self.region and self.console:
+                self.console.print(f"[dim]Time&Sales located at {found}[/dim]")
+            self.region = found or self.region or self.manual
+            self._win_rect = rect
+            self._misses_row = 0
+        if not self.region:
+            return
+        raw = np.asarray(sct.grab(self.region))
+        key = zlib.crc32(raw.tobytes())
+        if key == self._frame_key:
+            return                     # tape unchanged -> no OCR needed
+        self._frame_key = key
+        rows = tape_rows(raw)
+        with self.lock:
+            bid = ask = None
+            if self._quote and now - self._quote[2] <= 5.0:
+                bid, ask = self._quote[0], self._quote[1]
+            if rows:
+                self.ok += 1
+                self._misses_row = 0
+                self.tape.ingest_frame(rows, now, bid, ask)
+            else:
+                self.miss += 1
+                self._misses_row += 1
 
 
 # ---------------------------------------------------------------- alerts ----
@@ -471,20 +687,37 @@ def alert(sig: Signal, cfg: dict):
 
 # ------------------------------------------------------------------- log ----
 
+def _open_csv(path: Path, fields: list[str]):
+    """Open a CSV for append; if an existing file's header doesn't match
+    (schema changed, e.g. the symbol column was added), the old file is
+    renamed <stem>-old-<stamp>.csv instead of being silently mixed."""
+    if path.exists():
+        try:
+            with open(path) as fh:
+                first = fh.readline().strip()
+        except Exception:                                  # noqa: BLE001
+            first = ""
+        if first != ",".join(fields):
+            path.rename(path.with_name(
+                f"{path.stem}-old-{datetime.now():%Y%m%d-%H%M%S}.csv"))
+    new = not path.exists()
+    f = open(path, "a", newline="")
+    w = csv.writer(f)
+    if new:
+        w.writerow(fields)
+    return f, w
+
+
 class CsvLog:
-    FIELDS = ["time", "best_bid", "best_ask", "spread_pct", "bid_size",
-              "ask_size", "imbalance", "signal", "reason"]
+    FIELDS = ["time", "symbol", "best_bid", "best_ask", "spread_pct",
+              "bid_size", "ask_size", "imbalance", "signal", "reason"]
 
     def __init__(self, path: Path):
-        new = not path.exists()
-        self.f = open(path, "a", newline="")
-        self.w = csv.writer(self.f)
-        if new:
-            self.w.writerow(self.FIELDS)
+        self.f, self.w = _open_csv(path, self.FIELDS)
 
-    def write(self, book: L2Book, sig: Signal | None):
+    def write(self, book: L2Book, sig: Signal | None, symbol: str = ""):
         self.w.writerow([
-            datetime.now().isoformat(timespec="milliseconds"),
+            datetime.now().isoformat(timespec="milliseconds"), symbol,
             f"{book.best_bid:.4f}", f"{book.best_ask:.4f}",
             f"{book.spread_pct:.3f}", int(book.bid_size), int(book.ask_size),
             f"{book.imbalance:.3f}",
@@ -494,20 +727,18 @@ class CsvLog:
 
 
 class TradeLog:
-    """One row per completed round trip -> trades.csv. Review this to see
-    which setups actually made money, then tune config thresholds."""
-    FIELDS = ["entry_time", "entry", "exit_time", "exit", "pnl_pct", "reason"]
+    """One row per completed round trip -> trades.csv. Review this with
+    trade_stats.py to see which setups actually made money, then tune."""
+    FIELDS = ["entry_time", "symbol", "entry", "exit_time", "exit",
+              "pnl_pct", "reason"]
 
     def __init__(self, path: Path):
-        new = not path.exists()
-        self.f = open(path, "a", newline="")
-        self.w = csv.writer(self.f)
-        if new:
-            self.w.writerow(self.FIELDS)
+        self.f, self.w = _open_csv(path, self.FIELDS)
 
     def write(self, tr: Trade):
         self.w.writerow([
             datetime.fromtimestamp(tr.entry_ts).isoformat(timespec="seconds"),
+            tr.symbol,
             f"{tr.entry:.4f}",
             datetime.fromtimestamp(tr.exit_ts).isoformat(timespec="seconds"),
             f"{tr.exit:.4f}", f"{tr.pnl_pct:+.2f}", tr.reason,
@@ -517,27 +748,86 @@ class TradeLog:
 
 # ------------------------------------------------------------- dashboard ----
 
+def _vote_cell(label: str, v) -> str:
+    """A pillar's vote as 'trend ▲' with the arrow colored by direction."""
+    arrow = {1: "[green]▲[/green]", -1: "[red]▼[/red]",
+             0: "[yellow]■[/yellow]"}.get(v, "[grey42]·[/grey42]")
+    lab = "grey42" if v is None else "grey70"
+    return f"[{lab}]{label}[/{lab}] {arrow}"
+
+
 def lv_banner(lv: dict | None) -> Panel:
-    """The longer-view stance, big and unmissable at the top."""
+    """THE signal: 5-minute confidence, big and unmissable at the top.
+
+    Four centered lines - a bold directional headline, a colored
+    confidence gauge with the agree/total fraction, the three pillar
+    votes, and a dim meta line (held time / pending turn / no-tape).
+    Everything else in the table below is supporting detail. Confidence =
+    agreement of trend + tape + VWAP (see l2_core.confidence), not the
+    size of any single meter."""
     if not lv:
-        txt, style, border = "WARMING UP …", "bold white on grey30", "grey50"
+        return Panel(
+            Align.center("[bold grey70]WARMING UP[/bold grey70]   "
+                         "[dim]building the 5-minute picture …[/dim]"),
+            title="[dim]5m CONFIDENCE[/dim]", title_align="left",
+            border_style="grey50", padding=(1, 2))
+
+    held = lv["held"]
+    dur = (f"{int(held // 60)}m{int(held % 60):02d}s"
+           if held >= 60 else f"{int(held)}s")
+    agree, total = lv.get("agree", 0), lv.get("total", 0)
+    tape_live = lv.get("tape_live", False)
+    stance = lv["stance"]
+
+    if stance == "NEUTRAL" or agree < 2:
+        color = "yellow"
+        headline = "◇   STAND ASIDE   ◇"
+        sub = "no aligned edge"
     else:
-        held = lv["held"]
-        dur = (f"{int(held // 60)}m{int(held % 60):02d}s"
-               if held >= 60 else f"{int(held)}s")
-        if lv["stance"] == "LONG":
-            txt, style, border = f"▲ ▲   H O L D   L O N G   ({dur})   ▲ ▲", \
-                "bold black on green", "green"
-        elif lv["stance"] == "BEAR":
-            txt, style, border = f"▼ ▼   S T A Y   O U T   ({dur})   ▼ ▼", \
-                "bold white on red", "red"
+        strong = agree >= 3
+        if stance == "LONG":
+            color = "green"
+            headline = "▲ ▲   GO / HOLD LONG   ▲ ▲" if strong else "▲   LEAN LONG"
+            weak_note = "half size"
+        else:  # BEAR
+            color = "red"
+            headline = ("▼ ▼   GET OUT / STAY OUT   ▼ ▼" if strong
+                        else "▼   LEAN OUT")
+            weak_note = "protect / trim"
+        if strong:
+            sub = "trend, tape and VWAP all agree"
+        elif not tape_live:
+            sub = "trend & VWAP agree — unconfirmed by tape"
         else:
-            txt, style, border = f"→   N O   E D G E   ({dur})", \
-                "bold yellow on grey23", "yellow"
-        if lv.get("pending"):
-            txt += f"   → {lv['pending']} in {int(lv['pending_left'])}s?"
-    return Panel(Align.center(f"[{style}]  {txt}  [/]"),
-                 border_style=border, padding=(1, 1))
+            sub = f"{agree} of {total} agree — {weak_note}"
+
+    # confidence gauge: filled (colored) + empty (grey) pips + fraction
+    pips = " ".join([f"[{color}]●[/{color}]"] * agree
+                    + [f"[grey42]○[/grey42]"] * max(0, total - agree))
+    gauge = (f"{pips}    [bold {color}]{agree}/{total}[/bold {color}]"
+             f"    [dim]{sub}[/dim]")
+
+    v = lv.get("votes", {})
+    pillars = "     ".join((_vote_cell("trend", v.get("trend")),
+                            _vote_cell("tape", v.get("tape")),
+                            _vote_cell("vwap", v.get("vwap"))))
+
+    meta = f"[dim]held {dur}[/dim]"
+    if not lv.get("tape_live", False):
+        meta += "   [yellow]· no tape (show Time&Sales)[/yellow]"
+    if lv.get("pending"):
+        pend = {"LONG": "LONG", "BEAR": "OUT"}.get(lv["pending"], lv["pending"])
+        meta += (f"   [dim]→ turning[/dim] [bold {color}]{pend}[/bold {color}] "
+                 f"[dim]in {int(lv['pending_left'])}s if it holds[/dim]")
+
+    body = Group(
+        Align.center(f"[bold {color}]{headline}[/bold {color}]"),
+        Align.center(gauge),
+        Align.center(pillars),
+        Align.center(meta),
+    )
+    return Panel(body, title=f"[bold {color}]5m CONFIDENCE[/bold {color}]",
+                 title_align="left", border_style=color, padding=(1, 2))
 
 
 def sparkline(vals: list[float], width: int = 40) -> str:
@@ -550,6 +840,27 @@ def sparkline(vals: list[float], width: int = 40) -> str:
     if hi - lo < 1e-9:
         return "▄" * len(vals)
     return "".join(blocks[int((v - lo) / (hi - lo) * 7)] for v in vals)
+
+
+def bucket_mids(history, window: float, buckets: int = 40) -> list[float]:
+    """Median mid per time bucket over the trailing window, oldest first.
+    Feeds the sparkline the SHAPE of the last 5 minutes instead of just
+    the last ~15 seconds of reads; empty buckets are skipped."""
+    hist = [b for b in history if b.ts >= history[-1].ts - window] \
+        if len(history) >= 2 else []
+    if len(hist) < 2:
+        return []
+    start = hist[-1].ts - window
+    cells: list[list[float]] = [[] for _ in range(buckets)]
+    for b in hist:
+        i = min(buckets - 1, max(0, int((b.ts - start) / window * buckets)))
+        cells[i].append(b.mid)
+    out = []
+    for c in cells:
+        if c:
+            c.sort()
+            out.append(c[len(c) // 2])
+    return out
 
 
 def _bias_meter(score: float, width: int = 21) -> str:
@@ -569,22 +880,44 @@ def _trend_cell(pct: float | None) -> str:
     return f"[{c}]{arrow} {pct:+.2f}%[/{c}]"
 
 
+def _shares(v: float) -> str:
+    return f"{v / 1000:.1f}K" if v >= 1000 else f"{int(v)}"
+
+
+def _tape_cell(m: dict) -> str:
+    """One tape window -> 'B 62% / S 38%   12.4K sh   34 prints'."""
+    sided = m["buy"] + m["sell"]
+    if not m["n"] or not sided:
+        return "[dim]no prints[/dim]"
+    bp = 100.0 * m["buy"] / sided
+    c = ("green" if m["dom"] >= 0.25 else "red" if m["dom"] <= -0.25
+         else "yellow")
+    return (f"[{c}]B {bp:.0f}% / S {100 - bp:.0f}%[/{c}]   "
+            f"{_shares(m['total'])} sh   {m['n']} prints")
+
+
 def render(book: L2Book | None, last_sig: Signal | None, reads: int,
            misses: int, hz: float, trader: PaperTrader | None = None,
            session_pnl: float = 0.0, n_trades: int = 0,
            trend1: float | None = None, trend5: float | None = None,
            spark: str = "", symbol: str | None = None,
            wall_events: list | None = None,
-           lv: dict | None = None, proj: tuple | None = None) -> Group:
-    t = Table(title=f"Webull L2 Monitor [bold cyan]{symbol or '?'}[/bold cyan]"
-                    f"   {hz:.1f} reads/s   ok:{reads} miss:{misses}",
-              expand=False)
+           lv: dict | None = None, proj: tuple | None = None,
+           glitches: int = 0, span5: tuple | None = None,
+           spark_label: str = "Price (recent)",
+           tape: dict | None = None) -> Group:
+    title = (f"Webull L2 Monitor [bold cyan]{symbol or '?'}[/bold cyan]"
+             f"   {hz:.1f} reads/s   ok:{reads} miss:{misses}")
+    if glitches:
+        title += f" glitch:{glitches}"
+    t = Table(title=title, expand=False)
     t.add_column("Metric"), t.add_column("Value", justify="right")
     if session_line:
         t.add_row("⏱ Session", session_line())
     if book:
+        tape_m1 = tape["m1"] if tape and tape.get("on") else None
         # one-glance verdict, always the first thing you see
-        score, label, why = market_bias(book, trend1, trend5)
+        score, label, why = market_bias(book, trend1, trend5, tape=tape_m1)
         bc = ("green" if label == "BULLISH"
               else "red" if label == "BEARISH" else "yellow")
         arrow = ("▲" if label == "BULLISH"
@@ -593,8 +926,8 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
                   f"[bold {bc}]{arrow} {label} ({score:+.0f})[/bold {bc}]")
         t.add_row("", f"[{bc}]{_bias_meter(score)}[/{bc}]  [dim]{why}[/dim]")
 
-        # the daily-use playbook: 3 checks -> 1 action
-        pb = playbook(book, trend1, trend5, wall_events or [])
+        # the daily-use playbook: 4 checks -> 1 action
+        pb = playbook(book, trend1, trend5, wall_events or [], tape_m1)
         c1 = ("[green]✓ arrows agree ▲[/green]" if pb["trend_up"]
               else "[red]✓ arrows agree ▼[/red]" if pb["trend_dn"]
               else "[dim]✗ arrows disagree[/dim]")
@@ -609,7 +942,13 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
                   + ", ".join(f"{p:.3f}" for p in pb["bid_crack"]) + "[/red]")
         else:
             c3 = "[dim]walls holding[/dim]"
-        t.add_row("Checklist", f"{c1}   {c2}   {c3}")
+        if pb["tape_ok"]:
+            c4 = ("[green]✓ tape buying[/green]" if pb["tape_up"]
+                  else "[red]✓ tape selling[/red]" if pb["tape_dn"]
+                  else "[dim]✗ tape mixed[/dim]")
+        else:
+            c4 = "[dim]— tape n/a[/dim]"
+        t.add_row("Checklist", f"{c1}   {c2}   {c3}   {c4}")
         plays = {
             "LONG_TRIGGER": "[bold green]GO LONG — trend+flow aligned and "
                             "the wall above is breaking[/bold green]",
@@ -623,28 +962,8 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
         }
         t.add_row("Play", plays[pb["verdict"]])
 
-        if lv:
-            held = lv["held"]
-            dur = (f"{int(held // 60)}m{int(held % 60):02d}s"
-                   if held >= 60 else f"{int(held)}s")
-            stances = {
-                "LONG": ("green", "▲ HOLD LONG"),
-                "BEAR": ("red", "▼ STAY OUT / PROTECT"),
-                "NEUTRAL": ("yellow", "→ NO EDGE"),
-            }
-            lc, ltxt = stances[lv["stance"]]
-            drivers = (f"60s imb {lv['med_imb']:.2f}, "
-                       f"5m {(lv['t5'] or 0):+.2f}%")
-            if lv["ask_breaks"] or lv["bid_cracks"]:
-                drivers += (f", walls {lv['ask_breaks']}▲/"
-                            f"{lv['bid_cracks']}▼")
-            line = f"[bold {lc}]{ltxt}[/bold {lc}]  ({dur})  [dim]{drivers}[/dim]"
-            if lv["pending"]:
-                pc, ptxt = stances[lv["pending"]]
-                line += (f"   [dim]→ turning[/dim] [{pc}]{ptxt.split(' ', 1)[1]}"
-                         f"[/{pc}] [dim]in {int(lv['pending_left'])}s "
-                         f"if it holds[/dim]")
-            t.add_row("Longer view", line)
+        # (the 5m confidence stance now lives in the banner above — no
+        # duplicate row here)
         imb = book.imbalance
         color = "green" if imb > 1.3 else "red" if imb < 0.7 else "yellow"
         t.add_row("Best bid / ask", f"{book.best_bid:.3f} / {book.best_ask:.3f}")
@@ -655,8 +974,28 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
         walls = book.walls()
         t.add_row("Walls", "; ".join(f"{s} {p:.3f} x{int(z):,}"
                                      for s, p, z in walls) or "none")
-        t.add_row("Move 1m / 5m",
-                  f"{_trend_cell(trend1)}   {_trend_cell(trend5)}")
+        if tape:
+            if tape.get("on"):
+                t.add_row("Tape 1m", _tape_cell(tape["m1"]))
+                t.add_row("Tape 5m", _tape_cell(tape["m5"]))
+                vw = tape.get("vwap")
+                if vw:
+                    dv = 100.0 * (book.mid - vw) / vw
+                    vc = ("green" if dv > 0.05 else "red" if dv < -0.05
+                          else "yellow")
+                    t.add_row("VWAP (tape)",
+                              f"{vw:.3f}   mid [{vc}]{dv:+.2f}%[/{vc}] vs "
+                              "vwap  [dim]since "
+                              f"{datetime.fromtimestamp(tape['since']):%H:%M}"
+                              "[/dim]")
+            else:
+                t.add_row("Tape", "[dim]Time&Sales widget not located — "
+                                  "keep it visible next to L2[/dim]")
+        move = f"{_trend_cell(trend1)}   {_trend_cell(trend5)}"
+        if trend5 is None and span5 and span5[0] > 0:
+            move += (f"  [dim]warming: {span5[0] / 60:.1f}m of "
+                     f"{span5[1] / 60:.0f}m[/dim]")
+        t.add_row("Move 1m / 5m", move)
         if proj:
             mid, target, note = proj
             chg = 100.0 * (target - mid) / mid if mid else 0.0
@@ -667,7 +1006,7 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
                       + (f"  [dim]{note}[/dim]" if note else "")
                       + "  [dim]at current pace[/dim]")
         if spark:
-            t.add_row("Price (recent)", spark)
+            t.add_row(spark_label, spark)
         if trader and trader.in_position:
             up = trader.unrealized_pct(book)
             pc = "green" if up >= 0 else "red"
@@ -709,6 +1048,10 @@ def main():
     longview = LongView(cfg)
     lv: dict | None = None
     proj: tuple | None = None
+    gate = GlitchGate(cfg.get("glitch_jump_pct", 1.5),
+                      cfg.get("glitch_confirm", 2))
+    frame_key: tuple | None = None       # (region, crc32) of the last grab
+    frame_book: L2Book | None = None     # what that frame parsed to
 
     console.print("[bold]Starting — Ctrl+C to stop.[/bold] "
                   "Keep the L2 panel visible and unobstructed.")
@@ -724,6 +1067,11 @@ def main():
     except Exception as e:
         console.print(f"[dim]position feed unavailable: {e}[/dim]")
     tracker = RegionTracker(cfg, console)
+    tsreader = TapeReader(cfg, console)
+    if tsreader.enabled:
+        console.print("[dim]Time&Sales reader on — executed prints feed "
+                      "the tape rows, checklist, and VWAP[/dim]")
+    active_sym: str | None = None      # symbol the current state belongs to
 
     def _symbol_refresher():
         # keeps the displayed ticker current when you switch stocks
@@ -734,9 +1082,7 @@ def main():
                 if not rect:
                     continue
                 try:
-                    sym = detect_symbol(np.asarray(s2.grab(rect)))
-                    if sym:
-                        tracker.symbol = sym
+                    tracker.note_symbol(detect_symbol(np.asarray(s2.grab(rect))))
                 except Exception:
                     pass
 
@@ -750,18 +1096,55 @@ def main():
                 live.update(render(None, last_sig, reads, misses, 0.0))
                 time.sleep(1.0)
                 continue
-            b = ocr_book(sct, region)
-            tracker.report(b is not None)
+            if tracker.symbol != active_sym:
+                old, active_sym = active_sym, tracker.symbol
+                if old is not None:
+                    # trends, streaks, walls, tape, and any virtual entry
+                    # computed on the old stock are garbage for the new one
+                    engine.reset()
+                    walltrack.state.clear()
+                    recent_events.clear()
+                    longview = LongView(cfg)
+                    gate = GlitchGate(cfg.get("glitch_jump_pct", 1.5),
+                                      cfg.get("glitch_confirm", 2))
+                    tsreader.reset()
+                    frame_key = frame_book = None
+                    book = lv = proj = last_sig = None
+                    dropped = trader.drop_virtual()
+                    console.print(
+                        f"[dim]symbol switch {old} → {active_sym}: history "
+                        "reset" + (", virtual position dropped" if dropped
+                                   else "") + "[/dim]")
+            raw = np.asarray(sct.grab(region))
+            key = (region["left"], region["top"], region["width"],
+                   region["height"], zlib.crc32(raw.tobytes()))
+            if key == frame_key:
+                # pixels unchanged since the last poll -> skip Tesseract
+                # entirely and re-stamp the previous parse (same market
+                # state, fresh timestamp). Big CPU win on a quiet tape.
+                b = (L2Book(frame_book.bids, frame_book.asks)
+                     if frame_book else None)
+            else:
+                b = ocr_image(raw)
+                frame_key, frame_book = key, b
+            ok = b is not None
+            tracker.report(ok)
+            if ok and not gate.accept(b):
+                b = None   # isolated out-of-band frame -> held back
             if b:
                 reads += 1
                 book = b
-                sig = engine.update(b)
+                if tsreader.enabled:
+                    tsreader.set_quote(b.best_bid, b.best_ask, t0)
+                tsnap = tsreader.snapshot(t0) if tsreader.enabled else None
+                tape_m1 = tsnap["m1"] if tsnap and tsnap.get("on") else None
+                sig = engine.update(b, tape_m1)
                 # anchor exits to the real broker position when the feed
                 # is fresh (None = feed unknown -> leave the trader alone)
                 real = read_real_position(tracker.symbol)
                 if real is not None:
                     trader.sync_real(real or None, b)
-                exit_sig, trade = trader.update(b, sig)
+                exit_sig, trade = trader.update(b, sig, active_sym or "")
                 # exit alerts take priority (they're anchored to your entry)
                 show = exit_sig or sig
                 if exit_sig:
@@ -777,7 +1160,8 @@ def main():
                                     if t0 - ts <= 10]
                 lv = longview.update(
                     b, engine.trend_pct(cfg.get("trend_window", 300)),
-                    evs, t0)
+                    evs, t0, tape=tape_m1,
+                    vwap=tsnap["vwap"] if tsnap else None)
                 # projection: current pace extended 5 min, with the wall
                 # standing in its way (if any) noted
                 proj = None
@@ -803,14 +1187,21 @@ def main():
                 # a combined chart+orderflow master verdict
                 try:
                     score, _, _ = market_bias(b, engine.trend_pct(60),
-                                              engine.trend_pct(300))
+                                              engine.trend_pct(300),
+                                              tape=tape_m1)
                     pb = playbook(b, engine.trend_pct(60),
                                   engine.trend_pct(300),
-                                  [e for _, e in recent_events])
+                                  [e for _, e in recent_events], tape_m1)
                     (HERE.parent / "l2_state.json").write_text(json.dumps({
                         "ts": t0, "symbol": tracker.symbol,
                         "bias": round(score, 1), "play": pb["verdict"],
+                        "confidence": (f"{lv['stance']} {lv['agree']}/"
+                                       f"{lv['total']}") if lv else None,
                         "imbalance": round(b.imbalance, 2),
+                        "tape_dom": (round(tape_m1["dom"], 2)
+                                     if tape_m1 else None),
+                        "vwap": (round(tsnap["vwap"], 4)
+                                 if tsnap and tsnap.get("vwap") else None),
                         "price": round(proj[0], 4) if proj else None,
                         "proj": round(proj[1], 4) if proj else None,
                         "stance": lv["stance"] if lv else None,
@@ -827,12 +1218,11 @@ def main():
                     if tlog:
                         tlog.write(trade)
                 if log:
-                    log.write(b, show)
-            else:
+                    log.write(b, show, active_sym or "")
+            elif not ok:
                 misses += 1
                 if cfg.get("debug", True) and misses % 25 == 0:
                     # dump what the failing region looks like + raw OCR text
-                    raw = np.asarray(sct.grab(region))
                     cv2.imwrite(str(HERE / "debug_region_raw.png"),
                                 np.ascontiguousarray(raw[:, :, :3]))
                     th = preprocess(raw)
@@ -842,15 +1232,19 @@ def main():
                         f"region={region}\n--- OCR text ---\n{txt}")
             stamps.append(t0)
             stamps[:] = [s for s in stamps if t0 - s <= 5]
-            mids = [(bk.best_bid + bk.best_ask) / 2
-                    for bk in list(engine.history)[-40:]]
+            win = cfg.get("trend_window", 300)
+            mids = bucket_mids(engine.history, win)
             live.update(render(book, last_sig, reads, misses,
                                len(stamps) / 5.0, trader,
                                session_pnl, n_trades,
                                engine.trend_pct(60),
-                               engine.trend_pct(cfg.get("trend_window", 300)),
+                               engine.trend_pct(win),
                                sparkline(mids), tracker.symbol,
-                               [e for _, e in recent_events], lv, proj))
+                               [e for _, e in recent_events], lv, proj,
+                               gate.dropped, (engine.trend_span(win), win),
+                               f"Price ({win / 60:.0f}m)",
+                               tsreader.snapshot(t0) if tsreader.enabled
+                               else None))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
