@@ -59,8 +59,29 @@ The 5-minute trend/projection drive the confidence signal, bias, and playbook, s
 - **Coverage gate**: the 5m trend shows `…` (with a `warming: X.Xm of 5m` note) until `trend_min_coverage` (60%) of the window actually has data. No more calling 40 seconds of history a "5-minute trend" — the playbook stays STAND ASIDE until the read is real.
 - **Robust endpoints**: trend and projection use median mids over a band at each end of the window instead of two raw samples, so one surviving OCR misread can't swing them.
 - **Glitch gate**: a frame whose mid jumps more than `glitch_jump_pct` (1.5%) from the recent median is held back unless `glitch_confirm` (2) consecutive reads land there. Real spikes pass one frame later; single-frame garbage never enters history. Dropped frames show as `glitch:N` in the title.
+- **Reference-price veto** (`ref_price_gate`): the internal gate above can be fooled by a *sustained* misread — two bad frames in a row make it rebase onto the garbage level, which is how the 139→6 and 6.81→23.74 rows entered the old paper log. So each frame is also checked against the real last-trade price from the Finnhub stream: if the OCR mid disagrees by more than `glitch_ref_tol_pct` (15%), the frame is vetoed outright. The reference is only used when it's a *fresh* print (< `ref_max_age`, 15s), so it can never fight a genuine fast move, and the whole check is a no-op when there's no Finnhub key or `websockets`. Needs the key via `FINNHUB_API_KEY` env var or `finnhub_key` in config.json.
 - **5m sparkline**: the price row charts median mids per time bucket across the whole trend window (the shape you're trading), not just the last ~15 seconds of reads.
 - **Frame skip**: when the captured panel's pixels are byte-identical to the previous poll, Tesseract is skipped and the last parse is re-stamped — a large CPU saving on quiet tape, which keeps the effective read rate up.
+
+## Measuring the signal (does it actually work?)
+
+`score_confidence.py` grades the monitor's calls against what price did next, on your own logged data — so "how much can I trust this" becomes a number instead of a vibe.
+
+```
+python score_confidence.py           # scores l2_log.csv
+python score_confidence.py --all     # include archived l2_log-old-*.csv
+python score_confidence.py --stride 20 --horizons 60,120,300
+```
+
+For every logged moment it measures the forward return at +1/+2/+5 min and reports, per predictor, the **hit-rate** (share of calls price moved the called way; 50% = coin flip) and **median edge** (median of return × direction; >0 = real forward edge). Hit-rate and median are used as the headline because they shrug off the OCR glitches that wreck a mean.
+
+What it scores:
+
+- **5m BANNER stance** — the real three-pillar confidence call. Only appears once stance logging is on (the CSV now carries `stance,agree,total,tape_live`); older logs don't have it, so it's skipped until you've run a session with the new build.
+- **trend pillar** — reconstructed from the logged mid series exactly as `SignalEngine.trend_pct` computes it. The one pillar recoverable from price history alone.
+- **imbalance** and the **logged BUY/SELL signal** — for comparison (imbalance having ~no forward edge is *why* it's kept out of the confidence signal).
+
+The glitch count it prints (`[N glitchy]`, moves > 25% in the window) is itself a health check: a high count means the OCR feed is dirty and the reference-price veto above should be doing more work.
 
 ## Tuning tips
 

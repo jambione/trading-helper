@@ -649,6 +649,71 @@ class TapeReader:
                 self._misses_row += 1
 
 
+# ------------------------------------------------------- reference price ----
+
+class RefFeed:
+    """Real last-trade price per symbol from the Finnhub stream, used to
+    veto OCR frames whose mid disagrees with an actual print by a wide
+    margin (the catastrophic 139->6 / 6.81->23.74 misreads that polluted
+    the paper log and, per score_confidence.py, ~30% of l2_log.csv).
+
+    Screen-scraped depth stays the signal; this is only a truth anchor for
+    the price. Degrades to a no-op when there's no key, no `websockets`,
+    or no fresh print — the monitor then runs exactly as it did before."""
+
+    def __init__(self, cfg: dict, console=None):
+        self.enabled = bool(cfg.get("ref_price_gate", True))
+        self.max_age = float(cfg.get("ref_max_age", 15.0))
+        self.key = cfg.get("finnhub_key") or os.getenv("FINNHUB_API_KEY", "")
+        self._start = self._state = None
+        self._subscribed: set[str] = set()
+        if not (self.enabled and self.key):
+            self.enabled = False
+            if console and not self.key:
+                console.print("[dim]ref-price gate off — no Finnhub key "
+                              "(set FINNHUB_API_KEY or finnhub_key in "
+                              "config.json)[/dim]")
+            return
+        try:
+            sys.path.insert(0, str(HERE.parent))
+            from finnhub_stream import FINNHUB_STATE, start_finnhub_stream
+            self._start, self._state = start_finnhub_stream, FINNHUB_STATE
+            if console:
+                console.print("[dim]ref-price gate on — Finnhub last-trade "
+                              "vetoes wild OCR misreads[/dim]")
+        except Exception as e:                                 # noqa: BLE001
+            self.enabled = False
+            if console:
+                console.print(f"[dim]ref-price gate unavailable: {e}[/dim]")
+
+    def ensure(self, symbol: str | None):
+        """Subscribe the active symbol (first call also starts the stream)."""
+        if not self.enabled or not symbol or symbol in self._subscribed:
+            return
+        try:
+            self._start(self.key, [symbol])
+            self._subscribed.add(symbol)
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    def price(self, symbol: str | None) -> float | None:
+        """A FRESH real last-trade price for `symbol`, or None. Staleness is
+        gated here so the gate never vetoes against an old print (e.g. if
+        the feed drops during a fast move)."""
+        if not self.enabled or not symbol or self._state is None:
+            return None
+        try:
+            with self._state.lock:
+                d = self._state.prices.get(symbol)
+            if not d or not d.get("price"):
+                return None
+            if time.time() - d.get("ts_unix", 0) > self.max_age:
+                return None
+            return float(d["price"])
+        except Exception:                                      # noqa: BLE001
+            return None
+
+
 # ---------------------------------------------------------------- alerts ----
 
 # distinct tones per event: high = get in / take money, low = get out
@@ -689,8 +754,14 @@ def alert(sig: Signal, cfg: dict):
 
 def _open_csv(path: Path, fields: list[str]):
     """Open a CSV for append; if an existing file's header doesn't match
-    (schema changed, e.g. the symbol column was added), the old file is
-    renamed <stem>-old-<stamp>.csv instead of being silently mixed."""
+    (schema changed, e.g. the confidence columns were added), the old file
+    is archived as <stem>-old-<stamp>.csv instead of being silently mixed.
+
+    If the archive rename fails because the log is locked -- almost always
+    a second monitor still running, occasionally an editor/indexer -- the
+    startup must NOT crash (that used to raise WinError 32 to the console).
+    We fall back to a distinct <stem>-<stamp>.csv for this session so the
+    new schema stays clean and the locked file is left untouched."""
     if path.exists():
         try:
             with open(path) as fh:
@@ -698,8 +769,17 @@ def _open_csv(path: Path, fields: list[str]):
         except Exception:                                  # noqa: BLE001
             first = ""
         if first != ",".join(fields):
-            path.rename(path.with_name(
-                f"{path.stem}-old-{datetime.now():%Y%m%d-%H%M%S}.csv"))
+            archived = path.with_name(
+                f"{path.stem}-old-{datetime.now():%Y%m%d-%H%M%S}.csv")
+            try:
+                path.rename(archived)
+            except OSError as e:                            # locked elsewhere
+                path = path.with_name(
+                    f"{path.stem}-{datetime.now():%Y%m%d-%H%M%S}.csv")
+                print(f"[warn] could not archive {archived.name} "
+                      f"({getattr(e, 'strerror', None) or e}); the log is in "
+                      "use -- is another monitor still running? Writing this "
+                      f"session to {path.name} instead.")
     new = not path.exists()
     f = open(path, "a", newline="")
     w = csv.writer(f)
@@ -709,19 +789,29 @@ def _open_csv(path: Path, fields: list[str]):
 
 
 class CsvLog:
+    # stance/agree/total/tape_live capture the 5m CONFIDENCE banner per row
+    # so score_confidence.py can measure the FULL three-pillar signal after
+    # the fact (the trend pillar alone is recoverable from price; tape and
+    # vwap are not, so they must be logged live or they're lost).
     FIELDS = ["time", "symbol", "best_bid", "best_ask", "spread_pct",
-              "bid_size", "ask_size", "imbalance", "signal", "reason"]
+              "bid_size", "ask_size", "imbalance", "signal", "reason",
+              "stance", "agree", "total", "tape_live"]
 
     def __init__(self, path: Path):
         self.f, self.w = _open_csv(path, self.FIELDS)
 
-    def write(self, book: L2Book, sig: Signal | None, symbol: str = ""):
+    def write(self, book: L2Book, sig: Signal | None, symbol: str = "",
+              lv: dict | None = None):
         self.w.writerow([
             datetime.now().isoformat(timespec="milliseconds"), symbol,
             f"{book.best_bid:.4f}", f"{book.best_ask:.4f}",
             f"{book.spread_pct:.3f}", int(book.bid_size), int(book.ask_size),
             f"{book.imbalance:.3f}",
             sig.action if sig else "", sig.reason if sig else "",
+            lv["stance"] if lv else "",
+            lv.get("agree", "") if lv else "",
+            lv.get("total", "") if lv else "",
+            int(lv.get("tape_live", False)) if lv else "",
         ])
         self.f.flush()
 
@@ -1049,7 +1139,8 @@ def main():
     lv: dict | None = None
     proj: tuple | None = None
     gate = GlitchGate(cfg.get("glitch_jump_pct", 1.5),
-                      cfg.get("glitch_confirm", 2))
+                      cfg.get("glitch_confirm", 2),
+                      ref_tol_pct=cfg.get("glitch_ref_tol_pct", 15.0))
     frame_key: tuple | None = None       # (region, crc32) of the last grab
     frame_book: L2Book | None = None     # what that frame parsed to
 
@@ -1067,6 +1158,7 @@ def main():
     except Exception as e:
         console.print(f"[dim]position feed unavailable: {e}[/dim]")
     tracker = RegionTracker(cfg, console)
+    reffeed = RefFeed(cfg, console)
     tsreader = TapeReader(cfg, console)
     if tsreader.enabled:
         console.print("[dim]Time&Sales reader on — executed prints feed "
@@ -1106,7 +1198,9 @@ def main():
                     recent_events.clear()
                     longview = LongView(cfg)
                     gate = GlitchGate(cfg.get("glitch_jump_pct", 1.5),
-                                      cfg.get("glitch_confirm", 2))
+                                      cfg.get("glitch_confirm", 2),
+                                      ref_tol_pct=cfg.get("glitch_ref_tol_pct",
+                                                          15.0))
                     tsreader.reset()
                     frame_key = frame_book = None
                     book = lv = proj = last_sig = None
@@ -1115,6 +1209,7 @@ def main():
                         f"[dim]symbol switch {old} → {active_sym}: history "
                         "reset" + (", virtual position dropped" if dropped
                                    else "") + "[/dim]")
+            reffeed.ensure(tracker.symbol)
             raw = np.asarray(sct.grab(region))
             key = (region["left"], region["top"], region["width"],
                    region["height"], zlib.crc32(raw.tobytes()))
@@ -1129,8 +1224,8 @@ def main():
                 frame_key, frame_book = key, b
             ok = b is not None
             tracker.report(ok)
-            if ok and not gate.accept(b):
-                b = None   # isolated out-of-band frame -> held back
+            if ok and not gate.accept(b, reffeed.price(tracker.symbol)):
+                b = None   # isolated / ref-contradicted frame -> held back
             if b:
                 reads += 1
                 book = b
@@ -1218,7 +1313,7 @@ def main():
                     if tlog:
                         tlog.write(trade)
                 if log:
-                    log.write(b, show, active_sym or "")
+                    log.write(b, show, active_sym or "", lv)
             elif not ok:
                 misses += 1
                 if cfg.get("debug", True) and misses % 25 == 0:

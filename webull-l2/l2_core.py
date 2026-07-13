@@ -168,16 +168,28 @@ class GlitchGate:
     """
 
     def __init__(self, jump_pct: float = 1.5, confirm: int = 2,
-                 keep: int = 9):
+                 keep: int = 9, ref_tol_pct: float = 15.0):
         self.jump_pct = jump_pct
         self.confirm = max(1, confirm)
+        self.ref_tol_pct = ref_tol_pct
         self.mids: deque = deque(maxlen=keep)
         self._streak = 0        # consecutive out-of-band reads
         self._streak_dir = 0    # +1 above the band, -1 below
         self.dropped = 0        # total frames held back (for the UI)
 
-    def accept(self, book: L2Book) -> bool:
+    def accept(self, book: L2Book, ref: float | None = None) -> bool:
         mid = book.mid
+        # Hard external sanity check first: a real executed trade price that
+        # disagrees with the OCR mid by a wide margin means the OCR grabbed
+        # garbage (wrong region, merged/misread digits). The internal streak
+        # logic below can't catch this on its own -- two consecutive bad
+        # reads make it REBASE onto the garbage level, which is exactly how
+        # the 139->6 and 6.81->23.74 rows entered the paper log. `ref` is
+        # only ever a fresh print (the caller gates staleness), so vetoing
+        # against it can't fight a real fast move.
+        if ref and ref > 0 and abs(mid - ref) / ref > self.ref_tol_pct / 100.0:
+            self.dropped += 1
+            return False
         if len(self.mids) < 3:
             self.mids.append(mid)
             return True
