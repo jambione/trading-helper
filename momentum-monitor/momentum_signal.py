@@ -329,6 +329,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
     t = Table(expand=False)
     t.add_column("#", justify="right", style="bold")
     t.add_column("Symbol")
+    t.add_column("Added", justify="right")
     t.add_column("Price", justify="right")
     t.add_column("Chg%", justify="right")
     t.add_column("Mentions", justify="right")
@@ -337,6 +338,9 @@ def momentum_table(feed: Feed, now: float, hz: float,
     for i, r in enumerate(feed.rows):
         sym = str(r.get("ticker") or "?").upper()
         key = str(i + 1) if (hotkeys_on and i < 9) else ""
+        seen = feed.first_seen.get(sym)
+        added = (f"{datetime.fromtimestamp(seen):%H:%M:%S}"
+                 if seen is not None else "—")
         chg = r.get("pct_change")
         cc = ("green" if (chg or 0) > 0 else "red" if (chg or 0) < 0
               else "white")
@@ -357,6 +361,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
         t.add_row(
             key,
             f"[bold cyan]{sym}[/bold cyan]",
+            f"[dim]{added}[/dim]",
             _fmt(r.get("price"), ".2f"),
             f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]" if chg is not None else "—",
             mtxt,
@@ -365,7 +370,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
         )
     if not feed.rows:
         t.add_row("", "[dim]no momentum tickers in the feed[/dim]",
-                  "", "", "", "", "")
+                  "", "", "", "", "", "")
     return t
 
 
