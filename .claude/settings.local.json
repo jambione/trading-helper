@@ -45,7 +45,10 @@
       "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgfire.py)",
       "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgdiv.py)",
       "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgcrop.py)",
-      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgsq.py)"
+      "Bash(PYTHONIOENCODING=utf-8 ../.venv/Scripts/python.exe _dbgsq.py)",
+      "WebFetch(domain:trading.jbrasfield.com)",
+      "Bash(PYTHONUTF8=1 timeout 7 ../.venv/Scripts/python.exe momentum_signal.py)",
+      "Bash(echo \"exit=$? \\(124=timeout, expected\\)\")"
     ]
   }
 }

@@ -4,10 +4,11 @@ title Trading Monitors Launcher
 REM ============================================================================
 REM  Launches both trading monitors, each in its own window:
 REM    1. Webull L2 Monitor      (webull-l2\l2_signal.py)
-REM    2. TradingView Monitor    (tv-monitor\tv_signal.py)
+REM    2. Momentum Monitor       (momentum-monitor\momentum_signal.py)
 REM
-REM  Requirements: Python 3.9+, Tesseract-OCR, and both apps visible on screen
-REM  (Webull Desktop, and the TradingView chart tab in a browser window).
+REM  Requirements: Python 3.9+. The L2 monitor needs Tesseract-OCR and the
+REM  Webull Desktop window visible; the momentum monitor polls the dashboard
+REM  feed (trading.jbrasfield.com) and needs no screen scraping.
 REM ============================================================================
 
 REM ── locate a Python interpreter ─────────────────────────────────────────────
@@ -52,14 +53,14 @@ REM ── one combined window (Windows Terminal split panes) when available ─
 where wt >nul 2>&1
 if %ERRORLEVEL% NEQ 0 goto classic
 
-echo  Launching combined monitor window (L2 top, TradingView bottom)...
-wt --size 64,72 --title "Trading Monitors" --suppressApplicationTitle -d "%~dp0webull-l2" cmd /k %PYEXE% l2_signal.py ; split-pane -H --title "Trading Monitors" --suppressApplicationTitle -d "%~dp0tv-monitor" cmd /k %PYEXE% tv_signal.py
+echo  Launching combined monitor window (L2 top, Momentum bottom)...
+wt --size 64,72 --title "Trading Monitors" --suppressApplicationTitle -d "%~dp0webull-l2" cmd /k %PYEXE% l2_signal.py ; split-pane -H --title "Trading Monitors" --suppressApplicationTitle -d "%~dp0momentum-monitor" cmd /k %PYEXE% momentum_signal.py
 goto positioned
 
 :classic
 echo  Windows Terminal not found - launching two separate windows...
 start "Webull L2 Monitor" /D "%~dp0webull-l2" cmd /k "mode con: %L2_SIZE% & %PYEXE% l2_signal.py"
-start "TradingView Monitor" /D "%~dp0tv-monitor" cmd /k "mode con: %TV_SIZE% & %PYEXE% tv_signal.py"
+start "Momentum Monitor" /D "%~dp0momentum-monitor" cmd /k "mode con: %TV_SIZE% & %PYEXE% momentum_signal.py"
 
 :positioned
 REM ── restore saved size/position (save with save_layout.bat) ────────────────
