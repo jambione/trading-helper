@@ -301,13 +301,25 @@ def _parse_squeeze_levels(line: str) -> list[float]:
 # Compact cards posted by the scanner bot. Vision OCR often splits the label/
 # value pairs onto separate lines, so we scan a short window after the headline.
 
+# The scanner bot posts several differently-branded alert headers ("Scanner
+# Alert!", "Find It First Alert!", etc.), all followed by an optional [TIER]
+# badge. Match the two known names explicitly, plus any "<words> Alert!" header
+# that carries a [TIER] bracket (the bracket keeps the generic branch from
+# firing on ordinary chat). Emission is still gated on a valid ticker headline.
 _SCANNER_ALERT_HEADER_RE = re.compile(
-    r"Scanner\s+Alert!\s*(?:\[(?P<tier>[A-Z]+)\])?",
+    r"(?:(?:Scanner|Find\s+It\s+First)\s+Alert!"
+    r"|(?:[A-Za-z]+\s+){1,4}Alert!(?=\s*\[))"
+    r"\s*(?:\[(?P<tier>[A-Z]+)\])?",
     re.I,
 )
 
+# The card headline is a ticker, optionally followed by an alert type. Some
+# cards (e.g. "Find It First") show only the bare ticker ("$AGEN"), so the alert
+# type is optional. A bare ticker is only accepted as a card headline when it
+# sits under a recognised alert header (see parse_scanner_cards); the standalone
+# branch still requires a real alert type so lone uppercase words can't fire.
 _SCANNER_CARD_HEADLINE_RE = re.compile(
-    r"^\s*\$?(?P<ticker>[A-Z]{2,5})\s+(?P<alert_type>.+?)\s*!?\s*$",
+    r"^\s*\$?(?P<ticker>[A-Z]{2,5})(?:\s+(?P<alert_type>.+?))?\s*!?\s*$",
     re.I,
 )
 
@@ -322,19 +334,19 @@ _SCANNER_ALERT_TYPE_RE = re.compile(
     r"gap\s+up|volume\s+breakout|momentum|halts?|resume",
 )
 
-_SCANNER_PRICE_KV_RE = re.compile(
-    r"(?i)\bPrice\s*:?\s*\$?([\d,]+\.?\d*)",
-)
-
-_SCANNER_FLOAT_KV_RE = re.compile(
-    r"(?i)Float\s*Size\s*:?\s*\$?([\d,.]+)\s*([KMB])?\b",
-)
-
-_PRICE_LABEL_ONLY_RE = re.compile(r"^Price\s*:?\s*$", re.I)
-_FLOAT_LABEL_ONLY_RE = re.compile(r"^Float\s*Size\s*:?\s*$", re.I)
-
-_NUMERIC_VALUE_RE = re.compile(
-    r"^\$?([\d,.]+)\s*([KMB])?\s*$",
+# One ordered pass over the card body yields Price/Float labels and numeric
+# values in reading order. A label only counts when it's directly followed by a
+# value, another label, or end-of-text — so the "Price" inside a "Price Spike!"
+# headline (followed by the word "Spike") is ignored. Pairing each label with the
+# next value FIFO (see _extract_price_float_from_lines) then handles every
+# observed layout: interleaved ("Price $251 Float Size 2.42M"), vertically
+# stacked (label / value / label / value), and two-column tables whose header row
+# lists the labels and the following row the values ("Float Size Price" /
+# "41.12M $4.05") — including Float-before-Price column order.
+_FIELD_SCAN_RE = re.compile(
+    r"(?P<flabel>Float\s*Size|Float)\b\s*:?\s*(?=\$?\d|Price\b|Float\b|$)"
+    r"|(?P<plabel>Price)\b\s*:?\s*(?=\$?\d|Float\b|Price\b|$)"
+    r"|(?P<value>\$?\d[\d,]*\.?\d*)\s*(?P<suffix>[KMB])?\b",
     re.I,
 )
 
@@ -356,15 +368,13 @@ def _scanner_field_window_end(lines: list[str], start: int, end: int) -> int:
         text = lines[i].strip()
         if not text or _SCANNER_NOISE_RE.match(text):
             continue
-        if i > start and (
-            _SCANNER_ALERT_HEADER_RE.search(text)
-            or (
-                _SCANNER_CARD_HEADLINE_RE.match(text)
-                and _SCANNER_ALERT_TYPE_RE.search(
-                    _SCANNER_CARD_HEADLINE_RE.match(text).group("alert_type")  # type: ignore[union-attr]
-                )
-            )
-        ):
+        if i == start:
+            continue
+        if _SCANNER_ALERT_HEADER_RE.search(text):
+            return i
+        hm = _SCANNER_CARD_HEADLINE_RE.match(text)
+        if hm and hm.group("alert_type") and _SCANNER_ALERT_TYPE_RE.search(
+                hm.group("alert_type")):
             return i
     return limit
 
@@ -372,44 +382,63 @@ def _scanner_field_window_end(lines: list[str], start: int, end: int) -> int:
 def _extract_price_float_from_lines(
     lines: list[str], start: int, end: int,
 ) -> tuple[float | None, float | None, set[int]]:
-    """Scan a slice of OCR lines for Price and Float Size fields."""
-    used: set[int] = set()
-    price: float | None = None
-    float_size: float | None = None
+    """Scan a slice of OCR lines for Price and Float Size fields.
+
+    Walks the card body in reading order and pairs each label with the next value
+    (FIFO), so it is correct regardless of whether the card interleaves
+    label/value pairs, stacks them vertically, or lays them out as a two-column
+    header+value table in either Price-first or Float-first order.
+    """
     end = _scanner_field_window_end(lines, start, end)
     window = [(i, lines[i].strip()) for i in range(start, end)
               if lines[i].strip() and not _SCANNER_NOISE_RE.match(lines[i].strip())]
 
-    blob = " ".join(text for _, text in window)
-    pm = _SCANNER_PRICE_KV_RE.search(blob)
-    if pm:
-        try:
-            price = float(pm.group(1).replace(",", ""))
-        except ValueError:
-            pass
-    fm = _SCANNER_FLOAT_KV_RE.search(blob)
-    if fm:
-        float_size = _parse_scaled_number(fm.group(1), fm.group(2) or "")
+    # Join the window into one blob, tracking which line each character came from
+    # so the lines that actually supplied a field can be marked consumed.
+    segments: list[tuple[int, int, int]] = []   # (blob_start, blob_end, line_idx)
+    pieces: list[str] = []
+    pos = 0
+    for i, text in window:
+        if pieces:
+            pieces.append(" ")
+            pos += 1
+        seg_start = pos
+        pieces.append(text)
+        pos += len(text)
+        segments.append((seg_start, pos, i))
+    blob = "".join(pieces)
 
-    for idx, (i, text) in enumerate(window):
-        if price is None and _PRICE_LABEL_ONLY_RE.match(text):
-            for j, nxt in window[idx + 1:]:
-                vm = _NUMERIC_VALUE_RE.match(nxt)
-                if vm and not (vm.group(2) or "").upper():
-                    parsed = _parse_scaled_number(vm.group(1), "")
-                    if parsed is not None:
-                        price = parsed
-                        used.update({i, j})
-                        break
-        if float_size is None and _FLOAT_LABEL_ONLY_RE.match(text):
-            for j, nxt in window[idx + 1:]:
-                vm = _NUMERIC_VALUE_RE.match(nxt)
-                if vm:
-                    parsed = _parse_scaled_number(vm.group(1), vm.group(2) or "")
-                    if parsed is not None:
-                        float_size = parsed
-                        used.update({i, j})
-                        break
+    def _line_of(char_pos: int) -> int | None:
+        for s, e, idx in segments:
+            if s <= char_pos < e:
+                return idx
+        return None
+
+    price: float | None = None
+    float_size: float | None = None
+    used: set[int] = set()
+    pending: list[tuple[str, int | None]] = []   # (kind, label line idx), FIFO
+
+    for m in _FIELD_SCAN_RE.finditer(blob):
+        if m.group("flabel") is not None:
+            pending.append(("float", _line_of(m.start())))
+        elif m.group("plabel") is not None:
+            pending.append(("price", _line_of(m.start())))
+        else:
+            val = _parse_scaled_number(
+                m.group("value").lstrip("$"), m.group("suffix") or "")
+            if val is None or not pending:
+                continue
+            kind, label_line = pending.pop(0)
+            if kind == "price" and price is None:
+                price = val
+            elif kind == "float" and float_size is None:
+                float_size = val
+            else:
+                continue
+            for li in (label_line, _line_of(m.start())):
+                if li is not None:
+                    used.add(li)
 
     return price, float_size, used
 
@@ -418,7 +447,7 @@ def _scanner_card_summary(
     ticker: str, alert_type: str, price: float | None,
     float_size: float | None, tier: str | None,
 ) -> str:
-    parts = [f"${ticker} {alert_type}!"]
+    parts = [f"${ticker} {alert_type}!" if alert_type else f"${ticker}"]
     if price is not None:
         parts.append(f"Price ${price:g}")
     if float_size is not None:
@@ -454,7 +483,7 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
             return False
 
         alert_type = re.sub(
-            r"[!?.,]+$", "", hm.group("alert_type").strip(),
+            r"[!?.,]+$", "", (hm.group("alert_type") or "").strip(),
         ).strip().title()
 
         # Include the headline line — OCR sometimes keeps Price/Float inline there.
@@ -504,7 +533,10 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
             for j in range(i + 1, min(i + 5, n)):
                 if j in used:
                     continue
-                if _SCANNER_CARD_HEADLINE_RE.match(lines[j].strip()):
+                cand = lines[j].strip()
+                if not cand or _SCANNER_NOISE_RE.match(cand):
+                    continue
+                if _SCANNER_CARD_HEADLINE_RE.match(cand):
                     headline_idx = j
                     break
             if headline_idx is not None:
@@ -515,7 +547,8 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
             continue
 
         hm = _SCANNER_CARD_HEADLINE_RE.match(line)
-        if hm and _SCANNER_ALERT_TYPE_RE.search(hm.group("alert_type")):
+        if hm and hm.group("alert_type") and _SCANNER_ALERT_TYPE_RE.search(
+                hm.group("alert_type")):
             prev_has_header = any(
                 _SCANNER_ALERT_HEADER_RE.search(lines[j].strip())
                 for j in range(max(0, i - 3), i)

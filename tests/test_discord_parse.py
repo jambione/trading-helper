@@ -229,4 +229,77 @@ def test_scanner_card_does_not_duplicate_with_classic_arrow_alert():
     assert 0 not in card_used
 
 
+# ── "Find It First" cards: bare ticker + Float-before-Price columns ───────────
+
+def test_find_it_first_bare_ticker_float_then_price_header_row():
+    """The exact $AGEN card: 'Find It First Alert!' header, a bare-ticker
+    headline, and a two-column table whose header row is 'Float Size Price' with
+    the values 'Float Price' on the next row (Float column before Price)."""
+    lines = [
+        "6:08 AM APP",
+        "Find It First Alert! [ELITE]",
+        "$AGEN",
+        "Float Size Price",
+        "41.12M $4.05",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["ticker"] == "AGEN"
+    assert c["kind"] == "scanner_card"
+    assert c["price"] == 4.05
+    assert c["float_size"] == pytest.approx(41.12e6)
+    assert c["scanner_tier"] == "ELITE"
+
+
+def test_find_it_first_bare_ticker_all_cells_split_lines():
+    """Same card, but Vision splits every table cell onto its own line."""
+    lines = [
+        "6:08 AM",
+        "APP",
+        "Find It First Alert! [ELITE]",
+        "$AGEN",
+        "Float Size",
+        "Price",
+        "41.12M",
+        "$4.05",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["ticker"] == "AGEN"
+    assert c["price"] == 4.05
+    assert c["float_size"] == pytest.approx(41.12e6)
+    assert c["scanner_tier"] == "ELITE"
+
+
+def test_find_it_first_header_without_dollar_on_ticker():
+    lines = [
+        "Find It First Alert! [ELITE]",
+        "AGEN",
+        "Float Size",
+        "41.12M",
+        "Price",
+        "$4.05",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    assert cards[0]["ticker"] == "AGEN"
+    assert cards[0]["price"] == 4.05
+    assert cards[0]["float_size"] == pytest.approx(41.12e6)
+
+
+def test_generic_alert_header_requires_tier_bracket():
+    """A generic '<words> Alert!' header is only honoured with a [TIER] badge."""
+    with_badge = ds._SCANNER_ALERT_HEADER_RE.search("Momentum Alert! [PRO]")
+    assert with_badge and with_badge.group("tier") == "PRO"
+    assert ds._SCANNER_ALERT_HEADER_RE.search("sold my last alert lol") is None
+
+
+def test_bare_ticker_without_header_is_not_a_card():
+    """A lone ticker line with no alert header and no alert type must not fire."""
+    cards, _ = ds.parse_scanner_cards(["$AGEN", "Float Size", "41.12M"])
+    assert cards == []
+
+
 import pytest
