@@ -38,6 +38,14 @@ def _split_prices(tok: str):
     return None
 
 
+def _median(vals):
+    vals = sorted(vals)
+    n = len(vals)
+    if not n:
+        return None
+    return vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+
+
 def _size(tok: str) -> float:
     """'13.01K' -> 13010, '1,204' -> 1204, '129' -> 129."""
     tok = tok.replace(",", "").strip()
@@ -63,6 +71,10 @@ class L2Book:
     @property
     def best_ask(self):
         return self.asks[0][0]
+
+    @property
+    def mid(self):
+        return (self.best_bid + self.best_ask) / 2
 
     @property
     def spread(self):
@@ -144,13 +156,62 @@ def _monotone(levels, decreasing: bool):
     return out
 
 
+class GlitchGate:
+    """Drops isolated OCR misreads before they pollute history.
+
+    A book whose mid jumps more than `jump_pct` from the median of the
+    recent accepted mids is held back; it only passes once `confirm`
+    consecutive reads land on the same side of the band (a real spike
+    keeps printing there, an OCR glitch is gone next frame). Costs one
+    frame of latency on a genuinely violent move, kills the single-frame
+    garbage that used to swing the 1m/5m trend and the projection.
+    """
+
+    def __init__(self, jump_pct: float = 1.5, confirm: int = 2,
+                 keep: int = 9):
+        self.jump_pct = jump_pct
+        self.confirm = max(1, confirm)
+        self.mids: deque = deque(maxlen=keep)
+        self._streak = 0        # consecutive out-of-band reads
+        self._streak_dir = 0    # +1 above the band, -1 below
+        self.dropped = 0        # total frames held back (for the UI)
+
+    def accept(self, book: L2Book) -> bool:
+        mid = book.mid
+        if len(self.mids) < 3:
+            self.mids.append(mid)
+            return True
+        med = _median(self.mids)
+        dev = 100.0 * (mid - med) / med if med else 0.0
+        if abs(dev) > self.jump_pct:
+            direction = 1 if dev > 0 else -1
+            if direction == self._streak_dir:
+                self._streak += 1
+            else:
+                self._streak, self._streak_dir = 1, direction
+            if self._streak >= self.confirm:
+                # confirmed move -> rebase on the new level
+                self.mids.clear()
+                self.mids.append(mid)
+                self._streak = self._streak_dir = 0
+                return True
+            self.dropped += 1
+            return False
+        self._streak = self._streak_dir = 0
+        self.mids.append(mid)
+        return True
+
+
 def market_bias(book: L2Book, t1: float | None, t5: float | None,
-                wall_mult: float = 4.0):
+                wall_mult: float = 4.0, tape: dict | None = None):
     """One-glance verdict from the L2 evidence. Returns (score, label,
     reason) where score is -100 (max bearish) .. +100 (max bullish).
 
     Weights: imbalance +/-40, 1-min drift +/-30, 5-min drift +/-15,
-    walls within 1% of the touch +/-15.
+    walls within 1% of the touch +/-15, and - when the Time&Sales feed
+    is live - executed tape dominance +/-20. The tape term is the only
+    input spoofers can't fake (it's transactions, not resting size);
+    the total is clamped to +/-100.
     """
     imb = book.imbalance
     s_imb = max(-1.0, min(1.0, math.log2(max(imb, 1e-6)) / 1.5)) * 40
@@ -163,7 +224,10 @@ def market_bias(book: L2Book, t1: float | None, t5: float | None,
         elif side == "BID" and 0 <= 100 * (book.best_bid - p) / book.best_bid <= 1.0:
             s_w += 7.5   # support wall just below
     s_w = max(-15.0, min(15.0, s_w))
-    score = s_imb + s_t1 + s_t5 + s_w
+    s_tape = 0.0
+    if tape and tape.get("n", 0) >= 8:      # enough prints to mean something
+        s_tape = max(-1.0, min(1.0, tape["dom"] / 0.5)) * 20
+    score = max(-100.0, min(100.0, s_imb + s_t1 + s_t5 + s_w + s_tape))
 
     label = ("BULLISH" if score >= 30 else
              "BEARISH" if score <= -30 else "FLAT")
@@ -177,6 +241,10 @@ def market_bias(book: L2Book, t1: float | None, t5: float | None,
         parts.append("price falling now")
     elif s_t1 >= 15:
         parts.append("price rising now")
+    if s_tape >= 10:
+        parts.append("tape buying")
+    elif s_tape <= -10:
+        parts.append("tape selling")
     if s_w < 0:
         parts.append("supply wall overhead")
     elif s_w > 0:
@@ -221,11 +289,14 @@ class WallTracker:
 
 
 def playbook(book: L2Book, t1: float | None, t5: float | None,
-             wall_events: list) -> dict:
+             wall_events: list, tape: dict | None = None) -> dict:
     """The daily-use rule, mechanized:
       trade in the direction where 1m and 5m agree,
       only when imbalance confirms it,
-      walls define the trigger levels (break above / crack below).
+      walls define the trigger levels (break above / crack below),
+      and the executed tape gets a veto: a "buy" setup where real money
+      is hitting the bid (or vice versa) never fully triggers - stacked
+      size with opposing prints is the classic spoof shape.
     """
     def up(v): return v is not None and v > 0.05
     def dn(v): return v is not None and v < -0.05
@@ -236,26 +307,81 @@ def playbook(book: L2Book, t1: float | None, t5: float | None,
                         if s == "ASK" and p >= book.best_ask})
     bid_crack = sorted({p for s, p, _ in wall_events
                         if s == "BID" and p <= book.best_bid})
+    tape_ok = bool(tape) and tape.get("n", 0) >= 8
+    tape_up = tape_ok and tape["dom"] >= 0.25
+    tape_dn = tape_ok and tape["dom"] <= -0.25
 
     if trend_up and imb_up:
-        verdict = "LONG_TRIGGER" if ask_break else "LONG_SETUP"
+        verdict = ("LONG_TRIGGER" if ask_break and not tape_dn
+                   else "LONG_SETUP")
     elif trend_dn and imb_dn:
-        verdict = "BEAR_CRACK" if bid_crack else "BEARISH"
+        verdict = ("BEAR_CRACK" if bid_crack and not tape_up
+                   else "BEARISH")
     else:
         verdict = "STAND_ASIDE"
     return {"trend_up": trend_up, "trend_dn": trend_dn,
             "imb_up": imb_up, "imb_dn": imb_dn, "imb": imb,
             "ask_break": ask_break, "bid_crack": bid_crack,
+            "tape_ok": tape_ok, "tape_up": tape_up, "tape_dn": tape_dn,
             "verdict": verdict}
 
 
-class LongView:
-    """Slow, stable stance for holds of roughly 10s-10min.
+def confidence(t5: float | None, tape: dict | None,
+               mid: float | None, vwap: float | None) -> dict:
+    """The single 5-minute confidence signal.
 
-    Uses smoothed inputs (median imbalance over `long_window` seconds,
-    the 5-min drift, net wall pressure over the window) plus hysteresis:
-    the stance only switches after the new reading has held steady for
-    `long_confirm_secs`. No flicker.
+    Three INDEPENDENT, hard-to-spoof pillars each vote long / short /
+    neutral, and confidence is how many AGREE - not the magnitude of any
+    one of them:
+
+      trend  - the 5-min robust drift (where price actually went)
+      tape   - 60s executed buy/sell dominance (real money; unspoofable,
+               abstains under 8 prints)
+      vwap   - price above / below the session VWAP (who controls the day)
+
+    Imbalance is deliberately excluded: it's resting displayed size, the
+    one input spoofers fake, and trusting it is what the losing paper log
+    was built on. Direction is the majority of the pillars that have an
+    opinion; `agree`/`total` drive the confidence meter (3/3 = size up,
+    2/3 = normal, split = stand aside regardless of how extreme one meter
+    looks). `tape_live` is False when the T&S feed isn't giving prints, so
+    the caller can cap confidence and say so."""
+    votes: dict = {}
+    votes["trend"] = (None if t5 is None else
+                      1 if t5 > 0.1 else -1 if t5 < -0.1 else 0)
+    if tape and tape.get("n", 0) >= 8:
+        d = tape["dom"]
+        votes["tape"] = 1 if d >= 0.25 else -1 if d <= -0.25 else 0
+    else:
+        votes["tape"] = None
+    if vwap and mid:
+        rel = (mid - vwap) / vwap
+        votes["vwap"] = 1 if rel > 0.0005 else -1 if rel < -0.0005 else 0
+    else:
+        votes["vwap"] = None
+
+    live = [v for v in votes.values() if v is not None]
+    longs = sum(1 for v in live if v > 0)
+    shorts = sum(1 for v in live if v < 0)
+    if longs > shorts:
+        direction, agree = "LONG", longs
+    elif shorts > longs:
+        direction, agree = "SHORT", shorts
+    else:
+        direction, agree = "NEUTRAL", 0
+    return {"dir": direction, "agree": agree, "total": len(live),
+            "votes": votes, "tape_live": votes["tape"] is not None}
+
+
+class LongView:
+    """Slow, stable 5-minute stance for holds of roughly 10s-10min.
+
+    Its raw read each poll is confidence() over trend + tape + VWAP (see
+    that function - imbalance is intentionally out of the core signal);
+    hysteresis then holds the stance until a new read persists for
+    `long_confirm_secs`, so the headline confidence never flickers. Wall
+    events over the window are still tracked for the detail line but no
+    longer drive the stance.
     """
 
     def __init__(self, cfg: dict):
@@ -269,7 +395,8 @@ class LongView:
         self._cand_since = 0.0
 
     def update(self, book: L2Book, t5: float | None,
-               wall_events: list, now: float) -> dict:
+               wall_events: list, now: float,
+               tape: dict | None = None, vwap: float | None = None) -> dict:
         if self.since is None:
             self.since = now
         self.samples.append((now, book.imbalance))
@@ -285,13 +412,11 @@ class LongView:
         ask_breaks = sum(1 for _, s in self.events if s == "ASK")
         bid_cracks = sum(1 for _, s in self.events if s == "BID")
 
-        # raw stance from the slow inputs
-        if med_imb >= 1.3 and (t5 or 0.0) > 0.1 and ask_breaks >= bid_cracks:
-            raw = "LONG"
-        elif med_imb <= 0.77 and (t5 or 0.0) < -0.1:
-            raw = "BEAR"
-        else:
-            raw = "NEUTRAL"
+        # raw stance = the confidence vote (LONG/SHORT/NEUTRAL -> our
+        # LONG/BEAR/NEUTRAL vocabulary)
+        conf = confidence(t5, tape, book.mid, vwap)
+        raw = {"LONG": "LONG", "SHORT": "BEAR",
+               "NEUTRAL": "NEUTRAL"}[conf["dir"]]
 
         # hysteresis: candidate must persist before we switch
         pending = None
@@ -311,23 +436,28 @@ class LongView:
         return {"stance": self.stance, "held": now - self.since,
                 "med_imb": med_imb, "t5": t5,
                 "ask_breaks": ask_breaks, "bid_cracks": bid_cracks,
-                "pending": pending, "pending_left": pending_left}
+                "pending": pending, "pending_left": pending_left,
+                "agree": conf["agree"], "total": conf["total"],
+                "votes": conf["votes"], "tape_live": conf["tape_live"]}
 
 
 def project_price(history, minutes: float = 5.0,
                   window: float = 120.0) -> tuple | None:
     """(mid_now, projected_mid) by extrapolating the recent drift.
-    This is a pace estimate, not a prediction - walls and news bend it."""
+    This is a pace estimate, not a prediction - walls and news bend it.
+    Endpoints are median mids over a 5s band so a lone misread can't
+    bend the projection."""
     if len(history) < 2:
         return None
     last = history[-1]
-    mid_now = (last.best_bid + last.best_ask) / 2
     cutoff = last.ts - window
-    base = next((b for b in history if b.ts >= cutoff), None)
-    if base is None or last.ts - base.ts < 20:
+    xs = [b for b in history if b.ts >= cutoff]
+    if len(xs) < 2 or xs[-1].ts - xs[0].ts < 20:
         return None   # need at least 20s of history to call it a pace
-    m0 = (base.best_bid + base.best_ask) / 2
-    rate = (mid_now - m0) / (last.ts - base.ts)   # $/sec
+    band = 5.0
+    m0 = _median([b.mid for b in xs if b.ts <= xs[0].ts + band])
+    mid_now = _median([b.mid for b in xs if b.ts >= xs[-1].ts - band])
+    rate = (mid_now - m0) / (xs[-1].ts - xs[0].ts)   # $/sec
     target = mid_now + rate * minutes * 60.0
     # violent tapes extrapolate to nonsense (even negative prices);
     # clamp the projection to a +/-25% band
@@ -350,8 +480,11 @@ class SignalEngine:
     Entry rules (all tunable via config):
       BUY  - imbalance >= imbalance_buy for `confirm_reads` consecutive reads,
              spread <= max_spread_pct, no large ask wall at best ask,
-             mid-price not falling (momentum filter), and enough room to the
-             nearest ask wall above (min_room_pct) to make the trade worth it.
+             mid-price not falling (momentum filter), enough room to the
+             nearest ask wall above (min_room_pct), AND the executed tape
+             isn't selling (the tape veto - resting bids mean nothing if
+             real money is hitting the bid; this is the spoof filter that
+             the 52-stop-out paper log was missing).
       SELL - imbalance <= imbalance_sell for `confirm_reads` consecutive reads.
     A cooldown prevents alert spam.
     """
@@ -367,27 +500,53 @@ class SignalEngine:
         self.momentum_reads = cfg.get("momentum_reads", 6)
         self.trend_window = cfg.get("trend_window", 300)
         self.max_downtrend = cfg.get("max_downtrend_pct", 0.2)
+        self.min_coverage = cfg.get("trend_min_coverage", 0.6)
+        self.tape_gate = cfg.get("tape_gate_entries", True)
+        self.tape_dom_min = cfg.get("tape_dom_min", 0.25)
         # ~11 min of history at 3 reads/s, enough for a 5-min trend
         self.history = deque(maxlen=2000)
         self._buy_streak = 0
         self._sell_streak = 0
         self._last_alert = 0.0
 
+    def reset(self):
+        """Forget all per-symbol state (called on symbol switch - trends
+        and streaks computed across two different stocks are garbage)."""
+        self.history.clear()
+        self._buy_streak = self._sell_streak = 0
+
     def trend_pct(self, seconds: float) -> float | None:
         """Mid-price change (%) over the last `seconds` of history.
-        The bigger-picture view: where has price actually been drifting."""
+        The bigger-picture view: where has price actually been drifting.
+
+        Robust: each endpoint is the MEDIAN mid over a short band, so one
+        surviving misread can't swing the number; and the window must be
+        `trend_min_coverage` covered before a value is returned — 40s of
+        history is never reported as a "5-minute trend" (callers show …
+        and the playbook stays conservative until the data is real)."""
         if len(self.history) < 2:
             return None
-        last = self.history[-1]
-        cutoff = last.ts - seconds
-        base = next((b for b in self.history if b.ts >= cutoff), None)
-        if base is None or base is last:
+        last_ts = self.history[-1].ts
+        cutoff = last_ts - seconds
+        xs = [b for b in self.history if b.ts >= cutoff]
+        if len(xs) < 2 or xs[-1].ts - xs[0].ts < self.min_coverage * seconds:
             return None
-        m0 = (base.best_bid + base.best_ask) / 2
-        m1 = (last.best_bid + last.best_ask) / 2
+        band = max(3.0, seconds * 0.05)
+        m0 = _median([b.mid for b in xs if b.ts <= xs[0].ts + band])
+        m1 = _median([b.mid for b in xs if b.ts >= xs[-1].ts - band])
         return 100.0 * (m1 - m0) / m0 if m0 else None
 
-    def update(self, book: L2Book) -> Signal | None:
+    def trend_span(self, seconds: float) -> float:
+        """Seconds of history actually available inside the trailing
+        window — lets the UI say 'warming up: 2.1m of 5m'."""
+        if len(self.history) < 2:
+            return 0.0
+        last_ts = self.history[-1].ts
+        cutoff = last_ts - seconds
+        base = next((b for b in self.history if b.ts >= cutoff), None)
+        return (last_ts - base.ts) if base else 0.0
+
+    def update(self, book: L2Book, tape: dict | None = None) -> Signal | None:
         self.history.append(book)
         imb = book.imbalance
         walls = book.walls(self.wall_mult)
@@ -419,6 +578,14 @@ class SignalEngine:
             drift = self.trend_pct(self.trend_window)
             if drift is not None and drift < -self.max_downtrend:
                 return None  # book looks bullish but stock is bleeding
+            # tape veto: stacked bids but real money is hitting the bid ->
+            # the classic spoof that turned into stop-outs. Only vetoes
+            # when the tape has enough prints to be trusted.
+            tape_note = ""
+            if self.tape_gate and tape and tape.get("n", 0) >= 8:
+                if tape["dom"] <= -self.tape_dom_min:
+                    return None  # executed flow is selling -> not a real bid
+                tape_note = f", tape {tape['dom']:+.2f}"
             # room filter: profit room to the nearest ask wall above
             above = [p for s, p, _ in walls
                      if s == "ASK" and p > book.best_ask]
@@ -433,6 +600,7 @@ class SignalEngine:
                       f"spread {book.spread_pct:.2f}%{room}")
             if drift is not None:
                 reason += f", 5m drift {drift:+.2f}%"
+            reason += tape_note
             if bid_wall_at_touch:
                 reason += ", bid wall support at touch"
             return Signal("BUY", reason, book.best_ask, imb)
@@ -456,6 +624,7 @@ class Trade:
     exit: float
     pnl_pct: float
     reason: str
+    symbol: str = ""
 
 
 class PaperTrader:
@@ -484,6 +653,17 @@ class PaperTrader:
     @property
     def in_position(self) -> bool:
         return self.entry is not None
+
+    def drop_virtual(self) -> bool:
+        """Forget a virtual position without logging a trade. Used on
+        symbol switch: PnL of an entry on one stock against another
+        stock's book is meaningless (this produced the 171.58 -> 143
+        'trades' in trades.csv). Real-anchored positions are left alone;
+        sync_real re-resolves them against the new symbol's feed."""
+        if self.in_position and not self.real:
+            self.entry = self.entry_ts = self.hwm = None
+            return True
+        return False
 
     def sync_real(self, pos: dict | None, book: L2Book) -> str | None:
         """Anchor exits to a real broker position (position_state.json).
@@ -520,7 +700,7 @@ class PaperTrader:
             return 0.0
         return 100.0 * (self.hwm - self.entry) / self.entry
 
-    def update(self, book: L2Book, sig: Signal | None):
+    def update(self, book: L2Book, sig: Signal | None, symbol: str = ""):
         """Returns (exit_signal | None, trade | None)."""
         if not self.in_position:
             if sig and sig.action == "BUY":
@@ -551,7 +731,8 @@ class PaperTrader:
 
         if action is None:
             return None, None
-        trade = Trade(self.entry_ts, self.entry, book.ts, bid, up, reason)
+        trade = Trade(self.entry_ts, self.entry, book.ts, bid, up, reason,
+                      symbol)
         if self.real:   # one alert per broker position state
             self._real_muted = self._real_key
         self.entry = self.entry_ts = self.hwm = None
