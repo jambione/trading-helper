@@ -931,12 +931,14 @@ def _vote_cell(label: str, v) -> str:
     return f"[{lab}]{label}[/{lab}] {arrow}"
 
 
-def lv_banner(lv: dict | None) -> Panel:
+def lv_banner(lv: dict | None, price: float | None = None,
+              ask_walls: list | None = None) -> Panel:
     """THE signal: 5-minute confidence, big and unmissable at the top.
 
-    Four centered lines - a bold directional headline, a colored
-    confidence gauge with the agree/total fraction, the three pillar
-    votes, and a dim meta line (held time / pending turn / no-tape).
+    Centered lines - a bold directional headline, a colored confidence
+    gauge with the agree/total fraction, the three pillar votes, the
+    current price with the next ask walls overhead (your resistance /
+    targets), and a dim meta line (held time / pending turn / no-tape).
     Everything else in the table below is supporting detail. Confidence =
     agreement of trend + tape + VWAP (see l2_core.confidence), not the
     size of any single meter."""
@@ -987,6 +989,21 @@ def lv_banner(lv: dict | None) -> Panel:
                             _vote_cell("tape", v.get("tape")),
                             _vote_cell("vwap", v.get("vwap"))))
 
+    # current price + the next ask walls overhead (resistance / targets)
+    price_line = None
+    if price:
+        if ask_walls:
+            wtxt = "   ".join(
+                f"[bold]{p:.3f}[/bold][dim] x{int(z):,} "
+                f"+{100 * (p - price) / price:.1f}%[/dim]"
+                for p, z in ask_walls)
+            price_line = (f"[dim]now[/dim] [bold]{price:.3f}[/bold]    "
+                          f"[dim]ask walls ↑[/dim]   {wtxt}")
+        else:
+            price_line = (f"[dim]now[/dim] [bold]{price:.3f}[/bold]    "
+                          f"[green]clear overhead — no ask walls in view"
+                          f"[/green]")
+
     meta = f"[dim]held {dur}[/dim]"
     if not lv.get("tape_live", False):
         meta += "   [yellow]· no tape (show Time&Sales)[/yellow]"
@@ -995,12 +1012,13 @@ def lv_banner(lv: dict | None) -> Panel:
         meta += (f"   [dim]→ turning[/dim] [bold {color}]{pend}[/bold {color}] "
                  f"[dim]in {int(lv['pending_left'])}s if it holds[/dim]")
 
-    body = Group(
-        Align.center(f"[bold {color}]{headline}[/bold {color}]"),
-        Align.center(gauge),
-        Align.center(pillars),
-        Align.center(meta),
-    )
+    lines = [Align.center(f"[bold {color}]{headline}[/bold {color}]"),
+             Align.center(gauge),
+             Align.center(pillars)]
+    if price_line:
+        lines.append(Align.center(price_line))
+    lines.append(Align.center(meta))
+    body = Group(*lines)
     return Panel(body, title=f"[bold {color}]5m CONFIDENCE[/bold {color}]",
                  title_align="left", border_style=color, padding=(1, 2))
 
@@ -1198,7 +1216,13 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
                       f"[{sc}]{session_pnl:+.2f}% over {n_trades} trades[/{sc}]")
     else:
         t.add_row("Status", "[red]no clean OCR read yet[/red]")
-    return Group(lv_banner(lv), t)
+    price = ask_walls = None
+    if book:
+        price = book.mid
+        # next 3 ask walls overhead, nearest first (resistance / targets)
+        ask_walls = sorted(((p, z) for s, p, z in book.walls() if s == "ASK"),
+                           key=lambda x: x[0])[:3]
+    return Group(lv_banner(lv, price, ask_walls), t)
 
 
 # ------------------------------------------------------------------ main ----
