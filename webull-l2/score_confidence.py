@@ -290,6 +290,25 @@ def report(preds, base, anchors, nsegs, horizons, stride):
           "build (trend/tape/vwap_vote columns); older logs show trend only.")
 
 
+def capture_stats(moves, horizon, move_thresh) -> dict:
+    """Recall numbers at one horizon: among anchors that actually moved
+    >= move_thresh, how the banner and tape votes fared. Returns
+    {'n': int, 'banner': (captured, wrong, missed), 'tape': (...)} where
+    missed = the pillar stayed neutral/abstained on a real move. Shared by
+    capture_report and compare_ab.py so both count identically."""
+    real = [m for m in moves.get(horizon, []) if abs(m[0]) >= move_thresh]
+    n = len(real)
+
+    def stat(idx):  # idx 1 = banner vote, 2 = tape vote
+        cap = sum(1 for m in real
+                  if m[idx] in (1, -1) and (m[0] > 0) == (m[idx] > 0))
+        wrong = sum(1 for m in real
+                    if m[idx] in (1, -1) and (m[0] > 0) != (m[idx] > 0))
+        return cap, wrong, n - cap - wrong              # missed = the rest
+
+    return {"n": n, "banner": stat(1), "tape": stat(2)}
+
+
 def capture_report(moves, horizons, move_thresh):
     """RECALL view: among anchors that actually moved >= move_thresh by the
     horizon, how often did we call the direction vs stay neutral. 'missed'
@@ -299,21 +318,13 @@ def capture_report(moves, horizons, move_thresh):
     print("  captured = called the right way | wrong = called opposite | "
           "missed = stayed NEUTRAL on a real move")
     for h in horizons:
-        real = [m for m in moves[h] if abs(m[0]) >= move_thresh]
-        n = len(real)
+        st = capture_stats(moves, h, move_thresh)
+        n = st["n"]
         if not n:
             print(f"  +{int(h)}s: no moves >= {move_thresh:.2f}%")
             continue
-
-        def stat(idx):  # idx 1 = banner vote, 2 = tape vote
-            cap = sum(1 for m in real
-                      if m[idx] in (1, -1) and (m[0] > 0) == (m[idx] > 0))
-            wrong = sum(1 for m in real
-                        if m[idx] in (1, -1) and (m[0] > 0) != (m[idx] > 0))
-            return cap, wrong, n - cap - wrong          # missed = the rest
-
-        for label, idx in (("banner", 1), ("tape  ", 2)):
-            c, w, miss = stat(idx)
+        for label, key in (("banner", "banner"), ("tape  ", "tape")):
+            c, w, miss = st[key]
             if c == w == 0 and miss == n:
                 # pillar never voted on any real move (e.g. no tape logged)
                 print(f"  +{int(h)}s {label}: n={n}  (no votes logged)")

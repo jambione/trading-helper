@@ -1207,7 +1207,10 @@ def main():
     cfg = load_config()
     engine = SignalEngine(cfg)
     trader = PaperTrader(cfg)
-    log = CsvLog(HERE / "l2_log.csv") if cfg.get("csv_log", True) else None
+    # csv_name lets an A/B session log to its own file (e.g. warm_on.csv /
+    # warm_off.csv) so compare_ab.py can score the two runs side by side
+    log = (CsvLog(HERE / cfg.get("csv_name", "l2_log.csv"))
+           if cfg.get("csv_log", True) else None)
     tlog = TradeLog(HERE / "trades.csv") if cfg.get("csv_log", True) else None
     interval = cfg.get("poll_interval", 0.35)
     console = Console()
