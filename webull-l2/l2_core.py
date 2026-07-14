@@ -339,7 +339,9 @@ def playbook(book: L2Book, t1: float | None, t5: float | None,
 
 
 def confidence(t5: float | None, tape: dict | None,
-               mid: float | None, vwap: float | None) -> dict:
+               mid: float | None, vwap: float | None, *,
+               tape_min_sided: int = 4, tape_sided_share: float = 0.5,
+               tape_dom_min: float = 0.25) -> dict:
     """The single 5-minute confidence signal.
 
     Three INDEPENDENT, hard-to-spoof pillars each vote long / short /
@@ -347,8 +349,7 @@ def confidence(t5: float | None, tape: dict | None,
     one of them:
 
       trend  - the 5-min robust drift (where price actually went)
-      tape   - 60s executed buy/sell dominance (real money; unspoofable,
-               abstains under 8 prints)
+      tape   - 60s executed buy/sell dominance (real money; unspoofable)
       vwap   - price above / below the session VWAP (who controls the day)
 
     Imbalance is deliberately excluded: it's resting displayed size, the
@@ -357,13 +358,24 @@ def confidence(t5: float | None, tape: dict | None,
     opinion; `agree`/`total` drive the confidence meter (3/3 = size up,
     2/3 = normal, split = stand aside regardless of how extreme one meter
     looks). `tape_live` is False when the T&S feed isn't giving prints, so
-    the caller can cap confidence and say so."""
+    the caller can cap confidence and say so.
+
+    Tape gate is VOLUME-aware, not print-count: it votes when at least
+    `tape_min_sided` prints carry a real side AND the sided volume is at
+    least `tape_sided_share` of the flow. So a few large clearly-sided
+    prints (real money moving fast) vote - which the old '>= 8 raw prints'
+    gate missed - while a tape that's mostly unsided noise abstains."""
     votes: dict = {}
     votes["trend"] = (None if t5 is None else
                       1 if t5 > 0.1 else -1 if t5 < -0.1 else 0)
-    if tape and tape.get("n", 0) >= 8:
+    sided_vol = (tape.get("buy", 0) + tape.get("sell", 0)) if tape else 0
+    total_vol = tape.get("total", 0) if tape else 0
+    if (tape and tape.get("sided_n", 0) >= tape_min_sided
+            and sided_vol > 0
+            and sided_vol >= tape_sided_share * total_vol):
         d = tape["dom"]
-        votes["tape"] = 1 if d >= 0.25 else -1 if d <= -0.25 else 0
+        votes["tape"] = (1 if d >= tape_dom_min
+                         else -1 if d <= -tape_dom_min else 0)
     else:
         votes["tape"] = None
     if vwap and mid:
@@ -399,6 +411,10 @@ class LongView:
     def __init__(self, cfg: dict):
         self.window = cfg.get("long_window", 60)
         self.confirm = cfg.get("long_confirm_secs", 20)
+        # volume-aware tape gate thresholds (see confidence())
+        self.tape_min_sided = int(cfg.get("tape_min_sided", 4))
+        self.tape_sided_share = float(cfg.get("tape_sided_share", 0.5))
+        self.tape_dom_min = float(cfg.get("tape_dom_min", 0.25))
         self.samples = deque()     # (ts, imbalance)
         self.events = deque()      # (ts, side)
         self.stance = "NEUTRAL"
@@ -426,7 +442,10 @@ class LongView:
 
         # raw stance = the confidence vote (LONG/SHORT/NEUTRAL -> our
         # LONG/BEAR/NEUTRAL vocabulary)
-        conf = confidence(t5, tape, book.mid, vwap)
+        conf = confidence(t5, tape, book.mid, vwap,
+                          tape_min_sided=self.tape_min_sided,
+                          tape_sided_share=self.tape_sided_share,
+                          tape_dom_min=self.tape_dom_min)
         raw = {"LONG": "LONG", "SHORT": "BEAR",
                "NEUTRAL": "NEUTRAL"}[conf["dir"]]
 

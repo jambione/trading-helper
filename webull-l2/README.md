@@ -28,7 +28,7 @@ The big banner at the top is the whole point — everything in the table below i
 Confidence is **agreement of independent, hard-to-spoof evidence**, not the magnitude of any single meter. Three pillars each vote long / short / neutral:
 
 - **trend** — the 5-minute robust drift (where price actually went)
-- **tape** — 60s executed buy/sell dominance from Time&Sales (real money; can't be spoofed; abstains under 8 prints)
+- **tape** — 60s executed buy/sell dominance from Time&Sales (real money; can't be spoofed). Votes on a **volume-aware** gate: it needs at least `tape_min_sided` (4) prints with a real side AND the sided volume to be at least `tape_sided_share` (0.5) of the flow — so a few large clearly-sided prints vote (catching fast moves the old 8-print-count gate missed), while a tape that's mostly unsided noise abstains.
 - **vwap** — price above / below the session VWAP (who controls the day)
 
 The direction is the majority; the dots show how many agree. **3/3 = size up, 2/3 = normal, split or <2 = STAND ASIDE** no matter how extreme one meter looks. Hysteresis (`long_confirm_secs`) holds the stance so it doesn't flicker, and the small `trend ▲ tape ▲ vwap ▲` line under it shows the one-glance why.

@@ -186,5 +186,10 @@ class Tape:
         sell = sum(sz for _, _, sz, s in xs if s == "S")
         total = sum(sz for _, _, sz, _ in xs)
         sided = buy + sell
-        return {"n": len(xs), "buy": buy, "sell": sell, "total": total,
-                "dom": (buy - sell) / sided if sided > 0 else 0.0}
+        sided_n = sum(1 for _, _, _, s in xs if s in ("B", "S"))
+        # sided_n / sided volume let the confidence gate vote on real sided
+        # EVIDENCE (a few large clearly-sided prints) rather than raw print
+        # count, and abstain when the tape is mostly unsided noise.
+        return {"n": len(xs), "sided_n": sided_n, "buy": buy, "sell": sell,
+                "total": total, "dom": (buy - sell) / sided if sided > 0
+                else 0.0}
