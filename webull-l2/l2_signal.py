@@ -944,10 +944,10 @@ def lv_banner(lv: dict | None, price: float | None = None,
     size of any single meter."""
     if not lv:
         return Panel(
-            Align.center("[bold grey70]WARMING UP[/bold grey70]   "
-                         "[dim]building the 5-minute picture …[/dim]"),
+            "[bold grey70]WARMING UP[/bold grey70]   "
+            "[dim]building the 5-minute picture …[/dim]",
             title="[dim]5m CONFIDENCE[/dim]", title_align="left",
-            border_style="grey50", padding=(1, 2))
+            border_style="grey50", padding=(1, 2), expand=True)
 
     held = lv["held"]
     dur = (f"{int(held // 60)}m{int(held % 60):02d}s"
@@ -1012,15 +1012,21 @@ def lv_banner(lv: dict | None, price: float | None = None,
         meta += (f"   [dim]→ turning[/dim] [bold {color}]{pend}[/bold {color}] "
                  f"[dim]in {int(lv['pending_left'])}s if it holds[/dim]")
 
-    lines = [Align.center(f"[bold {color}]{headline}[/bold {color}]"),
-             Align.center(gauge),
-             Align.center(pillars)]
-    if price_line:
-        lines.append(Align.center(price_line))
-    lines.append(Align.center(meta))
-    body = Group(*lines)
+    # Left-anchored, fixed line count so nothing slides when text changes
+    # length: centering re-offsets every line each frame (the jarring shift);
+    # a constant 5 lines stops vertical reflow when price/pending come and go.
+    if price_line is None:
+        price_line = "[dim]now  —[/dim]"
+    body = Group(
+        f"[bold {color}]{headline}[/bold {color}]",
+        gauge,
+        pillars,
+        price_line,
+        meta,
+    )
     return Panel(body, title=f"[bold {color}]5m CONFIDENCE[/bold {color}]",
-                 title_align="left", border_style=color, padding=(1, 2))
+                 title_align="left", border_style=color, padding=(1, 2),
+                 expand=True)
 
 
 def sparkline(vals: list[float], width: int = 40) -> str:
@@ -1103,8 +1109,12 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
              f"   {hz:.1f} reads/s   ok:{reads} miss:{misses}")
     if glitches:
         title += f" glitch:{glitches}"
-    t = Table(title=title, expand=False)
-    t.add_column("Metric"), t.add_column("Value", justify="right")
+    # expand=True + fixed Metric width pins the table to the pane width and
+    # the Value column's right edge, so numbers update IN PLACE instead of the
+    # whole column resizing to the current values (the frame-to-frame jump).
+    t = Table(title=title, expand=True)
+    t.add_column("Metric", no_wrap=True, width=16)
+    t.add_column("Value", justify="right", ratio=1, overflow="fold")
     if session_line:
         t.add_row("⏱ Session", session_line())
     if book:
