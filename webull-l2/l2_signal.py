@@ -793,15 +793,25 @@ class CsvLog:
     # so score_confidence.py can measure the FULL three-pillar signal after
     # the fact (the trend pillar alone is recoverable from price; tape and
     # vwap are not, so they must be logged live or they're lost).
+    # trend/tape/vwap_vote are each pillar's own -1/0/1 vote (blank = the
+    # pillar abstained, e.g. tape under 8 prints), so the scorer can grade
+    # each pillar INDIVIDUALLY and show which one drags the banner.
     FIELDS = ["time", "symbol", "best_bid", "best_ask", "spread_pct",
               "bid_size", "ask_size", "imbalance", "signal", "reason",
-              "stance", "agree", "total", "tape_live"]
+              "stance", "agree", "total", "tape_live",
+              "trend_vote", "tape_vote", "vwap_vote"]
 
     def __init__(self, path: Path):
         self.f, self.w = _open_csv(path, self.FIELDS)
 
     def write(self, book: L2Book, sig: Signal | None, symbol: str = "",
               lv: dict | None = None):
+        votes = (lv or {}).get("votes") or {}
+
+        def _v(k):  # pillar vote -> "" when the pillar had no opinion (None)
+            x = votes.get(k)
+            return "" if x is None else int(x)
+
         self.w.writerow([
             datetime.now().isoformat(timespec="milliseconds"), symbol,
             f"{book.best_bid:.4f}", f"{book.best_ask:.4f}",
@@ -812,6 +822,7 @@ class CsvLog:
             lv.get("agree", "") if lv else "",
             lv.get("total", "") if lv else "",
             int(lv.get("tape_live", False)) if lv else "",
+            _v("trend"), _v("tape"), _v("vwap"),
         ])
         self.f.flush()
 

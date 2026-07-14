@@ -12,16 +12,21 @@ signals, against forward returns at +1/+2/+5 min.
 
 What it can and can't measure
 -----------------------------
-The historical CSV logs mid-price, imbalance, and the engine BUY/SELL
-signal — NOT the confidence banner's stance (that only ever went to the
-live l2_state.json). So the full trend+tape+vwap banner cannot be scored
-from old logs. What IS scorable:
+Older logs carry only mid-price, imbalance, and the engine BUY/SELL
+signal. The newer build also logs the confidence banner's stance and each
+pillar's own vote, so the full three-pillar signal is scorable per pillar
+once you have sessions from that build. What IS scorable:
 
+  * banner stance - the real logged 5m LONG/BEAR/NEUTRAL call (newer logs).
   * trend pillar  - reconstructed from the logged mid series with the
                     same robust median-band endpoints and coverage gate
                     as SignalEngine.trend_pct(300). This is the backbone
                     of the banner; if even it has no forward edge, the
-                    premise is weak.
+                    premise is weak. Works on all logs.
+  * tape pillar   - the logged 60s executed buy/sell vote (newer logs);
+                    cannot be reconstructed from price, so pre-newer-build
+                    logs can't score it.
+  * vwap pillar   - the logged price-vs-session-VWAP vote (newer logs).
   * imbalance     - the input the banner deliberately DE-weights; scoring
                     it here checks that decision against your own data.
   * logged signal - the old imbalance-based engine's BUY/SELL calls.
@@ -81,7 +86,11 @@ def load_rows(paths: list[Path]) -> list[dict]:
                              "spread_pct": _sfloat(r.get("spread_pct")),
                              "imb": imb, "sig": (r.get("signal") or "").strip(),
                              # present only once stance logging is on (newer logs)
-                             "stance": (r.get("stance") or "").strip()})
+                             "stance": (r.get("stance") or "").strip(),
+                             # per-pillar votes (-1/0/1); None when the pillar
+                             # abstained or the log predates vote logging
+                             "tape_v": _svote(r.get("tape_vote")),
+                             "vwap_v": _svote(r.get("vwap_vote"))})
     rows.sort(key=lambda d: (d["sym"], d["ts"]))
     return rows
 
@@ -91,6 +100,15 @@ def _sfloat(s) -> float | None:
         return float(s)
     except (ValueError, TypeError):
         return None
+
+
+def _svote(s) -> int | None:
+    """Parse a logged pillar vote to -1/0/1, or None (blank/absent = the
+    pillar abstained, or the log predates vote logging)."""
+    s = (s or "").strip()
+    if s in ("-1", "0", "1"):
+        return int(s)
+    return None
 
 
 def segments(rows: list[dict]) -> list[list[dict]]:
@@ -171,7 +189,8 @@ def score(rows: list[dict], horizons: list[float], stride: float):
     segs = segments(rows)
     # predictor -> horizon -> Bucket. 'banner' is the real logged 5m stance
     # (only populated once stance logging is on); the rest are reconstructed.
-    preds = {"banner": {}, "trend": {}, "imbalance": {}, "signal": {}}
+    preds = {"banner": {}, "trend": {}, "tape": {}, "vwap": {},
+             "imbalance": {}, "signal": {}}
     for name in preds:
         for h in horizons:
             preds[name][h] = Bucket()
@@ -198,6 +217,9 @@ def score(rows: list[dict], horizons: list[float], stride: float):
             ivote = 1 if r["imb"] >= IMB_BUY else -1 if r["imb"] <= IMB_SELL else 0
             svote = 1 if r["sig"] == "BUY" else -1 if r["sig"] == "SELL" else 0
             bvote = 1 if r["stance"] == "LONG" else -1 if r["stance"] == "BEAR" else 0
+            # tape/vwap pillars come straight from the logged live votes -
+            # they can't be reconstructed from price the way trend can
+            tapevote, vwapvote = r.get("tape_v"), r.get("vwap_v")
             for h in horizons:
                 fwd = forward_ret(seg, ts_list, i, h)
                 if fwd is None:
@@ -207,6 +229,10 @@ def score(rows: list[dict], horizons: list[float], stride: float):
                     preds["banner"][h].add(fwd, bvote)
                 if tvote in (1, -1):
                     preds["trend"][h].add(fwd, tvote)
+                if tapevote in (1, -1):
+                    preds["tape"][h].add(fwd, tapevote)
+                if vwapvote in (1, -1):
+                    preds["vwap"][h].add(fwd, vwapvote)
                 if ivote in (1, -1):
                     preds["imbalance"][h].add(fwd, ivote)
                 if svote in (1, -1):
@@ -232,16 +258,20 @@ def report(preds, base, anchors, nsegs, horizons, stride):
             print(f"-- horizon +{int(h)}s -- no forward samples")
         for name, label in (("banner", "5m BANNER stance (logged)"),
                              ("trend", "TREND pillar (reconstructed)"),
+                             ("tape", "TAPE pillar (logged)"),
+                             ("vwap", "VWAP pillar (logged)"),
                              ("imbalance", "imbalance >=1.8 / <=0.55"),
                              ("signal", "logged BUY / SELL signal")):
-            if name == "banner" and not preds[name][h].n:
-                continue   # no stance logged yet; skip until logging is on
+            # banner/tape/vwap only exist once the newer logging is on;
+            # skip them silently on older logs rather than print empty lines
+            if name in ("banner", "tape", "vwap") and not preds[name][h].n:
+                continue
             print(preds[name][h].line(label))
         print()
     print("Note: 'med_edge' near 0 or negative = that predictor did not "
           "anticipate the next move on this data.\n"
-          "The tape and VWAP pillars are NOT in these logs and are not "
-          "scored here -- enable stance logging to measure the full banner.")
+          "TAPE/VWAP pillars are scored only from rows logged by the newer "
+          "build (trend/tape/vwap_vote columns); older logs show trend only.")
 
 
 def main():
