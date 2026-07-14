@@ -351,6 +351,8 @@ def momentum_table(feed: Feed, now: float, hz: float,
         st_lbl = _STATUS_LABEL.get((st or "").lower(), st or "")
         sc = ("green" if _is_buy(r) else "yellow" if st else "dim")
         flags = []
+        if r.get("find_it_first"):
+            flags.append("[bold black on green]🥇FIRST[/]")
         if feed.is_fresh(sym, now):
             flags.append("[bold black on cyan] NEW [/]")
         if r.get("mention_burst"):

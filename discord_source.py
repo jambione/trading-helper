@@ -307,11 +307,20 @@ def _parse_squeeze_levels(line: str) -> list[float]:
 # that carries a [TIER] bracket (the bracket keeps the generic branch from
 # firing on ordinary chat). Emission is still gated on a valid ticker headline.
 _SCANNER_ALERT_HEADER_RE = re.compile(
-    r"(?:(?:Scanner|Find\s+It\s+First)\s+Alert!"
+    r"(?:(?P<brand>Scanner|Find\s+It\s+First)\s+Alert!"
     r"|(?:[A-Za-z]+\s+){1,4}Alert!(?=\s*\[))"
     r"\s*(?:\[(?P<tier>[A-Z]+)\])?",
     re.I,
 )
+
+
+def _normalize_card_brand(brand: str | None) -> str:
+    """Map a scanner-alert header brand to a stable tag. Only "Find It First"
+    is distinguished today (it drives the momentum monitor's FIRST badge);
+    the generic scanner and every other header collapse to ""."""
+    if brand and re.search(r"find\s+it\s+first", brand, re.I):
+        return "find_it_first"
+    return ""
 
 # The card headline is a ticker, optionally followed by an alert type. Some
 # cards (e.g. "Find It First") show only the bare ticker ("$AGEN"), so the alert
@@ -473,7 +482,7 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
 
     def _emit_card(
         headline_idx: int, tier: str | None, header_idx: int | None,
-        require_fields: bool,
+        require_fields: bool, brand: str = "",
     ) -> bool:
         hm = _SCANNER_CARD_HEADLINE_RE.match(lines[headline_idx].strip())
         if not hm:
@@ -512,6 +521,7 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
             "price":        price,
             "float_size":   float_size,
             "scanner_tier": tier,
+            "card_brand":   brand,
             "volume":       None,
         })
         return True
@@ -529,6 +539,7 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
         hdr = _SCANNER_ALERT_HEADER_RE.search(line)
         if hdr:
             tier = (hdr.group("tier") or "").upper() or None
+            brand = _normalize_card_brand(hdr.group("brand"))
             headline_idx = None
             for j in range(i + 1, min(i + 5, n)):
                 if j in used:
@@ -540,7 +551,8 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
                     headline_idx = j
                     break
             if headline_idx is not None:
-                _emit_card(headline_idx, tier, i, require_fields=False)
+                _emit_card(headline_idx, tier, i, require_fields=False,
+                           brand=brand)
             else:
                 used.add(i)
             i += 1
@@ -574,6 +586,7 @@ def _scanner_card_to_alert(card: dict) -> dict:
         "volume":       card.get("volume"),
         "float_size":   card.get("float_size"),
         "scanner_tier": card.get("scanner_tier"),
+        "card_brand":   card.get("card_brand") or "",
         "price_spike":  price_spike,
     }
 

@@ -108,6 +108,10 @@ class _State:
         # Mention tracking — resets on server restart (fresh each trading day)
         self.mention_ts:    dict = {}  # ticker → [float, ...]  recent timestamps
         self.mention_daily: dict = {}  # ticker → int  daily total count
+        # Find It First provenance — ticker → unix ts of the last "Find It First"
+        # scanner card. Drives the momentum monitor's FIRST badge; expires per
+        # _FIND_IT_FIRST_TTL and clears on the daily mention reset.
+        self.find_it_first_ts: dict = {}
         from datetime import date as _date
         self.mention_reset_date: str  = str(_date.today())
         self.mention_market_opened: bool = False
@@ -135,6 +139,8 @@ _SPIKE_TTL_SEC = 3 * 60   # price spikes live 3 min, then drop from UI + de-dupe
 _DISCORD_STALE_SEC  = 15.0
 # Sentiment events older than this drop out of the recency-weighted mean.
 _SENTIMENT_WINDOW_SEC = 30 * 60
+# How long a ticker keeps its "Find It First" provenance badge after the card.
+_FIND_IT_FIRST_TTL = 30 * 60
 
 STATE = _State()
 
@@ -680,6 +686,7 @@ def clear_ticker_log():
         STATE.tickers.clear()
         STATE.mention_ts.clear()
         STATE.mention_daily.clear()
+        STATE.find_it_first_ts.clear()
 
 
 def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
@@ -715,6 +722,7 @@ def remove_ticker_from_log(ticker: str) -> bool:
                 STATE.tickers.pop(ticker, None)
                 STATE.mention_ts.pop(ticker, None)
                 STATE.mention_daily.pop(ticker, None)
+                STATE.find_it_first_ts.pop(ticker, None)
             return True
         except Exception as e:
             log.error(f"[TICKER] Remove {ticker} failed: {e}")
@@ -782,12 +790,15 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
         is_spike = _is_price_spike_alert(a)
         if is_spike and _price_spike_is_duplicate(ticker, a):
             continue
+        card_brand = str(a.get("card_brand") or "")
         add_ticker_to_log(ticker)
         hits = threshold if a.get("burst") else 1
         spike_rec = None
         with STATE.lock:
             if is_spike:
                 _mark_price_spike_seen(ticker, a)
+            if card_brand == "find_it_first":
+                STATE.find_it_first_ts[ticker] = time.time()
             for _ in range(hits):
                 _track_mention(ticker)
             alert_rec = {
@@ -801,6 +812,7 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
                 "volume":       a.get("volume"),
                 "float_size":   a.get("float_size"),
                 "scanner_tier": str(a.get("scanner_tier") or ""),
+                "card_brand":   card_brand,
                 "levels":       a.get("levels") or [],
             }
             STATE.discord_alerts.append(alert_rec)
@@ -1225,6 +1237,9 @@ def _snapshot() -> dict:
             conf = _confluence_sources(t)
             if len(conf) >= 2:
                 d["confluence"] = {"sources": conf, "count": len(conf)}
+            fif_ts = STATE.find_it_first_ts.get(t)
+            if fif_ts and now_ts - fif_ts <= _FIND_IT_FIRST_TTL:
+                d["find_it_first"] = True
             rows.append(d)
 
         # Morning-funnel overlay — attach the compact per-symbol score to any
@@ -1442,6 +1457,7 @@ def _mention_reset_worker():
                     STATE.mention_ts.clear()
                     STATE.push_notified.clear()
                     STATE.sentiment_events.clear()
+                    STATE.find_it_first_ts.clear()
                     log.info("[MENTIONS] Daily reset — new calendar day")
 
                 elif 930 <= hhmm <= 935 and not STATE.mention_market_opened:
@@ -1450,6 +1466,7 @@ def _mention_reset_worker():
                     STATE.mention_ts.clear()
                     STATE.push_notified.clear()
                     STATE.sentiment_events.clear()
+                    STATE.find_it_first_ts.clear()
                     log.info("[MENTIONS] Daily reset — market open window")
 
                 elif 1605 <= hhmm <= 1610 and not close_reset_fired:
@@ -1458,6 +1475,7 @@ def _mention_reset_worker():
                     STATE.mention_ts.clear()
                     STATE.push_notified.clear()
                     STATE.sentiment_events.clear()
+                    STATE.find_it_first_ts.clear()
                     log.info("[MENTIONS] Daily reset — market close window")
 
                 elif hhmm > 1610 and close_reset_fired:
