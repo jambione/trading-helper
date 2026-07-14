@@ -63,6 +63,14 @@ class FinnhubState:
             if now - self._hist_last.get(ticker, 0.0) >= _HIST_MIN_GAP:
                 dq = self.history.get(ticker)
                 if dq is None:
+                    # new symbol: opportunistically evict any that went quiet
+                    # (unsubscribed/rotated off) so the dict tracks only live
+                    # names instead of every symbol seen all session
+                    if len(self.history) > 64:
+                        for k in [k for k, v in self.history.items()
+                                  if not v or now - v[-1][0] > _HIST_SECS]:
+                            self.history.pop(k, None)
+                            self._hist_last.pop(k, None)
                     dq = self.history[ticker] = deque(maxlen=512)
                 dq.append((now, price))
                 self._hist_last[ticker] = now
@@ -90,6 +98,7 @@ class FinnhubState:
 FINNHUB_STATE  = FinnhubState()
 _STREAM_THREAD = None
 _pending_subs: _queue.Queue = _queue.Queue()
+_pending_unsubs: _queue.Queue = _queue.Queue()
 
 # Optional per-trade callbacks. Each is invoked fn(symbol, price, volume, ts_ms)
 # on every trade — used by realtime_bars to aggregate live OHLCV bars. Kept
@@ -115,10 +124,17 @@ def request_subscribe(tickers: list):
             _pending_subs.put(t)
 
 
+def request_unsubscribe(tickers: list):
+    """Queue tickers to unsubscribe (thread-safe). Frees a slot toward the
+    free-tier 50-symbol cap so rotating watchlists don't starve new movers."""
+    for t in tickers:
+        _pending_unsubs.put(t.upper())
+
+
 # ── WebSocket Stream ─────────────────────────────────────────
 
 async def _drain_pending(ws):
-    """Send any queued subscriptions to the live WebSocket."""
+    """Send any queued (un)subscriptions to the live WebSocket."""
     while not _pending_subs.empty():
         try:
             t = _pending_subs.get_nowait()
@@ -129,6 +145,19 @@ async def _drain_pending(ws):
             break
         except Exception as e:
             FINNHUB_STATE.add_log("WARN", f"Sub error for {t}: {e}")
+    while not _pending_unsubs.empty():
+        try:
+            t = _pending_unsubs.get_nowait()
+            await ws.send(json.dumps({"type": "unsubscribe", "symbol": t}))
+            with FINNHUB_STATE.lock:
+                FINNHUB_STATE.subscribed.discard(t)
+                # free the symbol's rolling history too (no longer warmed)
+                FINNHUB_STATE.history.pop(t, None)
+                FINNHUB_STATE._hist_last.pop(t, None)
+        except _queue.Empty:
+            break
+        except Exception as e:
+            FINNHUB_STATE.add_log("WARN", f"Unsub error for {t}: {e}")
 
 
 async def _finnhub_stream(api_key: str, tickers: list):
@@ -224,12 +253,13 @@ def start_finnhub_stream(api_key: str, tickers: list):
             request_subscribe(tickers)
         return _STREAM_THREAD
 
-    # Flush any stale pending subs from a previous session
-    while not _pending_subs.empty():
-        try:
-            _pending_subs.get_nowait()
-        except _queue.Empty:
-            break
+    # Flush any stale pending (un)subs from a previous session
+    for q in (_pending_subs, _pending_unsubs):
+        while not q.empty():
+            try:
+                q.get_nowait()
+            except _queue.Empty:
+                break
     with FINNHUB_STATE.lock:
         FINNHUB_STATE.subscribed.clear()
 
@@ -275,6 +305,7 @@ __all__ = [
     "FINNHUB_STATE",
     "start_finnhub_stream",
     "request_subscribe",
+    "request_unsubscribe",
     "fetch_realtime_quote",
     "get_latest_price",
 ]

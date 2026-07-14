@@ -544,17 +544,32 @@ class SignalEngine:
                            if m and float(m) > 0)
 
     def _trend_series(self, seconds: float) -> list:
-        """Merged (ts, mid) series for the trend view: seeds strictly OLDER
-        than the oldest live read, then live OCR mids. Keeping seeds before
-        live (never interleaved) means the recent-band endpoint is always
-        live once reads exist; seeds only extend the window backwards during
-        warm-up and vanish once live coverage fills it."""
-        live = [(b.ts, b.mid) for b in self.history]
+        """Windowed (ts, mid) series for the trend view. Seeds are kept
+        strictly OLDER than the oldest live read (never interleaved), so the
+        recent-band endpoint is always live once reads exist and seeds only
+        extend the window backwards during warm-up.
+
+        Runs on every render, so the common steady state (no seed) takes the
+        fast path: scan the live history tail only. Seeds are dropped the
+        moment live history alone covers the window, so they never cost
+        anything once warmed."""
+        hist = self.history
+        live_last = hist[-1].ts if hist else None
+        seed_last = self.seed[-1][0] if self.seed else None
+        if live_last is None and seed_last is None:
+            return []
+        last_ts = live_last if seed_last is None else (
+            seed_last if live_last is None else max(live_last, seed_last))
+        cutoff = last_ts - seconds
+        # once live reads span the window, the seeds are dead weight -> drop
+        if self.seed and hist and hist[0].ts <= cutoff:
+            self.seed = []
+        live = [(b.ts, b.mid) for b in hist if b.ts >= cutoff]
         if not self.seed:
             return live
         oldest_live = live[0][0] if live else float("inf")
-        seeds = [(t, m) for (t, m) in self.seed if t < oldest_live]
-        return seeds + live
+        return [(t, m) for (t, m) in self.seed
+                if cutoff <= t < oldest_live] + live
 
     def trend_pct(self, seconds: float) -> float | None:
         """Mid-price change (%) over the last `seconds` of history.

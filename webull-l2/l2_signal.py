@@ -665,8 +665,13 @@ class RefFeed:
         self.enabled = bool(cfg.get("ref_price_gate", True))
         self.max_age = float(cfg.get("ref_max_age", 15.0))
         self.key = cfg.get("finnhub_key") or os.getenv("FINNHUB_API_KEY", "")
-        self._start = self._state = None
-        self._subscribed: set[str] = set()
+        self._start = self._state = self._unsub = None
+        self._subscribed: set[str] = set()   # symbols actually on the wire
+        self._watch: set[str] = set()        # watchlist we want warmed
+        self._active: str | None = None      # the symbol in focus now
+        # ensure() (render loop) and set_watchlist() (warm-start daemon) both
+        # reconcile from different threads -> guard the shared sub sets
+        self._sub_lock = threading.Lock()
         if not (self.enabled and self.key):
             self.enabled = False
             if console and not self.key:
@@ -676,8 +681,10 @@ class RefFeed:
             return
         try:
             sys.path.insert(0, str(HERE.parent))
-            from finnhub_stream import FINNHUB_STATE, start_finnhub_stream
+            from finnhub_stream import (FINNHUB_STATE, request_unsubscribe,
+                                         start_finnhub_stream)
             self._start, self._state = start_finnhub_stream, FINNHUB_STATE
+            self._unsub = request_unsubscribe
             if console:
                 console.print("[dim]ref-price gate on — Finnhub last-trade "
                               "vetoes wild OCR misreads[/dim]")
@@ -686,31 +693,52 @@ class RefFeed:
             if console:
                 console.print(f"[dim]ref-price gate unavailable: {e}[/dim]")
 
-    def ensure(self, symbol: str | None):
-        """Subscribe the active symbol (first call also starts the stream)."""
-        if not self.enabled or not symbol or symbol in self._subscribed:
-            return
-        try:
-            self._start(self.key, [symbol])
-            self._subscribed.add(symbol)
-        except Exception:                                      # noqa: BLE001
-            pass
+    def _reconcile(self):
+        """Drive the live subscription set to exactly {watchlist + active},
+        capped under Finnhub's free-tier 50-symbol limit. Subscribes what's
+        newly wanted and UNsubscribes what's no longer wanted (dropped
+        watchlist names, stale prior actives) so the set can't creep toward
+        the cap over a long session and starve new movers of a warm slot."""
+        with self._sub_lock:
+            want = set(self._watch)
+            if self._active:
+                want.add(self._active)
+            if len(want) > 45:                   # keep headroom under 50
+                want = ({self._active} if self._active else set()) \
+                    | set(list(want - {self._active})[:44])
+            add = [s for s in want if s not in self._subscribed]
+            drop = [s for s in self._subscribed if s not in want]
+            try:
+                if add:
+                    self._start(self.key, add)
+                    self._subscribed.update(add)
+                if drop and self._unsub:
+                    self._unsub(drop)
+                    self._subscribed.difference_update(drop)
+            except Exception:                                  # noqa: BLE001
+                pass
 
-    def subscribe(self, symbols):
+    def ensure(self, symbol: str | None):
+        """Mark `symbol` as the active one and reconcile (first call also
+        starts the stream). Cheap no-op when the active symbol is unchanged,
+        so it's safe to call every poll."""
+        if not self.enabled or not symbol or symbol == self._active:
+            return
+        self._active = symbol
+        self._reconcile()
+
+    def set_watchlist(self, symbols):
         """Pre-subscribe a watchlist so each symbol's trade history warms in
         the background BEFORE you switch onto it -- that pre-collected history
         is what seed_points() returns to seed the trend instantly on a switch.
-        Capped under Finnhub's free-tier 50-symbol limit."""
-        if not self.enabled or not symbols:
+        Names that fall off the list get unsubscribed on the next reconcile."""
+        if not self.enabled:
             return
-        fresh = [s for s in symbols if s and s not in self._subscribed][:40]
-        if not fresh:
-            return
-        try:
-            self._start(self.key, fresh)
-            self._subscribed.update(fresh)
-        except Exception:                                      # noqa: BLE001
-            pass
+        want = {s for s in symbols if s}
+        if want == self._watch:
+            return                              # unchanged -> skip the diff
+        self._watch = want
+        self._reconcile()
 
     def seed_points(self, symbol: str | None, seconds: float) -> list:
         """(ts, price) points collected for `symbol` over the last `seconds`
@@ -1248,7 +1276,7 @@ def main():
             try:
                 syms = _fetch_watchlist(url)
                 if syms:
-                    reffeed.subscribe(syms)
+                    reffeed.set_watchlist(syms)
             except Exception:                                  # noqa: BLE001
                 pass
             time.sleep(max(5.0, float(cfg.get("warm_poll", 12))))
