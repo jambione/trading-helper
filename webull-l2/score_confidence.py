@@ -9,6 +9,9 @@ signals, against forward returns at +1/+2/+5 min.
     python score_confidence.py            # scores l2_log.csv
     python score_confidence.py --all      # include archived l2_log-old-*.csv
     python score_confidence.py --stride 20 --horizons 60,120,300
+    python score_confidence.py --since-switch 180 --move-thresh 1.0
+        # only the first 3 min after each symbol switch (the fast-hop
+        # decision window), and count 1%+ moves for the recall report
 
 What it can and can't measure
 -----------------------------
@@ -185,7 +188,11 @@ class Bucket:
                 + (f"  [{self.extreme} glitchy]" if self.extreme else ""))
 
 
-def score(rows: list[dict], horizons: list[float], stride: float):
+def score(rows: list[dict], horizons: list[float], stride: float,
+          since_switch: float = 0.0):
+    """since_switch>0 restricts anchors to the first N seconds after a symbol
+    switch (segment start) -- the actual few-minute decision window when you
+    hop onto a ticker, rather than idealized fully-warmed reads."""
     segs = segments(rows)
     # predictor -> horizon -> Bucket. 'banner' is the real logged 5m stance
     # (only populated once stance logging is on); the rest are reconstructed.
@@ -195,16 +202,24 @@ def score(rows: list[dict], horizons: list[float], stride: float):
         for h in horizons:
             preds[name][h] = Bucket()
     base = {h: [] for h in horizons}       # all anchors: unconditional fwd ret
+    # every scored anchor's (fwd_ret, banner_vote, tape_vote) per horizon,
+    # incl. neutral votes -- so capture_report can count MISSED real moves
+    moves = {h: [] for h in horizons}
 
     anchors = 0
     for seg in segs:
         ts_list = [r["ts"] for r in seg]
+        seg_start = seg[0]["ts"]
         left = 0
         last_anchor = -1e9
         for i, r in enumerate(seg):
             # slide the trailing-window left edge
             while seg[left]["ts"] < r["ts"] - TREND_WINDOW:
                 left += 1
+            # decision-window filter: once we're past N s into the segment,
+            # every later row is too (rows are time-ordered) -> stop this seg
+            if since_switch and r["ts"] - seg_start > since_switch:
+                break
             if r["ts"] - last_anchor < stride:
                 continue                    # sub-sample: one anchor / stride
             last_anchor = r["ts"]
@@ -225,6 +240,7 @@ def score(rows: list[dict], horizons: list[float], stride: float):
                 if fwd is None:
                     continue
                 base[h].append(fwd)
+                moves[h].append((fwd, bvote, tapevote))
                 if bvote in (1, -1):
                     preds["banner"][h].add(fwd, bvote)
                 if tvote in (1, -1):
@@ -237,7 +253,7 @@ def score(rows: list[dict], horizons: list[float], stride: float):
                     preds["imbalance"][h].add(fwd, ivote)
                 if svote in (1, -1):
                     preds["signal"][h].add(fwd, svote)
-    return preds, base, anchors, len(segs)
+    return preds, base, anchors, len(segs), moves
 
 
 def report(preds, base, anchors, nsegs, horizons, stride):
@@ -274,6 +290,39 @@ def report(preds, base, anchors, nsegs, horizons, stride):
           "build (trend/tape/vwap_vote columns); older logs show trend only.")
 
 
+def capture_report(moves, horizons, move_thresh):
+    """RECALL view: among anchors that actually moved >= move_thresh by the
+    horizon, how often did we call the direction vs stay neutral. 'missed'
+    (we abstained on a real move) is the failure you asked to cut."""
+    print(f"\nMove capture (RECALL) -- of anchors that actually moved "
+          f">= {move_thresh:.2f}% by the horizon:")
+    print("  captured = called the right way | wrong = called opposite | "
+          "missed = stayed NEUTRAL on a real move")
+    for h in horizons:
+        real = [m for m in moves[h] if abs(m[0]) >= move_thresh]
+        n = len(real)
+        if not n:
+            print(f"  +{int(h)}s: no moves >= {move_thresh:.2f}%")
+            continue
+
+        def stat(idx):  # idx 1 = banner vote, 2 = tape vote
+            cap = sum(1 for m in real
+                      if m[idx] in (1, -1) and (m[0] > 0) == (m[idx] > 0))
+            wrong = sum(1 for m in real
+                        if m[idx] in (1, -1) and (m[0] > 0) != (m[idx] > 0))
+            return cap, wrong, n - cap - wrong          # missed = the rest
+
+        for label, idx in (("banner", 1), ("tape  ", 2)):
+            c, w, miss = stat(idx)
+            if c == w == 0 and miss == n:
+                # pillar never voted on any real move (e.g. no tape logged)
+                print(f"  +{int(h)}s {label}: n={n}  (no votes logged)")
+                continue
+            print(f"  +{int(h)}s {label}: n={n}  captured {c} "
+                  f"({100 * c / n:3.0f}%)  wrong {w} ({100 * w / n:3.0f}%)  "
+                  f"missed {miss} ({100 * miss / n:3.0f}%)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--all", action="store_true",
@@ -282,6 +331,12 @@ def main():
                     help="forward horizons in seconds, comma-separated")
     ap.add_argument("--stride", type=float, default=15.0,
                     help="min seconds between scored anchors (default 15)")
+    ap.add_argument("--since-switch", type=float, default=0.0,
+                    help="only score anchors within N seconds of a symbol "
+                         "switch -- your few-minute decision window (0=off)")
+    ap.add_argument("--move-thresh", type=float, default=1.0,
+                    help="%% move that counts as a 'real move' for the "
+                         "recall/capture report (default 1.0)")
     a = ap.parse_args()
 
     paths = [HERE / "l2_log.csv"]
@@ -297,8 +352,13 @@ def main():
         return
     print(f"Loaded {len(rows)} rows from "
           f"{', '.join(p.name for p in paths if p.exists())}")
-    preds, base, anchors, nsegs = score(rows, horizons, a.stride)
+    if a.since_switch:
+        print(f"Decision-window mode: only anchors within "
+              f"{a.since_switch:.0f}s of a symbol switch.")
+    preds, base, anchors, nsegs, moves = score(
+        rows, horizons, a.stride, a.since_switch)
     report(preds, base, anchors, nsegs, horizons, a.stride)
+    capture_report(moves, horizons, a.move_thresh)
 
 
 if __name__ == "__main__":
