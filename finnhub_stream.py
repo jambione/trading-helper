@@ -25,6 +25,14 @@ log = logging.getLogger(__name__)
 
 # ── Shared State ─────────────────────────────────────────────
 
+# rolling per-symbol price history: keep ~6 min, subsampled to ~1 point/s.
+# Lets a consumer that subscribes a watchlist ahead of time (e.g. the L2
+# monitor) seed a symbol's trend the instant it switches to it, instead of
+# warming up blind for minutes. Subsampling caps memory to ~360 pts/symbol.
+_HIST_SECS    = 360.0
+_HIST_MIN_GAP = 1.0
+
+
 class FinnhubState:
     def __init__(self):
         self.lock       = threading.Lock()
@@ -33,6 +41,8 @@ class FinnhubState:
         self.connected  = False
         self.last_trade = {}           # ticker → last trade data
         self.log_lines  = deque(maxlen=100)
+        self.history    = {}           # ticker → deque[(ts_unix, price)]
+        self._hist_last = {}           # ticker → last stored ts_unix
 
     def add_log(self, level: str, msg: str):
         ts = datetime.now(ET).strftime("%H:%M:%S")
@@ -40,14 +50,32 @@ class FinnhubState:
             self.log_lines.append({"ts": ts, "level": level, "msg": msg})
 
     def update_price(self, ticker: str, price: float, volume: int = 0, timestamp: int = 0):
+        now = time.time()
         with self.lock:
             self.prices[ticker] = {
                 "price":     price,
                 "volume":    volume,
                 "timestamp": timestamp,
-                "ts_unix":   time.time(),
+                "ts_unix":   now,
                 "updated":   datetime.now(ET).strftime("%H:%M:%S"),
             }
+            # subsampled rolling history for trend seeding
+            if now - self._hist_last.get(ticker, 0.0) >= _HIST_MIN_GAP:
+                dq = self.history.get(ticker)
+                if dq is None:
+                    dq = self.history[ticker] = deque(maxlen=512)
+                dq.append((now, price))
+                self._hist_last[ticker] = now
+                while dq and now - dq[0][0] > _HIST_SECS:
+                    dq.popleft()
+
+    def recent_prices(self, ticker: str, seconds: float) -> list:
+        """(ts_unix, price) points for `ticker` within the last `seconds`.
+        Empty if the symbol was never streamed (nothing to seed from)."""
+        cut = time.time() - seconds
+        with self.lock:
+            dq = self.history.get(ticker.upper())
+            return [(t, p) for (t, p) in dq if t >= cut] if dq else []
 
     def snapshot(self) -> dict:
         with self.lock:

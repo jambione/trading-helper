@@ -696,6 +696,33 @@ class RefFeed:
         except Exception:                                      # noqa: BLE001
             pass
 
+    def subscribe(self, symbols):
+        """Pre-subscribe a watchlist so each symbol's trade history warms in
+        the background BEFORE you switch onto it -- that pre-collected history
+        is what seed_points() returns to seed the trend instantly on a switch.
+        Capped under Finnhub's free-tier 50-symbol limit."""
+        if not self.enabled or not symbols:
+            return
+        fresh = [s for s in symbols if s and s not in self._subscribed][:40]
+        if not fresh:
+            return
+        try:
+            self._start(self.key, fresh)
+            self._subscribed.update(fresh)
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    def seed_points(self, symbol: str | None, seconds: float) -> list:
+        """(ts, price) points collected for `symbol` over the last `seconds`
+        from the stream -- empty unless it was subscribed early enough to have
+        accumulated history. Fed to SignalEngine.seed_history() on a switch."""
+        if not self.enabled or not symbol or self._state is None:
+            return []
+        try:
+            return self._state.recent_prices(symbol, seconds)
+        except Exception:                                      # noqa: BLE001
+            return []
+
     def price(self, symbol: str | None) -> float | None:
         """A FRESH real last-trade price for `symbol`, or None. Staleness is
         gated here so the gate never vetoes against an old print (e.g. if
@@ -712,6 +739,25 @@ class RefFeed:
             return float(d["price"])
         except Exception:                                      # noqa: BLE001
             return None
+
+
+def _fetch_watchlist(url: str) -> list:
+    """Best-effort GET of the dashboard's /api/state; returns the momentum
+    ticker symbols. Browser UA so Cloudflare doesn't 403; the feed's auth is
+    off by default. Any failure -> [] (warm-start just no-ops for that poll)."""
+    import urllib.request
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    try:
+        req = urllib.request.Request(
+            url.rstrip("/") + "/api/state",
+            headers={"Accept": "application/json", "User-Agent": ua})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode())
+        return [s for s in (str(r.get("ticker") or "").upper().strip()
+                            for r in (data.get("tickers") or [])) if s]
+    except Exception:                                          # noqa: BLE001
+        return []
 
 
 # ---------------------------------------------------------------- alerts ----
@@ -1190,6 +1236,28 @@ def main():
                     pass
 
     threading.Thread(target=_symbol_refresher, daemon=True).start()
+
+    def _warm_watchlist():
+        # pre-subscribe the momentum monitor's live list to the trade stream
+        # so each symbol's trend history warms in the background; on a switch
+        # seed_points() then makes the 5m trend valid on arrival (vs ~3 min
+        # blind). Best-effort: a down feed just leaves us at live warm-up.
+        url = (cfg.get("dashboard_url")
+               or os.getenv("DASHBOARD_URL", "https://trading.jbrasfield.com"))
+        while True:
+            try:
+                syms = _fetch_watchlist(url)
+                if syms:
+                    reffeed.subscribe(syms)
+            except Exception:                                  # noqa: BLE001
+                pass
+            time.sleep(max(5.0, float(cfg.get("warm_poll", 12))))
+
+    if reffeed.enabled and cfg.get("warm_start", True):
+        threading.Thread(target=_warm_watchlist, daemon=True).start()
+        console.print("[dim]warm-start on — pre-subscribing the momentum "
+                      "watchlist so trends seed instantly on switch[/dim]")
+
     with mss.MSS() as sct, Live(render(None, None, 0, 0, 0),
                                 console=console, refresh_per_second=4) as live:
         while True:
@@ -1220,6 +1288,17 @@ def main():
                         f"[dim]symbol switch {old} → {active_sym}: history "
                         "reset" + (", virtual position dropped" if dropped
                                    else "") + "[/dim]")
+                # seed the new symbol's trend from stream history collected
+                # while it sat on the watchlist -> valid 5m read on arrival
+                # instead of ~3 min blind. Runs on the first switch too;
+                # empty (symbol not pre-subbed) falls back to live warm-up.
+                seeds = reffeed.seed_points(
+                    active_sym, cfg.get("trend_window", 300))
+                if seeds:
+                    engine.seed_history(seeds)
+                    console.print(
+                        f"[dim]seeded {len(seeds)} stream pts → {active_sym}: "
+                        "trend warm on arrival[/dim]")
             reffeed.ensure(tracker.symbol)
             raw = np.asarray(sct.grab(region))
             key = (region["left"], region["top"], region["width"],

@@ -517,6 +517,10 @@ class SignalEngine:
         self.tape_dom_min = cfg.get("tape_dom_min", 0.25)
         # ~11 min of history at 3 reads/s, enough for a 5-min trend
         self.history = deque(maxlen=2000)
+        # (ts, mid) points pre-loaded from a real-time trade stream on a
+        # symbol switch, so the trend pillar is valid immediately instead of
+        # blind for min_coverage*trend_window (~3 min). Trend-only.
+        self.seed: list[tuple[float, float]] = []
         self._buy_streak = 0
         self._sell_streak = 0
         self._last_alert = 0.0
@@ -525,7 +529,32 @@ class SignalEngine:
         """Forget all per-symbol state (called on symbol switch - trends
         and streaks computed across two different stocks are garbage)."""
         self.history.clear()
+        self.seed = []
         self._buy_streak = self._sell_streak = 0
+
+    def seed_history(self, points):
+        """Pre-load (ts, mid) points (e.g. from the Finnhub trade stream that
+        was pre-subscribed to your watchlist) so the trend pillar has a real
+        5-minute read the moment you switch symbols, instead of warming up
+        blind. Seeds feed ONLY trend_pct/trend_span; live OCR history alone
+        still drives entries and the momentum filter, so a seed can never by
+        itself trigger a trade. Seeds age out of the window as live reads
+        accumulate. Call right AFTER reset() on a switch."""
+        self.seed = sorted((float(t), float(m)) for t, m in points
+                           if m and float(m) > 0)
+
+    def _trend_series(self, seconds: float) -> list:
+        """Merged (ts, mid) series for the trend view: seeds strictly OLDER
+        than the oldest live read, then live OCR mids. Keeping seeds before
+        live (never interleaved) means the recent-band endpoint is always
+        live once reads exist; seeds only extend the window backwards during
+        warm-up and vanish once live coverage fills it."""
+        live = [(b.ts, b.mid) for b in self.history]
+        if not self.seed:
+            return live
+        oldest_live = live[0][0] if live else float("inf")
+        seeds = [(t, m) for (t, m) in self.seed if t < oldest_live]
+        return seeds + live
 
     def trend_pct(self, seconds: float) -> float | None:
         """Mid-price change (%) over the last `seconds` of history.
@@ -536,27 +565,31 @@ class SignalEngine:
         `trend_min_coverage` covered before a value is returned — 40s of
         history is never reported as a "5-minute trend" (callers show …
         and the playbook stays conservative until the data is real)."""
-        if len(self.history) < 2:
+        series = self._trend_series(seconds)
+        if len(series) < 2:
             return None
-        last_ts = self.history[-1].ts
+        last_ts = series[-1][0]
         cutoff = last_ts - seconds
-        xs = [b for b in self.history if b.ts >= cutoff]
-        if len(xs) < 2 or xs[-1].ts - xs[0].ts < self.min_coverage * seconds:
+        xs = [(t, m) for (t, m) in series if t >= cutoff]
+        if len(xs) < 2 or xs[-1][0] - xs[0][0] < self.min_coverage * seconds:
             return None
         band = max(3.0, seconds * 0.05)
-        m0 = _median([b.mid for b in xs if b.ts <= xs[0].ts + band])
-        m1 = _median([b.mid for b in xs if b.ts >= xs[-1].ts - band])
+        m0 = _median([m for (t, m) in xs if t <= xs[0][0] + band])
+        m1 = _median([m for (t, m) in xs if t >= xs[-1][0] - band])
         return 100.0 * (m1 - m0) / m0 if m0 else None
 
     def trend_span(self, seconds: float) -> float:
         """Seconds of history actually available inside the trailing
-        window — lets the UI say 'warming up: 2.1m of 5m'."""
-        if len(self.history) < 2:
+        window — lets the UI say 'warming up: 2.1m of 5m'. Counts seeded
+        history too, so a freshly-switched, stream-seeded symbol reads as
+        warm rather than 'warming up'."""
+        series = self._trend_series(seconds)
+        if len(series) < 2:
             return 0.0
-        last_ts = self.history[-1].ts
+        last_ts = series[-1][0]
         cutoff = last_ts - seconds
-        base = next((b for b in self.history if b.ts >= cutoff), None)
-        return (last_ts - base.ts) if base else 0.0
+        base = next((t for (t, m) in series if t >= cutoff), None)
+        return (last_ts - base) if base is not None else 0.0
 
     def update(self, book: L2Book, tape: dict | None = None) -> Signal | None:
         self.history.append(book)
