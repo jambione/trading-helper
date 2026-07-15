@@ -108,7 +108,10 @@ class Tape:
 
     def __init__(self, keep: float = 600.0):
         self.keep = keep
-        self.prints: deque = deque()   # (wall_ts, price, size, side)
+        # (wall_ts, price, size, side, src) -- src records HOW the side was
+        # decided: "C" color (Webull's own aggressor paint, most trusted),
+        # "Q" quote rule, "T" tick rule (noisiest), "N" unsided.
+        self.prints: deque = deque()
         self._prev: list = []          # last frame's signatures, top-down
         self.pv = 0.0                  # running sum(price*size) for VWAP
         self.v = 0.0                   # running sum(size)
@@ -125,22 +128,25 @@ class Tape:
         self.started = time.time()
 
     def _infer_side(self, price: float, bid: float | None,
-                    ask: float | None) -> str:
+                    ask: float | None) -> tuple[str, str]:
         """Webull leaves many prints uncolored, so classify them the
         classic way: quote rule first (at/above the ask = buyer, at/below
         the bid = seller), tick rule as fallback (uptick = buy, downtick
-        = sell, unchanged inherits the last known side)."""
+        = sell, unchanged inherits the last known side). Returns
+        (side, src) so downstream can weight by how the call was made --
+        the quote rule is the real aggression classifier, the tick rule
+        is a guess."""
         if ask is not None and price >= ask:
-            return "B"
+            return "B", "Q"
         if bid is not None and price <= bid:
-            return "S"
+            return "S", "Q"
         if self._last_px is not None:
             if price > self._last_px:
-                return "B"
+                return "B", "T"
             if price < self._last_px:
-                return "S"
-            return self._last_side
-        return "N"
+                return "S", "T"
+            return self._last_side, "T"
+        return "N", "N"
 
     def ingest_frame(self, rows: list, now: float,
                      bid: float | None = None,
@@ -151,9 +157,11 @@ class Tape:
         sigs = [r[:3] for r in rows]
         new = rows if not self._prev else rows[:self._match(sigs)]
         for _ts, price, size, side in reversed(new):   # oldest new first
-            if side == "N":
-                side = self._infer_side(price, bid, ask)
-            self.prints.append((now, price, size, side))
+            if side in ("B", "S"):
+                src = "C"                    # Webull's own color paint
+            else:
+                side, src = self._infer_side(price, bid, ask)
+            self.prints.append((now, price, size, side, src))
             self.pv += price * size
             self.v += size
             self._last_px = price
@@ -164,6 +172,12 @@ class Tape:
         while self.prints and now - self.prints[0][0] > self.keep:
             self.prints.popleft()
         return len(new)
+
+    def prints_since(self, ts: float) -> list:
+        """Prints recorded after wall-clock `ts` (newest ingests) -- feeds
+        the book-flow detectors that cross-reference resting size against
+        executed volume."""
+        return [p for p in self.prints if p[0] > ts]
 
     def _match(self, sigs: list) -> int:
         """Index in the new frame where the previous frame starts."""
@@ -178,18 +192,68 @@ class Tape:
         """True volume-weighted average price of every captured print."""
         return self.pv / self.v if self.v > 0 else None
 
-    def metrics(self, now: float, window: float) -> dict:
+    def metrics(self, now: float, window: float, big_mult: float = 4.0,
+                tick_weight: float = 0.5) -> dict:
         """Buy/sell executed volume and dominance over the trailing window.
-        dom is -1 (all sells) .. +1 (all buys) over the SIDED volume."""
+        dom is -1 (all sells) .. +1 (all buys) over the SIDED volume.
+
+        Extras (logged/displayed first, promoted to voting only after
+        score_confidence grades them on real sessions):
+          dom_big - dominance over BLOCK prints only (size >= big_mult x the
+                    window's median print size, mirroring wall_multiple).
+                    Executed size is the hardest evidence on the feed; this
+                    separates one 5,000-share lift from fifty 100-share pings.
+          dom_w   - dominance with tick-rule-sided prints weighted
+                    tick_weight (they're guesses; color/quote calls aren't).
+          pace_n  - prints per minute over the window.
+          pace_vol- executed volume per minute over the window.
+          accel   - window volume rate vs the whole retention baseline
+                    (>1 = tape heating up, <1 = cooling, None = no baseline).
+        """
         xs = [p for p in self.prints if now - p[0] <= window]
-        buy = sum(sz for _, _, sz, s in xs if s == "B")
-        sell = sum(sz for _, _, sz, s in xs if s == "S")
-        total = sum(sz for _, _, sz, _ in xs)
+        buy = sum(sz for _, _, sz, s, _ in xs if s == "B")
+        sell = sum(sz for _, _, sz, s, _ in xs if s == "S")
+        total = sum(sz for _, _, sz, _, _ in xs)
         sided = buy + sell
-        sided_n = sum(1 for _, _, _, s in xs if s in ("B", "S"))
+        sided_n = sum(1 for _, _, _, s, _ in xs if s in ("B", "S"))
+
+        dom_big, big_n = 0.0, 0
+        sizes = sorted(sz for _, _, sz, _, _ in xs)
+        if sizes:
+            med = sizes[len(sizes) // 2]
+            if med > 0:
+                th = big_mult * med
+                bb = sum(sz for _, _, sz, s, _ in xs
+                         if s == "B" and sz >= th)
+                bs = sum(sz for _, _, sz, s, _ in xs
+                         if s == "S" and sz >= th)
+                big_n = sum(1 for _, _, sz, s, _ in xs
+                            if s in ("B", "S") and sz >= th)
+                dom_big = (bb - bs) / (bb + bs) if (bb + bs) > 0 else 0.0
+
+        wb = sum(sz * (tick_weight if src == "T" else 1.0)
+                 for _, _, sz, s, src in xs if s == "B")
+        ws = sum(sz * (tick_weight if src == "T" else 1.0)
+                 for _, _, sz, s, src in xs if s == "S")
+        dom_w = (wb - ws) / (wb + ws) if (wb + ws) > 0 else 0.0
+
+        mins = window / 60.0
+        span = now - self.started
+        accel = None
+        if span > window and self.prints:
+            base_span = min(span, self.keep,
+                            now - self.prints[0][0]) or 0.0
+            base_vol = sum(sz for _, _, sz, _, _ in self.prints)
+            if base_span > window and base_vol > 0:
+                accel = (total / window) / (base_vol / base_span)
+
         # sided_n / sided volume let the confidence gate vote on real sided
         # EVIDENCE (a few large clearly-sided prints) rather than raw print
         # count, and abstain when the tape is mostly unsided noise.
         return {"n": len(xs), "sided_n": sided_n, "buy": buy, "sell": sell,
                 "total": total, "dom": (buy - sell) / sided if sided > 0
-                else 0.0}
+                else 0.0,
+                "dom_big": dom_big, "big_n": big_n, "dom_w": dom_w,
+                "pace_n": len(xs) / mins if mins > 0 else 0.0,
+                "pace_vol": total / mins if mins > 0 else 0.0,
+                "accel": accel}

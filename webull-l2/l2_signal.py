@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import zlib
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -31,15 +32,15 @@ import cv2
 import mss
 import numpy as np
 import pytesseract
-from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-from l2_core import (GlitchGate, L2Book, LongView, PaperTrader, Signal,
-                     SignalEngine, Trade, WallTracker, _median, market_bias,
-                     parse_l2_text, playbook, project_price)
+from l2_core import (BookFlow, GlitchGate, L2Book, LongView, PaperTrader,
+                     Signal, SignalEngine, Trade, WallTracker, _median,
+                     market_bias, parse_l2_text, playbook, project_price,
+                     quality_grade, signal_quality)
 from tape_core import Tape, classify_rgb, parse_tape_line
 
 # shared session clock (repo root) — optional: monitor runs fine without it
@@ -587,6 +588,7 @@ class TapeReader:
         self._win_rect: dict | None = None
         self._frame_key: int | None = None
         self._quote: tuple | None = None       # (bid, ask, ts) from L2 loop
+        self.last_print: float | None = None   # wall ts of last NEW print
         if self.enabled:
             threading.Thread(target=self._run, daemon=True).start()
 
@@ -602,11 +604,18 @@ class TapeReader:
                     "m5": self.tape.metrics(now, 300),
                     "vwap": self.tape.vwap(),
                     "since": self.tape.started,
+                    "last_print": self.last_print,
                     "ok": self.ok, "miss": self.miss}
 
     def reset(self):
         with self.lock:
             self.tape.reset()
+            self.last_print = None
+
+    def prints_since(self, ts: float) -> list:
+        """Thread-safe view of prints newer than `ts` (for BookFlow)."""
+        with self.lock:
+            return self.tape.prints_since(ts)
 
     def _run(self):
         with mss.MSS() as sct:
@@ -643,7 +652,8 @@ class TapeReader:
             if rows:
                 self.ok += 1
                 self._misses_row = 0
-                self.tape.ingest_frame(rows, now, bid, ask)
+                if self.tape.ingest_frame(rows, now, bid, ask):
+                    self.last_print = now
             else:
                 self.miss += 1
                 self._misses_row += 1
@@ -769,6 +779,94 @@ class RefFeed:
             return None
 
 
+# --------------------------------------------------------- SDK depth feed ---
+
+class BookFeed:
+    """Daemon thread polling Webull OpenAPI depth quotes (10 levels) as the
+    PRIMARY book source; the OCR pipeline stays as fallback and as the
+    symbol detector. Removes OCR misreads from the confidence chain when
+    it's live: no merged digits, no frozen-pixel re-stamps, real sizes.
+
+    Needs the OpenAPI *Advanced Quotes* subscription - without it the SDK
+    caps depth at 1 (top-of-book: no walls, no real imbalance), which
+    get() treats as not-live so auto mode stays on OCR.
+
+    config.json "book_source": "auto" (SDK when fresh, OCR otherwise),
+    "ocr" (never poll), "sdk" (prefer SDK, still OCR when it's down).
+    Credentials come from config/webull_bridge.json or WEBULL_APP_* env
+    vars - the same plumbing the bridge uses."""
+
+    def __init__(self, cfg: dict, console=None):
+        self.mode = str(cfg.get("book_source", "auto")).lower()
+        self.max_age = 1.5      # SDK book older than this -> OCR wins
+        self.lock = threading.Lock()
+        self._symbol: str | None = None
+        self._book: L2Book | None = None
+        self._got: float = 0.0
+        self.ok = 0
+        self.fail = 0
+        self.md = None
+        if self.mode == "ocr":
+            return
+        try:
+            sys.path.insert(0, str(HERE.parent))
+            from webull_bridge.config import load_config
+            from webull_bridge.providers.webull import WebullMarketData
+            self.md = WebullMarketData(load_config())
+            threading.Thread(target=self._run, daemon=True).start()
+            if console:
+                console.print("[dim]SDK depth feed on — OpenAPI book "
+                              "preferred, OCR fallback[/dim]")
+        except Exception as e:                                 # noqa: BLE001
+            self.md = None
+            if console:
+                style = "yellow" if self.mode == "sdk" else "dim"
+                console.print(f"[{style}]SDK depth feed unavailable ({e}) — "
+                              f"staying on OCR[/{style}]")
+
+    @property
+    def enabled(self) -> bool:
+        return self.md is not None
+
+    def set_symbol(self, symbol: str | None):
+        if not symbol or self.md is None:
+            return
+        with self.lock:
+            if symbol != self._symbol:
+                self._symbol = symbol
+                self._book = None      # never serve another symbol's book
+
+    def get(self, now: float) -> L2Book | None:
+        """The current SDK book if it's fresh and REAL depth (>1 level) -
+        else None and the caller stays on OCR."""
+        if self.md is None:
+            return None
+        with self.lock:
+            if (self._book is not None and now - self._got <= self.max_age
+                    and self.md.depth > 1):
+                return self._book
+        return None
+
+    def _run(self):
+        while True:
+            t0 = time.time()
+            with self.lock:
+                sym = self._symbol
+            if sym:
+                try:
+                    book = self.md._fetch(sym)
+                except Exception:                              # noqa: BLE001
+                    book = None
+                with self.lock:
+                    if book is not None and sym == self._symbol:
+                        self._book, self._got = book, time.time()
+                        self.ok += 1
+                    elif book is None:
+                        self.fail += 1
+            poll = self.md.poll if self.md else 0.5
+            time.sleep(max(0.05, poll - (time.time() - t0)))
+
+
 def _fetch_watchlist(url: str) -> list:
     """Best-effort GET of the dashboard's /api/state; returns the momentum
     ticker symbols. Browser UA so Cloudflare doesn't 403; the feed's auth is
@@ -868,23 +966,34 @@ class CsvLog:
     # the fact (the trend pillar alone is recoverable from price; tape and
     # vwap are not, so they must be logged live or they're lost).
     # trend/tape/vwap_vote are each pillar's own -1/0/1 vote (blank = the
-    # pillar abstained, e.g. tape under 8 prints), so the scorer can grade
-    # each pillar INDIVIDUALLY and show which one drags the banner.
+    # pillar abstained), so the scorer can grade each pillar INDIVIDUALLY.
+    # The raw-value tail (t5..quality) exists so thresholds can be swept
+    # OFFLINE against forward returns -- votes alone can't be re-derived at
+    # a different tape_dom_min / deadband, the raw numbers can. flow/absorb
+    # are reserved for the book-flow detectors (logged before they vote).
     FIELDS = ["time", "symbol", "best_bid", "best_ask", "spread_pct",
               "bid_size", "ask_size", "imbalance", "signal", "reason",
               "stance", "agree", "total", "tape_live",
-              "trend_vote", "tape_vote", "vwap_vote"]
+              "trend_vote", "tape_vote", "vwap_vote",
+              "t5", "tape_dom", "tape_dom_big", "tape_dom_w",
+              "tape_sided_n", "tape_sided_share", "tape_pace", "tape_accel",
+              "vwap", "tape_age", "quality", "flow", "absorb"]
 
     def __init__(self, path: Path):
         self.f, self.w = _open_csv(path, self.FIELDS)
 
     def write(self, book: L2Book, sig: Signal | None, symbol: str = "",
-              lv: dict | None = None):
+              lv: dict | None = None, raw: dict | None = None):
         votes = (lv or {}).get("votes") or {}
+        raw = raw or {}
 
         def _v(k):  # pillar vote -> "" when the pillar had no opinion (None)
             x = votes.get(k)
             return "" if x is None else int(x)
+
+        def _r(k, nd=4):  # raw value -> rounded or "" when unknown
+            x = raw.get(k)
+            return "" if x is None else round(x, nd)
 
         self.w.writerow([
             datetime.now().isoformat(timespec="milliseconds"), symbol,
@@ -897,6 +1006,11 @@ class CsvLog:
             lv.get("total", "") if lv else "",
             int(lv.get("tape_live", False)) if lv else "",
             _v("trend"), _v("tape"), _v("vwap"),
+            _r("t5"), _r("tape_dom", 3), _r("tape_dom_big", 3),
+            _r("tape_dom_w", 3), _r("tape_sided_n", 0),
+            _r("tape_sided_share", 3), _r("tape_pace", 1),
+            _r("tape_accel", 2), _r("vwap"), _r("tape_age", 0),
+            _r("quality", 2), raw.get("flow", ""), raw.get("absorb", ""),
         ])
         self.f.flush()
 
@@ -955,13 +1069,17 @@ def lv_banner(lv: dict | None, price: float | None = None,
     agree, total = lv.get("agree", 0), lv.get("total", 0)
     tape_live = lv.get("tape_live", False)
     stance = lv["stance"]
+    grade = quality_grade(lv.get("quality")) if "quality" in lv else None
+    q_why = lv.get("quality_why") or []
 
     if stance == "NEUTRAL" or agree < 2:
         color = "yellow"
         headline = "◇   STAND ASIDE   ◇"
         sub = "no aligned edge"
     else:
-        strong = agree >= 3
+        # grade C = the DATA under the read is suspect (frozen book, OCR
+        # misses, wild spread...): never show the size-up headline on it
+        strong = agree >= 3 and grade != "C"
         if stance == "LONG":
             color = "green"
             headline = "▲ ▲   GO / HOLD LONG   ▲ ▲" if strong else "▲   LEAN LONG"
@@ -971,7 +1089,10 @@ def lv_banner(lv: dict | None, price: float | None = None,
             headline = ("▼ ▼   GET OUT / STAY OUT   ▼ ▼" if strong
                         else "▼   LEAN OUT")
             weak_note = "protect / trim"
-        if strong:
+        if agree >= 3 and grade == "C":
+            sub = ("all agree but data is grade C"
+                   + (f" — {q_why[0]}" if q_why else ""))
+        elif strong:
             sub = "trend, tape and VWAP all agree"
         elif not tape_live:
             sub = "trend & VWAP agree — unconfirmed by tape"
@@ -980,14 +1101,20 @@ def lv_banner(lv: dict | None, price: float | None = None,
 
     # confidence gauge: filled (colored) + empty (grey) pips + fraction
     pips = " ".join([f"[{color}]●[/{color}]"] * agree
-                    + [f"[grey42]○[/grey42]"] * max(0, total - agree))
+                    + ["[grey42]○[/grey42]"] * max(0, total - agree))
     gauge = (f"{pips}    [bold {color}]{agree}/{total}[/bold {color}]"
              f"    [dim]{sub}[/dim]")
 
     v = lv.get("votes", {})
-    pillars = "     ".join((_vote_cell("trend", v.get("trend")),
-                            _vote_cell("tape", v.get("tape")),
-                            _vote_cell("vwap", v.get("vwap"))))
+    cells = [_vote_cell("trend", v.get("trend")),
+             _vote_cell("tape", v.get("tape")),
+             _vote_cell("vwap", v.get("vwap"))]
+    if lv.get("book_pillar"):
+        cells.append(_vote_cell("book", v.get("book")))
+    pillars = "     ".join(cells)
+    if lv.get("flow_note"):
+        fcol = "red" if "spoof" in lv["flow_note"] else "cyan"
+        pillars += f"     [{fcol}]· {lv['flow_note']}[/{fcol}]"
 
     # current price + the next ask walls overhead (resistance / targets)
     price_line = None
@@ -1005,6 +1132,11 @@ def lv_banner(lv: dict | None, price: float | None = None,
                           f"[/green]")
 
     meta = f"[dim]held {dur}[/dim]"
+    if grade is not None:
+        gcol = {"A": "green", "B": "yellow", "C": "red"}[grade]
+        meta += f"   [{gcol}]data {grade}[/{gcol}]"
+        if grade != "A" and q_why:
+            meta += f" [dim]· {q_why[0]}[/dim]"
     if not lv.get("tape_live", False):
         meta += "   [yellow]· no tape (show Time&Sales)[/yellow]"
     if lv.get("pending"):
@@ -1104,9 +1236,12 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
            lv: dict | None = None, proj: tuple | None = None,
            glitches: int = 0, span5: tuple | None = None,
            spark_label: str = "Price (recent)",
-           tape: dict | None = None) -> Group:
+           tape: dict | None = None, cfg: dict | None = None,
+           book_src: str = "ocr") -> Group:
     title = (f"Webull L2 Monitor [bold cyan]{symbol or '?'}[/bold cyan]"
              f"   {hz:.1f} reads/s   ok:{reads} miss:{misses}")
+    if book_src == "sdk":
+        title += "   [green]book:SDK[/green]"
     if glitches:
         title += f" glitch:{glitches}"
     # expand=True + fixed Metric width pins the table to the pane width and
@@ -1119,8 +1254,12 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
         t.add_row("⏱ Session", session_line())
     if book:
         tape_m1 = tape["m1"] if tape and tape.get("on") else None
+        gate_kw = {"tape_min_sided": int((cfg or {}).get("tape_min_sided", 4)),
+                   "tape_sided_share": float((cfg or {}).get(
+                       "tape_sided_share", 0.5))}
         # one-glance verdict, always the first thing you see
-        score, label, why = market_bias(book, trend1, trend5, tape=tape_m1)
+        score, label, why = market_bias(book, trend1, trend5, tape=tape_m1,
+                                        **gate_kw)
         bc = ("green" if label == "BULLISH"
               else "red" if label == "BEARISH" else "yellow")
         arrow = ("▲" if label == "BULLISH"
@@ -1130,7 +1269,8 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
         t.add_row("", f"[{bc}]{_bias_meter(score)}[/{bc}]  [dim]{why}[/dim]")
 
         # the daily-use playbook: 4 checks -> 1 action
-        pb = playbook(book, trend1, trend5, wall_events or [], tape_m1)
+        pb = playbook(book, trend1, trend5, wall_events or [], tape_m1,
+                      **gate_kw)
         c1 = ("[green]✓ arrows agree ▲[/green]" if pb["trend_up"]
               else "[red]✓ arrows agree ▼[/red]" if pb["trend_dn"]
               else "[dim]✗ arrows disagree[/dim]")
@@ -1256,6 +1396,9 @@ def main():
     session_pnl = 0.0
     n_trades = 0
     walltrack = WallTracker(cfg.get("wall_multiple", 4.0))
+    bookflow = BookFlow(cfg.get("wall_multiple", 4.0))
+    flow: dict | None = None   # last BookFlow read (events/absorb/vote)
+    flow_note: tuple | None = None   # (ts, text) last wall verdict, held 10s
     recent_events: list = []   # [(ts, event)] kept ~10s so you can react
     longview = LongView(cfg)
     lv: dict | None = None
@@ -1265,6 +1408,13 @@ def main():
                       ref_tol_pct=cfg.get("glitch_ref_tol_pct", 15.0))
     frame_key: tuple | None = None       # (region, crc32) of the last grab
     frame_book: L2Book | None = None     # what that frame parsed to
+    # data-health windows for signal_quality(): the frame-skip path re-stamps
+    # unchanged pixels as a fresh book, so staleness must be tracked HERE --
+    # frame_changed is the wall time the pixels last actually changed
+    frame_changed: float | None = None
+    ok_hist: deque = deque()             # (ts, parse ok?) last 60s
+    drop_hist: deque = deque()           # ts of each GlitchGate drop, 60s
+    last_dropped = 0
 
     console.print("[bold]Starting — Ctrl+C to stop.[/bold] "
                   "Keep the L2 panel visible and unobstructed.")
@@ -1282,6 +1432,7 @@ def main():
     tracker = RegionTracker(cfg, console)
     reffeed = RefFeed(cfg, console)
     tsreader = TapeReader(cfg, console)
+    bookfeed = BookFeed(cfg, console)
     if tsreader.enabled:
         console.print("[dim]Time&Sales reader on — executed prints feed "
                       "the tape rows, checklist, and VWAP[/dim]")
@@ -1339,6 +1490,8 @@ def main():
                     # computed on the old stock are garbage for the new one
                     engine.reset()
                     walltrack.state.clear()
+                    bookflow = BookFlow(cfg.get("wall_multiple", 4.0))
+                    flow = flow_note = None
                     recent_events.clear()
                     longview = LongView(cfg)
                     gate = GlitchGate(cfg.get("glitch_jump_pct", 1.5),
@@ -1347,6 +1500,10 @@ def main():
                                                           15.0))
                     tsreader.reset()
                     frame_key = frame_book = None
+                    frame_changed = None
+                    ok_hist.clear()
+                    drop_hist.clear()
+                    last_dropped = 0
                     book = lv = proj = last_sig = None
                     dropped = trader.drop_virtual()
                     console.print(
@@ -1372,15 +1529,41 @@ def main():
                 # pixels unchanged since the last poll -> skip Tesseract
                 # entirely and re-stamp the previous parse (same market
                 # state, fresh timestamp). Big CPU win on a quiet tape.
+                # frame_changed stays put: signal_quality() turns a long
+                # stretch of identical pixels (halted stock, obscured
+                # panel) into a visible grade drop instead of the book
+                # silently voting forever on frozen data.
                 b = (L2Book(frame_book.bids, frame_book.asks)
                      if frame_book else None)
             else:
                 b = ocr_image(raw)
                 frame_key, frame_book = key, b
+                frame_changed = t0
             ok = b is not None
             tracker.report(ok)
-            if ok and not gate.accept(b, reffeed.price(tracker.symbol)):
+            ok_hist.append((t0, ok))
+            while ok_hist and t0 - ok_hist[0][0] > 60.0:
+                ok_hist.popleft()
+            nd = gate.dropped - last_dropped
+            if nd > 0:
+                drop_hist.extend([t0] * nd)
+            last_dropped = gate.dropped
+            while drop_hist and t0 - drop_hist[0] > 60.0:
+                drop_hist.popleft()
+            ref_px = reffeed.price(tracker.symbol)
+            if ok and not gate.accept(b, ref_px):
                 b = None   # isolated / ref-contradicted frame -> held back
+            # SDK book preferred when live: cleaner numbers, and it keeps
+            # the signal fed even when the OCR panel is obscured. The OCR
+            # health tracking above still runs so a later fallback is
+            # graded honestly.
+            book_sdk = False
+            if bookfeed.enabled:
+                bookfeed.set_symbol(tracker.symbol)
+                nb = bookfeed.get(t0)
+                if nb is not None:
+                    b = nb
+                    book_sdk = True
             if b:
                 reads += 1
                 book = b
@@ -1408,10 +1591,54 @@ def main():
                     recent_events.append((t0, ev))
                 recent_events[:] = [(ts, e) for ts, e in recent_events
                                     if t0 - ts <= 10]
+                # book x tape fusion: walls eaten vs pulled + absorption.
+                # Display+log only until cfg book_pillar=true (log first,
+                # vote later -- score_confidence decides the promotion).
+                flow = bookflow.update(
+                    b, tsreader.prints_since(bookflow.upto)
+                    if tsreader.enabled else [], t0)
+                t5_now = engine.trend_pct(cfg.get("trend_window", 300))
                 lv = longview.update(
-                    b, engine.trend_pct(cfg.get("trend_window", 300)),
+                    b, t5_now,
                     evs, t0, tape=tape_m1,
-                    vwap=tsnap["vwap"] if tsnap else None)
+                    vwap=tsnap["vwap"] if tsnap else None,
+                    vwap_age=(t0 - tsnap["since"])
+                    if tsnap and tsnap.get("on") else None,
+                    book_vote=flow["vote"] if flow else None)
+                # data-quality grade rides along with the stance: the
+                # banner shows it and caps size-up advice on grade C
+                n_ok = sum(1 for _, o in ok_hist if o)
+                lp = tsnap.get("last_print") if tsnap else None
+                q, q_why = signal_quality(
+                    frame_age=(t0 - frame_changed)
+                    if frame_changed is not None else None,
+                    ok_rate=n_ok / len(ok_hist) if ok_hist else None,
+                    glitch_rate=(len(drop_hist) / len(ok_hist))
+                    if ok_hist else None,
+                    tape_print_age=(t0 - lp)
+                    if (lp and tsnap and tsnap.get("on")) else None,
+                    ref_dev_pct=(100.0 * abs(b.mid - ref_px) / ref_px)
+                    if ref_px else None,
+                    have_ref=ref_px is not None,
+                    spread_pct=b.spread_pct,
+                    spoof_events=(flow["spoof_bid"] + flow["spoof_ask"])
+                    if flow else 0,
+                    sdk_book=book_sdk)
+                lv["quality"] = q
+                lv["quality_why"] = q_why
+                # flow verdicts ride along for the banner detail; a wall
+                # event is a moment, so it holds on screen ~10s
+                if flow and flow["events"]:
+                    s_, p_, v_ = flow["events"][-1]
+                    flow_note = (t0, f"{s_.lower()} wall {p_:.3f} {v_}"
+                                 + (" — spoof" if v_ == "PULLED"
+                                    else " — real"))
+                if flow_note and t0 - flow_note[0] <= 10.0:
+                    lv["flow_note"] = flow_note[1]
+                elif flow and flow["absorb"]:
+                    lv["flow_note"] = ("absorption at the bid — accumulation"
+                                       if flow["absorb"] > 0 else
+                                       "absorption at the ask — distribution")
                 # projection: current pace extended 5 min, with the wall
                 # standing in its way (if any) noted
                 proj = None
@@ -1436,12 +1663,17 @@ def main():
                 # publish live state so the TradingView monitor can build
                 # a combined chart+orderflow master verdict
                 try:
+                    gate_kw = {
+                        "tape_min_sided": int(cfg.get("tape_min_sided", 4)),
+                        "tape_sided_share": float(cfg.get(
+                            "tape_sided_share", 0.5))}
                     score, _, _ = market_bias(b, engine.trend_pct(60),
                                               engine.trend_pct(300),
-                                              tape=tape_m1)
+                                              tape=tape_m1, **gate_kw)
                     pb = playbook(b, engine.trend_pct(60),
                                   engine.trend_pct(300),
-                                  [e for _, e in recent_events], tape_m1)
+                                  [e for _, e in recent_events], tape_m1,
+                                  **gate_kw)
                     (HERE.parent / "l2_state.json").write_text(json.dumps({
                         "ts": t0, "symbol": tracker.symbol,
                         "bias": round(score, 1), "play": pb["verdict"],
@@ -1455,6 +1687,12 @@ def main():
                         "price": round(proj[0], 4) if proj else None,
                         "proj": round(proj[1], 4) if proj else None,
                         "stance": lv["stance"] if lv else None,
+                        "quality": (round(lv["quality"], 2)
+                                    if lv and "quality" in lv else None),
+                        "quality_note": ((lv.get("quality_why") or [""])[0]
+                                         if lv else None),
+                        "book_src": "sdk" if book_sdk else "ocr",
+                        "flow_note": lv.get("flow_note") if lv else None,
                         "pos": ({"real": trader.real,
                                  "entry": round(trader.entry, 4),
                                  "upnl": round(trader.unrealized_pct(b), 2),
@@ -1468,7 +1706,33 @@ def main():
                     if tlog:
                         tlog.write(trade)
                 if log:
-                    log.write(b, show, active_sym or "", lv)
+                    sided_vol = ((tape_m1.get("buy", 0)
+                                  + tape_m1.get("sell", 0))
+                                 if tape_m1 else None)
+                    log.write(b, show, active_sym or "", lv, raw={
+                        "t5": t5_now,
+                        "tape_dom": tape_m1["dom"] if tape_m1 else None,
+                        "tape_dom_big": (tape_m1.get("dom_big")
+                                         if tape_m1 else None),
+                        "tape_dom_w": (tape_m1.get("dom_w")
+                                       if tape_m1 else None),
+                        "tape_sided_n": (tape_m1.get("sided_n")
+                                         if tape_m1 else None),
+                        "tape_sided_share": (
+                            sided_vol / tape_m1["total"]
+                            if tape_m1 and tape_m1.get("total") else None),
+                        "tape_pace": (tape_m1.get("pace_vol")
+                                      if tape_m1 else None),
+                        "tape_accel": (tape_m1.get("accel")
+                                       if tape_m1 else None),
+                        "vwap": tsnap["vwap"] if tsnap else None,
+                        "tape_age": (t0 - tsnap["since"])
+                        if tsnap and tsnap.get("on") else None,
+                        "quality": lv.get("quality") if lv else None,
+                        "flow": ";".join(f"{s} {p:.4f} {v}" for s, p, v
+                                         in flow["events"]) if flow else "",
+                        "absorb": flow["absorb"] if flow else "",
+                    })
             elif not ok:
                 misses += 1
                 if cfg.get("debug", True) and misses % 25 == 0:
@@ -1494,7 +1758,8 @@ def main():
                                gate.dropped, (engine.trend_span(win), win),
                                f"Price ({win / 60:.0f}m)",
                                tsreader.snapshot(t0) if tsreader.enabled
-                               else None))
+                               else None, cfg,
+                               "sdk" if book_sdk else "ocr"))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 

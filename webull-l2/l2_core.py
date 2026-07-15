@@ -214,8 +214,24 @@ class GlitchGate:
         return True
 
 
+def tape_gate_ok(tape: dict | None, min_sided: int = 4,
+                 sided_share: float = 0.5) -> bool:
+    """True when the tape carries enough REAL sided evidence to trust its
+    dominance: at least `min_sided` prints with a side AND sided volume at
+    least `sided_share` of total flow. Volume-aware, not print-count - a
+    few large clearly-sided prints pass (real money moving fast), a tape
+    that's mostly unsided noise doesn't. The single gate every consumer
+    goes through (confidence pillar, bias meter, playbook, entry engine),
+    so the banner can never abstain while the playbook still speaks."""
+    if not tape or tape.get("sided_n", 0) < min_sided:
+        return False
+    sided_vol = tape.get("buy", 0) + tape.get("sell", 0)
+    return sided_vol > 0 and sided_vol >= sided_share * tape.get("total", 0)
+
+
 def market_bias(book: L2Book, t1: float | None, t5: float | None,
-                wall_mult: float = 4.0, tape: dict | None = None):
+                wall_mult: float = 4.0, tape: dict | None = None, *,
+                tape_min_sided: int = 4, tape_sided_share: float = 0.5):
     """One-glance verdict from the L2 evidence. Returns (score, label,
     reason) where score is -100 (max bearish) .. +100 (max bullish).
 
@@ -237,7 +253,7 @@ def market_bias(book: L2Book, t1: float | None, t5: float | None,
             s_w += 7.5   # support wall just below
     s_w = max(-15.0, min(15.0, s_w))
     s_tape = 0.0
-    if tape and tape.get("n", 0) >= 8:      # enough prints to mean something
+    if tape_gate_ok(tape, tape_min_sided, tape_sided_share):
         s_tape = max(-1.0, min(1.0, tape["dom"] / 0.5)) * 20
     score = max(-100.0, min(100.0, s_imb + s_t1 + s_t5 + s_w + s_tape))
 
@@ -301,7 +317,8 @@ class WallTracker:
 
 
 def playbook(book: L2Book, t1: float | None, t5: float | None,
-             wall_events: list, tape: dict | None = None) -> dict:
+             wall_events: list, tape: dict | None = None, *,
+             tape_min_sided: int = 4, tape_sided_share: float = 0.5) -> dict:
     """The daily-use rule, mechanized:
       trade in the direction where 1m and 5m agree,
       only when imbalance confirms it,
@@ -319,7 +336,7 @@ def playbook(book: L2Book, t1: float | None, t5: float | None,
                         if s == "ASK" and p >= book.best_ask})
     bid_crack = sorted({p for s, p, _ in wall_events
                         if s == "BID" and p <= book.best_bid})
-    tape_ok = bool(tape) and tape.get("n", 0) >= 8
+    tape_ok = tape_gate_ok(tape, tape_min_sided, tape_sided_share)
     tape_up = tape_ok and tape["dom"] >= 0.25
     tape_dn = tape_ok and tape["dom"] <= -0.25
 
@@ -338,10 +355,174 @@ def playbook(book: L2Book, t1: float | None, t5: float | None,
             "verdict": verdict}
 
 
+class BookFlow:
+    """Cross-references RESTING size against EXECUTED prints - the signal
+    class neither side of the feed can produce alone, and the hardest one
+    to spoof: faking it requires actually trading.
+
+    Two detectors, both fed each accepted book plus the prints ingested
+    since the previous update:
+
+      * wall PULLED vs CONSUMED - when a tracked wall disappears, the
+        executed volume at its price (within a tolerance) while it stood
+        decides what happened: traded <= pull_ratio x peak -> PULLED
+        (displayed size withdrawn untouched: the classic spoof signature;
+        counts toward a rolling per-side spoof score), traded >=
+        consume_ratio x peak -> CONSUMED (a real level eaten through:
+        directional evidence in the break direction). In between: no call.
+      * absorption at the touch - sided volume hammering one side while
+        that side's PRICE refuses to move (bid holds under heavy selling =
+        someone is accumulating into the hits; mirrored at the ask). Uses
+        price persistence + tape volume, deliberately NOT frame-to-frame
+        OCR size deltas (too noisy to trust).
+
+    Staged promotion: vote() only feeds the confidence 'book' pillar when
+    cfg book_pillar=true; until then events/absorption are display+log
+    only, so score_confidence can grade them on real sessions first."""
+
+    def __init__(self, wall_mult: float = 4.0, tick: float = 0.01,
+                 pull_ratio: float = 0.25, consume_ratio: float = 0.5,
+                 gone_reads: int = 3, absorb_window: float = 45.0,
+                 absorb_min_n: int = 6, absorb_share: float = 0.6,
+                 event_keep: float = 120.0, vote_window: float = 45.0):
+        self.wall_mult = wall_mult
+        self.tick = tick
+        self.pull_ratio = pull_ratio
+        self.consume_ratio = consume_ratio
+        self.gone_reads = gone_reads
+        self.absorb_window = absorb_window
+        self.absorb_min_n = absorb_min_n
+        self.absorb_share = absorb_share
+        self.event_keep = event_keep
+        self.vote_window = vote_window
+        self.walls: dict = {}     # (side, price) -> {peak, traded, miss}
+        self.events: deque = deque()   # (ts, side, price, verdict)
+        self.touch: deque = deque()    # (ts, best_bid, best_ask)
+        self.prints: deque = deque()   # (ts, price, size, side)
+        self.upto = 0.0                # watermark: newest print consumed
+        self.absorb = 0                # last absorption read: -1/0/+1
+
+    def _tol(self, mid: float) -> float:
+        """Price tolerance for 'at this level': one tick or 0.1%,
+        whichever is wider (penny grids don't fit $200 stocks)."""
+        return max(self.tick, 0.001 * mid)
+
+    def update(self, book: L2Book, new_prints: list, now: float) -> dict:
+        """Feed one accepted book + the prints since the last update.
+        Returns {"events": [(side, price, verdict)...] (this read),
+                 "absorb": -1/0/+1, "spoof_bid"/"spoof_ask": rolling counts,
+                 "vote": the would-be book-pillar vote (may be None)}."""
+        tol = self._tol(book.mid)
+        for p in new_prints:
+            ts, px, sz, side = p[0], p[1], p[2], p[3]
+            self.prints.append((ts, px, sz, side))
+            if ts > self.upto:
+                self.upto = ts
+            for (wside, wp), st in self.walls.items():
+                if abs(px - wp) <= tol:
+                    st["traded"] += sz
+        while self.prints and now - self.prints[0][0] > self.absorb_window:
+            self.prints.popleft()
+
+        cur = {(s, round(p, 4)): sz for s, p, sz in
+               book.walls(self.wall_mult)}
+        for key, sz in cur.items():
+            st = self.walls.get(key)
+            if st is None:
+                self.walls[key] = {"peak": sz, "traded": 0.0, "miss": 0}
+            else:
+                st["miss"] = 0
+                if sz > st["peak"]:
+                    st["peak"] = sz
+        events = []
+        for key, st in list(self.walls.items()):
+            if key in cur:
+                continue
+            st["miss"] += 1
+            if st["miss"] < self.gone_reads:   # OCR-miss tolerant, like
+                continue                       # WallTracker.gone_reads
+            traded, peak = st["traded"], st["peak"]
+            if peak > 0:
+                if traded >= self.consume_ratio * peak:
+                    events.append((key[0], key[1], "CONSUMED"))
+                elif traded <= self.pull_ratio * peak:
+                    events.append((key[0], key[1], "PULLED"))
+            del self.walls[key]
+        for s, p, verdict in events:
+            self.events.append((now, s, p, verdict))
+        while self.events and now - self.events[0][0] > self.event_keep:
+            self.events.popleft()
+
+        self.touch.append((now, book.best_bid, book.best_ask))
+        while self.touch and now - self.touch[0][0] > self.absorb_window:
+            self.touch.popleft()
+        self.absorb = self._absorption(tol, now)
+
+        return {"events": events, "absorb": self.absorb,
+                "spoof_bid": self.spoof_count("BID"),
+                "spoof_ask": self.spoof_count("ASK"),
+                "vote": self.vote(now)}
+
+    def _absorption(self, tol: float, now: float) -> int:
+        """+1 = bid holding under heavy hits (bull), -1 = ask capping heavy
+        lifts (bear), 0 = neither. Requires the touch history to actually
+        span most of the window - 3 seconds of data is not persistence."""
+        if len(self.prints) < self.absorb_min_n or len(self.touch) < 2:
+            return 0
+        if self.touch[-1][0] - self.touch[0][0] < 0.6 * self.absorb_window:
+            return 0
+        bids = [b for _, b, _ in self.touch]
+        asks = [a for _, _, a in self.touch]
+        total = sum(sz for _, _, sz, _ in self.prints)
+        if total <= 0:
+            return 0
+        bid_stable = max(bids) - min(bids) <= tol
+        ask_stable = max(asks) - min(asks) <= tol
+        sell_at_bid = sum(sz for _, px, sz, s in self.prints
+                          if s == "S" and px <= min(bids) + tol)
+        buy_at_ask = sum(sz for _, px, sz, s in self.prints
+                         if s == "B" and px >= max(asks) - tol)
+        if bid_stable and sell_at_bid >= self.absorb_share * total:
+            return 1
+        if ask_stable and buy_at_ask >= self.absorb_share * total:
+            return -1
+        return 0
+
+    def spoof_count(self, side: str) -> int:
+        """PULLED walls on `side` over the rolling event window."""
+        return sum(1 for _, s, _, v in self.events
+                   if s == side and v == "PULLED")
+
+    def vote(self, now: float) -> int | None:
+        """The would-be 'book' pillar vote. Bull = absorption at the bid or
+        an ask wall CONSUMED recently (supply eaten through); bear mirror.
+        Both at once = 0 (conflict). None = nothing to say (thin window,
+        no events) so the pillar abstains rather than votes flat."""
+        recent = [(s, v) for ts, s, _, v in self.events
+                  if now - ts <= self.vote_window]
+        consumed_ask = any(s == "ASK" and v == "CONSUMED" for s, v in recent)
+        consumed_bid = any(s == "BID" and v == "CONSUMED" for s, v in recent)
+        bull = self.absorb == 1 or consumed_ask
+        bear = self.absorb == -1 or consumed_bid
+        if bull and bear:
+            return 0
+        if bull:
+            return 1
+        if bear:
+            return -1
+        if not recent and len(self.prints) < self.absorb_min_n:
+            return None
+        return 0
+
+
 def confidence(t5: float | None, tape: dict | None,
                mid: float | None, vwap: float | None, *,
                tape_min_sided: int = 4, tape_sided_share: float = 0.5,
-               tape_dom_min: float = 0.25) -> dict:
+               tape_dom_min: float = 0.25,
+               vwap_age: float | None = None,
+               vwap_min_age: float = 0.0,
+               book_vote: int | None = None,
+               book_pillar: bool = False) -> dict:
     """The single 5-minute confidence signal.
 
     Three INDEPENDENT, hard-to-spoof pillars each vote long / short /
@@ -364,25 +545,38 @@ def confidence(t5: float | None, tape: dict | None,
     `tape_min_sided` prints carry a real side AND the sided volume is at
     least `tape_sided_share` of the flow. So a few large clearly-sided
     prints (real money moving fast) vote - which the old '>= 8 raw prints'
-    gate missed - while a tape that's mostly unsided noise abstains."""
+    gate missed - while a tape that's mostly unsided noise abstains.
+
+    VWAP maturity gate: the "VWAP" resets on every symbol switch, so for
+    the first minutes it is really price-vs-a-3-minute-mean - a trend echo,
+    not an independent pillar - and correlated pillars fake 3/3s exactly in
+    the fast-hop decision window. When `vwap_age` (seconds since the tape/
+    VWAP accumulator reset) is below `vwap_min_age`, the vwap pillar
+    abstains like the tape gate does. Defaults keep old behavior (0 = always
+    mature; age None = unknown = mature) so existing callers are unchanged.
+
+    Fourth pillar (staged): when `book_pillar` is on, BookFlow.vote() joins
+    as votes['book'] - absorption + consumed-wall evidence, the book x tape
+    fusion that requires real executed volume to fake. It is OFF by default
+    and should stay off until score_confidence shows the logged flow/absorb
+    columns carry forward edge (the repo rule: log first, vote later)."""
     votes: dict = {}
     votes["trend"] = (None if t5 is None else
                       1 if t5 > 0.1 else -1 if t5 < -0.1 else 0)
-    sided_vol = (tape.get("buy", 0) + tape.get("sell", 0)) if tape else 0
-    total_vol = tape.get("total", 0) if tape else 0
-    if (tape and tape.get("sided_n", 0) >= tape_min_sided
-            and sided_vol > 0
-            and sided_vol >= tape_sided_share * total_vol):
+    if tape_gate_ok(tape, tape_min_sided, tape_sided_share):
         d = tape["dom"]
         votes["tape"] = (1 if d >= tape_dom_min
                          else -1 if d <= -tape_dom_min else 0)
     else:
         votes["tape"] = None
-    if vwap and mid:
+    vwap_mature = (vwap_age is None or vwap_age >= vwap_min_age)
+    if vwap and mid and vwap_mature:
         rel = (mid - vwap) / vwap
         votes["vwap"] = 1 if rel > 0.0005 else -1 if rel < -0.0005 else 0
     else:
         votes["vwap"] = None
+    if book_pillar:
+        votes["book"] = book_vote
 
     live = [v for v in votes.values() if v is not None]
     longs = sum(1 for v in live if v > 0)
@@ -395,6 +589,86 @@ def confidence(t5: float | None, tape: dict | None,
         direction, agree = "NEUTRAL", 0
     return {"dir": direction, "agree": agree, "total": len(live),
             "votes": votes, "tape_live": votes["tape"] is not None}
+
+
+def signal_quality(*, frame_age: float | None = None,
+                   ok_rate: float | None = None,
+                   glitch_rate: float | None = None,
+                   tape_print_age: float | None = None,
+                   ref_dev_pct: float | None = None,
+                   have_ref: bool = True,
+                   spread_pct: float | None = None,
+                   spoof_events: int = 0,
+                   sdk_book: bool = False) -> tuple[float, list[str]]:
+    """Confidence in the confidence: how much the DATA under the current
+    read can be trusted, 0..1, with reasons worst-first.
+
+    The banner's pillars are only as good as their feed, and the feed has
+    failure modes the pillars can't see - above all the frame-skip path,
+    which re-stamps unchanged pixels as a fresh book, so a halted stock or
+    an obscured Webull panel would keep voting trend+vwap forever. This
+    function is where that staleness (and OCR misses, glitch drops,
+    OCR-vs-stream disagreement, a dead tape, a wide spread) becomes a
+    visible penalty instead of silent rot.
+
+    Multiplicative: each problem scales q down independently. `sdk_book`
+    marks a book that came from the Webull OpenAPI feed rather than OCR -
+    the book-side penalties (frozen frame, OCR, glitches, ref deviation)
+    don't apply; tape and spread penalties still do (the tape is OCR
+    either way, and a wide spread is a market fact, not a feed artifact).
+    UI mapping: A >= 0.8, B >= 0.5, else C (see quality_grade); a 3/3 on
+    grade-C data is a different animal from a 3/3 on grade-A."""
+    q = 1.0
+    reasons: list[tuple[float, str]] = []
+
+    def ding(factor: float, why: str):
+        nonlocal q
+        q *= factor
+        reasons.append((factor, why))
+
+    if not sdk_book:
+        if frame_age is not None:
+            if frame_age > 90:
+                ding(0.2, f"book frozen {frame_age:.0f}s")
+            elif frame_age > 30:
+                ding(0.5, f"book frozen {frame_age:.0f}s")
+            elif frame_age > 10:
+                ding(0.8, f"book quiet {frame_age:.0f}s")
+        if ok_rate is not None:
+            if ok_rate < 0.5:
+                ding(0.4, f"OCR failing ({100 * (1 - ok_rate):.0f}% misses)")
+            elif ok_rate < 0.8:
+                ding(0.7, f"OCR misses {100 * (1 - ok_rate):.0f}%")
+        if glitch_rate is not None and glitch_rate > 0.2:
+            ding(0.6, f"glitchy frames ({100 * glitch_rate:.0f}%)")
+        if ref_dev_pct is not None:
+            if ref_dev_pct > 5.0:
+                ding(0.5, f"OCR vs stream differ {ref_dev_pct:.1f}%")
+            elif ref_dev_pct > 2.0:
+                ding(0.8, f"OCR vs stream differ {ref_dev_pct:.1f}%")
+        elif not have_ref:
+            ding(0.9, "no ref-price anchor")
+    if tape_print_age is not None:
+        if tape_print_age > 120:
+            ding(0.7, f"no prints {tape_print_age:.0f}s")
+        elif tape_print_age > 30:
+            ding(0.85, f"tape slow ({tape_print_age:.0f}s)")
+    if spread_pct is not None:
+        if spread_pct > 2.0:
+            ding(0.5, f"spread {spread_pct:.1f}%")
+        elif spread_pct > 1.0:
+            ding(0.7, f"spread {spread_pct:.1f}%")
+    if spoof_events >= 2:   # walls pulled untraded = displayed size lies
+        ding(0.7, f"spoofy book ({spoof_events} pulled walls)")
+    reasons.sort(key=lambda x: x[0])
+    return max(0.0, min(1.0, q)), [w for _, w in reasons]
+
+
+def quality_grade(q: float | None) -> str:
+    """A/B/C label for a signal_quality score (None = unknown -> C)."""
+    if q is None:
+        return "C"
+    return "A" if q >= 0.8 else "B" if q >= 0.5 else "C"
 
 
 class LongView:
@@ -415,6 +689,10 @@ class LongView:
         self.tape_min_sided = int(cfg.get("tape_min_sided", 4))
         self.tape_sided_share = float(cfg.get("tape_sided_share", 0.5))
         self.tape_dom_min = float(cfg.get("tape_dom_min", 0.25))
+        # vwap pillar abstains until the accumulator is this old (secs)
+        self.vwap_min_age = float(cfg.get("vwap_min_age", 180.0))
+        # 4th pillar (BookFlow) is staged: log/display until graded
+        self.book_pillar = bool(cfg.get("book_pillar", False))
         self.samples = deque()     # (ts, imbalance)
         self.events = deque()      # (ts, side)
         self.stance = "NEUTRAL"
@@ -424,7 +702,9 @@ class LongView:
 
     def update(self, book: L2Book, t5: float | None,
                wall_events: list, now: float,
-               tape: dict | None = None, vwap: float | None = None) -> dict:
+               tape: dict | None = None, vwap: float | None = None,
+               vwap_age: float | None = None,
+               book_vote: int | None = None) -> dict:
         if self.since is None:
             self.since = now
         self.samples.append((now, book.imbalance))
@@ -445,7 +725,11 @@ class LongView:
         conf = confidence(t5, tape, book.mid, vwap,
                           tape_min_sided=self.tape_min_sided,
                           tape_sided_share=self.tape_sided_share,
-                          tape_dom_min=self.tape_dom_min)
+                          tape_dom_min=self.tape_dom_min,
+                          vwap_age=vwap_age,
+                          vwap_min_age=self.vwap_min_age,
+                          book_vote=book_vote,
+                          book_pillar=self.book_pillar)
         raw = {"LONG": "LONG", "SHORT": "BEAR",
                "NEUTRAL": "NEUTRAL"}[conf["dir"]]
 
@@ -469,7 +753,8 @@ class LongView:
                 "ask_breaks": ask_breaks, "bid_cracks": bid_cracks,
                 "pending": pending, "pending_left": pending_left,
                 "agree": conf["agree"], "total": conf["total"],
-                "votes": conf["votes"], "tape_live": conf["tape_live"]}
+                "votes": conf["votes"], "tape_live": conf["tape_live"],
+                "book_pillar": self.book_pillar}
 
 
 def project_price(history, minutes: float = 5.0,
@@ -534,6 +819,8 @@ class SignalEngine:
         self.min_coverage = cfg.get("trend_min_coverage", 0.6)
         self.tape_gate = cfg.get("tape_gate_entries", True)
         self.tape_dom_min = cfg.get("tape_dom_min", 0.25)
+        self.tape_min_sided = int(cfg.get("tape_min_sided", 4))
+        self.tape_sided_share = float(cfg.get("tape_sided_share", 0.5))
         # ~11 min of history at 3 reads/s, enough for a 5-min trend
         self.history = deque(maxlen=2000)
         # (ts, mid) points pre-loaded from a real-time trade stream on a
@@ -661,7 +948,8 @@ class SignalEngine:
             # the classic spoof that turned into stop-outs. Only vetoes
             # when the tape has enough prints to be trusted.
             tape_note = ""
-            if self.tape_gate and tape and tape.get("n", 0) >= 8:
+            if self.tape_gate and tape_gate_ok(
+                    tape, self.tape_min_sided, self.tape_sided_share):
                 if tape["dom"] <= -self.tape_dom_min:
                     return None  # executed flow is selling -> not a real bid
                 tape_note = f", tape {tape['dom']:+.2f}"
