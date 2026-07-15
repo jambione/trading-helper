@@ -43,6 +43,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from l2_core import (VWAP_MIN_AGE_DEFAULT, BookFlow, GlitchGate, L2Book,
                      LongView, PaperTrader, SessionVWAP, Signal, SignalEngine,
@@ -1381,6 +1382,40 @@ def _vote_cell(label: str, v) -> str:
     return f"[{lab}]{label}[/{lab}] {arrow}"
 
 
+def wall_cells(price: float, ask_walls: list) -> list[str]:
+    """The ask walls overhead as readable cells: `8.310 x12.4K +1.5%`.
+
+    Price, size and distance - the three things that decide whether a
+    wall is worth waiting for. The price is your trigger level, the size
+    is what has to get chewed through, the distance is how far the pace
+    has to carry you to reach it. Nearest first: that one is the trade.
+
+    No real/spoof mark here, on purpose. BookFlow only rules a wall
+    CONSUMED or PULLED once the level LEAVES the book, so a standing wall
+    has no verdict by construction - a listed wall wearing one would be
+    an artifact (the same OCR churn that inflates the pulled-wall count).
+    The verdict lands on the flow note beside the pillars the moment the
+    wall goes, which is when it means something."""
+    return [f"[bold]{p:.3f}[/bold] [dim]x{_shares(z)}[/dim] "
+            f"[dim]{100.0 * (p - price) / price:+.1f}%[/dim]"
+            for p, z in ask_walls]
+
+
+def _fixed(markup: str) -> Text:
+    """A banner line that can never re-flow the panel.
+
+    The layout's whole promise is a constant line count (see the Group at
+    the end of lv_banner): a line that wraps silently becomes two and
+    shoves everything below it down, which is the jitter this panel was
+    built to stop. Rich wraps by default, so every line goes through here
+    - a line too long for the pane loses its TAIL instead. That's safe:
+    each line front-loads what matters (nearest wall first, grade before
+    its reason), and the table underneath carries the full detail."""
+    t = Text.from_markup(markup)
+    t.no_wrap, t.overflow = True, "crop"
+    return t
+
+
 def lv_banner(lv: dict | None, price: float | None = None,
               ask_walls: list | None = None,
               proj: tuple | None = None) -> Panel:
@@ -1485,80 +1520,87 @@ def lv_banner(lv: dict | None, price: float | None = None,
     pillars = "     ".join(cells)
     if lv.get("flow_note"):
         fcol = "red" if "spoof" in lv["flow_note"] else "cyan"
-        pillars += f"     [{fcol}]· {lv['flow_note']}[/{fcol}]"
+        pillars += f"   [{fcol}]· {lv['flow_note']}[/{fcol}]"
 
     # price now -> where the current pace lands 5m out. Kept on its own
     # line, not appended to the walls: this panel is narrow, and a line
     # that wraps re-flows the whole banner (the thing the fixed line count
     # below exists to prevent).
     px = f"[dim]now[/dim] [bold]{price:.3f}[/bold]" if price else "[dim]now  —[/dim]"
+    # NO 5m TARGET HERE, on purpose. Backtested over the 169 logged
+    # sessions, project_price's target lands FARTHER from the truth
+    # than assuming no change at all in 3 of every 4 independent calls
+    # (median error 17% vs 6%), and its direction is a coin flip
+    # (44%, CI 34-54). It extrapolates 120s of drift across 5 minutes,
+    # multiplying by 2.5 a number that is mostly noise at this scale -
+    # a noise amplifier, not a forecast. What survives is the trailing
+    # PACE: a measured fact about what price just did, with no
+    # destination for the eye to trade toward.
+    pace_val = None
+    pace_txt = "[dim]—   building pace[/dim]"   # needs ~20s of history
     if proj and price:
-        # NO 5m TARGET HERE, on purpose. Backtested over the 169 logged
-        # sessions, project_price's target lands FARTHER from the truth
-        # than assuming no change at all in 3 of every 4 independent calls
-        # (median error 17% vs 6%), and its direction is a coin flip
-        # (44%, CI 34-54). It extrapolates 120s of drift across 5 minutes,
-        # multiplying by 2.5 a number that is mostly noise at this scale -
-        # a noise amplifier, not a forecast. What survives is the trailing
-        # PACE: a measured fact about what price just did, with no
-        # destination for the eye to trade toward.
         p_mid, p_target, _ = proj
         chg = 100.0 * (p_target - p_mid) / p_mid if p_mid else 0.0
-        pace = chg / (PROJ_MINUTES or 5.0)          # %/min
+        pace_val = chg / (PROJ_MINUTES or 5.0)      # %/min
         # Colour by AGREEMENT with the stance, not by the sign of the
         # arithmetic: green means "aligned upside" everywhere else in this
         # banner, and a bare pace has not earned the right to say it.
-        agrees = ((pace > 0.01 and color == "green")
-                  or (pace < -0.01 and color == "red"))
+        agrees = ((pace_val > 0.01 and color == "green")
+                  or (pace_val < -0.01 and color == "red"))
         pc = color if agrees else "yellow"
-        price_line = (f"{px}   [bold {pc}]{pace:+.2f}%/min[/bold {pc}]"
-                      f"   [dim]trailing 2m[/dim]")
+        pace_txt = f"[bold {pc}]{pace_val:+.2f}%/min[/bold {pc}]"
+
+    if pace_val is not None:
+        price_line = f"{px}   {pace_txt}   [dim]trailing 2m[/dim]"
     else:
-        # needs ~20s of history to call a pace; say so rather than show 0.00
-        price_line = f"{px}   [dim]—   building pace[/dim]"
+        price_line = f"{px}   {pace_txt}"
 
     # the next ask walls overhead (resistance / targets) = what the pace
-    # above has to get through
+    # above has to get through. Walls are listed with their size and
+    # distance and left at that. Marking which one is "in the way" needed
+    # a projected target to be in the way OF, and that target is noise
+    # (see price_line) - it would have dressed a coin flip up as geometry.
     if not price:
         walls_line = "[dim]walls  —[/dim]"
     elif ask_walls:
-        # Walls are listed with their distance and left at that. Marking
-        # which one is "in the way" needed a projected target to be in the
-        # way OF, and that target is noise (see price_line) - it would have
-        # dressed a coin flip up as geometry.
-        wtxt = "   ".join(
-            f"[bold]{p:.3f}[/bold][dim] x{int(z):,} "
-            f"+{100 * (p - price) / price:.1f}%[/dim]"
-            for p, z in ask_walls)
-        walls_line = f"[dim]ask walls ↑[/dim]   {wtxt}"
+        walls_line = ("[dim]ask walls ↑[/dim]   "
+                      + "   ".join(wall_cells(price, ask_walls)))
     else:
         walls_line = "[green]clear overhead — no ask walls in view[/green]"
 
+    # every clause here is short and 2-space separated on purpose: at the
+    # narrow end of the pane this line carries four of them, and the tail
+    # (the pending turn - the most actionable of the four) is what a crop
+    # would eat first
     meta = f"[dim]held {dur}[/dim]"
     if grade is not None:
         gcol = {"A": "green", "B": "yellow", "C": "red"}[grade]
-        meta += f"   [{gcol}]data {grade}[/{gcol}]"
+        meta += f"  [{gcol}]data {grade}[/{gcol}]"
         if grade != "A" and q_why:
             meta += f" [dim]· {q_why[0]}[/dim]"
     if not lv.get("tape_live", False):
-        meta += "   [yellow]· no tape (show Time&Sales)[/yellow]"
+        # the "show Time&Sales" fix-it hint lives on the table's Tape row:
+        # it's a one-time instruction, and repeating it here every frame
+        # was long enough to wrap the line
+        meta += "  [yellow]· no tape[/yellow]"
     if lv.get("pending"):
         pend = {"LONG": "LONG", "BEAR": "OUT"}.get(lv["pending"], lv["pending"])
-        meta += (f"   [dim]→ turning[/dim] [bold {color}]{pend}[/bold {color}] "
-                 f"[dim]in {int(lv['pending_left'])}s if it holds[/dim]")
+        meta += (f"  [dim]→[/dim] [bold {color}]{pend}[/bold {color}] "
+                 f"[dim]{int(lv['pending_left'])}s[/dim]")
 
     # Left-anchored, fixed line count so nothing slides when text changes
     # length: centering re-offsets every line each frame (the jarring shift);
     # a constant 6 lines stops vertical reflow when price/proj/pending come
     # and go (each renders a placeholder rather than dropping its line).
-    body = Group(
+    # _fixed() enforces it - see there for why a long line crops.
+    body = Group(*(_fixed(ln) for ln in (
         f"[bold {color}]{headline}[/bold {color}]",
         gauge,
         pillars,
         price_line,
         walls_line,
         meta,
-    )
+    )))
     return Panel(body, title=f"[bold {color}]5m CONFIDENCE[/bold {color}]",
                  title_align="left", border_style=color, padding=(1, 2),
                  expand=True)
@@ -2145,18 +2187,19 @@ def main():
                 lv["quality"] = q
                 lv["quality_why"] = q_why
                 # flow verdicts ride along for the banner detail; a wall
-                # event is a moment, so it holds on screen ~10s
+                # event is a moment, so it holds on screen ~10s. Kept
+                # SHORT: this shares the pillars line, and a long note
+                # pushed it past the pane where it got cropped mid-word.
                 if flow and flow["events"]:
                     s_, p_, v_ = flow["events"][-1]
-                    flow_note = (t0, f"{s_.lower()} wall {p_:.3f} {v_}"
-                                 + (" — spoof" if v_ == "PULLED"
-                                    else " — real"))
+                    flow_note = (t0, f"{s_.lower()} {p_:.3f} "
+                                 + ("spoofed" if v_ == "PULLED" else "eaten"))
                 if flow_note and t0 - flow_note[0] <= 10.0:
                     lv["flow_note"] = flow_note[1]
                 elif flow and flow["absorb"]:
-                    lv["flow_note"] = ("absorption at the bid — accumulation"
+                    lv["flow_note"] = ("bid absorption — accumulation"
                                        if flow["absorb"] > 0 else
-                                       "absorption at the ask — distribution")
+                                       "ask absorption — distribution")
                 # projection: current pace extended 5 min, with the wall
                 # standing in its way (if any) noted
                 proj = None
