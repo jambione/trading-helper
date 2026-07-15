@@ -98,7 +98,10 @@ def test_enum_validation(env_file):
 
 def test_update_existing_key_in_place(env_file):
     engine_env.update_engine_env({"TAKE_PROFIT": "1.5"}, env_file)
-    text = env_file.read_text()
+    # utf-8 explicitly: engine_env reads and writes utf-8, but read_text()
+    # follows the locale, which is cp1252 on Windows -- so the em-dash below
+    # came back mojibake and this passed only on the mac side of the branch.
+    text = env_file.read_text(encoding="utf-8")
     assert "TAKE_PROFIT=1.5" in text
     assert text.count("TAKE_PROFIT=") == 1
     # comments and unrelated lines preserved
@@ -108,7 +111,7 @@ def test_update_existing_key_in_place(env_file):
 
 def test_new_key_appended_to_managed_section(env_file):
     engine_env.update_engine_env({"DAILY_LOSS_LIMIT": "75"}, env_file)
-    text = env_file.read_text()
+    text = env_file.read_text(encoding="utf-8")
     assert engine_env._MANAGED_HEADER in text
     assert "DAILY_LOSS_LIMIT=75" in text
     # commented placeholder for a DIFFERENT key untouched

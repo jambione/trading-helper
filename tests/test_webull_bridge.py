@@ -30,17 +30,28 @@ def cfg():
 
 # ── engine ───────────────────────────────────────────────────────────────
 
+# The trend pillar refuses to report a "5-minute trend" until
+# trend_min_coverage (0.6) of trend_window (300s) is really covered -- 40s of
+# history is never a 5m drift. These scripted runs feed only books, so trend
+# is the ONLY pillar with an opinion (no tape, no vwap): a run shorter than
+# 180s leaves zero live pillars and the stance is a permanent NEUTRAL.
+# The original 120s runs predate that gate and tested a trend that would
+# speak from any scrap of history. Cover the whole window instead.
+READS_PER_SEC = 3
+SPAN_SECS = 300.0
+READS = int(READS_PER_SEC * SPAN_SECS)
+
 
 def test_engine_reaches_long_stance(cfg):
     """Sustained buy imbalance + rising price -> LongView flips to LONG."""
     eng = SymbolEngine("TEST", cfg)
     t0 = 1_000_000.0
     state = None
-    # 120s of strong bid imbalance with a steady uptrend (+0.5% overall,
-    # comfortably above LongView's +0.1% five-minute drift gate)
-    for i in range(360):                       # 3 reads/sec
-        ts = t0 + i / 3.0
-        mid = 5.0 * (1 + 0.005 * (i / 360))
+    # a steady uptrend (+0.5% overall, comfortably above LongView's +0.1%
+    # five-minute drift gate) across the full trend window
+    for i in range(READS):
+        ts = t0 + i / READS_PER_SEC
+        mid = 5.0 * (1 + 0.005 * (i / READS))
         state = eng.on_book(make_book(mid, 2.0, ts), now=ts)
     assert state["stance"]["stance"] == "LONG"
     assert state["bias"]["label"] == "BULLISH"
@@ -53,9 +64,9 @@ def test_engine_bear_stance_and_shape(cfg):
     eng = SymbolEngine("TEST", cfg)
     t0 = 2_000_000.0
     state = None
-    for i in range(360):
-        ts = t0 + i / 3.0
-        mid = 5.0 * (1 - 0.004 * (i / 360))    # −0.4% over 2 min
+    for i in range(READS):
+        ts = t0 + i / READS_PER_SEC
+        mid = 5.0 * (1 - 0.004 * (i / READS))    # −0.4% over the window
         state = eng.on_book(make_book(mid, 0.4, ts), now=ts)
     assert state["stance"]["stance"] == "BEAR"
     for key in ("symbol", "ts", "stance", "bias", "playbook", "book",
@@ -70,13 +81,13 @@ def test_engine_stance_has_hysteresis(cfg):
     eng = SymbolEngine("TEST", cfg)
     t0 = 3_000_000.0
     ts = t0
-    for i in range(360):
-        ts = t0 + i / 3.0
+    for i in range(READS):
+        ts = t0 + i / READS_PER_SEC
         state = eng.on_book(make_book(5.0 + 0.01 * (i / 100), 2.0, ts), now=ts)
     assert state["stance"]["stance"] == "LONG"
     # 5 seconds of bearish books — shorter than long_confirm_secs (20)
     for i in range(15):
-        ts += 1 / 3.0
+        ts += 1 / READS_PER_SEC
         state = eng.on_book(make_book(5.0, 0.4, ts), now=ts)
     assert state["stance"]["stance"] == "LONG"      # held by hysteresis
     assert state["stance"]["pending"] in (None, "BEAR", "NEUTRAL")
