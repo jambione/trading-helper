@@ -214,6 +214,105 @@ class GlitchGate:
         return True
 
 
+# Regular-hours open, in ET minutes-from-midnight. VWAP is conventionally
+# drawn from the session open, and the sessions a small-cap actually trades
+# in are premarket / regular / after-hours - so the anchor is the most
+# recent of these at or before the trade. The 04:00 anchor is not padding:
+# the logs contain 04:18 sessions.
+_SESSION_ANCHORS_ET = (4 * 60, 9 * 60 + 30, 16 * 60)
+
+
+def _session_anchor(ts: float, tz=None) -> float:
+    """Unix ts of the session open that `ts` belongs to (ET)."""
+    from datetime import datetime, timedelta
+    if tz is None:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(ts, tz)
+    mins = dt.hour * 60 + dt.minute
+    start = max((m for m in _SESSION_ANCHORS_ET if m <= mins), default=None)
+    if start is None:                      # before 04:00 -> overnight belongs
+        prev = dt - timedelta(days=1)      # to the prior after-hours session
+        base = prev.replace(hour=16, minute=0, second=0, microsecond=0)
+        return base.timestamp()
+    return dt.replace(hour=start // 60, minute=start % 60,
+                      second=0, microsecond=0).timestamp()
+
+
+class SessionVWAP:
+    """A VWAP anchored to the SESSION open, accumulated per symbol from the
+    real trade stream, and kept across symbol hops.
+
+    This exists because the vwap confidence pillar was not independent of
+    the trend pillar (measured corr +0.43, agree 67% vs 47% if independent
+    - see `confidence`). The cause was mechanical: the old VWAP came from
+    the local tape reader, which resets on every symbol switch, so it
+    spanned a median of 106s and never more than 11.8 min. A VWAP that
+    covers ~2 minutes is not "who controls the day" - it is a second,
+    slower trend pillar computed off the same recent price path.
+
+    Note the trap that made it inevitable: the old maturity gate was
+    vwap_min_age=180 against trend_window=300. A "mature" VWAP was YOUNGER
+    than the trend it was supposed to be independent of - it was
+    necessarily a subset of the same prices. Independence needs the VWAP to
+    span MUCH more time than the trend window, hence a default min age well
+    above it (see VWAP_MIN_AGE_DEFAULT).
+
+    Volume-weighted, from actual executed prints - so it is as hard to
+    spoof as the tape, unlike resting displayed size.
+
+    `age()` reports the span actually COVERED (from the first print seen),
+    not time since the session anchor. Start the monitor at 11:00 and the
+    anchor is 09:30, but nothing from 09:30-11:00 was ever observed; the
+    caller's maturity gate must judge real coverage, never an anchor we
+    slept through."""
+
+    def __init__(self, tz=None):
+        self._pv: dict[str, float] = {}      # sum(price * volume)
+        self._v: dict[str, float] = {}       # sum(volume)
+        self._first: dict[str, float] = {}   # first print ts actually seen
+        self._anchor: dict[str, float] = {}  # session open this belongs to
+        self._tz = tz
+
+    def ingest(self, symbol: str, price: float, volume: float,
+               ts: float | None = None) -> None:
+        """One executed print. Safe to call from the stream thread."""
+        if not symbol or not price or price <= 0 or not volume or volume <= 0:
+            return
+        ts = time.time() if ts is None else ts
+        sym = symbol.upper()
+        anchor = _session_anchor(ts, self._tz)
+        if self._anchor.get(sym) != anchor:      # new session -> start over
+            self._anchor[sym] = anchor
+            self._pv[sym] = self._v[sym] = 0.0
+            self._first[sym] = ts
+        self._pv[sym] += price * volume
+        self._v[sym] += volume
+
+    def vwap(self, symbol: str | None) -> float | None:
+        if not symbol:
+            return None
+        sym = symbol.upper()
+        v = self._v.get(sym, 0.0)
+        return (self._pv[sym] / v) if v > 0 else None
+
+    def age(self, symbol: str | None, now: float | None = None) -> float | None:
+        """Seconds of session actually covered, or None if never seen."""
+        if not symbol:
+            return None
+        first = self._first.get(symbol.upper())
+        if first is None:
+            return None
+        return max(0.0, (time.time() if now is None else now) - first)
+
+    def forget(self, symbols) -> None:
+        """Drop symbols that rotated off the watchlist (bounds the dicts)."""
+        for s in symbols:
+            sym = (s or "").upper()
+            for d in (self._pv, self._v, self._first, self._anchor):
+                d.pop(sym, None)
+
+
 def tape_gate_ok(tape: dict | None, min_sided: int = 4,
                  sided_share: float = 0.5) -> bool:
     """True when the tape carries enough REAL sided evidence to trust its
@@ -370,6 +469,17 @@ class BookFlow:
         counts toward a rolling per-side spoof score), traded >=
         consume_ratio x peak -> CONSUMED (a real level eaten through:
         directional evidence in the break direction). In between: no call.
+
+        A wall can also leave for a reason that is neither: the book shows
+        a FIXED DEPTH, so when price runs, levels left behind scroll out of
+        the visible window. Nothing traded at them (price is elsewhere), so
+        they used to land in PULLED and read as spoofs - and because a fast
+        run is exactly what evicts levels, the artifact fired hardest on
+        the clean moves this tool exists to catch. `_scrolled_out` tells
+        the two apart by asking whether the WINDOW moved off the level or
+        the level vanished under a stationary window; scroll-outs are
+        dropped with no verdict. Same guard rejects OCR-garbage prices,
+        which sit far outside the window when they evict.
       * absorption at the touch - sided volume hammering one side while
         that side's PRICE refuses to move (bid holds under heavy selling =
         someone is accumulating into the hits; mirrored at the ask). Uses
@@ -407,6 +517,46 @@ class BookFlow:
         whichever is wider (penny grids don't fit $200 stocks)."""
         return max(self.tick, 0.001 * mid)
 
+    @staticmethod
+    def _level_gap(levels: list) -> float | None:
+        """Median spacing between adjacent visible levels - the book's own
+        grid, measured rather than assumed (it is not always the tick:
+        Webull aggregates, and gaps are common in thin names)."""
+        if len(levels) < 2:
+            return None
+        gaps = sorted(abs(levels[i + 1][0] - levels[i][0])
+                      for i in range(len(levels) - 1))
+        return gaps[len(gaps) // 2] or None
+
+    def _scrolled_out(self, side: str, price: float, book: L2Book) -> bool:
+        """Did this level leave the VISIBLE window rather than the market?
+
+        The book is a fixed-depth peek, so 'gone from view' has two very
+        different causes and only one is a spoof:
+
+          * the window slid off it - price ran up and left a low bid
+            behind, or fell and left a high ask behind. The order may well
+            still be resting; we simply cannot see it. Not evidence.
+          * it vanished while the window stayed put - the level really was
+            withdrawn (or eaten). This is the case worth a verdict.
+
+        Distinguished by position, not by history: only a level beyond the
+        FAR edge of its side can have scrolled out, since the window can
+        only slide away from a level in that direction. A wall pulled at or
+        near the touch is never beyond the far edge, so genuine spoofs
+        survive this guard. One level of slack absorbs the span shrinking
+        by the removed wall itself.
+        """
+        levels = book.bids if side == "BID" else book.asks
+        gap = self._level_gap(levels)
+        if gap is None:
+            return True          # can't measure the window -> don't guess
+        slack = 1.5 * gap
+        prices = [p for p, _ in levels]
+        if side == "BID":
+            return price < min(prices) - slack   # price ran up, left it below
+        return price > max(prices) + slack       # price fell, left it above
+
     def update(self, book: L2Book, new_prints: list, now: float) -> dict:
         """Feed one accepted book + the prints since the last update.
         Returns {"events": [(side, price, verdict)...] (this read),
@@ -442,7 +592,7 @@ class BookFlow:
             if st["miss"] < self.gone_reads:   # OCR-miss tolerant, like
                 continue                       # WallTracker.gone_reads
             traded, peak = st["traded"], st["peak"]
-            if peak > 0:
+            if peak > 0 and not self._scrolled_out(key[0], key[1], book):
                 if traded >= self.consume_ratio * peak:
                     events.append((key[0], key[1], "CONSUMED"))
                 elif traded <= self.pull_ratio * peak:
@@ -515,6 +665,14 @@ class BookFlow:
         return 0
 
 
+# The vwap pillar must span MUCH more time than the trend window (300s) or
+# it is measuring the same price path and merely echoes it. The old 180s
+# was SHORTER than the trend window, which is why trend/vwap measured
+# corr +0.43. 15 min = 3x the trend window: long enough to be about the
+# session rather than the last few candles.
+VWAP_MIN_AGE_DEFAULT = 900.0
+
+
 def confidence(t5: float | None, tape: dict | None,
                mid: float | None, vwap: float | None, *,
                tape_min_sided: int = 4, tape_sided_share: float = 0.5,
@@ -525,13 +683,49 @@ def confidence(t5: float | None, tape: dict | None,
                book_pillar: bool = False) -> dict:
     """The single 5-minute confidence signal.
 
-    Three INDEPENDENT, hard-to-spoof pillars each vote long / short /
-    neutral, and confidence is how many AGREE - not the magnitude of any
-    one of them:
+    Three hard-to-spoof pillars each vote long / short / neutral, and
+    confidence is how many AGREE - not the magnitude of any one of them:
 
       trend  - the 5-min robust drift (where price actually went)
       tape   - 60s executed buy/sell dominance (real money; unspoofable)
-      vwap   - price above / below the session VWAP (who controls the day)
+      vwap   - price above / below the "session" VWAP
+
+    THEY ARE NOT ALL INDEPENDENT, and counting agreement assumes they are.
+    Measured over the logged sessions (n=21,281 rows where both are live):
+
+      tape  vs vwap   corr +0.08   agree 22.0% (17.6% if independent)
+      trend vs tape   corr +0.19   agree 22.3% (19.9% if independent)
+      trend vs vwap   corr +0.43   agree 67.0% (47.1% if independent)  <-
+
+    So tape is a genuinely independent witness, but trend and vwap are
+    substantially the same one: a 3/3 is nearer two witnesses than three,
+    and the gauge overstates itself exactly where it says to size up.
+
+    The cause was mechanical, not statistical, and is FIXED for callers
+    that pass a `SessionVWAP`-derived vwap (the monitor does; see its
+    docstring). Two things were wrong together:
+
+      * the VWAP came from the local tape reader, which resets on every
+        symbol switch -> it spanned a median of 106s, never over 11.8 min:
+        not a session VWAP at all, just a slower trend;
+      * vwap_min_age was 180s while trend_window is 300s, so a "mature"
+        VWAP was YOUNGER than the trend it had to be independent of.
+
+    `vwap_min_age` (verified: 0 violations in the logs) was always doing
+    its job; it was simply set below the threshold that makes the pillar
+    mean anything. See VWAP_MIN_AGE_DEFAULT.
+
+    The correlations above are the BEFORE measurement, kept as the
+    baseline to re-measure against once the rebuilt pillar has logged
+    hours. It is not yet proven that the fix delivers independence live -
+    only that the mechanism that destroyed it is gone.
+
+    Whether 3/3 actually beats 2/3 forward is UNKNOWN, not established:
+    6.3h of logs hold only ~128 independent 2-min windows in total (3/3
+    gets ~16; ~101 are needed to detect a 60% win rate), and pooled over
+    every directional call the edge is 50.6%, z=+0.11 - which rules out
+    nothing weaker than ~61%. Do not read that as "it doesn't work"; read
+    it as "not yet measurable". ~60h of logging would settle it.
 
     Imbalance is deliberately excluded: it's resting displayed size, the
     one input spoofers fake, and trusting it is what the losing paper log
@@ -658,7 +852,9 @@ def signal_quality(*, frame_age: float | None = None,
             ding(0.5, f"spread {spread_pct:.1f}%")
         elif spread_pct > 1.0:
             ding(0.7, f"spread {spread_pct:.1f}%")
-    if spoof_events >= 2:   # walls pulled untraded = displayed size lies
+    if spoof_events >= 5:   # a book this dishonest is barely a data source
+        ding(0.55, f"very spoofy book ({spoof_events} pulled walls)")
+    elif spoof_events >= 2:  # walls pulled untraded = displayed size lies
         ding(0.7, f"spoofy book ({spoof_events} pulled walls)")
     reasons.sort(key=lambda x: x[0])
     return max(0.0, min(1.0, q)), [w for _, w in reasons]
@@ -690,7 +886,8 @@ class LongView:
         self.tape_sided_share = float(cfg.get("tape_sided_share", 0.5))
         self.tape_dom_min = float(cfg.get("tape_dom_min", 0.25))
         # vwap pillar abstains until the accumulator is this old (secs)
-        self.vwap_min_age = float(cfg.get("vwap_min_age", 180.0))
+        self.vwap_min_age = float(cfg.get("vwap_min_age",
+                                          VWAP_MIN_AGE_DEFAULT))
         # 4th pillar (BookFlow) is staged: log/display until graded
         self.book_pillar = bool(cfg.get("book_pillar", False))
         self.samples = deque()     # (ts, imbalance)

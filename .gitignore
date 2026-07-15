@@ -55,6 +55,9 @@ webull-l2/debug_*.png
 webull-l2/debug_*.txt
 webull-l2/test_region*.png
 webull-l2/test_window.png
+webull-l2/region_cache.json
+webull-l2/book_feed.log
 config/webull_bridge.json
 conf/
 webull_trade_sdk.log*
+webull_sdk.log*

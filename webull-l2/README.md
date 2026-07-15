@@ -11,7 +11,17 @@ Watches the Level-2 order book on your Webull screen via OCR and alerts you when
 
 Default is `"region_mode": "auto"` — the script finds the Webull window by title, OCR-locates the L2 header row ("Size Bid ... Ask Size"), and anchors the capture region below it. If you move or resize Webull, it re-anchors automatically (also after 5 failed reads in a row). No calibration needed.
 
-Fallback: set `"region_mode": "manual"` in config.json and run `python calibrate.py` to drag-select the region — useful if auto-locate ever struggles with your theme/font size. The manual region is also used if the Webull window can't be found.
+**Nothing is stored as screen pixels.** Every region is kept as a *fraction of the Webull window*, so it follows the window across a move, a resize, or a jump to another monitor. Three ways to find the panel, best first:
+
+1. **Auto-locate** — anchors on the header row. Immune to moves/resizes, but it needs the header to actually be rendered. An L2 panel you aren't subscribed to draws an upsell instead, and there is nothing to find.
+2. **Learned region** (`region_cache.json`, written automatically) — every anchor that produces ≥5 good reads is remembered as a window fraction. When auto-locate later fails, that fraction is projected onto the window's *current* rect. This is what keeps the fallback from going stale; it's a cache, so deleting it is always safe.
+3. **Calibrated region** — `python calibrate.py` drag-selects a box and saves `region_rel` (fractions) plus `region` (absolute, legacy). Run it with Webull visible so the fractions can be computed; it warns if it could only save absolute pixels.
+
+`"region_mode": "manual"` pins to the calibrated region, still tracked to the window. Absolute `region` coordinates are only valid while the window sits exactly where it was calibrated — that's how a stale box ended up OCRing the Time&Sales widget and reporting "no clean OCR read yet" forever.
+
+### If OCR reads nothing
+
+Check the L2 panel is showing a **book**, not a subscription prompt — the monitor can only read pixels Webull actually draws. Overnight Consolidated LV2 is a separate subscription from regular-hours L2, so a panel that works at 10:00 can be an upsell at 03:00. `ok:0` with a high `miss:` count and a failing auto-locate usually means there is no ladder on screen at all, not that OCR needs tuning.
 
 ## Run
 
@@ -29,13 +39,17 @@ Confidence is **agreement of independent, hard-to-spoof evidence**, not the magn
 
 - **trend** — the 5-minute robust drift (where price actually went)
 - **tape** — 60s executed buy/sell dominance from Time&Sales (real money; can't be spoofed). Votes on a **volume-aware** gate: it needs at least `tape_min_sided` (4) prints with a real side AND the sided volume to be at least `tape_sided_share` (0.5) of the flow — so a few large clearly-sided prints vote (catching fast moves the old 8-print-count gate missed), while a tape that's mostly unsided noise abstains.
-- **vwap** — price above / below the session VWAP (who controls the day)
+- **vwap** — price above / below the **session** VWAP (who controls the day)
 
 The direction is the majority; the dots show how many agree. **3/3 = size up, 2/3 = normal, split or <2 = STAND ASIDE** no matter how extreme one meter looks. Hysteresis (`long_confirm_secs`) holds the stance so it doesn't flicker, and the small `trend ▲ tape ▲ vwap ▲` line under it shows the one-glance why.
 
+> **Counting agreement assumes the pillars are independent witnesses. Measured over the logs, two of them weren't.** Across 21,281 rows where both voted, trend and vwap ran at **corr +0.43** (agreeing 67% of the time vs 47% expected if independent), while tape was genuinely independent of both (+0.08 vs vwap, +0.19 vs trend). So a "3/3" was nearer *two* witnesses than three — the gauge overstated itself exactly where it says to size up. The cause was mechanical and is fixed below; the correlations are the **before** baseline to re-measure against once the rebuilt pillar has logged hours.
+>
+> Separately: **whether 3/3 actually beats 2/3 forward is still unknown.** 6.3h of logs hold only ~128 independent 2-min windows in total (3/3 gets ~16; ~101 are needed to detect a 60% win rate). Pooled over every directional call the edge is 50.6%, z=+0.11 — which rules out nothing weaker than ~61%. That is "not yet measurable", **not** "doesn't work". Roughly 60h of logging settles it, and `vwap_age`/`vwap_src` are logged per row to do it.
+
 Two guards on the pillars themselves:
 
-- **VWAP maturity** (`vwap_min_age`, 180s): the VWAP accumulator resets on every symbol switch, so for the first minutes "price vs VWAP" is really price-vs-a-short-mean — a trend echo that faked 3/3s right when you hop onto a mover. The vwap pillar now abstains until the accumulator is old enough to mean something.
+- **VWAP maturity** (`vwap_min_age`, 900s): the vwap pillar must span *much* more time than the 300s trend window or it is reading the same price path and merely echoing it. The old default was **180s — shorter than the trend window**, so a "mature" VWAP was younger than the trend it was meant to corroborate; that, plus a VWAP accumulated by the local tape reader (which resets on every symbol switch, spanning a median of 106s and never over 11.8 min), is what produced the +0.43. The pillar now prefers a **real session VWAP**: volume-weighted from executed prints off the Finnhub stream, anchored to the session open (04:00 / 09:30 / 16:00 ET), and kept **per symbol across hops**. Because the watchlist is pre-subscribed, a name accumulates its VWAP in the background *before* you hop onto it. The old tape VWAP remains only as a fallback for symbols the stream never saw — and under the 900s gate it can essentially never qualify, so it abstains rather than echoing trend. Expect the vwap pillar to vote **less often than it used to**, and `total` to read 2 more often: that is the point. Fewer pillars, honestly counted, beat three where two are the same witness.
 - **Data-quality grade** (`data A/B/C` on the banner meta line): confidence in the confidence. Computed every read from feed health — how long the L2 pixels have been frozen (a halted stock or obscured panel used to keep voting forever), OCR miss/glitch rates, OCR-vs-stream price deviation, tape staleness, spread width, pulled-wall spoof pressure. **Grade C caps the banner at the normal (non-size-up) rendering** and says why (e.g. `book frozen 45s`). A 3/3 on grade-C data is not a 3/3.
 
 Imbalance is deliberately **not** a confidence pillar — it's resting displayed size, the one input spoofers fake. It stays a detail row, not your focus signal.

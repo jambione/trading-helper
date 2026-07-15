@@ -6,8 +6,14 @@ and Windows toast. Logs every snapshot to CSV.
 
 Region modes (config.json "region_mode"):
     "auto"   - finds the Webull window and locates the L2 panel by its
-               header row; re-anchors when the window moves/resizes.
-    "manual" - uses the fixed coordinates from calibrate.py.
+               header row; re-anchors when the window moves/resizes. Falls
+               back to the last anchor that worked (or the calibrated
+               region), projected onto the window's current rect.
+    "manual" - uses the region from calibrate.py, tracked to the Webull
+               window so it still follows moves/resizes.
+
+Every region is stored as a FRACTION of the Webull window rather than as
+screen pixels, so nothing goes stale when the window moves or is resized.
 
 Usage:
     python l2_signal.py
@@ -19,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import sys
 import threading
@@ -37,10 +44,10 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-from l2_core import (BookFlow, GlitchGate, L2Book, LongView, PaperTrader,
-                     Signal, SignalEngine, Trade, WallTracker, _median,
-                     market_bias, parse_l2_text, playbook, project_price,
-                     quality_grade, signal_quality)
+from l2_core import (VWAP_MIN_AGE_DEFAULT, BookFlow, GlitchGate, L2Book,
+                     LongView, PaperTrader, SessionVWAP, Signal, SignalEngine,
+                     Trade, WallTracker, _median, market_bias, parse_l2_text,
+                     playbook, project_price, quality_grade, signal_quality)
 from tape_core import Tape, classify_rgb, parse_tape_line
 
 # shared session clock (repo root) — optional: monitor runs fine without it
@@ -188,18 +195,52 @@ _NOT_TICKERS = {"BID", "ASK", "SIZE", "VWAP", "MACD", "ATR", "EMA", "SMA",
                 "EST", "UTC", "AM", "PM", "NA", "OTC", "USD", "INC", "CO",
                 "LTD", "LLC", "BUY", "SELL", "DAY", "VS", "TT", "HOD", "LOD"}
 
+# x-positions this close (window pixels, pre-2x-scale) count as one column
+_COL_TOL = 20
+# repeats this many times down ONE column = a table column, not a symbol
+_TABLE_MIN_ROWS = 4
 
-def _guess_symbol(raw_words: list[str]) -> str | None:
-    """The active ticker appears several times on screen (chart header,
-    quotes panel, order line); watchlist tickers only once. Pick the most
-    frequent 2-5 letter uppercase token."""
+
+def _guess_symbol(words: list[tuple[str, int]], scale: int = 1) -> str | None:
+    """Pick the active ticker from OCR'd window tokens.
+
+    The active ticker is written in several DIFFERENT places — chart header,
+    quotes panel, positions row, order line — so it shows up in several
+    distinct COLUMNS. A table instead repeats one token down a single x:
+    Time&Sales stamps its execution venue (OCEA, BOSS, ARCA…) on every
+    print, which by raw frequency buried the real symbol 7-to-4 and had the
+    monitor polling depth for an exchange code.
+
+    So position, not identity, decides:
+      * a token stacked >= _TABLE_MIN_ROWS times in ONE column is a table
+        column and is ranked last outright, however often it appears;
+      * otherwise rank by how many distinct columns it spans, then by count.
+
+    Venue codes are deliberately NOT blocklisted: the list would never be
+    complete, and some are real tickers (PSX is Phillips 66), so a name-based
+    filter would eventually silence a stock you actually trade.
+
+    `words` are (text, x) pairs; `scale` is the factor x was measured at.
+    """
     import collections
     import re as _re
-    cands = [w for w in raw_words
-             if _re.fullmatch(r"[A-Z]{2,5}", w) and w not in _NOT_TICKERS]
+    cands: dict[str, list[int]] = collections.defaultdict(list)
+    for text, x in words:
+        if _re.fullmatch(r"[A-Z]{2,5}", text) and text not in _NOT_TICKERS:
+            cands[text].append(x)
     if not cands:
         return None
-    return collections.Counter(cands).most_common(1)[0][0]
+    tol = _COL_TOL * scale
+
+    def score(xs: list[int]) -> tuple[int, int, int]:
+        cols: list[int] = []
+        for x in sorted(xs):
+            if not cols or x - cols[-1] > tol:
+                cols.append(x)
+        table = len(cols) == 1 and len(xs) >= _TABLE_MIN_ROWS
+        return (0 if table else 1), len(cols), len(xs)
+
+    return max(cands, key=lambda t: score(cands[t]))
 
 
 def detect_symbol(win_img: np.ndarray) -> str | None:
@@ -211,7 +252,9 @@ def detect_symbol(win_img: np.ndarray) -> str | None:
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     d = pytesseract.image_to_data(th, config="--psm 11",
                                   output_type=pytesseract.Output.DICT)
-    return _guess_symbol([w.strip() for w in d["text"] if w.strip()])
+    words = [(d["text"][i].strip(), d["left"][i])
+             for i in range(len(d["text"])) if d["text"][i].strip()]
+    return _guess_symbol(words, scale=2)   # gray was resized 2x above
 
 def find_webull_window() -> dict | None:
     """Bounding box of the (largest) visible window owned by the Webull
@@ -354,28 +397,113 @@ def locate_l2_region(win_img: np.ndarray, win_rect: dict,
     return region
 
 
+REGION_CACHE = HERE / "region_cache.json"
+
+# Horizon project_price extrapolates over. Only ever divided back OUT to
+# recover a %/min pace for display - the target itself is not shown
+# anywhere, because it does not survive a backtest (see lv_banner).
+PROJ_MINUTES = 5.0
+
+
+def rel_from_abs(region: dict | None, rect: dict | None) -> dict | None:
+    """Absolute screen region -> fractions of the window rect."""
+    if not region or not rect or rect["width"] <= 0 or rect["height"] <= 0:
+        return None
+    return {"x": (region["left"] - rect["left"]) / rect["width"],
+            "y": (region["top"] - rect["top"]) / rect["height"],
+            "w": region["width"] / rect["width"],
+            "h": region["height"] / rect["height"]}
+
+
+def abs_from_rel(rel: dict | None, rect: dict | None) -> dict | None:
+    """Window-relative fractions -> absolute region on the window's CURRENT
+    rect, clamped inside it. This is what makes a calibrated region survive
+    the window being moved to another monitor or resized."""
+    if not rel or not rect:
+        return None
+    try:
+        left = rect["left"] + int(round(rel["x"] * rect["width"]))
+        top = rect["top"] + int(round(rel["y"] * rect["height"]))
+        width = int(round(rel["w"] * rect["width"]))
+        height = int(round(rel["h"] * rect["height"]))
+    except (KeyError, TypeError):
+        return None
+    left = max(rect["left"], min(left, rect["left"] + rect["width"] - 1))
+    top = max(rect["top"], min(top, rect["top"] + rect["height"] - 1))
+    width = min(width, rect["left"] + rect["width"] - left)
+    height = min(height, rect["top"] + rect["height"] - top)
+    if width < 60 or height < 40:
+        return None
+    return {"left": left, "top": top, "width": width, "height": height}
+
+
 class RegionTracker:
     """Keeps the capture region pointed at the L2 panel even when the
     Webull window moves or resizes. Re-anchors when the window rect
-    changes or several consecutive reads fail."""
+    changes or several consecutive reads fail.
+
+    Three ways to find the panel, best first:
+      1. auto-locate  - OCR the window, anchor on the 'Size Bid Ask Size'
+                        header. Immune to moves/resizes; needs the header
+                        to actually be on screen (an unsubscribed L2 panel
+                        renders an upsell instead, and there's nothing to
+                        find).
+      2. learned rel  - every successful anchor records where the panel sat
+                        AS A FRACTION of the window, cached to disk. When
+                        auto-locate later fails, that fraction is projected
+                        onto the window's current rect, so the fallback
+                        follows the window instead of going stale.
+      3. calibrated   - config.json "region_rel" (fractions, written by
+                        calibrate.py) or legacy "region" (absolute pixels,
+                        only valid while the window sits exactly where it
+                        was calibrated).
+    """
 
     MISS_LIMIT = 5
     BAD_ANCHOR_LIMIT = 3     # anchors that produced zero good reads
     MANUAL_HOLD = 60         # seconds to sit on manual region before retrying auto
+    CACHE_MIN_OK = 5         # good reads before an anchor is worth caching
 
     def __init__(self, cfg: dict, console=None):
         self.mode = cfg.get("region_mode", "auto")
-        self.manual = cfg.get("region")
+        self.manual_abs = cfg.get("region")
+        self.manual_rel = cfg.get("region_rel")
         self.debug = cfg.get("debug", True)
         self.console = console
-        self.region = self.manual if self.mode == "manual" else None
+        self.region = None
         self.win_rect = None
         self.misses = 0
         self.ok_since_anchor = 0
         self.bad_anchors = 0
         self.manual_until = 0.0
+        self.learned_rel = self._load_cache()
+        self._cached_rel = None
         self.symbol: str | None = None
         self._sym_cand: str | None = None
+
+    def _load_cache(self) -> dict | None:
+        try:
+            return json.loads(REGION_CACHE.read_text()).get("region_rel")
+        except Exception:                                  # noqa: BLE001
+            return None
+
+    def _save_cache(self, rel: dict):
+        """Persist a proven anchor. Kept out of config.json so the user's
+        settings are never rewritten underneath them."""
+        try:
+            tmp = REGION_CACHE.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"region_rel": rel}, indent=2))
+            tmp.replace(REGION_CACHE)
+        except Exception:                                  # noqa: BLE001
+            pass
+
+    def fallback(self, rect: dict | None) -> dict | None:
+        """Best non-auto region for the window's current position."""
+        for rel in (self.learned_rel, self.manual_rel):
+            got = abs_from_rel(rel, rect)
+            if got:
+                return got
+        return self.manual_abs
 
     def note_symbol(self, sym: str | None):
         """Adopt a detected symbol with hysteresis: switching wipes all
@@ -403,29 +531,40 @@ class RegionTracker:
 
     def get(self, sct) -> dict | None:
         if self.mode == "manual":
-            return self.manual
+            # still tracked to the window: a calibrated region is only
+            # meaningful relative to the panel it was drawn around
+            return self.fallback(find_webull_window())
         now = time.time()
-        if now < self.manual_until:
-            return self.manual
         rect = find_webull_window()
         if rect is None:
-            return self.manual  # window not found; try manual as fallback
+            return self.fallback(None)  # window gone; last resort
+        if now < self.manual_until:
+            return self.fallback(rect)
         if (self.region and rect == self.win_rect
                 and self.misses < self.MISS_LIMIT):
             return self.region
+        # an anchor that produced good reads is worth remembering, as a
+        # fraction of the window so it survives the next move/resize
+        if (self.region and self.ok_since_anchor >= self.CACHE_MIN_OK
+                and self.win_rect):
+            rel = rel_from_abs(self.region, self.win_rect)
+            if rel and rel != self._cached_rel:
+                self.learned_rel = self._cached_rel = rel
+                self._save_cache(rel)
         # window moved/resized or reads failing -> re-anchor
         if self.region is not None and self.ok_since_anchor == 0:
             self.bad_anchors += 1
         else:
             self.bad_anchors = 0
-        if self.bad_anchors >= self.BAD_ANCHOR_LIMIT and self.manual:
-            self._say("auto-locate keeps failing -> using calibrated region "
+        if self.bad_anchors >= self.BAD_ANCHOR_LIMIT and self.fallback(rect):
+            src = "learned" if self.learned_rel else "calibrated"
+            self._say(f"auto-locate keeps failing -> using {src} region "
                       f"for {self.MANUAL_HOLD}s (check debug_anchor.png; "
                       "run calibrate.py to refresh the fallback)")
             self.manual_until = now + self.MANUAL_HOLD
             self.bad_anchors = 0
             self.misses = 0
-            return self.manual
+            return self.fallback(rect)
         img = np.asarray(sct.grab(rect))
         found = locate_l2_region(img, rect,
                                  HERE if self.debug else None)
@@ -449,8 +588,10 @@ class RegionTracker:
             if found != self.region:
                 self._say(f"L2 panel located at {found}")
             self.region = found
-        elif self.region is None:
-            self.region = self.manual
+        else:
+            # the window just moved or the reads went bad, so the old
+            # absolute region is the one thing we know is wrong
+            self.region = self.fallback(rect) or self.region
         return self.region
 
 
@@ -675,6 +816,10 @@ class RefFeed:
         self.enabled = bool(cfg.get("ref_price_gate", True))
         self.max_age = float(cfg.get("ref_max_age", 15.0))
         self.key = cfg.get("finnhub_key") or os.getenv("FINNHUB_API_KEY", "")
+        # built before any early return: _on_trade can fire the moment the
+        # callback is registered, and vwap() is called whether or not the
+        # feed came up
+        self.svwap = SessionVWAP()
         self._start = self._state = self._unsub = None
         self._subscribed: set[str] = set()   # symbols actually on the wire
         self._watch: set[str] = set()        # watchlist we want warmed
@@ -691,17 +836,45 @@ class RefFeed:
             return
         try:
             sys.path.insert(0, str(HERE.parent))
-            from finnhub_stream import (FINNHUB_STATE, request_unsubscribe,
+            from finnhub_stream import (FINNHUB_STATE, register_trade_callback,
+                                         request_unsubscribe,
                                          start_finnhub_stream)
             self._start, self._state = start_finnhub_stream, FINNHUB_STATE
             self._unsub = request_unsubscribe
+            # Every print for every SUBSCRIBED symbol feeds the session VWAP,
+            # not just the active one: the watchlist is pre-subscribed, so a
+            # name accumulates its VWAP in the background for the minutes
+            # before you hop onto it. That warm-in-advance is what lets the
+            # pillar clear VWAP_MIN_AGE_DEFAULT on arrival instead of sitting
+            # dark for 15 min of a 72-second visit.
+            register_trade_callback(self._on_trade)
             if console:
                 console.print("[dim]ref-price gate on — Finnhub last-trade "
-                              "vetoes wild OCR misreads[/dim]")
+                              "vetoes wild OCR misreads, and feeds the "
+                              "session VWAP pillar[/dim]")
         except Exception as e:                                 # noqa: BLE001
             self.enabled = False
             if console:
                 console.print(f"[dim]ref-price gate unavailable: {e}[/dim]")
+
+    def _on_trade(self, symbol: str, price: float, volume: float,
+                  ts_ms: float) -> None:
+        """Stream-thread callback. Must never raise: an exception here would
+        propagate into the websocket reader and kill the price feed the
+        glitch gate depends on."""
+        try:
+            self.svwap.ingest(symbol, float(price), float(volume),
+                              float(ts_ms) / 1000.0 if ts_ms else None)
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    def vwap(self, symbol: str | None) -> tuple[float | None, float | None]:
+        """(session vwap, seconds of session actually covered) for `symbol`.
+        (None, None) when the feed is off or the symbol was never streamed —
+        the caller then falls back to the local tape VWAP."""
+        if not self.enabled:
+            return None, None
+        return self.svwap.vwap(symbol), self.svwap.age(symbol)
 
     def _reconcile(self):
         """Drive the live subscription set to exactly {watchlist + active},
@@ -725,6 +898,10 @@ class RefFeed:
                 if drop and self._unsub:
                     self._unsub(drop)
                     self._subscribed.difference_update(drop)
+                    # no more prints are coming for these, so their VWAP can
+                    # only go stale; drop it rather than let a name that
+                    # rotated off hours ago answer vwap() if it returns
+                    self.svwap.forget(drop)
             except Exception:                                  # noqa: BLE001
                 pass
 
@@ -781,6 +958,21 @@ class RefFeed:
 
 # --------------------------------------------------------- SDK depth feed ---
 
+def _quiet_sdk_logs():
+    """Keep the bridge's own [WEBULL] lines off the terminal — Rich's Live
+    display owns it, and a log line written mid-frame shreds the dashboard.
+    They go to book_feed.log instead; propagate=False keeps them away from
+    root's stderr lastResort handler. (The SDK's own stdout handler is
+    pre-empted in providers.webull._route_sdk_logs.)"""
+    handler = logging.FileHandler(HERE / "book_feed.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"))
+    lg = logging.getLogger("webull_bridge")
+    lg.handlers = [handler]
+    lg.propagate = False
+    lg.setLevel(logging.WARNING)
+
+
 class BookFeed:
     """Daemon thread polling Webull OpenAPI depth quotes (10 levels) as the
     PRIMARY book source; the OCR pipeline stays as fallback and as the
@@ -812,6 +1004,7 @@ class BookFeed:
             sys.path.insert(0, str(HERE.parent))
             from webull_bridge.config import load_config
             from webull_bridge.providers.webull import WebullMarketData
+            _quiet_sdk_logs()
             self.md = WebullMarketData(load_config())
             threading.Thread(target=self._run, daemon=True).start()
             if console:
@@ -848,10 +1041,14 @@ class BookFeed:
         return None
 
     def _run(self):
+        misses = 0
+        last_sym = None
         while True:
             t0 = time.time()
             with self.lock:
                 sym = self._symbol
+            if sym != last_sym:     # new symbol, new chance: drop the backoff
+                misses, last_sym = 0, sym
             if sym:
                 try:
                     book = self.md._fetch(sym)
@@ -861,9 +1058,15 @@ class BookFeed:
                     if book is not None and sym == self._symbol:
                         self._book, self._got = book, time.time()
                         self.ok += 1
+                        misses = 0
                     elif book is None:
                         self.fail += 1
+                        misses += 1
             poll = self.md.poll if self.md else 0.5
+            # a book we can't fetch is a book OCR is already covering, so
+            # ease off instead of billing the API 2x/sec for the same error
+            if misses >= 5:
+                poll = min(poll * misses, 10.0)
             time.sleep(max(0.05, poll - (time.time() - t0)))
 
 
@@ -971,13 +1174,24 @@ class CsvLog:
     # OFFLINE against forward returns -- votes alone can't be re-derived at
     # a different tape_dom_min / deadband, the raw numbers can. flow/absorb
     # are reserved for the book-flow detectors (logged before they vote).
+    #
+    # vwap_age/vwap_src are what the REBUILT vwap pillar is judged on. The
+    # old pillar measured corr +0.43 against trend (it was the same witness
+    # twice); the fix is only a mechanism, not yet a proven result, so the
+    # age and the source of every VWAP that voted are logged to re-measure
+    # that correlation on real hours. vwap_src="session" is the real
+    # anchored VWAP, "tape" the reset-on-hop fallback that the maturity
+    # gate should now be silencing -- if "tape" rows ever show a vwap_vote,
+    # the gate has a hole. tape_age stays: it is the fallback's own age and
+    # the column the 0-violation gate check was verified against.
     FIELDS = ["time", "symbol", "best_bid", "best_ask", "spread_pct",
               "bid_size", "ask_size", "imbalance", "signal", "reason",
               "stance", "agree", "total", "tape_live",
               "trend_vote", "tape_vote", "vwap_vote",
               "t5", "tape_dom", "tape_dom_big", "tape_dom_w",
               "tape_sided_n", "tape_sided_share", "tape_pace", "tape_accel",
-              "vwap", "tape_age", "quality", "flow", "absorb"]
+              "vwap", "vwap_age", "vwap_src", "tape_age", "quality",
+              "flow", "absorb"]
 
     def __init__(self, path: Path):
         self.f, self.w = _open_csv(path, self.FIELDS)
@@ -1009,7 +1223,8 @@ class CsvLog:
             _r("t5"), _r("tape_dom", 3), _r("tape_dom_big", 3),
             _r("tape_dom_w", 3), _r("tape_sided_n", 0),
             _r("tape_sided_share", 3), _r("tape_pace", 1),
-            _r("tape_accel", 2), _r("vwap"), _r("tape_age", 0),
+            _r("tape_accel", 2), _r("vwap"), _r("vwap_age", 0),
+            raw.get("vwap_src", ""), _r("tape_age", 0),
             _r("quality", 2), raw.get("flow", ""), raw.get("absorb", ""),
         ])
         self.f.flush()
@@ -1046,16 +1261,21 @@ def _vote_cell(label: str, v) -> str:
 
 
 def lv_banner(lv: dict | None, price: float | None = None,
-              ask_walls: list | None = None) -> Panel:
+              ask_walls: list | None = None,
+              proj: tuple | None = None) -> Panel:
     """THE signal: 5-minute confidence, big and unmissable at the top.
 
     Centered lines - a bold directional headline, a colored confidence
     gauge with the agree/total fraction, the three pillar votes, the
-    current price with the next ask walls overhead (your resistance /
-    targets), and a dim meta line (held time / pending turn / no-tape).
-    Everything else in the table below is supporting detail. Confidence =
-    agreement of trend + tape + VWAP (see l2_core.confidence), not the
-    size of any single meter."""
+    current price projected 5m ahead at the current pace, the next ask
+    walls overhead (your resistance / targets), and a dim meta line (held
+    time / pending turn / no-tape). Everything else in the table below is
+    supporting detail. Confidence = agreement of trend + tape + VWAP (see
+    l2_core.confidence), not the size of any single meter.
+
+    Projection and walls sit on adjacent lines on purpose: the projection
+    is a PACE estimate, not a prediction (l2_core.project_price), and the
+    walls directly above are the thing most likely to bend it."""
     if not lv:
         return Panel(
             "[bold grey70]WARMING UP[/bold grey70]   "
@@ -1116,20 +1336,52 @@ def lv_banner(lv: dict | None, price: float | None = None,
         fcol = "red" if "spoof" in lv["flow_note"] else "cyan"
         pillars += f"     [{fcol}]· {lv['flow_note']}[/{fcol}]"
 
-    # current price + the next ask walls overhead (resistance / targets)
-    price_line = None
-    if price:
-        if ask_walls:
-            wtxt = "   ".join(
-                f"[bold]{p:.3f}[/bold][dim] x{int(z):,} "
-                f"+{100 * (p - price) / price:.1f}%[/dim]"
-                for p, z in ask_walls)
-            price_line = (f"[dim]now[/dim] [bold]{price:.3f}[/bold]    "
-                          f"[dim]ask walls ↑[/dim]   {wtxt}")
-        else:
-            price_line = (f"[dim]now[/dim] [bold]{price:.3f}[/bold]    "
-                          f"[green]clear overhead — no ask walls in view"
-                          f"[/green]")
+    # price now -> where the current pace lands 5m out. Kept on its own
+    # line, not appended to the walls: this panel is narrow, and a line
+    # that wraps re-flows the whole banner (the thing the fixed line count
+    # below exists to prevent).
+    px = f"[dim]now[/dim] [bold]{price:.3f}[/bold]" if price else "[dim]now  —[/dim]"
+    if proj and price:
+        # NO 5m TARGET HERE, on purpose. Backtested over the 169 logged
+        # sessions, project_price's target lands FARTHER from the truth
+        # than assuming no change at all in 3 of every 4 independent calls
+        # (median error 17% vs 6%), and its direction is a coin flip
+        # (44%, CI 34-54). It extrapolates 120s of drift across 5 minutes,
+        # multiplying by 2.5 a number that is mostly noise at this scale -
+        # a noise amplifier, not a forecast. What survives is the trailing
+        # PACE: a measured fact about what price just did, with no
+        # destination for the eye to trade toward.
+        p_mid, p_target, _ = proj
+        chg = 100.0 * (p_target - p_mid) / p_mid if p_mid else 0.0
+        pace = chg / (PROJ_MINUTES or 5.0)          # %/min
+        # Colour by AGREEMENT with the stance, not by the sign of the
+        # arithmetic: green means "aligned upside" everywhere else in this
+        # banner, and a bare pace has not earned the right to say it.
+        agrees = ((pace > 0.01 and color == "green")
+                  or (pace < -0.01 and color == "red"))
+        pc = color if agrees else "yellow"
+        price_line = (f"{px}   [bold {pc}]{pace:+.2f}%/min[/bold {pc}]"
+                      f"   [dim]trailing 2m[/dim]")
+    else:
+        # needs ~20s of history to call a pace; say so rather than show 0.00
+        price_line = f"{px}   [dim]—   building pace[/dim]"
+
+    # the next ask walls overhead (resistance / targets) = what the pace
+    # above has to get through
+    if not price:
+        walls_line = "[dim]walls  —[/dim]"
+    elif ask_walls:
+        # Walls are listed with their distance and left at that. Marking
+        # which one is "in the way" needed a projected target to be in the
+        # way OF, and that target is noise (see price_line) - it would have
+        # dressed a coin flip up as geometry.
+        wtxt = "   ".join(
+            f"[bold]{p:.3f}[/bold][dim] x{int(z):,} "
+            f"+{100 * (p - price) / price:.1f}%[/dim]"
+            for p, z in ask_walls)
+        walls_line = f"[dim]ask walls ↑[/dim]   {wtxt}"
+    else:
+        walls_line = "[green]clear overhead — no ask walls in view[/green]"
 
     meta = f"[dim]held {dur}[/dim]"
     if grade is not None:
@@ -1146,14 +1398,14 @@ def lv_banner(lv: dict | None, price: float | None = None,
 
     # Left-anchored, fixed line count so nothing slides when text changes
     # length: centering re-offsets every line each frame (the jarring shift);
-    # a constant 5 lines stops vertical reflow when price/pending come and go.
-    if price_line is None:
-        price_line = "[dim]now  —[/dim]"
+    # a constant 6 lines stops vertical reflow when price/proj/pending come
+    # and go (each renders a placeholder rather than dropping its line).
     body = Group(
         f"[bold {color}]{headline}[/bold {color}]",
         gauge,
         pillars,
         price_line,
+        walls_line,
         meta,
     )
     return Panel(body, title=f"[bold {color}]5m CONFIDENCE[/bold {color}]",
@@ -1340,14 +1592,19 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
                      f"{span5[1] / 60:.0f}m[/dim]")
         t.add_row("Move 1m / 5m", move)
         if proj:
+            # was "Price -> proj (5m)": a 5-minute target price. It read
+            # like a forecast and was not one - see lv_banner for the
+            # backtest that retired it. The pace it was built from is real,
+            # so that is what the row reports now.
             mid, target, note = proj
             chg = 100.0 * (target - mid) / mid if mid else 0.0
-            pc = ("green" if chg > 0.05 else "red" if chg < -0.05
+            pace = chg / PROJ_MINUTES
+            pc = ("green" if pace > 0.01 else "red" if pace < -0.01
                   else "yellow")
-            t.add_row("Price → proj (5m)",
-                      f"{mid:.3f} → [{pc}]{target:.3f} ({chg:+.2f}%)[/{pc}]"
+            t.add_row("Pace (trailing 2m)",
+                      f"[{pc}]{pace:+.2f}%/min[/{pc}]"
                       + (f"  [dim]{note}[/dim]" if note else "")
-                      + "  [dim]at current pace[/dim]")
+                      + "  [dim]what price just did, not a forecast[/dim]")
         if spark:
             t.add_row(spark_label, spark)
         if trader and trader.in_position:
@@ -1372,7 +1629,7 @@ def render(book: L2Book | None, last_sig: Signal | None, reads: int,
         # next 3 ask walls overhead, nearest first (resistance / targets)
         ask_walls = sorted(((p, z) for s, p, z in book.walls() if s == "ASK"),
                            key=lambda x: x[0])[:3]
-    return Group(lv_banner(lv, price, ask_walls), t)
+    return Group(lv_banner(lv, price, ask_walls, proj), t)
 
 
 # ------------------------------------------------------------------ main ----
@@ -1598,12 +1855,26 @@ def main():
                     b, tsreader.prints_since(bookflow.upto)
                     if tsreader.enabled else [], t0)
                 t5_now = engine.trend_pct(cfg.get("trend_window", 300))
+                # The vwap pillar prefers the REAL session VWAP: accumulated
+                # from executed prints, anchored to the session open, and
+                # kept across symbol hops. The local tape VWAP is only a
+                # fallback for when the stream has never seen this symbol,
+                # and it is deliberately left on its own (short) age - under
+                # the maturity gate a tape VWAP that resets every hop can
+                # essentially never qualify, so the pillar abstains instead
+                # of echoing the trend. Fewer pillars, honestly counted,
+                # beats three where two are the same witness.
+                sv, sv_age = reffeed.vwap(active_sym)
+                if sv is not None:
+                    vwap_now, vwap_age_now = sv, sv_age
+                else:
+                    vwap_now = tsnap["vwap"] if tsnap else None
+                    vwap_age_now = ((t0 - tsnap["since"])
+                                    if tsnap and tsnap.get("on") else None)
                 lv = longview.update(
                     b, t5_now,
                     evs, t0, tape=tape_m1,
-                    vwap=tsnap["vwap"] if tsnap else None,
-                    vwap_age=(t0 - tsnap["since"])
-                    if tsnap and tsnap.get("on") else None,
+                    vwap=vwap_now, vwap_age=vwap_age_now,
                     book_vote=flow["vote"] if flow else None)
                 # data-quality grade rides along with the stance: the
                 # banner shows it and caps size-up advice on grade C
@@ -1682,8 +1953,8 @@ def main():
                         "imbalance": round(b.imbalance, 2),
                         "tape_dom": (round(tape_m1["dom"], 2)
                                      if tape_m1 else None),
-                        "vwap": (round(tsnap["vwap"], 4)
-                                 if tsnap and tsnap.get("vwap") else None),
+                        "vwap": (round(vwap_now, 4)
+                                 if vwap_now else None),
                         "price": round(proj[0], 4) if proj else None,
                         "proj": round(proj[1], 4) if proj else None,
                         "stance": lv["stance"] if lv else None,
@@ -1725,7 +1996,9 @@ def main():
                                       if tape_m1 else None),
                         "tape_accel": (tape_m1.get("accel")
                                        if tape_m1 else None),
-                        "vwap": tsnap["vwap"] if tsnap else None,
+                        "vwap": vwap_now,
+                        "vwap_age": vwap_age_now,
+                        "vwap_src": "session" if sv is not None else "tape",
                         "tape_age": (t0 - tsnap["since"])
                         if tsnap and tsnap.get("on") else None,
                         "quality": lv.get("quality") if lv else None,

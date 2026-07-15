@@ -166,6 +166,68 @@ def test_bookflow_wall_pulled_untraded_is_spoof():
     assert out["vote"] != 1            # a pulled wall is never a buy signal
 
 
+def test_bookflow_ask_wall_left_behind_by_falling_price_is_not_spoof():
+    """RUBI, live: an ask wall at 5.470 flagged 'PULLED - spoof' while price
+    was 4.825 - a level the touch had long since fallen away from, still
+    resting for all we know. The book is a fixed-depth peek, so price
+    running leaves levels behind; that is the window moving, not a spoof."""
+    bf = BookFlow()
+    bf.update(book(bid=5.05, ask=5.10, ask_wall=(5.47, 2000.0)), [], 0.0)
+    for i in range(bf.gone_reads):      # price falls away; 5.47 leaves view
+        out = bf.update(book(bid=4.82, ask=4.83), [], 2.0 + i)
+    assert out["events"] == []
+    assert out["spoof_ask"] == 0
+
+
+def test_bookflow_bid_wall_left_behind_by_rising_price_is_not_spoof():
+    """SPCX, live: bid wall 137.400 flagged 'PULLED - spoof' at price
+    137.770. Mirror of the ask case, and the costly direction: a clean run
+    up manufactured spoof events that downgraded the data grade exactly
+    when the banner was being read for a long."""
+    bf = BookFlow()
+    bf.update(book(bid=137.40, ask=137.45), [], 0.0)
+    bf.walls[("BID", 137.40)] = {"peak": 5000.0, "traded": 0.0, "miss": 0}
+    for i in range(bf.gone_reads):      # price runs up; 137.40 leaves view
+        out = bf.update(book(bid=137.77, ask=137.78), [], 2.0 + i)
+    assert out["events"] == []
+    assert out["spoof_bid"] == 0
+
+
+def test_bookflow_ocr_garbage_price_never_becomes_a_spoof():
+    """Live logs held 'pulled walls' 17,000% from mid - misparsed prices.
+    They evict far outside the window, so the same guard drops them."""
+    bf = BookFlow()
+    bf.update(book(ask_wall=(24000.0, 9000.0)), [], 0.0)
+    for i in range(bf.gone_reads):
+        out = bf.update(book(), [], 2.0 + i)
+    assert out["events"] == []
+    assert out["spoof_ask"] == 0
+
+
+def test_bookflow_spoof_at_the_touch_still_fires_when_price_holds():
+    """The guard must not buy its quiet by going blind: a wall yanked
+    untraded while the touch sits still is the real signature, and stays
+    detected."""
+    bf = BookFlow()
+    bf.update(book(bid=5.00, ask=5.05, ask_wall=WALL), [], 0.0)
+    for i in range(bf.gone_reads):      # same touch, wall simply gone
+        out = bf.update(book(bid=5.00, ask=5.05), [], 2.0 + i)
+    assert out["events"] == [("ASK", 5.20, "PULLED")]
+    assert out["spoof_ask"] == 1
+
+
+def test_bookflow_wall_pulled_as_price_approaches_still_fires():
+    """The classic spoof: size shown to fake resistance, yanked as price
+    walks toward it. Price MOVES here, but toward the wall, not away - the
+    guard keys on the window sliding off a level, so this must survive."""
+    bf = BookFlow()
+    bf.update(book(bid=5.00, ask=5.05, ask_wall=WALL), [], 0.0)
+    for i in range(bf.gone_reads):      # touch climbs to just under 5.20
+        out = bf.update(book(bid=5.13, ask=5.14), [], 2.0 + i)
+    assert out["events"] == [("ASK", 5.20, "PULLED")]
+    assert out["spoof_ask"] == 1
+
+
 def test_bookflow_tolerates_ocr_flicker():
     bf = BookFlow()
     bf.update(book(ask_wall=WALL), [], 0.0)

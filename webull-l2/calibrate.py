@@ -1,6 +1,11 @@
 """Drag a box around the L2 order-book rows (just the Size/Bid/Ask/Size rows,
 NOT the column headers) and the region is saved to config.json.
 
+The box is saved BOTH ways: "region_rel" as fractions of the Webull window
+(so the fallback follows the window when you move or resize it) and "region"
+in absolute pixels (legacy, and all we can store if the Webull window can't
+be found). The monitor prefers the fractions.
+
 Works across multiple monitors — the overlay spans the whole virtual desktop.
 
 Run: python calibrate.py
@@ -21,6 +26,9 @@ if sys.platform == "win32":
             pass
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
+
+sys.path.insert(0, str(Path(__file__).parent))
+from l2_signal import find_webull_window, rel_from_abs  # noqa: E402
 
 
 def virtual_screen(root):
@@ -68,10 +76,22 @@ def main():
             return
         cfg = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
         # canvas coords are relative to the overlay -> add virtual origin
-        cfg["region"] = {"left": vx + left, "top": vy + top,
-                         "width": w, "height": h}
+        region = {"left": vx + left, "top": vy + top, "width": w, "height": h}
+        cfg["region"] = region
+        rel = rel_from_abs(region, find_webull_window())
+        if rel:
+            cfg["region_rel"] = rel
+        else:
+            cfg.pop("region_rel", None)
         CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
-        print(f"Saved region {cfg['region']} to {CONFIG_PATH}")
+        print(f"Saved region {region} to {CONFIG_PATH}")
+        if rel:
+            print(f"  window-relative: {rel} "
+                  "(follows the Webull window when you move/resize it)")
+        else:
+            print("  WARNING: Webull window not found, so only absolute "
+                  "pixels were saved -- this fallback breaks if you move "
+                  "or resize the window. Re-run with Webull visible.")
 
     canvas.bind("<ButtonPress-1>", press)
     canvas.bind("<B1-Motion>", drag)
