@@ -1,5 +1,6 @@
 {
     "region_mode": "auto",
+    "book_source": "auto",
     "region": {
         "left": 5475,
         "top": 642,
@@ -33,6 +34,10 @@
     "ts_region": null,
     "tape_gate_entries": true,
     "tape_dom_min": 0.25,
+    "tape_min_sided": 4,
+    "tape_sided_share": 0.5,
+    "vwap_min_age": 180,
+    "book_pillar": false,
     "symbol_refresh": 30,
     "long_window": 60,
     "long_confirm_secs": 20,

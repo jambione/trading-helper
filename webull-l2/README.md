@@ -33,16 +33,36 @@ Confidence is **agreement of independent, hard-to-spoof evidence**, not the magn
 
 The direction is the majority; the dots show how many agree. **3/3 = size up, 2/3 = normal, split or <2 = STAND ASIDE** no matter how extreme one meter looks. Hysteresis (`long_confirm_secs`) holds the stance so it doesn't flicker, and the small `trend ▲ tape ▲ vwap ▲` line under it shows the one-glance why.
 
+Two guards on the pillars themselves:
+
+- **VWAP maturity** (`vwap_min_age`, 180s): the VWAP accumulator resets on every symbol switch, so for the first minutes "price vs VWAP" is really price-vs-a-short-mean — a trend echo that faked 3/3s right when you hop onto a mover. The vwap pillar now abstains until the accumulator is old enough to mean something.
+- **Data-quality grade** (`data A/B/C` on the banner meta line): confidence in the confidence. Computed every read from feed health — how long the L2 pixels have been frozen (a halted stock or obscured panel used to keep voting forever), OCR miss/glitch rates, OCR-vs-stream price deviation, tape staleness, spread width, pulled-wall spoof pressure. **Grade C caps the banner at the normal (non-size-up) rendering** and says why (e.g. `book frozen 45s`). A 3/3 on grade-C data is not a 3/3.
+
 Imbalance is deliberately **not** a confidence pillar — it's resting displayed size, the one input spoofers fake. It stays a detail row, not your focus signal.
+
+### The staged 4th pillar: book × tape flow
+
+`BookFlow` cross-references resting size against executed prints — the one signal class that requires real money to fake:
+
+- **Wall PULLED vs CONSUMED**: when a tracked wall disappears, the volume that actually traded at its price decides the verdict. Eaten through (≥50% of peak traded) = a real level broke — directional. Vanished untraded (≤25%) = **PULLED**, the classic spoof signature; pulled walls feed a rolling spoof score that also drags the quality grade.
+- **Absorption at the touch**: heavy one-sided prints into a bid that will not budge = someone is accumulating into the hits (mirrored at the ask for distribution).
+
+Verdicts show on the pillar line (`ask wall 5.200 CONSUMED — real` / `PULLED — spoof`) and are logged to `l2_log.csv` (`flow`, `absorb` columns). **The pillar does not vote yet**: per the repo rule (log first, vote later), flip `book_pillar: true` in config.json only after `score_confidence.py` shows the logged flow columns carry forward edge — the banner then becomes `x/4`.
 
 ## Time & Sales (the tape)
 
 Keep the Webull **Time&Sales** widget visible next to the L2 panel. A background thread locates it, OCRs the prints (tolerating the merged columns OCR produces), and sides each print by color, then by the quote rule (at/above ask = buy, at/below bid = sell) and tick rule for the uncolored ones. That feeds the tape pillar, the `Tape 1m/5m` rows, the true volume-weighted `VWAP` row, and a tape veto in the playbook. Toggle with `ts_enabled`; tune `ts_poll` (0.6s).
 
+Each print also records **how** its side was decided (color / quote rule / tick rule), and the tape computes three logged-first metrics alongside plain dominance: `dom_big` (dominance over block prints only — one 5,000-share lift is not fifty 100-share pings), `dom_w` (tick-rule guesses weighted 0.5), and pace/acceleration vs the 10-minute baseline. They're written to `l2_log.csv` so `--sweep grid` can grade them before any of them is allowed to influence a vote.
+
+## SDK book source (Advanced Quotes)
+
+With the Webull **OpenAPI Advanced Quotes** subscription, set `book_source: "auto"` (default) and the monitor polls real 10-level depth through `webull_bridge` (credentials in `config/webull_bridge.json` or `WEBULL_APP_KEY/SECRET` env vars) and prefers it over OCR whenever it's fresh — no merged digits, no frozen-pixel re-stamps, real sizes; the title shows `book:SDK` and the quality grade's book-side penalties switch off. OCR stays on as the symbol detector and automatic fallback (feed down, no subscription — the API caps depth at 1, which is treated as not-live). `"ocr"` forces the old behavior; the tape is OCR either way (the OpenAPI has no Time&Sales stream).
+
 ## How signals work
 
 - **Imbalance** = total bid size / total ask size across visible levels.
-- **BUY**: imbalance ≥ `imbalance_buy` (1.8) for `confirm_reads` (3) consecutive reads, spread ≤ `max_spread_pct`, no large ask wall at the best ask, price not falling, **and the executed tape isn't selling** (`tape_gate_entries`, veto when 60s tape dominance ≤ −`tape_dom_min` with ≥8 prints). The tape veto is the spoof filter the old imbalance-only entry was missing — it's what produced 52 stop-outs in the paper log.
+- **BUY**: imbalance ≥ `imbalance_buy` (1.8) for `confirm_reads` (3) consecutive reads, spread ≤ `max_spread_pct`, no large ask wall at the best ask, price not falling, **and the executed tape isn't selling** (`tape_gate_entries`, veto when 60s tape dominance ≤ −`tape_dom_min` and the tape passes the same volume-aware gate as the confidence pillar — `tape_min_sided`/`tape_sided_share`; every tape consumer now goes through one gate). The tape veto is the spoof filter the old imbalance-only entry was missing — it's what produced 52 stop-outs in the paper log.
 - **SELL**: imbalance ≤ `imbalance_sell` (0.55) for 3 consecutive reads.
 - **Walls**: any level ≥ `wall_multiple` (4×) the median size on its side.
 - `alert_cooldown` (30s) prevents spam. Tune everything in `config.json`.
@@ -71,7 +91,23 @@ The 5-minute trend/projection drive the confidence signal, bias, and playbook, s
 python score_confidence.py           # scores l2_log.csv
 python score_confidence.py --all     # include archived l2_log-old-*.csv
 python score_confidence.py --stride 20 --horizons 60,120,300
+python score_confidence.py --by all  # banner hit-rate split by agreement
+                                     # level / spread / tape liveness /
+                                     # data-quality grade
+python score_confidence.py --all --save-baseline benchmarks/baseline.json
+python score_confidence.py --all --vs benchmarks/baseline.json   # deltas
+python score_confidence.py --all --sweep trend                   # deadband
+python score_confidence.py --all --sweep grid   # tape_dom_min / sided_share /
+                                                # vwap deadband / dom_big /
+                                                # dom_w from logged raw values,
+                                                # with a train/eval file split
 ```
+
+**Benchmark discipline**: freeze a baseline (`--save-baseline`) before changing
+signal code, re-run with `--vs` after — the reconstructed pillars must not
+drift on old logs, and any live improvement has to show up as positive deltas
+across sessions, not vibes. `--by agree` is the meter's own premise check:
+3/3 should consistently beat 2/3, or the meter isn't measuring conviction.
 
 For every logged moment it measures the forward return at +1/+2/+5 min and reports, per predictor, the **hit-rate** (share of calls price moved the called way; 50% = coin flip) and **median edge** (median of return × direction; >0 = real forward edge). Hit-rate and median are used as the headline because they shrug off the OCR glitches that wreck a mean.
 

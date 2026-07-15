@@ -48,7 +48,7 @@ def _measure(path: Path, horizon: float, stride: float,
     rows = load_rows([path])
     if not rows:
         return None
-    preds, base, anchors, nsegs, moves = score(
+    preds, base, anchors, nsegs, moves, _cond, _sweep = score(
         rows, [horizon], stride, since_switch)
     cap = capture_stats(moves, horizon, move_thresh)
     bucket: Bucket = preds["banner"][horizon]
