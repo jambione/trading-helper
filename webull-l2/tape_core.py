@@ -179,6 +179,55 @@ class Tape:
         executed volume."""
         return [p for p in self.prints if p[0] > ts]
 
+    def ingest_stream(self, points: list, bid: float | None = None,
+                      ask: float | None = None) -> int:
+        """Executed prints from a real-time trade stream -- (ts, price,
+        size) tuples, any order -- sided exactly like uncolored OCR rows:
+        quote rule when the current touch is known, tick rule otherwise
+        (src 'Q'/'T', never 'C': a stream carries no aggressor paint, and
+        dom_w already downweights the tick-rule guesses). Prints keep
+        their own timestamps so window metrics age them correctly.
+
+        The newest few prints also become _prev frame signatures (their
+        hh:mm:ss + price + size, the same shape OCR rows produce), so if
+        the same trades then appear in an OCR frame the normal dedupe can
+        catch them. When clocks/formats don't line up the overlap is NOT
+        fully deduped -- callers must not run stream and OCR feeds for the
+        same trades at once (see TapeReader: seed after reset, fallback
+        only while OCR is dark)."""
+        pts = sorted((float(t), float(p), float(z)) for t, p, z in points
+                     if p and float(p) > 0 and z and float(z) > 0)
+        for t, price, size in pts:
+            side, src = self._infer_side(price, bid, ask)
+            self.prints.append((t, price, size, side, src))
+            self.pv += price * size
+            self.v += size
+            self._last_px = price
+            if side != "N":
+                self._last_side = side
+        if pts:
+            self._prev = [(time.strftime("%H:%M:%S", time.localtime(t)),
+                           p, z) for t, p, z in reversed(pts)][:6]
+            now = pts[-1][0]
+            while self.prints and now - self.prints[0][0] > self.keep:
+                self.prints.popleft()
+        return len(pts)
+
+    def seed_prints(self, points: list, bid: float | None = None,
+                    ask: float | None = None) -> int:
+        """Pre-load stream prints right after reset() on a symbol hop, so
+        the rolling dominance has real executed evidence ON ARRIVAL
+        instead of sitting dark for a whole window while you decide --
+        the warm-up mismatch fix for the tape pillar (the trend gets the
+        same treatment via SignalEngine.seed_history). `started` is
+        backdated to the oldest seed: it marks the span of evidence, and
+        it keeps accel's baseline math from treating seeded history as a
+        one-second burst."""
+        n = self.ingest_stream(points, bid, ask)
+        if n and self.prints:
+            self.started = min(self.started, self.prints[0][0])
+        return n
+
     def _match(self, sigs: list) -> int:
         """Index in the new frame where the previous frame starts."""
         for k in range(min(len(self._prev), 4), 0, -1):

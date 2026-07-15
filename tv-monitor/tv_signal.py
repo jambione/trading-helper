@@ -1030,11 +1030,17 @@ def detail_table(s: Slot | None, hz: float, misses: int,
         lc = ("green" if l2.get("bias", 0) >= 25
               else "red" if l2.get("bias", 0) <= -25 else "yellow")
         px = l2.get("price")
-        pj = l2.get("proj")
+        # the L2 monitor no longer publishes a projected target ("proj"):
+        # it graded worse than assuming no change at all. The trailing
+        # pace (%/min) is a measured fact, so that is what's shown.
+        pace = l2.get("pace_pct_min")
         pxs = ""
-        if px and pj:
-            pc = "green" if pj > px else "red" if pj < px else "yellow"
-            pxs = f"  px {px:.3f}→[{pc}]{pj:.3f}[/{pc}]"
+        if px and pace is not None:
+            pc = ("green" if pace > 0.01
+                  else "red" if pace < -0.01 else "yellow")
+            pxs = f"  px {px:.3f} [{pc}]{pace:+.2f}%/min[/{pc}]"
+        elif px:
+            pxs = f"  px {px:.3f}"
         t.add_row("⚡ Order flow (L2)",
                   f"[{lc}]bias {l2.get('bias', 0):+.0f}[/{lc}]  "
                   f"imb {l2.get('imbalance', '—')}  "

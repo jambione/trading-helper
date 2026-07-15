@@ -746,8 +746,10 @@ def confidence(t5: float | None, tape: dict | None,
     not an independent pillar - and correlated pillars fake 3/3s exactly in
     the fast-hop decision window. When `vwap_age` (seconds since the tape/
     VWAP accumulator reset) is below `vwap_min_age`, the vwap pillar
-    abstains like the tape gate does. Defaults keep old behavior (0 = always
-    mature; age None = unknown = mature) so existing callers are unchanged.
+    abstains like the tape gate does. With a gate set (vwap_min_age > 0) an
+    UNKNOWN age (None) abstains too -- a maturity gate a caller can slip
+    through by not reporting age is not a gate. vwap_min_age = 0 keeps the
+    old always-mature behavior for callers that never opted in.
 
     Fourth pillar (staged): when `book_pillar` is on, BookFlow.vote() joins
     as votes['book'] - absorption + consumed-wall evidence, the book x tape
@@ -763,7 +765,8 @@ def confidence(t5: float | None, tape: dict | None,
                          else -1 if d <= -tape_dom_min else 0)
     else:
         votes["tape"] = None
-    vwap_mature = (vwap_age is None or vwap_age >= vwap_min_age)
+    vwap_mature = (vwap_min_age <= 0
+                   or (vwap_age is not None and vwap_age >= vwap_min_age))
     if vwap and mid and vwap_mature:
         rel = (mid - vwap) / vwap
         votes["vwap"] = 1 if rel > 0.0005 else -1 if rel < -0.0005 else 0
@@ -901,7 +904,10 @@ class LongView:
                wall_events: list, now: float,
                tape: dict | None = None, vwap: float | None = None,
                vwap_age: float | None = None,
-               book_vote: int | None = None) -> dict:
+               book_vote: int | None = None,
+               trend_seed_frac: float = 0.0,
+               tape_span: float | None = None,
+               vwap_src: str | None = None) -> dict:
         if self.since is None:
             self.since = now
         self.samples.append((now, book.imbalance))
@@ -945,13 +951,37 @@ class LongView:
             self._cand, self._cand_since = raw, now
             pending, pending_left = raw, float(self.confirm)
 
+        # per-pillar provenance: WHERE each vote (or abstention) came from,
+        # so a 1/1 LONG ten seconds after a hop renders as one seeded
+        # witness instead of looking identical to a warmed read. trend_src
+        # thresholds: mostly-seed reads are "seed" (the hop tape-lead gate
+        # keys on this), any seed at all is "mixed", else "live".
+        trend_src = ("seed" if trend_seed_frac >= 0.5 else
+                     "mixed" if trend_seed_frac > 0 else "live")
+        meta = {"trend_src": trend_src, "trend_seed_frac": trend_seed_frac,
+                "tape_span": tape_span, "tape_window": 60.0,
+                "vwap_age": vwap_age, "vwap_min_age": self.vwap_min_age,
+                "vwap_src": vwap_src}
+
         return {"stance": self.stance, "held": now - self.since,
                 "med_imb": med_imb, "t5": t5,
                 "ask_breaks": ask_breaks, "bid_cracks": bid_cracks,
                 "pending": pending, "pending_left": pending_left,
                 "agree": conf["agree"], "total": conf["total"],
                 "votes": conf["votes"], "tape_live": conf["tape_live"],
-                "book_pillar": self.book_pillar}
+                "book_pillar": self.book_pillar, "meta": meta}
+
+
+def tape_confirms(stance: str, tape_vote: int | None) -> bool:
+    """Does the tape's own vote back the stance? The early-hop tape-lead
+    gate: right after a symbol switch the trend pillar votes off SEEDED
+    pre-hop history while the tape is the only live witness, so a seeded
+    majority may not show the size-up headline until the tape agrees.
+    Presentation-level on purpose -- confidence() stays a pure vote count;
+    nothing is suppressed (the LEAN still shows), only "size up" waits
+    for the lead witness. Recall-safe by construction."""
+    want = 1 if stance == "LONG" else -1 if stance == "BEAR" else 0
+    return tape_vote is not None and tape_vote == want
 
 
 def project_price(history, minutes: float = 5.0,
@@ -1073,6 +1103,28 @@ class SignalEngine:
         oldest_live = live[0][0] if live else float("inf")
         return [(t, m) for (t, m) in self.seed
                 if cutoff <= t < oldest_live] + live
+
+    def seed_fraction(self, seconds: float) -> float:
+        """Share of the current trend window covered only by SEEDED stream
+        points: 1.0 = the trend read is entirely pre-hop history, 0.0 =
+        fully live. Right after a hop a seeded trend votes like a warmed
+        one; this number is what lets the banner say so (trend "(seeded)")
+        and what the hop-window tape-lead gate keys on, instead of a
+        seeded majority silently reading as three warmed witnesses."""
+        if not self.seed:
+            return 0.0
+        series = self._trend_series(seconds)   # may drop stale seeds
+        if not self.seed or not series:
+            return 0.0
+        span = series[-1][0] - series[0][0]
+        if span <= 0:
+            return 1.0
+        # seeds are strictly older than live reads (never interleaved), so
+        # the seed-only share is simply everything before the oldest live
+        oldest_live = self.history[0].ts if self.history else None
+        if oldest_live is None:
+            return 1.0
+        return max(0.0, min(1.0, (oldest_live - series[0][0]) / span))
 
     def trend_pct(self, seconds: float) -> float | None:
         """Mid-price change (%) over the last `seconds` of history.

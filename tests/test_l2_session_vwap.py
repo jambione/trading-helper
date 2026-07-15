@@ -148,9 +148,21 @@ def test_a_session_length_vwap_does_vote():
     assert c["total"] == 3
 
 
-def test_unknown_age_still_counts_as_mature():
-    """Documents the compatibility hole: vwap_age=None reads as mature, so
-    any caller that supplies a vwap without an age bypasses the gate
-    entirely. Verified against the logs (0 violations in 4,323 rows), but
-    it is a live trapdoor for a future caller."""
-    assert conf(None)["votes"]["vwap"] == 1
+def test_unknown_age_abstains_when_a_gate_is_set():
+    """The closed trapdoor: vwap_age=None used to read as MATURE, so any
+    caller supplying a vwap without an age bypassed the maturity gate
+    entirely (0 violations in the logs, but a live hole). Unknown age now
+    abstains -- a gate a caller can slip through by not reporting age is
+    not a gate."""
+    c = conf(None)
+    assert c["votes"]["vwap"] is None
+    assert c["total"] == 2                    # honestly counted as 2 pillars
+
+
+def test_no_gate_keeps_the_old_always_mature_behavior():
+    """vwap_min_age=0 (the confidence() default) must stay permissive so
+    callers that never opted into the gate are unchanged."""
+    tape = {"dom": 0.0, "sided_n": 9, "buy": 900, "sell": 900, "total": 1800}
+    c = confidence(1.0, tape, mid=101.0, vwap=100.0,
+                   vwap_age=None, vwap_min_age=0.0)
+    assert c["votes"]["vwap"] == 1

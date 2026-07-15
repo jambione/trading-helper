@@ -47,7 +47,8 @@ from rich.table import Table
 from l2_core import (VWAP_MIN_AGE_DEFAULT, BookFlow, GlitchGate, L2Book,
                      LongView, PaperTrader, SessionVWAP, Signal, SignalEngine,
                      Trade, WallTracker, _median, market_bias, parse_l2_text,
-                     playbook, project_price, quality_grade, signal_quality)
+                     playbook, project_price, quality_grade, signal_quality,
+                     tape_confirms)
 from tape_core import Tape, classify_rgb, parse_tape_line
 
 # shared session clock (repo root) — optional: monitor runs fine without it
@@ -730,6 +731,12 @@ class TapeReader:
         self._frame_key: int | None = None
         self._quote: tuple | None = None       # (bid, ask, ts) from L2 loop
         self.last_print: float | None = None   # wall ts of last NEW print
+        # where the tape's prints are coming from, for the log/display:
+        # "ocr" (the screen-scraped panel), "seed" (pre-hop stream prints
+        # just loaded), "finnhub" (dark-tape stream fallback feeding live)
+        self.src: str = "ocr"
+        self._last_ocr: float | None = None    # ts of last OCR-ingested print
+        self.stream_upto: float = 0.0          # high-water mark of fed prints
         if self.enabled:
             threading.Thread(target=self._run, daemon=True).start()
 
@@ -740,18 +747,69 @@ class TapeReader:
 
     def snapshot(self, now: float) -> dict:
         with self.lock:
-            return {"on": self.region is not None and self.ok > 0,
+            # "on" also when stream prints are feeding the tape: real
+            # executed prints are real evidence whether they arrived by
+            # OCR or by websocket -- with the T&S panel hidden the pillar
+            # used to abstain even though the stream had the data
+            has_prints = len(self.tape.prints) > 0
+            return {"on": (self.region is not None and self.ok > 0)
+                    or has_prints,
                     "m1": self.tape.metrics(now, 60),
                     "m5": self.tape.metrics(now, 300),
                     "vwap": self.tape.vwap(),
                     "since": self.tape.started,
                     "last_print": self.last_print,
+                    "src": self.src,
                     "ok": self.ok, "miss": self.miss}
 
     def reset(self):
         with self.lock:
             self.tape.reset()
             self.last_print = None
+            self._last_ocr = None
+            self.src = "ocr"
+            self.stream_upto = 0.0
+
+    def seed(self, points: list) -> int:
+        """Pre-load pre-hop stream prints right after reset() -- see
+        Tape.seed_prints. Sets the stream high-water mark so the dark-tape
+        fallback never re-feeds the same prints."""
+        with self.lock:
+            bid = ask = None
+            if self._quote:
+                bid, ask = self._quote[0], self._quote[1]
+            n = self.tape.seed_prints(points, bid, ask)
+            if n:
+                newest = max(p[0] for p in points)
+                self.stream_upto = max(self.stream_upto, newest)
+                self.last_print = newest
+                self.src = "seed"
+            return n
+
+    def ocr_dark(self, now: float, secs: float) -> bool:
+        """No NEW print has come off the OCR'd panel for `secs` (or ever) --
+        the condition under which the stream fallback may feed, so the two
+        feeds never ingest the same trades side by side."""
+        with self.lock:
+            return self._last_ocr is None or now - self._last_ocr > secs
+
+    def feed_stream(self, points: list, now: float) -> int:
+        """Dark-tape fallback: live stream prints while OCR yields nothing
+        (panel hidden/obscured, or not shown at all). Caller gates on
+        ocr_dark(); the high-water mark makes re-feeds impossible."""
+        with self.lock:
+            pts = [p for p in points if p[0] > self.stream_upto]
+            if not pts:
+                return 0
+            bid = ask = None
+            if self._quote and now - self._quote[2] <= 5.0:
+                bid, ask = self._quote[0], self._quote[1]
+            n = self.tape.ingest_stream(pts, bid, ask)
+            if n:
+                self.stream_upto = max(p[0] for p in pts)
+                self.last_print = now
+                self.src = "finnhub"
+            return n
 
     def prints_since(self, ts: float) -> list:
         """Thread-safe view of prints newer than `ts` (for BookFlow)."""
@@ -795,6 +853,8 @@ class TapeReader:
                 self._misses_row = 0
                 if self.tape.ingest_frame(rows, now, bid, ask):
                     self.last_print = now
+                    self._last_ocr = now
+                    self.src = "ocr"     # OCR back -> fallback stands down
             else:
                 self.miss += 1
                 self._misses_row += 1
@@ -820,6 +880,16 @@ class RefFeed:
         # callback is registered, and vwap() is called whether or not the
         # feed came up
         self.svwap = SessionVWAP()
+        # rolling per-symbol print buffer (ts, price, size) for the tape:
+        # the same pre-subscribed watchlist stream that warms the trend
+        # and the session VWAP also carries every executed print, so on a
+        # hop the TAPE can be seeded too instead of sitting dark for a
+        # window (and fed live if the OCR tape goes dark). ~10 min deep,
+        # matching Tape's own retention.
+        self._prints: dict[str, deque] = {}
+        self._prints_keep = 600.0
+        # appended from the stream thread, read from the render loop
+        self._prints_lock = threading.Lock()
         self._start = self._state = self._unsub = None
         self._subscribed: set[str] = set()   # symbols actually on the wire
         self._watch: set[str] = set()        # watchlist we want warmed
@@ -863,8 +933,14 @@ class RefFeed:
         propagate into the websocket reader and kill the price feed the
         glitch gate depends on."""
         try:
-            self.svwap.ingest(symbol, float(price), float(volume),
-                              float(ts_ms) / 1000.0 if ts_ms else None)
+            ts = float(ts_ms) / 1000.0 if ts_ms else time.time()
+            self.svwap.ingest(symbol, float(price), float(volume), ts)
+            if price and volume and float(price) > 0 and float(volume) > 0:
+                with self._prints_lock:
+                    dq = self._prints.setdefault(symbol.upper(), deque())
+                    dq.append((ts, float(price), float(volume)))
+                    while dq and ts - dq[0][0] > self._prints_keep:
+                        dq.popleft()
         except Exception:                                      # noqa: BLE001
             pass
 
@@ -902,6 +978,9 @@ class RefFeed:
                     # only go stale; drop it rather than let a name that
                     # rotated off hours ago answer vwap() if it returns
                     self.svwap.forget(drop)
+                    with self._prints_lock:
+                        for s in drop:
+                            self._prints.pop(s.upper(), None)
             except Exception:                                  # noqa: BLE001
                 pass
 
@@ -937,6 +1016,32 @@ class RefFeed:
             return self._state.recent_prices(symbol, seconds)
         except Exception:                                      # noqa: BLE001
             return []
+
+    def seed_prints(self, symbol: str | None, seconds: float) -> list:
+        """(ts, price, size) prints collected for `symbol` over the last
+        `seconds` -- empty unless it was pre-subscribed long enough. Fed to
+        the tape on a symbol switch (Tape.seed_prints), the tape-side twin
+        of seed_points()."""
+        if not self.enabled or not symbol:
+            return []
+        with self._prints_lock:
+            dq = self._prints.get(symbol.upper())
+            if not dq:
+                return []
+            cutoff = dq[-1][0] - seconds
+            return [p for p in dq if p[0] >= cutoff]
+
+    def prints_after(self, symbol: str | None, after_ts: float) -> list:
+        """(ts, price, size) prints strictly newer than `after_ts` -- the
+        dark-tape fallback's incremental read (the caller keeps the
+        high-water mark so nothing is fed twice)."""
+        if not self.enabled or not symbol:
+            return []
+        with self._prints_lock:
+            dq = self._prints.get(symbol.upper())
+            if not dq:
+                return []
+            return [p for p in dq if p[0] > after_ts]
 
     def price(self, symbol: str | None) -> float | None:
         """A FRESH real last-trade price for `symbol`, or None. Staleness is
@@ -1184,6 +1289,17 @@ class CsvLog:
     # gate should now be silencing -- if "tape" rows ever show a vwap_vote,
     # the gate has a hole. tape_age stays: it is the fallback's own age and
     # the column the 0-violation gate check was verified against.
+    # The 0c tail (book_vote..ofi) starts the data clock for the staged
+    # promotions: book_vote is BookFlow's would-be pillar vote logged
+    # directly (cheaper for the scorer than re-deriving it from flow);
+    # book_src/tape_src say which FEED produced the book (sdk/ocr) and the
+    # tape (ocr/seed/finnhub) so signals can be conditioned on feed quality;
+    # bias/play capture the market_bias/playbook layer so its imbalance
+    # weighting can finally be graded against the pillars it contradicts;
+    # micro_skew/ofi are reserved (blank) for the Phase-5 microstructure
+    # signals. Changing FIELDS rotates l2_log.csv via _open_csv's header
+    # check; score_confidence reads by column name so old archives still
+    # score.
     FIELDS = ["time", "symbol", "best_bid", "best_ask", "spread_pct",
               "bid_size", "ask_size", "imbalance", "signal", "reason",
               "stance", "agree", "total", "tape_live",
@@ -1191,7 +1307,9 @@ class CsvLog:
               "t5", "tape_dom", "tape_dom_big", "tape_dom_w",
               "tape_sided_n", "tape_sided_share", "tape_pace", "tape_accel",
               "vwap", "vwap_age", "vwap_src", "tape_age", "quality",
-              "flow", "absorb"]
+              "flow", "absorb",
+              "book_vote", "book_src", "tape_src", "bias", "play",
+              "micro_skew", "ofi"]
 
     def __init__(self, path: Path):
         self.f, self.w = _open_csv(path, self.FIELDS)
@@ -1226,6 +1344,9 @@ class CsvLog:
             _r("tape_accel", 2), _r("vwap"), _r("vwap_age", 0),
             raw.get("vwap_src", ""), _r("tape_age", 0),
             _r("quality", 2), raw.get("flow", ""), raw.get("absorb", ""),
+            _r("book_vote", 0), raw.get("book_src", ""),
+            raw.get("tape_src", ""), _r("bias", 1), raw.get("play", ""),
+            _r("micro_skew"), _r("ofi"),
         ])
         self.f.flush()
 
@@ -1292,6 +1413,9 @@ def lv_banner(lv: dict | None, price: float | None = None,
     grade = quality_grade(lv.get("quality")) if "quality" in lv else None
     q_why = lv.get("quality_why") or []
 
+    v = lv.get("votes", {})
+    meta = lv.get("meta") or {}
+
     if stance == "NEUTRAL" or agree < 2:
         color = "yellow"
         headline = "◇   STAND ASIDE   ◇"
@@ -1300,6 +1424,15 @@ def lv_banner(lv: dict | None, price: float | None = None,
         # grade C = the DATA under the read is suspect (frozen book, OCR
         # misses, wild spread...): never show the size-up headline on it
         strong = agree >= 3 and grade != "C"
+        # early-hop tape lead: while the trend is voting off seeded pre-hop
+        # history, a majority without the tape's own agreement is one
+        # seeded witness dressed up -- hold the size-up headline (not the
+        # lean) until the live tape confirms. lv["hop_tape_lead"] is set
+        # by the main loop only inside hop_window after a switch.
+        hop_held = (strong and lv.get("hop_tape_lead")
+                    and not tape_confirms(stance, v.get("tape")))
+        if hop_held:
+            strong = False
         if stance == "LONG":
             color = "green"
             headline = "▲ ▲   GO / HOLD LONG   ▲ ▲" if strong else "▲   LEAN LONG"
@@ -1309,7 +1442,9 @@ def lv_banner(lv: dict | None, price: float | None = None,
             headline = ("▼ ▼   GET OUT / STAY OUT   ▼ ▼" if strong
                         else "▼   LEAN OUT")
             weak_note = "protect / trim"
-        if agree >= 3 and grade == "C":
+        if hop_held:
+            sub = "seeded majority — waiting on the tape to confirm"
+        elif agree >= 3 and grade == "C":
             sub = ("all agree but data is grade C"
                    + (f" — {q_why[0]}" if q_why else ""))
         elif strong:
@@ -1325,10 +1460,26 @@ def lv_banner(lv: dict | None, price: float | None = None,
     gauge = (f"{pips}    [bold {color}]{agree}/{total}[/bold {color}]"
              f"    [dim]{sub}[/dim]")
 
-    v = lv.get("votes", {})
-    cells = [_vote_cell("trend", v.get("trend")),
-             _vote_cell("tape", v.get("tape")),
-             _vote_cell("vwap", v.get("vwap"))]
+    # pillar cells with PROVENANCE: an abstaining pillar says why (still
+    # warming) and a voting trend says when its history is seeded pre-hop
+    # stream data -- a 1/1 ten seconds after a hop must not render like a
+    # warmed 3/3 component (that was the warm-up mismatch).
+    trend_cell = _vote_cell("trend", v.get("trend"))
+    if v.get("trend") is not None:
+        src = meta.get("trend_src")
+        if src == "seed":
+            trend_cell += " [dim](seeded)[/dim]"
+        elif src == "mixed":
+            trend_cell += " [dim](part-seed)[/dim]"
+    tape_cell = _vote_cell("tape", v.get("tape"))
+    tspan, twin = meta.get("tape_span"), meta.get("tape_window", 60.0)
+    if v.get("tape") is None and tspan is not None and tspan < twin:
+        tape_cell += f" [dim]warming {int(tspan)}s/{int(twin)}s[/dim]"
+    vwap_cell = _vote_cell("vwap", v.get("vwap"))
+    vage, vmin = meta.get("vwap_age"), meta.get("vwap_min_age")
+    if v.get("vwap") is None and vage is not None and vmin and vage < vmin:
+        vwap_cell += f" [dim]{vage / 60:.0f}m/{vmin / 60:.0f}m[/dim]"
+    cells = [trend_cell, tape_cell, vwap_cell]
     if lv.get("book_pillar"):
         cells.append(_vote_cell("book", v.get("book")))
     pillars = "     ".join(cells)
@@ -1694,6 +1845,10 @@ def main():
         console.print("[dim]Time&Sales reader on — executed prints feed "
                       "the tape rows, checklist, and VWAP[/dim]")
     active_sym: str | None = None      # symbol the current state belongs to
+    switch_ts: float | None = None     # when the current symbol arrived --
+    # drives the early-hop tape-lead gate (hop_window) on the banner
+    force_reset = False    # jump guard tripped: reset state next iteration
+    veto_streak = 0        # consecutive ref-price gate rejections
 
     def _symbol_refresher():
         # keeps the displayed ticker current when you switch stocks
@@ -1740,8 +1895,9 @@ def main():
                 live.update(render(None, last_sig, reads, misses, 0.0))
                 time.sleep(1.0)
                 continue
-            if tracker.symbol != active_sym:
+            if tracker.symbol != active_sym or force_reset:
                 old, active_sym = active_sym, tracker.symbol
+                switch_ts = t0
                 if old is not None:
                     # trends, streaks, walls, tape, and any virtual entry
                     # computed on the old stock are garbage for the new one
@@ -1771,13 +1927,34 @@ def main():
                 # while it sat on the watchlist -> valid 5m read on arrival
                 # instead of ~3 min blind. Runs on the first switch too;
                 # empty (symbol not pre-subbed) falls back to live warm-up.
-                seeds = reffeed.seed_points(
-                    active_sym, cfg.get("trend_window", 300))
-                if seeds:
-                    engine.seed_history(seeds)
-                    console.print(
-                        f"[dim]seeded {len(seeds)} stream pts → {active_sym}: "
-                        "trend warm on arrival[/dim]")
+                # NOT on a jump-reset whose title re-read didn't flip the
+                # label (old == active_sym): the label is suspect there, and
+                # seeding it would pour the WRONG symbol's history into the
+                # state that was just wiped to stop exactly that.
+                if old != active_sym:
+                    seeds = reffeed.seed_points(
+                        active_sym, cfg.get("trend_window", 300))
+                    if seeds:
+                        engine.seed_history(seeds)
+                        console.print(
+                            f"[dim]seeded {len(seeds)} stream pts → "
+                            f"{active_sym}: trend warm on arrival[/dim]")
+                    # the tape gets the same treatment: pre-hop stream
+                    # prints so the 60s dominance has real executed
+                    # evidence on arrival instead of the tape pillar
+                    # sitting dark through your whole 2-3 minute visit
+                    if tsreader.enabled and cfg.get("tape_seed_finnhub",
+                                                    True):
+                        tape_pts = reffeed.seed_prints(
+                            active_sym, tsreader.tape.keep)
+                        if tape_pts:
+                            n_seeded = tsreader.seed(tape_pts)
+                            if n_seeded:
+                                console.print(
+                                    f"[dim]seeded {n_seeded} stream prints "
+                                    f"→ {active_sym}: tape warm on "
+                                    "arrival[/dim]")
+                force_reset = False
             reffeed.ensure(tracker.symbol)
             raw = np.asarray(sct.grab(region))
             key = (region["left"], region["top"], region["width"],
@@ -1810,6 +1987,24 @@ def main():
             ref_px = reffeed.price(tracker.symbol)
             if ok and not gate.accept(b, ref_px):
                 b = None   # isolated / ref-contradicted frame -> held back
+                # a LONG rejection streak is the hop signature for STREAMED
+                # symbols: you switched panels, every new-symbol frame
+                # contradicts the old symbol's reference price, and the
+                # monitor would sit blind until the ~30s title refresh.
+                # Re-read the title early instead (twice: note_symbol needs
+                # two matching reads to flip); the label flipping triggers
+                # the normal switch reset+seed path above.
+                veto_streak += 1
+                if veto_streak >= int(cfg.get("hop_veto_reads", 8)):
+                    veto_streak = 0
+                    for _ in range(2):
+                        try:
+                            tracker.note_symbol(detect_symbol(
+                                np.asarray(sct.grab(tracker.win_rect))))
+                        except Exception:                      # noqa: BLE001
+                            break
+            elif ok:
+                veto_streak = 0
             # SDK book preferred when live: cleaner numbers, and it keeps
             # the signal fed even when the OCR panel is obscured. The OCR
             # health tracking above still runs so a later fallback is
@@ -1821,11 +2016,47 @@ def main():
                 if nb is not None:
                     b = nb
                     book_sdk = True
+            # undetected-hop guard for UN-streamed symbols (no reference
+            # price to contradict, so the glitch gate can't catch it): the
+            # title OCR refreshes every ~symbol_refresh seconds, and a hop
+            # faster than that feeds the old symbol's trend/vwap/walls with
+            # the NEW symbol's book -- live logs showed one "RGNT" segment
+            # blending 2.5 -> 1.6 -> 13.4 books, pegging the pace at its
+            # clamp and minting fake PULLED-wall spoof events. A persistent
+            # (gate-accepted) mid jump this big is a hop, not a move:
+            # re-read the title now, wipe the state next iteration, and
+            # drop this frame rather than feed it to anyone.
+            if (b is not None and book is not None and book.mid
+                    and not force_reset):
+                jump = abs(b.mid - book.mid) / book.mid
+                if jump > float(cfg.get("hop_jump_pct", 20.0)) / 100.0:
+                    for _ in range(2):
+                        try:
+                            tracker.note_symbol(detect_symbol(
+                                np.asarray(sct.grab(tracker.win_rect))))
+                        except Exception:                      # noqa: BLE001
+                            break
+                    force_reset = True
+                    console.print(
+                        f"[dim]book jumped {100 * jump:.0f}% with no symbol "
+                        "change — undetected hop: title re-read, state "
+                        "reset[/dim]")
+                    b = None
             if b:
                 reads += 1
                 book = b
                 if tsreader.enabled:
                     tsreader.set_quote(b.best_bid, b.best_ask, t0)
+                    # dark-tape fallback: when the OCR panel has produced
+                    # no print for 30s but the stream is flowing, feed the
+                    # tape from the stream (never both at once -- OCR is
+                    # preferred the moment it wakes back up)
+                    if (cfg.get("tape_fallback_finnhub", True)
+                            and tsreader.ocr_dark(t0, 30.0)):
+                        fpts = reffeed.prints_after(active_sym,
+                                                    tsreader.stream_upto)
+                        if fpts:
+                            tsreader.feed_stream(fpts, t0)
                 tsnap = tsreader.snapshot(t0) if tsreader.enabled else None
                 tape_m1 = tsnap["m1"] if tsnap and tsnap.get("on") else None
                 sig = engine.update(b, tape_m1)
@@ -1869,13 +2100,29 @@ def main():
                     vwap_now, vwap_age_now = sv, sv_age
                 else:
                     vwap_now = tsnap["vwap"] if tsnap else None
-                    vwap_age_now = ((t0 - tsnap["since"])
+                    # clamped: t0 is stamped BEFORE the switch-block reset,
+                    # so right after a hop tape.started can be a couple of
+                    # seconds ahead of it (live logs showed age -2.0)
+                    vwap_age_now = (max(0.0, t0 - tsnap["since"])
                                     if tsnap and tsnap.get("on") else None)
                 lv = longview.update(
                     b, t5_now,
                     evs, t0, tape=tape_m1,
                     vwap=vwap_now, vwap_age=vwap_age_now,
-                    book_vote=flow["vote"] if flow else None)
+                    book_vote=flow["vote"] if flow else None,
+                    trend_seed_frac=engine.seed_fraction(
+                        cfg.get("trend_window", 300)),
+                    tape_span=max(0.0, t0 - tsnap["since"])
+                    if tsnap and tsnap.get("on") else None,
+                    vwap_src="session" if sv is not None else "tape")
+                # early-hop tape lead: inside hop_window after a switch,
+                # while the trend still votes off seeded history, the
+                # banner's size-up headline needs the tape to agree
+                lv["hop_tape_lead"] = (
+                    bool(cfg.get("hop_tape_lead", True))
+                    and switch_ts is not None
+                    and t0 - switch_ts <= float(cfg.get("hop_window", 120))
+                    and lv["meta"]["trend_src"] != "live")
                 # data-quality grade rides along with the stance: the
                 # banner shows it and caps size-up advice on grade C
                 n_ok = sum(1 for _, o in ok_hist if o)
@@ -1931,20 +2178,24 @@ def main():
                             note = f"bid wall {max(blockers):.3f} may hold"
                     proj = (mid, target, note)
 
+                # bias/playbook are computed here (not inside the publish
+                # try) so the CSV logs them too -- the 0c columns exist to
+                # grade this layer's imbalance weighting against the
+                # pillar layer it currently contradicts
+                gate_kw = {
+                    "tape_min_sided": int(cfg.get("tape_min_sided", 4)),
+                    "tape_sided_share": float(cfg.get(
+                        "tape_sided_share", 0.5))}
+                score, _, _ = market_bias(b, engine.trend_pct(60),
+                                          engine.trend_pct(300),
+                                          tape=tape_m1, **gate_kw)
+                pb = playbook(b, engine.trend_pct(60),
+                              engine.trend_pct(300),
+                              [e for _, e in recent_events], tape_m1,
+                              **gate_kw)
                 # publish live state so the TradingView monitor can build
                 # a combined chart+orderflow master verdict
                 try:
-                    gate_kw = {
-                        "tape_min_sided": int(cfg.get("tape_min_sided", 4)),
-                        "tape_sided_share": float(cfg.get(
-                            "tape_sided_share", 0.5))}
-                    score, _, _ = market_bias(b, engine.trend_pct(60),
-                                              engine.trend_pct(300),
-                                              tape=tape_m1, **gate_kw)
-                    pb = playbook(b, engine.trend_pct(60),
-                                  engine.trend_pct(300),
-                                  [e for _, e in recent_events], tape_m1,
-                                  **gate_kw)
                     (HERE.parent / "l2_state.json").write_text(json.dumps({
                         "ts": t0, "symbol": tracker.symbol,
                         "bias": round(score, 1), "play": pb["verdict"],
@@ -1956,7 +2207,16 @@ def main():
                         "vwap": (round(vwap_now, 4)
                                  if vwap_now else None),
                         "price": round(proj[0], 4) if proj else None,
-                        "proj": round(proj[1], 4) if proj else None,
+                        # NO projected target here. project_price's 5m
+                        # target graded worse than "no change" on the
+                        # logged sessions (median error 17% vs 6%,
+                        # direction a coin flip) -- publishing it had a
+                        # downstream display trading toward a number this
+                        # code itself calls noise. The trailing pace
+                        # (%/min, a measured fact) is what survives.
+                        "pace_pct_min": (round(100.0 * (proj[1] - proj[0])
+                                               / proj[0] / PROJ_MINUTES, 3)
+                                         if proj and proj[0] else None),
                         "stance": lv["stance"] if lv else None,
                         "quality": (round(lv["quality"], 2)
                                     if lv and "quality" in lv else None),
@@ -1999,12 +2259,21 @@ def main():
                         "vwap": vwap_now,
                         "vwap_age": vwap_age_now,
                         "vwap_src": "session" if sv is not None else "tape",
-                        "tape_age": (t0 - tsnap["since"])
+                        "tape_age": max(0.0, t0 - tsnap["since"])
                         if tsnap and tsnap.get("on") else None,
                         "quality": lv.get("quality") if lv else None,
                         "flow": ";".join(f"{s} {p:.4f} {v}" for s, p, v
                                          in flow["events"]) if flow else "",
                         "absorb": flow["absorb"] if flow else "",
+                        "book_vote": flow["vote"] if flow else None,
+                        "book_src": "sdk" if book_sdk else "ocr",
+                        "tape_src": (tsnap.get("src")
+                                     if tsnap and tsnap.get("on") else ""),
+                        "bias": score,
+                        "play": pb["verdict"],
+                        # reserved for the Phase-5 microstructure signals
+                        "micro_skew": None,
+                        "ofi": None,
                     })
             elif not ok:
                 misses += 1

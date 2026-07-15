@@ -18,6 +18,10 @@ signals, against forward returns at +1/+2/+5 min.
     python score_confidence.py --all --save-baseline benchmarks/baseline.json
     python score_confidence.py --all --vs benchmarks/baseline.json
         # freeze a benchmark before a change, then print deltas after it
+    python score_confidence.py --all --pillar-corr
+        # pillar-vote independence check: does the rebuilt session VWAP
+        # still echo the trend (the +0.43 baseline), measured on the
+        # logged votes themselves
     python score_confidence.py --all --sweep trend --sweep-range 0.05,0.30,0.025
         # sweep the trend deadband against forward returns (calibration)
 
@@ -102,8 +106,15 @@ def load_rows(paths: list[Path]) -> list[dict]:
                              "stance": (r.get("stance") or "").strip(),
                              # per-pillar votes (-1/0/1); None when the pillar
                              # abstained or the log predates vote logging
+                             "trend_v": _svote(r.get("trend_vote")),
                              "tape_v": _svote(r.get("tape_vote")),
                              "vwap_v": _svote(r.get("vwap_vote")),
+                             # book-flow evidence: the logged would-be vote
+                             # (newest builds) or the flow/absorb columns it
+                             # is derived from (older newer-build logs)
+                             "book_v": _svote(r.get("book_vote")),
+                             "flow": (r.get("flow") or "").strip(),
+                             "absorb": _sint(r.get("absorb")),
                              # confidence meter state, for conditioned scoring
                              "agree": _sint(r.get("agree")),
                              "total": _sint(r.get("total")),
@@ -118,7 +129,13 @@ def load_rows(paths: list[Path]) -> list[dict]:
                              "tape_sided_share":
                                  _sfloat(r.get("tape_sided_share")),
                              "tape_age": _sfloat(r.get("tape_age")),
+                             "accel": _sfloat(r.get("tape_accel")),
                              "vwap_raw": _sfloat(r.get("vwap")),
+                             # which VWAP voted: "session" (anchored, kept
+                             # across hops) or "tape" (reset-on-hop fallback)
+                             # -- the pillar-corr report judges only the
+                             # session one, the thing the rebuild built
+                             "vwap_src": (r.get("vwap_src") or "").strip(),
                              "quality": _sfloat(r.get("quality"))})
     rows.sort(key=lambda d: (d["sym"], d["ts"]))
     return rows
@@ -221,6 +238,43 @@ class Bucket:
                 + (f"  [{self.extreme} glitchy]" if self.extreme else ""))
 
 
+BOOK_VOTE_WINDOW = 45.0    # mirrors BookFlow(vote_window=45.0)
+
+
+def _flow_events(cell: str) -> list[tuple[str, str]]:
+    """Parse one logged flow cell 'ASK 5.2000 CONSUMED;BID 3.10 PULLED'
+    -> [(side, verdict), ...]; malformed parts are skipped."""
+    out = []
+    for part in cell.split(";"):
+        toks = part.split()
+        if len(toks) == 3 and toks[0] in ("BID", "ASK") \
+                and toks[2] in ("CONSUMED", "PULLED"):
+            out.append((toks[0], toks[2]))
+    return out
+
+
+def _book_vote(r: dict, consumed_sides: set[str]) -> int | None:
+    """The book pillar's would-be vote for one anchor, mirroring
+    BookFlow.vote(): bull = absorption at the bid or an ask wall CONSUMED
+    within the vote window; bear mirror; both = 0 (conflict); nothing to
+    say = None. The logged book_vote column (newest builds) wins outright;
+    older newer-build logs derive it from the flow/absorb columns -- this
+    is what decides whether book_pillar ever gets promoted."""
+    if r.get("book_v") is not None:
+        return r["book_v"]
+    if r.get("absorb") is None and not consumed_sides:
+        return None
+    bull = r.get("absorb") == 1 or "ASK" in consumed_sides
+    bear = r.get("absorb") == -1 or "BID" in consumed_sides
+    if bull and bear:
+        return 0
+    if bull:
+        return 1
+    if bear:
+        return -1
+    return None
+
+
 def _cond_labels(r: dict) -> list[tuple[str, str]]:
     """(condition, bucket) pairs for one row -- the splits the conditioned
     banner report groups by. Only conditions the row actually carries."""
@@ -237,6 +291,14 @@ def _cond_labels(r: dict) -> list[tuple[str, str]]:
     if q is not None:
         out.append(("quality", "grade A" if q >= 0.8 else
                     "grade B" if q >= 0.5 else "grade C"))
+    # accel is the tape's own pace normalized by its retention baseline, so
+    # it pools across symbols (raw pace_vol doesn't: 50k sh/min is a quiet
+    # large-cap and a screaming micro-float) -- the split asks whether a
+    # heating tape makes the banner more trustworthy
+    ac = r.get("accel")
+    if ac is not None:
+        out.append(("accel", "heating >1.5x" if ac > 1.5 else
+                    "cooling <0.7x" if ac < 0.7 else "steady 0.7-1.5x"))
     return out
 
 
@@ -248,7 +310,7 @@ def score(rows: list[dict], horizons: list[float], stride: float,
     segs = segments(rows)
     # predictor -> horizon -> Bucket. 'banner' is the real logged 5m stance
     # (only populated once stance logging is on); the rest are reconstructed.
-    preds = {"banner": {}, "trend": {}, "tape": {}, "vwap": {},
+    preds = {"banner": {}, "trend": {}, "tape": {}, "vwap": {}, "book": {},
              "imbalance": {}, "signal": {}}
     for name in preds:
         for h in horizons:
@@ -259,7 +321,8 @@ def score(rows: list[dict], horizons: list[float], stride: float,
     moves = {h: [] for h in horizons}
     # banner performance split by condition (agree level / spread / tape
     # liveness): condition -> bucket label -> horizon -> Bucket
-    cond: dict = {"agree": {}, "spread": {}, "tape_live": {}, "quality": {}}
+    cond: dict = {"agree": {}, "spread": {}, "tape_live": {}, "quality": {},
+                  "accel": {}}
     # (t5, {h: fwd}) per anchor with a valid trend read -- raw material for
     # the deadband sweep (votes are re-derived per candidate threshold)
     sweep_pts: list[tuple[float, dict]] = []
@@ -270,7 +333,17 @@ def score(rows: list[dict], horizons: list[float], stride: float,
         seg_start = seg[0]["ts"]
         left = 0
         last_anchor = -1e9
+        # rolling consumed-wall events for the derived book vote: the flow
+        # column logs each event ONCE (the read it happened on), but the
+        # vote carries it forward vote_window seconds -- accumulate over
+        # every row, not just anchors, or events between anchors are lost
+        book_ev: list[tuple[float, str]] = []
         for i, r in enumerate(seg):
+            for side, verdict in _flow_events(r.get("flow", "")):
+                if verdict == "CONSUMED":
+                    book_ev.append((r["ts"], side))
+            book_ev = [(ts, s) for ts, s in book_ev
+                       if r["ts"] - ts <= BOOK_VOTE_WINDOW]
             # slide the trailing-window left edge
             while seg[left]["ts"] < r["ts"] - TREND_WINDOW:
                 left += 1
@@ -293,6 +366,7 @@ def score(rows: list[dict], horizons: list[float], stride: float,
             # tape/vwap pillars come straight from the logged live votes -
             # they can't be reconstructed from price the way trend can
             tapevote, vwapvote = r.get("tape_v"), r.get("vwap_v")
+            bookvote = _book_vote(r, {s for _, s in book_ev})
             fwds: dict = {}
             for h in horizons:
                 fwd = forward_ret(seg, ts_list, i, h)
@@ -313,6 +387,8 @@ def score(rows: list[dict], horizons: list[float], stride: float,
                     preds["tape"][h].add(fwd, tapevote)
                 if vwapvote in (1, -1):
                     preds["vwap"][h].add(fwd, vwapvote)
+                if bookvote in (1, -1):
+                    preds["book"][h].add(fwd, bookvote)
                 if ivote in (1, -1):
                     preds["imbalance"][h].add(fwd, ivote)
                 if svote in (1, -1):
@@ -342,11 +418,13 @@ def report(preds, base, anchors, nsegs, horizons, stride):
                              ("trend", "TREND pillar (reconstructed)"),
                              ("tape", "TAPE pillar (logged)"),
                              ("vwap", "VWAP pillar (logged)"),
+                             ("book", "BOOK flow (staged pillar)"),
                              ("imbalance", "imbalance >=1.8 / <=0.55"),
                              ("signal", "logged BUY / SELL signal")):
-            # banner/tape/vwap only exist once the newer logging is on;
+            # banner/tape/vwap/book only exist once the newer logging is on;
             # skip them silently on older logs rather than print empty lines
-            if name in ("banner", "tape", "vwap") and not preds[name][h].n:
+            if name in ("banner", "tape", "vwap", "book") \
+                    and not preds[name][h].n:
                 continue
             print(preds[name][h].line(label))
         print()
@@ -410,7 +488,9 @@ def conditioned_report(cond: dict, horizons: list[float], by: list[str]):
               "spread": "banner by SPREAD bucket",
               "tape_live": "banner by TAPE liveness",
               "quality": "banner by DATA-QUALITY grade (A-rows should "
-                         "beat C-rows or the grade is noise)"}
+                         "beat C-rows or the grade is noise)",
+              "accel": "banner by TAPE ACCELERATION (does a heating tape "
+                       "make the call more trustworthy)"}
     for cname in by:
         groups = cond.get(cname, {})
         print(f"\n== {titles.get(cname, cname)} ==")
@@ -428,6 +508,80 @@ def conditioned_report(cond: dict, horizons: list[float], by: list[str]):
                       f"hit={hit:5.1f}%  "
                       f"med_edge={_median(b.dirret):+6.3f}%{warn}")
         print()
+
+
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    vx = sum((x - mx) ** 2 for x in xs)
+    vy = sum((y - my) ** 2 for y in ys)
+    if vx <= 0 or vy <= 0:
+        return None
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    return cov / (vx * vy) ** 0.5
+
+
+def pillar_corr_report(rows: list[dict], stride: float):
+    """The independence premise, measured on the logged votes themselves.
+
+    confidence() counts agreeing pillars as if they were separate
+    witnesses; pre-rebuild the trend and vwap votes ran corr +0.43
+    (agree 67% vs 47% expected if independent), i.e. a 3/3 was nearer two
+    witnesses. The SessionVWAP rebuild removed the mechanism -- this
+    report is the post-fix re-measurement it left open. Pairs involving
+    vwap are restricted to vwap_src=='session' rows so the rebuilt pillar
+    is judged, not the retired reset-on-hop tape fallback.
+
+    'agree%' counts rows where both pillars voted DIRECTIONALLY and the
+    same way; 'expected' is what the marginals alone would produce --
+    agreement well above expected means shared witness, not confirmation."""
+    print("\n== pillar-vote independence (stride-sampled logged votes) ==")
+    pairs = (("trend", "tape"), ("trend", "vwap"), ("tape", "vwap"))
+    key = {"trend": "trend_v", "tape": "tape_v", "vwap": "vwap_v"}
+    any_data = False
+    for a, b in pairs:
+        xs, ys = [], []
+        for seg in segments(rows):
+            last_anchor = -1e9
+            for r in seg:
+                if r["ts"] - last_anchor < stride:
+                    continue
+                last_anchor = r["ts"]
+                va, vb = r.get(key[a]), r.get(key[b])
+                if va is None or vb is None:
+                    continue
+                if "vwap" in (a, b) and r.get("vwap_src") != "session":
+                    continue
+                xs.append(float(va))
+                ys.append(float(vb))
+        corr = _pearson(xs, ys)
+        if corr is None:
+            print(f"  {a:<5} vs {b:<5}  n={len(xs):<6} "
+                  "(not enough co-voting rows)")
+            continue
+        any_data = True
+        both_dir = [(x, y) for x, y in zip(xs, ys) if x and y]
+        if both_dir:
+            agree = 100.0 * sum(1 for x, y in both_dir if x == y) \
+                / len(both_dir)
+            # expected agreement from the marginals if independent
+            pa1 = sum(1 for x, _ in both_dir if x > 0) / len(both_dir)
+            pb1 = sum(1 for _, y in both_dir if y > 0) / len(both_dir)
+            exp = 100.0 * (pa1 * pb1 + (1 - pa1) * (1 - pb1))
+            extra = (f"  agree {agree:.1f}% "
+                     f"(expected {exp:.1f}% if independent, "
+                     f"n={len(both_dir)})")
+        else:
+            extra = "  (no rows where both voted directionally)"
+        warn = "  [low n]" if len(xs) < MIN_CELL_N else ""
+        print(f"  {a:<5} vs {b:<5}  n={len(xs):<6} corr {corr:+.2f}"
+              f"{extra}{warn}")
+    if not any_data:
+        print("  (needs newer-build logs with per-pillar vote columns)")
+    print("  baseline to beat: trend vs vwap corr +0.43 / agree 67% "
+          "(pre-rebuild, README)")
 
 
 def sweep_trend(sweep_pts: list, horizons: list[float],
@@ -667,7 +821,11 @@ def main():
                          "recall/capture report (default 1.0)")
     ap.add_argument("--by", default="",
                     help="conditioned banner report: comma list of "
-                         "agree,spread,tape_live (or 'all')")
+                         "agree,spread,tape_live,quality,accel (or 'all')")
+    ap.add_argument("--pillar-corr", action="store_true",
+                    help="pillar-vote independence report: trend/tape/vwap "
+                         "vote correlations, vwap restricted to session-"
+                         "anchored rows (re-measures the +0.43 baseline)")
     ap.add_argument("--save-baseline", metavar="FILE",
                     help="write this run's per-predictor stats to a JSON "
                          "benchmark file (freeze before a change)")
@@ -703,10 +861,13 @@ def main():
     capture_report(moves, horizons, a.move_thresh)
 
     if a.by:
-        wanted = (["agree", "spread", "tape_live", "quality"]
+        wanted = (["agree", "spread", "tape_live", "quality", "accel"]
                   if a.by == "all"
                   else [s.strip() for s in a.by.split(",") if s.strip()])
         conditioned_report(cond, horizons, wanted)
+
+    if a.pillar_corr:
+        pillar_corr_report(rows, a.stride)
 
     if a.sweep == "trend":
         try:
