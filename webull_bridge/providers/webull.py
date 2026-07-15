@@ -33,6 +33,24 @@ def _require_sdk():
         ) from e
 
 
+def _route_sdk_logs(client, cfg: dict):
+    """Stop the SDK from writing to stdout.
+
+    DataClient._init_logger installs a StreamHandler on sys.stdout unless a
+    logger is already configured, and every rejected request is logged at
+    ERROR with the whole request dict inline. That lands in the middle of
+    the L2 monitor's Rich display. Claiming _stream_logger_set pre-empts it;
+    the file logger keeps the records (and keeps them off root's stderr
+    lastResort handler).
+    """
+    client._stream_logger_set = True
+    if not getattr(client, "_file_logger_set", False):
+        client.set_file_logger(
+            path=cfg.get("webull_sdk_log", "webull_sdk.log"),
+            log_level=logging.WARNING,
+            format_string="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+
 def _make_api_client(cfg: dict):
     from webull.core.client import ApiClient
     key = cfg.get("webull_app_key", "")
@@ -42,7 +60,9 @@ def _make_api_client(cfg: dict):
             "webull provider needs WEBULL_APP_KEY / WEBULL_APP_SECRET "
             "(env vars or webull_app_key/webull_app_secret in "
             "config/webull_bridge.json)")
-    return ApiClient(key, secret, cfg.get("webull_region", "us"))
+    client = ApiClient(key, secret, cfg.get("webull_region", "us"))
+    _route_sdk_logs(client, cfg)
+    return client
 
 
 def _f(v, default=0.0) -> float:
@@ -106,13 +126,31 @@ class WebullMarketData(MarketDataProvider):
         self.category = cfg.get("webull_category", "US_STOCK")
         self._last: dict[str, L2Book] = {}
         self._active = 0   # live subscribe_depth generators
+        # symbols the API rejects outright (INVALID_SYMBOL): OCR hands us
+        # garbage tickers and delisted names, and retrying those at poll
+        # rate is a traceback flood the caller can never satisfy. Re-probed
+        # after _bad_ttl in case the listing catches up.
+        self._bad: dict[str, float] = {}
+        self._bad_ttl = float(cfg.get("webull_bad_symbol_ttl", 600.0))
 
     def _interval(self) -> float:
         """Per-symbol poll interval, stretched so the combined request
         rate across all active engines stays under webull_max_rps."""
         return max(self.poll, max(self._active, 1) / self.max_rps)
 
+    def known_bad(self, symbol: str) -> bool:
+        """True while `symbol` is inside its INVALID_SYMBOL cooldown."""
+        until = self._bad.get(symbol.upper())
+        if until is None:
+            return False
+        if time.time() >= until:
+            del self._bad[symbol.upper()]
+            return False
+        return True
+
     def _fetch(self, symbol: str) -> Optional[L2Book]:
+        if self.known_bad(symbol):
+            return None
         try:
             res = self.client.market_data.get_quotes(
                 symbol, self.category, depth=self.depth)
@@ -139,7 +177,14 @@ class WebullMarketData(MarketDataProvider):
                     "developer.webull.com for full L2.")
                 self.depth = 1
                 return self._fetch(symbol)
-            log.exception("[WEBULL] get_quotes %s failed", symbol)
+            if "INVALID_SYMBOL" in str(e):
+                self._bad[symbol.upper()] = time.time() + self._bad_ttl
+                log.warning("[WEBULL] %s not in %s - no depth polling for %.0fs",
+                            symbol, self.category, self._bad_ttl)
+                return None
+            # one line, no traceback: this runs at poll rate and the caller
+            # already treats None as "stay on the fallback book"
+            log.warning("[WEBULL] get_quotes %s failed: %s", symbol, e)
             return None
 
     async def subscribe_depth(self, symbol: str) -> AsyncIterator[L2Book]:

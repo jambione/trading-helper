@@ -50,7 +50,9 @@ async def run(cfg: dict | None = None, quiet: bool = False) -> None:
             print("position feed: no Webull keys configured - not running")
         return
     if quiet:   # keep SDK log lines out of the monitor's live display
-        logging.getLogger("webull").setLevel(logging.ERROR)
+        # ERROR is the level the SDK logs its rejected requests AT, so this
+        # silenced nothing; CRITICAL is what actually holds them back.
+        logging.getLogger("webull").setLevel(logging.CRITICAL)
 
     broker = WebullBroker(cfg)
     interval = float(cfg.get("position_poll_sec", 5.0))
