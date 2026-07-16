@@ -9,6 +9,12 @@ Press the number shown beside a symbol (1-9) to load that ticker into BOTH
 TradingView and Webull Desktop, using the existing windows_agent workflows.
 SPACE loads the top (newest) symbol.
 
+The bottom strip shows the top movers OCR'd straight off the Webull
+watchlist sidebar (symbol + (pre)market percent), scraped the same way the
+L2 book and Time&Sales are — see watchlist_ocr.py. Needs the webull-l2 OCR
+deps (cv2/mss/pytesseract) and the Webull window on screen; without them
+the strip just says it's off.
+
 Run:  python momentum_signal.py       (repo .venv has rich + plyer)
 
 Windows-only for the hotkey / Webull-TV loading; on other platforms it still
@@ -56,6 +62,13 @@ try:
 except Exception:                                          # noqa: BLE001
     _plyer = None
 
+# Webull watchlist scraper (same OCR stack as webull-l2); import never
+# hard-fails — without cv2/mss/pytesseract the reader reports itself off.
+try:
+    from watchlist_ocr import WatchlistReader, top_movers
+except Exception:                                          # noqa: BLE001
+    WatchlistReader = top_movers = None
+
 HERE = Path(__file__).parent
 CONFIG_PATH = HERE / "momentum_config.json"
 
@@ -69,6 +82,10 @@ DEFAULTS = {
     "alert_buy": False,       # beep/toast when signal status hits buy-zone
     "alert_cooldown": 60.0,   # per-symbol, per-alert-type cooldown
     "desktop_toast": True,    # plyer desktop notification alongside the beep
+    "watchlist_enabled": True,  # OCR the Webull watchlist sidebar for movers
+    "watchlist_poll": 2.0,    # seconds between watchlist captures
+    "watchlist_top": 3,       # movers shown in the bottom strip
+    "watchlist_rank": "gainers",  # "gainers" (signed %) or "abs" (magnitude)
 }
 
 
@@ -412,6 +429,35 @@ def footer_panel(alerter: Alerter, hotkeys: LoadHotkey,
                  padding=(0, 1))
 
 
+def movers_panel(snap: dict | None, now: float, top: int,
+                 rank: str) -> Panel:
+    """Bottom strip: top watchlist movers straight off the Webull sidebar."""
+    label = "[bold magenta]WB watchlist[/bold magenta]"
+    if snap is None or not snap.get("on"):
+        body = (f"{label}   [dim]scraper off (needs the webull-l2 OCR deps: "
+                "cv2 / mss / pytesseract)[/dim]")
+    elif not snap["rows"]:
+        why = ("waiting for the Webull window / watchlist header"
+               if not snap["located"] else "no readable rows yet")
+        body = f"{label}   [dim]{why}[/dim]"
+    else:
+        movers = top_movers(snap["rows"], top, rank)
+        bits = []
+        for i, m in enumerate(movers, 1):
+            c = "green" if m.pct >= 0 else "red"
+            px = f" [dim]{m.price:.2f}[/dim]" if m.price is not None else ""
+            bits.append(f"[bold]{i}[/bold] [bold cyan]{m.sym}[/bold cyan] "
+                        f"[{c}]{m.pct:+.1f}%[/{c}]{px}")
+        pre = " (pre)" if any(m.pre for m in movers) else ""
+        meta = f"{len(snap['rows'])} rows"
+        age = (now - snap["updated"]) if snap.get("updated") else None
+        if age is not None and age > 15:
+            meta += f" · [yellow]{age:.0f}s stale[/yellow]"
+        body = (f"{label}{pre}   " + "    ".join(bits)
+                + f"   [dim]{meta}[/dim]")
+    return Panel(Align.center(body), border_style="magenta", padding=(0, 1))
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 STALE_AFTER = 15.0   # seconds without a good poll before the FEED DOWN banner
@@ -430,6 +476,11 @@ def main():
     feed = Feed(cfg)
     alerter = Alerter(cfg)
     hotkeys = LoadHotkey()
+    watchlist = (WatchlistReader(cfg, console)
+                 if WatchlistReader and cfg.get("watchlist_enabled", True)
+                 else None)
+    wl_top = max(1, int(cfg.get("watchlist_top", 3)))
+    wl_rank = str(cfg.get("watchlist_rank", "gainers"))
 
     console.print("[bold]Momentum monitor — Ctrl+C to stop.[/bold]  "
                   f"Polling {_dashboard_url()}/api/state")
@@ -448,11 +499,16 @@ def main():
             stamps.append(t0)
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
-            live.update(Group(
+            parts = [
                 header_panel(feed, t0, hz, stale),
                 momentum_table(feed, t0, hz, hotkeys.enabled),
                 footer_panel(alerter, hotkeys, hotkey_slots),
-            ))
+            ]
+            if cfg.get("watchlist_enabled", True):
+                parts.append(movers_panel(
+                    watchlist.snapshot() if watchlist else None,
+                    t0, wl_top, wl_rank))
+            live.update(Group(*parts))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
