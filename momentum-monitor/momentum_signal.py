@@ -9,11 +9,12 @@ Press the number shown beside a symbol (1-9) to load that ticker into BOTH
 TradingView and Webull Desktop, using the existing windows_agent workflows.
 SPACE loads the top (newest) symbol.
 
-The bottom strip shows the top movers OCR'd straight off the Webull
+The header strip shows the top movers OCR'd straight off the Webull
 watchlist sidebar (symbol + (pre)market percent), scraped the same way the
-L2 book and Time&Sales are — see watchlist_ocr.py. Needs the webull-l2 OCR
-deps (cv2/mss/pytesseract) and the Webull window on screen; without them
-the strip just says it's off.
+L2 book and Time&Sales are — see watchlist_ocr.py. It replaces the old
+branding header to keep the monitor short; the FEED DOWN warning moved
+into it. Needs the webull-l2 OCR deps (cv2/mss/pytesseract) and the Webull
+window on screen; without them the classic header renders instead.
 
 Run:  python momentum_signal.py       (repo .venv has rich + plyer)
 
@@ -430,8 +431,11 @@ def footer_panel(alerter: Alerter, hotkeys: LoadHotkey,
 
 
 def movers_panel(snap: dict | None, now: float, top: int,
-                 rank: str) -> Panel:
-    """Bottom strip: top watchlist movers straight off the Webull sidebar."""
+                 rank: str, stale: bool = False) -> Panel:
+    """Header strip: top watchlist movers straight off the Webull sidebar.
+    Sits where the branding header used to (the movers earn the row, the
+    URL didn't), so the FEED DOWN warning renders here too — it must never
+    be hidden by the swap."""
     label = "[bold magenta]WB watchlist[/bold magenta]"
     if snap is None or not snap.get("on"):
         body = (f"{label}   [dim]scraper off (needs the webull-l2 OCR deps: "
@@ -455,7 +459,11 @@ def movers_panel(snap: dict | None, now: float, top: int,
             meta += f" · [yellow]{age:.0f}s stale[/yellow]"
         body = (f"{label}{pre}   " + "    ".join(bits)
                 + f"   [dim]{meta}[/dim]")
-    return Panel(Align.center(body), border_style="magenta", padding=(0, 1))
+    if stale:
+        body = ("[bold white on red]  FEED DOWN  [/]  "
+                f"[dim]can't reach {_dashboard_url()}[/dim]\n") + body
+    return Panel(Align.center(body),
+                 border_style="red" if stale else "magenta", padding=(0, 1))
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -499,16 +507,17 @@ def main():
             stamps.append(t0)
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
-            parts = [
-                header_panel(feed, t0, hz, stale),
+            # the movers strip takes the header slot; the classic header
+            # only renders when the scraper is off (config or missing deps)
+            wl_on = watchlist is not None and watchlist.enabled
+            top_panel = (movers_panel(watchlist.snapshot(), t0, wl_top,
+                                      wl_rank, stale) if wl_on
+                         else header_panel(feed, t0, hz, stale))
+            live.update(Group(
+                top_panel,
                 momentum_table(feed, t0, hz, hotkeys.enabled),
                 footer_panel(alerter, hotkeys, hotkey_slots),
-            ]
-            if cfg.get("watchlist_enabled", True):
-                parts.append(movers_panel(
-                    watchlist.snapshot() if watchlist else None,
-                    t0, wl_top, wl_rank))
-            live.update(Group(*parts))
+            ))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
