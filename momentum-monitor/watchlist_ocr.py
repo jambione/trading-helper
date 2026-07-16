@@ -58,10 +58,19 @@ except Exception:                                          # noqa: BLE001
 # price last, at most a couple of badge tokens between. The token cap is the
 # noise filter — chart overlays like "O 3.070 H 3.140 L 3.060 C 3.120" carry
 # many tokens and never match, even if the region ever leaks into the chart.
-SYM_LINE_RE = re.compile(r"^([A-Z]{2,5})(?:\s+\S+){0,2}\s+(\d{1,5}\.\d{2,4})$")
+# The decimal point is OPTIONAL: Webull flashes a highlight box behind the
+# price cell on every tick, and OCR under the flash drops the dot ("5.36" ->
+# "536") — on a hot symbol that's nearly every frame, so requiring the dot
+# made exactly the most interesting rows vanish. A dotless price parses as
+# symbol-with-unknown-price; the reader backfills from the last clean read.
+SYM_LINE_RE = re.compile(
+    r"^([A-Z]{2,5})(?:\s+\S+){0,2}\s+(\d{1,5}(?:\.\d{2,4})?)$")
 # the lookbehind stops a garbage run like "+5000%" from backtracking into
-# a bogus "000%" match — a percent must not be the tail of a longer number
-PCT_RE = re.compile(r"(?<![\d.])([+-]?\d{1,3}(?:\.\d{1,2})?)\s*%")
+# a bogus "000%" match — a percent must not be the tail of a longer number.
+# The dot is optional for the same tick-flash reason as SYM_LINE_RE: Webull
+# always renders two decimals, so a dotless read ("+4246%") is a flash
+# casualty whose last two digits are the decimals (rescaled in the parser).
+PCT_RE = re.compile(r"(?<![\d.])([+-]?\d{1,5}(?:\.\d{1,2})?)\s*%")
 
 
 @dataclass
@@ -87,8 +96,14 @@ def parse_watchlist_lines(lines) -> list[Mover]:
         if "%" in text:
             m = PCT_RE.search(text)
             if m and cur_sym and cur_sym not in seen:
-                pct = float(m[1])
-                if abs(pct) <= 500:        # OCR garbage guard
+                tok = m[1]
+                if "." in tok:
+                    pct = float(tok)
+                elif len(tok.lstrip("+-")) >= 3:
+                    pct = float(tok) / 100.0   # dotless flash read: the last
+                else:                          # two digits are the decimals
+                    pct = None                 # 1-2 digits: too ambiguous
+                if pct is not None and abs(pct) <= 500:  # OCR garbage guard
                     out.append(Mover(cur_sym, pct, cur_price,
                                      "pre" in text.lower()))
                     seen.add(cur_sym)
@@ -96,7 +111,24 @@ def parse_watchlist_lines(lines) -> list[Mover]:
             continue
         m = SYM_LINE_RE.match(text)
         if m:
-            cur_sym, cur_price = m[1], float(m[2])
+            cur_sym = m[1]
+            cur_price = float(m[2]) if "." in m[2] else None
+    return out
+
+
+def drop_ghosts(rows: list[Mover]) -> list[Mover]:
+    """OCR truncates a symbol under the tick-flash ('ATAI' reads 'ATA') —
+    often on MORE frames than it reads it whole, so observation frequency
+    cannot pick the real spelling (measured live: ATA 11 polls, ATAI 1).
+    When two symbols are prefix-related AND carry (near-)equal percents,
+    the shorter is the truncation ghost: keep the longer. Prefix pairs
+    with different percents are two real symbols and both survive."""
+    out = []
+    for r in rows:
+        ghost = any(r.sym != s.sym and s.sym.startswith(r.sym)
+                    and abs(r.pct - s.pct) <= 1.0 for s in rows)
+        if not ghost:
+            out.append(r)
     return out
 
 
@@ -212,6 +244,11 @@ class WatchlistReader:
         # from the watchlist) ages off.
         self.keep = float(cfg.get("watchlist_keep", 10.0))
         self._seen: dict[str, tuple[Mover, float]] = {}
+        # session-lifetime spelling memory: truncated -> full symbol. The
+        # tick-flash can eat the trailing letter on MOST frames of a hot
+        # row, so once both spellings have coexisted with matching percents
+        # every later truncated read is relabeled to the full spelling.
+        self._alias: dict[str, str] = {}
         self.console = console
         self.lock = threading.Lock()
         self.region: dict | None = None
@@ -262,7 +299,11 @@ class WatchlistReader:
                     self.updated = now     # unchanged pixels = still current
             return
         self._frame_key = key
-        movers = watchlist_frame(raw)
+        self.ingest(watchlist_frame(raw), now)
+
+    def ingest(self, movers: list[Mover], now: float):
+        """Merge one frame's parse into the cross-frame state. Split out of
+        _step so the merge/alias/ghost logic is testable without a screen."""
         with self.lock:
             if movers:
                 self.ok += 1
@@ -272,7 +313,22 @@ class WatchlistReader:
                 self.miss += 1
                 self._misses_row += 1
             for m in movers:
+                canon = self._alias.get(m.sym)
+                if canon:                # known truncation -> full spelling
+                    m = Mover(canon, m.pct, m.price, m.pre)
+                old = self._seen.get(m.sym)
+                if m.price is None and old and old[0].price is not None:
+                    # tick-flash ate the decimal — keep the last clean price
+                    m = Mover(m.sym, m.pct, old[0].price, m.pre)
                 self._seen[m.sym] = (m, now)
-            self._seen = {s: (m, ts) for s, (m, ts) in self._seen.items()
-                          if now - ts <= self.keep}
-            self.rows = [m for m, _ in self._seen.values()]
+            # learn spellings from coexisting prefix pairs (same rule as
+            # drop_ghosts): 'ATA' alongside 'ATAI' at the same percent
+            # means ATA is the flash-truncated read of ATAI
+            for a, (ma, _) in self._seen.items():
+                for b, (mb, _) in self._seen.items():
+                    if (a != b and b.startswith(a)
+                            and abs(ma.pct - mb.pct) <= 1.0):
+                        self._alias[a] = b
+            self._seen = {s: e for s, e in self._seen.items()
+                          if now - e[1] <= self.keep}
+            self.rows = drop_ghosts([m for m, _ in self._seen.values()])

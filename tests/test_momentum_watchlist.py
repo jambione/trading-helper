@@ -11,8 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "momentum-monitor"))
 
-from watchlist_ocr import (Mover, parse_watchlist_lines,  # noqa: E402
-                           top_movers)
+from watchlist_ocr import (Mover, WatchlistReader,  # noqa: E402
+                           drop_ghosts, parse_watchlist_lines, top_movers)
 
 # the sidebar from the 2026-07-16 04:56 premarket session
 SIDEBAR = [
@@ -103,7 +103,56 @@ def test_duplicate_symbol_keeps_the_first_read():
 
 
 def test_garbage_percent_is_rejected():
-    assert parse_watchlist_lines(["PBM 2.890", "Pre: +5000%"]) == []
+    # dotted and impossibly large -> real garbage, not a flash casualty
+    assert parse_watchlist_lines(["PBM 2.890", "Pre: +999.99%"]) == []
+    # dotless "+5000%" IS a flash casualty: it means +50.00%
+    assert parse_watchlist_lines(
+        ["PBM 2.890", "Pre: +5000%"]) == [Mover("PBM", 50.0, 2.89, True)]
+
+
+def test_tick_flash_eats_the_price_decimal():
+    """Webull flashes a box behind the price cell on every tick and OCR
+    drops the dot ('5.36' -> '536'). The hottest symbol flashes on nearly
+    every frame, so this exact line ('ATAI B 536', badge misread as B)
+    made the top mover vanish from the strip. The symbol and percent are
+    still good; the price is just unknown for that frame."""
+    rows = parse_watchlist_lines(["ATAI B 536", "Atai Beckley Pre: +61.01%"])
+    assert rows == [Mover("ATAI", 61.01, None, True)]
+
+
+def test_tick_flash_eats_the_percent_decimal():
+    """Same flash failure on the percent cell: '+42.46%' reads '+4246%'.
+    Webull always renders two decimals, so the last two digits of a
+    dotless read are the decimals; 1-2 digit dotless reads stay rejected
+    (too ambiguous to rescale)."""
+    rows = parse_watchlist_lines(["ATPC 2.520", "Agape Pre: +4246%"])
+    assert rows == [Mover("ATPC", 42.46, 2.52, True)]
+    assert parse_watchlist_lines(["ATPC 2.520", "Agape Pre: +42%"]) == []
+
+
+def test_truncated_ghost_spelling_collapses_to_the_longer():
+    """The flash also truncates the symbol itself ('ATAI' reads 'ATA'),
+    and the cross-frame merge keeps both spellings alive. A prefix pair
+    with near-equal percents collapses to the longer spelling (the
+    truncation is the ghost); different percents = two real symbols."""
+    atai, ghost = Mover("ATAI", 61.0), Mover("ATA", 61.2)
+    assert drop_ghosts([ghost, atai]) == [atai]
+    real_pair = [Mover("VS", 5.0), Mover("VSA", 61.0)]
+    assert drop_ghosts(real_pair) == real_pair
+
+
+def test_reader_learns_spelling_and_relabels_truncated_reads():
+    """Live measurement: the flash truncated ATAI to ATA on 11 of 15 polls,
+    sometimes for 30s+ straight, so the full spelling may never coexist in
+    the 10s merge window again. Once both spellings HAVE coexisted at the
+    same percent, the reader must remember ATA->ATAI for the session and
+    relabel every later truncated read (keeping the last clean price)."""
+    r = WatchlistReader({"watchlist_enabled": False})
+    r.ingest([Mover("ATAI", 61.0, 5.36, True)], now=100.0)
+    r.ingest([Mover("ATA", 61.2, None, True)], now=102.0)   # learns alias
+    assert r.snapshot()["rows"] == [Mover("ATAI", 61.0, 5.36, True)]
+    r.ingest([Mover("ATA", 61.5, None, True)], now=104.0)   # relabeled
+    assert r.snapshot()["rows"] == [Mover("ATAI", 61.5, 5.36, True)]
 
 
 def test_regular_hours_line_without_pre_tag():
