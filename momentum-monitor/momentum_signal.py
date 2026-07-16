@@ -39,6 +39,23 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+# DPI awareness MUST be set before windows_agent imports pyautogui, which
+# claims system-DPI-aware at import and locks the process there (awareness
+# is set-once). Under system-aware, GetWindowRect returns virtualized
+# coordinates on mixed-scaling multi-monitor setups (e.g. 1.5x off when the
+# primary runs 150%), so the watchlist scraper's capture region lands on
+# the wrong pixels and never finds the sidebar. Per-monitor v2 keeps window
+# rects, screen grabs, AND pyautogui clicks in the same physical-pixel
+# space. Same block as l2_signal.py, which never faces this only because
+# its process doesn't import pyautogui.
+if sys.platform == "win32":
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v2
+    except Exception:                                      # noqa: BLE001
+        with contextlib.suppress(Exception):
+            ctypes.windll.user32.SetProcessDPIAware()
+
 # windows_agent (repo root) owns the dashboard auth + the WB/TV load
 # workflows. Import is side-effect-free (its server/listener only start under
 # __main__), so we borrow the pieces we need. On a box without the automation

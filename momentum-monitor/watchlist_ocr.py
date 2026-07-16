@@ -206,6 +206,12 @@ class WatchlistReader:
         self.enabled = HAVE_OCR and bool(cfg.get("watchlist_enabled", True))
         self.poll = float(cfg.get("watchlist_poll", 2.0))
         self.manual = cfg.get("watchlist_region")
+        # rows are merged across frames: OCR drops a row now and then, and a
+        # single missed frame must not knock a top mover off the strip. A
+        # symbol not re-read within `keep` seconds (scrolled out / removed
+        # from the watchlist) ages off.
+        self.keep = float(cfg.get("watchlist_keep", 10.0))
+        self._seen: dict[str, tuple[Mover, float]] = {}
         self.console = console
         self.lock = threading.Lock()
         self.region: dict | None = None
@@ -261,8 +267,12 @@ class WatchlistReader:
             if movers:
                 self.ok += 1
                 self._misses_row = 0
-                self.rows = movers
                 self.updated = now
             else:
                 self.miss += 1
                 self._misses_row += 1
+            for m in movers:
+                self._seen[m.sym] = (m, now)
+            self._seen = {s: (m, ts) for s, (m, ts) in self._seen.items()
+                          if now - ts <= self.keep}
+            self.rows = [m for m, _ in self._seen.values()]
