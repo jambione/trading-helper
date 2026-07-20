@@ -44,8 +44,6 @@ def main():
     ap.add_argument("symbol", nargs="?", default="AAPL")
     ap.add_argument("--live", action="store_true",
                     help="use live account (default: paper)")
-    ap.add_argument("--feed", default=os.getenv("ALPACA_DATA_FEED", "IEX"),
-                    default="IEX")
     args = ap.parse_args()
     symbol = args.symbol.upper()
 
@@ -58,7 +56,7 @@ def main():
         "alpaca_api_key": key,
         "alpaca_secret_key": secret,
         "alpaca_paper": not args.live,
-        "alpaca_data_feed": args.feed.upper(),
+        "alpaca_data_feed": "IEX",  # free tier only
         "alpaca_poll_sec": 0.5,
     }
 
@@ -66,7 +64,7 @@ def main():
         AlpacaBroker, AlpacaMarketData, quote_to_book,
     )
 
-    print(f"mode={'LIVE' if args.live else 'PAPER'}  feed={cfg['alpaca_data_feed']}")
+    print(f"mode={'LIVE' if args.live else 'PAPER'}  feed=IEX")
     print(f"key  ={key[:8]}…")
 
     broker = AlpacaBroker(cfg)
