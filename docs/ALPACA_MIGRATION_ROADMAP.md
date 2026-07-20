@@ -1,5 +1,7 @@
 # Webull → Alpaca Migration Roadmap
 
+> **Superseded for execution.** The complete, locked plan (decisions, Flow Monitor, phases, non-goals) lives in [`ALPACA_COMPLETE_PLAN.md`](./ALPACA_COMPLETE_PLAN.md). Prefer that file when implementing. This roadmap remains as the original investigation notes.
+
 **Audience:** this doc is written for an AI coding agent picking up the work cold. It assumes no memory of prior sessions — every claim below was verified against the repo as it exists on `master-mac` at the time of writing (2026-07-20). Re-verify anything that looks stale before acting on it.
 
 **Scope decision (already made by the user, do not re-litigate):** full retirement of Webull. This means killing the screen-scraped L2/tape/watchlist monitors and the Webull Desktop GUI automation, not just swapping the broker API underneath them. That trades away true multi-level order-book depth — Alpaca's standard market-data plans expose top-of-book (NBBO) quotes and trade prints, not a multi-level book the way Webull's Advanced Quotes subscription (or the OCR scrape of the Desktop app) did. If that tradeoff turns out to be a problem in practice, the fallback is to stop after Phase 1 (provider swap only, keep the OCR monitors alive) — **check with the user before reversing course**, don't silently keep the OCR pipeline running "just in case."
