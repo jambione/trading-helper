@@ -82,7 +82,11 @@ DEFAULTS = {
     "watchlist_enabled": False,
     "trade_enabled": True,       # B/S keys → Alpaca
     "trader_mode": None,          # override TRADER_MODE from env (paper|live|off)
-    "trade_amount": None,        # override TRADE_AMOUNT
+    "trade_amount": None,        # override TRADE_AMOUNT (dollars per buy)
+    "buy_order_style": "auto",   # "auto" (mkt when open, limit off-hours) | "limit_ask" | "market"; all whole shares only
+    "limit_pad_pct": 0.1,        # % above ask (buys) / below bid (ext-hours sells)
+    "extended_hours": True,      # allow pre/post-market B/S
+    "positions_refresh": 3.0,    # seconds between live P&L refreshes
 }
 
 
@@ -327,6 +331,39 @@ def header_panel(feed: Feed, now: float, hz: float,
                  padding=(0, 1))
 
 
+def positions_panel(positions: dict, focus: str | None) -> Panel:
+    """Live P&L for every open Alpaca position. Focused symbol highlighted."""
+    total_pl = sum(float(p.get("pl") or 0) for p in positions.values())
+    tcol = "green" if total_pl >= 0 else "red"
+    t = Table.grid(expand=False, padding=(0, 2))
+    t.add_column(justify="left")     # symbol
+    t.add_column(justify="right")    # qty
+    t.add_column(justify="right")    # entry
+    t.add_column(justify="right")    # last
+    t.add_column(justify="right")    # P&L $
+    t.add_column(justify="right")    # P&L %
+    t.add_column(justify="right")    # mkt value
+    for sym in sorted(positions):
+        p = positions[sym]
+        pl, plpc = float(p.get("pl") or 0), float(p.get("plpc") or 0)
+        c = "green" if pl >= 0 else "red"
+        marker = "▶ " if focus and sym == focus.upper() else "  "
+        name = f"[bold cyan]{marker}{sym}[/bold cyan]"
+        t.add_row(
+            name,
+            f"[white]{p.get('qty', 0):g} sh[/white]",
+            f"[dim]entry[/dim] ${p.get('avg_entry', 0):.2f}",
+            f"[dim]last[/dim] ${p.get('current', 0):.2f}",
+            f"[{c}]{'+' if pl >= 0 else ''}${pl:,.2f}[/{c}]",
+            f"[{c}]{'+' if plpc >= 0 else ''}{plpc:.2f}%[/{c}]",
+            f"[dim]${p.get('mkt_val', 0):,.0f}[/dim]",
+        )
+    title = (f"POSITIONS ({len(positions)})   "
+             f"total P&L [{tcol}]{'+' if total_pl >= 0 else ''}${total_pl:,.2f}[/{tcol}]")
+    return Panel(t, title=title, title_align="left",
+                 border_style=tcol, padding=(0, 1))
+
+
 def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
                  hotkey_slots: int, trader_mode: str,
                  trade_amount: float) -> Panel:
@@ -336,10 +373,13 @@ def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
     focus = hotkeys.focus_symbol() or "—"
     mode_c = {"paper": "yellow", "live": "red", "off": "dim"}.get(
         trader_mode, "dim")
+    style = {"auto": "auto mkt/lim", "limit_ask": "limit@ask", "market": "market"}.get(
+        desk.buy_style(), desk.buy_style())
+    ext = "  EXT" if desk.extended_hours() else ""
     lines.append(
         f"[bold]FOCUS[/bold] [bold cyan]{focus}[/bold cyan]   "
         f"Alpaca [{mode_c}]{trader_mode.upper()}[/{mode_c}]   "
-        f"${trade_amount:.0f}/buy   [{desk.platform_label()}]"
+        f"${trade_amount:.0f}/buy {style}{ext}   [{desk.platform_label()}]"
     )
     if hotkeys.enabled:
         hint = (f"[dim]1-{hotkey_slots}/space: load TV + set focus   ·   "
@@ -375,6 +415,12 @@ def main():
         trade_cfg["trader_mode"] = cfg["trader_mode"]
     if cfg.get("trade_amount") is not None:
         trade_cfg["trade_amount"] = cfg["trade_amount"]
+    if cfg.get("buy_order_style"):
+        trade_cfg["buy_order_style"] = cfg["buy_order_style"]
+    if cfg.get("limit_pad_pct") is not None:
+        trade_cfg["limit_pad_pct"] = cfg["limit_pad_pct"]
+    if cfg.get("extended_hours") is not None:
+        trade_cfg["extended_hours"] = cfg["extended_hours"]
     mode = desk.init_trader(trade_cfg) if trade_on else "off"
     amount = desk.trade_amount()
 
@@ -383,9 +429,12 @@ def main():
     alerter = Alerter(cfg)
     hotkeys = DeskHotkeys(trade_enabled=trade_on and mode != "off")
 
+    _style = {"auto": "auto mkt/lim", "limit_ask": "limit@ask", "market": "market"}.get(
+        desk.buy_style(), desk.buy_style())
+    _ext = " +EXT" if desk.extended_hours() else ""
     console.print(
         f"[bold]Momentum desk[/bold]  {desk.platform_label()}  "
-        f"Alpaca [bold]{mode.upper()}[/bold]  ${amount:.0f}/buy  "
+        f"Alpaca [bold]{mode.upper()}[/bold]  ${amount:.0f}/buy {_style}{_ext}  "
         f"TV={'on' if desk.tv_load_available() else 'off'}  "
         f"— Ctrl+C to stop.\n"
         f"Polling {_dashboard_url()}/api/state\n"
@@ -395,6 +444,9 @@ def main():
         console.print("[bold red]LIVE money enabled — B/S place real orders[/bold red]")
 
     stamps: list[float] = []
+    pos_on = trade_on and mode != "off"
+    pos_refresh = float(cfg.get("positions_refresh", 3.0))
+    pos_cache: dict = {"ts": 0.0, "data": {}}
     with Live(console=console, refresh_per_second=2, screen=False) as live:
         while True:
             t0 = time.time()
@@ -409,11 +461,21 @@ def main():
             stamps.append(t0)
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
-            live.update(Group(
-                header_panel(feed, t0, hz, stale),
-                momentum_table(feed, t0, hz, hotkeys.enabled),
-                footer_panel(alerter, hotkeys, hotkey_slots, mode, amount),
-            ))
+
+            # Live P&L for open positions (throttled Alpaca call)
+            if pos_on and (t0 - pos_cache["ts"] >= pos_refresh):
+                d = desk.positions_detail()
+                if d is not None:                 # None = call failed; keep last good
+                    pos_cache["data"] = d
+                pos_cache["ts"] = t0
+
+            panels = [header_panel(feed, t0, hz, stale)]
+            if pos_cache["data"]:
+                panels.append(positions_panel(pos_cache["data"],
+                                              hotkeys.focus_symbol()))
+            panels.append(momentum_table(feed, t0, hz, hotkeys.enabled))
+            panels.append(footer_panel(alerter, hotkeys, hotkey_slots, mode, amount))
+            live.update(Group(*panels))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 

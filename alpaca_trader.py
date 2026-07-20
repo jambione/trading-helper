@@ -133,6 +133,21 @@ def is_active() -> bool:
     return _mode != "off" and _client is not None
 
 
+def market_is_open() -> bool:
+    """True if the US market is currently open (Alpaca clock).
+
+    Defaults False on error — a limit order is valid in any session, so when we
+    can't tell we prefer the (always-legal) limit path over a market order that
+    Alpaca would reject outside regular hours.
+    """
+    if not is_active():
+        return False
+    try:
+        return bool(_client.get_clock().is_open)
+    except Exception:
+        return False
+
+
 # ── Order execution ───────────────────────────────────────────────────────────
 
 def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
@@ -223,6 +238,133 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
         return {"ok": False, "order_id": None, "status": "error"}
 
 
+def buy_limit_at_ask(ticker: str, ask: float, dollar_amount: Optional[float] = None,
+                     pad_pct: float = 0.0, rsi: float = 0.0, hist: float = 0.0) -> dict:
+    """
+    Fixed-dollar BUY sized to WHOLE shares, submitted as a limit at ask*(1+pad%).
+
+    Marketable in regular hours; also valid in extended hours (limit + DAY, no
+    brackets). Alpaca limit orders require whole shares, so the actual spend is
+    <= dollar_amount. Never overspends: qty is floored against the limit price.
+
+    ask           : current ask price (must be > 0)
+    dollar_amount : budget for this buy (defaults to the module TRADE_AMOUNT)
+    pad_pct       : percent to lift the limit above the ask (better fill odds)
+
+    Returns {"ok": bool, "order_id": str|None, "status": str|None, "note": str|None}.
+    """
+    amount   = float(dollar_amount if dollar_amount is not None else _trade_amount)
+    mode_tag = f"[{_mode.upper()}]"
+
+    if not is_active():
+        _log_action("BUY_LOGGED", ticker, ask, rsi, hist,
+                    note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": None, "note": None}
+
+    if not ask or ask <= 0:
+        _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="no ask")
+        return {"ok": False, "order_id": None, "status": "no_ask", "note": "no ask"}
+
+    limit_px = round(ask * (1 + max(0.0, pad_pct) / 100.0), 2)
+    qty      = int(amount // limit_px)      # whole shares affordable at the limit
+    if qty < 1:
+        note = f"ask ${ask:.2f} > ${amount:.0f} budget"
+        _log_action("BUY_SKIPPED", ticker, ask, rsi, hist, note=note)
+        return {"ok": False, "order_id": None, "status": "under_budget", "note": note}
+
+    print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
+          f"{qty} sh @ limit ${limit_px:.2f}  (~${qty * limit_px:.0f} of ${amount:.0f})")
+
+    try:
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        order = _client.submit_order(
+            LimitOrderRequest(
+                symbol         = ticker,
+                qty            = qty,
+                side           = OrderSide.BUY,
+                time_in_force  = TimeInForce.DAY,
+                limit_price    = limit_px,
+                extended_hours = _extended_hours,
+            )
+        )
+        order_id = str(order.id)
+        status   = str(order.status)
+        print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
+        _log_action("BUY", ticker, limit_px, rsi, hist,
+                    order_id=order_id, order_status=status, qty=qty,
+                    note="limit_ask")
+        return {"ok": True, "order_id": order_id, "status": status,
+                "note": None, "qty": qty, "limit_px": limit_px}
+
+    except Exception as e:
+        print(f"  [TRADER] ❌  BUY order failed: {e}")
+        _log_action("BUY_ERROR", ticker, limit_px, rsi, hist, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
+
+
+def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] = None,
+                      rsi: float = 0.0, hist: float = 0.0) -> dict:
+    """
+    Fixed-dollar BUY sized to WHOLE shares, submitted as a market order.
+
+    Whole shares only — never notional/fractional. RTH only: market orders are
+    rejected in extended hours (use buy_limit_at_ask() off-hours).
+
+    price         : reference price for sizing (pass the ask to avoid overspend)
+    dollar_amount : budget (defaults to the module TRADE_AMOUNT)
+
+    Returns {"ok": bool, "order_id": str|None, "status": str|None, "note": str|None, "qty": int}.
+    """
+    amount   = float(dollar_amount if dollar_amount is not None else _trade_amount)
+    mode_tag = f"[{_mode.upper()}]"
+
+    if not is_active():
+        _log_action("BUY_LOGGED", ticker, price, rsi, hist,
+                    note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": None, "note": None}
+
+    if not price or price <= 0:
+        _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="no price")
+        return {"ok": False, "order_id": None, "status": "no_price", "note": "no price"}
+
+    qty = int(amount // price)      # whole shares only
+    if qty < 1:
+        note = f"px ${price:.2f} > ${amount:.0f} budget"
+        _log_action("BUY_SKIPPED", ticker, price, rsi, hist, note=note)
+        return {"ok": False, "order_id": None, "status": "under_budget", "note": note}
+
+    print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
+          f"{qty} sh market  (~${qty * price:.0f} of ${amount:.0f})")
+
+    try:
+        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        order = _client.submit_order(
+            MarketOrderRequest(
+                symbol        = ticker,
+                qty           = qty,          # integer qty — no notional/fractional
+                side          = OrderSide.BUY,
+                time_in_force = TimeInForce.DAY,
+            )
+        )
+        order_id = str(order.id)
+        status   = str(order.status)
+        print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
+        _log_action("BUY", ticker, price, rsi, hist,
+                    order_id=order_id, order_status=status, qty=qty,
+                    note="market_shares")
+        return {"ok": True, "order_id": order_id, "status": status,
+                "note": None, "qty": qty}
+
+    except Exception as e:
+        print(f"  [TRADER] ❌  BUY order failed: {e}")
+        _log_action("BUY_ERROR", ticker, price, rsi, hist, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
+
+
 def sell(ticker: str, price: float, rsi: float, hist: float,
          buy_price: Optional[float] = None) -> dict:
     """
@@ -293,6 +435,84 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
         return {"ok": False, "order_id": None, "status": "error"}
 
 
+def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0.0) -> dict:
+    """
+    Desk EXIT: cancel any OPEN orders for the symbol, then close 100% of the position.
+
+    Cancelling first clears a resting buy limit — otherwise a sell is rejected as a
+    wash trade (Alpaca: "buy order exists, sell limit price should be greater...").
+
+    Market open   -> market close_position() (fills 100%).
+    Market closed -> extended-hours limit SELL of the held qty at price*(1-pad).
+
+    Returns {"ok", "order_id", "status", "note", "canceled"}.
+    """
+    if not is_active():
+        _log_action("SELL_LOGGED", ticker, price, rsi, hist, note="TRADER_MODE=off")
+        return {"ok": False, "order_id": None, "status": None, "note": None, "canceled": 0}
+
+    ticker = ticker.upper()
+
+    # 1) Cancel resting orders for this symbol (esp. an unfilled buy limit).
+    canceled = 0
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        open_orders = _client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[ticker]))
+        for o in open_orders or []:
+            try:
+                _client.cancel_order_by_id(o.id)
+                canceled += 1
+            except Exception as e:
+                log.warning("[TRADER] cancel %s failed: %s", getattr(o, "id", "?"), e)
+    except Exception as e:
+        log.warning("[TRADER] list/cancel open orders for %s failed: %s", ticker, e)
+
+    # 2) Do we actually hold anything?
+    try:
+        pos = _client.get_open_position(ticker)
+        qty_held = float(pos.qty)
+    except Exception:
+        note = f"no position (canceled {canceled} open order{'' if canceled == 1 else 's'})"
+        print(f"  [TRADER] ℹ️  {ticker}: {note}")
+        _log_action("CANCELED", ticker, price, rsi, hist, canceled=canceled, note=note)
+        return {"ok": canceled > 0, "order_id": None,
+                "status": "canceled" if canceled else "flat",
+                "note": note, "canceled": canceled}
+
+    # 3) Close 100%.
+    try:
+        if market_is_open():
+            order = _client.close_position(ticker)      # market, whole position
+        else:
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+            ref = price if price and price > 0 else float(getattr(pos, "current_price", 0) or 0)
+            limit_px = round(ref * (1 - _limit_offset / 100.0), 2) if ref > 0 else 0.0
+            if limit_px <= 0:
+                return {"ok": False, "order_id": None, "status": "no_price",
+                        "note": "off-hours sell needs a price", "canceled": canceled}
+            order = _client.submit_order(
+                LimitOrderRequest(symbol=ticker, qty=qty_held, side=OrderSide.SELL,
+                                  time_in_force=TimeInForce.DAY, limit_price=limit_px,
+                                  extended_hours=True))
+        order_id = str(order.id)
+        status   = str(order.status)
+        print(f"  [TRADER] ✓  CLOSE {ticker}  {qty_held} sh  id={order_id}  "
+              f"status={status}  (canceled {canceled})")
+        _log_action("SELL", ticker, price, rsi, hist, qty=qty_held,
+                    order_id=order_id, order_status=status, canceled=canceled,
+                    note="close_out")
+        return {"ok": True, "order_id": order_id, "status": status,
+                "note": None, "canceled": canceled}
+    except Exception as e:
+        print(f"  [TRADER] ❌  CLOSE {ticker} failed: {e}")
+        _log_action("SELL_ERROR", ticker, price, rsi, hist, error=str(e), canceled=canceled)
+        return {"ok": False, "order_id": None, "status": "error",
+                "note": str(e), "canceled": canceled}
+
+
 # ── Order / position lookups (fill reconciliation) ────────────────────────────
 
 def get_order(order_id: str) -> Optional[dict]:
@@ -334,6 +554,40 @@ def get_open_positions() -> Optional[dict]:
         return out
     except Exception as e:
         log.warning("[TRADER] get_open_positions failed: %s", e)
+        return None
+
+
+def _f(obj, attr) -> float:
+    try:
+        v = getattr(obj, attr, 0)
+        return float(v) if v is not None else 0.0
+    except Exception:
+        return 0.0
+
+
+def get_positions_detail() -> Optional[dict]:
+    """
+    All open positions with live P&L for display:
+      {SYM: {qty, avg_entry, current, pl, plpc, mkt_val}}
+    plpc is a PERCENT (Alpaca returns a fraction; this multiplies by 100).
+    Returns None when the trader is off or the call fails.
+    """
+    if not is_active():
+        return None
+    try:
+        out = {}
+        for pos in _client.get_all_positions():
+            out[str(pos.symbol).upper()] = {
+                "qty":       _f(pos, "qty"),
+                "avg_entry": _f(pos, "avg_entry_price"),
+                "current":   _f(pos, "current_price"),
+                "pl":        _f(pos, "unrealized_pl"),
+                "plpc":      _f(pos, "unrealized_plpc") * 100.0,
+                "mkt_val":   _f(pos, "market_value"),
+            }
+        return out
+    except Exception as e:
+        log.warning("[TRADER] get_positions_detail failed: %s", e)
         return None
 
 

@@ -9,6 +9,10 @@
   "desktop_toast": true,
   "watchlist_enabled": false,
   "trade_enabled": true,
-  "trader_mode": null,
-  "trade_amount": null
+  "trader_mode": "paper",
+  "trade_amount": 1000,
+  "buy_order_style": "auto",
+  "limit_pad_pct": 0.1,
+  "extended_hours": true,
+  "positions_refresh": 3.0
 }
