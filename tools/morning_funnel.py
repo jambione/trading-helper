@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Morning funnel — rank the watchlist, name the day's battlefield.
 
-The monitors (webull-l2, tv-monitor) confirm entries and exits on ONE
+The monitors (tv-monitor) confirm entries and exits on ONE
 symbol: whatever is on screen. This tool decides which symbol deserves
 that slot. It pulls Alpaca bars for every candidate, hard-rejects names
 your ~$3K can't trade cleanly (price band, spread, dollar volume), and

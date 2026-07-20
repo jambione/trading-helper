@@ -13,7 +13,7 @@ import random
 import time
 from typing import AsyncIterator, Optional
 
-from webull_bridge.l2 import L2Book
+from trade_bridge.l2 import L2Book
 from .base import Account, BrokerProvider, MarketDataProvider, Order, Position
 
 LEVELS = 10

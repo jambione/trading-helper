@@ -1336,8 +1336,8 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # L2 monitor + broker endpoints for the Mobile Trader iPhone app
-from webull_bridge.routes import router as _webull_router, get_manager as _get_bridge  # noqa: E402
-app.include_router(_webull_router)
+from trade_bridge.routes import router as _bridge_router, get_manager as _get_bridge  # noqa: E402
+app.include_router(_bridge_router)
 
 
 @app.on_event("startup")
@@ -2294,16 +2294,15 @@ async def api_save_ticker_feed(request: Request):
 
 @app.post("/api/agent/add-wb")
 async def api_agent_add_wb(request: Request):
-    """Proxy to Windows agent for adding ticker to Webull watchlist."""
+    """Legacy path — broker retired; forwards to TradingView add."""
     try:
         body = await request.json()
         ticker = str(body.get("ticker", "")).strip().upper()
         if not ticker:
             return JSONResponse({"ok": False, "error": "missing ticker"}, status_code=400)
-        
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post("http://localhost:8889/add-wb", json={"ticker": ticker})
+            resp = await client.post("http://localhost:8889/add-tv", json={"ticker": ticker})
             return JSONResponse(resp.json(), status_code=resp.status_code)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -2357,7 +2356,7 @@ async def download_wb_tv_agent(request: Request):
 
     README = f"""WB+TV Agent  v{version}
 {'=' * (14 + len(version))}
-Runs on your Windows machine and automates adding tickers to Webull Desktop
+Runs on your Windows machine and automates adding tickers to desktop broker
 and TradingView when an alert fires on the Brasfield Momentum dashboard.
 
 Setup

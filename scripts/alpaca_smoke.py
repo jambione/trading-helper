@@ -62,7 +62,7 @@ def main():
         "alpaca_poll_sec": 0.5,
     }
 
-    from webull_bridge.providers.alpaca import (
+    from trade_bridge.providers.alpaca import (
         AlpacaBroker, AlpacaMarketData, quote_to_book,
     )
 
@@ -116,7 +116,7 @@ def main():
               f"touch_skew={book.imbalance:.2f}")
 
     asyncio.run(run())
-    print("\nOK — safe to set config/webull_bridge.json "
+    print("\nOK — safe to set config/trade_bridge.json "
           "provider (or broker_provider / market_data_provider) to \"alpaca\"")
 
 

@@ -1,20 +1,15 @@
 """Real-position feed: publishes broker holdings for the monitors.
 
-Polls WebullBroker.positions() and writes position_state.json at the repo
-root (same drop-file pattern as l2_state.json). The webull-l2 monitor uses
-it to anchor exit signals (take-profit / trail / stop) to the actual fill
-price instead of a virtual paper entry, and the TradingView monitor uses
-it to switch the master verdict from entry-mode to exit-mode.
+Polls AlpacaBroker.positions() and writes position_state.json at the repo
+root. Monitors use it to anchor exits to the actual fill price.
 
 Read-only: only calls positions(); never places or cancels orders.
 
 Runs two ways:
-  - embedded: the L2 monitor calls start_daemon(), so the feed lives and
-    dies with the monitor window (no separate process to forget)
-  - standalone: scripts/position_feed.py, for testing the broker link
+  - embedded: start_daemon() from a host process
+  - standalone: scripts/position_feed.py
 """
 import asyncio
-import json
 import logging
 import threading
 import time
@@ -22,14 +17,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_FILE = ROOT / "position_state.json"
+log = logging.getLogger(__name__)
 
 
 def have_keys(cfg: dict) -> bool:
-    return bool(cfg.get("webull_app_key") and cfg.get("webull_app_secret"))
+    return bool(cfg.get("alpaca_api_key") and cfg.get("alpaca_secret_key"))
 
 
 def write_state(positions: list, ok: bool, error: str = "") -> None:
-    # tmp + replace so a monitor never reads a half-written file
+    import json
     tmp = STATE_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({
         "ts": time.time(), "ok": ok, "error": error,
@@ -41,20 +37,16 @@ def write_state(positions: list, ok: bool, error: str = "") -> None:
 
 
 async def run(cfg: dict | None = None, quiet: bool = False) -> None:
-    from webull_bridge.config import load_config
-    from webull_bridge.providers.webull import WebullBroker
+    from trade_bridge.config import load_config
+    from trade_bridge.providers.alpaca import AlpacaBroker
 
     cfg = cfg or load_config()
     if not have_keys(cfg):
         if not quiet:
-            print("position feed: no Webull keys configured - not running")
+            print("position feed: no Alpaca keys configured - not running")
         return
-    if quiet:   # keep SDK log lines out of the monitor's live display
-        # ERROR is the level the SDK logs its rejected requests AT, so this
-        # silenced nothing; CRITICAL is what actually holds them back.
-        logging.getLogger("webull").setLevel(logging.CRITICAL)
 
-    broker = WebullBroker(cfg)
+    broker = AlpacaBroker(cfg)
     interval = float(cfg.get("position_poll_sec", 5.0))
     last: list | None = None
     if not quiet:
@@ -82,7 +74,7 @@ def start_daemon() -> bool:
     """Start the feed in a daemon thread (dies with the host process).
 
     Returns True if started, False when no keys are configured."""
-    from webull_bridge.config import load_config
+    from trade_bridge.config import load_config
     cfg = load_config()
     if not have_keys(cfg):
         return False

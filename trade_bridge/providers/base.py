@@ -1,6 +1,6 @@
 """Provider interfaces: market data (L2 depth) and broker (orders/positions).
 
-Both the mock simulator and the real Webull OpenAPI implementation conform
+Both the mock simulator and the real Alpaca implementation conform
 to these, so the engine and routes never care which one is running.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
-from webull_bridge.l2 import L2Book
+from trade_bridge.l2 import L2Book
 
 
 @dataclass

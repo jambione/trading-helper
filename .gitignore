@@ -46,18 +46,8 @@ tv-monitor/tv_panel_*.png
 tv-monitor/tv_test_window.png
 tv-monitor/tv_test_grid.png
 tv-monitor/tv_test_grid.txt
-webull-l2/l2_log.csv
-webull-l2/trades.csv
-webull-l2/*-old-*.csv
-webull-l2/ts_*.png
-webull-l2/test_locate_result.txt
-webull-l2/debug_*.png
-webull-l2/debug_*.txt
-webull-l2/test_region*.png
-webull-l2/test_window.png
-webull-l2/region_cache.json
-webull-l2/book_feed.log
-config/webull_bridge.json
 conf/
-webull_trade_sdk.log*
-webull_sdk.log*
+
+# flow monitor
+flow_monitor/flow_log.csv
+config/trade_bridge.json

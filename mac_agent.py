@@ -1,5 +1,5 @@
 """
-mac_agent.py — Local macOS agent for Webull + TradingView automation.
+mac_agent.py — Local macOS agent for TradingView automation.
 
 Run this on your Mac:
     bash mac_agent.sh          (recommended — checks deps first)
@@ -8,7 +8,7 @@ Run this on your Mac:
 The agent does two things:
   1. Watches the Brasfield Momentum dashboard for alerts (mention burst / BUY)
      and posts a native toast for each. By default it does NOT auto-add (so you
-     can run everything minimized) — click a toast to add that ticker to Webull
+     can run everything minimized) — click a toast to add that ticker to TradingView
      Desktop + TradingView. Set AUTO_ADD=1 for the old hands-free behavior
      (auto-adds on every burst/BUY, which steals window focus).
   2. Listens on http://localhost:8889 so the dashboard (and the toast click)
@@ -26,7 +26,6 @@ macOS prerequisites (one-time):
   - Grant Terminal (or your IDE) Accessibility access:
       System Settings → Privacy & Security → Accessibility → add Terminal ✓
   - pip install pyautogui
-  - Webull Desktop from the Mac App Store (optional — only needed for WB adds)
 
 The agent logs in automatically and refreshes the token before it expires —
 you never need to touch the token manually.
@@ -140,7 +139,7 @@ def _notify_mac(title: str, message: str, subtitle: str = "",
     Post a native macOS notification banner via BrasfieldNotifier.app.
 
     Sends one line of JSON to the notifier on 127.0.0.1:NOTIFIER_PORT. When
-    `ticker` is set, clicking the banner fires the add-to-TradingView+Webull
+    `ticker` is set, clicking the banner fires the add-to-TradingView
     workflow back on this agent (no browser tab opens). Fire-and-forget — never
     raises; if the notifier isn't running the alert is simply skipped (the
     terminal log line still prints at the call site).
@@ -214,61 +213,17 @@ def _ensure_app_open(app_name: str, bundle_path: str | None = None,
 
 
 # =============================================================================
-# Webull workflow
+# Webull workflow (retired)
 # =============================================================================
 
-WB_APP_NAME  = "Webull Desktop"
-WB_APP_PATHS = [
-    "/Applications/Webull Desktop.app",
-    str(Path.home() / "Applications" / "Webull Desktop.app"),
-]
-
-
 def _webull_installed() -> bool:
-    return any(Path(p).exists() for p in WB_APP_PATHS)
+    return False
 
 
 def workflow_add_wb(ticker: str) -> bool:
-    """
-    Open/focus Webull Desktop, switch to Stocks tab (Cmd+2),
-    type the ticker, then press Enter.
-    """
-    ticker = ticker.upper().strip()
-
-    if not _IS_MAC:
-        print(f"  [DRY RUN] ADD_WB → {ticker}")
-        return True
-
-    if not _webull_installed():
-        print("  ⏭  ADD_WB skipped — Webull Desktop not installed (Mac App Store)")
-        return False
-
-    if not _PAG_OK:
-        print("  ⏭  ADD_WB skipped — pyautogui not available")
-        return False
-
-    bundle = next((p for p in WB_APP_PATHS if Path(p).exists()), None)
-    print(f"  📊 ADD_WB → {ticker}")
-
-    if not _ensure_app_open(WB_APP_NAME, bundle):
-        print(f"  ❌ ADD_WB failed — could not open {WB_APP_NAME}")
-        return False
-
-    time.sleep(0.4)
-
-    # Option+2 → Stocks tab  (macOS Webull shortcut)
-    _pag.hotkey("option", "2")
-    time.sleep(0.5)
-
-    # Type ticker letter-by-letter — matches how TradingView input works on Mac
-    for letter in ticker:
-        _pag.press(letter.lower())
-        time.sleep(0.025)
-    time.sleep(0.5)
-    _pag.press("enter")
-
-    print(f"  ✅ ADD_WB done: {ticker}")
-    return True
+    """Retired — Webull Desktop integration removed. Use TradingView only."""
+    print("  ⏭  ADD_WB skipped — Webull integration retired (TradingView only)")
+    return False
 
 
 # =============================================================================
@@ -591,7 +546,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 "dashboard_url":    DASHBOARD_URL,
                 "polling":          True,
                 "brave_tv_tab":     BRAVE_TV_TAB,
-                "webull_installed": _webull_installed(),
+                "webull_installed": False,
                 "pyautogui_ok":     _PAG_OK,
                 "activated_count":  len(_activated),
             })
@@ -672,10 +627,7 @@ if __name__ == "__main__":
     print(f"  Add mode   : {'AUTO_ADD (hands-free, steals focus)' if AUTO_ADD else 'toast-click (run minimized)'}")
     print(f"  TV tab     : Cmd+{BRAVE_TV_TAB}")
     print(f"  pyautogui  : {'✓' if _PAG_OK else '✗ not installed — run: pip install pyautogui'}")
-    if _webull_installed():
-        print("  Webull     : detected ✓")
-    else:
-        print("  Webull     : not found — WB adds skipped (install from Mac App Store)")
+    print("  Webull     : retired (Alpaca only)")
     print(f"  Skip-add window: {ACTIVATED_TTL // 60} min after activation")
     print(f"{'='*56}")
     print()
@@ -693,7 +645,7 @@ if __name__ == "__main__":
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
     print("   GET  /health  → status")
     print("   GET  /add?ticker=NVDA&mode=both  → WB+TV (used by toast click)")
-    print("   POST /add-wb  {\"ticker\": \"NVDA\"}  → Webull Desktop")
+    print("   POST /add-wb  retired (use /add-tv)")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Cmd+{BRAVE_TV_TAB}, Option+W)")
     print("   Press Ctrl+C to stop.\n")
     try:

@@ -44,13 +44,13 @@ try:
 except Exception:                                       # noqa: BLE001
     session_line = None
 
-# optional Webull symbol-load workflow (repo root). The monitor runs fine
+# optional symbol-load workflow (repo root). The monitor runs fine
 # without it - non-Windows, or the automation deps aren't installed - in
 # which case the 1-4 hotkeys are simply disabled.
 try:
-    from windows_agent import workflow_add_wb
-except Exception:                                       # noqa: BLE001
-    workflow_add_wb = None
+    from windows_agent import workflow_add_tv
+except Exception:
+    workflow_add_tv = None
 
 if sys.platform == "win32":
     import ctypes
@@ -851,7 +851,7 @@ def drift5(tr: Trail) -> float | None:
 
 
 def read_l2_state() -> dict | None:
-    """Latest state published by the Webull L2 monitor (if running)."""
+    """Latest state published by the flow monitor (if running)."""
     try:
         d = json.loads(L2_STATE.read_text())
         if time.time() - d.get("ts", 0) > 10:
@@ -956,7 +956,7 @@ def squeeze_text(sq: dict | None) -> str:
 
 def leader_strip(lead: str | None, score: float | None,
                  l2_sym: str | None) -> Panel:
-    """Which chart deserves the Webull window right now."""
+    """Which chart deserves focus right now."""
     if not lead:
         return Panel(Align.center(
             "[dim]no bullish leader on the grid[/dim]"),
@@ -965,10 +965,10 @@ def leader_strip(lead: str | None, score: float | None,
     if score is not None:
         txt += f"  [green]{score:+.1f}[/green]"
     if l2_sym and not _sym_match(l2_sym, lead):
-        txt += (f"    [bold black on yellow]  SWITCH WEBULL → {lead}  [/]"
+        txt += (f"    [bold black on yellow]  SWITCH TV → {lead}  [/]"
                 f"  [dim]L2 is on {l2_sym}[/dim]")
     elif l2_sym:
-        txt += "    [dim]webull on target[/dim]"
+        txt += "    [dim]tv on target[/dim]"
     return Panel(Align.center(txt), border_style="cyan", padding=(0, 1))
 
 
@@ -1002,7 +1002,7 @@ def detail_table(s: Slot | None, hz: float, misses: int,
                  l2: dict | None = None, master: dict | None = None,
                  l2_note: str | None = None,
                  symbol: str | None = None) -> Table:
-    """Per-indicator readout for the focus slot (the chart the Webull
+    """Per-indicator readout for the focus slot (the chart the
     window is on, else the leader)."""
     star = s.star if s else None
     heart = s.heart if s else None
@@ -1199,8 +1199,8 @@ def read_slot(s: Slot, sct, t0: float) -> bool:
     return bool(star or heart or check or sq_info)
 
 
-class WebullHotkey:
-    """Press a slot number (1-9) to load that chart's symbol into Webull,
+class LoadHotkey:
+    """Press a slot number (1-9) to load that chart's symbol into TradingView,
     or SPACE to load the current grid leader, via the existing
     windows_agent workflow. A daemon thread reads the keys - so the render
     loop never blocks - and runs the send there too (it steals focus for
@@ -1211,7 +1211,7 @@ class WebullHotkey:
     SPACE = " "
 
     def __init__(self):
-        self.enabled = sys.platform == "win32" and workflow_add_wb is not None
+        self.enabled = sys.platform == "win32" and workflow_add_tv is not None
         self._by_key: dict[str, str] = {}
         self._leader: str | None = None
         self._status = ""
@@ -1256,14 +1256,14 @@ class WebullHotkey:
                     self._set("no leader to send")
                 continue
             where = "leader" if ch == self.SPACE else "chart"
-            self._set(f"sending {where} {sym} to Webull ...")
+            self._set(f"sending {where} {sym} to TradingView ...")
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    ok = workflow_add_wb(sym)
-                self._set(f"Webull now on {sym}" if ok
-                          else f"Webull send FAILED for {sym}")
+                    ok = workflow_add_tv(sym)
+                self._set(f"TradingView now on {sym}" if ok
+                          else f"TradingView send FAILED for {sym}")
             except Exception as e:                       # noqa: BLE001
-                self._set(f"Webull send error: {e}")
+                self._set(f"TradingView send error: {e}")
 
 
 def main():
@@ -1277,7 +1277,7 @@ def main():
     tracker = TVTracker(cfg, console)
     leader = LeaderTracker(float(cfg.get("leader_margin", 1.5)),
                            int(cfg.get("leader_confirm_reads", 5)))
-    hotkeys = WebullHotkey()
+    hotkeys = LoadHotkey()
 
     slots: list[Slot] = []
     logf, logw = open_log()
@@ -1321,7 +1321,7 @@ def main():
             if not ok_any:
                 misses += 1
 
-            # leader election: who deserves the Webull window
+            # leader election: who deserves focus
             scores = {s.symbol: s.score
                       for s in slots if s.symbol and s.res}
             lead = leader.update(scores)
@@ -1330,7 +1330,7 @@ def main():
                 _beep()
             prev_lead = lead
 
-            # bridge: the slot the Webull window is on gets the MASTER
+            # bridge: the slot the focused chart is on gets the MASTER
             # verdict (entry + position/exit logic); anywhere else the
             # leader strip tells you where to point it
             l2 = read_l2_state()
@@ -1394,7 +1394,7 @@ def main():
             if hotkeys.enabled:
                 st = hotkeys.status()
                 hint = (f"[dim]keys 1-{max(1, len(slots))}: load that chart "
-                        "into Webull   ·   space: load the leader[/dim]")
+                        "into TradingView   ·   space: load the leader[/dim]")
                 parts.append(Panel(
                     Align.center(hint + (f"     [bold green]{st}[/bold green]"
                                          if st else "")),

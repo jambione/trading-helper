@@ -11,9 +11,9 @@ import asyncio
 import logging
 from typing import Optional
 
-from webull_bridge.l2 import (L2Book, LongView, SignalEngine, WallTracker,
+from trade_bridge.l2 import (L2Book, LongView, SignalEngine, WallTracker,
                               market_bias, playbook, project_price)
-from webull_bridge.providers import build_providers
+from trade_bridge.providers import build_providers
 
 log = logging.getLogger(__name__)
 

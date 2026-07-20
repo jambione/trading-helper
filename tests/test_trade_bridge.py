@@ -1,14 +1,14 @@
-"""Tests for the webull_bridge package: engine stance transitions from
+"""Tests for the trade_bridge package: engine stance transitions from
 scripted book sequences, the order-value safety cap, and mock broker fills.
 """
 import asyncio
 
 import pytest
 
-from webull_bridge.config import DEFAULTS
-from webull_bridge.engine import SymbolEngine
-from webull_bridge.l2 import L2Book
-from webull_bridge.providers.mock import MockBroker, MockMarketData
+from trade_bridge.config import DEFAULTS
+from trade_bridge.engine import SymbolEngine
+from trade_bridge.l2 import L2Book
+from trade_bridge.providers.mock import MockBroker, MockMarketData
 
 
 def make_book(mid: float, imbalance: float, ts: float,
@@ -158,7 +158,7 @@ def test_mock_broker_limit_and_cancel(cfg):
 def test_auto_watch_sync(cfg):
     """sync_symbols keeps engines matched to the ticker list, respects the
     engine cap, and never drops a symbol a client is streaming."""
-    from webull_bridge.engine import BridgeManager
+    from trade_bridge.engine import BridgeManager
 
     async def run():
         m = BridgeManager({**cfg, "max_engines": 3})
@@ -180,36 +180,6 @@ def test_auto_watch_sync(cfg):
     asyncio.run(run())
 
 
-# ── webull depth payload parser ──────────────────────────────────────────
-
-
-def test_parse_depth_payload():
-    from webull_bridge.providers.webull import parse_depth_payload
-
-    payload = {
-        "symbol": "AAPL",
-        "asks": [{"price": "231.45", "size": "300"},
-                 {"price": "231.46", "size": "1,200"}],
-        "bids": [{"price": "231.44", "size": "500"},
-                 {"price": "231.43", "size": "800"}],
-    }
-    book = parse_depth_payload(payload)
-    assert book is not None
-    assert book.best_bid == 231.44 and book.best_ask == 231.45
-    assert book.bids[1] == (231.43, 800.0)
-    assert book.asks[1] == (231.46, 1200.0)
-
-    # askList/bidList spelling also parses
-    alt = {"askList": [{"price": 5.01, "size": 10}],
-           "bidList": [{"price": 5.00, "size": 20}]}
-    assert parse_depth_payload(alt) is not None
-
-    # crossed or empty books are rejected
-    crossed = {"asks": [{"price": "4.99", "size": "10"}],
-               "bids": [{"price": "5.00", "size": "10"}]}
-    assert parse_depth_payload(crossed) is None
-    assert parse_depth_payload({}) is None
-
 
 # ── order-value cap (route logic) ────────────────────────────────────────
 
@@ -218,12 +188,12 @@ def test_order_cap_rejection(cfg):
     """POST /api/broker/orders must reject orders above max_order_value."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import webull_bridge.routes as routes
+    import trade_bridge.routes as routes
 
     app = FastAPI()
     app.include_router(routes.router)
     routes._manager = None                # fresh manager with test cfg
-    import webull_bridge.config as bcfg
+    import trade_bridge.config as bcfg
     orig = bcfg.load_config
     bcfg.load_config = lambda: {**DEFAULTS, "max_order_value": 50.0}
     routes.load_config = bcfg.load_config

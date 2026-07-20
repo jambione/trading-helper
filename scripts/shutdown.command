@@ -3,8 +3,8 @@
 #
 #   1. Quit Discord (closes the alert window the OCR source reads)
 #   2. ./trading stop  → dashboard + signal engine + Discord OCR source + tunnel
-#   3. Kill the macOS TradingView/Webull agent (mac_agent.sh / mac_agent.py)
-#   4. (optional) Clean up TradingView + Webull watchlists — see commented section
+#   3. Kill the macOS TradingView agent (mac_agent.sh / mac_agent.py)
+#   4. (optional) Clean up TradingView + Alpaca watchlists — see commented section
 #
 # Source of truth lives in the repo at scripts/shutdown.command; a copy sits on the
 # Desktop for double-click convenience.
@@ -31,12 +31,12 @@ echo "      ✓ Discord closed."
 echo "[2/3] ./trading stop"
 ./trading stop
 
-# ── 3. Kill the macOS TradingView/Webull agent ────────────────────────────────
+# ── 3. Kill the macOS TradingView agent ────────────────────────────────
 echo "[3/3] Stopping mac_agent..."
 pkill -f "mac_agent.py" 2>/dev/null && echo "      ✓ mac_agent.py stopped." || echo "      • mac_agent.py was not running."
 pkill -f "mac_agent.sh" 2>/dev/null || true
 
-# ── 5. OPTIONAL: clean up TradingView + Webull watchlists ─────────────────────
+# ── 5. OPTIONAL: clean up TradingView + Alpaca watchlists ─────────────────────
 # There is no API for this yet — it would be UI keystroke automation against the
 # live apps, which is fragile. Fill in the exact keystrokes for your layout and
 # uncomment to enable. TEST CAREFULLY: select-all + delete in the wrong window is
@@ -56,12 +56,12 @@ pkill -f "mac_agent.sh" 2>/dev/null || true
 # end tell
 # APPLESCRIPT
 #
-# # --- Webull Desktop ---
+# # --- Alpaca Desktop ---
 # osascript <<'APPLESCRIPT'
-# tell application "Webull Desktop" to activate
+# tell application "Alpaca Desktop" to activate
 # delay 0.5
 # tell application "System Events"
-#     -- TODO: navigate to the watchlist and remove symbols (Webull has no bulk clear;
+#     -- TODO: navigate to the watchlist and remove symbols (Alpaca has no bulk clear;
 #     -- you typically right-click each symbol → Remove, or use the edit/manage view).
 # end tell
 # APPLESCRIPT

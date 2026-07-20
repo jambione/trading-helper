@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from webull_bridge.config import DEFAULTS
-from webull_bridge.providers.alpaca import (
+from trade_bridge.config import DEFAULTS
+from trade_bridge.providers.alpaca import (
     quote_to_book,
     _map_order,
     _map_order_status,
@@ -111,16 +111,16 @@ def test_paper_default():
 
 def test_build_providers_alpaca_branch():
     """Factory selects Alpaca classes when name is alpaca (ctors mocked)."""
-    import webull_bridge.providers as providers
+    import trade_bridge.providers as providers
 
     fake_md = object()
     fake_br = object()
     cfg = {**DEFAULTS, "provider": "alpaca",
            "alpaca_api_key": "PK_TEST", "alpaca_secret_key": "SECRET"}
 
-    with patch("webull_bridge.providers.alpaca.AlpacaMarketData",
+    with patch("trade_bridge.providers.alpaca.AlpacaMarketData",
                return_value=fake_md) as md_cls, \
-         patch("webull_bridge.providers.alpaca.AlpacaBroker",
+         patch("trade_bridge.providers.alpaca.AlpacaBroker",
                return_value=fake_br) as br_cls:
         md, br = providers.build_providers(cfg)
         assert md is fake_md
@@ -131,8 +131,8 @@ def test_build_providers_alpaca_branch():
 
 def test_build_providers_split_alpaca_broker_mock_md():
     """broker_provider=alpaca with mock market data still works."""
-    import webull_bridge.providers as providers
-    from webull_bridge.providers.mock import MockMarketData
+    import trade_bridge.providers as providers
+    from trade_bridge.providers.mock import MockMarketData
 
     fake_br = object()
     cfg = {**DEFAULTS, "provider": "mock",
@@ -140,7 +140,7 @@ def test_build_providers_split_alpaca_broker_mock_md():
            "market_data_provider": "mock",
            "alpaca_api_key": "PK_TEST", "alpaca_secret_key": "SECRET"}
 
-    with patch("webull_bridge.providers.alpaca.AlpacaBroker",
+    with patch("trade_bridge.providers.alpaca.AlpacaBroker",
                return_value=fake_br):
         md, br = providers.build_providers(cfg)
         assert isinstance(md, MockMarketData)
@@ -151,7 +151,7 @@ def test_build_providers_split_alpaca_broker_mock_md():
 
 
 def test_alpaca_broker_account_positions_orders():
-    from webull_bridge.providers.alpaca import AlpacaBroker
+    from trade_bridge.providers.alpaca import AlpacaBroker
 
     fake_client = MagicMock()
     fake_client.get_account.return_value = SimpleNamespace(
@@ -171,8 +171,8 @@ def test_alpaca_broker_account_positions_orders():
         ),
     ]
 
-    with patch("webull_bridge.providers.alpaca._require_sdk"), \
-         patch("webull_bridge.providers.alpaca._credentials",
+    with patch("trade_bridge.providers.alpaca._require_sdk"), \
+         patch("trade_bridge.providers.alpaca._credentials",
                return_value=("K", "S")), \
          patch("alpaca.trading.client.TradingClient",
                return_value=fake_client):
@@ -195,7 +195,7 @@ def test_alpaca_broker_account_positions_orders():
 
 
 def test_alpaca_broker_place_and_cancel():
-    from webull_bridge.providers.alpaca import AlpacaBroker
+    from trade_bridge.providers.alpaca import AlpacaBroker
 
     fake_client = MagicMock()
     fake_client.submit_order.return_value = SimpleNamespace(
@@ -206,8 +206,8 @@ def test_alpaca_broker_place_and_cancel():
     )
     fake_client.cancel_order_by_id.return_value = None
 
-    with patch("webull_bridge.providers.alpaca._require_sdk"), \
-         patch("webull_bridge.providers.alpaca._credentials",
+    with patch("trade_bridge.providers.alpaca._require_sdk"), \
+         patch("trade_bridge.providers.alpaca._credentials",
                return_value=("K", "S")), \
          patch("alpaca.trading.client.TradingClient",
                return_value=fake_client):
@@ -227,7 +227,7 @@ def test_alpaca_broker_place_and_cancel():
 
 
 def test_alpaca_market_data_fetch():
-    from webull_bridge.providers.alpaca import AlpacaMarketData
+    from trade_bridge.providers.alpaca import AlpacaMarketData
 
     quote = SimpleNamespace(
         bid_price=10.0, ask_price=10.02, bid_size=100, ask_size=80,
@@ -235,8 +235,8 @@ def test_alpaca_market_data_fetch():
     fake_data = MagicMock()
     fake_data.get_stock_latest_quote.return_value = {"AAPL": quote}
 
-    with patch("webull_bridge.providers.alpaca._require_sdk"), \
-         patch("webull_bridge.providers.alpaca._credentials",
+    with patch("trade_bridge.providers.alpaca._require_sdk"), \
+         patch("trade_bridge.providers.alpaca._credentials",
                return_value=("K", "S")), \
          patch("alpaca.data.historical.StockHistoricalDataClient",
                return_value=fake_data):

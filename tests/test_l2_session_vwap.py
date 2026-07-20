@@ -19,9 +19,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "webull-l2"))
+sys.path.insert(0, str(ROOT))
 
-from l2_core import (VWAP_MIN_AGE_DEFAULT, SessionVWAP,  # noqa: E402
+from flow_core.core import (VWAP_MIN_AGE_DEFAULT, SessionVWAP,  # noqa: E402
                      _session_anchor, confidence)
 
 ET = ZoneInfo("America/New_York")

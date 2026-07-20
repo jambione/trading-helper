@@ -18,7 +18,7 @@ BRAVE_TV_TAB=1
 
 # Add behavior on alerts:
 #   0 (default) = toast-only. Burst/BUY just pops a toast; click it to add the
-#                 ticker to Webull + TradingView. Nothing steals window focus,
+#                 ticker to TradingView. Nothing steals window focus,
 #                 so you can run everything minimized.
 #   1           = hands-free. Auto-adds to WB+TV on every burst/BUY (the old
 #                 behavior) — this pulls those apps to the foreground.

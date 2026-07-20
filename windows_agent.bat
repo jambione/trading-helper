@@ -6,7 +6,7 @@ REM  Brasfield Trading — Windows Local Agent
 REM ============================================================================
 REM
 REM  This agent lets the trading dashboard's Add button (and burst/BUY alerts)
-REM  control Webull Desktop and TradingView on this PC.
+REM  control TradingView Desktop and TradingView on this PC.
 REM
 REM  ── TradingView setup (do this once before running the agent) ─────────────
 REM    1. Open Brave or Google Chrome.
@@ -17,9 +17,9 @@ REM       (Ctrl+1 must switch to it). Leave the window open while trading.
 REM    5. If you keep TradingView on a different tab number, edit BRAVE_TV_TAB
 REM       in your .env file to match (Ctrl+2 = 2, Ctrl+3 = 3, etc.).
 REM
-REM  ── Webull setup ──────────────────────────────────────────────────────────
-REM    Install Webull Desktop if you want auto-add to a Webull watchlist.
-REM    If Webull Desktop is not installed, the agent skips the Webull step
+REM  ── TradingView setup ──────────────────────────────────────────────────────────
+REM    Install TradingView Desktop if you want auto-add to a TradingView watchlist.
+REM    If TradingView Desktop is not installed, the agent skips the TradingView step
 REM    and only adds tickers to TradingView.
 REM ============================================================================
 

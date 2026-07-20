@@ -3,9 +3,6 @@ from .base import Account, BrokerProvider, MarketDataProvider, Order, Position
 
 def _make_market_data(name: str, cfg: dict):
     name = (name or "mock").lower()
-    if name == "webull":
-        from .webull import WebullMarketData
-        return WebullMarketData(cfg)
     if name == "alpaca":
         from .alpaca import AlpacaMarketData
         return AlpacaMarketData(cfg)
@@ -15,9 +12,6 @@ def _make_market_data(name: str, cfg: dict):
 
 def _make_broker(name: str, cfg: dict, md):
     name = (name or "mock").lower()
-    if name == "webull":
-        from .webull import WebullBroker
-        return WebullBroker(cfg)
     if name == "alpaca":
         from .alpaca import AlpacaBroker
         return AlpacaBroker(cfg)
@@ -34,8 +28,7 @@ def build_providers(cfg: dict):
 
     cfg["provider"] names both halves; cfg["market_data_provider"] /
     cfg["broker_provider"] override either one independently (e.g. real
-    Webull broker for positions/orders while depth stays mock/scraped
-    because the account has no OpenAPI quotes subscription).
+    Alpaca broker for positions/orders while market data stays mock).
     """
     default = cfg.get("provider", "mock")
     md_name = cfg.get("market_data_provider") or default

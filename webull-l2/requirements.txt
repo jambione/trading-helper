@@ -1,7 +1,0 @@
-mss
-opencv-python
-numpy
-pytesseract
-rich
-plyer
-pygetwindow

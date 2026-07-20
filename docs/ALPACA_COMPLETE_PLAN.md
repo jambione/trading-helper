@@ -40,7 +40,7 @@ These were open during planning; they are now **defaults**. Change only with an 
 | D9 | Package names | Shared math → `flow_core/`. Terminal process → `flow_monitor/`. Do not put new code under `webull-l2/`. |
 | D10 | Discord OCR | **Out of scope** — stays as ticker source. Not Webull. |
 | D11 | Phase 4 priority | (1) brackets/OCO, (2) screener movers, (3) trailing stops, (4) Alpaca stream for engine / drop Finnhub, (5) news, (6) crypto/options later. |
-| D12 | Webull OpenAPI provider | Keep `webull_bridge/providers/webull.py` unreachable for one release after flip, then delete in Phase 3. |
+| D12 | Webull OpenAPI provider | Keep `trade_bridge/providers/webull.py` unreachable for one release after flip, then delete in Phase 3. |
 
 ---
 
@@ -50,7 +50,7 @@ These were open during planning; they are now **defaults**. Change only with an 
 
 | Surface | Location | Role |
 |---|---|---|
-| Bridge provider | `webull_bridge/providers/webull.py`, config | Orders/positions/account + depth for Mobile Trader |
+| Bridge provider | `trade_bridge/providers/webull.py`, config | Orders/positions/account + depth for Mobile Trader |
 | OCR desktop monitors | `webull-l2/*`, `momentum-monitor/watchlist_ocr.py` | L2, tape, movers scrape |
 | GUI automation | `windows_agent.py`, `mac_agent.py`, `transcription/workflows.py` (`workflow_add_wb`) | Type tickers into Webull Desktop |
 | Window bookkeeping | `position_windows.py` | “Webull L2 Monitor” console position |
@@ -65,14 +65,14 @@ These were open during planning; they are now **defaults**. Change only with an 
 
 ### 2.3 Landmine (do not delete blindly)
 
-`webull_bridge/l2.py` imports pure signal logic from `webull-l2/l2_core.py` via `sys.path` hack.  
-`l2_core.py` has **no OCR dependency**. Mobile Trader (`SymbolEngine` in `webull_bridge/engine.py`) depends on it.
+`trade_bridge/l2.py` imports pure signal logic from `webull-l2/l2_core.py` via `sys.path` hack.  
+`l2_core.py` has **no OCR dependency**. Mobile Trader (`SymbolEngine` in `trade_bridge/engine.py`) depends on it.
 
 **Order:** relocate math → update import → then delete OCR files.
 
 ### 2.4 Provider factory today
 
-`webull_bridge/providers/__init__.py`: only `"webull"` vs mock. No `"alpaca"` branch yet.
+`trade_bridge/providers/__init__.py`: only `"webull"` vs mock. No `"alpaca"` branch yet.
 
 ---
 
@@ -87,7 +87,7 @@ These were open during planning; they are now **defaults**. Change only with an 
            ┌─────────────────────┼─────────────────────┐
            ▼                     ▼                     ▼
   ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────┐
-  │ alpaca_trader  │  │ flow_monitor     │  │ webull_bridge      │
+  │ alpaca_trader  │  │ flow_monitor     │  │ trade_bridge      │
   │ signal_engine   │  │ (terminal UI)    │  │ providers/alpaca   │
   │ (strategy)      │  │ quotes+trades    │  │ depth-1 books      │
   └─────────────────┘  └────────┬─────────┘  │ + broker orders    │
@@ -225,7 +225,7 @@ flow_monitor/
 | Stance / confidence | Prefer same pillars once tape is available to bridge; v1 bridge may ship quote-only trend/bias first, then add tape metrics |
 | Playbook | Rewrite reasons without ask_break/bid_crack from multi-level walls |
 
-**Provider work:** `webull_bridge/providers/alpaca.py`
+**Provider work:** `trade_bridge/providers/alpaca.py`
 
 - `AlpacaBroker` — wrap `TradingClient` (mirror patterns in `alpaca_trader.py`).
 - `AlpacaMarketData` — latest quote → depth-1 `L2Book`; poll or stream.
@@ -255,7 +255,7 @@ Do not reorder deletions ahead of landmine relocation. Do not implement Phase 4 
 ### Phase 2 — Landmine relocation
 
 1. Create `flow_core/` with pure math extracted from `webull-l2/l2_core.py` (split modules optional; single module OK for first cut).
-2. Update `webull_bridge/l2.py` imports; remove `sys.path` hack.
+2. Update `trade_bridge/l2.py` imports; remove `sys.path` hack.
 3. Temporary re-export from old path if needed so OCR still runs until Phase 5.
 4. Tests that import bridge still pass.
 
@@ -431,8 +431,8 @@ Do **not** start with deleting `webull-l2/`.
 |---|---|
 | Planning completed | 2026-07-20 |
 | Supersedes | Conflicts with `ALPACA_MIGRATION_ROADMAP.md` resolve **in favor of this file** |
-| Implementation status | **Phase 1 done** on branch `feature/alpaca-migration` (provider + smoke + tests). Phases 2–6 not started. |
-| Next user action | Paper-soak Mobile Trader with `"provider": "alpaca"`, then Phase 2 landmine (`flow_core`) |
+| Implementation status | **Webull removed** on branch `feature/alpaca-migration`: `flow_core`, `trade_bridge` (was webull_bridge), Alpaca provider, `flow_monitor`, OCR/`webull-l2` deleted, agents TV-only. Phase 6 extras (brackets etc.) still open. |
+| Next user action | Paper-soak with `"provider": "alpaca"` in `config/trade_bridge.json`; run `python3 -m flow_monitor.main` |
 
 ---
 

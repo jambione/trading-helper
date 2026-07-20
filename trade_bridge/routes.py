@@ -12,8 +12,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from auth import is_auth_required, verify_token
-from webull_bridge.config import load_config
-from webull_bridge.engine import BridgeManager
+from trade_bridge.config import load_config
+from trade_bridge.engine import BridgeManager
 
 log = logging.getLogger(__name__)
 router = APIRouter()

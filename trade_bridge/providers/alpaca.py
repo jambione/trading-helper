@@ -3,13 +3,13 @@
 Market data: latest NBBO quote → depth=1 L2Book (no multi-level depth).
 Broker: TradingClient for orders / positions / account.
 
-Activated by config/webull_bridge.json {"provider": "alpaca"} plus
+Activated by config/trade_bridge.json {"provider": "alpaca"} plus
 ALPACA_API_KEY / ALPACA_SECRET_KEY (same env vars as alpaca_trader.py).
 Optional: alpaca_paper (default true), alpaca_poll_sec, alpaca_data_feed
 (IEX | SIP).
 
 All SDK calls are blocking HTTP, so they run in the default executor —
-same pattern as WebullBroker / WebullMarketData.
+same pattern as the mock providers (blocking SDK → executor).
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import os
 import time
 from typing import AsyncIterator, Optional
 
-from webull_bridge.l2 import L2Book
+from trade_bridge.l2 import L2Book
 from .base import Account, BrokerProvider, MarketDataProvider, Order, Position
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def _credentials(cfg: dict) -> tuple[str, str]:
         raise RuntimeError(
             "alpaca provider needs ALPACA_API_KEY / ALPACA_SECRET_KEY "
             "(env vars or alpaca_api_key/alpaca_secret_key in "
-            "config/webull_bridge.json)")
+            "config/trade_bridge.json)")
     return key, secret
 
 
@@ -180,8 +180,7 @@ class AlpacaMarketData(MarketDataProvider):
     """Top-of-book via StockLatestQuoteRequest polling.
 
     Alpaca standard plans do not expose multi-level depth; this always
-    yields depth=1 books (same shape Webull falls back to without
-    Advanced Quotes).
+    yields depth=1 books only.
     """
 
     def __init__(self, cfg: dict):
@@ -190,8 +189,7 @@ class AlpacaMarketData(MarketDataProvider):
         key, secret = _credentials(cfg)
         self.cfg = cfg
         self.client = StockHistoricalDataClient(key, secret)
-        self.poll = float(cfg.get("alpaca_poll_sec",
-                                  cfg.get("webull_poll_sec", 0.5)))
+        self.poll = float(cfg.get("alpaca_poll_sec", 0.5))
         self.max_rps = float(cfg.get("alpaca_max_rps", 10.0))
         self._feed_kw = _feed_kw(cfg)
         self._last: dict[str, L2Book] = {}
@@ -278,9 +276,8 @@ class AlpacaMarketData(MarketDataProvider):
 class AlpacaBroker(BrokerProvider):
     """Order/account access via alpaca.trading.client.TradingClient.
 
-    Mirrors the qty-based place_order interface of WebullBroker (bridge
-    routes pass share qty, not notional). Paper vs live is cfg alpaca_paper
-    (default True).
+    Qty-based place_order (bridge routes pass share qty, not notional).
+    Paper vs live is cfg alpaca_paper (default True).
     """
 
     def __init__(self, cfg: dict):

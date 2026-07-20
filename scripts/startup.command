@@ -3,8 +3,8 @@
 #
 #   1. ./trading start  → dashboard + signal engine + Discord OCR source + Cloudflare tunnel
 #   2. Open Discord → Stock Scanners & Alerts so the alert channel is on screen for OCR
-#   3. Arrange windows  → Brave left, Webull right, Terminal minimized (runs in background)
-#   4. Launch the macOS TradingView/Webull agent (mac_agent.sh).
+#   3. Arrange windows  → Brave left, Alpaca right, Terminal minimized (runs in background)
+#   4. Launch the macOS TradingView agent (mac_agent.sh).
 #      This stays in the foreground and keeps THIS window open — leave it running.
 #
 # Source of truth lives in the repo at scripts/startup.command; a copy sits on the
@@ -80,9 +80,9 @@ echo ""
 echo "[4/5] Scheduling window arrangement in 6 s..."
 bash "$REPO/scripts/arrange_windows.sh" 6 &
 
-# ── 5. macOS TradingView/Webull agent (foreground — keeps this window open) ────
+# ── 5. macOS TradingView agent (foreground — keeps this window open) ────
 echo ""
-echo "[5/5] Launching macOS TradingView/Webull agent (mac_agent.sh)..."
+echo "[5/5] Launching macOS TradingView agent (mac_agent.sh)..."
 echo "      Keep this window open while trading. Close it (or Ctrl+C) to stop the agent."
 echo ""
 cd "$REPO"

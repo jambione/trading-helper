@@ -276,7 +276,7 @@ FIRED_FRESH = 120.0   # a squeeze fire only tilts the score this long
 
 def bullish_score(verdict: str, trend: dict | None = None,
                   sq: dict | None = None) -> float:
-    """How much this chart deserves the Webull window. The combine()
+    """How much this chart deserves the focus chart. The combine()
     verdict is the base; the 5m trend and squeeze state tilt it.
     Range roughly -12..+12."""
     score = 0.0
@@ -296,7 +296,7 @@ def bullish_score(verdict: str, trend: dict | None = None,
 
 
 class LeaderTracker:
-    """Names the chart that deserves the Webull window. A challenger must
+    """Names the chart that deserves the focus chart. A challenger must
     beat the sitting leader by `margin` for `confirm` consecutive reads —
     flapping between two hot charts is worse than being five seconds
     late. A vacant seat (no leader, leader left the grid, or leader went
@@ -333,7 +333,7 @@ class LeaderTracker:
 # -------------------------------------------------------------- verdict -----
 
 def master_verdict(tv_verdict: str, l2: dict | None) -> dict | None:
-    """Combine the TradingView verdict (the setup) with Webull L2 order
+    """Combine the TradingView verdict (the setup) with flow order
     flow (the trigger). l2 = {'bias': -100..100, 'play': playbook verdict}.
 
     EXECUTE only when both agree; a bullish chart with a selling tape is

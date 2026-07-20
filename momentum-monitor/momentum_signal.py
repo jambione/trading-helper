@@ -6,19 +6,19 @@ have to keep the webpage open in another tab. Newest momentum names sit on
 top; a fresh arrival or a mention burst beeps and pops a desktop toast.
 
 Press the number shown beside a symbol (1-9) to load that ticker into BOTH
-TradingView and Webull Desktop, using the existing windows_agent workflows.
+TradingView, using the existing windows_agent workflows.
 SPACE loads the top (newest) symbol.
 
-The header strip shows the top movers OCR'd straight off the Webull
+The header strip (movers) was OCR and is retired.
 watchlist sidebar (symbol + (pre)market percent), scraped the same way the
 L2 book and Time&Sales are — see watchlist_ocr.py. It replaces the old
 branding header to keep the monitor short; the FEED DOWN warning moved
-into it. Needs the webull-l2 OCR deps (cv2/mss/pytesseract) and the Webull
+Movers strip retired with OCR.
 window on screen; without them the classic header renders instead.
 
 Run:  python momentum_signal.py       (repo .venv has rich + plyer)
 
-Windows-only for the hotkey / Webull-TV loading; on other platforms it still
+Windows-only for the hotkey / TradingView loading; on other platforms it still
 renders the list, just without the load hotkeys.
 """
 from __future__ import annotations
@@ -80,7 +80,9 @@ try:
 except Exception:                                          # noqa: BLE001
     _plyer = None
 
-# Webull watchlist scraper (same OCR stack as webull-l2); import never
+# Webull watchlist scraper retired
+WatchlistReader = None
+
 # hard-fails — without cv2/mss/pytesseract the reader reports itself off.
 try:
     from watchlist_ocr import WatchlistReader, top_movers
@@ -100,7 +102,7 @@ DEFAULTS = {
     "alert_buy": False,       # beep/toast when signal status hits buy-zone
     "alert_cooldown": 60.0,   # per-symbol, per-alert-type cooldown
     "desktop_toast": True,    # plyer desktop notification alongside the beep
-    "watchlist_enabled": True,  # OCR the Webull watchlist sidebar for movers
+    "watchlist_enabled": False,  # OCR movers retired
     "watchlist_poll": 2.0,    # seconds between watchlist captures
     "watchlist_top": 3,       # movers shown in the bottom strip
     "watchlist_rank": "gainers",  # "gainers" (signed %) or "abs" (magnitude)
@@ -201,11 +203,11 @@ class Alerter:
                 pass
 
 
-# ── hotkeys: load a symbol into TradingView + Webull ─────────────────────────
+# ── hotkeys: load a symbol into TradingView ─────────────────────────
 
 class LoadHotkey:
     """Press a slot number (1-9) to load that row's symbol into BOTH
-    TradingView and Webull Desktop; SPACE loads the top (newest) row. A
+    TradingView; SPACE loads the top (newest) row. A
     daemon thread reads keys and runs the load off the render loop (each
     load steals focus for ~2s and prints, which we swallow so the Rich
     display stays clean). Windows-only; a no-op if the workflows didn't
@@ -265,11 +267,11 @@ class LoadHotkey:
                     self._busy = False
 
     def _load(self, sym: str):
-        self._set(f"loading {sym} into TradingView + Webull …")
+        self._set(f"loading {sym} into TradingView …")
         wb_ok = tv_ok = False
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                wb_ok = bool(workflow_add_wb(sym))
+                wb_ok = False  # Webull retired
                 time.sleep(0.5)
                 tv_ok = bool(workflow_add_tv(sym))
         except Exception as e:                             # noqa: BLE001
@@ -435,7 +437,7 @@ def footer_panel(alerter: Alerter, hotkeys: LoadHotkey,
         lines.append("[dim]" + "   ·   ".join(alerter.recent[:3]) + "[/dim]")
     if hotkeys.enabled:
         hint = (f"[dim]keys 1-{hotkey_slots}: load that symbol into "
-                "TradingView + Webull   ·   space: load the top symbol[/dim]")
+                "TradingView   ·   space: load the top symbol[/dim]")
         st = hotkeys.status()
         if st:
             hint += f"     [bold green]{st}[/bold green]"
@@ -449,16 +451,16 @@ def footer_panel(alerter: Alerter, hotkeys: LoadHotkey,
 
 def movers_panel(snap: dict | None, now: float, top: int,
                  rank: str, stale: bool = False) -> Panel:
-    """Header strip: top watchlist movers straight off the Webull sidebar.
+    """Header strip: top watchlist movers straight off the movers strip.
     Sits where the branding header used to (the movers earn the row, the
     URL didn't), so the FEED DOWN warning renders here too — it must never
     be hidden by the swap."""
     label = "[bold magenta]WB watchlist[/bold magenta]"
     if snap is None or not snap.get("on"):
-        body = (f"{label}   [dim]scraper off (needs the webull-l2 OCR deps: "
+        body = (f"{label}   [dim]movers retired (OCR removed)"
                 "cv2 / mss / pytesseract)[/dim]")
     elif not snap["rows"]:
-        why = ("waiting for the Webull window / watchlist header"
+        why = ("movers strip retired"
                if not snap["located"] else "no readable rows yet")
         body = f"{label}   [dim]{why}[/dim]"
     else:

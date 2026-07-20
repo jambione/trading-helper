@@ -17,7 +17,7 @@ ROW_RE = re.compile(
     re.IGNORECASE,
 )
 
-# In Webull's L2 panel the bid and ask price columns are nearly touching,
+# In the L2 panel the bid and ask price columns are nearly touching,
 # so OCR often merges them into ONE token: "1.3301.340". This matches a
 # row whose middle token contains two dots (two concatenated prices).
 MERGED_RE = re.compile(
@@ -115,7 +115,7 @@ class L2Book:
 
 
 def parse_l2_text(text: str) -> L2Book | None:
-    """Parse raw OCR text of the Webull L2 panel (Size Bid | Ask Size columns).
+    """Parse raw OCR text of an L2 panel (legacy) (Size Bid | Ask Size columns).
 
     Tolerant of OCR noise: skips malformed lines, then sanity-checks ordering.
     Returns None if fewer than 3 clean levels survive.
@@ -521,7 +521,7 @@ class BookFlow:
     def _level_gap(levels: list) -> float | None:
         """Median spacing between adjacent visible levels - the book's own
         grid, measured rather than assumed (it is not always the tick:
-        Webull aggregates, and gaps are common in thin names)."""
+        feed aggregates, and gaps are common in thin names)."""
         if len(levels) < 2:
             return None
         gaps = sorted(abs(levels[i + 1][0] - levels[i][0])
@@ -803,13 +803,13 @@ def signal_quality(*, frame_age: float | None = None,
     The banner's pillars are only as good as their feed, and the feed has
     failure modes the pillars can't see - above all the frame-skip path,
     which re-stamps unchanged pixels as a fresh book, so a halted stock or
-    an obscured Webull panel would keep voting trend+vwap forever. This
+    an obscured panel would keep voting trend+vwap forever. This
     function is where that staleness (and OCR misses, glitch drops,
     OCR-vs-stream disagreement, a dead tape, a wide spread) becomes a
     visible penalty instead of silent rot.
 
     Multiplicative: each problem scales q down independently. `sdk_book`
-    marks a book that came from the Webull OpenAPI feed rather than OCR -
+    marks a book that came from the API feed rather than OCR -
     the book-side penalties (frozen frame, OCR, glitches, ref deviation)
     don't apply; tape and spread penalties still do (the tape is OCR
     either way, and a wide spread is a market fact, not a feed artifact).
