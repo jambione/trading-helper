@@ -51,3 +51,4 @@ conf/
 # flow monitor
 flow_monitor/flow_log.csv
 config/trade_bridge.json
+active_symbol.json

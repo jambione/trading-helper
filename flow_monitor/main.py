@@ -68,6 +68,17 @@ def main():
     args = ap.parse_args()
 
     focus = args.symbol.upper()
+    # Prefer desk focus if momentum monitor set active_symbol.json
+    try:
+        import json as _json
+        _as = Path(__file__).resolve().parent.parent / "active_symbol.json"
+        if _as.exists():
+            _sym = (_json.loads(_as.read_text()) or {}).get("symbol")
+            if _sym and args.symbol == (load_cfg().get("symbol") or "AAPL"):
+                # only auto-override when user left default symbol
+                focus = str(_sym).upper()
+    except Exception:
+        pass
     feed = "IEX"  # free tier only (SIP needs paid Alpaca data plan)
     watch = [s.strip().upper() for s in str(args.watch).split(",") if s.strip()]
     if focus not in watch:

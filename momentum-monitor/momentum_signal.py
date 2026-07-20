@@ -1,33 +1,24 @@
-"""Momentum monitor — the Brasfield Momentum watchlist in your terminal.
+"""Momentum desk monitor — watchlist + TradingView load + Alpaca trade keys.
 
-Polls the dashboard's /api/state feed (the same data as
-trading.jbrasfield.com) and shows the live momentum tickers so you don't
-have to keep the webpage open in another tab. Newest momentum names sit on
-top; a fresh arrival or a mention burst beeps and pops a desktop toast.
+Polls the dashboard /api/state feed and shows live momentum tickers.
+Cross-platform (macOS + Windows):
 
-Press the number shown beside a symbol (1-9) to load that ticker into BOTH
-TradingView, using the existing windows_agent workflows.
-SPACE loads the top (newest) symbol.
+  1-9     focus that row + load TradingView
+  SPACE   focus newest + load TradingView
+  B       buy focused symbol (Alpaca paper/live via TRADER_MODE)
+  S       sell / close focused symbol
 
-The header strip (movers) was OCR and is retired.
-watchlist sidebar (symbol + (pre)market percent), scraped the same way the
-L2 book and Time&Sales are — see watchlist_ocr.py. It replaces the old
-branding header to keep the monitor short; the FEED DOWN warning moved
-Movers strip retired with OCR.
-window on screen; without them the classic header renders instead.
+Focused symbol is written to repo root active_symbol.json.
 
-Run:  python momentum_signal.py       (repo .venv has rich + plyer)
-
-Windows-only for the hotkey / TradingView loading; on other platforms it still
-renders the list, just without the load hotkeys.
+Run (from repo root or this folder):
+  python3 momentum-monitor/momentum_signal.py
+  python3 momentum_signal.py
 """
 from __future__ import annotations
 
 import contextlib
-import io
 import json
 import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -39,37 +30,29 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-# DPI awareness MUST be set before windows_agent imports pyautogui, which
-# claims system-DPI-aware at import and locks the process there (awareness
-# is set-once). Under system-aware, GetWindowRect returns virtualized
-# coordinates on mixed-scaling multi-monitor setups (e.g. 1.5x off when the
-# primary runs 150%), so the watchlist scraper's capture region lands on
-# the wrong pixels and never finds the sidebar. Per-monitor v2 keeps window
-# rects, screen grabs, AND pyautogui clicks in the same physical-pixel
-# space. Same block as l2_signal.py, which never faces this only because
-# its process doesn't import pyautogui.
+HERE = Path(__file__).parent
+ROOT = HERE.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(HERE))
+
 if sys.platform == "win32":
     import ctypes
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v2
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:                                      # noqa: BLE001
         with contextlib.suppress(Exception):
             ctypes.windll.user32.SetProcessDPIAware()
 
-# windows_agent (repo root) owns the dashboard auth + the WB/TV load
-# workflows. Import is side-effect-free (its server/listener only start under
-# __main__), so we borrow the pieces we need. On a box without the automation
-# deps the load hotkeys simply switch off and the list still renders.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Dashboard auth helper (optional — Windows or Mac agent)
+wa = None
 try:
-    import windows_agent as wa
-    workflow_add_wb = wa.workflow_add_wb
-    workflow_add_tv = wa.workflow_add_tv
+    if sys.platform == "darwin":
+        import mac_agent as wa
+    elif sys.platform == "win32":
+        import windows_agent as wa
 except Exception:                                          # noqa: BLE001
     wa = None
-    workflow_add_wb = workflow_add_tv = None
 
-# shared session clock (repo root) — optional
 try:
     from session_clock import session_line
 except Exception:                                          # noqa: BLE001
@@ -80,32 +63,26 @@ try:
 except Exception:                                          # noqa: BLE001
     _plyer = None
 
-# Webull watchlist scraper retired
-WatchlistReader = None
+import desk_actions as desk
+from desk_hotkeys import DeskHotkeys
 
-# hard-fails — without cv2/mss/pytesseract the reader reports itself off.
-try:
-    from watchlist_ocr import WatchlistReader, top_movers
-except Exception:                                          # noqa: BLE001
-    WatchlistReader = top_movers = None
+WatchlistReader = top_movers = None  # OCR movers retired
 
-HERE = Path(__file__).parent
 CONFIG_PATH = HERE / "momentum_config.json"
 
-# defaults — override any of these in momentum_config.json
 DEFAULTS = {
-    "poll_interval": 2.0,     # seconds between /api/state polls
-    "hotkey_slots": 9,        # rows that get a load number (1-9 max)
-    "new_ttl": 120.0,         # seconds a symbol wears the NEW badge / stays on top
-    "alert_new": True,        # beep/toast when a symbol enters the list
-    "alert_burst": True,      # beep/toast on a mention-burst rising edge
-    "alert_buy": False,       # beep/toast when signal status hits buy-zone
-    "alert_cooldown": 60.0,   # per-symbol, per-alert-type cooldown
-    "desktop_toast": True,    # plyer desktop notification alongside the beep
-    "watchlist_enabled": False,  # OCR movers retired
-    "watchlist_poll": 2.0,    # seconds between watchlist captures
-    "watchlist_top": 3,       # movers shown in the bottom strip
-    "watchlist_rank": "gainers",  # "gainers" (signed %) or "abs" (magnitude)
+    "poll_interval": 2.0,
+    "hotkey_slots": 9,
+    "new_ttl": 120.0,
+    "alert_new": True,
+    "alert_burst": True,
+    "alert_buy": False,
+    "alert_cooldown": 60.0,
+    "desktop_toast": True,
+    "watchlist_enabled": False,
+    "trade_enabled": True,       # B/S keys → Alpaca
+    "trader_mode": None,          # override TRADER_MODE from env (paper|live|off)
+    "trade_amount": None,        # override TRADE_AMOUNT
 }
 
 
@@ -201,86 +178,6 @@ class Alerter:
                               timeout=6)
             except Exception:                              # noqa: BLE001
                 pass
-
-
-# ── hotkeys: load a symbol into TradingView ─────────────────────────
-
-class LoadHotkey:
-    """Press a slot number (1-9) to load that row's symbol into BOTH
-    TradingView; SPACE loads the top (newest) row. A
-    daemon thread reads keys and runs the load off the render loop (each
-    load steals focus for ~2s and prints, which we swallow so the Rich
-    display stays clean). Windows-only; a no-op if the workflows didn't
-    import, in which case the on-screen hint is hidden."""
-
-    SPACE = " "
-
-    def __init__(self):
-        self.enabled = (sys.platform == "win32"
-                        and workflow_add_wb is not None
-                        and workflow_add_tv is not None)
-        self._by_key: dict[str, str] = {}
-        self._top: str | None = None
-        self._status = ""
-        self._busy = False
-        self._lock = threading.Lock()
-        if self.enabled:
-            threading.Thread(target=self._reader, daemon=True).start()
-
-    def update(self, ordered: list[str]):
-        """ordered = symbols in display order; key N -> ordered[N-1]."""
-        with self._lock:
-            self._by_key = {str(i + 1): s for i, s in enumerate(ordered[:9])}
-            self._top = ordered[0] if ordered else None
-
-    def status(self) -> str:
-        with self._lock:
-            return self._status
-
-    def _set(self, msg: str):
-        with self._lock:
-            self._status = f"{datetime.now():%H:%M:%S}  {msg}"
-
-    def _reader(self):
-        try:
-            import msvcrt
-        except Exception:                                  # noqa: BLE001
-            return
-        while True:
-            try:
-                ch = msvcrt.getwch()
-            except Exception:                              # noqa: BLE001
-                return                                     # no real console
-            with self._lock:
-                if self._busy:
-                    continue                               # ignore keys mid-load
-                sym = (self._top if ch == self.SPACE
-                       else self._by_key.get(ch))
-                if sym:
-                    self._busy = True
-            if not sym:
-                continue
-            try:
-                self._load(sym)
-            finally:
-                with self._lock:
-                    self._busy = False
-
-    def _load(self, sym: str):
-        self._set(f"loading {sym} into TradingView …")
-        wb_ok = tv_ok = False
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                wb_ok = False  # Webull retired
-                time.sleep(0.5)
-                tv_ok = bool(workflow_add_tv(sym))
-        except Exception as e:                             # noqa: BLE001
-            self._set(f"load error for {sym}: {e}")
-            return
-        parts = []
-        parts.append("WB✓" if wb_ok else "WB✗")
-        parts.append("TV✓" if tv_ok else "TV✗")
-        self._set(f"{sym}: {' '.join(parts)}")
 
 
 # ── model ────────────────────────────────────────────────────────────────────
@@ -430,59 +327,31 @@ def header_panel(feed: Feed, now: float, hz: float,
                  padding=(0, 1))
 
 
-def footer_panel(alerter: Alerter, hotkeys: LoadHotkey,
-                 hotkey_slots: int) -> Panel:
+def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
+                 hotkey_slots: int, trader_mode: str,
+                 trade_amount: float) -> Panel:
     lines = []
     if alerter.recent:
         lines.append("[dim]" + "   ·   ".join(alerter.recent[:3]) + "[/dim]")
+    focus = hotkeys.focus_symbol() or "—"
+    mode_c = {"paper": "yellow", "live": "red", "off": "dim"}.get(
+        trader_mode, "dim")
+    lines.append(
+        f"[bold]FOCUS[/bold] [bold cyan]{focus}[/bold cyan]   "
+        f"Alpaca [{mode_c}]{trader_mode.upper()}[/{mode_c}]   "
+        f"${trade_amount:.0f}/buy   [{desk.platform_label()}]"
+    )
     if hotkeys.enabled:
-        hint = (f"[dim]keys 1-{hotkey_slots}: load that symbol into "
-                "TradingView   ·   space: load the top symbol[/dim]")
+        hint = (f"[dim]1-{hotkey_slots}/space: load TV + set focus   ·   "
+                f"B: buy focus   ·   S: sell focus[/dim]")
         st = hotkeys.status()
         if st:
             hint += f"     [bold green]{st}[/bold green]"
         lines.append(hint)
     else:
-        lines.append("[dim]load hotkeys off (needs Windows + windows_agent "
-                     "automation deps)[/dim]")
+        lines.append("[dim]hotkeys off — use a real Terminal on macOS/Windows[/dim]")
     return Panel(Align.center("\n".join(lines)), border_style="grey37",
                  padding=(0, 1))
-
-
-def movers_panel(snap: dict | None, now: float, top: int,
-                 rank: str, stale: bool = False) -> Panel:
-    """Header strip: top watchlist movers straight off the movers strip.
-    Sits where the branding header used to (the movers earn the row, the
-    URL didn't), so the FEED DOWN warning renders here too — it must never
-    be hidden by the swap."""
-    label = "[bold magenta]WB watchlist[/bold magenta]"
-    if snap is None or not snap.get("on"):
-        body = (f"{label}   [dim]movers retired (OCR removed)"
-                "cv2 / mss / pytesseract)[/dim]")
-    elif not snap["rows"]:
-        why = ("movers strip retired"
-               if not snap["located"] else "no readable rows yet")
-        body = f"{label}   [dim]{why}[/dim]"
-    else:
-        movers = top_movers(snap["rows"], top, rank)
-        bits = []
-        for i, m in enumerate(movers, 1):
-            c = "green" if m.pct >= 0 else "red"
-            px = f" [dim]{m.price:.2f}[/dim]" if m.price is not None else ""
-            bits.append(f"[bold]{i}[/bold] [bold cyan]{m.sym}[/bold cyan] "
-                        f"[{c}]{m.pct:+.1f}%[/{c}]{px}")
-        pre = " (pre)" if any(m.pre for m in movers) else ""
-        meta = f"{len(snap['rows'])} rows"
-        age = (now - snap["updated"]) if snap.get("updated") else None
-        if age is not None and age > 15:
-            meta += f" · [yellow]{age:.0f}s stale[/yellow]"
-        body = (f"{label}{pre}   " + "    ".join(bits)
-                + f"   [dim]{meta}[/dim]")
-    if stale:
-        body = ("[bold white on red]  FEED DOWN  [/]  "
-                f"[dim]can't reach {_dashboard_url()}[/dim]\n") + body
-    return Panel(Align.center(body),
-                 border_style="red" if stale else "magenta", padding=(0, 1))
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -491,26 +360,40 @@ STALE_AFTER = 15.0   # seconds without a good poll before the FEED DOWN banner
 
 
 def main():
-    # the badges/arrows below are UTF-8; a classic cmd console defaults to
-    # cp1252 and would crash Rich's writer, so force UTF-8 where possible.
+    # UTF-8 console (Windows cmd defaults break badge glyphs)
     for stream in (sys.stdout, sys.stderr):
         with contextlib.suppress(Exception):
             stream.reconfigure(encoding="utf-8")           # type: ignore[attr-defined]
     cfg = load_config()
     interval = float(cfg.get("poll_interval", 2.0))
     hotkey_slots = min(9, int(cfg.get("hotkey_slots", 9)))
+    trade_on = bool(cfg.get("trade_enabled", True))
+
+    # Alpaca paper/live for B/S keys
+    trade_cfg = {}
+    if cfg.get("trader_mode"):
+        trade_cfg["trader_mode"] = cfg["trader_mode"]
+    if cfg.get("trade_amount") is not None:
+        trade_cfg["trade_amount"] = cfg["trade_amount"]
+    mode = desk.init_trader(trade_cfg) if trade_on else "off"
+    amount = desk.trade_amount()
+
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
-    hotkeys = LoadHotkey()
-    watchlist = (WatchlistReader(cfg, console)
-                 if WatchlistReader and cfg.get("watchlist_enabled", True)
-                 else None)
-    wl_top = max(1, int(cfg.get("watchlist_top", 3)))
-    wl_rank = str(cfg.get("watchlist_rank", "gainers"))
+    hotkeys = DeskHotkeys(trade_enabled=trade_on and mode != "off")
 
-    console.print("[bold]Momentum monitor — Ctrl+C to stop.[/bold]  "
-                  f"Polling {_dashboard_url()}/api/state")
+    console.print(
+        f"[bold]Momentum desk[/bold]  {desk.platform_label()}  "
+        f"Alpaca [bold]{mode.upper()}[/bold]  ${amount:.0f}/buy  "
+        f"TV={'on' if desk.tv_load_available() else 'off'}  "
+        f"— Ctrl+C to stop.\n"
+        f"Polling {_dashboard_url()}/api/state\n"
+        f"[dim]1-9/space load TV · B buy · S sell · focus → active_symbol.json[/dim]"
+    )
+    if mode == "live":
+        console.print("[bold red]LIVE money enabled — B/S place real orders[/bold red]")
+
     stamps: list[float] = []
     with Live(console=console, refresh_per_second=2, screen=False) as live:
         while True:
@@ -526,16 +409,10 @@ def main():
             stamps.append(t0)
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
-            # the movers strip takes the header slot; the classic header
-            # only renders when the scraper is off (config or missing deps)
-            wl_on = watchlist is not None and watchlist.enabled
-            top_panel = (movers_panel(watchlist.snapshot(), t0, wl_top,
-                                      wl_rank, stale) if wl_on
-                         else header_panel(feed, t0, hz, stale))
             live.update(Group(
-                top_panel,
+                header_panel(feed, t0, hz, stale),
                 momentum_table(feed, t0, hz, hotkeys.enabled),
-                footer_panel(alerter, hotkeys, hotkey_slots),
+                footer_panel(alerter, hotkeys, hotkey_slots, mode, amount),
             ))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 

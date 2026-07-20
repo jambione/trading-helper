@@ -7,8 +7,8 @@
   "alert_buy": false,
   "alert_cooldown": 60.0,
   "desktop_toast": true,
-  "watchlist_enabled": true,
-  "watchlist_poll": 2.0,
-  "watchlist_top": 3,
-  "watchlist_rank": "gainers"
+  "watchlist_enabled": false,
+  "trade_enabled": true,
+  "trader_mode": null,
+  "trade_amount": null
 }
