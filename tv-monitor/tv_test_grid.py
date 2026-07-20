@@ -52,7 +52,7 @@ def main():
     say(f"  best title: {cands[0][1][:70]!r}")
 
     tracker = TVTracker(cfg)
-    with mss.MSS() as sct:
+    with mss.mss() as sct:
         found = None
         rect = cands[0][0]
         for i, (cand, title) in enumerate(cands[:3]):

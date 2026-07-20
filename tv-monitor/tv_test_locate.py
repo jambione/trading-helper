@@ -42,7 +42,7 @@ def main():
 
     panels = None
     rect = cands[0][0]
-    with mss.MSS() as sct:
+    with mss.mss() as sct:
         for i, (cand, title) in enumerate(cands[:3]):
             img = np.asarray(sct.grab(cand))
             t0 = time.time()

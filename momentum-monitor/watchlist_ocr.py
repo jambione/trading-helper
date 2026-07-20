@@ -269,7 +269,7 @@ class WatchlistReader:
                     "ok": self.ok, "miss": self.miss}
 
     def _run(self):
-        with mss.MSS() as sct:
+        with mss.mss() as sct:
             while True:
                 t0 = time.time()
                 try:

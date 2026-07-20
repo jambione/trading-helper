@@ -37,7 +37,7 @@ def main():
         return
     say(f"STEP 1 OK: Webull window at {rect}")
 
-    with mss.MSS() as sct:
+    with mss.mss() as sct:
         img = np.asarray(sct.grab(rect))
 
         # 2. locate the L2 header inside the window

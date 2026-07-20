@@ -1288,7 +1288,7 @@ def main():
 
     console.print("[bold]TradingView monitor - Ctrl+C to stop.[/bold] "
                   "Keep the chart(s) visible on screen.")
-    with mss.MSS() as sct, Live(console=console,
+    with mss.mss() as sct, Live(console=console,
                                 refresh_per_second=2) as live:
         while True:
             t0 = time.time()

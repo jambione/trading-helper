@@ -818,7 +818,7 @@ class TapeReader:
             return self.tape.prints_since(ts)
 
     def _run(self):
-        with mss.MSS() as sct:
+        with mss.mss() as sct:
             while True:
                 t0 = time.time()
                 try:
@@ -1894,7 +1894,7 @@ def main():
 
     def _symbol_refresher():
         # keeps the displayed ticker current when you switch stocks
-        with mss.MSS() as s2:
+        with mss.mss() as s2:
             while True:
                 time.sleep(cfg.get("symbol_refresh", 30))
                 rect = tracker.win_rect
@@ -1928,7 +1928,7 @@ def main():
         console.print("[dim]warm-start on — pre-subscribing the momentum "
                       "watchlist so trends seed instantly on switch[/dim]")
 
-    with mss.MSS() as sct, Live(render(None, None, 0, 0, 0),
+    with mss.mss() as sct, Live(render(None, None, 0, 0, 0),
                                 console=console, refresh_per_second=4) as live:
         while True:
             t0 = time.time()
