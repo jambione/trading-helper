@@ -35,7 +35,7 @@ DEFAULTS = {
     "alpaca_paper": True,          # False only for live Mobile Trader orders
     "alpaca_poll_sec": 0.5,        # quote poll interval per symbol
     "alpaca_max_rps": 10.0,
-    "alpaca_data_feed": os.getenv("ALPACA_DATA_FEED", "IEX"),  # IEX | SIP
+    "alpaca_data_feed": "IEX",  # free tier only (SIP needs paid Alpaca data plan)
 
     # scripts/position_feed.py: seconds between broker position polls
     "position_poll_sec": 5.0,

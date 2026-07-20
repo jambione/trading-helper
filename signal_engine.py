@@ -439,9 +439,7 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
     that are thinly traded or when the market has only been open a few minutes.
 
     Strategy:
-      1. Try the IEX feed first (free tier).
-      2. If IEX returns fewer bars than we need for warmup, retry with the
-         SIP feed (broader coverage, also available on free paper accounts).
+      Free-tier IEX feed only (no SIP — that requires a paid Alpaca data plan).
     """
     if not api_key or not secret_key:
         return None
@@ -455,11 +453,8 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 
     min_needed = MACD_SLOW + MACD_SIG + 5   # 40 bars minimum for stable MACD
 
-    # Feed order. IEX is free but covers ~2-3% of volume — sparse and
-    # unrepresentative for low-float small caps, where it disagrees with what
-    # TradingView shows. Set ALPACA_FEED=sip (requires a paid Alpaca data plan)
-    # to prefer the consolidated SIP feed. Default keeps the free IEX→SIP order.
-    feeds = ("sip", "iex") if os.getenv("ALPACA_FEED", "iex").lower() == "sip" else ("iex", "sip")
+    # IEX only — free with every Alpaca account. SIP needs Algo Trader Plus.
+    feeds = ("iex",)
     for feed in feeds:
         params = {
             "timeframe": timeframe,

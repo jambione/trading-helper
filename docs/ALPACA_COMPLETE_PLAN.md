@@ -33,7 +33,7 @@ These were open during planning; they are now **defaults**. Change only with an 
 | D2 | Confidence pillars | **Trend + tape + session VWAP** only. Imbalance/touch skew is detail, not a pillar. BookFlow retired. |
 | D3 | Monitor alerts (v1) | **Banner-transition only** (GO LONG / BEAR / STAND ASIDE). No BUY/SELL from multi-level imbalance. |
 | D4 | Size-up rules | **2/2** (when a pillar abstains) = normal confidence headline. **3/3** = size-up. Grade **C** never size-up. Early session (VWAP immature) may show 2/2 only. |
-| D5 | Feed | Prototype on **IEX**; production config **SIP** when subscribed. Config key `feed`: `IEX` \| `SIP`. |
+| D5 | Feed | **IEX only** (free Alpaca tier). SIP requires a paid data plan — not used. |
 | D6 | Active symbol | Dashboard momentum list + manual focus in the monitor. **No** OCR symbol detect from Webull. Hotkeys load TradingView only (Webull leg removed). |
 | D7 | Stream architecture (v1) | **Separate processes**: Flow Monitor has its own `StockDataStream`; bridge provider uses REST/poll or its own stream. Shared stream service is a later optimization. |
 | D8 | Credentials | **Only** `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` (env / `signal_engine.env`). No second naming scheme. |
@@ -432,7 +432,7 @@ Do **not** start with deleting `webull-l2/`.
 | Planning completed | 2026-07-20 |
 | Supersedes | Conflicts with `ALPACA_MIGRATION_ROADMAP.md` resolve **in favor of this file** |
 | Implementation status | **On `feature/alpaca-migration`:** Webull removed; Phase 2b empty walls; Flow-B monitor (tape+VWAP+screener+banner alerts); **bracket exits** in `alpaca_trader` via `BRACKET_EXITS=auto`. |
-| Next user action | Paper-soak Mobile Trader + flow monitor; try paper buy with brackets (`STOP_LOSS`/`TAKE_PROFIT` set, RTH); optional SIP feed / trailing stops next |
+| Next user action | Paper-soak Mobile Trader + flow monitor; try paper buy with brackets (`STOP_LOSS`/`TAKE_PROFIT` set, RTH); optional trailing stops next |
 
 ---
 

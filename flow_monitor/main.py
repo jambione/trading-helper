@@ -3,7 +3,7 @@
 
 Usage:
     python3 -m flow_monitor.main [SYMBOL]
-    python3 -m flow_monitor.main NVDA --feed SIP --watch AAPL,MSFT,AMD
+    python3 -m flow_monitor.main NVDA --watch AAPL,MSFT,AMD
 
 Credentials: ALPACA_API_KEY / ALPACA_SECRET_KEY (env or signal_engine.env).
 """
@@ -60,8 +60,6 @@ def main():
     ap = argparse.ArgumentParser(description="Alpaca Flow Monitor")
     ap.add_argument("symbol", nargs="?",
                     default=file_cfg.get("symbol", "AAPL"))
-    ap.add_argument("--feed", default=file_cfg.get("feed", "IEX"),
-                    choices=("IEX", "SIP", "iex", "sip"))
     ap.add_argument("--poll", type=float,
                     default=float(file_cfg.get("poll_sec", 1.0)))
     ap.add_argument("--watch", default=file_cfg.get("watch", ""),
@@ -70,7 +68,7 @@ def main():
     args = ap.parse_args()
 
     focus = args.symbol.upper()
-    feed = args.feed.upper()
+    feed = "IEX"  # free tier only (SIP needs paid Alpaca data plan)
     watch = [s.strip().upper() for s in str(args.watch).split(",") if s.strip()]
     if focus not in watch:
         watch = [focus] + watch

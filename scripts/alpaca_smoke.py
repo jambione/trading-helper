@@ -45,7 +45,7 @@ def main():
     ap.add_argument("--live", action="store_true",
                     help="use live account (default: paper)")
     ap.add_argument("--feed", default=os.getenv("ALPACA_DATA_FEED", "IEX"),
-                    choices=("IEX", "SIP", "iex", "sip"))
+                    default="IEX")
     args = ap.parse_args()
     symbol = args.symbol.upper()
 

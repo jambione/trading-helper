@@ -34,11 +34,11 @@ def connect_data_client(cfg: dict):
 
 
 def _get_feed_arg(cfg: dict = None) -> dict:
+    """Always IEX on free Alpaca plans. SIP requires a paid data subscription
+    and is intentionally not used."""
     try:
         from alpaca.data.enums import DataFeed as _DF
-        cfg = cfg or {}
-        feed = _DF.SIP if cfg.get("data_feed", "IEX").upper() == "SIP" else _DF.IEX
-        return {"feed": feed}
+        return {"feed": _DF.IEX}
     except Exception:
         return {}
 

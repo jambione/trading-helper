@@ -62,19 +62,16 @@ def _paper(cfg: dict) -> bool:
     return True
 
 
-def feed_kw(cfg: dict) -> dict:
-    """Public helper: IEX/SIP kwargs for Alpaca data requests."""
-    return _feed_kw(cfg)
+def feed_kw(cfg: dict | None = None) -> dict:
+    """Public helper: always IEX (free tier). SIP not used without a paid plan."""
+    return _feed_kw(cfg or {})
 
 
 def _feed_kw(cfg: dict) -> dict:
     try:
         from alpaca.data.enums import DataFeed
-        feed_name = str(cfg.get("alpaca_data_feed")
-                        or cfg.get("data_feed")
-                        or "IEX").upper()
-        feed = DataFeed.SIP if feed_name == "SIP" else DataFeed.IEX
-        return {"feed": feed}
+        # Free accounts only get IEX real-time. Do not request SIP.
+        return {"feed": DataFeed.IEX}
     except Exception:
         return {}
 
