@@ -62,6 +62,11 @@ def _paper(cfg: dict) -> bool:
     return True
 
 
+def feed_kw(cfg: dict) -> dict:
+    """Public helper: IEX/SIP kwargs for Alpaca data requests."""
+    return _feed_kw(cfg)
+
+
 def _feed_kw(cfg: dict) -> dict:
     try:
         from alpaca.data.enums import DataFeed

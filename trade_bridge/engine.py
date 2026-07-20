@@ -19,25 +19,27 @@ log = logging.getLogger(__name__)
 
 
 class SymbolEngine:
-    """Everything l2_signal.py computes per OCR read, minus the terminal UI."""
+    """Per-symbol stance pipeline for Mobile Trader (NBBO / depth-1 books)."""
 
     def __init__(self, symbol: str, cfg: dict):
         self.symbol = symbol.upper()
         self.cfg = cfg
         self.engine = SignalEngine(cfg)
+        # WallTracker kept only for API stability; never drives stance at depth=1
         self.walls = WallTracker(cfg.get("wall_multiple", 4.0))
         self.longview = LongView(cfg)
-        self.recent_events: list = []   # [(ts, (side, price, kind))]
+        self.recent_events: list = []
 
     def on_book(self, book: L2Book, now: Optional[float] = None) -> dict:
+        """Update stance from a book snapshot.
+
+        Multi-level walls are not claimed (NBBO cannot support them).
+        `walls` is always []. Touch skew is book.imbalance / touch_skew.
+        """
         now = now if now is not None else book.ts
         sig = self.engine.update(book)
-        events = self.walls.update(book)
-        for ev in events:
-            self.recent_events.append((now, ev))
-        self.recent_events = [(ts, e) for ts, e in self.recent_events
-                              if now - ts <= 10]
-        live_events = [e for _, e in self.recent_events]
+        events: list = []
+        live_events: list = []
 
         t1 = self.engine.trend_pct(60)
         t5 = self.engine.trend_pct(self.cfg.get("trend_window", 300))
@@ -50,20 +52,8 @@ class SymbolEngine:
                            self.cfg.get("projection_minutes", 5.0))
         if pp:
             mid, target = pp
-            note = ""
-            wm = self.cfg.get("wall_multiple", 4.0)
-            if target > mid:
-                blockers = [p for s, p, _ in book.walls(wm)
-                            if s == "ASK" and mid < p < target]
-                if blockers:
-                    note = f"ask wall {min(blockers):.3f} in the way"
-            elif target < mid:
-                blockers = [p for s, p, _ in book.walls(wm)
-                            if s == "BID" and target < p < mid]
-                if blockers:
-                    note = f"bid wall {max(blockers):.3f} may hold"
             proj = {"mid": round(mid, 4), "target": round(target, 4),
-                    "note": note}
+                    "note": "pace estimate (NBBO only)"}
 
         mids = [round((b.best_bid + b.best_ask) / 2, 4)
                 for b in list(self.engine.history)[-40:]]
@@ -78,15 +68,15 @@ class SymbolEngine:
                 "pending_left": round(lv["pending_left"], 1),
                 "med_imb": round(lv["med_imb"], 2),
                 "t5": round(lv["t5"], 3) if lv["t5"] is not None else None,
-                "ask_breaks": lv["ask_breaks"],
-                "bid_cracks": lv["bid_cracks"],
+                "ask_breaks": 0,
+                "bid_cracks": 0,
             },
             "bias": {"score": round(score, 1), "label": label, "reason": why},
             "playbook": {
                 "verdict": pb["verdict"],
                 "trend_up": pb["trend_up"], "trend_dn": pb["trend_dn"],
                 "imb_up": pb["imb_up"], "imb_dn": pb["imb_dn"],
-                "ask_break": pb["ask_break"], "bid_crack": pb["bid_crack"],
+                "ask_break": [], "bid_crack": [],
             },
             "book": {
                 "bids": [[p, int(s)] for p, s in book.bids],
@@ -98,9 +88,9 @@ class SymbolEngine:
                 "bid_size": int(book.bid_size),
                 "ask_size": int(book.ask_size),
                 "imbalance": round(book.imbalance, 2),
+                "touch_skew": round(book.imbalance, 2),
             },
-            "walls": [[s, p, int(z)] for s, p, z in
-                      book.walls(self.cfg.get("wall_multiple", 4.0))],
+            "walls": [],
             "trend1": round(t1, 3) if t1 is not None else None,
             "trend5": round(t5, 3) if t5 is not None else None,
             "projection": proj,

@@ -1427,6 +1427,14 @@ class SignalEngine:
         self._last_state_write: float = 0.0            # last time we wrote signal_state.json
 
         # Initialise Alpaca trader (off / paper / live — set by TRADER_MODE)
+        # BRACKET_EXITS=on|off|auto — auto attaches OTOCO when both SL and TP > 0
+        _be = os.getenv("BRACKET_EXITS", "auto").strip().lower()
+        if _be in ("0", "false", "off", "no"):
+            _use_brackets = False
+        elif _be in ("1", "true", "on", "yes"):
+            _use_brackets = True
+        else:
+            _use_brackets = None  # auto from SL/TP
         alpaca_trader.init(
             mode           = TRADER_MODE,
             api_key        = self.api_key,
@@ -1434,6 +1442,9 @@ class SignalEngine:
             trade_amount   = TRADE_AMOUNT,
             extended_hours = EXTENDED_HOURS,
             limit_offset_pct = EXT_LIMIT_OFFSET,
+            stop_loss_pct  = STOP_LOSS,
+            take_profit_pct = TAKE_PROFIT,
+            use_brackets   = _use_brackets,
         )
 
         # Start the Finnhub WebSocket in a background thread.

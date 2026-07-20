@@ -431,8 +431,8 @@ Do **not** start with deleting `webull-l2/`.
 |---|---|
 | Planning completed | 2026-07-20 |
 | Supersedes | Conflicts with `ALPACA_MIGRATION_ROADMAP.md` resolve **in favor of this file** |
-| Implementation status | **Webull removed** on branch `feature/alpaca-migration`: `flow_core`, `trade_bridge` (was webull_bridge), Alpaca provider, `flow_monitor`, OCR/`webull-l2` deleted, agents TV-only. Phase 6 extras (brackets etc.) still open. |
-| Next user action | Paper-soak with `"provider": "alpaca"` in `config/trade_bridge.json`; run `python3 -m flow_monitor.main` |
+| Implementation status | **On `feature/alpaca-migration`:** Webull removed; Phase 2b empty walls; Flow-B monitor (tape+VWAP+screener+banner alerts); **bracket exits** in `alpaca_trader` via `BRACKET_EXITS=auto`. |
+| Next user action | Paper-soak Mobile Trader + flow monitor; try paper buy with brackets (`STOP_LOSS`/`TAKE_PROFIT` set, RTH); optional SIP feed / trailing stops next |
 
 ---
 

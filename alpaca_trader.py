@@ -31,13 +31,18 @@ _mode:           str   = "off"    # "off" | "paper" | "live"
 _trade_amount:   float = 500.0    # dollars per BUY
 _extended_hours: bool  = False    # allow pre/post-market orders
 _limit_offset:   float = 0.0      # % to push ext-hours limit prices for fills
+_stop_loss_pct:  float = 0.0      # % below entry for bracket stop (0 = off)
+_take_profit_pct: float = 0.0     # % above entry for bracket TP (0 = off)
+_use_brackets:   bool  = False    # attach OTOCO legs on RTH market buys
 _client                = None     # alpaca TradingClient instance
 
 
 # ── Initialisation ────────────────────────────────────────────────────────────
 
 def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
-         extended_hours: bool = False, limit_offset_pct: float = 0.0):
+         extended_hours: bool = False, limit_offset_pct: float = 0.0,
+         stop_loss_pct: float = 0.0, take_profit_pct: float = 0.0,
+         use_brackets: bool | None = None):
     """
     Initialise the Alpaca trading module.
     Call once at signal engine startup.
@@ -49,13 +54,23 @@ def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
     extended_hours   : allow pre/post-market limit orders
     limit_offset_pct : push ext-hours limit prices this %% past the touch
                        (buys higher, sells lower) to improve fills in thin books
+    stop_loss_pct    : if >0 with take_profit and brackets on, attach stop leg
+    take_profit_pct  : if >0 with stop_loss and brackets on, attach TP leg
+    use_brackets     : attach bracket exits on RTH buys (default: both SL/TP > 0)
     """
     global _mode, _trade_amount, _extended_hours, _limit_offset, _client
+    global _stop_loss_pct, _take_profit_pct, _use_brackets
 
     _mode           = mode.lower().strip()
     _trade_amount   = trade_amount
     _extended_hours = bool(extended_hours)
     _limit_offset   = max(0.0, float(limit_offset_pct))
+    _stop_loss_pct  = max(0.0, float(stop_loss_pct or 0.0))
+    _take_profit_pct = max(0.0, float(take_profit_pct or 0.0))
+    if use_brackets is None:
+        _use_brackets = _stop_loss_pct > 0 and _take_profit_pct > 0
+    else:
+        _use_brackets = bool(use_brackets)
 
     if _mode == "off":
         log.info("[TRADER] mode=off — no orders will be placed")
@@ -94,6 +109,16 @@ def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
             "[TRADER] Alpaca connected  mode=%s  cash=$%,.2f  buying_power=$%,.2f",
             _mode.upper(), cash, bp,
         )
+        if _use_brackets and _stop_loss_pct > 0 and _take_profit_pct > 0:
+            log.info(
+                "[TRADER] brackets ON  SL=%.2f%%  TP=%.2f%%  (RTH market buys only)",
+                _stop_loss_pct, _take_profit_pct,
+            )
+        elif _stop_loss_pct > 0 or _take_profit_pct > 0:
+            log.info(
+                "[TRADER] brackets OFF — client-side exits only "
+                "(set BRACKET_EXITS=on and both STOP_LOSS/TAKE_PROFIT > 0)",
+            )
     except Exception as e:
         log.error(
             "[TRADER] Could not connect to Alpaca (%s). "
@@ -131,12 +156,15 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
           f"${_trade_amount:.0f} notional  ~{est_shares:.2f} shares @ ${price:.2f}")
 
     try:
-        from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
-        from alpaca.trading.enums   import OrderSide, TimeInForce
+        from alpaca.trading.requests import (
+            MarketOrderRequest, LimitOrderRequest,
+            TakeProfitRequest, StopLossRequest,
+        )
+        from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
         if _extended_hours and price and price > 0:
             # Extended-hours orders must be limit + DAY (Alpaca requirement).
-            # Nudge the limit slightly above the touch so it fills in thin books.
+            # Brackets are not supported outside RTH.
             limit_px = round(price * (1 + _limit_offset / 100.0), 2)
             order = _client.submit_order(
                 LimitOrderRequest(
@@ -148,6 +176,29 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
                     extended_hours = True,
                 )
             )
+        elif (_use_brackets and price and price > 0
+              and _stop_loss_pct > 0 and _take_profit_pct > 0):
+            # Broker-held OTOCO: entry + take-profit + stop-loss.
+            # Qty (not notional) so both exit legs size correctly.
+            qty = max(round(_trade_amount / price, 4), 0.0001)
+            tp = round(price * (1 + _take_profit_pct / 100.0), 2)
+            sl = round(price * (1 - _stop_loss_pct / 100.0), 2)
+            # stop limit a tick under stop to reduce gap skips
+            sl_limit = round(sl * 0.999, 2)
+            order = _client.submit_order(
+                MarketOrderRequest(
+                    symbol=ticker,
+                    qty=qty,
+                    side=OrderSide.BUY,
+                    time_in_force=TimeInForce.DAY,
+                    order_class=OrderClass.BRACKET,
+                    take_profit=TakeProfitRequest(limit_price=tp),
+                    stop_loss=StopLossRequest(
+                        stop_price=sl, limit_price=sl_limit),
+                )
+            )
+            print(f"  [TRADER] 📐 bracket  TP=${tp:.2f}  SL=${sl:.2f}  "
+                  f"qty={qty}")
         else:
             order = _client.submit_order(
                 MarketOrderRequest(
@@ -161,7 +212,9 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
         status   = str(order.status)
         print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
         _log_action("BUY", ticker, price, rsi, hist,
-                    order_id=order_id, order_status=status)
+                    order_id=order_id, order_status=status,
+                    note=("bracket" if _use_brackets and not _extended_hours
+                          and _stop_loss_pct > 0 else None))
         return {"ok": True, "order_id": order_id, "status": status}
 
     except Exception as e:

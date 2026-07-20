@@ -72,8 +72,11 @@ def test_engine_bear_stance_and_shape(cfg):
     for key in ("symbol", "ts", "stance", "bias", "playbook", "book",
                 "walls", "trend1", "trend5", "projection", "mids", "signal"):
         assert key in state, f"missing {key}"
-    assert state["playbook"]["verdict"] in ("BEARISH", "BEAR_CRACK")
-    assert len(state["book"]["bids"]) == 10
+    assert state["playbook"]["verdict"] in ("BEARISH", "BEAR_CRACK", "STAND_ASIDE")
+    # Multi-level depth no longer claimed — mock may still send 10 levels,
+    # but the API never reports walls.
+    assert state["walls"] == []
+    assert "touch_skew" in state["book"]
 
 
 def test_engine_stance_has_hysteresis(cfg):
@@ -93,14 +96,16 @@ def test_engine_stance_has_hysteresis(cfg):
     assert state["stance"]["pending"] in (None, "BEAR", "NEUTRAL")
 
 
-def test_wall_detection(cfg):
+def test_walls_always_empty_at_depth1(cfg):
+    """Phase 2b: multi-level walls are not claimed even if book has deep levels."""
     eng = SymbolEngine("TEST", cfg)
     book = make_book(5.0, 1.0, 4_000_000.0)
-    # plant a 6x wall on the 3rd ask level
     asks = list(book.asks)
     asks[2] = (asks[2][0], asks[2][1] * 6)
     state = eng.on_book(L2Book(book.bids, asks, ts=book.ts))
-    assert ["ASK", asks[2][0], int(asks[2][1])] in state["walls"]
+    assert state["walls"] == []
+    assert state["playbook"]["ask_break"] == []
+    assert state["playbook"]["bid_crack"] == []
 
 
 # ── mock providers ───────────────────────────────────────────────────────
