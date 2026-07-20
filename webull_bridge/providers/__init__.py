@@ -2,17 +2,25 @@ from .base import Account, BrokerProvider, MarketDataProvider, Order, Position
 
 
 def _make_market_data(name: str, cfg: dict):
+    name = (name or "mock").lower()
     if name == "webull":
         from .webull import WebullMarketData
         return WebullMarketData(cfg)
+    if name == "alpaca":
+        from .alpaca import AlpacaMarketData
+        return AlpacaMarketData(cfg)
     from .mock import MockMarketData
     return MockMarketData(cfg)
 
 
 def _make_broker(name: str, cfg: dict, md):
+    name = (name or "mock").lower()
     if name == "webull":
         from .webull import WebullBroker
         return WebullBroker(cfg)
+    if name == "alpaca":
+        from .alpaca import AlpacaBroker
+        return AlpacaBroker(cfg)
     from .mock import MockBroker, MockMarketData
     if not isinstance(md, MockMarketData):
         # the mock broker fills against a simulated book, so give it one

@@ -11,7 +11,7 @@ from pathlib import Path
 CONFIG_FILE = Path(__file__).resolve().parent.parent / "config" / "webull_bridge.json"
 
 DEFAULTS = {
-    # "mock" until Webull OpenAPI credentials are approved, then "webull"
+    # "mock" | "webull" | "alpaca" — use "alpaca" after scripts/alpaca_smoke.py passes
     "provider": "mock",
 
     # override either half of the provider pair independently, e.g.
@@ -38,6 +38,14 @@ DEFAULTS = {
     # webull provider: total depth-poll budget across all engines (req/sec);
     # per-symbol interval stretches automatically as engines are added
     "webull_max_rps": 6.0,
+
+    # alpaca provider (provider == "alpaca"): same env keys as alpaca_trader
+    "alpaca_api_key": os.getenv("ALPACA_API_KEY", ""),
+    "alpaca_secret_key": os.getenv("ALPACA_SECRET_KEY", ""),
+    "alpaca_paper": True,          # False only for live Mobile Trader orders
+    "alpaca_poll_sec": 0.5,        # quote poll interval per symbol (stretched by rps)
+    "alpaca_max_rps": 10.0,
+    "alpaca_data_feed": os.getenv("ALPACA_DATA_FEED", "IEX"),  # IEX | SIP
 
     # scripts/position_feed.py: seconds between broker position polls
     "position_poll_sec": 5.0,
