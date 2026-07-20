@@ -431,8 +431,8 @@ Do **not** start with deleting `webull-l2/`.
 |---|---|
 | Planning completed | 2026-07-20 |
 | Supersedes | Conflicts with `ALPACA_MIGRATION_ROADMAP.md` resolve **in favor of this file** |
-| Implementation status | **Not started** (plan only) |
-| Next user action | Approve plan and say which phase to implement first (recommend Phase 1) |
+| Implementation status | **Phase 1 done** on branch `feature/alpaca-migration` (provider + smoke + tests). Phases 2–6 not started. |
+| Next user action | Paper-soak Mobile Trader with `"provider": "alpaca"`, then Phase 2 landmine (`flow_core`) |
 
 ---
 
