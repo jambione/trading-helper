@@ -100,13 +100,15 @@ import alpaca_trader
 import trade_guard
 import version
 
-# ── Import Finnhub WebSocket stream ───────────────────────────────────────────
+# ── Live prices: Alpaca IEX poll (default) and optional Finnhub WebSocket ─────
 from finnhub_stream import (
     start_finnhub_stream,
-    request_subscribe,
-    get_latest_price,
+    request_subscribe as fh_request_subscribe,
+    get_latest_price as fh_get_latest_price,
     FINNHUB_STATE,
 )
+import alpaca_price_poll as alpaca_px
+from finnhub_stream import register_trade_callback as fh_register_trade_callback
 
 # ── Import Massive API client (optional — activated by MASSIVE_API_KEY) ───────
 import massive_client
@@ -114,7 +116,6 @@ import massive_client
 # ── Import the 3-indicator strategy + realtime bar aggregator (optional) ──────
 # Both are inert unless STRATEGY_MODE=three_indicator / REALTIME_BARS=1.
 import strategy_three_indicator as three_ind
-from finnhub_stream import register_trade_callback
 from realtime_bars import RealtimeBarAggregator
 
 # ── Load signal_engine.env ────────────────────────────────────────────────────
@@ -350,6 +351,11 @@ GUARD = trade_guard.TradeGuard(
 # These percentages are the levers; defaults are the backtest's top performer.
 ALERT_HARD_STOP   = float(os.getenv("ALERT_HARD_STOP",  "8.0"))   # % below entry → hard stop
 ALERT_TRAIL_STOP  = float(os.getenv("ALERT_TRAIL_STOP", "15.0"))  # % below peak  → trailing stop
+# When on, attach a broker-held trailing stop after alert buys (RTH; GTC).
+# Client-side trail still runs as backup.
+BROKER_TRAIL = os.getenv("BROKER_TRAIL", "on").strip().lower() in (
+    "1", "true", "on", "yes",
+)
 ALERT_MIN_HOLD    = int(os.getenv("ALERT_MIN_HOLD",     "30"))    # seconds to hold before a stop can fire
 # Optional falling-knife veto: require the live price to be at/above the last
 # closed bar (don't buy a ticker that's already dumping). Default off so the pure
@@ -380,6 +386,35 @@ def _load_alpaca_credentials() -> tuple[str, str]:
     return api_key, secret_key
 
 
+# Live price source: alpaca (default free IEX poll) | finnhub | both | auto
+PRICE_SOURCE = os.getenv("PRICE_SOURCE", "alpaca").strip().lower()
+
+
+def get_latest_price(ticker: str):
+    """Last trade price — Alpaca IEX first (default), then Finnhub if enabled."""
+    if PRICE_SOURCE in ("alpaca", "both", "auto"):
+        p = alpaca_px.get_latest_price(ticker)
+        if p is not None:
+            return p
+    if PRICE_SOURCE in ("finnhub", "both", "auto"):
+        return fh_get_latest_price(ticker)
+    return None
+
+
+def request_subscribe(tickers: list):
+    if PRICE_SOURCE in ("alpaca", "both", "auto"):
+        alpaca_px.request_subscribe(tickers)
+    if PRICE_SOURCE in ("finnhub", "both", "auto"):
+        fh_request_subscribe(tickers)
+
+
+def register_trade_callback(cb):
+    if PRICE_SOURCE in ("alpaca", "both", "auto"):
+        alpaca_px.register_trade_callback(cb)
+    if PRICE_SOURCE in ("finnhub", "both", "auto"):
+        fh_register_trade_callback(cb)
+
+
 def _load_finnhub_key() -> str:
     """
     Load the Finnhub API key.
@@ -395,11 +430,10 @@ def _load_finnhub_key() -> str:
                 key = s.get("finnhub_key", "")
             except Exception as e:
                 print(f"[CFG] Could not read secrets.json for Finnhub key: {e}")
-    if not key:
+    if not key and PRICE_SOURCE in ("finnhub", "both"):
         print(
             "[CFG] WARNING: FINNHUB_API_KEY not set.\n"
-            "       Real-time prices will fall back to dashboard poll values.\n"
-            "       Set FINNHUB_API_KEY in signal_engine.env to enable the stream."
+            "       PRICE_SOURCE wants Finnhub — set FINNHUB_API_KEY or use PRICE_SOURCE=alpaca."
         )
     return key
 
@@ -738,6 +772,7 @@ class TickerState:
         # filled_avg_price so TP/SL bands measure from the actual entry.
         self.pending_order_id: Optional[str] = None
         self.fill_check_at: Optional[float]  = None
+        self.needs_broker_trail: bool = False
 
         # Live indicator values — updated each bar fetch / proximity check
         self.last_atr:  Optional[float] = None
@@ -1442,18 +1477,24 @@ class SignalEngine:
             use_brackets   = _use_brackets,
         )
 
-        # Start the Finnhub WebSocket in a background thread.
-        # It will subscribe to tickers as they are added to the active list.
-        if self.finnhub_key:
+        # Live prices: Alpaca IEX poll (default) and/or Finnhub WebSocket
+        if PRICE_SOURCE in ("alpaca", "both", "auto") and self.api_key and self.secret_key:
+            ok = alpaca_px.start_alpaca_price_poll(
+                self.api_key, self.secret_key, tickers=[], poll_sec=1.0)
+            if ok:
+                print("[ALPACA_PX] IEX latest-trade poller started — "
+                      "subscribing tickers as they appear")
+        if PRICE_SOURCE in ("finnhub", "both", "auto") and self.finnhub_key:
             start_finnhub_stream(self.finnhub_key, tickers=[])
             print("[FH] Finnhub WebSocket stream started — subscribing tickers as they appear")
+        print(f"[PRICE] source={PRICE_SOURCE}")
 
         # Initialise Massive client for alert-ticker bar fetching
         self.massive = massive_client.MassiveClient(api_key=MASSIVE_API_KEY)
         if self.massive.is_configured():
             print("[MASSIVE] API key loaded — alert tickers will try Massive bars first")
 
-        # Realtime bar aggregator — fed by the Finnhub trade stream when enabled.
+        # Realtime bar aggregator — fed by live trade callbacks when enabled.
         self.rt_bars = RealtimeBarAggregator()
         if STRATEGY_MODE == "three_indicator":
             print(f"[STRATEGY] three_indicator active  (exit={THREE_IND_PARAMS['exit_mode']}, "
@@ -1462,7 +1503,7 @@ class SignalEngine:
                 register_trade_callback(
                     lambda sym, price, vol, ts: self.rt_bars.on_trade(sym, price, vol, ts)
                 )
-                print("[STRATEGY] realtime bars: aggregating live OHLCV from Finnhub trades")
+                print("[STRATEGY] realtime bars: aggregating live OHLCV from price poll/stream")
         elif STRATEGY_MODE == "alert":
             print(f"[STRATEGY] alert active  (entry=mention burst, "
                   f"exit=trail {ALERT_TRAIL_STOP:.0f}% + hard {ALERT_HARD_STOP:.0f}%, "
@@ -1474,8 +1515,7 @@ class SignalEngine:
         for i, sym in enumerate(COMPARE_TICKERS):
             self.active[sym] = TickerState(sym, fetch_offset_s=i * BAR_STAGGER, pinned=True)
             self._known_mentioned.add(sym)
-            if self.finnhub_key:
-                request_subscribe([sym])
+            request_subscribe([sym])
             print(f"  📌 PINNED {sym} — compare ticker (never expires, realtime eval)")
 
         # Adopt open Alpaca positions left over from a previous run so the
@@ -1492,8 +1532,7 @@ class SignalEngine:
                     ts = TickerState(sym, fetch_offset_s=offset)
                     self.active[sym] = ts
                     self._known_mentioned.add(sym)
-                    if self.finnhub_key:
-                        request_subscribe([sym])
+                    request_subscribe([sym])
                 ts.in_position = True
                 ts.buy_price   = pos["avg_entry_price"]
                 ts.buy_time    = _now_iso()
@@ -1614,11 +1653,14 @@ class SignalEngine:
                     f"(bar fetch in ~{offset}s | expiry {expiry_tag} if no signal)\n"
                 )
 
-                # Subscribe to Finnhub WebSocket for real-time trade prices
-                if self.finnhub_key:
-                    request_subscribe([sym])
-                    fh_status = "✓ subscribed to Finnhub" if FINNHUB_STATE.connected else "⏳ queued (stream connecting)"
-                    print(f"  [FH]  {sym} — {fh_status}")
+                # Subscribe for real-time trade prices (Alpaca IEX and/or Finnhub)
+                request_subscribe([sym])
+                tags = []
+                if PRICE_SOURCE in ("alpaca", "both", "auto"):
+                    tags.append("Alpaca IEX")
+                if PRICE_SOURCE in ("finnhub", "both", "auto") and self.finnhub_key:
+                    tags.append("Finnhub" if FINNHUB_STATE.connected else "Finnhub…")
+                print(f"  [PX]  {sym} — subscribed ({', '.join(tags) or PRICE_SOURCE})")
 
     # ── Bar refresh ───────────────────────────────────────────────────────────
 
@@ -1900,6 +1942,10 @@ class SignalEngine:
             ts.priority_buy   = True
             ts.high_since_buy = price
             track_fill(ts, order)
+            # Broker trail is placed after fill confirmation (see fill rebase)
+            # so qty is known; flag so we attach once.
+            ts.needs_broker_trail = bool(
+                BROKER_TRAIL and ALERT_TRAIL_STOP > 0 and order and order.get("ok"))
             return
 
         # ── EXIT: trailing stop + hard stop ──────────────────────────────────
@@ -1968,6 +2014,13 @@ class SignalEngine:
                         print(f"  [{ticker_tag(ts.ticker)}] 🧾 fill rebase — "
                               f"entry ${ts.buy_price:.4f} → ${fill:.4f}")
                     ts.buy_price = fill
+                # Attach broker trailing stop once fill qty is real
+                if getattr(ts, "needs_broker_trail", False) and alpaca_trader.is_active():
+                    fq = o.get("filled_qty")
+                    alpaca_trader.place_trailing_stop(
+                        ts.ticker, trail_percent=ALERT_TRAIL_STOP,
+                        qty=float(fq) if fq else None)
+                    ts.needs_broker_trail = False
                 ts.pending_order_id = None
                 ts.fill_check_at    = None
             elif o and o.get("status") in ("OrderStatus.CANCELED", "canceled",
@@ -2184,8 +2237,7 @@ class SignalEngine:
                 ts = TickerState(sym, fetch_offset_s=offset)
                 self.active[sym] = ts
                 self._known_mentioned.add(sym)
-                if self.finnhub_key:
-                    request_subscribe([sym])
+                request_subscribe([sym])
             if not ts.in_position:
                 ts.in_position = True
                 ts.buy_price   = pos["avg_entry_price"]
@@ -2251,7 +2303,8 @@ class SignalEngine:
         print("  Signal Engine — RSI + MACD Momentum")
         print(f"  Dashboard     : {DASHBOARD_URL}")
         print(f"  Auth user     : {DASHBOARD_USER or '(none)'}")
-        print(f"  Finnhub key   : {'✓ loaded — WebSocket active' if self.finnhub_key else '✗ missing — using dashboard prices'}")
+        print(f"  Price source  : {PRICE_SOURCE}")
+        print(f"  Finnhub key   : {'✓ loaded' if self.finnhub_key else '✗ missing (ok if PRICE_SOURCE=alpaca)'}")
         print(f"  Alpaca key    : {'✓ loaded' if self.api_key else '✗ missing'}")
         print(f"  Massive key   : {'✓ loaded — alert tickers use Massive bars first' if self.massive.is_configured() else '✗ not set — using Alpaca only (set MASSIVE_API_KEY)'}")
         trader_label = {"off": "off — log only", "paper": "PAPER trading", "live": "⚠️  LIVE trading"}.get(TRADER_MODE, TRADER_MODE)

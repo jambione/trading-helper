@@ -431,8 +431,8 @@ Do **not** start with deleting `webull-l2/`.
 |---|---|
 | Planning completed | 2026-07-20 |
 | Supersedes | Conflicts with `ALPACA_MIGRATION_ROADMAP.md` resolve **in favor of this file** |
-| Implementation status | **On `feature/alpaca-migration`:** Webull removed; Phase 2b empty walls; Flow-B monitor (tape+VWAP+screener+banner alerts); **bracket exits** in `alpaca_trader` via `BRACKET_EXITS=auto`. |
-| Next user action | Paper-soak Mobile Trader + flow monitor; try paper buy with brackets (`STOP_LOSS`/`TAKE_PROFIT` set, RTH); optional trailing stops next |
+| Implementation status | **Migration stack complete on branch** (IEX-only). Paper config default alpaca; Flow-B; brackets; broker trail; PRICE_SOURCE=alpaca. Human paper soak + merge still on you. |
+| Next user action | Paper-soak during RTH; merge `feature/alpaca-migration` when happy. Optional later: news, crypto, order websocket. |
 
 ---
 

@@ -1,0 +1,12 @@
+{
+  "provider": "alpaca",
+  "alpaca_paper": true,
+  "alpaca_data_feed": "IEX",
+  "alpaca_poll_sec": 0.5,
+  "max_order_value": 1000.0,
+  "max_engines": 12,
+  "auto_watch": true,
+  "auto_watch_interval": 15,
+  "stream_hz": 3.0,
+  "position_poll_sec": 5.0
+}

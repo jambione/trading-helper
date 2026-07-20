@@ -337,6 +337,56 @@ def get_open_positions() -> Optional[dict]:
         return None
 
 
+def place_trailing_stop(ticker: str, trail_percent: float,
+                        qty: Optional[float] = None) -> dict:
+    """
+    Broker-held trailing stop SELL for an open long. Survives engine restarts.
+
+    trail_percent: percent below the high-water mark (e.g. 15.0 = 15%).
+    qty: optional; defaults to full open position size.
+
+    Returns {"ok": bool, "order_id": str|None, "status": str|None}.
+    """
+    if not is_active():
+        return {"ok": False, "order_id": None, "status": None}
+    if trail_percent is None or float(trail_percent) <= 0:
+        return {"ok": False, "order_id": None, "status": "invalid_trail"}
+
+    ticker = ticker.upper()
+    try:
+        from alpaca.trading.requests import TrailingStopOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        if qty is None:
+            pos = _client.get_open_position(ticker)
+            qty = float(pos.qty)
+        qty = float(qty)
+        if qty <= 0:
+            return {"ok": False, "order_id": None, "status": "no_qty"}
+
+        order = _client.submit_order(
+            TrailingStopOrderRequest(
+                symbol=ticker,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,
+                trail_percent=round(float(trail_percent), 2),
+            )
+        )
+        order_id = str(order.id)
+        status = str(order.status)
+        print(f"  [TRADER] 📉 trailing stop  {ticker}  trail={trail_percent}%  "
+              f"qty={qty}  id={order_id}")
+        _log_action("TRAIL_STOP", ticker, 0.0, 0.0, 0.0,
+                    order_id=order_id, order_status=status,
+                    trail_percent=trail_percent, qty=qty)
+        return {"ok": True, "order_id": order_id, "status": status}
+    except Exception as e:
+        print(f"  [TRADER] ❌  trailing stop failed: {e}")
+        _log_action("TRAIL_STOP_ERROR", ticker, 0.0, 0.0, 0.0, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error"}
+
+
 # ── Trade logging ─────────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
