@@ -175,10 +175,30 @@ def rsi_focus_trigger(row: dict, max_lvl: float = 35.0) -> tuple[float | None, b
     return rsi, triggered
 
 
+def rsi_focus_empty_reason(row: dict) -> str:
+    """Why the RSI cell is blank: 'untracked' | 'pending' | '' (has value)."""
+    sp = row.get("signal_proximity")
+    if not isinstance(sp, dict):
+        return "untracked"
+    if _cm_rsi_value(row) is None:
+        return "pending"
+    return ""
+
+
 def _rsi_focus_cell(row: dict, max_lvl: float = 35.0) -> str:
-    """Rich markup for the RSI focus column (reuses former Signal column)."""
+    """Rich markup for the RSI focus column (reuses former Signal column).
+
+    Empty states (distinct so pipeline gaps are obvious):
+      —   engine not tracking this symbol (no signal_proximity)
+      …   tracked, waiting on bars / CM RSI
+      N   RSI value outside focus zone
+      FOCUS N  CM RSI in green-long band [0, max)
+    """
     rsi, hit = rsi_focus_trigger(row, max_lvl)
     if rsi is None:
+        reason = rsi_focus_empty_reason(row)
+        if reason == "pending":
+            return "[dim]…[/dim]"
         return "[dim]—[/dim]"
     if hit:
         # Sharp green long — focus this symbol

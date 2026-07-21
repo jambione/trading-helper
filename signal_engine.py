@@ -12,9 +12,9 @@ HOW IT WORKS
    to detect newly highlighted tickers.  Price data from the dashboard
    is used only as a fallback — real-time prices come from Finnhub.
 
-2. Any ticker with `mentioned = true` (highlighted row on dashboard)
-   is added to the active watchlist (capped at MAX_ACTIVE_TICKERS) AND
-   immediately subscribed to the Finnhub WebSocket for live prices.
+2. Tickers enter the active watchlist (capped at MAX_ACTIVE_TICKERS) when
+   mentioned, mention_burst, find_it_first, or (TRACK_DESK_TICKERS) present
+   on the dashboard ticker list — then are subscribed for live prices.
 
 3. Finnhub WebSocket provides real-time trade prices during market hours
    (free tier, up to 50 symbols).  get_latest_price() is called each
@@ -181,8 +181,24 @@ EXPIRY_WARM    = int(os.getenv("EXPIRY_WARM",    "600"))   # 10 min — showed p
 MAX_ACTIVE_TICKERS = int(os.getenv("MAX_ACTIVE_TICKERS", "20"))  # hard cap on active list
 
 BAR_COUNT          = int(os.getenv("BAR_COUNT",         "200"))  # max bars to fetch
-BAR_LOOKBACK_DAYS  = int(os.getenv("BAR_LOOKBACK_DAYS",  "5"))   # calendar days back to start from
+BAR_LOOKBACK_DAYS  = int(os.getenv("BAR_LOOKBACK_DAYS",  "5"))   # calendar days back (steady-state)
+# Longer lookback on first successful load — thin/illiquid names often have
+# <40 1-min IEX bars in 5 calendar days, especially after hours / overnight.
+BAR_LOOKBACK_THIN  = int(os.getenv("BAR_LOOKBACK_THIN", "20"))
+# Retry interval after a failed first bar fetch (keep last_bar_minute=-1 so we
+# don't wait a full minute on empty IEX responses).
+BAR_FAIL_RETRY_S   = int(os.getenv("BAR_FAIL_RETRY_S",  "20"))
 BAR_TIMEFRAME  = os.getenv("BAR_TIMEFRAME",  "1Min")
+
+# When on, every symbol on the dashboard ticker list (momentum desk universe)
+# is eligible for engine tracking — not only transcription "mentioned" /
+# mention_burst rows. Find It First and scanner names get bars + CM RSI so the
+# desk RSI focus column can light up. Capped by MAX_ACTIVE_TICKERS.
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+TRACK_DESK_TICKERS = _env_flag("TRACK_DESK_TICKERS", "1")
 
 RSI_PERIOD     = int(os.getenv("RSI_PERIOD",   "14"))
 MACD_FAST      = int(os.getenv("MACD_FAST",    "12"))
@@ -461,16 +477,45 @@ def _dashboard_login(user: str, password: str) -> Optional[str]:
         return None
 
 
+# ── Tracking triggers (dashboard row → engine active set) ─────────────────────
+
+def row_triggers_tracking(row: dict, track_desk: bool | None = None) -> tuple[bool, str]:
+    """
+    Decide whether a dashboard ticker row should enter the engine active set.
+
+    Returns (should_track, reason) where reason is a short tag for logs:
+      mentioned | burst | find_it_first | desk | "" 
+
+    Priority order matches how useful the catalyst signal is for trading;
+    desk is the broadest (any symbol currently on the momentum list).
+    """
+    if not isinstance(row, dict) or not row.get("ticker"):
+        return False, ""
+    if row.get("mentioned"):
+        return True, "mentioned"
+    if row.get("mention_burst"):
+        return True, "burst"
+    if row.get("find_it_first"):
+        return True, "find_it_first"
+    if track_desk is None:
+        track_desk = TRACK_DESK_TICKERS
+    if track_desk:
+        return True, "desk"
+    return False, ""
+
+
 # ── Alpaca bar fetching ───────────────────────────────────────────────────────
 
 def fetch_bars(symbol: str, api_key: str, secret_key: str,
                count: int = BAR_COUNT,
-               timeframe: str = BAR_TIMEFRAME) -> Optional[pd.DataFrame]:
+               timeframe: str = BAR_TIMEFRAME,
+               lookback_days: int | None = None) -> Optional[pd.DataFrame]:
     """
-    Download recent OHLCV bars from Alpaca going back BAR_LOOKBACK_DAYS
-    calendar days.  Using a start date instead of relying on limit alone
-    ensures we always get bars from multiple sessions — critical for tickers
-    that are thinly traded or when the market has only been open a few minutes.
+    Download recent OHLCV bars from Alpaca going back `lookback_days`
+    calendar days (default BAR_LOOKBACK_DAYS).  Using a start date instead of
+    relying on limit alone ensures we always get bars from multiple sessions —
+    critical for tickers that are thinly traded or when the market has only
+    been open a few minutes.
 
     Strategy:
       Free-tier IEX feed only (no SIP — that requires a paid Alpaca data plan).
@@ -478,12 +523,16 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
     if not api_key or not secret_key:
         return None
 
+    lookback = int(lookback_days if lookback_days is not None else BAR_LOOKBACK_DAYS)
+    if lookback < 1:
+        lookback = BAR_LOOKBACK_DAYS
+
     headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
     url     = f"{ALPACA_BASE_URL}/v2/stocks/{symbol}/bars"
 
-    # Go back BAR_LOOKBACK_DAYS calendar days — covers weekends + holidays
+    # Go back `lookback` calendar days — covers weekends + holidays
     from datetime import datetime, timedelta, timezone as _tz
-    start_dt = (datetime.now(_tz.utc) - timedelta(days=BAR_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_dt = (datetime.now(_tz.utc) - timedelta(days=lookback)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     min_needed = MACD_SLOW + MACD_SIG + 5   # 40 bars minimum for stable MACD
 
@@ -515,18 +564,19 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
             df = df.reset_index(drop=True)
 
             if len(df) >= min_needed:
-                print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓")
+                print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓"
+                      f" (lookback={lookback}d)")
                 return df
 
             # Not enough yet — try the next feed
             print(f"  [BARS] {symbol}: only {len(df)} bars on {feed} "
-                  f"(need {min_needed}) — trying next feed…")
+                  f"(need {min_needed}, lookback={lookback}d) — trying next feed…")
 
         except Exception as e:
             print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
 
     print(f"  [BARS] {symbol}: ❌ could not get {min_needed} bars on any feed "
-          f"(lookback={BAR_LOOKBACK_DAYS}d) — skipping this cycle")
+          f"(lookback={lookback}d) — skipping this cycle")
     return None
 
 
@@ -799,6 +849,13 @@ class TickerState:
         # to the dashboard by proximity_state() when STRATEGY_MODE=three_indicator.
         self.three_ind_state: Optional[dict] = None
 
+        # Still on the dashboard ticker list (momentum desk). Refreshed each
+        # _ingest_state; while True, is_expired() stays False so RSI focus keeps
+        # updating for symbols the desk is actively showing.
+        self.on_desk: bool = False
+        # Failed bar-fetch attempts before first success (drives fast retry).
+        self._bar_fetch_attempts: int = 0
+
     def expiry_seconds(self) -> int:
         """How long this ticker is allowed to live without a position."""
         return EXPIRY_WARM if self.ever_positive_hist else EXPIRY_COLD
@@ -809,6 +866,8 @@ class TickerState:
 
     def time_left_s(self) -> float:
         """Seconds remaining before expiry (if no position)."""
+        if self.on_desk:
+            return float("inf")  # held by desk presence
         if self.cooled_at is not None:
             return max(0.0, EXPIRY_COOLED - (time.time() - self.cooled_at))
         return max(0.0, self.expiry_seconds() - self.age_s())
@@ -818,6 +877,10 @@ class TickerState:
             return False   # pinned compare tickers never expire
         if self.in_position:
             return False   # never expire an open position
+        # Keep symbols the momentum desk is still showing so RSI / proximity
+        # stay live; normal age/cool expiry applies once they leave the list.
+        if self.on_desk:
+            return False
         # Hot ticker that cooled off — drop it after EXPIRY_COOLED seconds
         if self.cooled_at is not None:
             return (time.time() - self.cooled_at) > EXPIRY_COOLED
@@ -1582,26 +1645,46 @@ class SignalEngine:
         """
         Process one dashboard snapshot.
         - Use dashboard price as a fallback ONLY if Finnhub has no reading yet.
-        - Add newly mentioned tickers and immediately subscribe them to Finnhub.
+        - Add newly highlighted / desk tickers and subscribe them for live prices.
+        - Refresh on_desk so symbols still on the momentum list do not expire.
         """
         # Decay mention windows for ALL active tickers on every poll cycle.
         # This ensures tickers that stopped being mentioned (e.g. SPY) cool off
         # even if no new mention event ever arrives to trigger update_mention_velocity.
+        # Clear on_desk; rows present below re-mark it so leavers can expire.
         for ts in list(self.active.values()):
             ts.decay_mentions()
+            if not ts.pinned:
+                ts.on_desk = False
 
         for row in state.get("tickers", []):
             sym   = row.get("ticker", "")
             price = row.get("price")
             if not sym:
                 continue
+            sym = str(sym).upper()
 
-            # Use dashboard price as a fallback if Finnhub hasn't seen a trade yet
+            # Keep last_price fresh: prefer live stream, but when the stream is
+            # quiet/frozen (common after hours) and the dashboard snapshot moves,
+            # adopt the dashboard price so RSI / proximity don't freeze.
             if sym in self.active and price is not None:
-                fh_price = get_latest_price(sym)
-                if fh_price is None:
-                    # No Finnhub reading yet — use dashboard value as seed
-                    self.active[sym].last_price = float(price)
+                ts_px = self.active[sym]
+                stream = get_latest_price(sym)
+                dash = float(price)
+                if stream is None:
+                    ts_px.last_price = dash
+                else:
+                    prev = ts_px.last_price
+                    stream_stuck = (
+                        prev is not None
+                        and abs(stream - prev) < 1e-9
+                        and abs(dash - prev) >= 0.005
+                    )
+                    ts_px.last_price = dash if stream_stuck else stream
+
+            # Still on the dashboard ticker list → hold for RSI / proximity
+            if sym in self.active:
+                self.active[sym].on_desk = True
 
             # ── Mention velocity tracking ─────────────────────────────────────
             # Every time the dashboard says this ticker is mentioned, record it.
@@ -1624,43 +1707,47 @@ class SignalEngine:
                     # Boolean "mentioned" only — each 5-second poll counts as 1
                     ts.update_mention_velocity(1)
 
-            # Add newly mentioned tickers — trigger on either transcription mention
-            # OR a mention_burst (5+ rapid mentions via the API / chat feed).
-            # mention_burst tickers are always worth tracking even without a
-            # transcription hit because the signal bar needs proximity data.
-            is_triggered = row.get("mentioned") or row.get("mention_burst")
-            if is_triggered and sym not in self._known_mentioned:
-                self._known_mentioned.add(sym)
-                if sym in self.active:
-                    continue  # already tracking
+            # Add tickers for: transcription mention, mention burst, Find It First,
+            # or (when TRACK_DESK_TICKERS) any row on the dashboard ticker list.
+            # Only mark _known_mentioned after a successful add so a full list
+            # does not permanently block a later slot.
+            is_triggered, reason = row_triggers_tracking(row)
+            if not is_triggered:
+                continue
+            if sym in self.active:
+                continue  # already tracking
 
-                # Pinned compare tickers don't count against the cap
-                if sum(1 for t in self.active.values() if not t.pinned) >= MAX_ACTIVE_TICKERS:
-                    print(f"  [ENGINE] ⚠️  active list full ({MAX_ACTIVE_TICKERS}) "
-                          f"— skipping {sym}")
-                    continue
+            # Pinned compare tickers don't count against the cap
+            if sum(1 for t in self.active.values() if not t.pinned) >= MAX_ACTIVE_TICKERS:
+                print(f"  [ENGINE] ⚠️  active list full ({MAX_ACTIVE_TICKERS}) "
+                      f"— skipping {sym} ({reason})")
+                continue
 
-                # Stagger bar fetches: ticker #0 fetches now, #1 in BAR_STAGGER s,
-                # #2 in 2×BAR_STAGGER s, etc.  Prevents a burst of Alpaca calls
-                # when several tickers are mentioned close together.
-                offset = self._stagger_index * BAR_STAGGER
-                self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
+            # Stagger bar fetches: ticker #0 fetches now, #1 in BAR_STAGGER s,
+            # #2 in 2×BAR_STAGGER s, etc.  Prevents a burst of Alpaca calls
+            # when several tickers land on the desk close together.
+            offset = self._stagger_index * BAR_STAGGER
+            self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
 
-                self.active[sym] = TickerState(sym, fetch_offset_s=offset)
-                expiry_tag = "3min" if not self.active[sym].ever_positive_hist else "10min"
-                print(
-                    f"\n  ➕ ADDED {sym}  "
-                    f"(bar fetch in ~{offset}s | expiry {expiry_tag} if no signal)\n"
-                )
+            ts = TickerState(sym, fetch_offset_s=offset)
+            ts.on_desk = True
+            self.active[sym] = ts
+            self._known_mentioned.add(sym)
+            expiry_tag = "desk-held" if ts.on_desk else (
+                "3min" if not ts.ever_positive_hist else "10min")
+            print(
+                f"\n  ➕ ADDED {sym}  [{reason}]  "
+                f"(bar fetch in ~{offset}s | expiry {expiry_tag} if no signal)\n"
+            )
 
-                # Subscribe for real-time trade prices (Alpaca IEX and/or Finnhub)
-                request_subscribe([sym])
-                tags = []
-                if PRICE_SOURCE in ("alpaca", "both", "auto"):
-                    tags.append("Alpaca IEX")
-                if PRICE_SOURCE in ("finnhub", "both", "auto") and self.finnhub_key:
-                    tags.append("Finnhub" if FINNHUB_STATE.connected else "Finnhub…")
-                print(f"  [PX]  {sym} — subscribed ({', '.join(tags) or PRICE_SOURCE})")
+            # Subscribe for real-time trade prices (Alpaca IEX and/or Finnhub)
+            request_subscribe([sym])
+            tags = []
+            if PRICE_SOURCE in ("alpaca", "both", "auto"):
+                tags.append("Alpaca IEX")
+            if PRICE_SOURCE in ("finnhub", "both", "auto") and self.finnhub_key:
+                tags.append("Finnhub" if FINNHUB_STATE.connected else "Finnhub…")
+            print(f"  [PX]  {sym} — subscribed ({', '.join(tags) or PRICE_SOURCE})")
 
     # ── Bar refresh ───────────────────────────────────────────────────────────
 
@@ -1684,9 +1771,15 @@ class SignalEngine:
         current_minute   = int(now // 60)               # used for logging / last_bar_minute stamp
         secs_past_minute = dt.second + dt.microsecond / 1_000_000  # 0–59.999
 
-        if ts.last_bar_minute == -1:
-            # ── First fetch: respect the stagger timer ────────────────────
-            if now - ts.last_bar_fetch < BAR_REFRESH:
+        if not ts.bars_fetched:
+            # ── Until first success: stagger, then fast retry on failure ──
+            # Initial last_bar_fetch is set so the first attempt respects
+            # fetch_offset_s via the BAR_REFRESH comparison. After a failed
+            # attempt we only wait BAR_FAIL_RETRY_S so thin names recover
+            # without waiting a full minute.
+            min_wait = (BAR_FAIL_RETRY_S if ts._bar_fetch_attempts > 0
+                        else BAR_REFRESH)
+            if now - ts.last_bar_fetch < min_wait:
                 return
         else:
             # ── Subsequent fetches: elapsed-time guard + stagger slot ─────
@@ -1698,22 +1791,30 @@ class SignalEngine:
             if secs_past_minute < fire_at:
                 return   # stagger slot not reached yet in this minute
 
-        print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars  "
-              f"(minute={current_minute} secs={secs_past_minute:.1f})")
+        # Longer lookback until we have a successful load — thin / after-hours
+        # names often lack 40×1m IEX bars inside the short steady-state window.
+        lookback = (max(BAR_LOOKBACK_DAYS, BAR_LOOKBACK_THIN)
+                    if not ts.bars_fetched else BAR_LOOKBACK_DAYS)
 
-        # ── Try Massive first for alert (hot) tickers ──────────────────────
-        # When a ticker has 5+ mention alerts it is marked is_hot.  Massive
-        # provides higher-quality bar data (tick-accurate aggregates) for paid
-        # plans, or end-of-day bars on the free tier (useful for overnight warmup).
+        print(f"  [{ticker_tag(ts.ticker)}] 🔄 fetching bars  "
+              f"(minute={current_minute} secs={secs_past_minute:.1f} "
+              f"lookback={lookback}d)")
+
+        # ── Try Massive first for hot tickers OR first-load warmup ─────────
+        # Massive helps after hours / thin names when IEX is sparse. Once we
+        # already have bars, only prefer Massive for hot (burst) symbols.
         df = None
-        if ts.is_hot and self.massive.is_configured():
+        min_needed = MACD_SLOW + MACD_SIG + 5
+        use_massive = self.massive.is_configured() and (
+            ts.is_hot or not ts.bars_fetched)
+        if use_massive:
             df = self.massive.fetch_bars(
                 symbol=ts.ticker,
                 timeframe=BAR_TIMEFRAME,
                 count=BAR_COUNT,
-                lookback_days=BAR_LOOKBACK_DAYS,
+                lookback_days=lookback,
             )
-            if df is not None and len(df) >= MACD_SLOW + MACD_SIG + 5:
+            if df is not None and len(df) >= min_needed:
                 ts._data_source = "massive"
                 print(f"  [{ticker_tag(ts.ticker)}] ✨ using Massive bar data")
             else:
@@ -1725,25 +1826,39 @@ class SignalEngine:
 
         # ── Fall back to Alpaca ────────────────────────────────────────────
         if df is None:
-            df = fetch_bars(ts.ticker, self.api_key, self.secret_key)
+            df = fetch_bars(ts.ticker, self.api_key, self.secret_key,
+                            lookback_days=lookback)
             if df is not None:
                 ts._data_source = "alpaca"
 
-        # Always mark the minute so we don't retry this same minute on failure
-        ts.last_bar_fetch  = now
-        ts.last_bar_minute = current_minute
+        ts.last_bar_fetch = now
+        ts._bar_fetch_attempts += 1
 
-        if df is None or len(df) < MACD_SLOW + MACD_SIG + 5:
+        if df is None or len(df) < min_needed:
+            # Stay on the fast first-fetch path until bars_fetched flips True.
+            if not ts.bars_fetched:
+                ts.last_bar_minute = -1
+            else:
+                ts.last_bar_minute = current_minute
             print(f"  [{ticker_tag(ts.ticker)}] ⚠️  not enough bars "
                   f"({len(df) if df is not None else 0} received, "
-                  f"need {MACD_SLOW + MACD_SIG + 5})")
+                  f"need {min_needed}, lookback={lookback}d"
+                  f"{f'; retry in {BAR_FAIL_RETRY_S}s' if not ts.bars_fetched else ''})")
             return
 
         try:
             rsi_val, hist_val, atr_val, vwap_val, rvol_val, cm_rsi_ok_val, obv_ok_val = compute_indicators(df)
         except Exception as e:
+            # Keep first-fetch fast-retry if we never successfully published bars.
+            if not ts.bars_fetched:
+                ts.last_bar_minute = -1
+            else:
+                ts.last_bar_minute = current_minute
             print(f"  [{ticker_tag(ts.ticker)}] ❌ indicator error: {e}")
             return
+
+        # Success — align subsequent refreshes to the clock-minute path
+        ts.last_bar_minute = current_minute
 
         ts.last_atr      = atr_val  if atr_val  > 0 else ts.last_atr
         ts.last_vwap     = vwap_val if vwap_val > 0 else ts.last_vwap
@@ -2138,30 +2253,26 @@ class SignalEngine:
                     ts.last_cm_rsi_ok = cm_rsi_live
                     ts.last_obv_ok    = obv_live
 
-                    # Hot tickers get real-time momentum checks so the BUY fires
-                    # the moment MACD starts growing — not up to a minute later.
-                    # Normal tickers still wait for confirmed bar closes to avoid
-                    # false signals from mid-candle histogram fluctuations.
-                    # In 3-indicator mode, pinned compare tickers (TV side-by-side)
-                    # and open positions (so the strategy SELL isn't up to a
-                    # minute late) are also evaluated on the forming bar.
-                    realtime_eval = ts.is_hot or (
-                        STRATEGY_MODE == "three_indicator"
-                        and (ts.pinned or ts.in_position))
-                    if realtime_eval and ts.bars_fetched:
-                        if STRATEGY_MODE == "three_indicator":
-                            # Evaluate the 3-indicator rule on the realtime forming
-                            # candle (aggregator when enabled, else the live-price
-                            # injected cache) — TradingView-style intra-bar updates.
-                            self._eval_three_indicator(ts, self._strategy_df(ts, df_live))
-                        else:
-                            open_pos = sum(1 for t in self.active.values() if t.in_position)
-                            ts.update_momentum(
-                                hist           = hist_live,
-                                price          = ts.last_price,
-                                rsi            = rsi_live,
-                                open_positions = open_pos,
-                            )
+                    # Refresh strategy state whenever price moves and bars are
+                    # loaded so the desk RSI / CM pills actually change.
+                    # Trade entries stay gated inside _eval_three_indicator
+                    # (THREE_IND_REQUIRE_HOT etc). Momentum mode still only
+                    # auto-trades on live values for hot tickers to avoid
+                    # mid-candle false BUYs.
+                    if ts.bars_fetched and STRATEGY_MODE == "three_indicator":
+                        # Forming-bar inject → update cm_rsi for every tracked
+                        # name (not only hot/pinned/in_position).
+                        self._eval_three_indicator(
+                            ts, self._strategy_df(ts, df_live))
+                    elif ts.bars_fetched and ts.is_hot:
+                        open_pos = sum(
+                            1 for t in self.active.values() if t.in_position)
+                        ts.update_momentum(
+                            hist           = hist_live,
+                            price          = ts.last_price,
+                            rsi            = rsi_live,
+                            open_positions = open_pos,
+                        )
 
                 except Exception as e:
                     print(f"  [engine] live recompute error for {ts.ticker}: {e}", flush=True)
@@ -2312,7 +2423,10 @@ class SignalEngine:
         print(f"  Loop cadence  : every {POLL_INTERVAL}s")
         print(f"  Dashboard poll: every {DASHBOARD_POLL_INTERVAL}s (new ticker detection only)")
         print(f"  Bar refresh   : every {BAR_REFRESH}s (staggered {BAR_STAGGER}s apart)")
-        print(f"  Expiry cold   : {EXPIRY_COLD}s (no positive hist seen)")
+        print(f"  Bar lookback  : {BAR_LOOKBACK_DAYS}d steady / {BAR_LOOKBACK_THIN}d first-load "
+              f"(fail retry {BAR_FAIL_RETRY_S}s)")
+        print(f"  Desk tracking : {'on — all dashboard tickers' if TRACK_DESK_TICKERS else 'off — mentioned/burst/FIF only'}")
+        print(f"  Expiry cold   : {EXPIRY_COLD}s (no positive hist seen; held while on desk)")
         print(f"  Expiry warm   : {EXPIRY_WARM}s (positive hist seen at least once)")
         print(f"  Max tickers   : {MAX_ACTIVE_TICKERS}")
         print(f"  RSI buy max   : {RSI_BUY_MAX}  (bypassed when ticker is hot)")
