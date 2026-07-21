@@ -13,6 +13,7 @@ import alpaca_trader as tr
 # momentum-monitor/ isn't an importable package (hyphen) — add it to the path.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "momentum-monitor"))
 import desk_actions as desk  # noqa: E402
+import mac_agent as ma  # noqa: E402  (repo root is on sys.path under `python -m pytest`)
 
 
 def _arm_trader(fake, *, extended=False, amount=1000.0):
@@ -120,6 +121,38 @@ def test_market_shares_under_budget_skips():
 
     assert out["ok"] is False and out["status"] == "under_budget"
     fake.submit_order.assert_not_called()
+
+
+# ── TradingView chart-title → symbol parsing ──────────────────────────────────
+
+def test_tv_symbol_leading_token():
+    assert ma._parse_tv_symbol("ENHA 3.16 ▲ +1.20% — TradingView") == "ENHA"
+
+
+def test_tv_symbol_exchange_prefix():
+    assert ma._parse_tv_symbol("AAPL stock price — NASDAQ:AAPL — TradingView") == "AAPL"
+
+
+def test_tv_symbol_dotted_ticker():
+    assert ma._parse_tv_symbol("BRK.B 400.00 — TradingView") == "BRK.B"
+
+
+def test_tv_symbol_url_fallback_when_title_unhelpful():
+    got = ma._parse_tv_symbol(
+        "TradingView",
+        "https://www.tradingview.com/chart/x04Gfcu8/?symbol=NASDAQ%3ATSLA")
+    assert got == "TSLA"
+
+
+def test_tv_symbol_none_when_empty():
+    assert ma._parse_tv_symbol("") is None
+    assert ma._parse_tv_symbol("   ", "") is None
+
+
+def test_desk_tv_focus_symbol_dispatches_to_agent():
+    with patch.object(desk, "_agent", create=True) as agent:
+        agent.read_tv_symbol.return_value = "gme"
+        assert desk.tv_focus_symbol() == "GME"
 
 
 # ── desk_actions routing ──────────────────────────────────────────────────────

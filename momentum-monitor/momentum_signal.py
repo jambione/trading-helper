@@ -382,8 +382,8 @@ def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
         f"${trade_amount:.0f}/buy {style}{ext}   [{desk.platform_label()}]"
     )
     if hotkeys.enabled:
-        hint = (f"[dim]1-{hotkey_slots}/space: load TV + set focus   ·   "
-                f"B: buy focus   ·   S: sell focus[/dim]")
+        hint = (f"[dim]1-{hotkey_slots}/space: load TV + focus   ·   "
+                f"T: focus = TV chart   ·   B: buy   ·   S: sell[/dim]")
         st = hotkeys.status()
         if st:
             hint += f"     [bold green]{st}[/bold green]"
@@ -438,7 +438,7 @@ def main():
         f"TV={'on' if desk.tv_load_available() else 'off'}  "
         f"— Ctrl+C to stop.\n"
         f"Polling {_dashboard_url()}/api/state\n"
-        f"[dim]1-9/space load TV · B buy · S sell · focus → active_symbol.json[/dim]"
+        f"[dim]1-9/space load TV · T focus=TV chart · B buy · S sell[/dim]"
     )
     if mode == "live":
         console.print("[bold red]LIVE money enabled — B/S place real orders[/bold red]")

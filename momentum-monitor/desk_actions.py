@@ -54,6 +54,21 @@ def load_tv(symbol: str) -> bool:
     return bool(workflow_add_tv(symbol.upper().strip()))
 
 
+def tv_focus_symbol() -> Optional[str]:
+    """Current TradingView chart symbol (read from the browser tab), or None.
+
+    macOS only for now (Brave/Chrome via AppleScript). Returns None elsewhere.
+    """
+    reader = getattr(_agent, "read_tv_symbol", None)
+    if not callable(reader):
+        return None
+    try:
+        sym = reader()
+        return str(sym).upper().strip() if sym else None
+    except Exception:
+        return None
+
+
 def publish_focus(symbol: str | None, source: str = "momentum-monitor") -> None:
     """Write the focused/loaded symbol for other processes (flow_monitor, etc.)."""
     payload = {

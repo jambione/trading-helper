@@ -21,6 +21,7 @@ class DeskHotkeys:
     Keys:
       1-9   focus + load that row into TradingView
       SPACE focus + load top (newest) row
+      T     focus = whatever symbol the TradingView chart is on
       B     buy focused symbol (Alpaca paper/live)
       S     sell / close focused symbol
       F     focus only (no TV load) — optional future
@@ -141,6 +142,9 @@ class DeskHotkeys:
             elif low == "s":
                 sym = self.focus
                 action = "sell"
+            elif low == "t":
+                sym = None            # resolved from TradingView in _grab_tv
+                action = "grab_tv"
             elif key == self.SPACE or key == " ":
                 sym = self._top
                 action = "load"
@@ -149,7 +153,7 @@ class DeskHotkeys:
                 action = "load"
             else:
                 return
-            if not sym:
+            if action != "grab_tv" and not sym:
                 self._status = f"{datetime.now():%H:%M:%S}  no symbol"
                 return
             self._busy = True
@@ -161,6 +165,8 @@ class DeskHotkeys:
                 self._buy(sym)
             elif action == "sell":
                 self._sell(sym)
+            elif action == "grab_tv":
+                self._grab_tv()
         finally:
             with self._lock:
                 self._busy = False
@@ -198,3 +204,17 @@ class DeskHotkeys:
         except Exception as e:
             msg = f"SELL error: {e}"
         self._set(msg)
+
+    def _grab_tv(self):
+        self._set("grab TradingView symbol …")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                sym = actions.tv_focus_symbol()
+        except Exception as e:
+            self._set(f"TV grab error: {e}")
+            return
+        if not sym:
+            self._set("TV: no chart symbol (open the TradingView tab in Brave/Chrome)")
+            return
+        self._set_focus(sym)
+        self._set(f"FOCUS {sym} — from TradingView chart")

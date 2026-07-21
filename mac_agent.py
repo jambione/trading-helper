@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -301,6 +302,80 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
 
     print(f"  ✅ ADD_TV done: {ticker}")
     return True
+
+
+# ── Read the current TradingView chart symbol (browser tab title) ─────────────
+
+_TV_READ_SCRIPT = '''
+set out to ""
+repeat with appName in {"Brave Browser", "Google Chrome"}
+  try
+    if application appName is running then
+      tell application appName
+        repeat with w in windows
+          repeat with t in tabs of w
+            try
+              if (URL of t) contains "tradingview.com/chart" then
+                set out to (title of t) & linefeed & (URL of t)
+              end if
+            end try
+          end repeat
+        end repeat
+      end tell
+    end if
+  end try
+end repeat
+return out
+'''
+
+
+def _parse_tv_symbol(title: str, url: str = "") -> str | None:
+    """Extract the ticker from a TradingView chart tab title (URL as fallback).
+
+    Handles "ENHA 3.16 … — TradingView" (leading token) and
+    "… NYSE:ENHA — TradingView" (EXCHANGE:TICKER), plus a ?symbol= URL param.
+    """
+    title = (title or "").strip()
+    # EXCHANGE:TICKER anywhere in the title (e.g. "NYSE:ENHA")
+    m = re.search(r'\b[A-Z]{2,6}:([A-Z][A-Z0-9.\-]{0,9})\b', title)
+    if m:
+        return m.group(1).upper()
+    # Leading token of the title is usually the symbol
+    if title:
+        cand = re.sub(r'[^A-Z0-9.\-]', '', title.split()[0].upper())
+        if re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,9}', cand or ''):
+            return cand
+    # Fallback: ?symbol=EXCHANGE:TICKER in the chart URL (may be stale)
+    m = re.search(r'[?&]symbol=([^&]+)', url or '')
+    if m:
+        from urllib.parse import unquote
+        s = unquote(m.group(1)).upper()
+        if ':' in s:
+            s = s.split(':', 1)[1]
+        s = re.sub(r'[^A-Z0-9.\-]', '', s)
+        if re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,9}', s or ''):
+            return s
+    return None
+
+
+def read_tv_symbol() -> str | None:
+    """Current TradingView chart symbol, read from the browser tab title.
+
+    Reads Brave/Chrome tabs via AppleScript — no OCR, no stolen window focus.
+    Returns an uppercase ticker, or None when no TV chart tab is found.
+    """
+    if not _IS_MAC:
+        return None
+    try:
+        code, out = _osascript(_TV_READ_SCRIPT)
+    except Exception:
+        return None
+    if code != 0 or not (out or "").strip():
+        return None
+    lines = out.strip().splitlines()
+    title = lines[0] if lines else ""
+    url = lines[1] if len(lines) > 1 else ""
+    return _parse_tv_symbol(title, url)
 
 
 # =============================================================================
