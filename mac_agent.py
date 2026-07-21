@@ -306,12 +306,29 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
 
 # ── Read the current TradingView chart symbol (browser tab title) ─────────────
 
+# Literal app names on purpose: `tell application (variable)` breaks AppleScript
+# terminology resolution, so `tabs`/`URL`/`title` silently fail. Keep them literal.
 _TV_READ_SCRIPT = '''
 set out to ""
-repeat with appName in {"Brave Browser", "Google Chrome"}
+try
+  if application "Brave Browser" is running then
+    tell application "Brave Browser"
+      repeat with w in windows
+        repeat with t in tabs of w
+          try
+            if (URL of t) contains "tradingview.com/chart" then
+              set out to (title of t) & linefeed & (URL of t)
+            end if
+          end try
+        end repeat
+      end repeat
+    end tell
+  end if
+end try
+if out is "" then
   try
-    if application appName is running then
-      tell application appName
+    if application "Google Chrome" is running then
+      tell application "Google Chrome"
         repeat with w in windows
           repeat with t in tabs of w
             try
@@ -324,7 +341,7 @@ repeat with appName in {"Brave Browser", "Google Chrome"}
       end tell
     end if
   end try
-end repeat
+end if
 return out
 '''
 
