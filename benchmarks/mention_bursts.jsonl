@@ -211,3 +211,8 @@
 {"ticker": "WOK", "time": "2026-07-15T17:39:02Z", "unix": 1784137142.8, "price": null, "window_count": 2}
 {"ticker": "TSLA", "time": "2026-07-15T17:39:02Z", "unix": 1784137142.9, "price": null, "window_count": 2}
 {"ticker": "EHGO", "time": "2026-07-15T17:39:02Z", "unix": 1784137142.9, "price": null, "window_count": 2}
+{"ticker": "VTAK", "time": "2026-07-21T20:15:10Z", "unix": 1784664910.6, "price": 0.4939, "window_count": 2}
+{"ticker": "AEHL", "time": "2026-07-21T20:37:14Z", "unix": 1784666234.6, "price": 0.6456, "window_count": 2}
+{"ticker": "KUST", "time": "2026-07-21T20:41:55Z", "unix": 1784666515.7, "price": 1.375, "window_count": 2}
+{"ticker": "AEHL", "time": "2026-07-21T20:42:03Z", "unix": 1784666523.3, "price": 0.6456, "window_count": 2}
+{"ticker": "NVVE", "time": "2026-07-21T20:45:51Z", "unix": 1784666751.1, "price": 7.07, "window_count": 2}

@@ -1344,13 +1344,20 @@ app.include_router(_bridge_router)
 async def _bridge_startup():
     # run an L2 engine for every momentum ticker so each symbol already
     # has a live stance when the phone opens it (load_tickers is defined
-    # later in this module; resolved at call time)
-    _get_bridge().start_auto_watch(lambda: load_tickers())
+    # later in this module; resolved at call time).
+    # Fail soft: missing Alpaca keys / SDK must not take down the dashboard.
+    try:
+        _get_bridge().start_auto_watch(lambda: load_tickers())
+    except Exception as e:
+        log.error("[BRIDGE] startup failed (dashboard continues): %s", e)
 
 
 @app.on_event("shutdown")
 async def _bridge_shutdown():
-    await _get_bridge().shutdown()
+    try:
+        await _get_bridge().shutdown()
+    except Exception as e:
+        log.warning("[BRIDGE] shutdown error: %s", e)
 
 
 # ── Active session tracker ────────────────────────────────────────────────────

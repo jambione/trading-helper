@@ -1,11 +1,20 @@
 """Bridge configuration — self-contained so the existing bot_config.json
 plumbing stays untouched. Overrides live in config/trade_bridge.json.
+
+Alpaca credentials resolve in this order (first non-empty wins per key):
+  1. process env  ALPACA_API_KEY / ALPACA_SECRET_KEY
+  2. signal_engine.env  (same file the signal engine / trader use)
+  3. config/secrets.json  api_key / secret_key
+  4. config/trade_bridge.json  alpaca_api_key / alpaca_secret_key
 """
 import json
 import os
 from pathlib import Path
 
-CONFIG_FILE = Path(__file__).resolve().parent.parent / "config" / "trade_bridge.json"
+_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_FILE = _ROOT / "config" / "trade_bridge.json"
+ENGINE_ENV_FILE = _ROOT / "signal_engine.env"
+SECRETS_FILE = _ROOT / "config" / "secrets.json"
 
 DEFAULTS = {
     # "mock" | "alpaca" — use "alpaca" after scripts/alpaca_smoke.py passes
@@ -30,8 +39,8 @@ DEFAULTS = {
     "auto_watch_interval": 15,
 
     # alpaca provider: same env keys as alpaca_trader
-    "alpaca_api_key": os.getenv("ALPACA_API_KEY", ""),
-    "alpaca_secret_key": os.getenv("ALPACA_SECRET_KEY", ""),
+    "alpaca_api_key": "",
+    "alpaca_secret_key": "",
     "alpaca_paper": True,          # False only for live Mobile Trader orders
     "alpaca_poll_sec": 0.5,        # quote poll interval per symbol
     "alpaca_max_rps": 10.0,
@@ -57,11 +66,74 @@ DEFAULTS = {
 }
 
 
-def load_config() -> dict:
-    cfg = dict(DEFAULTS)
-    if CONFIG_FILE.exists():
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """KEY=VALUE lines from an env file (comments / blanks ignored)."""
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if not key:
+                continue
+            value = value.strip().split("#")[0].strip().strip('"').strip("'")
+            out[key] = value
+    except Exception:
+        pass
+    return out
+
+
+def _resolve_alpaca_credentials(file_cfg: dict) -> tuple[str, str]:
+    """Fill alpaca keys from env → signal_engine.env → secrets → trade_bridge.json."""
+    key = (
+        os.getenv("ALPACA_API_KEY", "").strip()
+        or (file_cfg.get("alpaca_api_key") or "").strip()
+    )
+    secret = (
+        os.getenv("ALPACA_SECRET_KEY", "").strip()
+        or (file_cfg.get("alpaca_secret_key") or "").strip()
+    )
+
+    if not key or not secret:
+        env_file = _parse_env_file(ENGINE_ENV_FILE)
+        key = key or env_file.get("ALPACA_API_KEY", "").strip()
+        secret = secret or env_file.get("ALPACA_SECRET_KEY", "").strip()
+
+    if not key or not secret:
         try:
-            cfg.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
+            if SECRETS_FILE.exists():
+                secrets = json.loads(SECRETS_FILE.read_text(encoding="utf-8"))
+                if isinstance(secrets, dict):
+                    key = key or (secrets.get("api_key") or "").strip()
+                    secret = secret or (secrets.get("secret_key") or "").strip()
         except Exception:
             pass
+
+    return key, secret
+
+
+def load_config() -> dict:
+    cfg = dict(DEFAULTS)
+    file_cfg: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                file_cfg = loaded
+                cfg.update(loaded)
+        except Exception:
+            pass
+
+    # Credentials: resolve after file merge so missing json keys still pick
+    # up signal_engine.env / secrets / process env. Explicit non-empty values
+    # in trade_bridge.json (already in file_cfg) win via _resolve.
+    key, secret = _resolve_alpaca_credentials(file_cfg)
+    if key:
+        cfg["alpaca_api_key"] = key
+    if secret:
+        cfg["alpaca_secret_key"] = secret
     return cfg
