@@ -1,6 +1,10 @@
 """Momentum desk monitor — watchlist + TradingView load + Alpaca trade keys.
 
 Polls the dashboard /api/state feed and shows live momentum tickers.
+RSI column (reuses former Signal slot): green FOCUS when CM RSI-2 is in the
+TV green-long band [0, rsi_focus_max) — data from signal_proximity only
+(signal engine); no list reorder, no local Alpaca bar fetch.
+
 Cross-platform (macOS + Windows):
 
   1-9     focus that row + load TradingView
@@ -87,6 +91,8 @@ DEFAULTS = {
     "limit_pad_pct": 0.1,        # % above ask (buys) / below bid (ext-hours sells)
     "extended_hours": True,      # allow pre/post-market B/S
     "positions_refresh": 3.0,    # seconds between live P&L refreshes
+    # CM RSI-2 green long zone (TV bottom spike): value in [0, rsi_focus_max)
+    "rsi_focus_max": 35.0,
 }
 
 
@@ -139,6 +145,45 @@ def _signal_status(row: dict) -> str | None:
 
 def _is_buy(row: dict) -> bool:
     return (_signal_status(row) or "").lower() in ("buy", "buy_zone")
+
+
+def _cm_rsi_value(row: dict) -> float | None:
+    """CM RSI-2 (preferred) or classic RSI from signal_proximity, if the engine
+    is publishing it. No local Alpaca fetch — blank when the engine is off."""
+    sp = row.get("signal_proximity")
+    if not isinstance(sp, dict):
+        return None
+    for key in ("cm_rsi", "rsi"):
+        v = sp.get(key)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def rsi_focus_trigger(row: dict, max_lvl: float = 35.0) -> tuple[float | None, bool]:
+    """Green long zone at the bottom of the CM RSI pane: value from 0 up to
+    (but not including) max_lvl (default 35). Returns (rsi, is_trigger)."""
+    rsi = _cm_rsi_value(row)
+    if rsi is None:
+        return None, False
+    # Match the TV green long marker: deep oversold band toward 0
+    triggered = 0.0 <= rsi < float(max_lvl)
+    return rsi, triggered
+
+
+def _rsi_focus_cell(row: dict, max_lvl: float = 35.0) -> str:
+    """Rich markup for the RSI focus column (reuses former Signal column)."""
+    rsi, hit = rsi_focus_trigger(row, max_lvl)
+    if rsi is None:
+        return "[dim]—[/dim]"
+    if hit:
+        # Sharp green long — focus this symbol
+        return f"[bold black on green] FOCUS [/] [bold green]{rsi:.0f}[/bold green]"
+    return f"[dim]{rsi:.0f}[/dim]"
 
 
 # ── alerting ─────────────────────────────────────────────────────────────────
@@ -252,18 +297,13 @@ def _detail(row: dict) -> str:
 
 # ── render ───────────────────────────────────────────────────────────────────
 
-_STATUS_LABEL = {
-    "buy": "🔥 BUY", "buy_zone": "🔥 BUY ZONE", "watching": "watching",
-    "approaching": "approaching", "on_deck": "on deck",
-}
-
-
 def _fmt(v, spec, none="—"):
     return format(v, spec) if v is not None else none
 
 
 def momentum_table(feed: Feed, now: float, hz: float,
-                   hotkeys_on: bool) -> Table:
+                   hotkeys_on: bool,
+                   rsi_focus_max: float = 35.0) -> Table:
     t = Table(expand=False)
     t.add_column("#", justify="right", style="bold")
     t.add_column("Symbol")
@@ -271,7 +311,8 @@ def momentum_table(feed: Feed, now: float, hz: float,
     t.add_column("Price", justify="right")
     t.add_column("Chg%", justify="right")
     t.add_column("Mentions", justify="right")
-    t.add_column("Signal")
+    # Reuses the former Signal column: CM RSI green-long focus cue (RSI < max)
+    t.add_column("RSI", justify="right")
     t.add_column("")
     for i, r in enumerate(feed.rows):
         sym = str(r.get("ticker") or "?").upper()
@@ -285,9 +326,6 @@ def momentum_table(feed: Feed, now: float, hz: float,
         win = r.get("mention_window") or 0
         day = r.get("mention_count") or 0
         mtxt = f"{win}/{day}" if (win or day) else "—"
-        st = _signal_status(r)
-        st_lbl = _STATUS_LABEL.get((st or "").lower(), st or "")
-        sc = ("green" if _is_buy(r) else "yellow" if st else "dim")
         flags = []
         if r.get("find_it_first"):
             flags.append("[bold black on green]🥇FIRST[/]")
@@ -305,7 +343,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
             _fmt(r.get("price"), ".2f"),
             f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]" if chg is not None else "—",
             mtxt,
-            f"[{sc}]{st_lbl}[/{sc}]" if st_lbl else "[dim]—[/dim]",
+            _rsi_focus_cell(r, rsi_focus_max),
             " ".join(flags),
         )
     if not feed.rows:
@@ -408,6 +446,7 @@ def main():
     interval = float(cfg.get("poll_interval", 2.0))
     hotkey_slots = min(9, int(cfg.get("hotkey_slots", 9)))
     trade_on = bool(cfg.get("trade_enabled", True))
+    rsi_focus_max = float(cfg.get("rsi_focus_max", 35.0))
 
     # Alpaca paper/live for B/S keys
     trade_cfg = {}
@@ -473,7 +512,8 @@ def main():
             if pos_cache["data"]:
                 panels.append(positions_panel(pos_cache["data"],
                                               hotkeys.focus_symbol()))
-            panels.append(momentum_table(feed, t0, hz, hotkeys.enabled))
+            panels.append(momentum_table(feed, t0, hz, hotkeys.enabled,
+                                         rsi_focus_max))
             panels.append(footer_panel(alerter, hotkeys, hotkey_slots, mode, amount))
             live.update(Group(*panels))
             time.sleep(max(0.0, interval - (time.time() - t0)))

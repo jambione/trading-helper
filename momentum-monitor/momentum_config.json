@@ -14,5 +14,6 @@
   "buy_order_style": "auto",
   "limit_pad_pct": 0.1,
   "extended_hours": true,
-  "positions_refresh": 3.0
+  "positions_refresh": 3.0,
+  "rsi_focus_max": 35.0
 }
