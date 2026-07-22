@@ -1117,6 +1117,11 @@ class TickerState:
             "pctr":           s.get("pctr"),
             "pctr_ok":        bool(s.get("pctr_ok")),
             "pctr_rising":    bool(s.get("pctr_rising")),
+            # Fast + slow %R deep-oversold band for desk FOCUS
+            "pctr_slow":         s.get("pctr_slow"),
+            "pctr_falling":      bool(s.get("pctr_falling")),
+            "pctr_slow_falling": bool(s.get("pctr_slow_falling")),
+            "pctr_deep_os":      bool(s.get("pctr_deep_os")),
             "macd_cross":     bool(s.get("macd_cross")),
             "macd_sep_ratio": s.get("macd_sep_ratio"),
             "macd_ok":        bool(s.get("macd_ok")),

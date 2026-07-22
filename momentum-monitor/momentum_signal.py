@@ -1,9 +1,12 @@
 """Momentum desk monitor — watchlist + TradingView load + Alpaca trade keys.
 
 Polls the dashboard /api/state feed and shows live momentum tickers.
-RSI column (reuses former Signal slot): green FOCUS when CM RSI-2 is in the
-TV green-long band [0, rsi_focus_max) — data from signal_proximity only
-(signal engine); no list reorder, no local Alpaca bar fetch.
+RSI column (reuses former Signal slot): green FOCUS only when BOTH are true:
+  • CM RSI-2 in the TV green-long band [0, rsi_focus_max)
+  • both %R Trend Exhaustion lines (fast + slow) in [pctr_focus_lo, pctr_focus_hi]
+    and falling toward -100 (signal_proximity.pctr_deep_os, or computed from
+    pctr / pctr_slow + falling flags)
+Data from signal_proximity only; no list reorder, no local Alpaca bar fetch.
 
 Cross-platform (macOS + Windows):
 
@@ -91,8 +94,10 @@ DEFAULTS = {
     "limit_pad_pct": 0.1,        # % above ask (buys) / below bid (ext-hours sells)
     "extended_hours": True,      # allow pre/post-market B/S
     "positions_refresh": 3.0,    # seconds between live P&L refreshes
-    # CM RSI-2 green long zone (TV bottom spike): value in [0, rsi_focus_max)
-    "rsi_focus_max": 35.0,
+    # FOCUS = CM RSI green-long AND both %R lines deep OS toward -100
+    "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
+    "pctr_focus_lo": -100.0,     # both %R lines >= lo
+    "pctr_focus_hi": -75.0,      # both %R lines <= hi
 }
 
 
@@ -147,62 +152,105 @@ def _is_buy(row: dict) -> bool:
     return (_signal_status(row) or "").lower() in ("buy", "buy_zone")
 
 
-def _cm_rsi_value(row: dict) -> float | None:
-    """CM RSI-2 (preferred) or classic RSI from signal_proximity, if the engine
-    is publishing it. No local Alpaca fetch — blank when the engine is off."""
+def _sp(row: dict) -> dict:
     sp = row.get("signal_proximity")
-    if not isinstance(sp, dict):
+    return sp if isinstance(sp, dict) else {}
+
+
+def _fnum(v) -> float | None:
+    if v is None:
         return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cm_rsi_value(row: dict) -> float | None:
+    """CM RSI-2 (preferred) or classic RSI from signal_proximity."""
+    sp = _sp(row)
     for key in ("cm_rsi", "rsi"):
-        v = sp.get(key)
-        if v is None:
-            continue
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            continue
+        n = _fnum(sp.get(key))
+        if n is not None:
+            return n
     return None
 
 
-def rsi_focus_trigger(row: dict, max_lvl: float = 35.0) -> tuple[float | None, bool]:
-    """Green long zone at the bottom of the CM RSI pane: value from 0 up to
-    (but not including) max_lvl (default 35). Returns (rsi, is_trigger)."""
+def _rsi_leg_ok(row: dict, max_lvl: float = 35.0) -> bool:
+    """CM RSI green-long band: value in [0, max_lvl)."""
+    rsi = _cm_rsi_value(row)
+    return rsi is not None and 0.0 <= rsi < float(max_lvl)
+
+
+def _pctr_leg_ok(row: dict,
+                 lo: float = -100.0,
+                 hi: float = -75.0) -> bool:
+    """Both %R lines in [lo, hi] and falling toward -100.
+
+    Prefers engine flag `pctr_deep_os`. Falls back to pctr + pctr_slow +
+    falling flags when the flag is absent (older engine builds).
+    """
+    sp = _sp(row)
+    if "pctr_deep_os" in sp:
+        return bool(sp.get("pctr_deep_os"))
+
+    fast = _fnum(sp.get("pctr"))
+    slow = _fnum(sp.get("pctr_slow"))
+    if fast is None or slow is None:
+        return False
+    in_band = (float(lo) <= fast <= float(hi)
+               and float(lo) <= slow <= float(hi))
+    falling = bool(sp.get("pctr_falling")) and bool(sp.get("pctr_slow_falling"))
+    return in_band and falling
+
+
+def rsi_focus_trigger(row: dict,
+                      max_lvl: float = 35.0,
+                      pctr_lo: float = -100.0,
+                      pctr_hi: float = -75.0) -> tuple[float | None, bool]:
+    """FOCUS when RSI leg AND %R deep-OS leg are both true.
+
+    Returns (cm_rsi_or_None, is_focus). FOCUS requires:
+      • CM RSI-2 in [0, max_lvl)
+      • both %R lines in [pctr_lo, pctr_hi] trending toward -100
+    """
     rsi = _cm_rsi_value(row)
     if rsi is None:
         return None, False
-    # Match the TV green long marker: deep oversold band toward 0
-    triggered = 0.0 <= rsi < float(max_lvl)
-    return rsi, triggered
+    hit = _rsi_leg_ok(row, max_lvl) and _pctr_leg_ok(row, pctr_lo, pctr_hi)
+    return rsi, hit
 
 
 def rsi_focus_empty_reason(row: dict) -> str:
     """Why the RSI cell is blank: 'untracked' | 'pending' | '' (has value)."""
-    sp = row.get("signal_proximity")
-    if not isinstance(sp, dict):
+    if not _sp(row):
         return "untracked"
     if _cm_rsi_value(row) is None:
         return "pending"
     return ""
 
 
-def _rsi_focus_cell(row: dict, max_lvl: float = 35.0) -> str:
+def _rsi_focus_cell(row: dict,
+                    max_lvl: float = 35.0,
+                    pctr_lo: float = -100.0,
+                    pctr_hi: float = -75.0) -> str:
     """Rich markup for the RSI focus column (reuses former Signal column).
 
-    Empty states (distinct so pipeline gaps are obvious):
-      —   engine not tracking this symbol (no signal_proximity)
+    Empty states:
+      —   engine not tracking this symbol
       …   tracked, waiting on bars / CM RSI
-      N   RSI value outside focus zone
-      FOCUS N  CM RSI in green-long band [0, max)
+      N   RSI shown; no FOCUS (RSI and/or %R leg not ready)
+      FOCUS N  both RSI green-long and %R deep-OS toward -100
     """
-    rsi, hit = rsi_focus_trigger(row, max_lvl)
+    rsi, hit = rsi_focus_trigger(row, max_lvl, pctr_lo, pctr_hi)
     if rsi is None:
         reason = rsi_focus_empty_reason(row)
         if reason == "pending":
             return "[dim]…[/dim]"
         return "[dim]—[/dim]"
     if hit:
-        # Sharp green long — focus this symbol
         return f"[bold black on green] FOCUS [/] [bold green]{rsi:.0f}[/bold green]"
+    # Partial: show RSI dim; mark %R-ready with a small cue when only RSI missing
     return f"[dim]{rsi:.0f}[/dim]"
 
 
@@ -323,7 +371,9 @@ def _fmt(v, spec, none="—"):
 
 def momentum_table(feed: Feed, now: float, hz: float,
                    hotkeys_on: bool,
-                   rsi_focus_max: float = 35.0) -> Table:
+                   rsi_focus_max: float = 35.0,
+                   pctr_focus_lo: float = -100.0,
+                   pctr_focus_hi: float = -75.0) -> Table:
     t = Table(expand=False)
     t.add_column("#", justify="right", style="bold")
     t.add_column("Symbol")
@@ -331,7 +381,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
     t.add_column("Price", justify="right")
     t.add_column("Chg%", justify="right")
     t.add_column("Mentions", justify="right")
-    # Reuses the former Signal column: CM RSI green-long focus cue (RSI < max)
+    # FOCUS = CM RSI green-long + both %R lines deep OS toward -100
     t.add_column("RSI", justify="right")
     t.add_column("")
     for i, r in enumerate(feed.rows):
@@ -363,7 +413,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
             _fmt(r.get("price"), ".2f"),
             f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]" if chg is not None else "—",
             mtxt,
-            _rsi_focus_cell(r, rsi_focus_max),
+            _rsi_focus_cell(r, rsi_focus_max, pctr_focus_lo, pctr_focus_hi),
             " ".join(flags),
         )
     if not feed.rows:
@@ -467,6 +517,8 @@ def main():
     hotkey_slots = min(9, int(cfg.get("hotkey_slots", 9)))
     trade_on = bool(cfg.get("trade_enabled", True))
     rsi_focus_max = float(cfg.get("rsi_focus_max", 35.0))
+    pctr_focus_lo = float(cfg.get("pctr_focus_lo", -100.0))
+    pctr_focus_hi = float(cfg.get("pctr_focus_hi", -75.0))
 
     # Alpaca paper/live for B/S keys
     trade_cfg = {}
@@ -532,8 +584,9 @@ def main():
             if pos_cache["data"]:
                 panels.append(positions_panel(pos_cache["data"],
                                               hotkeys.focus_symbol()))
-            panels.append(momentum_table(feed, t0, hz, hotkeys.enabled,
-                                         rsi_focus_max))
+            panels.append(momentum_table(
+                feed, t0, hz, hotkeys.enabled,
+                rsi_focus_max, pctr_focus_lo, pctr_focus_hi))
             panels.append(footer_panel(alerter, hotkeys, hotkey_slots, mode, amount))
             live.update(Group(*panels))
             time.sleep(max(0.0, interval - (time.time() - t0)))

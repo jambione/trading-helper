@@ -15,5 +15,7 @@
   "limit_pad_pct": 0.1,
   "extended_hours": true,
   "positions_refresh": 3.0,
-  "rsi_focus_max": 35.0
+  "rsi_focus_max": 35.0,
+  "pctr_focus_lo": -100.0,
+  "pctr_focus_hi": -75.0
 }
