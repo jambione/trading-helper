@@ -222,7 +222,7 @@ def rsi_focus_trigger(row: dict,
 
 
 def rsi_focus_empty_reason(row: dict) -> str:
-    """Why the RSI cell is blank: 'untracked' | 'pending' | '' (has value)."""
+    """Why the Setup cell is blank: 'untracked' | 'pending' | '' (has value)."""
     if not _sp(row):
         return "untracked"
     if _cm_rsi_value(row) is None:
@@ -230,17 +230,41 @@ def rsi_focus_empty_reason(row: dict) -> str:
     return ""
 
 
+def _pctr_pair(row: dict) -> tuple[float | None, float | None]:
+    """(fast %R, slow %R) from signal_proximity."""
+    sp = _sp(row)
+    return _fnum(sp.get("pctr")), _fnum(sp.get("pctr_slow"))
+
+
+def _setup_readout(rsi: float,
+                   fast: float | None,
+                   slow: float | None) -> str:
+    """Compact combined readout: RSI · fast/slow %R (omit missing %R)."""
+    # e.g. "3/−99/−77" or "17/−96" or "17"
+    parts = [f"{rsi:.0f}"]
+    if fast is not None and slow is not None:
+        parts.append(f"{fast:.0f}/{slow:.0f}")
+    elif fast is not None:
+        parts.append(f"{fast:.0f}")
+    elif slow is not None:
+        parts.append(f"—/{slow:.0f}")
+    return "·".join(parts) if len(parts) > 1 else parts[0]
+
+
 def _rsi_focus_cell(row: dict,
                     max_lvl: float = 35.0,
                     pctr_lo: float = -100.0,
                     pctr_hi: float = -75.0) -> str:
-    """Rich markup for the RSI focus column (reuses former Signal column).
+    """Rich markup for the Setup column (combined CM RSI + %R cue).
 
-    Empty states:
-      —   engine not tracking this symbol
+    Empty:
+      —   engine not tracking
       …   tracked, waiting on bars / CM RSI
-      N   RSI shown; no FOCUS (RSI and/or %R leg not ready)
-      FOCUS N  both RSI green-long and %R deep-OS toward -100
+    Partial (no FOCUS):
+      dim  17·−96/−40   RSI + both %R (full setup not ready)
+      dim  17           RSI only (%R not published yet)
+    Full setup:
+      FOCUS  3·−99/−77  both legs true — number is RSI·fast/slow %R
     """
     rsi, hit = rsi_focus_trigger(row, max_lvl, pctr_lo, pctr_hi)
     if rsi is None:
@@ -248,10 +272,12 @@ def _rsi_focus_cell(row: dict,
         if reason == "pending":
             return "[dim]…[/dim]"
         return "[dim]—[/dim]"
+    fast, slow = _pctr_pair(row)
+    readout = _setup_readout(rsi, fast, slow)
     if hit:
-        return f"[bold black on green] FOCUS [/] [bold green]{rsi:.0f}[/bold green]"
-    # Partial: show RSI dim; mark %R-ready with a small cue when only RSI missing
-    return f"[dim]{rsi:.0f}[/dim]"
+        return (f"[bold black on green] FOCUS [/] "
+                f"[bold green]{readout}[/bold green]")
+    return f"[dim]{readout}[/dim]"
 
 
 # ── alerting ─────────────────────────────────────────────────────────────────

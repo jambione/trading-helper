@@ -108,16 +108,42 @@ def test_empty_reason_pending():
     assert rsi_focus_empty_reason(row) == "pending"
 
 
-def test_cell_markup_focus():
-    cell = _rsi_focus_cell(_row(cm_rsi=8.0, pctr_deep_os=True))
+def test_cell_markup_focus_combined_readout():
+    cell = _rsi_focus_cell(_row(
+        cm_rsi=8.0, pctr_deep_os=True,
+        pctr=-99.0, pctr_slow=-88.0,
+    ))
     assert "FOCUS" in cell
     assert "8" in cell
+    assert "-99" in cell
+    assert "-88" in cell
+    assert "·" in cell
+
+
+def test_cell_markup_idle_shows_both_when_available():
+    cell = _rsi_focus_cell(_row(
+        cm_rsi=8.0, pctr_deep_os=False,
+        pctr=-85.0, pctr_slow=-60.0,
+    ))
+    assert "FOCUS" not in cell
+    assert "8" in cell
+    assert "-85" in cell
+    assert "-60" in cell
 
 
 def test_cell_markup_idle_rsi_only():
     cell = _rsi_focus_cell(_row(cm_rsi=8.0, pctr_deep_os=False))
     assert "FOCUS" not in cell
     assert "8" in cell
+
+
+def test_setup_readout_formats():
+    from momentum_signal import _setup_readout
+    # .0f rounds half away from zero for display
+    assert _setup_readout(3.2, -99.4, -77.2) == "3·-99/-77"
+    assert _setup_readout(17.0, None, None) == "17"
+    assert _setup_readout(17.0, -96.0, None) == "17·-96"
+    assert _setup_readout(3.0, -99.0, -77.0) == "3·-99/-77"
 
 
 def test_cell_markup_untracked():
