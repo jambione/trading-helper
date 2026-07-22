@@ -464,29 +464,48 @@ def momentum_table(feed: Feed, now: float, hz: float,
 def stocktwits_panel(st: StocktwitsTrending,
                      price_by_sym: dict[str, float | None],
                      limit: int = 10) -> Panel:
-    """Compact Stocktwits trending strip (equities; max_price when known)."""
+    """Stocktwits trending — same columns as stocktwits.com/sentiment (+ score)."""
+    from stocktwits_trending import fmt_mcap, fmt_vol
+
     rows = st.display_rows(price_by_sym, limit=limit)
     t = Table(expand=False)
     t.add_column("ST#", justify="right", style="bold magenta")
     t.add_column("Symbol")
+    t.add_column("Last", justify="right")
+    t.add_column("%Chg", justify="right")
+    t.add_column("Volume", justify="right")
+    t.add_column("52w Hi", justify="right")
+    t.add_column("52w Lo", justify="right")
+    t.add_column("Mkt Cap", justify="right")
     t.add_column("Score", justify="right")
-    t.add_column("Price", justify="right")
-    t.add_column("Watchers", justify="right")
     if not rows:
         msg = st.error or "waiting for first poll…"
-        t.add_row("—", f"[dim]{msg}[/dim]", "", "", "")
+        t.add_row("—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "")
     else:
         for r in rows:
             px = r.get("price")
-            px_s = f"{px:.2f}" if px is not None else "[dim]—[/dim]"
+            px_s = f"${px:.2f}" if px is not None else "[dim]—[/dim]"
+            chg = r.get("pct_change")
+            if chg is None:
+                chg_s = "[dim]—[/dim]"
+            else:
+                cc = "green" if chg >= 0 else "red"
+                chg_s = f"[{cc}]{chg:+.2f}%[/{cc}]"
+            hi = r.get("high_52w")
+            lo = r.get("low_52w")
             sc = r.get("trending_score")
-            sc_s = f"{sc:.1f}" if sc is not None else "—"
+            # Prefer session volume; fall back to ST avg daily
+            vol = r.get("volume") if r.get("volume") is not None else r.get("avg_vol")
             t.add_row(
                 str(r.get("rank") or "—"),
                 f"[bold cyan]{r['symbol']}[/bold cyan]",
-                sc_s,
                 px_s,
-                f"{r.get('watchlist_count') or 0:,}",
+                chg_s,
+                fmt_vol(vol),
+                f"${hi:.2f}" if hi is not None else "—",
+                f"${lo:.2f}" if lo is not None else "—",
+                fmt_mcap(r.get("market_cap")),
+                f"{sc:.1f}" if sc is not None else "—",
             )
     age = ""
     if st.last_ok:
