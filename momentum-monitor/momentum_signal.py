@@ -381,8 +381,8 @@ def momentum_table(feed: Feed, now: float, hz: float,
     t.add_column("Price", justify="right")
     t.add_column("Chg%", justify="right")
     t.add_column("Mentions", justify="right")
-    # FOCUS = CM RSI green-long + both %R lines deep OS toward -100
-    t.add_column("RSI", justify="right")
+    # Combined CM RSI + %R deep-OS cue (not RSI alone)
+    t.add_column("Setup", justify="right")
     t.add_column("")
     for i, r in enumerate(feed.rows):
         sym = str(r.get("ticker") or "?").upper()
