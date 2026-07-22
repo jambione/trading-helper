@@ -17,5 +17,10 @@
   "positions_refresh": 3.0,
   "rsi_focus_max": 35.0,
   "pctr_focus_lo": -100.0,
-  "pctr_focus_hi": -75.0
+  "pctr_focus_hi": -75.0,
+  "stocktwits_enabled": true,
+  "stocktwits_poll": 60.0,
+  "stocktwits_stocks_only": true,
+  "stocktwits_max_price": 30.0,
+  "stocktwits_panel_limit": 10
 }

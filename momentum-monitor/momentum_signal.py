@@ -72,6 +72,7 @@ except Exception:                                          # noqa: BLE001
 
 import desk_actions as desk
 from desk_hotkeys import DeskHotkeys
+from stocktwits_trending import StocktwitsTrending
 
 WatchlistReader = top_movers = None  # OCR movers retired
 
@@ -98,6 +99,12 @@ DEFAULTS = {
     "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
     "pctr_focus_lo": -100.0,     # both %R lines >= lo
     "pctr_focus_hi": -75.0,      # both %R lines <= hi
+    # Stocktwits free trending (stocktwits.com/sentiment)
+    "stocktwits_enabled": True,
+    "stocktwits_poll": 60.0,     # seconds between ST API polls
+    "stocktwits_stocks_only": True,
+    "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
+    "stocktwits_panel_limit": 10,
 }
 
 
@@ -399,7 +406,8 @@ def momentum_table(feed: Feed, now: float, hz: float,
                    hotkeys_on: bool,
                    rsi_focus_max: float = 35.0,
                    pctr_focus_lo: float = -100.0,
-                   pctr_focus_hi: float = -75.0) -> Table:
+                   pctr_focus_hi: float = -75.0,
+                   st_rank: dict[str, int] | None = None) -> Table:
     t = Table(expand=False)
     t.add_column("#", justify="right", style="bold")
     t.add_column("Symbol")
@@ -410,6 +418,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
     # Combined CM RSI + %R deep-OS cue (not RSI alone)
     t.add_column("Setup", justify="right")
     t.add_column("")
+    st_rank = st_rank or {}
     for i, r in enumerate(feed.rows):
         sym = str(r.get("ticker") or "?").upper()
         key = str(i + 1) if (hotkeys_on and i < 9) else ""
@@ -432,6 +441,10 @@ def momentum_table(feed: Feed, now: float, hz: float,
         conf = r.get("confluence")
         if isinstance(conf, dict) and conf.get("count", 0) >= 2:
             flags.append(f"[magenta]⚡{conf['count']}[/magenta]")
+        # Stocktwits trending rank (same list as stocktwits.com/sentiment)
+        rk = st_rank.get(sym)
+        if rk is not None:
+            flags.append(f"[bold black on magenta] ST#{rk} [/]")
         t.add_row(
             key,
             f"[bold cyan]{sym}[/bold cyan]",
@@ -446,6 +459,42 @@ def momentum_table(feed: Feed, now: float, hz: float,
         t.add_row("", "[dim]no momentum tickers in the feed[/dim]",
                   "", "", "", "", "", "")
     return t
+
+
+def stocktwits_panel(st: StocktwitsTrending,
+                     price_by_sym: dict[str, float | None],
+                     limit: int = 10) -> Panel:
+    """Compact Stocktwits trending strip (equities; max_price when known)."""
+    rows = st.display_rows(price_by_sym, limit=limit)
+    t = Table(expand=False)
+    t.add_column("ST#", justify="right", style="bold magenta")
+    t.add_column("Symbol")
+    t.add_column("Score", justify="right")
+    t.add_column("Price", justify="right")
+    t.add_column("Watchers", justify="right")
+    if not rows:
+        msg = st.error or "waiting for first poll…"
+        t.add_row("—", f"[dim]{msg}[/dim]", "", "", "")
+    else:
+        for r in rows:
+            px = r.get("price")
+            px_s = f"{px:.2f}" if px is not None else "[dim]—[/dim]"
+            sc = r.get("trending_score")
+            sc_s = f"{sc:.1f}" if sc is not None else "—"
+            t.add_row(
+                str(r.get("rank") or "—"),
+                f"[bold cyan]{r['symbol']}[/bold cyan]",
+                sc_s,
+                px_s,
+                f"{r.get('watchlist_count') or 0:,}",
+            )
+    age = ""
+    if st.last_ok:
+        age = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
+    cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
+    title = f"STOCKTWITS TRENDING{cap}{age}"
+    return Panel(t, title=title, title_align="left",
+                 border_style="magenta", padding=(0, 1))
 
 
 def header_panel(feed: Feed, now: float, hz: float,
@@ -545,6 +594,10 @@ def main():
     rsi_focus_max = float(cfg.get("rsi_focus_max", 35.0))
     pctr_focus_lo = float(cfg.get("pctr_focus_lo", -100.0))
     pctr_focus_hi = float(cfg.get("pctr_focus_hi", -75.0))
+    st_on = bool(cfg.get("stocktwits_enabled", True))
+    st_poll = float(cfg.get("stocktwits_poll", 60.0))
+    st_max_px = cfg.get("stocktwits_max_price", 30.0)
+    st_limit = int(cfg.get("stocktwits_panel_limit", 10))
 
     # Alpaca paper/live for B/S keys
     trade_cfg = {}
@@ -565,17 +618,24 @@ def main():
     feed = Feed(cfg)
     alerter = Alerter(cfg)
     hotkeys = DeskHotkeys(trade_enabled=trade_on and mode != "off")
+    st = StocktwitsTrending(
+        poll_interval=st_poll,
+        stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
+        max_price=float(st_max_px) if st_max_px is not None else None,
+    ) if st_on else None
 
     _style = {"auto": "auto mkt/lim", "limit_ask": "limit@ask", "market": "market"}.get(
         desk.buy_style(), desk.buy_style())
     _ext = " +EXT" if desk.extended_hours() else ""
+    st_note = f"  ST={'on' if st_on else 'off'}"
     console.print(
         f"[bold]Momentum desk[/bold]  {desk.platform_label()}  "
         f"Alpaca [bold]{mode.upper()}[/bold]  ${amount:.0f}/buy {_style}{_ext}  "
-        f"TV={'on' if desk.tv_load_available() else 'off'}  "
+        f"TV={'on' if desk.tv_load_available() else 'off'}{st_note}  "
         f"— Ctrl+C to stop.\n"
-        f"Polling {_dashboard_url()}/api/state\n"
-        f"[dim]1-9/space load TV · T focus=TV chart · B buy · S sell[/dim]"
+        f"Polling {_dashboard_url()}/api/state"
+        + (f"  ·  Stocktwits every {st_poll:.0f}s\n" if st_on else "\n")
+        + f"[dim]1-9/space load TV · T focus=TV chart · B buy · S sell[/dim]"
     )
     if mode == "live":
         console.print("[bold red]LIVE money enabled — B/S place real orders[/bold red]")
@@ -599,6 +659,9 @@ def main():
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
 
+            if st is not None:
+                st.refresh(t0)
+
             # Live P&L for open positions (throttled Alpaca call)
             if pos_on and (t0 - pos_cache["ts"] >= pos_refresh):
                 d = desk.positions_detail()
@@ -606,13 +669,31 @@ def main():
                     pos_cache["data"] = d
                 pos_cache["ts"] = t0
 
+            # Prices from momentum feed for ST panel filter (price < max)
+            price_map: dict[str, float | None] = {}
+            for r in feed.rows:
+                s = str(r.get("ticker") or "").upper()
+                if s:
+                    try:
+                        price_map[s] = float(r["price"]) if r.get("price") is not None else None
+                    except (TypeError, ValueError):
+                        price_map[s] = None
+
+            st_rank = {}
+            if st is not None:
+                st_rank = {sym: int(row["rank"])
+                           for sym, row in st.by_symbol.items()
+                           if row.get("rank") is not None}
+
             panels = [header_panel(feed, t0, hz, stale)]
             if pos_cache["data"]:
                 panels.append(positions_panel(pos_cache["data"],
                                               hotkeys.focus_symbol()))
             panels.append(momentum_table(
                 feed, t0, hz, hotkeys.enabled,
-                rsi_focus_max, pctr_focus_lo, pctr_focus_hi))
+                rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank))
+            if st is not None:
+                panels.append(stocktwits_panel(st, price_map, limit=st_limit))
             panels.append(footer_panel(alerter, hotkeys, hotkey_slots, mode, amount))
             live.update(Group(*panels))
             time.sleep(max(0.0, interval - (time.time() - t0)))
