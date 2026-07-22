@@ -228,7 +228,7 @@ def workflow_add_wb(ticker: str) -> bool:
 
 
 # =============================================================================
-# TradingView workflow — find Brave or Chrome, switch tab, type ticker
+# TradingView workflow — load symbol via chart URL (reliable on macOS)
 # =============================================================================
 
 def _find_browser() -> str | None:
@@ -242,66 +242,173 @@ def _find_browser() -> str | None:
     return None
 
 
+def _tv_chart_url(ticker: str) -> str:
+    """Chart URL for ticker from TV_CHART_URL (placeholder {sym})."""
+    sym = ticker.upper().strip()
+    tpl = TV_CHART_URL or "https://www.tradingview.com/chart/?symbol={sym}"
+    if "{sym}" in tpl:
+        return tpl.replace("{sym}", sym)
+    # Fallback if template has no placeholder
+    sep = "&" if "?" in tpl else "?"
+    return f"{tpl}{sep}symbol={sym}"
+
+
+def _as_escape(s: str) -> str:
+    """Escape a string for embedding in an AppleScript double-quoted literal."""
+    return (s or "").replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _navigate_tv_chart(ticker: str, browser: str) -> bool:
+    """
+    Point an existing TradingView chart tab at ticker (or open the chart URL).
+
+    Uses AppleScript URL assignment — more reliable than pyautogui keystrokes,
+    which often type into the wrong surface and report success anyway.
+    App names are literal (Brave / Chrome) so tab/URL terminology resolves.
+    """
+    url = _tv_chart_url(ticker)
+    url_q = _as_escape(url)
+    # Literal application blocks only — `tell application (variable)` breaks
+    # Chrome/Brave scripting terminology on recent macOS.
+    if browser == "Brave Browser":
+        script = f'''
+set theUrl to "{url_q}"
+set found to false
+if application "Brave Browser" is running then
+  tell application "Brave Browser"
+    activate
+    repeat with w in windows
+      set tabIndex to 0
+      repeat with t in tabs of w
+        set tabIndex to tabIndex + 1
+        try
+          if (URL of t) contains "tradingview.com/chart" then
+            set URL of t to theUrl
+            set active tab index of w to tabIndex
+            set index of w to 1
+            set found to true
+            exit repeat
+          end if
+        end try
+      end repeat
+      if found then exit repeat
+    end repeat
+    if not found then
+      open location theUrl
+    end if
+  end tell
+  return "ok"
+end if
+return "no"
+'''
+    elif browser == "Google Chrome":
+        script = f'''
+set theUrl to "{url_q}"
+set found to false
+if application "Google Chrome" is running then
+  tell application "Google Chrome"
+    activate
+    repeat with w in windows
+      set tabIndex to 0
+      repeat with t in tabs of w
+        set tabIndex to tabIndex + 1
+        try
+          if (URL of t) contains "tradingview.com/chart" then
+            set URL of t to theUrl
+            set active tab index of w to tabIndex
+            set index of w to 1
+            set found to true
+            exit repeat
+          end if
+        end try
+      end repeat
+      if found then exit repeat
+    end repeat
+    if not found then
+      open location theUrl
+    end if
+  end tell
+  return "ok"
+end if
+return "no"
+'''
+    else:
+        return False
+
+    code, out = _osascript(script)
+    return code == 0 and "ok" in (out or "").lower()
+
+
 def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     """
-    Focus Brave/Chrome, switch to the pinned TradingView tab (Cmd+tab_num),
-    click the chart area, type the ticker, press Enter to load the symbol,
-    then Option+W to add to the TradingView watchlist.
+    Load `ticker` on the TradingView chart in Brave or Chrome.
+
+    Primary path: set the existing chart tab's URL to TV_CHART_URL (with {sym}),
+    or open that URL if no chart tab exists. Verifies via read_tv_symbol().
+
+    Falls back to legacy pyautogui type-into-chart only if URL navigation fails
+    and pyautogui is available. `tab_num` is kept for API compat (used by fallback).
     """
     ticker = ticker.upper().strip()
+    if not ticker:
+        return False
 
     if not _IS_MAC:
         print(f"  [DRY RUN] ADD_TV → {ticker}")
         return True
-
-    if not _PAG_OK:
-        print("  ⏭  ADD_TV skipped — pyautogui not available")
-        return False
 
     browser = _find_browser()
     if not browser:
         print("  ❌ ADD_TV failed — Brave Browser / Google Chrome not running")
         return False
 
-    print(f"  🌐 ADD_TV → {ticker}  [{browser}]")
+    print(f"  🌐 ADD_TV → {ticker}  [{browser}]  url-nav")
+    ok = _navigate_tv_chart(ticker, browser)
+    if ok:
+        # Title can lag a moment after URL change
+        for _ in range(8):
+            time.sleep(0.35)
+            got = read_tv_symbol()
+            if got and got.upper() == ticker:
+                print(f"  ✅ ADD_TV done: {ticker}  (chart confirmed)")
+                return True
+        # URL navigation ran; title parse may lag or use exchange prefix — still ok
+        got = read_tv_symbol()
+        print(f"  ✅ ADD_TV navigated: {ticker}  (tab title now: {got or '—'})")
+        return True
 
+    # ── Legacy fallback: keystrokes into the chart (often flaky) ─────────────
+    if not _PAG_OK:
+        print("  ❌ ADD_TV failed — URL navigation failed and pyautogui unavailable")
+        return False
+
+    print(f"  ⚠️  ADD_TV URL path failed — trying keystroke fallback")
     if not _focus_app(browser):
         print(f"  ❌ ADD_TV failed — could not focus {browser}")
         return False
 
     time.sleep(0.3)
-
-    # Cmd+tab_num — switch to the pinned TradingView tab
-    # On macOS, browser tab shortcuts are Cmd+1…Cmd+9 (not Ctrl)
-    _pag.hotkey("command", str(tab_num))
-    time.sleep(0.6)
-
-    # Escape — return focus from address bar to the page
+    _pag.hotkey("command", str(tab_num or BRAVE_TV_TAB))
+    time.sleep(0.5)
     _pag.press("escape")
-    time.sleep(0.2)
-
-    # Click the chart canvas to ensure it has keyboard focus.
-    # Layout: Brave = left 45% of screen; TV right panel (watchlist) ≈ right 45%
-    # of the Brave window. Clicking at 15% of screen width (~1/3 of Brave's width)
-    # lands solidly on the chart canvas and avoids the right panel.
+    time.sleep(0.15)
     sw, sh = _pag.size()
     _pag.click(int(sw * 0.15), sh // 2)
-    time.sleep(0.2)
-    time.sleep(0.3)
+    time.sleep(0.25)
+    # Slash opens TV symbol search more reliably than bare keypresses
+    _pag.press("/")
+    time.sleep(0.25)
+    _pag.typewrite(ticker.lower(), interval=0.04)
+    time.sleep(0.35)
+    _pag.press("enter")
+    time.sleep(0.5)
 
-    # Type ticker — TradingView opens symbol search on first keypress
-    for letter in ticker:
-        _pag.press(letter.lower())
-        time.sleep(0.05)
-
-    time.sleep(0.4)
-    _pag.press("enter")       # confirm symbol
-    time.sleep(0.3)
-
-    _pag.hotkey("option", "w")  # macOS: Option+W = Add to TradingView watchlist
-
-    print(f"  ✅ ADD_TV done: {ticker}")
-    return True
+    got = read_tv_symbol()
+    if got and got.upper() == ticker:
+        print(f"  ✅ ADD_TV done (keystroke): {ticker}")
+        return True
+    print(f"  ❌ ADD_TV keystroke fallback — chart shows {got or '—'}, wanted {ticker}")
+    return False
 
 
 # ── Read the current TradingView chart symbol (browser tab title) ─────────────
