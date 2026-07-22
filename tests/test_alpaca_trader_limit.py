@@ -314,6 +314,27 @@ def test_get_positions_detail_maps_pnl():
     assert p["mkt_val"] == 1368.0
 
 
+def test_init_retries_transient_unauthorized():
+    acct = SimpleNamespace(cash="1000", buying_power="1000")
+    client = MagicMock()
+    client.get_account.side_effect = [Exception("unauthorized"),
+                                      Exception("unauthorized"), acct]
+    with patch("alpaca.trading.client.TradingClient", return_value=client), \
+         patch("alpaca_trader.time.sleep"):
+        tr.init(mode="paper", api_key="k", secret_key="s")
+    assert tr.is_active() and tr._mode == "paper"
+    assert client.get_account.call_count == 3
+
+
+def test_init_gives_up_after_retries():
+    client = MagicMock()
+    client.get_account.side_effect = Exception("unauthorized")
+    with patch("alpaca.trading.client.TradingClient", return_value=client), \
+         patch("alpaca_trader.time.sleep"):
+        tr.init(mode="paper", api_key="k", secret_key="s")
+    assert not tr.is_active() and tr._mode == "off"
+
+
 def test_close_out_no_position_reports_canceled():
     fake = MagicMock()
     fake.get_orders.return_value = [SimpleNamespace(id="o1")]

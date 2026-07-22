@@ -242,6 +242,60 @@ def _find_browser() -> str | None:
     return None
 
 
+def _front_window_bounds(app_name: str) -> tuple[int, int, int, int] | None:
+    """(x, y, width, height) of app_name's front window, or None.
+
+    System Events reports position/size in the same top-left origin point
+    space pyautogui clicks in, so the values need no conversion.
+    """
+    script = f'''
+tell application "System Events"
+  tell process "{app_name}"
+    if (count of windows) is 0 then return ""
+    set p to position of front window
+    set s to size of front window
+    return ((item 1 of p) as text) & "," & ((item 2 of p) as text) & "," & \
+           ((item 1 of s) as text) & "," & ((item 2 of s) as text)
+  end tell
+end tell
+'''
+    try:
+        code, out = _osascript(script)
+    except Exception:
+        return None
+    if code != 0 or not (out or "").strip():
+        return None
+    try:
+        x, y, w, h = (int(float(v)) for v in out.strip().split(","))
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, w, h)
+
+
+def _chart_click_point(browser: str) -> tuple[int, int]:
+    """Where to click to give the TradingView chart canvas keyboard focus.
+
+    Derived from the browser window's ACTUAL bounds. The previous version
+    hardcoded 15% of screen width, which assumed the browser sat on the left
+    half of the display — when the window layout changed, that coordinate
+    landed on whatever app was there instead (typically the Terminal running
+    the monitor), so every keystroke went to the wrong window while pyautogui
+    still reported success.
+
+    35% of window width stays clear of TradingView's right-hand watchlist
+    panel; 40% of window height stays above the bottom broker panel.
+    """
+    bounds = _front_window_bounds(browser)
+    if bounds:
+        wx, wy, ww, wh = bounds
+        return (int(wx + ww * 0.35), int(wy + wh * 0.40))
+    sw, sh = _pag.size()
+    print("  ⚠️  could not read window bounds — falling back to screen-relative click")
+    return (int(sw * 0.15), sh // 2)
+
+
 def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     """
     Focus Brave/Chrome, switch to the pinned TradingView tab (Cmd+tab_num),
@@ -283,14 +337,12 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     _pag.press("escape")
     time.sleep(0.2)
 
-    # Click the chart canvas to ensure it has keyboard focus.
-    # Layout: Brave = left 45% of screen; TV right panel (watchlist) ≈ right 45%
-    # of the Brave window. Clicking at 15% of screen width (~1/3 of Brave's width)
-    # lands solidly on the chart canvas and avoids the right panel.
-    sw, sh = _pag.size()
-    _pag.click(int(sw * 0.15), sh // 2)
-    time.sleep(0.2)
-    time.sleep(0.3)
+    # Click the chart canvas to ensure it has keyboard focus. The point is
+    # computed from the browser window's real bounds, so moving or resizing
+    # windows no longer sends the keystrokes to the wrong app.
+    cx, cy = _chart_click_point(browser)
+    _pag.click(cx, cy)
+    time.sleep(0.5)
 
     # Type ticker — TradingView opens symbol search on first keypress
     for letter in ticker:
@@ -300,6 +352,23 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     time.sleep(0.4)
     _pag.press("enter")       # confirm symbol
     time.sleep(0.3)
+
+    # Confirm the chart actually loaded the symbol before saving it. Without
+    # this the function reported success even when the keystrokes went to the
+    # wrong window — and Option+W could add whatever symbol WAS on the chart
+    # to the watchlist. Verify first, then save.
+    loaded = None
+    for _ in range(6):
+        loaded = read_tv_symbol()
+        if loaded == ticker:
+            break
+        time.sleep(0.25)
+
+    if loaded != ticker:
+        print(f"  ❌ ADD_TV failed: chart shows {loaded or 'unknown'}, expected {ticker}")
+        print("     Keystrokes likely went to another window — skipping Option+W")
+        print("     so the wrong symbol isn't saved to the watchlist.")
+        return False
 
     _pag.hotkey("option", "w")  # macOS: Option+W = Add to TradingView watchlist
 

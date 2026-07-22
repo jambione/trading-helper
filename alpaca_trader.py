@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -100,32 +101,46 @@ def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
     paper   = (_mode == "paper")
     _client = TradingClient(api_key, secret_key, paper=paper)
 
-    # Verify the connection works
-    try:
-        acct = _client.get_account()
-        cash = float(acct.cash)
-        bp   = float(acct.buying_power)
-        log.info(
-            "[TRADER] Alpaca connected  mode=%s  cash=$%,.2f  buying_power=$%,.2f",
-            _mode.upper(), cash, bp,
-        )
-        if _use_brackets and _stop_loss_pct > 0 and _take_profit_pct > 0:
-            log.info(
-                "[TRADER] brackets ON  SL=%.2f%%  TP=%.2f%%  (RTH market buys only)",
-                _stop_loss_pct, _take_profit_pct,
-            )
-        elif _stop_loss_pct > 0 or _take_profit_pct > 0:
-            log.info(
-                "[TRADER] brackets OFF — client-side exits only "
-                "(set BRACKET_EXITS=on and both STOP_LOSS/TAKE_PROFIT > 0)",
-            )
-    except Exception as e:
+    # Verify the connection works — retry a couple times so a transient
+    # "unauthorized"/network blip doesn't disable trading for the whole session.
+    acct     = None
+    last_err = None
+    for attempt in range(3):
+        try:
+            acct = _client.get_account()
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                log.warning("[TRADER] Alpaca connect attempt %d/3 failed (%s); retrying…",
+                            attempt + 1, e)
+                time.sleep(1.5 * (attempt + 1))
+
+    if acct is None:
         log.error(
-            "[TRADER] Could not connect to Alpaca (%s). "
-            "Check your API keys. Falling back to mode=off.", e
+            "[TRADER] Could not connect to Alpaca after 3 tries (%s). "
+            "Check your API keys. Falling back to mode=off.", last_err
         )
         _mode   = "off"
         _client = None
+        return
+
+    cash = float(acct.cash)
+    bp   = float(acct.buying_power)
+    log.info(
+        "[TRADER] Alpaca connected  mode=%s  cash=$%,.2f  buying_power=$%,.2f",
+        _mode.upper(), cash, bp,
+    )
+    if _use_brackets and _stop_loss_pct > 0 and _take_profit_pct > 0:
+        log.info(
+            "[TRADER] brackets ON  SL=%.2f%%  TP=%.2f%%  (RTH market buys only)",
+            _stop_loss_pct, _take_profit_pct,
+        )
+    elif _stop_loss_pct > 0 or _take_profit_pct > 0:
+        log.info(
+            "[TRADER] brackets OFF — client-side exits only "
+            "(set BRACKET_EXITS=on and both STOP_LOSS/TAKE_PROFIT > 0)",
+        )
 
 
 def is_active() -> bool:

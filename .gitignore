@@ -1,4 +1,9 @@
 secrets.json
+# Per-machine credentials — ship signal_engine.env.example instead.
+signal_engine.env
+.env
+# Monitor bootstrap venv (scripts/setup_monitor.sh|ps1)
+.venv-monitor/
 .DS_Store
 __pycache__/
 *.pyc
