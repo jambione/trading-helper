@@ -1,19 +1,16 @@
-"""Momentum desk monitor — watchlist + TradingView load + Alpaca trade keys.
+"""Momentum desk monitor — Discord momentum + Stocktwits + TradingView load.
 
-Polls the dashboard /api/state feed and shows live momentum tickers.
-RSI column (reuses former Signal slot): green FOCUS only when BOTH are true:
-  • CM RSI-2 in the TV green-long band [0, rsi_focus_max)
-  • both %R Trend Exhaustion lines (fast + slow) in [pctr_focus_lo, pctr_focus_hi]
-    and falling toward -100 (signal_proximity.pctr_deep_os, or computed from
-    pctr / pctr_slow + falling flags)
-Data from signal_proximity only; no list reorder, no local Alpaca bar fetch.
+Polls the dashboard /api/state feed and Stocktwits trending.
+Setup column: green FOCUS when CM RSI-2 and deep %R both fire (signal_proximity).
+
+No Alpaca buy/sell in this desk (B/S/T are Stocktwits letter keys).
 
 Cross-platform (macOS + Windows):
 
-  1-9     focus that row + load TradingView
-  SPACE   focus newest + load TradingView
-  B       buy focused symbol (Alpaca paper/live via TRADER_MODE)
-  S       sell / close focused symbol
+  1-9     focus momentum row + load TradingView
+  SPACE   focus newest momentum + load TradingView
+  A-J     focus Stocktwits trending row + load TradingView
+          (A = 1st under-$max panel row, B = 2nd, … J = 10th)
 
 Focused symbol is written to repo root active_symbol.json.
 
@@ -88,23 +85,16 @@ DEFAULTS = {
     "alert_cooldown": 60.0,
     "desktop_toast": True,
     "watchlist_enabled": False,
-    "trade_enabled": True,       # B/S keys → Alpaca
-    "trader_mode": None,          # override TRADER_MODE from env (paper|live|off)
-    "trade_amount": None,        # override TRADE_AMOUNT (dollars per buy)
-    "buy_order_style": "auto",   # "auto" (mkt when open, limit off-hours) | "limit_ask" | "market"; all whole shares only
-    "limit_pad_pct": 0.1,        # % above ask (buys) / below bid (ext-hours sells)
-    "extended_hours": True,      # allow pre/post-market B/S
-    "positions_refresh": 3.0,    # seconds between live P&L refreshes
     # FOCUS = CM RSI green-long AND both %R lines deep OS toward -100
     "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
     "pctr_focus_lo": -100.0,     # both %R lines >= lo
     "pctr_focus_hi": -75.0,      # both %R lines <= hi
-    # Stocktwits free trending (stocktwits.com/sentiment)
+    # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
     "stocktwits_enabled": True,
     "stocktwits_poll": 60.0,     # seconds between ST API polls
     "stocktwits_stocks_only": True,
     "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
-    "stocktwits_panel_limit": 10,
+    "stocktwits_panel_limit": 10,  # max 10 → keys A-J
 }
 
 
@@ -463,12 +453,14 @@ def momentum_table(feed: Feed, now: float, hz: float,
 
 def stocktwits_panel(st: StocktwitsTrending,
                      price_by_sym: dict[str, float | None],
-                     limit: int = 10) -> Panel:
-    """Stocktwits trending — same columns as stocktwits.com/sentiment (+ score)."""
+                     limit: int = 10,
+                     hotkeys_on: bool = True) -> Panel:
+    """Stocktwits trending — website columns + letter key (A-J) for TV load."""
     from stocktwits_trending import fmt_mcap, fmt_vol
 
-    rows = st.display_rows(price_by_sym, limit=limit)
+    rows = st.display_rows(price_by_sym, limit=min(limit, len(DeskHotkeys.ST_LETTERS)))
     t = Table(expand=False)
+    t.add_column("Key", justify="right", style="bold")
     t.add_column("ST#", justify="right", style="bold magenta")
     t.add_column("Symbol")
     t.add_column("Last", justify="right")
@@ -480,9 +472,11 @@ def stocktwits_panel(st: StocktwitsTrending,
     t.add_column("Score", justify="right")
     if not rows:
         msg = st.error or "waiting for first poll…"
-        t.add_row("—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "")
+        t.add_row("", "—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "")
     else:
-        for r in rows:
+        for i, r in enumerate(rows):
+            letter = (DeskHotkeys.ST_LETTERS[i].upper()
+                      if hotkeys_on and i < len(DeskHotkeys.ST_LETTERS) else "")
             px = r.get("price")
             px_s = f"${px:.2f}" if px is not None else "[dim]—[/dim]"
             chg = r.get("pct_change")
@@ -494,9 +488,9 @@ def stocktwits_panel(st: StocktwitsTrending,
             hi = r.get("high_52w")
             lo = r.get("low_52w")
             sc = r.get("trending_score")
-            # Prefer session volume; fall back to ST avg daily
             vol = r.get("volume") if r.get("volume") is not None else r.get("avg_vol")
             t.add_row(
+                letter,
                 str(r.get("rank") or "—"),
                 f"[bold cyan]{r['symbol']}[/bold cyan]",
                 px_s,
@@ -511,7 +505,7 @@ def stocktwits_panel(st: StocktwitsTrending,
     if st.last_ok:
         age = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
     cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
-    title = f"STOCKTWITS TRENDING{cap}{age}"
+    title = f"STOCKTWITS TRENDING  ·  A-J load TV{cap}{age}"
     return Panel(t, title=title, title_align="left",
                  border_style="magenta", padding=(0, 1))
 
@@ -567,25 +561,19 @@ def positions_panel(positions: dict, focus: str | None) -> Panel:
 
 
 def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
-                 hotkey_slots: int, trader_mode: str,
-                 trade_amount: float) -> Panel:
+                 hotkey_slots: int) -> Panel:
     lines = []
     if alerter.recent:
         lines.append("[dim]" + "   ·   ".join(alerter.recent[:3]) + "[/dim]")
     focus = hotkeys.focus_symbol() or "—"
-    mode_c = {"paper": "yellow", "live": "red", "off": "dim"}.get(
-        trader_mode, "dim")
-    style = {"auto": "auto mkt/lim", "limit_ask": "limit@ask", "market": "market"}.get(
-        desk.buy_style(), desk.buy_style())
-    ext = "  EXT" if desk.extended_hours() else ""
     lines.append(
         f"[bold]FOCUS[/bold] [bold cyan]{focus}[/bold cyan]   "
-        f"Alpaca [{mode_c}]{trader_mode.upper()}[/{mode_c}]   "
-        f"${trade_amount:.0f}/buy {style}{ext}   [{desk.platform_label()}]"
+        f"TV={'on' if desk.tv_load_available() else 'off'}   "
+        f"[{desk.platform_label()}]"
     )
     if hotkeys.enabled:
-        hint = (f"[dim]1-{hotkey_slots}/space: load TV + focus   ·   "
-                f"T: focus = TV chart   ·   B: buy   ·   S: sell[/dim]")
+        hint = (f"[dim]1-{hotkey_slots}/space: momentum → TV   ·   "
+                f"A-J: Stocktwits → TV[/dim]")
         st = hotkeys.status()
         if st:
             hint += f"     [bold green]{st}[/bold green]"
@@ -609,69 +597,41 @@ def main():
     cfg = load_config()
     interval = float(cfg.get("poll_interval", 2.0))
     hotkey_slots = min(9, int(cfg.get("hotkey_slots", 9)))
-    trade_on = bool(cfg.get("trade_enabled", True))
     rsi_focus_max = float(cfg.get("rsi_focus_max", 35.0))
     pctr_focus_lo = float(cfg.get("pctr_focus_lo", -100.0))
     pctr_focus_hi = float(cfg.get("pctr_focus_hi", -75.0))
     st_on = bool(cfg.get("stocktwits_enabled", True))
     st_poll = float(cfg.get("stocktwits_poll", 60.0))
     st_max_px = cfg.get("stocktwits_max_price", 30.0)
-    st_limit = int(cfg.get("stocktwits_panel_limit", 10))
-
-    # Alpaca paper/live for B/S keys
-    trade_cfg = {}
-    if cfg.get("trader_mode"):
-        trade_cfg["trader_mode"] = cfg["trader_mode"]
-    if cfg.get("trade_amount") is not None:
-        trade_cfg["trade_amount"] = cfg["trade_amount"]
-    if cfg.get("buy_order_style"):
-        trade_cfg["buy_order_style"] = cfg["buy_order_style"]
-    if cfg.get("limit_pad_pct") is not None:
-        trade_cfg["limit_pad_pct"] = cfg["limit_pad_pct"]
-    if cfg.get("extended_hours") is not None:
-        trade_cfg["extended_hours"] = cfg["extended_hours"]
-    mode = desk.init_trader(trade_cfg) if trade_on else "off"
-    amount = desk.trade_amount()
+    st_limit = min(10, int(cfg.get("stocktwits_panel_limit", 10)))
 
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
-    hotkeys = DeskHotkeys(trade_enabled=trade_on and mode != "off")
+    hotkeys = DeskHotkeys()
     st = StocktwitsTrending(
         poll_interval=st_poll,
         stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
         max_price=float(st_max_px) if st_max_px is not None else None,
     ) if st_on else None
 
-    _style = {"auto": "auto mkt/lim", "limit_ask": "limit@ask", "market": "market"}.get(
-        desk.buy_style(), desk.buy_style())
-    _ext = " +EXT" if desk.extended_hours() else ""
     st_note = f"  ST={'on' if st_on else 'off'}"
     console.print(
         f"[bold]Momentum desk[/bold]  {desk.platform_label()}  "
-        f"Alpaca [bold]{mode.upper()}[/bold]  ${amount:.0f}/buy {_style}{_ext}  "
         f"TV={'on' if desk.tv_load_available() else 'off'}{st_note}  "
         f"— Ctrl+C to stop.\n"
         f"Polling {_dashboard_url()}/api/state"
         + (f"  ·  Stocktwits every {st_poll:.0f}s\n" if st_on else "\n")
-        + f"[dim]1-9/space load TV · T focus=TV chart · B buy · S sell[/dim]"
+        + f"[dim]1-9/space momentum → TV   ·   A-J Stocktwits → TV[/dim]"
     )
-    if mode == "live":
-        console.print("[bold red]LIVE money enabled — B/S place real orders[/bold red]")
 
     stamps: list[float] = []
-    pos_on = trade_on and mode != "off"
-    pos_refresh = float(cfg.get("positions_refresh", 3.0))
-    pos_cache: dict = {"ts": 0.0, "data": {}}
     with Live(console=console, refresh_per_second=2, screen=False) as live:
         while True:
             t0 = time.time()
             state = fetch_state()
             if state is not None:
                 feed.ingest(state, t0, alerter, cfg)
-                ordered = [str(r.get("ticker") or "").upper()
-                           for r in feed.rows[:hotkey_slots]]
-                hotkeys.update(ordered)
             stale = (t0 - feed.last_ok) > STALE_AFTER if feed.last_ok else \
                     (state is None)
             stamps.append(t0)
@@ -681,14 +641,7 @@ def main():
             if st is not None:
                 st.refresh(t0)
 
-            # Live P&L for open positions (throttled Alpaca call)
-            if pos_on and (t0 - pos_cache["ts"] >= pos_refresh):
-                d = desk.positions_detail()
-                if d is not None:                 # None = call failed; keep last good
-                    pos_cache["data"] = d
-                pos_cache["ts"] = t0
-
-            # Prices from momentum feed for ST panel filter (price < max)
+            # Prices from momentum feed (fallback for ST filter)
             price_map: dict[str, float | None] = {}
             for r in feed.rows:
                 s = str(r.get("ticker") or "").upper()
@@ -699,21 +652,26 @@ def main():
                         price_map[s] = None
 
             st_rank = {}
+            st_ordered: list[str] = []
             if st is not None:
                 st_rank = {sym: int(row["rank"])
                            for sym, row in st.by_symbol.items()
                            if row.get("rank") is not None}
+                st_ordered = [r["symbol"] for r in
+                              st.display_rows(price_map, limit=st_limit)]
+
+            ordered = [str(r.get("ticker") or "").upper()
+                       for r in feed.rows[:hotkey_slots]]
+            hotkeys.update(ordered, st_ordered if st_on else None)
 
             panels = [header_panel(feed, t0, hz, stale)]
-            if pos_cache["data"]:
-                panels.append(positions_panel(pos_cache["data"],
-                                              hotkeys.focus_symbol()))
             panels.append(momentum_table(
                 feed, t0, hz, hotkeys.enabled,
                 rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank))
             if st is not None:
-                panels.append(stocktwits_panel(st, price_map, limit=st_limit))
-            panels.append(footer_panel(alerter, hotkeys, hotkey_slots, mode, amount))
+                panels.append(stocktwits_panel(
+                    st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled))
+            panels.append(footer_panel(alerter, hotkeys, hotkey_slots))
             live.update(Group(*panels))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 

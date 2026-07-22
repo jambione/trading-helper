@@ -2,6 +2,9 @@
 
 Windows: msvcrt
 macOS / Linux: termios cbreak + select (non-blocking)
+
+Trading (Alpaca B/S) and T=grab-TV were removed from this desk — letter keys
+are reserved for Stocktwits trending load.
 """
 from __future__ import annotations
 
@@ -9,7 +12,6 @@ import contextlib
 import io
 import sys
 import threading
-import time
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -19,24 +21,23 @@ import desk_actions as actions
 class DeskHotkeys:
     """
     Keys:
-      1-9   focus + load that row into TradingView
-      SPACE focus + load top (newest) row
-      T     focus = whatever symbol the TradingView chart is on
-      B     buy focused symbol (Alpaca paper/live)
-      S     sell / close focused symbol
-      F     focus only (no TV load) — optional future
+      1-9   focus + load momentum row into TradingView
+      SPACE focus + load top (newest) momentum row
+      A-J   focus + load Stocktwits trending row (panel order)
+            A = 1st ST row, B = 2nd, … J = 10th
     """
 
     SPACE = " "
+    # Full A–J for ST panel (B/S/T free — no longer buy/sell/TV-grab)
+    ST_LETTERS = tuple("abcdefghij")
 
-    def __init__(self, trade_enabled: bool = True):
+    def __init__(self):
         self.tv_ok = actions.tv_load_available()
-        self.trade_ok = trade_enabled
-        # Hotkeys on for Mac or Windows when we have either TV or trade
-        self.enabled = sys.platform in ("darwin", "win32") and (
-            self.tv_ok or self.trade_ok)
+        # Keys only need a real terminal on Mac/Windows (TV load is optional)
+        self.enabled = sys.platform in ("darwin", "win32")
         self.focus: Optional[str] = None
-        self._by_key: dict[str, str] = {}
+        self._by_key: dict[str, str] = {}       # "1".."9" → momentum symbol
+        self._st_by_key: dict[str, str] = {}    # "a".."j" → Stocktwits symbol
         self._top: Optional[str] = None
         self._status = ""
         self._busy = False
@@ -49,10 +50,22 @@ class DeskHotkeys:
     def set_focus_callback(self, cb: Callable[[str], None]):
         self._on_focus = cb
 
-    def update(self, ordered: list[str]):
+    def update(self, ordered: list[str], st_ordered: Optional[list[str]] = None):
+        """ordered = momentum 1-9; st_ordered = Stocktwits A-J map."""
         with self._lock:
             self._by_key = {str(i + 1): s for i, s in enumerate(ordered[:9])}
             self._top = ordered[0] if ordered else None
+            self._st_by_key = {}
+            if st_ordered:
+                for letter, sym in zip(self.ST_LETTERS, st_ordered):
+                    if sym:
+                        self._st_by_key[letter] = str(sym).upper()
+
+    def st_letter_for_index(self, i: int) -> str:
+        """Letter shown in the ST panel for row index 0..9, or ''."""
+        if 0 <= i < len(self.ST_LETTERS):
+            return self.ST_LETTERS[i].upper()
+        return ""
 
     def status(self) -> str:
         with self._lock:
@@ -128,7 +141,6 @@ class DeskHotkeys:
         if not ch:
             return
         key = ch
-        # normalize
         if key in ("\r", "\n"):
             return
         low = key.lower()
@@ -136,85 +148,41 @@ class DeskHotkeys:
         with self._lock:
             if self._busy:
                 return
-            if low == "b":
-                sym = self.focus
-                action = "buy"
-            elif low == "s":
-                sym = self.focus
-                action = "sell"
-            elif low == "t":
-                sym = None            # resolved from TradingView in _grab_tv
-                action = "grab_tv"
-            elif key == self.SPACE or key == " ":
+            tag = ""
+            if key == self.SPACE or key == " ":
                 sym = self._top
                 action = "load"
             elif key in self._by_key:
                 sym = self._by_key[key]
                 action = "load"
+            elif low in self._st_by_key:
+                sym = self._st_by_key[low]
+                action = "load"
+                tag = "ST "
             else:
                 return
-            if action != "grab_tv" and not sym:
+            if not sym:
                 self._status = f"{datetime.now():%H:%M:%S}  no symbol"
                 return
             self._busy = True
 
         try:
-            if action == "load":
-                self._load(sym)
-            elif action == "buy":
-                self._buy(sym)
-            elif action == "sell":
-                self._sell(sym)
-            elif action == "grab_tv":
-                self._grab_tv()
+            self._load(sym, tag=tag)
         finally:
             with self._lock:
                 self._busy = False
 
-    def _load(self, sym: str):
+    def _load(self, sym: str, tag: str = ""):
         self._set_focus(sym)
-        self._set(f"FOCUS {sym} · loading TradingView …")
-        tv_ok = False
-        if self.tv_ok:
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    tv_ok = bool(actions.load_tv(sym))
-            except Exception as e:
-                self._set(f"{sym}: TV error {e}")
-                return
-        else:
+        prefix = tag or ""
+        self._set(f"FOCUS {prefix}{sym} · loading TradingView …")
+        if not self.tv_ok:
             self._set(f"FOCUS {sym} (TV load unavailable on this box)")
             return
-        self._set(f"{sym}: TV{'✓' if tv_ok else '✗'}  FOCUS set")
-
-    def _buy(self, sym: str):
-        self._set(f"BUY {sym} …")
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                msg = actions.desk_buy(sym)
+                tv_ok = bool(actions.load_tv(sym))
         except Exception as e:
-            msg = f"BUY error: {e}"
-        self._set(msg)
-
-    def _sell(self, sym: str):
-        self._set(f"SELL {sym} …")
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                msg = actions.desk_sell(sym)
-        except Exception as e:
-            msg = f"SELL error: {e}"
-        self._set(msg)
-
-    def _grab_tv(self):
-        self._set("grab TradingView symbol …")
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                sym = actions.tv_focus_symbol()
-        except Exception as e:
-            self._set(f"TV grab error: {e}")
+            self._set(f"{sym}: TV error {e}")
             return
-        if not sym:
-            self._set("TV: no chart symbol (open the TradingView tab in Brave/Chrome)")
-            return
-        self._set_focus(sym)
-        self._set(f"FOCUS {sym} — from TradingView chart")
+        self._set(f"{prefix}{sym}: TV{'✓' if tv_ok else '✗'}  FOCUS set")
