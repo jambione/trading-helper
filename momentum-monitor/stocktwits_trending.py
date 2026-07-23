@@ -74,8 +74,16 @@ def parse_trending_payload(data: dict) -> list[dict[str, Any]]:
             "trending_score": _f(s.get("trending_score")),
             "watchlist_count": int(s.get("watchlist_count") or 0),
             "instrument_class": iclass or "stock",
-            "is_equity": iclass in ("", "stock", "etf", "adr"),
-            "is_crypto": iclass == "cryptocurrency" or sym.endswith(".X"),
+            # Include ADRs / depositary receipts (e.g. NOK) — Stocktwits uses
+            # "depositoryreceipt", not always "adr". Keep ETFs; drop crypto.
+            "is_equity": iclass in (
+                "", "stock", "etf", "adr", "depositoryreceipt",
+                "depositaryreceipt", "preferredstock",
+            ),
+            "is_crypto": (
+                iclass in ("cryptocurrency", "crypto")
+                or sym.endswith(".X")
+            ),
             "market_cap": mcap,
             "high_52w": _f(fund.get("HighPriceLast52Weeks")),
             "low_52w": _f(fund.get("LowPriceLast52Weeks")),

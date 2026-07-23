@@ -92,3 +92,28 @@ def test_rank_of():
     st.by_symbol = {"ONDS": {"rank": 2, "symbol": "ONDS"}}
     assert st.rank_of("onds") == 2
     assert st.rank_of("ZZZZ") is None
+
+
+def test_nok_depository_receipt_is_equity():
+    """NOK is instrument_class=depositoryreceipt on ST — must pass stocks_only."""
+    payload = {
+        "symbols": [{
+            "rank": 2,
+            "symbol": "NOK",
+            "title": "Nokia Corp",
+            "trending_score": 10.0,
+            "watchlist_count": 1,
+            "instrument_class": "depositoryreceipt",
+            "fundamentals": {},
+        }],
+    }
+    rows = parse_trending_payload(payload)
+    assert rows[0]["symbol"] == "NOK"
+    assert rows[0]["is_equity"] is True
+    assert rows[0]["is_crypto"] is False
+    st = StocktwitsTrending(stocks_only=True, enrich_quotes=False, max_price=30.0)
+    st.rows = [r for r in rows if r["is_equity"] and not r["is_crypto"]]
+    st.by_symbol = {r["symbol"]: r for r in st.rows}
+    st.rows[0]["price"] = 10.67
+    shown = st.display_rows(limit=10)
+    assert any(r["symbol"] == "NOK" for r in shown)
