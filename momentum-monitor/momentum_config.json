@@ -15,5 +15,9 @@
   "stocktwits_poll": 60.0,
   "stocktwits_stocks_only": true,
   "stocktwits_max_price": 30.0,
-  "stocktwits_panel_limit": 10
+  "stocktwits_panel_limit": 10,
+  "stocktwits_look_min_abs_chg": 3.0,
+  "stocktwits_look_max": 2,
+  "stocktwits_look_near_high": 0.70,
+  "stocktwits_look_near_low": 0.30
 }

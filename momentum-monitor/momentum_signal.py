@@ -95,6 +95,11 @@ DEFAULTS = {
     "stocktwits_stocks_only": True,
     "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
     "stocktwits_panel_limit": 10,  # max 10 → keys A-J
+    # LOOK badge: heat + |%chg| + vol + 52w extreme (EXT near high / WASH near low)
+    "stocktwits_look_min_abs_chg": 3.0,
+    "stocktwits_look_max": 2,
+    "stocktwits_look_near_high": 0.70,
+    "stocktwits_look_near_low": 0.30,
 }
 
 
@@ -455,7 +460,7 @@ def stocktwits_panel(st: StocktwitsTrending,
                      price_by_sym: dict[str, float | None],
                      limit: int = 10,
                      hotkeys_on: bool = True) -> Panel:
-    """Stocktwits trending — website columns + letter key (A-J) for TV load."""
+    """Stocktwits trending — website columns + letter key (A-J) + LOOK badge."""
     from stocktwits_trending import fmt_mcap, fmt_vol
 
     rows = st.display_rows(price_by_sym, limit=min(limit, len(DeskHotkeys.ST_LETTERS)))
@@ -470,9 +475,11 @@ def stocktwits_panel(st: StocktwitsTrending,
     t.add_column("52w Lo", justify="right")
     t.add_column("Mkt Cap", justify="right")
     t.add_column("Score", justify="right")
+    t.add_column("")  # LOOK badge
+    n_look = 0
     if not rows:
         msg = st.error or "waiting for first poll…"
-        t.add_row("", "—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "")
+        t.add_row("", "—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "", "")
     else:
         for i, r in enumerate(rows):
             letter = (DeskHotkeys.ST_LETTERS[i].upper()
@@ -489,10 +496,18 @@ def stocktwits_panel(st: StocktwitsTrending,
             lo = r.get("low_52w")
             sc = r.get("trending_score")
             vol = r.get("volume") if r.get("volume") is not None else r.get("avg_vol")
+            look_s = ""
+            if r.get("look"):
+                n_look += 1
+                reason = r.get("look_reason") or ""
+                look_s = f"[bold black on green] LOOK {reason} [/]"
+            sym_s = f"[bold cyan]{r['symbol']}[/bold cyan]"
+            if r.get("look"):
+                sym_s = f"[bold green]{r['symbol']}[/bold green]"
             t.add_row(
                 letter,
                 str(r.get("rank") or "—"),
-                f"[bold cyan]{r['symbol']}[/bold cyan]",
+                sym_s,
                 px_s,
                 chg_s,
                 fmt_vol(vol),
@@ -500,12 +515,14 @@ def stocktwits_panel(st: StocktwitsTrending,
                 f"${lo:.2f}" if lo is not None else "—",
                 fmt_mcap(r.get("market_cap")),
                 f"{sc:.1f}" if sc is not None else "—",
+                look_s,
             )
     age = ""
     if st.last_ok:
         age = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
     cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
-    title = f"STOCKTWITS TRENDING  ·  A-J load TV{cap}{age}"
+    look_n = f"  ·  {n_look} LOOK" if n_look else ""
+    title = f"STOCKTWITS TRENDING  ·  A-J load TV{cap}{look_n}{age}"
     return Panel(t, title=title, title_align="left",
                  border_style="magenta", padding=(0, 1))
 
@@ -613,6 +630,10 @@ def main():
         poll_interval=st_poll,
         stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
         max_price=float(st_max_px) if st_max_px is not None else None,
+        look_min_abs_chg=float(cfg.get("stocktwits_look_min_abs_chg", 3.0)),
+        look_max=int(cfg.get("stocktwits_look_max", 2)),
+        look_near_high=float(cfg.get("stocktwits_look_near_high", 0.70)),
+        look_near_low=float(cfg.get("stocktwits_look_near_low", 0.30)),
     ) if st_on else None
 
     st_note = f"  ST={'on' if st_on else 'off'}"

@@ -112,3 +112,46 @@ def test_nok_depository_receipt_excluded():
     st = StocktwitsTrending(stocks_only=True, enrich_quotes=False, max_price=30.0)
     st.rows = [r for r in rows if r["is_equity"] and not r["is_crypto"]]
     assert st.rows == []
+
+
+def test_look_extension_near_highs():
+    from stocktwits_trending import apply_look_highlights
+    rows = [
+        {
+            "symbol": "AAA", "trending_score": 20.0, "pct_change": 8.0,
+            "volume": 2e6, "price": 9.0, "high_52w": 10.0, "low_52w": 1.0,
+        },
+        {
+            "symbol": "BBB", "trending_score": 5.0, "pct_change": 0.5,
+            "volume": 1e5, "price": 5.0, "high_52w": 10.0, "low_52w": 1.0,
+        },
+    ]
+    apply_look_highlights(rows, min_abs_chg=3.0, max_looks=2)
+    by = {r["symbol"]: r for r in rows}
+    assert by["AAA"]["look"] is True
+    assert by["AAA"]["look_reason"] == "EXT"
+    assert by["BBB"]["look"] is False
+
+
+def test_look_washout_near_lows():
+    from stocktwits_trending import apply_look_highlights
+    rows = [
+        {
+            "symbol": "CCC", "trending_score": 15.0, "pct_change": -6.0,
+            "volume": 3e6, "price": 2.0, "high_52w": 20.0, "low_52w": 1.0,
+        },
+    ]
+    apply_look_highlights(rows, min_abs_chg=3.0, max_looks=2)
+    assert rows[0]["look"] is True
+    assert rows[0]["look_reason"] == "WASH"
+
+
+def test_look_max_caps_highlights():
+    from stocktwits_trending import apply_look_highlights
+    rows = [
+        {"symbol": f"S{i}", "trending_score": 20 - i, "pct_change": 10.0,
+         "volume": 5e6, "price": 9.5, "high_52w": 10.0, "low_52w": 1.0}
+        for i in range(5)
+    ]
+    apply_look_highlights(rows, min_abs_chg=3.0, max_looks=2)
+    assert sum(1 for r in rows if r["look"]) == 2

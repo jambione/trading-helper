@@ -190,16 +190,123 @@ def fmt_vol(v: Optional[float]) -> str:
     return f"{v:.0f}"
 
 
+def range_pct(price: Optional[float], hi: Optional[float],
+              lo: Optional[float]) -> Optional[float]:
+    """Where last sits in the 52w range: 0 = low, 1 = high."""
+    if price is None or hi is None or lo is None:
+        return None
+    span = float(hi) - float(lo)
+    if span <= 0:
+        return None
+    return (float(price) - float(lo)) / span
+
+
+def _row_vol(r: dict) -> Optional[float]:
+    if r.get("volume") is not None:
+        return _f(r.get("volume"))
+    return _f(r.get("avg_vol"))
+
+
+def apply_look_highlights(
+    rows: list[dict[str, Any]],
+    *,
+    min_abs_chg: float = 3.0,
+    max_looks: int = 2,
+    near_high: float = 0.70,
+    near_low: float = 0.30,
+    heat_top_n: int = 3,
+) -> list[dict[str, Any]]:
+    """
+    Mark rows with look=True when worth focusing (desk eyes, not auto-trade).
+
+    Requires ALL of:
+      • heat: score ≥ panel median OR top heat_top_n by score
+      • move: |%chg| ≥ min_abs_chg
+      • volume: ≥ panel median (session vol, else avg)
+      • range: green day + range_pct ≥ near_high  (EXT)
+            OR red day  + range_pct ≤ near_low   (WASH)
+
+    At most max_looks rows, ranked by Score × |%Chg| × log10(1+Vol).
+    """
+    import math
+    import statistics
+
+    for r in rows:
+        r["look"] = False
+        r["look_reason"] = ""
+        r["look_priority"] = 0.0
+        r["range_pct"] = range_pct(r.get("price"), r.get("high_52w"), r.get("low_52w"))
+
+    if not rows:
+        return rows
+
+    scores = [float(r["trending_score"]) for r in rows
+              if r.get("trending_score") is not None]
+    vols = [v for r in rows if (v := _row_vol(r)) is not None]
+    med_score = statistics.median(scores) if scores else None
+    med_vol = statistics.median(vols) if vols else None
+
+    by_score = sorted(
+        [r for r in rows if r.get("trending_score") is not None],
+        key=lambda r: float(r["trending_score"]),
+        reverse=True,
+    )
+    top_heat = {r["symbol"] for r in by_score[: max(1, int(heat_top_n))]}
+
+    candidates: list[tuple[float, dict, str]] = []
+    for r in rows:
+        sc = _f(r.get("trending_score"))
+        chg = _f(r.get("pct_change"))
+        vol = _row_vol(r)
+        rp = r.get("range_pct")
+
+        heat = (
+            r["symbol"] in top_heat
+            or (sc is not None and med_score is not None and sc >= med_score)
+        )
+        move = chg is not None and abs(chg) >= float(min_abs_chg)
+        vol_ok = vol is not None and (
+            (med_vol is not None and vol >= med_vol) or (med_vol is None and vol > 0)
+        )
+        if not (heat and move and vol_ok) or rp is None or chg is None:
+            continue
+
+        if chg > 0 and rp >= float(near_high):
+            reason = "EXT"    # extension / near highs, green
+        elif chg < 0 and rp <= float(near_low):
+            reason = "WASH"   # washout / near lows, red
+        else:
+            continue
+
+        pri = (sc or 0.0) * abs(chg) * math.log10(1.0 + max(0.0, vol or 0.0))
+        candidates.append((pri, r, reason))
+
+    candidates.sort(key=lambda x: -x[0])
+    for pri, r, reason in candidates[: max(0, int(max_looks))]:
+        r["look"] = True
+        r["look_reason"] = reason
+        r["look_priority"] = pri
+    return rows
+
+
 class StocktwitsTrending:
     """Throttled cache of Stocktwits trending (default poll ~60s)."""
 
     def __init__(self, poll_interval: float = 60.0, stocks_only: bool = True,
                  max_price: Optional[float] = 30.0,
-                 enrich_quotes: bool = True):
+                 enrich_quotes: bool = True,
+                 look_min_abs_chg: float = 3.0,
+                 look_max: int = 2,
+                 look_near_high: float = 0.70,
+                 look_near_low: float = 0.30):
         self.poll_interval = max(15.0, float(poll_interval))
         self.stocks_only = bool(stocks_only)
         self.max_price = float(max_price) if max_price is not None else None
         self.enrich_quotes = bool(enrich_quotes)
+        self.look_min_abs_chg = float(look_min_abs_chg)
+        self.look_max = int(look_max)
+        self.look_near_high = float(look_near_high)
+        self.look_near_low = float(look_near_low)
         self.rows: list[dict[str, Any]] = []
         self.by_symbol: dict[str, dict[str, Any]] = {}
         self.last_ok: float = 0.0
@@ -238,6 +345,7 @@ class StocktwitsTrending:
 
         Prefer Alpaca-enriched price on the row; fall back to price_by_sym
         from the momentum feed. Apply max_price when a price is known.
+        Then apply LOOK highlights (heat + move + vol + 52w range).
         """
         price_by_sym = price_by_sym or {}
         out = []
@@ -252,4 +360,10 @@ class StocktwitsTrending:
             out.append(row)
             if len(out) >= limit:
                 break
-        return out
+        return apply_look_highlights(
+            out,
+            min_abs_chg=self.look_min_abs_chg,
+            max_looks=self.look_max,
+            near_high=self.look_near_high,
+            near_low=self.look_near_low,
+        )
