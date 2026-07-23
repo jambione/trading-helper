@@ -94,8 +94,8 @@ def test_rank_of():
     assert st.rank_of("ZZZZ") is None
 
 
-def test_nok_depository_receipt_is_equity():
-    """NOK is instrument_class=depositoryreceipt on ST — must pass stocks_only."""
+def test_nok_depository_receipt_excluded():
+    """NOK is depositoryreceipt — stocks_only drops it (stocks only)."""
     payload = {
         "symbols": [{
             "rank": 2,
@@ -108,12 +108,7 @@ def test_nok_depository_receipt_is_equity():
         }],
     }
     rows = parse_trending_payload(payload)
-    assert rows[0]["symbol"] == "NOK"
-    assert rows[0]["is_equity"] is True
-    assert rows[0]["is_crypto"] is False
+    assert rows[0]["is_equity"] is False
     st = StocktwitsTrending(stocks_only=True, enrich_quotes=False, max_price=30.0)
     st.rows = [r for r in rows if r["is_equity"] and not r["is_crypto"]]
-    st.by_symbol = {r["symbol"]: r for r in st.rows}
-    st.rows[0]["price"] = 10.67
-    shown = st.display_rows(limit=10)
-    assert any(r["symbol"] == "NOK" for r in shown)
+    assert st.rows == []
