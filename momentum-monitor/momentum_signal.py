@@ -22,7 +22,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import shutil
+import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -82,7 +86,12 @@ DEFAULTS = {
     "alert_new": True,
     "alert_burst": True,
     "alert_buy": False,
+    "alert_st_new": True,
+    "alert_st_look": True,
     "alert_cooldown": 60.0,
+    "alert_notify_interval": 180.0,  # min seconds between OS notification popups
+    "alert_notify_duration": 5.0,    # seconds before an OS popup auto-dismisses
+    "alert_only_when_hidden": True,  # skip the popup if Terminal is frontmost
     "desktop_toast": True,
     "watchlist_enabled": False,
     # FOCUS = CM RSI green-long AND both %R lines deep OS toward -100
@@ -293,13 +302,105 @@ def _beep():
             pass
 
 
+# Maps $TERM_PROGRAM (set by the terminal running this script) to the process
+# name macOS System Events reports for that app's frontmost check, and to the
+# bundle id terminal-notifier needs to activate that app on notification click.
+_TERM_APP_NAMES = {
+    "Apple_Terminal": "Terminal",
+    "iTerm.app": "iTerm2",
+}
+_TERM_BUNDLE_IDS = {
+    "Apple_Terminal": "com.apple.Terminal",
+    "iTerm.app": "com.googlecode.iterm2",
+}
+_NOTIFY_GROUP = "brasfield-momentum"
+
+
+def _macos_notify(title: str, message: str, sound: bool = True,
+                   auto_dismiss: float = 5.0) -> None:
+    """Notification Center banner. Prefers `terminal-notifier` (brew) so
+    clicking the banner brings the monitor's terminal to the front via
+    `-activate`; plain `osascript display notification` can't do that — Apple
+    doesn't expose a click action to scripts, only to full app bundles.
+    Falls back to osascript (no click action) if terminal-notifier is absent.
+
+    `auto_dismiss` force-removes the banner after N seconds via a background
+    timer + `-remove`, regardless of the system's Banners/Alerts style —
+    macOS's own auto-hide timing isn't user- or script-configurable, so this
+    is the only way to guarantee a specific duration."""
+    if sys.platform != "darwin":
+        return
+
+    tn = shutil.which("terminal-notifier")
+    if tn:
+        cmd = [tn, "-title", title, "-message", message,
+               "-group", _NOTIFY_GROUP]
+        if sound:
+            cmd += ["-sound", "default"]
+        bundle_id = _TERM_BUNDLE_IDS.get(os.environ.get("TERM_PROGRAM", ""))
+        if bundle_id:
+            cmd += ["-activate", bundle_id]
+        try:
+            subprocess.run(cmd, check=False, timeout=5,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if auto_dismiss and auto_dismiss > 0:
+                def _dismiss():
+                    subprocess.run([tn, "-remove", _NOTIFY_GROUP], check=False,
+                                    timeout=5, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+                timer = threading.Timer(auto_dismiss, _dismiss)
+                timer.daemon = True
+                timer.start()
+            return
+        except Exception:                                  # noqa: BLE001
+            pass  # fall through to osascript
+
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f'display notification "{esc(message)}" with title "{esc(title)}"'
+    if sound:
+        script += ' sound name "Glass"'
+    try:
+        subprocess.run(["osascript", "-e", script], check=False, timeout=5,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:                                      # noqa: BLE001
+        pass
+
+
+def _monitor_visible() -> bool:
+    """True if the terminal app running this monitor is currently the
+    frontmost (focused) app — i.e. the user is already looking at it, so a
+    notification would be redundant. False (assume hidden) if we can't tell,
+    so notifications fail open rather than going silent."""
+    if sys.platform != "darwin":
+        return False
+    app_name = _TERM_APP_NAMES.get(os.environ.get("TERM_PROGRAM", ""))
+    if not app_name:
+        return False
+    script = ('tell application "System Events" to get name of '
+              'first application process whose frontmost is true')
+    try:
+        out = subprocess.run(["osascript", "-e", script], check=False,
+                              timeout=5, capture_output=True, text=True)
+        return out.stdout.strip() == app_name
+    except Exception:                                      # noqa: BLE001
+        return False
+
+
 class Alerter:
     """Beep + optional desktop toast, with a per-symbol, per-kind cooldown so
-    a symbol that keeps re-bursting doesn't machine-gun the speaker."""
+    a symbol that keeps re-bursting doesn't machine-gun the speaker, plus a
+    separate global throttle on OS notifications so a burst of different
+    symbols/kinds still caps out at one popup per `alert_notify_interval`."""
 
     def __init__(self, cfg: dict):
         self.cooldown = float(cfg.get("alert_cooldown", 60.0))
         self.toast = bool(cfg.get("desktop_toast", True))
+        self.notify_interval = float(cfg.get("alert_notify_interval", 180.0))
+        self.notify_duration = float(cfg.get("alert_notify_duration", 5.0))
+        self.only_when_hidden = bool(cfg.get("alert_only_when_hidden", True))
+        self._last_notify = 0.0
         self._last: dict[tuple[str, str], float] = {}
         self.recent: list[str] = []          # short on-screen alert log
 
@@ -311,18 +412,26 @@ class Alerter:
         self._last[key] = now
         _beep()
         msg = {"new": f"NEW {sym}", "burst": f"BURST {sym}",
-               "buy": f"BUY {sym}"}.get(kind, f"{kind} {sym}")
+               "buy": f"BUY {sym}", "st_new": f"NEW-ST {sym}",
+               "st_look": f"LOOK {sym}"}.get(kind, f"{kind} {sym}")
         if detail:
             msg += f"  {detail}"
         self.recent.insert(0, f"{datetime.now():%H:%M:%S}  {msg}")
         del self.recent[6:]
-        if self.toast and _plyer is not None:
-            try:
-                _plyer.notify(title=f"Momentum · {msg.split()[0]} {sym}",
-                              message=detail or "momentum alert",
-                              timeout=6)
-            except Exception:                              # noqa: BLE001
-                pass
+        if (self.toast and (now - self._last_notify) >= self.notify_interval
+                and not (self.only_when_hidden and _monitor_visible())):
+            self._last_notify = now
+            if sys.platform == "darwin":
+                _macos_notify(f"Momentum · {msg.split()[0]} {sym}",
+                               detail or "momentum alert",
+                               auto_dismiss=self.notify_duration)
+            elif _plyer is not None:
+                try:
+                    _plyer.notify(title=f"Momentum · {msg.split()[0]} {sym}",
+                                  message=detail or "momentum alert",
+                                  timeout=6)
+                except Exception:                          # noqa: BLE001
+                    pass
 
 
 # ── model ────────────────────────────────────────────────────────────────────
@@ -522,7 +631,7 @@ def stocktwits_panel(st: StocktwitsTrending,
         age = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
     cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
     look_n = f"  ·  {n_look} LOOK" if n_look else ""
-    title = f"STOCKTWITS TRENDING  ·  A-J load TV{cap}{look_n}{age}"
+    title = f"TRENDING  ·  A-J load TV{cap}{look_n}{age}"
     return Panel(t, title=title, title_align="left",
                  border_style="magenta", padding=(0, 1))
 
@@ -625,6 +734,12 @@ def main():
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
+
+    def _st_alert(kind: str, sym: str, detail: str) -> None:
+        flag = "alert_st_new" if kind == "st_new" else "alert_st_look"
+        if cfg.get(flag, True):
+            alerter.fire(kind, sym, detail)
+
     hotkeys = DeskHotkeys()
     st = StocktwitsTrending(
         poll_interval=st_poll,
@@ -679,7 +794,8 @@ def main():
                            for sym, row in st.by_symbol.items()
                            if row.get("rank") is not None}
                 st_ordered = [r["symbol"] for r in
-                              st.display_rows(price_map, limit=st_limit)]
+                              st.display_rows(price_map, limit=st_limit,
+                                              on_change=_st_alert)]
 
             ordered = [str(r.get("ticker") or "").upper()
                        for r in feed.rows[:hotkey_slots]]

@@ -15,7 +15,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.request import Request, urlopen
 
 TRENDING_URL = "https://api.stocktwits.com/api/2/trending/symbols.json"
@@ -312,6 +312,9 @@ class StocktwitsTrending:
         self.last_ok: float = 0.0
         self.last_attempt: float = 0.0
         self.error: str = ""
+        self._seen: set[str] = set()
+        self._prev_look: dict[str, bool] = {}
+        self._seeded = False          # suppress alerts on the first poll
 
     def refresh(self, now: Optional[float] = None) -> bool:
         now = now if now is not None else time.time()
@@ -339,13 +342,21 @@ class StocktwitsTrending:
         return r.get("rank")
 
     def display_rows(self, price_by_sym: Optional[dict[str, Optional[float]]] = None,
-                     limit: int = 12) -> list[dict[str, Any]]:
+                     limit: int = 12,
+                     on_change: Optional[Callable[[str, str, str], None]] = None
+                     ) -> list[dict[str, Any]]:
         """
         Rows for the monitor panel.
 
         Prefer Alpaca-enriched price on the row; fall back to price_by_sym
         from the momentum feed. Apply max_price when a price is known.
         Then apply LOOK highlights (heat + move + vol + 52w range).
+
+        `on_change(kind, symbol, detail)` fires on rising edges — a symbol
+        entering the panel for the first time ("st_new") or its LOOK badge
+        turning on ("st_look") — same shape as Feed's new/burst/buy alerts.
+        Suppressed on the first call so the initial fill doesn't fire a
+        notification per row.
         """
         price_by_sym = price_by_sym or {}
         out = []
@@ -360,10 +371,25 @@ class StocktwitsTrending:
             out.append(row)
             if len(out) >= limit:
                 break
-        return apply_look_highlights(
+        out = apply_look_highlights(
             out,
             min_abs_chg=self.look_min_abs_chg,
             max_looks=self.look_max,
             near_high=self.look_near_high,
             near_low=self.look_near_low,
         )
+        for r in out:
+            sym = r["symbol"]
+            is_new = sym not in self._seen
+            if is_new:
+                self._seen.add(sym)
+            was_look = self._prev_look.get(sym, False)
+            look = bool(r.get("look"))
+            if self._seeded and on_change is not None:
+                if is_new:
+                    on_change("st_new", sym, f"#{r.get('rank') or '?'} trending")
+                if look and not was_look:
+                    on_change("st_look", sym, r.get("look_reason") or "")
+            self._prev_look[sym] = look
+        self._seeded = True
+        return out
