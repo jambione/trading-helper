@@ -2,6 +2,8 @@
 import os
 import sys
 
+from conftest import column_cells  # noqa: E402
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from momentum_signal import (  # noqa: E402
@@ -122,8 +124,9 @@ def test_none_entries_in_the_series_are_skipped():
 def _mentions_cells(rows, hist, **over):
     f = Feed(CFG)
     f.rows = rows
-    t = momentum_table(f, T0, 0.5, True, cfg={**CFG, **over}, history=hist)
-    return list(list(t.columns)[5].cells)
+    return column_cells(
+        momentum_table(f, T0, 0.5, True, cfg={**CFG, **over}, history=hist),
+        "Mentions")
 
 
 def _hist_with(sym, field, values):
@@ -176,7 +179,7 @@ def test_no_history_object_renders_as_today():
     f = Feed(CFG)
     f.rows = rows
     t = momentum_table(f, T0, 0.5, True, cfg=CFG, history=None)
-    assert next(iter(list(t.columns)[5].cells)) == "12/47"
+    assert column_cells(t, "Mentions")[0] == "12/47"
 
 
 def test_a_row_with_no_mentions_gets_no_arrow():
@@ -234,7 +237,7 @@ def test_floor_is_applied_to_the_rendered_cell():
     f.rows = rows
     f.server_cfg = {"mention_alert_window": 10}
     t = momentum_table(f, T0, 0.5, True, cfg=CFG, history=hist)
-    assert next(iter(list(t.columns)[5].cells)) == "11/47"
+    assert column_cells(t, "Mentions")[0] == "11/47"
 
 
 def test_arrow_appears_once_the_derived_floor_is_met():
@@ -245,7 +248,7 @@ def test_arrow_appears_once_the_derived_floor_is_met():
     f.rows = rows
     f.server_cfg = {"mention_alert_window": 10}
     t = momentum_table(f, T0, 0.5, True, cfg=CFG, history=hist)
-    assert "↑" in next(iter(list(t.columns)[5].cells))
+    assert "↑" in column_cells(t, "Mentions")[0]
 
 
 def test_server_window_is_captured_from_the_feed():

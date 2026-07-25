@@ -2,6 +2,8 @@
 import os
 import sys
 
+from conftest import column_cells  # noqa: E402
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from momentum_signal import (  # noqa: E402
@@ -128,7 +130,7 @@ def test_unknown_age_renders_a_blank_chip_not_zero():
     f.rows = [{"ticker": "AAAA", "signal_proximity": FOCUS_SP}]
     t = momentum_table(f, T0 + 300.0, 0.5, True,
                        cfg={**CFG, "setup_distance_enabled": False})
-    cell = next(iter(list(t.columns)[6].cells))
+    cell = column_cells(t, "Setup")[0]
     assert "FOCUS" in cell
     assert "0:00" not in cell
     assert "5:00" not in cell
@@ -219,8 +221,8 @@ def test_flag_off_renders_the_cell_exactly_as_today():
 
     def setup_cells(**over):
         cfg = {**CFG, "setup_distance_enabled": False, **over}
-        t = momentum_table(f, T0 + 30.0, 0.5, True, cfg=cfg)
-        return list(list(t.columns)[6].cells)
+        return column_cells(
+            momentum_table(f, T0 + 30.0, 0.5, True, cfg=cfg), "Setup")
 
     assert setup_cells(focus_age_enabled=False) == [phase0]
     on = setup_cells(focus_age_enabled=True)

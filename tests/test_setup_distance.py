@@ -3,6 +3,8 @@ import os
 import sys
 from itertools import pairwise
 
+from conftest import column_cells  # noqa: E402
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from momentum_signal import (  # noqa: E402
@@ -177,8 +179,7 @@ def _setup_cells(rows, **over):
     f = Feed(CFG)
     f.rows = rows
     cfg = {**CFG, "focus_age_enabled": False, **over}
-    t = momentum_table(f, T0, 0.5, True, cfg=cfg)
-    return list(list(t.columns)[6].cells)
+    return column_cells(momentum_table(f, T0, 0.5, True, cfg=cfg), "Setup")
 
 
 def test_near_miss_renders_the_shortfall():

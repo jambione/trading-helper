@@ -117,6 +117,12 @@ DEFAULTS = {
     # Reordering rows by setup distance is OFF until it has been watched for
     # a few sessions — ship the column first (roadmap T1.2).
     "setup_sort_enabled": False,
+    # Relative volume column. A $2 stock on 8x volume is a different animal
+    # from one on 1.1x. Source is funnel.rvol, else the row's own rvol — both
+    # time-adjusted server-side (T2.1). Never synthesised here.
+    "rvol_column_enabled": True,
+    "rvol_hot": 3.0,
+    "rvol_warm": 1.5,
     # Mention acceleration arrow. The derivative is the signal, not the count.
     "mention_trend_enabled": True,
     # Floor on samples before an arrow is shown. 10 (not the roadmap's 8) so
@@ -853,7 +859,9 @@ def push_history(history: SymbolHistory, rows: list[dict],
                          mention_window=r.get("mention_window"),
                          mention_velocity=sp.get("mention_velocity"),
                          proximity_pct=sp.get("proximity_pct"),
-                         rvol=r.get("rvol"))
+                         # Same value the RVOL cell shows (funnel first), so a
+                         # future spark of it matches the column.
+                         rvol=row_rvol(r))
     with contextlib.suppress(Exception):
         history.prune(live)
 
@@ -896,6 +904,42 @@ def _cell_chg(row: dict, ctx: dict) -> str:
         return "—"
     cc = "green" if chg > 0 else "red" if chg < 0 else "white"
     return f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]"
+
+
+def row_rvol(row: dict) -> float | None:
+    """Relative volume for a row, or None when nothing trustworthy is on offer.
+
+    Precedence: the funnel's own figure (scored from today's extended-hours
+    minute bars) then the row's top-level `rvol` (same source since T2.1).
+    Never falls back to `rvol_raw` — that is the naive full-day ratio, and
+    reading it as a pace would understate every symbol before 16:00.
+    """
+    funnel = row.get("funnel")
+    if isinstance(funnel, dict):
+        v = _fnum(funnel.get("rvol"))
+        if v is not None and v > 0:
+            return v
+    v = _fnum(row.get("rvol"))
+    return v if (v is not None and v > 0) else None
+
+
+def _rvol_cell(row: dict, hot: float = 3.0, warm: float = 1.5) -> str:
+    """`8.2x` / `1.4x` / `—`. Never invents a value when both sources are
+    missing: an absent RVOL must not read as "volume is unremarkable"."""
+    v = row_rvol(row)
+    if v is None:
+        return "[dim]—[/dim]"
+    if v >= float(hot):
+        return f"[bold green]{v:.1f}x[/bold green]"
+    if v >= float(warm):
+        return f"[yellow]{v:.1f}x[/yellow]"
+    return f"[dim]{v:.1f}x[/dim]"
+
+
+def _cell_rvol(row: dict, ctx: dict) -> str:
+    cfg = ctx.get("cfg") or {}
+    return _rvol_cell(row, float(cfg.get("rvol_hot", 3.0)),
+                      float(cfg.get("rvol_warm", 1.5)))
 
 
 def _cell_mentions(row: dict, ctx: dict) -> str:
@@ -981,6 +1025,9 @@ def _cell_flags(row: dict, ctx: dict) -> str:
     return " ".join(flags)
 
 
+# The historical column set, unchanged since before the roadmap. Optional
+# columns are layered on by momentum_columns() rather than edited in here, so
+# this stays a stable reference for the ordering regression tests.
 MOMENTUM_COLUMNS = [
     ("#",        {"justify": "right", "style": "bold"}, _cell_key),
     ("Symbol",   {},                                    _cell_symbol),
@@ -993,6 +1040,31 @@ MOMENTUM_COLUMNS = [
     ("",         {},                                    _cell_flags),
 ]
 
+# Optional columns: (config flag, insert-after header, spec). Inserted in the
+# order listed; "after" is matched against the headers present at that point.
+OPTIONAL_COLUMNS = [
+    ("rvol_column_enabled", "Chg%",
+     ("RVOL", {"justify": "right"}, _cell_rvol)),
+]
+
+
+def momentum_columns(cfg: dict | None = None) -> list:
+    """The column spec for a render, with flag-gated optional columns added.
+
+    Passing no cfg yields exactly the historical set — the flags are read with
+    their DEFAULTS values only when a cfg is actually supplied, so a cfg-less
+    call stays a clean structural baseline for tests.
+    """
+    if cfg is None:
+        return list(MOMENTUM_COLUMNS)
+    cols = list(MOMENTUM_COLUMNS)
+    for flag, after, spec in OPTIONAL_COLUMNS:
+        if not cfg.get(flag, True):
+            continue
+        i = next((n for n, (h, _, _) in enumerate(cols) if h == after), None)
+        cols.insert(len(cols) if i is None else i + 1, spec)
+    return cols
+
 
 def momentum_table(feed: Feed, now: float, hz: float,
                    hotkeys_on: bool,
@@ -1003,7 +1075,7 @@ def momentum_table(feed: Feed, now: float, hz: float,
                    columns: list | None = None,
                    history=None,
                    cfg: dict | None = None) -> Table:
-    cols = MOMENTUM_COLUMNS if columns is None else columns
+    cols = momentum_columns(cfg) if columns is None else columns
     t = Table(expand=False)
     for header, opts, _ in cols:
         t.add_column(header, **opts)
