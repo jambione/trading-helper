@@ -134,7 +134,10 @@ DEFAULTS = {
     "journal_flush_sec": 5.0,
     # Price shape. Building, spiking and fading all read +12% on Chg%.
     "spark_enabled": True,
-    "spark_width": 20,
+    # 10 blocks ≈ 20s of tape at a 2.0s poll. The building/spiking/fading
+    # distinction survives at half the width of the roadmap's 20, and the
+    # column is the widest thing on the row.
+    "spark_width": 10,
     # Below this many samples no spark is drawn: 3 blocks over 6s look exactly
     # like 3 blocks over 4 minutes.
     "spark_min_samples": 5,

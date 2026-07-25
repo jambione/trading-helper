@@ -92,7 +92,7 @@ exits only.
 | 4 | Memory | T4.1, T4.2 |
 | 5 | Signal quality | T5.1, T5.2, T5.3 |
 | 6 | Context | T6.1 |
-| 7 | Fundamentals | T7.1, T7.2 |
+| ~~7~~ | ~~Fundamentals~~ | **CUT** — stale by construction, see below |
 
 **Design note resolving a conflict:** T1.2 (sort by distance-to-trigger) and T5.2
 (sort by confluence) both want to reorder rows. Do **not** implement two sorts.
@@ -715,121 +715,43 @@ schedule — the monitor just does not act on it.
 
 ---
 
-# Phase 7 — Fundamentals
+# Phase 7 — Fundamentals — **CUT (decided 2026-07-25)**
 
-> Scoped to **free sources only**, per decision. Read the honesty note in T7.1
-> before building — the constraint here is mostly not about money.
+Not building this. Recorded here with the reasoning so it does not get
+re-proposed.
 
-## T7.1 — Float and short-interest provider
+**Float** is reported quarterly in SEC filings and is stale by construction;
+for a small cap that just did an offering the figure can be badly wrong.
+**Short interest** is worse: FINRA collects it on settlement dates twice a
+month and publishes on a lag, and *every* source — free or paid — republishes
+that same delayed figure. Paying does not make it fresher. Anything sold as
+"real-time short interest" is a model estimate, not the reported number.
 
-**Goal.** For sub-$30 momentum names, low float plus high mention velocity *is*
-the setup. Float is the difference between a runner and a wall.
+Three things together killed it:
 
-**Files.** New — `momentum-monitor/fundamentals.py`
+1. Both inputs are stale by construction, and the desk's rule is that if the
+   data is wrong we fix the source or drop the calculation. There is no
+   fresher source to switch to — the staleness is in the filing schedule.
+2. T7.2 rendered `🪶LOW FLOAT` as a boolean flag in the row with the as-of
+   date pushed elsewhere. An undated flag derived from a possibly-months-old
+   figure is exactly the kind of confident-looking wrong number this desk
+   must not show.
+3. The watchlist is almost entirely different symbols every day, so a 24h
+   fundamentals cache mostly caches names never seen again — and churning
+   small caps are precisely the ones whose float is most stale after a recent
+   offering.
 
-**Honesty note — read this first.**
-- **Float** is reported quarterly in SEC filings. It is stale by construction.
-  For a small cap that just did an offering, a float figure can be badly wrong.
-  Display the as-of date next to it; a float number without a date invites false
-  confidence.
-- **Short interest** is worse: FINRA collects it on settlement dates twice a
-  month and publishes on a lag. *Every* source — free or paid — is republishing
-  the same delayed FINRA data. Paying does not make it fresher. Anything sold as
-  "real-time short interest" is a model estimate, not the reported figure.
-- Practical consequence: treat both as **slow context**, never as triggers.
-  Do not let them gate alerts, and do not let them into `row_rank()`.
+The roadmap's own honest estimate was "useful context on a watchlist review",
+not "better intraday decisions". That is not worth a new network dependency,
+a background fetch thread, a disk cache and two more flags in a process that
+currently has two well-understood dependencies.
 
-**Free options, in order of preference:**
-
-| Source | Gives | Cost | Risk |
-|---|---|---|---|
-| **yfinance** (already in `requirements.txt`, already used in `dashboard.py :: _vol_loop`) | `floatShares`, `sharesShort`, `shortPercentOfFloat`, `sharesShortPriorMonth` via `.get_info()` | free | unofficial, rate-limited, breaks on upstream changes; `.get_info()` is far slower than the `fast_info` path already in use |
-| **FINRA short-interest files** | official reported short interest | free | bulk file, twice monthly, needs its own fetch + parse + cache |
-| **Finnhub `/stock/profile2`** (key already configured) | `shareOutstanding` | free tier | outstanding ≠ float; can overstate badly for insider-heavy small caps |
-
-**Recommendation:** yfinance as the single provider, behind an interface, with
-aggressive caching. Do not add a second provider until the first proves
-insufficient.
-
-**Work.**
-1. ```python
-   class Fundamentals:
-       def get(self, sym: str) -> dict | None
-       # {"float_shares": int|None, "short_pct_float": float|None,
-       #  "shares_outstanding": int|None, "as_of": str|None,
-       #  "fetched": float, "source": "yfinance"}
-   ```
-2. **Cache hard.** Disk cache at `momentum-monitor/cache/fundamentals.json`,
-   TTL `fundamentals_ttl_hours` (default 24). This data changes quarterly; there
-   is no reason to fetch it twice in a session.
-3. **Never fetch in the render loop.** Background thread with a bounded queue,
-   fed by symbols appearing in the feed. The UI reads only the cache and shows
-   `…` on a miss. This is the single most important constraint in the ticket —
-   `.get_info()` can take seconds per symbol.
-4. Rate-limit to `fundamentals_max_per_min` (default 10) and back off on errors.
-   A failed lookup caches a negative result with a short TTL so a delisted or
-   unrecognized symbol is not retried every loop.
-5. Add `momentum-monitor/cache/` to `.gitignore`.
-
-**Config.**
-```json
-"fundamentals_enabled": false,
-"fundamentals_ttl_hours": 24.0,
-"fundamentals_max_per_min": 10,
-"fundamentals_cache": "cache/fundamentals.json"
-```
-Default **off** — this ticket adds a network dependency to a process that
-currently has only two well-understood ones.
-
-**Acceptance.**
-- No network call originates from the render loop; verify by asserting the
-  fetch runs on a non-main thread.
-- Cache hit returns without network.
-- Provider raising ⇒ `get()` returns `None`, loop unaffected.
-- Rate limit is honored across threads.
-- Stale-cache behavior: expired entries are served (with `fetched` intact) while
-  a refresh is queued, rather than returning `None` and blanking the column.
-
-**Tests.** `tests/test_fundamentals.py` — stub the provider entirely (no
-network). Cache hit/miss/expiry, negative caching, rate limiting, exception
-containment.
+If float ever becomes worth having, the honest shape is a **dated** figure on
+a pre-market watchlist review screen — never a flag on the live desk, never
+an input to `row_rank()`, and never gating an alert.
 
 ---
 
-## T7.2 — Float and short-interest display
-
-**Goal.** Surface low float and elevated short interest without adding noise.
-
-**Files.** `momentum_signal.py`
-
-**Work.**
-1. Do **not** add two more columns — the momentum table is already at eight and
-   gaining RVOL and a sparkline. Render as **flags** in the existing flag column:
-   - `🪶LOW FLOAT` when `float_shares < float_low_threshold`
-   - `SI 24%` when `short_pct_float >= short_pct_threshold`
-2. Show the `as_of` date in the ST/detail panel or on hover-equivalent (the
-   footer FOCUS line), not in the row. Per T7.1, an undated float figure is
-   misleading.
-3. Missing data renders nothing at all — no placeholder. An absent flag must not
-   be readable as "float is fine".
-
-**Config.**
-```json
-"float_flag_enabled": false,
-"float_low_threshold": 20000000,
-"short_pct_threshold": 20.0
-```
-
-**Acceptance.**
-- Flags appear only above threshold and only with data present.
-- Unknown float ⇒ no flag, no placeholder glyph.
-- Flag column layout does not shift existing flags.
-- `fundamentals_enabled: false` ⇒ no flags regardless of this ticket's flag.
-
-**Tests.** `tests/test_float_flags.py` — threshold boundaries, missing-data
-silence, and interaction with `fundamentals_enabled`.
-
----
 
 # Suggested working order
 
@@ -840,9 +762,7 @@ building Phase 5.** T4.2's threshold sweep will tell you whether
 will tell you which alerts deserve escalation in T5.3. Building Phase 5 first
 means guessing at exactly the numbers Phase 4 measures.
 
-Phase 7 is genuinely optional. Given that both float and short interest are
-stale by construction, the honest expected value is "useful context on a
-watchlist review", not "better intraday decisions".
+Phase 7 was cut outright — see the Phase 7 section for the reasoning.
 
 ---
 
