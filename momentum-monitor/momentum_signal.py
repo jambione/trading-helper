@@ -1,31 +1,30 @@
-"""Momentum monitor — the Brasfield Momentum watchlist in your terminal.
+"""Momentum desk monitor — Discord momentum + Stocktwits + TradingView load.
 
-Polls the dashboard's /api/state feed (the same data as
-trading.jbrasfield.com) and shows the live momentum tickers so you don't
-have to keep the webpage open in another tab. Newest momentum names sit on
-top; a fresh arrival or a mention burst beeps and pops a desktop toast.
+Polls the dashboard /api/state feed and Stocktwits trending.
+Setup column: green FOCUS when CM RSI-2 and deep %R both fire (signal_proximity).
 
-Press the number shown beside a symbol (1-9) to load that ticker into BOTH
-TradingView and Webull Desktop, using the existing windows_agent workflows.
-SPACE loads the top (newest) symbol.
+No Alpaca buy/sell in this desk (B/S/T are Stocktwits letter keys).
 
-The header strip shows the top movers OCR'd straight off the Webull
-watchlist sidebar (symbol + (pre)market percent), scraped the same way the
-L2 book and Time&Sales are — see watchlist_ocr.py. It replaces the old
-branding header to keep the monitor short; the FEED DOWN warning moved
-into it. Needs the webull-l2 OCR deps (cv2/mss/pytesseract) and the Webull
-window on screen; without them the classic header renders instead.
+Cross-platform (macOS + Windows):
 
-Run:  python momentum_signal.py       (repo .venv has rich + plyer)
+  1-9     focus momentum row + load TradingView
+  SPACE   focus newest momentum + load TradingView
+  A-J     focus Stocktwits trending row + load TradingView
+          (A = 1st under-$max panel row, B = 2nd, … J = 10th)
 
-Windows-only for the hotkey / Webull-TV loading; on other platforms it still
-renders the list, just without the load hotkeys.
+Focused symbol is written to repo root active_symbol.json.
+
+Run (from repo root or this folder):
+  python3 momentum-monitor/momentum_signal.py
+  python3 momentum_signal.py
 """
 from __future__ import annotations
 
 import contextlib
-import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -39,37 +38,29 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-# DPI awareness MUST be set before windows_agent imports pyautogui, which
-# claims system-DPI-aware at import and locks the process there (awareness
-# is set-once). Under system-aware, GetWindowRect returns virtualized
-# coordinates on mixed-scaling multi-monitor setups (e.g. 1.5x off when the
-# primary runs 150%), so the watchlist scraper's capture region lands on
-# the wrong pixels and never finds the sidebar. Per-monitor v2 keeps window
-# rects, screen grabs, AND pyautogui clicks in the same physical-pixel
-# space. Same block as l2_signal.py, which never faces this only because
-# its process doesn't import pyautogui.
+HERE = Path(__file__).parent
+ROOT = HERE.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(HERE))
+
 if sys.platform == "win32":
     import ctypes
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v2
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:                                      # noqa: BLE001
         with contextlib.suppress(Exception):
             ctypes.windll.user32.SetProcessDPIAware()
 
-# windows_agent (repo root) owns the dashboard auth + the WB/TV load
-# workflows. Import is side-effect-free (its server/listener only start under
-# __main__), so we borrow the pieces we need. On a box without the automation
-# deps the load hotkeys simply switch off and the list still renders.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Dashboard auth helper (optional — Windows or Mac agent)
+wa = None
 try:
-    import windows_agent as wa
-    workflow_add_wb = wa.workflow_add_wb
-    workflow_add_tv = wa.workflow_add_tv
+    if sys.platform == "darwin":
+        import mac_agent as wa
+    elif sys.platform == "win32":
+        import windows_agent as wa
 except Exception:                                          # noqa: BLE001
     wa = None
-    workflow_add_wb = workflow_add_tv = None
 
-# shared session clock (repo root) — optional
 try:
     from session_clock import session_line
 except Exception:                                          # noqa: BLE001
@@ -80,30 +71,44 @@ try:
 except Exception:                                          # noqa: BLE001
     _plyer = None
 
-# Webull watchlist scraper (same OCR stack as webull-l2); import never
-# hard-fails — without cv2/mss/pytesseract the reader reports itself off.
-try:
-    from watchlist_ocr import WatchlistReader, top_movers
-except Exception:                                          # noqa: BLE001
-    WatchlistReader = top_movers = None
+import desk_actions as desk
+from desk_hotkeys import DeskHotkeys
+from stocktwits_trending import StocktwitsTrending
 
-HERE = Path(__file__).parent
+WatchlistReader = top_movers = None  # OCR movers retired
+
 CONFIG_PATH = HERE / "momentum_config.json"
 
-# defaults — override any of these in momentum_config.json
 DEFAULTS = {
-    "poll_interval": 2.0,     # seconds between /api/state polls
-    "hotkey_slots": 9,        # rows that get a load number (1-9 max)
-    "new_ttl": 120.0,         # seconds a symbol wears the NEW badge / stays on top
-    "alert_new": True,        # beep/toast when a symbol enters the list
-    "alert_burst": True,      # beep/toast on a mention-burst rising edge
-    "alert_buy": False,       # beep/toast when signal status hits buy-zone
-    "alert_cooldown": 60.0,   # per-symbol, per-alert-type cooldown
-    "desktop_toast": True,    # plyer desktop notification alongside the beep
-    "watchlist_enabled": True,  # OCR the Webull watchlist sidebar for movers
-    "watchlist_poll": 2.0,    # seconds between watchlist captures
-    "watchlist_top": 3,       # movers shown in the bottom strip
-    "watchlist_rank": "gainers",  # "gainers" (signed %) or "abs" (magnitude)
+    "poll_interval": 2.0,
+    "hotkey_slots": 9,
+    "new_ttl": 120.0,
+    "alert_new": True,
+    "alert_burst": True,
+    "alert_buy": False,
+    "alert_st_new": True,
+    "alert_st_look": True,
+    "alert_cooldown": 60.0,
+    "alert_notify_interval": 180.0,  # min seconds between OS notification popups
+    "alert_notify_duration": 5.0,    # seconds before an OS popup auto-dismisses
+    "alert_only_when_hidden": True,  # skip the popup if Terminal is frontmost
+    "desktop_toast": True,
+    "watchlist_enabled": False,
+    # FOCUS = CM RSI green-long AND both %R lines deep OS toward -100
+    "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
+    "pctr_focus_lo": -100.0,     # both %R lines >= lo
+    "pctr_focus_hi": -75.0,      # both %R lines <= hi
+    # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
+    "stocktwits_enabled": True,
+    "stocktwits_poll": 60.0,     # seconds between ST API polls
+    "stocktwits_stocks_only": True,
+    "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
+    "stocktwits_panel_limit": 10,  # max 10 → keys A-J
+    # LOOK badge: heat + |%chg| + vol + 52w extreme (EXT near high / WASH near low)
+    "stocktwits_look_min_abs_chg": 3.0,
+    "stocktwits_look_max": 2,
+    "stocktwits_look_near_high": 0.70,
+    "stocktwits_look_near_low": 0.30,
 }
 
 
@@ -158,6 +163,134 @@ def _is_buy(row: dict) -> bool:
     return (_signal_status(row) or "").lower() in ("buy", "buy_zone")
 
 
+def _sp(row: dict) -> dict:
+    sp = row.get("signal_proximity")
+    return sp if isinstance(sp, dict) else {}
+
+
+def _fnum(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cm_rsi_value(row: dict) -> float | None:
+    """CM RSI-2 (preferred) or classic RSI from signal_proximity."""
+    sp = _sp(row)
+    for key in ("cm_rsi", "rsi"):
+        n = _fnum(sp.get(key))
+        if n is not None:
+            return n
+    return None
+
+
+def _rsi_leg_ok(row: dict, max_lvl: float = 35.0) -> bool:
+    """CM RSI green-long band: value in [0, max_lvl)."""
+    rsi = _cm_rsi_value(row)
+    return rsi is not None and 0.0 <= rsi < float(max_lvl)
+
+
+def _pctr_leg_ok(row: dict,
+                 lo: float = -100.0,
+                 hi: float = -75.0) -> bool:
+    """Both %R lines in [lo, hi] and falling toward -100.
+
+    Prefers engine flag `pctr_deep_os`. Falls back to pctr + pctr_slow +
+    falling flags when the flag is absent (older engine builds).
+    """
+    sp = _sp(row)
+    if "pctr_deep_os" in sp:
+        return bool(sp.get("pctr_deep_os"))
+
+    fast = _fnum(sp.get("pctr"))
+    slow = _fnum(sp.get("pctr_slow"))
+    if fast is None or slow is None:
+        return False
+    in_band = (float(lo) <= fast <= float(hi)
+               and float(lo) <= slow <= float(hi))
+    falling = bool(sp.get("pctr_falling")) and bool(sp.get("pctr_slow_falling"))
+    return in_band and falling
+
+
+def rsi_focus_trigger(row: dict,
+                      max_lvl: float = 35.0,
+                      pctr_lo: float = -100.0,
+                      pctr_hi: float = -75.0) -> tuple[float | None, bool]:
+    """FOCUS when RSI leg AND %R deep-OS leg are both true.
+
+    Returns (cm_rsi_or_None, is_focus). FOCUS requires:
+      • CM RSI-2 in [0, max_lvl)
+      • both %R lines in [pctr_lo, pctr_hi] trending toward -100
+    """
+    rsi = _cm_rsi_value(row)
+    if rsi is None:
+        return None, False
+    hit = _rsi_leg_ok(row, max_lvl) and _pctr_leg_ok(row, pctr_lo, pctr_hi)
+    return rsi, hit
+
+
+def rsi_focus_empty_reason(row: dict) -> str:
+    """Why the Setup cell is blank: 'untracked' | 'pending' | '' (has value)."""
+    if not _sp(row):
+        return "untracked"
+    if _cm_rsi_value(row) is None:
+        return "pending"
+    return ""
+
+
+def _pctr_pair(row: dict) -> tuple[float | None, float | None]:
+    """(fast %R, slow %R) from signal_proximity."""
+    sp = _sp(row)
+    return _fnum(sp.get("pctr")), _fnum(sp.get("pctr_slow"))
+
+
+def _setup_readout(rsi: float,
+                   fast: float | None,
+                   slow: float | None) -> str:
+    """Compact combined readout: RSI · fast/slow %R (omit missing %R)."""
+    # e.g. "3/−99/−77" or "17/−96" or "17"
+    parts = [f"{rsi:.0f}"]
+    if fast is not None and slow is not None:
+        parts.append(f"{fast:.0f}/{slow:.0f}")
+    elif fast is not None:
+        parts.append(f"{fast:.0f}")
+    elif slow is not None:
+        parts.append(f"—/{slow:.0f}")
+    return "·".join(parts) if len(parts) > 1 else parts[0]
+
+
+def _rsi_focus_cell(row: dict,
+                    max_lvl: float = 35.0,
+                    pctr_lo: float = -100.0,
+                    pctr_hi: float = -75.0) -> str:
+    """Rich markup for the Setup column (combined CM RSI + %R cue).
+
+    Empty:
+      —   engine not tracking
+      …   tracked, waiting on bars / CM RSI
+    Partial (no FOCUS):
+      dim  17·−96/−40   RSI + both %R (full setup not ready)
+      dim  17           RSI only (%R not published yet)
+    Full setup:
+      FOCUS  3·−99/−77  both legs true — number is RSI·fast/slow %R
+    """
+    rsi, hit = rsi_focus_trigger(row, max_lvl, pctr_lo, pctr_hi)
+    if rsi is None:
+        reason = rsi_focus_empty_reason(row)
+        if reason == "pending":
+            return "[dim]…[/dim]"
+        return "[dim]—[/dim]"
+    fast, slow = _pctr_pair(row)
+    readout = _setup_readout(rsi, fast, slow)
+    if hit:
+        return (f"[bold black on green] FOCUS [/] "
+                f"[bold green]{readout}[/bold green]")
+    return f"[dim]{readout}[/dim]"
+
+
 # ── alerting ─────────────────────────────────────────────────────────────────
 
 def _beep():
@@ -169,13 +302,105 @@ def _beep():
             pass
 
 
+# Maps $TERM_PROGRAM (set by the terminal running this script) to the process
+# name macOS System Events reports for that app's frontmost check, and to the
+# bundle id terminal-notifier needs to activate that app on notification click.
+_TERM_APP_NAMES = {
+    "Apple_Terminal": "Terminal",
+    "iTerm.app": "iTerm2",
+}
+_TERM_BUNDLE_IDS = {
+    "Apple_Terminal": "com.apple.Terminal",
+    "iTerm.app": "com.googlecode.iterm2",
+}
+_NOTIFY_GROUP = "brasfield-momentum"
+
+
+def _macos_notify(title: str, message: str, sound: bool = True,
+                   auto_dismiss: float = 5.0) -> None:
+    """Notification Center banner. Prefers `terminal-notifier` (brew) so
+    clicking the banner brings the monitor's terminal to the front via
+    `-activate`; plain `osascript display notification` can't do that — Apple
+    doesn't expose a click action to scripts, only to full app bundles.
+    Falls back to osascript (no click action) if terminal-notifier is absent.
+
+    `auto_dismiss` force-removes the banner after N seconds via a background
+    timer + `-remove`, regardless of the system's Banners/Alerts style —
+    macOS's own auto-hide timing isn't user- or script-configurable, so this
+    is the only way to guarantee a specific duration."""
+    if sys.platform != "darwin":
+        return
+
+    tn = shutil.which("terminal-notifier")
+    if tn:
+        cmd = [tn, "-title", title, "-message", message,
+               "-group", _NOTIFY_GROUP]
+        if sound:
+            cmd += ["-sound", "default"]
+        bundle_id = _TERM_BUNDLE_IDS.get(os.environ.get("TERM_PROGRAM", ""))
+        if bundle_id:
+            cmd += ["-activate", bundle_id]
+        try:
+            subprocess.run(cmd, check=False, timeout=5,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if auto_dismiss and auto_dismiss > 0:
+                def _dismiss():
+                    subprocess.run([tn, "-remove", _NOTIFY_GROUP], check=False,
+                                    timeout=5, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+                timer = threading.Timer(auto_dismiss, _dismiss)
+                timer.daemon = True
+                timer.start()
+            return
+        except Exception:                                  # noqa: BLE001
+            pass  # fall through to osascript
+
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f'display notification "{esc(message)}" with title "{esc(title)}"'
+    if sound:
+        script += ' sound name "Glass"'
+    try:
+        subprocess.run(["osascript", "-e", script], check=False, timeout=5,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:                                      # noqa: BLE001
+        pass
+
+
+def _monitor_visible() -> bool:
+    """True if the terminal app running this monitor is currently the
+    frontmost (focused) app — i.e. the user is already looking at it, so a
+    notification would be redundant. False (assume hidden) if we can't tell,
+    so notifications fail open rather than going silent."""
+    if sys.platform != "darwin":
+        return False
+    app_name = _TERM_APP_NAMES.get(os.environ.get("TERM_PROGRAM", ""))
+    if not app_name:
+        return False
+    script = ('tell application "System Events" to get name of '
+              'first application process whose frontmost is true')
+    try:
+        out = subprocess.run(["osascript", "-e", script], check=False,
+                              timeout=5, capture_output=True, text=True)
+        return out.stdout.strip() == app_name
+    except Exception:                                      # noqa: BLE001
+        return False
+
+
 class Alerter:
     """Beep + optional desktop toast, with a per-symbol, per-kind cooldown so
-    a symbol that keeps re-bursting doesn't machine-gun the speaker."""
+    a symbol that keeps re-bursting doesn't machine-gun the speaker, plus a
+    separate global throttle on OS notifications so a burst of different
+    symbols/kinds still caps out at one popup per `alert_notify_interval`."""
 
     def __init__(self, cfg: dict):
         self.cooldown = float(cfg.get("alert_cooldown", 60.0))
         self.toast = bool(cfg.get("desktop_toast", True))
+        self.notify_interval = float(cfg.get("alert_notify_interval", 180.0))
+        self.notify_duration = float(cfg.get("alert_notify_duration", 5.0))
+        self.only_when_hidden = bool(cfg.get("alert_only_when_hidden", True))
+        self._last_notify = 0.0
         self._last: dict[tuple[str, str], float] = {}
         self.recent: list[str] = []          # short on-screen alert log
 
@@ -187,98 +412,26 @@ class Alerter:
         self._last[key] = now
         _beep()
         msg = {"new": f"NEW {sym}", "burst": f"BURST {sym}",
-               "buy": f"BUY {sym}"}.get(kind, f"{kind} {sym}")
+               "buy": f"BUY {sym}", "st_new": f"NEW-ST {sym}",
+               "st_look": f"LOOK {sym}"}.get(kind, f"{kind} {sym}")
         if detail:
             msg += f"  {detail}"
         self.recent.insert(0, f"{datetime.now():%H:%M:%S}  {msg}")
         del self.recent[6:]
-        if self.toast and _plyer is not None:
-            try:
-                _plyer.notify(title=f"Momentum · {msg.split()[0]} {sym}",
-                              message=detail or "momentum alert",
-                              timeout=6)
-            except Exception:                              # noqa: BLE001
-                pass
-
-
-# ── hotkeys: load a symbol into TradingView + Webull ─────────────────────────
-
-class LoadHotkey:
-    """Press a slot number (1-9) to load that row's symbol into BOTH
-    TradingView and Webull Desktop; SPACE loads the top (newest) row. A
-    daemon thread reads keys and runs the load off the render loop (each
-    load steals focus for ~2s and prints, which we swallow so the Rich
-    display stays clean). Windows-only; a no-op if the workflows didn't
-    import, in which case the on-screen hint is hidden."""
-
-    SPACE = " "
-
-    def __init__(self):
-        self.enabled = (sys.platform == "win32"
-                        and workflow_add_wb is not None
-                        and workflow_add_tv is not None)
-        self._by_key: dict[str, str] = {}
-        self._top: str | None = None
-        self._status = ""
-        self._busy = False
-        self._lock = threading.Lock()
-        if self.enabled:
-            threading.Thread(target=self._reader, daemon=True).start()
-
-    def update(self, ordered: list[str]):
-        """ordered = symbols in display order; key N -> ordered[N-1]."""
-        with self._lock:
-            self._by_key = {str(i + 1): s for i, s in enumerate(ordered[:9])}
-            self._top = ordered[0] if ordered else None
-
-    def status(self) -> str:
-        with self._lock:
-            return self._status
-
-    def _set(self, msg: str):
-        with self._lock:
-            self._status = f"{datetime.now():%H:%M:%S}  {msg}"
-
-    def _reader(self):
-        try:
-            import msvcrt
-        except Exception:                                  # noqa: BLE001
-            return
-        while True:
-            try:
-                ch = msvcrt.getwch()
-            except Exception:                              # noqa: BLE001
-                return                                     # no real console
-            with self._lock:
-                if self._busy:
-                    continue                               # ignore keys mid-load
-                sym = (self._top if ch == self.SPACE
-                       else self._by_key.get(ch))
-                if sym:
-                    self._busy = True
-            if not sym:
-                continue
-            try:
-                self._load(sym)
-            finally:
-                with self._lock:
-                    self._busy = False
-
-    def _load(self, sym: str):
-        self._set(f"loading {sym} into TradingView + Webull …")
-        wb_ok = tv_ok = False
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                wb_ok = bool(workflow_add_wb(sym))
-                time.sleep(0.5)
-                tv_ok = bool(workflow_add_tv(sym))
-        except Exception as e:                             # noqa: BLE001
-            self._set(f"load error for {sym}: {e}")
-            return
-        parts = []
-        parts.append("WB✓" if wb_ok else "WB✗")
-        parts.append("TV✓" if tv_ok else "TV✗")
-        self._set(f"{sym}: {' '.join(parts)}")
+        if (self.toast and (now - self._last_notify) >= self.notify_interval
+                and not (self.only_when_hidden and _monitor_visible())):
+            self._last_notify = now
+            if sys.platform == "darwin":
+                _macos_notify(f"Momentum · {msg.split()[0]} {sym}",
+                               detail or "momentum alert",
+                               auto_dismiss=self.notify_duration)
+            elif _plyer is not None:
+                try:
+                    _plyer.notify(title=f"Momentum · {msg.split()[0]} {sym}",
+                                  message=detail or "momentum alert",
+                                  timeout=6)
+                except Exception:                          # noqa: BLE001
+                    pass
 
 
 # ── model ────────────────────────────────────────────────────────────────────
@@ -349,18 +502,16 @@ def _detail(row: dict) -> str:
 
 # ── render ───────────────────────────────────────────────────────────────────
 
-_STATUS_LABEL = {
-    "buy": "🔥 BUY", "buy_zone": "🔥 BUY ZONE", "watching": "watching",
-    "approaching": "approaching", "on_deck": "on deck",
-}
-
-
 def _fmt(v, spec, none="—"):
     return format(v, spec) if v is not None else none
 
 
 def momentum_table(feed: Feed, now: float, hz: float,
-                   hotkeys_on: bool) -> Table:
+                   hotkeys_on: bool,
+                   rsi_focus_max: float = 35.0,
+                   pctr_focus_lo: float = -100.0,
+                   pctr_focus_hi: float = -75.0,
+                   st_rank: dict[str, int] | None = None) -> Table:
     t = Table(expand=False)
     t.add_column("#", justify="right", style="bold")
     t.add_column("Symbol")
@@ -368,8 +519,10 @@ def momentum_table(feed: Feed, now: float, hz: float,
     t.add_column("Price", justify="right")
     t.add_column("Chg%", justify="right")
     t.add_column("Mentions", justify="right")
-    t.add_column("Signal")
+    # Combined CM RSI + %R deep-OS cue (not RSI alone)
+    t.add_column("Setup", justify="right")
     t.add_column("")
+    st_rank = st_rank or {}
     for i, r in enumerate(feed.rows):
         sym = str(r.get("ticker") or "?").upper()
         key = str(i + 1) if (hotkeys_on and i < 9) else ""
@@ -382,9 +535,6 @@ def momentum_table(feed: Feed, now: float, hz: float,
         win = r.get("mention_window") or 0
         day = r.get("mention_count") or 0
         mtxt = f"{win}/{day}" if (win or day) else "—"
-        st = _signal_status(r)
-        st_lbl = _STATUS_LABEL.get((st or "").lower(), st or "")
-        sc = ("green" if _is_buy(r) else "yellow" if st else "dim")
         flags = []
         if r.get("find_it_first"):
             flags.append("[bold black on green]🥇FIRST[/]")
@@ -395,6 +545,10 @@ def momentum_table(feed: Feed, now: float, hz: float,
         conf = r.get("confluence")
         if isinstance(conf, dict) and conf.get("count", 0) >= 2:
             flags.append(f"[magenta]⚡{conf['count']}[/magenta]")
+        # Stocktwits trending rank (same list as stocktwits.com/sentiment)
+        rk = st_rank.get(sym)
+        if rk is not None:
+            flags.append(f"[bold black on magenta] ST#{rk} [/]")
         t.add_row(
             key,
             f"[bold cyan]{sym}[/bold cyan]",
@@ -402,13 +556,84 @@ def momentum_table(feed: Feed, now: float, hz: float,
             _fmt(r.get("price"), ".2f"),
             f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]" if chg is not None else "—",
             mtxt,
-            f"[{sc}]{st_lbl}[/{sc}]" if st_lbl else "[dim]—[/dim]",
+            _rsi_focus_cell(r, rsi_focus_max, pctr_focus_lo, pctr_focus_hi),
             " ".join(flags),
         )
     if not feed.rows:
         t.add_row("", "[dim]no momentum tickers in the feed[/dim]",
                   "", "", "", "", "", "")
     return t
+
+
+def stocktwits_panel(st: StocktwitsTrending,
+                     price_by_sym: dict[str, float | None],
+                     limit: int = 10,
+                     hotkeys_on: bool = True) -> Panel:
+    """Stocktwits trending — website columns + letter key (A-J) + LOOK badge."""
+    from stocktwits_trending import fmt_mcap, fmt_vol
+
+    rows = st.display_rows(price_by_sym, limit=min(limit, len(DeskHotkeys.ST_LETTERS)))
+    t = Table(expand=False)
+    t.add_column("Key", justify="right", style="bold")
+    t.add_column("ST#", justify="right", style="bold magenta")
+    t.add_column("Symbol")
+    t.add_column("Last", justify="right")
+    t.add_column("%Chg", justify="right")
+    t.add_column("Volume", justify="right")
+    t.add_column("52w Hi", justify="right")
+    t.add_column("52w Lo", justify="right")
+    t.add_column("Mkt Cap", justify="right")
+    t.add_column("Score", justify="right")
+    t.add_column("")  # LOOK badge
+    n_look = 0
+    if not rows:
+        msg = st.error or "waiting for first poll…"
+        t.add_row("", "—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "", "")
+    else:
+        for i, r in enumerate(rows):
+            letter = (DeskHotkeys.ST_LETTERS[i].upper()
+                      if hotkeys_on and i < len(DeskHotkeys.ST_LETTERS) else "")
+            px = r.get("price")
+            px_s = f"${px:.2f}" if px is not None else "[dim]—[/dim]"
+            chg = r.get("pct_change")
+            if chg is None:
+                chg_s = "[dim]—[/dim]"
+            else:
+                cc = "green" if chg >= 0 else "red"
+                chg_s = f"[{cc}]{chg:+.2f}%[/{cc}]"
+            hi = r.get("high_52w")
+            lo = r.get("low_52w")
+            sc = r.get("trending_score")
+            vol = r.get("volume") if r.get("volume") is not None else r.get("avg_vol")
+            look_s = ""
+            if r.get("look"):
+                n_look += 1
+                reason = r.get("look_reason") or ""
+                look_s = f"[bold black on green] LOOK {reason} [/]"
+            sym_s = f"[bold cyan]{r['symbol']}[/bold cyan]"
+            if r.get("look"):
+                sym_s = f"[bold green]{r['symbol']}[/bold green]"
+            t.add_row(
+                letter,
+                str(r.get("rank") or "—"),
+                sym_s,
+                px_s,
+                chg_s,
+                fmt_vol(vol),
+                f"${hi:.2f}" if hi is not None else "—",
+                f"${lo:.2f}" if lo is not None else "—",
+                fmt_mcap(r.get("market_cap")),
+                f"{sc:.1f}" if sc is not None else "—",
+                look_s,
+            )
+    age = ""
+    if st.last_ok:
+        age = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
+    cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
+    look_n = f"  ·  {n_look} LOOK" if n_look else ""
+    title = f"TRENDING  ·  A-J load TV{cap}{look_n}{age}"
+    return Panel(t, title=title, title_align="left",
+                 border_style="magenta", padding=(0, 1))
 
 
 def header_panel(feed: Feed, now: float, hz: float,
@@ -428,59 +653,61 @@ def header_panel(feed: Feed, now: float, hz: float,
                  padding=(0, 1))
 
 
-def footer_panel(alerter: Alerter, hotkeys: LoadHotkey,
+def positions_panel(positions: dict, focus: str | None) -> Panel:
+    """Live P&L for every open Alpaca position. Focused symbol highlighted."""
+    total_pl = sum(float(p.get("pl") or 0) for p in positions.values())
+    tcol = "green" if total_pl >= 0 else "red"
+    t = Table.grid(expand=False, padding=(0, 2))
+    t.add_column(justify="left")     # symbol
+    t.add_column(justify="right")    # qty
+    t.add_column(justify="right")    # entry
+    t.add_column(justify="right")    # last
+    t.add_column(justify="right")    # P&L $
+    t.add_column(justify="right")    # P&L %
+    t.add_column(justify="right")    # mkt value
+    for sym in sorted(positions):
+        p = positions[sym]
+        pl, plpc = float(p.get("pl") or 0), float(p.get("plpc") or 0)
+        c = "green" if pl >= 0 else "red"
+        marker = "▶ " if focus and sym == focus.upper() else "  "
+        name = f"[bold cyan]{marker}{sym}[/bold cyan]"
+        t.add_row(
+            name,
+            f"[white]{p.get('qty', 0):g} sh[/white]",
+            f"[dim]entry[/dim] ${p.get('avg_entry', 0):.2f}",
+            f"[dim]last[/dim] ${p.get('current', 0):.2f}",
+            f"[{c}]{'+' if pl >= 0 else ''}${pl:,.2f}[/{c}]",
+            f"[{c}]{'+' if plpc >= 0 else ''}{plpc:.2f}%[/{c}]",
+            f"[dim]${p.get('mkt_val', 0):,.0f}[/dim]",
+        )
+    title = (f"POSITIONS ({len(positions)})   "
+             f"total P&L [{tcol}]{'+' if total_pl >= 0 else ''}${total_pl:,.2f}[/{tcol}]")
+    return Panel(t, title=title, title_align="left",
+                 border_style=tcol, padding=(0, 1))
+
+
+def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
                  hotkey_slots: int) -> Panel:
     lines = []
     if alerter.recent:
         lines.append("[dim]" + "   ·   ".join(alerter.recent[:3]) + "[/dim]")
+    focus = hotkeys.focus_symbol() or "—"
+    lines.append(
+        f"[bold]FOCUS[/bold] [bold cyan]{focus}[/bold cyan]   "
+        f"TV={'on' if desk.tv_load_available() else 'off'}   "
+        f"[{desk.platform_label()}]"
+    )
     if hotkeys.enabled:
-        hint = (f"[dim]keys 1-{hotkey_slots}: load that symbol into "
-                "TradingView + Webull   ·   space: load the top symbol[/dim]")
+        hint = (f"[dim]1-{hotkey_slots}/space: momentum → TV   ·   "
+                f"A-J: Stocktwits → TV[/dim]")
         st = hotkeys.status()
         if st:
             hint += f"     [bold green]{st}[/bold green]"
         lines.append(hint)
     else:
-        lines.append("[dim]load hotkeys off (needs Windows + windows_agent "
-                     "automation deps)[/dim]")
+        lines.append("[dim]hotkeys off — use a real Terminal on macOS/Windows[/dim]")
     return Panel(Align.center("\n".join(lines)), border_style="grey37",
                  padding=(0, 1))
-
-
-def movers_panel(snap: dict | None, now: float, top: int,
-                 rank: str, stale: bool = False) -> Panel:
-    """Header strip: top watchlist movers straight off the Webull sidebar.
-    Sits where the branding header used to (the movers earn the row, the
-    URL didn't), so the FEED DOWN warning renders here too — it must never
-    be hidden by the swap."""
-    label = "[bold magenta]WB watchlist[/bold magenta]"
-    if snap is None or not snap.get("on"):
-        body = (f"{label}   [dim]scraper off (needs the webull-l2 OCR deps: "
-                "cv2 / mss / pytesseract)[/dim]")
-    elif not snap["rows"]:
-        why = ("waiting for the Webull window / watchlist header"
-               if not snap["located"] else "no readable rows yet")
-        body = f"{label}   [dim]{why}[/dim]"
-    else:
-        movers = top_movers(snap["rows"], top, rank)
-        bits = []
-        for i, m in enumerate(movers, 1):
-            c = "green" if m.pct >= 0 else "red"
-            px = f" [dim]{m.price:.2f}[/dim]" if m.price is not None else ""
-            bits.append(f"[bold]{i}[/bold] [bold cyan]{m.sym}[/bold cyan] "
-                        f"[{c}]{m.pct:+.1f}%[/{c}]{px}")
-        pre = " (pre)" if any(m.pre for m in movers) else ""
-        meta = f"{len(snap['rows'])} rows"
-        age = (now - snap["updated"]) if snap.get("updated") else None
-        if age is not None and age > 15:
-            meta += f" · [yellow]{age:.0f}s stale[/yellow]"
-        body = (f"{label}{pre}   " + "    ".join(bits)
-                + f"   [dim]{meta}[/dim]")
-    if stale:
-        body = ("[bold white on red]  FEED DOWN  [/]  "
-                f"[dim]can't reach {_dashboard_url()}[/dim]\n") + body
-    return Panel(Align.center(body),
-                 border_style="red" if stale else "magenta", padding=(0, 1))
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -489,26 +716,51 @@ STALE_AFTER = 15.0   # seconds without a good poll before the FEED DOWN banner
 
 
 def main():
-    # the badges/arrows below are UTF-8; a classic cmd console defaults to
-    # cp1252 and would crash Rich's writer, so force UTF-8 where possible.
+    # UTF-8 console (Windows cmd defaults break badge glyphs)
     for stream in (sys.stdout, sys.stderr):
         with contextlib.suppress(Exception):
             stream.reconfigure(encoding="utf-8")           # type: ignore[attr-defined]
     cfg = load_config()
     interval = float(cfg.get("poll_interval", 2.0))
     hotkey_slots = min(9, int(cfg.get("hotkey_slots", 9)))
+    rsi_focus_max = float(cfg.get("rsi_focus_max", 35.0))
+    pctr_focus_lo = float(cfg.get("pctr_focus_lo", -100.0))
+    pctr_focus_hi = float(cfg.get("pctr_focus_hi", -75.0))
+    st_on = bool(cfg.get("stocktwits_enabled", True))
+    st_poll = float(cfg.get("stocktwits_poll", 60.0))
+    st_max_px = cfg.get("stocktwits_max_price", 30.0)
+    st_limit = min(10, int(cfg.get("stocktwits_panel_limit", 10)))
+
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
-    hotkeys = LoadHotkey()
-    watchlist = (WatchlistReader(cfg, console)
-                 if WatchlistReader and cfg.get("watchlist_enabled", True)
-                 else None)
-    wl_top = max(1, int(cfg.get("watchlist_top", 3)))
-    wl_rank = str(cfg.get("watchlist_rank", "gainers"))
 
-    console.print("[bold]Momentum monitor — Ctrl+C to stop.[/bold]  "
-                  f"Polling {_dashboard_url()}/api/state")
+    def _st_alert(kind: str, sym: str, detail: str) -> None:
+        flag = "alert_st_new" if kind == "st_new" else "alert_st_look"
+        if cfg.get(flag, True):
+            alerter.fire(kind, sym, detail)
+
+    hotkeys = DeskHotkeys()
+    st = StocktwitsTrending(
+        poll_interval=st_poll,
+        stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
+        max_price=float(st_max_px) if st_max_px is not None else None,
+        look_min_abs_chg=float(cfg.get("stocktwits_look_min_abs_chg", 3.0)),
+        look_max=int(cfg.get("stocktwits_look_max", 2)),
+        look_near_high=float(cfg.get("stocktwits_look_near_high", 0.70)),
+        look_near_low=float(cfg.get("stocktwits_look_near_low", 0.30)),
+    ) if st_on else None
+
+    st_note = f"  ST={'on' if st_on else 'off'}"
+    console.print(
+        f"[bold]Momentum desk[/bold]  {desk.platform_label()}  "
+        f"TV={'on' if desk.tv_load_available() else 'off'}{st_note}  "
+        f"— Ctrl+C to stop.\n"
+        f"Polling {_dashboard_url()}/api/state"
+        + (f"  ·  Stocktwits every {st_poll:.0f}s\n" if st_on else "\n")
+        + f"[dim]1-9/space momentum → TV   ·   A-J Stocktwits → TV[/dim]"
+    )
+
     stamps: list[float] = []
     with Live(console=console, refresh_per_second=2, screen=False) as live:
         while True:
@@ -516,25 +768,48 @@ def main():
             state = fetch_state()
             if state is not None:
                 feed.ingest(state, t0, alerter, cfg)
-                ordered = [str(r.get("ticker") or "").upper()
-                           for r in feed.rows[:hotkey_slots]]
-                hotkeys.update(ordered)
             stale = (t0 - feed.last_ok) > STALE_AFTER if feed.last_ok else \
                     (state is None)
             stamps.append(t0)
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
-            # the movers strip takes the header slot; the classic header
-            # only renders when the scraper is off (config or missing deps)
-            wl_on = watchlist is not None and watchlist.enabled
-            top_panel = (movers_panel(watchlist.snapshot(), t0, wl_top,
-                                      wl_rank, stale) if wl_on
-                         else header_panel(feed, t0, hz, stale))
-            live.update(Group(
-                top_panel,
-                momentum_table(feed, t0, hz, hotkeys.enabled),
-                footer_panel(alerter, hotkeys, hotkey_slots),
-            ))
+
+            if st is not None:
+                st.refresh(t0)
+
+            # Prices from momentum feed (fallback for ST filter)
+            price_map: dict[str, float | None] = {}
+            for r in feed.rows:
+                s = str(r.get("ticker") or "").upper()
+                if s:
+                    try:
+                        price_map[s] = float(r["price"]) if r.get("price") is not None else None
+                    except (TypeError, ValueError):
+                        price_map[s] = None
+
+            st_rank = {}
+            st_ordered: list[str] = []
+            if st is not None:
+                st_rank = {sym: int(row["rank"])
+                           for sym, row in st.by_symbol.items()
+                           if row.get("rank") is not None}
+                st_ordered = [r["symbol"] for r in
+                              st.display_rows(price_map, limit=st_limit,
+                                              on_change=_st_alert)]
+
+            ordered = [str(r.get("ticker") or "").upper()
+                       for r in feed.rows[:hotkey_slots]]
+            hotkeys.update(ordered, st_ordered if st_on else None)
+
+            panels = [header_panel(feed, t0, hz, stale)]
+            panels.append(momentum_table(
+                feed, t0, hz, hotkeys.enabled,
+                rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank))
+            if st is not None:
+                panels.append(stocktwits_panel(
+                    st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled))
+            panels.append(footer_panel(alerter, hotkeys, hotkey_slots))
+            live.update(Group(*panels))
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 

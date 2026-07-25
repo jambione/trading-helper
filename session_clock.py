@@ -1,7 +1,7 @@
 """Shared trading-session clock — one definition of the day's windows.
 
 Used by tools/morning_funnel.py (banner + guidance) and both monitors
-(webull-l2/l2_signal.py, tv-monitor/tv_signal.py) so the windows mean
+(tv-monitor/tv_signal.py) so the windows mean
 the same thing everywhere. Tuned for a cash account split into thirds:
 three round trips per day, entered at 7:00, 8:30, and 9:30 ET, with a
 funnel re-rank right before each shot.

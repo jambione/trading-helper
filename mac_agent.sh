@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mac_agent.sh — Launch the macOS TradingView/Webull agent
+# mac_agent.sh — Launch the macOS TradingView/TradingView agent
 #
 # TradingView setup (do this once before running):
 #   1. Open Brave or Google Chrome.
@@ -8,9 +8,9 @@
 #   4. Drag it so it is the FIRST tab (Cmd+1 switches to it).
 #      If TradingView lives on a different tab, set BRAVE_TV_TAB in .env.
 #
-# Webull setup (optional):
-#   Install "Webull Desktop" from the Mac App Store.
-#   The agent skips Webull adds if the app is not found.
+# TradingView setup (optional):
+#   Install "TradingView Desktop" from the Mac App Store.
+#   The agent skips TradingView adds if the app is not found.
 #
 # Accessibility (required for keyboard automation):
 #   System Settings → Privacy & Security → Accessibility → add Terminal ✓

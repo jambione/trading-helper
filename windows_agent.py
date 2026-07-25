@@ -1,5 +1,5 @@
 """
-windows_agent.py — Local Windows agent for Webull + TradingView automation.
+windows_agent.py — Local Windows agent for TradingView automation.
 
 Run this on your Windows machine:
     python windows_agent.py   (or double-click windows_agent.bat)
@@ -7,7 +7,7 @@ Run this on your Windows machine:
 The agent does two things:
   1. Watches the Brasfield Momentum dashboard for alerts (mention burst / BUY).
      When a ticker hits the alert threshold it automatically adds it to
-     Webull Desktop and TradingView — no browser toggle needed.
+     TradingView — no browser toggle needed.
   2. Listens on http://localhost:8889 so the dashboard can also trigger it
      manually via the Add button or Auto-Add toggle.
 
@@ -87,24 +87,13 @@ _UA = (
 )
 _token_expires_at = 0.0   # unix timestamp when current token expires
 
-WB_WINDOW      = "Webull Desktop"
-WB_LAUNCH      = r"C:\Program Files (x86)\Webull Desktop\Webull Desktop.exe"
-# Fallback locations that Webull's installer has used over the years.
-WB_LAUNCH_CANDIDATES = [
-    WB_LAUNCH,
-    r"C:\Program Files\Webull Desktop\Webull Desktop.exe",
-    os.path.expandvars(r"%LOCALAPPDATA%\Webull Desktop\Webull Desktop.exe"),
-    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Webull Desktop\Webull Desktop.exe"),
-]
 LAUNCH_TIMEOUT = 20
+BRAVE_TV_TAB   = int(os.environ.get("BRAVE_TV_TAB", "1"))  # Ctrl+N to switch tab
 
 
 def _webull_installed() -> bool:
-    """True if any known Webull Desktop install path exists on this PC."""
-    if not _IS_WINDOWS:
-        return False
-    return any(os.path.isfile(p) for p in WB_LAUNCH_CANDIDATES if p)
-BRAVE_TV_TAB   = int(os.environ.get("BRAVE_TV_TAB", "1"))  # Ctrl+N to switch tab
+    """Retired — Webull Desktop integration removed (compat for old clients)."""
+    return False
 
 # ── Win32 setup ───────────────────────────────────────────────────────────────
 WM_KEYDOWN = 0x0100
@@ -191,67 +180,12 @@ def _get_rect(hwnd: int) -> tuple[int, int, int, int]:
     return r.left, r.top, r.right - r.left, r.bottom - r.top
 
 
-# ── Webull: PostMessage helpers (no focus steal) ──────────────────────────────
-
-def _post_char(hwnd: int, char: str):
-    _PostMessage(hwnd, WM_CHAR, ord(char.upper()), 0)
-
-def _post_ctrl2(hwnd: int):
-    _PostMessage(hwnd, WM_KEYDOWN, VK_CONTROL, 0)
-    _PostMessage(hwnd, WM_KEYDOWN, VK_2,       0)
-    _PostMessage(hwnd, WM_KEYUP,   VK_2,       0)
-    _PostMessage(hwnd, WM_KEYUP,   VK_CONTROL, 0)
-
-def _post_enter(hwnd: int):
-    _PostMessage(hwnd, WM_KEYDOWN, VK_RETURN, 0)
-    _PostMessage(hwnd, WM_KEYUP,   VK_RETURN, 0)
-
-
-# ── Webull workflow ───────────────────────────────────────────────────────────
+# ── Webull workflow (retired) ─────────────────────────────────────────────────
 
 def workflow_add_wb(ticker: str) -> bool:
-    """Open/focus Webull Desktop, switch to Stocks tab, type ticker, Enter."""
-    ticker = ticker.upper().strip()
-
-    if not _IS_WINDOWS:
-        print(f"  [DRY RUN] ADD_WB → {ticker}")
-        return True
-
-    if not _webull_installed():
-        print("  ⏭  ADD_WB skipped — Webull Desktop is not installed")
-        return False
-
-    # Prefer whichever known install path actually exists on this PC.
-    launch_path = next(
-        (p for p in WB_LAUNCH_CANDIDATES if p and os.path.isfile(p)),
-        WB_LAUNCH,
-    )
-
-    print(f"  📊 ADD_WB → {ticker}")
-    if not _ensure_open(WB_WINDOW, launch_path):
-        print("  ❌ ADD_WB failed — could not open Webull Desktop")
-        return False
-
-    win = _find_window(WB_WINDOW)
-    if not win:
-        return False
-
-    hwnd = win._hWnd
-    time.sleep(0.4)
-
-    # Ctrl+2 → Stocks tab
-    _pag.hotkey("ctrl", "2")
-    time.sleep(0.5)
-
-    # Type ticker letter-by-letter directly into Webull's message queue
-    for letter in ticker:
-        _post_char(hwnd, letter)
-        time.sleep(0.05)
-
-    time.sleep(0.5)
-    _post_enter(hwnd)
-    print(f"  ✅ ADD_WB done: {ticker}")
-    return True
+    """Retired — Webull Desktop integration removed. Use TradingView only."""
+    print("  ⏭  ADD_WB skipped — Webull integration retired (TradingView only)")
+    return False
 
 
 # ── TradingView: find browser window (Brave or Chrome) ───────────────────────
@@ -415,7 +349,7 @@ _prev_statuses = {}   # ticker → last known status string
 _COOLDOWN = 60
 _last_fired: dict[str, float] = {}
 
-# Activated-ticker history: once a ticker has been pushed to Webull/TV we skip
+# Activated-ticker history: once a ticker has been pushed to TradingView we skip
 # it for this many seconds so the agent doesn't keep re-adding the same symbol.
 ACTIVATED_TTL = 15 * 60   # 15 minutes
 _activated: dict[str, float] = {}
@@ -444,7 +378,7 @@ def _mark_activated(ticker: str):
             if now - ts >= ACTIVATED_TTL:
                 del _activated[sym]
 
-# Serialise all workflow calls through a single worker thread so Webull and TV
+# Serialise all workflow calls through a single worker thread so TV
 # automation never overlap (pyautogui is not thread-safe).
 # Queue entries are (ticker, mode) where mode is 'wb', 'tv', or 'both'.
 _work_queue: list[tuple[str, str]] = []
@@ -595,7 +529,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 "dashboard_url":    DASHBOARD_URL,
                 "polling":          True,
                 "brave_tv_tab":     BRAVE_TV_TAB,
-                "webull_installed": _webull_installed(),
+                "webull_installed": False,
                 "activated_count":  len(_activated),
             })
         else:
@@ -644,18 +578,13 @@ if __name__ == "__main__":
         print("⚠️  WARNING: Not running on Windows — automation will be dry-run only.")
 
     print(f"\n{'='*54}")
-    print(f"  WB+TV Agent  v{VERSION}")
+    print(f"  TV Agent  v{VERSION}")
     print(f"{'='*54}")
     print(f"  Dashboard : {DASHBOARD_URL}")
     print(f"  User      : {DASHBOARD_USER or 'NOT SET — edit DASHBOARD_USER in script'}")
     print(f"  Password  : {'set ✓' if DASHBOARD_PASS else 'NOT SET — edit DASHBOARD_PASS in script'}")
     print(f"  Poll every: {POLL_INTERVAL}s")
     print(f"  TV tab    : Ctrl+{BRAVE_TV_TAB}")
-    if _IS_WINDOWS:
-        if _webull_installed():
-            print("  Webull    : detected ✓")
-        else:
-            print("  Webull    : NOT installed — Webull adds will be skipped")
     print(f"  Skip-add window: {ACTIVATED_TTL // 60} min after activation")
     print(f"{'='*54}\n")
 
@@ -673,7 +602,7 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
     print("   GET  /health  → status")
-    print("   POST /add-wb  {\"ticker\": \"NVDA\"}  → Webull Desktop")
+    print("   POST /add-wb  retired (use /add-tv)")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Ctrl+{BRAVE_TV_TAB}, Alt+W)")
     print("   Press Ctrl+C to stop.\n")
     try:

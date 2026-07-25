@@ -13,10 +13,10 @@ import sys
 from pathlib import Path
 
 TITLES = ["Trading Monitors",          # combined single window
-          "Webull L2 Monitor", "TradingView Monitor"]  # fallback windows
+          "Alpaca Flow Monitor", "Trading Monitors", "TradingView Monitor"]
 LAYOUT = Path(__file__).parent / "monitor_layout.json"
 DEFAULTS = {"Trading Monitors": {"x": 20, "y": 20},
-            "Webull L2 Monitor": {"x": 20, "y": 20},
+            "Alpaca Flow Monitor": {"x": 20, "y": 20},
             "TradingView Monitor": {"x": 20, "y": 560}}
 
 if sys.platform != "win32":

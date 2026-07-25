@@ -209,6 +209,9 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
     out = {
         "cm_rsi": None, "cm_rsi_rising": False, "cm_ok": False,
         "pctr": None, "pctr_rising": False, "pctr_ok": False,
+        # Slow %R line + deep-oversold band (desk FOCUS uses both lines)
+        "pctr_slow": None, "pctr_falling": False, "pctr_slow_falling": False,
+        "pctr_deep_os": False,
         "macd_cross": False, "macd_sep_ratio": None, "macd_ok": False,
         "buy": False, "sell": False, "buy_pct": 0,
     }
@@ -231,6 +234,19 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
         out["pctr"] = round(float(pr), 1)
     out["pctr_rising"] = _rising(a["s_percentR"], i, tl)
     out["pctr_ok"] = bool(any(_rising(a["s_percentR"], j, tl) for j in range(lo, i + 1)))
+
+    # Fast + slow %R: deep OS band [-100, -75] and falling toward -100
+    # (desk FOCUS long cue — not the same as pctr_ok which is "rising toward 0")
+    pr_s = a["l_percentR"][i]
+    if np.isfinite(pr_s):
+        out["pctr_slow"] = round(float(pr_s), 1)
+    out["pctr_falling"] = _falling(a["s_percentR"], i, tl)
+    out["pctr_slow_falling"] = _falling(a["l_percentR"], i, tl)
+    if (np.isfinite(pr) and np.isfinite(pr_s)
+            and -100.0 <= float(pr) <= -75.0
+            and -100.0 <= float(pr_s) <= -75.0
+            and out["pctr_falling"] and out["pctr_slow_falling"]):
+        out["pctr_deep_os"] = True
 
     # MACD: recent bullish cross, still bullish, wide separation
     line, sig = a["macd_line"][i], a["macd_signal"][i]

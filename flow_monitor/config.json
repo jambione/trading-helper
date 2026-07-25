@@ -1,0 +1,17 @@
+{
+  "feed": "IEX",
+  "symbol": "AAPL",
+  "watch": "",
+  "poll_sec": 1.0,
+  "trend_window": 300,
+  "long_confirm_secs": 20,
+  "tape_dom_min": 0.25,
+  "tape_min_sided": 4,
+  "tape_sided_share": 0.5,
+  "vwap_min_age": 900,
+  "alert_cooldown": 30,
+  "screener": true,
+  "screener_sec": 45,
+  "symbols_max": 30,
+  "csv_log": true
+}

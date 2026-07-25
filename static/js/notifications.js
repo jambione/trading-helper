@@ -3,11 +3,11 @@
  *
  * Alerts the user via in-page toasts, browser Notification API, and audio beep.
  * Also auto-selects the ticker in TradingView on first BUY transition.
- * Clicking a toast adds the ticker to Webull + TradingView via the local agent.
+ * Clicking a toast adds the ticker to TradingView via the local agent.
  *
  * Auto-Add: when the #auto-add-checkbox toggle is enabled (user=jmb only),
  * fires a POST to the local macOS agent (port 8889) to add the ticker to
- * Webull and TradingView on every mention_burst or BUY alert.
+ * TradingView on every mention_burst or BUY alert.
  */
 
 import { subscribe, selectTicker, get } from './store.js?v=65';
@@ -143,7 +143,7 @@ async function _agentAlert(ticker) {
 }
 
 /**
- * Fire-and-forget call to the local Windows agent for both Webull and TradingView.
+ * Fire-and-forget call to the local Windows agent for both TradingView.
  * Port 8889, same as the existing _addToWBAndTV helper in tickers.js.
  * Silently skips if the agent is not running.
  */

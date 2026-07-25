@@ -1,5 +1,7 @@
 # Webull → Alpaca Migration Roadmap
 
+> **Superseded for execution.** The complete, locked plan (decisions, Flow Monitor, phases, non-goals) lives in [`ALPACA_COMPLETE_PLAN.md`](./ALPACA_COMPLETE_PLAN.md). Prefer that file when implementing. This roadmap remains as the original investigation notes.
+
 **Audience:** this doc is written for an AI coding agent picking up the work cold. It assumes no memory of prior sessions — every claim below was verified against the repo as it exists on `master-mac` at the time of writing (2026-07-20). Re-verify anything that looks stale before acting on it.
 
 **Scope decision (already made by the user, do not re-litigate):** full retirement of Webull. This means killing the screen-scraped L2/tape/watchlist monitors and the Webull Desktop GUI automation, not just swapping the broker API underneath them. That trades away true multi-level order-book depth — Alpaca's standard market-data plans expose top-of-book (NBBO) quotes and trade prints, not a multi-level book the way Webull's Advanced Quotes subscription (or the OCR scrape of the Desktop app) did. If that tradeoff turns out to be a problem in practice, the fallback is to stop after Phase 1 (provider swap only, keep the OCR monitors alive) — **check with the user before reversing course**, don't silently keep the OCR pipeline running "just in case."
@@ -12,7 +14,7 @@ Four independent surfaces, not one:
 
 | Surface | Files | What it does |
 |---|---|---|
-| **Bridge provider** | `webull_bridge/providers/webull.py`, `webull_bridge/config.py` | Real Webull OpenAPI SDK (`webull-openapi-python-sdk`) for orders/positions/account/depth, behind a clean `MarketDataProvider`/`BrokerProvider` ABC. Powers the Mobile Trader iPhone app via `webull_bridge/routes.py` (mounted in `dashboard.py`). |
+| **Bridge provider** | `trade_bridge/providers/webull.py`, `trade_bridge/config.py` | Real Webull OpenAPI SDK (`webull-openapi-python-sdk`) for orders/positions/account/depth, behind a clean `MarketDataProvider`/`BrokerProvider` ABC. Powers the Mobile Trader iPhone app via `trade_bridge/routes.py` (mounted in `dashboard.py`). |
 | **OCR desktop monitors** | `webull-l2/` (`l2_signal.py`, `l2_core.py`, `tape_core.py`, `calibrate.py`, `score_confidence.py`), `momentum-monitor/watchlist_ocr.py` | ~4,000+ lines of `mss` + `cv2` + `pytesseract` screen-scraping of the Webull Desktop app: L2 order book, Time & Sales tape, watchlist movers sidebar. |
 | **GUI automation** | `windows_agent.py`, `mac_agent.py`, `transcription/workflows.py` (`workflow_add_wb`) | Drives pyautogui to type tickers into the Webull Desktop app window. Triggered by momentum-monitor's 1-9 hotkeys (`LoadHotkey` in `momentum_signal.py`), which load a symbol into **both** Webull Desktop and TradingView. |
 | **Window position bookkeeping** | `position_windows.py` | Saves/restores the "Webull L2 Monitor" console window's screen position. Cosmetic only. |
@@ -28,7 +30,7 @@ So Phase 1 below is mostly **wiring existing, proven logic into a new interface*
 
 ## 2. The landmine — read this before touching `webull-l2/`
 
-`webull_bridge/l2.py` does this:
+`trade_bridge/l2.py` does this:
 
 ```python
 _L2_DIR = str(Path(__file__).resolve().parent.parent / "webull-l2")
@@ -37,32 +39,32 @@ from l2_core import (L2Book, LongView, Signal, SignalEngine, WallTracker,
                       market_bias, playbook, project_price)
 ```
 
-`webull-l2/l2_core.py` is pure-stdlib signal logic (book state, wall detection, trend/bias scoring) — **it has no OCR dependency of its own**. It's the shared brain that `webull_bridge/engine.py`'s `SymbolEngine` runs on for the Mobile Trader app. The only reason it lives inside `webull-l2/` is that the desktop monitor (`l2_signal.py`) also imports it.
+`webull-l2/l2_core.py` is pure-stdlib signal logic (book state, wall detection, trend/bias scoring) — **it has no OCR dependency of its own**. It's the shared brain that `trade_bridge/engine.py`'s `SymbolEngine` runs on for the Mobile Trader app. The only reason it lives inside `webull-l2/` is that the desktop monitor (`l2_signal.py`) also imports it.
 
 **Deleting the whole `webull-l2/` folder in one pass will silently break the Mobile Trader app.** The correct order is:
 
-1. Move `l2_core.py` out of `webull-l2/` to a shared location (e.g. a new top-level `signal_core.py`, or `webull_bridge/l2_core.py` if you'd rather keep it bridge-local — either works, just pick one and update the one import site).
-2. Update `webull_bridge/l2.py`'s import path (and drop the `sys.path` hack).
+1. Move `l2_core.py` out of `webull-l2/` to a shared location (e.g. a new top-level `signal_core.py`, or `trade_bridge/l2_core.py` if you'd rather keep it bridge-local — either works, just pick one and update the one import site).
+2. Update `trade_bridge/l2.py`'s import path (and drop the `sys.path` hack).
 3. *Then* delete the OCR-only files: `l2_signal.py`, `tape_core.py`, `calibrate.py`, `score_confidence.py`, `region_cache.json`, `webull-l2/config.json`.
 4. Also relocate/keep `momentum-monitor/watchlist_ocr.py`'s `top_movers(rows, n, rank)` function if you want to keep it — it's a generic sort-by-percent helper with no OCR dependency, only `WatchlistReader` (the actual scraper) is OCR-bound.
 
 ---
 
-## 3. Phase 1 — Broker/data provider parity in `webull_bridge/`
+## 3. Phase 1 — Broker/data provider parity in `trade_bridge/`
 
-Goal: the Mobile Trader app works against Alpaca instead of Webull, with zero changes to `webull_bridge/engine.py` or `routes.py` (that's the point of the existing abstraction).
+Goal: the Mobile Trader app works against Alpaca instead of Webull, with zero changes to `trade_bridge/engine.py` or `routes.py` (that's the point of the existing abstraction).
 
-1. Read `webull_bridge/providers/base.py` (the ABCs: `MarketDataProvider.subscribe_depth`/`snapshot`, `BrokerProvider.place_order`/`cancel_order`/`orders`/`positions`/`account`) and `webull_bridge/providers/webull.py` (the reference implementation) before writing anything — mirror its structure exactly.
-2. Create `webull_bridge/providers/alpaca.py`:
+1. Read `trade_bridge/providers/base.py` (the ABCs: `MarketDataProvider.subscribe_depth`/`snapshot`, `BrokerProvider.place_order`/`cancel_order`/`orders`/`positions`/`account`) and `trade_bridge/providers/webull.py` (the reference implementation) before writing anything — mirror its structure exactly.
+2. Create `trade_bridge/providers/alpaca.py`:
    - `AlpacaBroker(BrokerProvider)` — wraps `alpaca.trading.client.TradingClient` (synchronous SDK, same pattern as `WebullBroker`: every call goes through `loop.run_in_executor`). Reuse the order-lifecycle logic already proven in `alpaca_trader.py` (`submit_order` with `MarketOrderRequest`/`LimitOrderRequest`, `close_position`, `get_all_positions`, `get_account`, `get_order_by_id`) rather than re-deriving it — that file has already handled the extended-hours limit-order edge case and fractional/notional sizing.
    - `AlpacaMarketData(MarketDataProvider)` — **do not try to build multi-level depth.** Synthesize a depth=1 `L2Book` (single bid level, single ask level) from the latest quote (`StockLatestQuoteRequest` — verify exact class name against the installed `alpaca-py` version, don't assume). This mirrors the fallback path `WebullMarketData` already takes when the account lacks the Advanced Quotes subscription (see `webull.py`'s `_fetch()` — it catches "depth not more than 1" and drops to `self.depth = 1`), so `L2Book` consumers downstream don't need to change shape.
-3. Add `"alpaca"` as a third branch in `webull_bridge/providers/__init__.py`'s `_make_market_data()` / `_make_broker()` (currently a two-way `if name == "webull" ... else: mock` branch).
-4. Decide credential source: reuse the existing `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` env vars (recommended — `alpaca_trader.py` already established that convention, no reason to introduce a second naming scheme) rather than adding `alpaca_app_key`-style fields to `config/webull_bridge.json`.
-5. Add `scripts/alpaca_smoke.py` mirroring `scripts/webull_smoke.py` — a read-only credential/connectivity check to run before flipping `config/webull_bridge.json`'s `"provider"` to `"alpaca"` in anything real.
-6. Add `tests/test_alpaca_bridge.py` mirroring `tests/test_webull_bridge.py`.
-7. `scripts/position_feed.py` and `webull_bridge/engine.py` are already provider-agnostic — confirm they work unmodified once the provider flips.
+3. Add `"alpaca"` as a third branch in `trade_bridge/providers/__init__.py`'s `_make_market_data()` / `_make_broker()` (currently a two-way `if name == "webull" ... else: mock` branch).
+4. Decide credential source: reuse the existing `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` env vars (recommended — `alpaca_trader.py` already established that convention, no reason to introduce a second naming scheme) rather than adding `alpaca_app_key`-style fields to `config/trade_bridge.json`.
+5. Add `scripts/alpaca_smoke.py` mirroring `scripts/webull_smoke.py` — a read-only credential/connectivity check to run before flipping `config/trade_bridge.json`'s `"provider"` to `"alpaca"` in anything real.
+6. Add `tests/test_alpaca_bridge.py` mirroring `tests/test_trade_bridge.py`.
+7. `scripts/position_feed.py` and `trade_bridge/engine.py` are already provider-agnostic — confirm they work unmodified once the provider flips.
 
-**Verification for Phase 1:** run `scripts/alpaca_smoke.py` against paper credentials, then set `config/webull_bridge.json`'s `provider` (or just `broker_provider`/`market_data_provider`) to `"alpaca"` and exercise the Mobile Trader app's order/position/account views end to end against a paper account before touching live.
+**Verification for Phase 1:** run `scripts/alpaca_smoke.py` against paper credentials, then set `config/trade_bridge.json`'s `provider` (or just `broker_provider`/`market_data_provider`) to `"alpaca"` and exercise the Mobile Trader app's order/position/account views end to end against a paper account before touching live.
 
 ---
 
@@ -97,11 +99,11 @@ Either way, flag this to the user before shipping — don't let the UI keep show
 
 Only after Phase 1 has run in production long enough to trust it:
 
-- Remove `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` / `WEBULL_ACCOUNT_ID` / `WEBULL_REGION` defaults from `webull_bridge/config.py`'s `DEFAULTS`.
-- Remove the Webull-only fields from `config/webull_bridge.json` (keep the file — it still holds thresholds, `max_engines`, etc.).
+- Remove `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` / `WEBULL_ACCOUNT_ID` / `WEBULL_REGION` defaults from `trade_bridge/config.py`'s `DEFAULTS`.
+- Remove the Webull-only fields from `config/trade_bridge.json` (keep the file — it still holds thresholds, `max_engines`, etc.).
 - Remove `webull-openapi-python-sdk` from any requirements file, and `cv2`/`mss`/`pytesseract`/`plyer` from `webull-l2/requirements.txt` (or delete that file if nothing in the repo needs OCR anymore — double check `tv-monitor/` doesn't independently depend on the same packages before assuming it's safe to drop them repo-wide).
 - Clean up the now-unused `.gitignore` entries for `webull_trade_sdk.log*` / `webull_sdk.log*` if those logs stop being produced.
-- Delete `webull_bridge/providers/webull.py` itself only once you're confident you won't want it as a reference — consider leaving it in place, just unreachable, for one release cycle.
+- Delete `trade_bridge/providers/webull.py` itself only once you're confident you won't want it as a reference — consider leaving it in place, just unreachable, for one release cycle.
 
 ---
 

@@ -18,7 +18,7 @@ _IS_WINDOWS = sys.platform == "win32"
 _IS_MACOS   = sys.platform == "darwin"
 
 # ========================= WATCHLIST TRACKER =========================
-# Tickers already added to Webull are stored in a JSON file so the list
+# Tickers already added to the local watchlist are stored in a JSON file so the list
 # survives restarts. Checked before every ADD_WB call to skip duplicates.
 
 _WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "wb_watchlist.json")
@@ -64,9 +64,9 @@ def wb_watchlist_clear():
 
 def wb_watchlist_show():
     if _wb_watchlist:
-        print(f"📋 Webull watchlist ({len(_wb_watchlist)}): {', '.join(sorted(_wb_watchlist))}")
+        print(f"📋 local watchlist ({len(_wb_watchlist)}): {', '.join(sorted(_wb_watchlist))}")
     else:
-        print("📋 Webull watchlist is empty.")
+        print("📋 local watchlist is empty.")
 
 # ── Win32 direct-message helpers ─────────────────────────────────────────────
 # PostMessage sends keystrokes straight to a window's message queue by HWND,
@@ -201,10 +201,10 @@ LIVE_MODE = _IS_WINDOWS  # GUI automation only available on Windows
 
 # Window title fragments (used when LIVE_MODE is True)
 TV_WINDOW = "TradingView"
-WB_WINDOW = "Webull Desktop"
+WB_WINDOW = ""  # retired
 
 # App launch paths (used when LIVE_MODE is True)
-WB_LAUNCH = r"C:\Program Files (x86)\Webull Desktop\Webull Desktop.exe"
+WB_LAUNCH = ""  # retired
 _TV_AUMID = "TradingView.Desktop_n534cwy3pjxzj!TradingView.Desktop"
 
 _TV_CANDIDATES = [
@@ -331,7 +331,7 @@ def find_window_title(title_fragment: str) -> str | None:
 
 def _wb_add_one(hwnd: int, win, ticker: str) -> bool:
     """
-    Type one ticker into the already-focused Webull window and confirm with Enter.
+    Retired Webull workflow window and confirm with Enter.
     Caller is responsible for opening/focusing the window first.
     """
     import time
@@ -351,82 +351,16 @@ def _wb_add_one(hwnd: int, win, ticker: str) -> bool:
 
 
 def workflow_add_wb(ticker: str, dry_run: bool = False) -> bool:
-    """
-    Open/focus Webull Desktop, switch to the Stocks tab (Ctrl+2),
-    type the ticker letter-by-letter directly into the window's message queue
-    (bypasses focus — no other window can be accidentally typed into),
-    wait for the search dropdown to appear, then send Enter.
-    """
-    ticker = ticker.upper()
+    """Retired — Webull Desktop integration removed."""
+    print("   ⏭ ADD_WB skipped — Webull retired")
+    return False
 
-    if not LIVE_MODE or dry_run:
-        print(f"📊 [LOG] ADD_WB → {ticker}")
-        wb_watchlist_add(ticker)
-        return True
-
-    print(f"📊 ADD_WB → {ticker}")
-    if not _ensure_open(WB_WINDOW, WB_LAUNCH):
-        print("   ❌ ADD_WB failed — could not open Webull Desktop")
-        return False
-
-    import time
-    win  = _find_window(WB_WINDOW)
-    hwnd = win._hWnd
-    time.sleep(0.4)
-
-    _wb_add_one(hwnd, win, ticker)
-    wb_watchlist_add(ticker)
-    return True
 
 
 def workflow_add_wb_bulk(tickers: list, dry_run: bool = False) -> dict:
-    """
-    Add multiple tickers to Webull watchlist sequentially in a single session.
-    Opens/focuses Webull once, then processes each ticker one at a time so
-    keystrokes never interleave. Returns counts of added/skipped/failed tickers.
-    """
-    results: dict = {"added": [], "skipped": [], "failed": []}
-    tickers = [t.upper() for t in tickers]
+    """Retired — Webull Desktop integration removed."""
+    return {"ok": 0, "fail": list(tickers or []), "skipped": True}
 
-    to_add           = [t for t in tickers if not wb_watchlist_contains(t)]
-    results["skipped"] = [t for t in tickers if wb_watchlist_contains(t)]
-
-    if not to_add:
-        return results
-
-    if not LIVE_MODE or dry_run:
-        for t in to_add:
-            print(f"📊 [LOG] ADD_WB → {t}")
-            wb_watchlist_add(t)
-            results["added"].append(t)
-        return results
-
-    if not _ensure_open(WB_WINDOW, WB_LAUNCH):
-        print("   ❌ ADD_WB_BULK failed — could not open Webull Desktop")
-        results["failed"] = to_add
-        return results
-
-    import time
-    win = _find_window(WB_WINDOW)
-    if not win:
-        results["failed"] = to_add
-        return results
-
-    hwnd = win._hWnd
-    time.sleep(0.4)
-
-    for i, ticker in enumerate(to_add, 1):
-        print(f"📊 ADD_WB → {ticker} ({i}/{len(to_add)})")
-        try:
-            _wb_add_one(hwnd, win, ticker)
-            wb_watchlist_add(ticker)
-            results["added"].append(ticker)
-            time.sleep(0.3)   # brief pause between tickers
-        except Exception as e:
-            print(f"   ❌ ADD_WB failed for {ticker}: {e}")
-            results["failed"].append(ticker)
-
-    return results
 
 
 def workflow_add_tv(ticker: str, dry_run: bool = False) -> bool:
@@ -571,10 +505,9 @@ def workflow_add_brave_tv(ticker: str, cfg: dict = None) -> bool:
 
 
 def workflow_add_wb_and_tv(ticker: str, cfg: dict = None) -> bool:
-    """Add to Webull watchlist, then load ticker in Brave TradingView."""
-    wb_ok = workflow_add_wb(ticker)
-    tv_ok = workflow_add_brave_tv(ticker, cfg)
-    return wb_ok and tv_ok
+    """TradingView only (Webull leg retired)."""
+    return workflow_add_tv(ticker, cfg=cfg) if 'workflow_add_tv' in dir() else workflow_add_tv(ticker)
+
 
 
 def workflow_buy(ticker: str, dry_run: bool = False) -> bool:
@@ -589,7 +522,7 @@ def workflow_buy(ticker: str, dry_run: bool = False) -> bool:
         # _pyautogui.hotkey("shift", "b")
         print(f"   ✅ BUY (Shift+B) sent for {ticker}")
         return True
-    print("   ❌ BUY failed — could not open Webull Desktop")
+    print("   ❌ BUY failed — Webull retired — use Alpaca/API")
     return False
 
 
@@ -605,7 +538,7 @@ def workflow_sell_all(ticker: str, dry_run: bool = False) -> bool:
         # _pyautogui.hotkey("shift", "a")
         print(f"   ✅ SELL ALL (Shift+A) sent for {ticker}")
         return True
-    print("   ❌ SELL failed — could not open Webull Desktop")
+    print("   ❌ SELL failed — Webull retired — use Alpaca/API")
     return False
 
 

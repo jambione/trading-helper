@@ -81,33 +81,68 @@ cmd_start() {
     local want_tunnel=1
     case "${1:-}" in local|--no-tunnel|notunnel|-n) want_tunnel=0 ;; esac
 
-    if _running "dashboard.py" || _running "signal_engine.py"; then
+    local dash_up=0 eng_up=0 disc_up=0
+    _running "dashboard.py"     && dash_up=1
+    _running "signal_engine.py" && eng_up=1
+    _running "discord_source.py" && disc_up=1
+
+    # Fully up — nothing to do (except ensure tunnel if requested).
+    if [ "$dash_up" = 1 ] && [ "$eng_up" = 1 ] && [ "$disc_up" = 1 ]; then
         echo "Already running. Use './trading restart' to reload code, or './trading status'."
         [ "$want_tunnel" = 1 ] && _start_tunnel
         cmd_status
         return 0
     fi
+
+    # Partial / crashed state (common: dashboard died on startup, engine left running).
+    # Restart missing pieces instead of claiming "Already running".
+    if [ "$dash_up" = 1 ] || [ "$eng_up" = 1 ] || [ "$disc_up" = 1 ]; then
+        echo "Partial stack detected — bringing up missing processes:"
+        [ "$dash_up" = 1 ]  && echo "  dashboard : already up" || echo "  dashboard : starting"
+        [ "$eng_up" = 1 ]   && echo "  engine    : already up" || echo "  engine    : starting"
+        [ "$disc_up" = 1 ]  && echo "  discord   : already up" || echo "  discord   : starting"
+    fi
+
     mkdir -p "$LOGDIR"
-    : > "$PIDFILE"
+    # Keep existing PIDs if any; append new ones.
+    touch "$PIDFILE"
 
-    echo "Starting dashboard → $URL"
-    nohup "$PY" -u dashboard.py      >"$LOGDIR/dashboard.log" 2>&1 &
-    echo "$!" >> "$PIDFILE"
+    if [ "$dash_up" = 0 ]; then
+        echo "Starting dashboard → $URL"
+        : > "$LOGDIR/dashboard.log"
+        nohup "$PY" -u dashboard.py >"$LOGDIR/dashboard.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
 
-    # Wait for the dashboard to bind the port before launching the engine,
-    # so the engine's first poll of localhost:8888 succeeds.
-    for _ in $(seq 1 30); do
-        curl -s --max-time 2 "$URL/api/meta" >/dev/null 2>&1 && break
-        sleep 0.5
-    done
+        # Wait for the dashboard to bind the port before launching the engine,
+        # so the engine's first poll of localhost:8888 succeeds.
+        local up=0
+        for _ in $(seq 1 30); do
+            if curl -s --max-time 2 "$URL/api/meta" >/dev/null 2>&1; then
+                up=1
+                break
+            fi
+            # If process already exited, stop waiting early.
+            if ! _running "dashboard.py"; then
+                echo "❌ Dashboard exited during startup — see $LOGDIR/dashboard.log"
+                tail -n 20 "$LOGDIR/dashboard.log" 2>/dev/null || true
+                break
+            fi
+            sleep 0.5
+        done
+        [ "$up" = 1 ] || echo "⚠ Dashboard not responding yet — check $LOGDIR/dashboard.log"
+    fi
 
-    echo "Starting signal engine"
-    nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 &
-    echo "$!" >> "$PIDFILE"
+    if [ "$eng_up" = 0 ]; then
+        echo "Starting signal engine"
+        nohup "$PY" -u signal_engine.py  >"$LOGDIR/engine.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
+    fi
 
-    echo "Starting Discord OCR source"
-    nohup "$PY" -u discord_source.py >"$LOGDIR/discord.log" 2>&1 &
-    echo "$!" >> "$PIDFILE"
+    if [ "$disc_up" = 0 ]; then
+        echo "Starting Discord OCR source"
+        nohup "$PY" -u discord_source.py >"$LOGDIR/discord.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
+    fi
 
     [ "$want_tunnel" = 1 ] && _start_tunnel
 

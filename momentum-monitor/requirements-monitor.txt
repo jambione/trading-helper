@@ -1,0 +1,39 @@
+# Momentum monitor — dependencies for THIS TOOL ONLY.
+#
+# The repo-root requirements.txt covers the whole trading-helper project
+# (dashboard, backtester, OCR monitors, signal engine). Installing it to run
+# the monitor pulls in fastapi, pandas, numpy, opencv, pytesseract and more
+# that the monitor never imports — and it lists pywin32 with no platform
+# marker, so `pip install -r requirements.txt` FAILS OUTRIGHT on macOS.
+#
+# This file is the verified import closure of:
+#   momentum_signal.py -> desk_actions.py -> desk_hotkeys.py
+#                      -> mac_agent.py / windows_agent.py -> alpaca_trader.py
+#                      -> session_clock.py
+
+# ── REQUIRED ─────────────────────────────────────────────────────────────────
+# Terminal UI. The monitor cannot start without it.
+rich
+
+# ── OPTIONAL, but this is the point of the tool ──────────────────────────────
+# Keyboard/mouse automation for the 1-9 "load into TradingView + Option/Alt+W"
+# flow. Without it the monitor still runs and displays symbols, but the hotkeys
+# only set focus; mac_agent/windows_agent report "pyautogui not available".
+pyautogui
+
+# Windows only: window discovery for the browser. ctypes/user32 does the real
+# work, so this is a convenience import guarded by try/except.
+# NOTE: pywin32 from the root requirements is NOT needed — nothing in the
+# monitor graph imports win32api/win32gui. It is omitted deliberately.
+pygetwindow; sys_platform == "win32"
+
+# ── OPTIONAL: trading ────────────────────────────────────────────────────────
+# Enables the B (buy) and S (sell) keys and the live P&L positions panel.
+# Verified: with alpaca-py absent AND no credentials set, desk_actions
+# .init_trader() returns "off" and the monitor runs normally — display and
+# TradingView loading are unaffected. Omit this if you only want the monitor.
+alpaca-py
+
+# ── OPTIONAL: desktop notifications ──────────────────────────────────────────
+# Toast alerts for new symbols / mention bursts. Silently skipped if absent.
+plyer

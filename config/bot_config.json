@@ -25,6 +25,26 @@
   "discord_window_title": "",
   "mention_alert_threshold": 2,
   "mention_alert_window": 10,
+  "swing_screener_enabled": false,
+  "swing_full_market": true,
+  "swing_min_dollar_vol": 5000000.0,
+  "swing_max_price": 100.0,
+  "swing_rsi_oversold": 30.0,
+  "swing_min_eps_growth": 2.0,
+  "swing_max_eps_growth": 3.0,
+  "swing_min_rating": "Buy",
+  "swing_rel_vol_entry": 1.0,
+  "swing_rel_vol_min": 1.5,
+  "swing_min_rr": 2.0,
+  "swing_earnings_window_days": 14,
+  "swing_bar_lookback_days": 150,
+  "swing_run_times": [
+    "08:00",
+    "12:30",
+    "20:00"
+  ],
+  "swing_limit": 12,
+  "swing_enrich_cap": 90,
   "discord_ocr_enabled": true,
   "tv_webhook_secret": "",
   "engine_control_secret": "brasfield-trading",
@@ -51,9 +71,18 @@
   "pyramid_gain_pct": 0.05,
   "pyramid_rsi_max": 68,
   "pyramid_size_pct": 0.1,
-  "no_new_buys_before": [10, 0],
-  "no_new_buys_after": [15, 30],
-  "eod_liquidate_at": [16, 0],
+  "no_new_buys_before": [
+    10,
+    0
+  ],
+  "no_new_buys_after": [
+    15,
+    30
+  ],
+  "eod_liquidate_at": [
+    16,
+    0
+  ],
   "use_float_filter": false,
   "max_float_million": 50,
   "micro_float_threshold": 10,
@@ -63,7 +92,10 @@
   "partial_exit_pct": 0.06,
   "partial_exit_qty_pct": 0.5,
   "auto_schedule": true,
-  "market_open_at": [9, 15],
+  "market_open_at": [
+    9,
+    15
+  ],
   "trending_max_price": 5,
   "wr_oversold": -75,
   "wr_overbought": -20,
@@ -81,7 +113,10 @@
   "rmi_ma_fast": 5,
   "precheck_threshold": -40,
   "pre_market_enabled": true,
-  "pre_market_start": [4, 0],
+  "pre_market_start": [
+    4,
+    0
+  ],
   "pre_market_limit_offset_pct": 0.002,
   "pre_market_volume_surge_mult": 0.3,
   "use_atr_sizing": true,
@@ -106,10 +141,14 @@
   "momentum_quality_rsi_min": 25,
   "momentum_quality_rsi_max": 85,
   "rte_max_entry_extension_pct": 0.03,
-  "etf_tickers": ["SQQQ", "UVXY"],
+  "etf_tickers": [
+    "SQQQ",
+    "UVXY"
+  ],
   "ticker_overrides": {
     "GMEX": {
       "rte_min_boxes": 2
     }
-  }
+  },
+  "push_vapid_public_key": "BK0bAv93snexOxFTXQLXOoFJZu3MNgAor4L6bU6RcouygbbW2qHyuH5f_ChJ1h1SBKpoxsw_TdWLdXsFBYD-J3Q"
 }

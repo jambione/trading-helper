@@ -1,20 +1,20 @@
 """Position-aware exit layer: real-fill anchoring of PaperTrader exits
-(webull-l2), exit-mode master verdicts (tv-monitor), and the split
-market-data / broker provider selection (webull_bridge).
+(flow_core), exit-mode master verdicts (tv-monitor), and the split
+market-data / broker provider selection (trade_bridge).
 """
 import sys
 import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "webull-l2"))
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tv-monitor"))
 
-import l2_core  # noqa: E402
+import flow_core.core as l2_core  # noqa: E402
 import tv_core  # noqa: E402
-from webull_bridge.config import DEFAULTS  # noqa: E402
-from webull_bridge.providers import build_providers  # noqa: E402
-from webull_bridge.providers.mock import (MockBroker,  # noqa: E402
+from trade_bridge.config import DEFAULTS  # noqa: E402
+from trade_bridge.providers import build_providers  # noqa: E402
+from trade_bridge.providers.mock import (MockBroker,  # noqa: E402
                                           MockMarketData)
 
 
@@ -137,13 +137,13 @@ def test_broker_override_keeps_mock_market_data(monkeypatch):
         def __init__(self, cfg):
             calls["broker_cfg"] = cfg
 
-    stub = types.ModuleType("webull_bridge.providers.webull")
-    stub.WebullBroker = StubBroker
-    stub.WebullMarketData = object
-    monkeypatch.setitem(sys.modules, "webull_bridge.providers.webull", stub)
+    stub = types.ModuleType("trade_bridge.providers.alpaca")
+    stub.AlpacaBroker = StubBroker
+    stub.AlpacaMarketData = object
+    monkeypatch.setitem(sys.modules, "trade_bridge.providers.alpaca", stub)
 
     cfg = dict(DEFAULTS)
-    cfg["broker_provider"] = "webull"          # provider stays "mock"
+    cfg["broker_provider"] = "alpaca"          # provider stays "mock"
     md, br = build_providers(cfg)
     assert isinstance(md, MockMarketData)
     assert isinstance(br, StubBroker)

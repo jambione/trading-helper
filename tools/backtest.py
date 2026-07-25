@@ -184,27 +184,9 @@ def fetch_history(symbol: str, api_key: str, secret_key: str,
             time.sleep(0.25)   # be polite to Alpaca's rate limiter
 
         except requests.exceptions.HTTPError as e:
-            if resp.status_code == 422:
-                # IEX may not have data — retry with SIP feed
-                params["feed"] = "sip"
-                try:
-                    resp = requests.get(url, params=params, headers=headers, timeout=30)
-                    resp.raise_for_status()
-                    data       = resp.json()
-                    bars       = data.get("bars", [])
-                    page_token = data.get("next_page_token")
-                    all_bars.extend(bars)
-                    page_num  += 1
-                    print("s", end="", flush=True)
-                    if not page_token:
-                        break
-                    time.sleep(0.25)
-                except Exception as e2:
-                    print(f"\n  ❌  SIP feed also failed: {e2}")
-                    break
-            else:
-                print(f"\n  ❌  HTTP {resp.status_code}: {e}")
-                break
+            # Free tier is IEX only — no SIP fallback (paid data plan).
+            print(f"\n  ❌  HTTP {resp.status_code}: {e}")
+            break
         except Exception as e:
             print(f"\n  ❌  Fetch error: {e}")
             break

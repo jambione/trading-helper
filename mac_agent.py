@@ -1,5 +1,5 @@
 """
-mac_agent.py — Local macOS agent for Webull + TradingView automation.
+mac_agent.py — Local macOS agent for TradingView automation.
 
 Run this on your Mac:
     bash mac_agent.sh          (recommended — checks deps first)
@@ -8,7 +8,7 @@ Run this on your Mac:
 The agent does two things:
   1. Watches the Brasfield Momentum dashboard for alerts (mention burst / BUY)
      and posts a native toast for each. By default it does NOT auto-add (so you
-     can run everything minimized) — click a toast to add that ticker to Webull
+     can run everything minimized) — click a toast to add that ticker to TradingView
      Desktop + TradingView. Set AUTO_ADD=1 for the old hands-free behavior
      (auto-adds on every burst/BUY, which steals window focus).
   2. Listens on http://localhost:8889 so the dashboard (and the toast click)
@@ -26,7 +26,6 @@ macOS prerequisites (one-time):
   - Grant Terminal (or your IDE) Accessibility access:
       System Settings → Privacy & Security → Accessibility → add Terminal ✓
   - pip install pyautogui
-  - Webull Desktop from the Mac App Store (optional — only needed for WB adds)
 
 The agent logs in automatically and refreshes the token before it expires —
 you never need to touch the token manually.
@@ -36,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -140,7 +140,7 @@ def _notify_mac(title: str, message: str, subtitle: str = "",
     Post a native macOS notification banner via BrasfieldNotifier.app.
 
     Sends one line of JSON to the notifier on 127.0.0.1:NOTIFIER_PORT. When
-    `ticker` is set, clicking the banner fires the add-to-TradingView+Webull
+    `ticker` is set, clicking the banner fires the add-to-TradingView
     workflow back on this agent (no browser tab opens). Fire-and-forget — never
     raises; if the notifier isn't running the alert is simply skipped (the
     terminal log line still prints at the call site).
@@ -214,61 +214,17 @@ def _ensure_app_open(app_name: str, bundle_path: str | None = None,
 
 
 # =============================================================================
-# Webull workflow
+# Webull workflow (retired)
 # =============================================================================
 
-WB_APP_NAME  = "Webull Desktop"
-WB_APP_PATHS = [
-    "/Applications/Webull Desktop.app",
-    str(Path.home() / "Applications" / "Webull Desktop.app"),
-]
-
-
 def _webull_installed() -> bool:
-    return any(Path(p).exists() for p in WB_APP_PATHS)
+    return False
 
 
 def workflow_add_wb(ticker: str) -> bool:
-    """
-    Open/focus Webull Desktop, switch to Stocks tab (Cmd+2),
-    type the ticker, then press Enter.
-    """
-    ticker = ticker.upper().strip()
-
-    if not _IS_MAC:
-        print(f"  [DRY RUN] ADD_WB → {ticker}")
-        return True
-
-    if not _webull_installed():
-        print("  ⏭  ADD_WB skipped — Webull Desktop not installed (Mac App Store)")
-        return False
-
-    if not _PAG_OK:
-        print("  ⏭  ADD_WB skipped — pyautogui not available")
-        return False
-
-    bundle = next((p for p in WB_APP_PATHS if Path(p).exists()), None)
-    print(f"  📊 ADD_WB → {ticker}")
-
-    if not _ensure_app_open(WB_APP_NAME, bundle):
-        print(f"  ❌ ADD_WB failed — could not open {WB_APP_NAME}")
-        return False
-
-    time.sleep(0.4)
-
-    # Option+2 → Stocks tab  (macOS Webull shortcut)
-    _pag.hotkey("option", "2")
-    time.sleep(0.5)
-
-    # Type ticker letter-by-letter — matches how TradingView input works on Mac
-    for letter in ticker:
-        _pag.press(letter.lower())
-        time.sleep(0.025)
-    time.sleep(0.5)
-    _pag.press("enter")
-
-    print(f"  ✅ ADD_WB done: {ticker}")
-    return True
+    """Retired — Webull Desktop integration removed. Use TradingView only."""
+    print("  ⏭  ADD_WB skipped — Webull integration retired (TradingView only)")
+    return False
 
 
 # =============================================================================
@@ -286,11 +242,68 @@ def _find_browser() -> str | None:
     return None
 
 
+def _front_window_bounds(app_name: str) -> tuple[int, int, int, int] | None:
+    """(x, y, width, height) of app_name's front window, or None.
+
+    System Events reports position/size in the same top-left origin point
+    space pyautogui clicks in, so the values need no conversion.
+    """
+    script = f'''
+tell application "System Events"
+  tell process "{app_name}"
+    if (count of windows) is 0 then return ""
+    set p to position of front window
+    set s to size of front window
+    return ((item 1 of p) as text) & "," & ((item 2 of p) as text) & "," & \
+           ((item 1 of s) as text) & "," & ((item 2 of s) as text)
+  end tell
+end tell
+'''
+    try:
+        code, out = _osascript(script)
+    except Exception:
+        return None
+    if code != 0 or not (out or "").strip():
+        return None
+    try:
+        x, y, w, h = (int(float(v)) for v in out.strip().split(","))
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, w, h)
+
+
+def _chart_click_point(browser: str) -> tuple[int, int]:
+    """Where to click to give the TradingView chart canvas keyboard focus.
+
+    Derived from the browser window's ACTUAL bounds. The previous version
+    hardcoded 15% of screen width, which assumed the browser sat on the left
+    half of the display — when the window layout changed, that coordinate
+    landed on whatever app was there instead (typically the Terminal running
+    the monitor), so every keystroke went to the wrong window while pyautogui
+    still reported success.
+
+    35% of window width stays clear of TradingView's right-hand watchlist
+    panel; 40% of window height stays above the bottom broker panel.
+    """
+    bounds = _front_window_bounds(browser)
+    if bounds:
+        wx, wy, ww, wh = bounds
+        return (int(wx + ww * 0.35), int(wy + wh * 0.40))
+    sw, sh = _pag.size()
+    print("  ⚠️  could not read window bounds — falling back to screen-relative click")
+    return (int(sw * 0.15), sh // 2)
+
+
 def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     """
     Focus Brave/Chrome, switch to the pinned TradingView tab (Cmd+tab_num),
     click the chart area, type the ticker, press Enter to load the symbol,
     then Option+W to add to the TradingView watchlist.
+
+    Desk path is type-into-chart (character keystrokes on the TV page) — not
+    URL navigation.
     """
     ticker = ticker.upper().strip()
 
@@ -324,14 +337,12 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     _pag.press("escape")
     time.sleep(0.2)
 
-    # Click the chart canvas to ensure it has keyboard focus.
-    # Layout: Brave = left 45% of screen; TV right panel (watchlist) ≈ right 45%
-    # of the Brave window. Clicking at 15% of screen width (~1/3 of Brave's width)
-    # lands solidly on the chart canvas and avoids the right panel.
-    sw, sh = _pag.size()
-    _pag.click(int(sw * 0.15), sh // 2)
-    time.sleep(0.2)
-    time.sleep(0.3)
+    # Click the chart canvas to ensure it has keyboard focus. The point is
+    # computed from the browser window's real bounds, so moving or resizing
+    # windows no longer sends the keystrokes to the wrong app.
+    cx, cy = _chart_click_point(browser)
+    _pag.click(cx, cy)
+    time.sleep(0.5)
 
     # Type ticker — TradingView opens symbol search on first keypress
     for letter in ticker:
@@ -342,10 +353,118 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
     _pag.press("enter")       # confirm symbol
     time.sleep(0.3)
 
+    # Confirm the chart actually loaded the symbol before saving it. Without
+    # this the function reported success even when the keystrokes went to the
+    # wrong window — and Option+W could add whatever symbol WAS on the chart
+    # to the watchlist. Verify first, then save.
+    loaded = None
+    for _ in range(6):
+        loaded = read_tv_symbol()
+        if loaded == ticker:
+            break
+        time.sleep(0.25)
+
+    if loaded != ticker:
+        print(f"  ❌ ADD_TV failed: chart shows {loaded or 'unknown'}, expected {ticker}")
+        print("     Keystrokes likely went to another window — skipping Option+W")
+        print("     so the wrong symbol isn't saved to the watchlist.")
+        return False
+
     _pag.hotkey("option", "w")  # macOS: Option+W = Add to TradingView watchlist
 
     print(f"  ✅ ADD_TV done: {ticker}")
     return True
+
+
+# ── Read the current TradingView chart symbol (browser tab title) ─────────────
+
+# Literal app names on purpose: `tell application (variable)` breaks AppleScript
+# terminology resolution, so `tabs`/`URL`/`title` silently fail. Keep them literal.
+_TV_READ_SCRIPT = '''
+set out to ""
+try
+  if application "Brave Browser" is running then
+    tell application "Brave Browser"
+      repeat with w in windows
+        repeat with t in tabs of w
+          try
+            if (URL of t) contains "tradingview.com/chart" then
+              set out to (title of t) & linefeed & (URL of t)
+            end if
+          end try
+        end repeat
+      end repeat
+    end tell
+  end if
+end try
+if out is "" then
+  try
+    if application "Google Chrome" is running then
+      tell application "Google Chrome"
+        repeat with w in windows
+          repeat with t in tabs of w
+            try
+              if (URL of t) contains "tradingview.com/chart" then
+                set out to (title of t) & linefeed & (URL of t)
+              end if
+            end try
+          end repeat
+        end repeat
+      end tell
+    end if
+  end try
+end if
+return out
+'''
+
+
+def _parse_tv_symbol(title: str, url: str = "") -> str | None:
+    """Extract the ticker from a TradingView chart tab title (URL as fallback).
+
+    Handles "ENHA 3.16 … — TradingView" (leading token) and
+    "… NYSE:ENHA — TradingView" (EXCHANGE:TICKER), plus a ?symbol= URL param.
+    """
+    title = (title or "").strip()
+    # EXCHANGE:TICKER anywhere in the title (e.g. "NYSE:ENHA")
+    m = re.search(r'\b[A-Z]{2,6}:([A-Z][A-Z0-9.\-]{0,9})\b', title)
+    if m:
+        return m.group(1).upper()
+    # Leading token of the title is usually the symbol
+    if title:
+        cand = re.sub(r'[^A-Z0-9.\-]', '', title.split()[0].upper())
+        if re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,9}', cand or ''):
+            return cand
+    # Fallback: ?symbol=EXCHANGE:TICKER in the chart URL (may be stale)
+    m = re.search(r'[?&]symbol=([^&]+)', url or '')
+    if m:
+        from urllib.parse import unquote
+        s = unquote(m.group(1)).upper()
+        if ':' in s:
+            s = s.split(':', 1)[1]
+        s = re.sub(r'[^A-Z0-9.\-]', '', s)
+        if re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,9}', s or ''):
+            return s
+    return None
+
+
+def read_tv_symbol() -> str | None:
+    """Current TradingView chart symbol, read from the browser tab title.
+
+    Reads Brave/Chrome tabs via AppleScript — no OCR, no stolen window focus.
+    Returns an uppercase ticker, or None when no TV chart tab is found.
+    """
+    if not _IS_MAC:
+        return None
+    try:
+        code, out = _osascript(_TV_READ_SCRIPT)
+    except Exception:
+        return None
+    if code != 0 or not (out or "").strip():
+        return None
+    lines = out.strip().splitlines()
+    title = lines[0] if lines else ""
+    url = lines[1] if len(lines) > 1 else ""
+    return _parse_tv_symbol(title, url)
 
 
 # =============================================================================
@@ -591,7 +710,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 "dashboard_url":    DASHBOARD_URL,
                 "polling":          True,
                 "brave_tv_tab":     BRAVE_TV_TAB,
-                "webull_installed": _webull_installed(),
+                "webull_installed": False,
                 "pyautogui_ok":     _PAG_OK,
                 "activated_count":  len(_activated),
             })
@@ -672,10 +791,7 @@ if __name__ == "__main__":
     print(f"  Add mode   : {'AUTO_ADD (hands-free, steals focus)' if AUTO_ADD else 'toast-click (run minimized)'}")
     print(f"  TV tab     : Cmd+{BRAVE_TV_TAB}")
     print(f"  pyautogui  : {'✓' if _PAG_OK else '✗ not installed — run: pip install pyautogui'}")
-    if _webull_installed():
-        print("  Webull     : detected ✓")
-    else:
-        print("  Webull     : not found — WB adds skipped (install from Mac App Store)")
+    print("  Webull     : retired (Alpaca only)")
     print(f"  Skip-add window: {ACTIVATED_TTL // 60} min after activation")
     print(f"{'='*56}")
     print()
@@ -693,7 +809,7 @@ if __name__ == "__main__":
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
     print("   GET  /health  → status")
     print("   GET  /add?ticker=NVDA&mode=both  → WB+TV (used by toast click)")
-    print("   POST /add-wb  {\"ticker\": \"NVDA\"}  → Webull Desktop")
+    print("   POST /add-wb  retired (use /add-tv)")
     print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Cmd+{BRAVE_TV_TAB}, Option+W)")
     print("   Press Ctrl+C to stop.\n")
     try:

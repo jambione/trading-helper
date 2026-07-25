@@ -7,8 +7,17 @@
   "alert_buy": false,
   "alert_cooldown": 60.0,
   "desktop_toast": true,
-  "watchlist_enabled": true,
-  "watchlist_poll": 2.0,
-  "watchlist_top": 3,
-  "watchlist_rank": "gainers"
+  "watchlist_enabled": false,
+  "rsi_focus_max": 35.0,
+  "pctr_focus_lo": -100.0,
+  "pctr_focus_hi": -75.0,
+  "stocktwits_enabled": true,
+  "stocktwits_poll": 60.0,
+  "stocktwits_stocks_only": true,
+  "stocktwits_max_price": 30.0,
+  "stocktwits_panel_limit": 10,
+  "stocktwits_look_min_abs_chg": 3.0,
+  "stocktwits_look_max": 2,
+  "stocktwits_look_near_high": 0.70,
+  "stocktwits_look_near_low": 0.30
 }
