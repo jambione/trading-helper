@@ -229,11 +229,13 @@ def snapshot_fields(snap, now: float, today_et: date) -> dict[str, Any]:
     if d_date is not None:
         out["vol_bar_date"] = d_date.isoformat()
 
-    # ── session volume: only from a bar that provably covers today ───────
-    if d_date == today_et:
-        v = _f(getattr(daily, "volume", None))
-        if v is not None and v > 0:
-            out["vol_session"] = v
+    # Deliberately no volume from the daily bar. Measured on IEX, the daily bar
+    # excludes pre-market entirely (AAPL 2026-07-24: bar 1,772,167 vs 1,771,144
+    # RTH minutes plus 14,059 pre-market minutes it does not contain), so before
+    # 9:30 there is no today-dated bar to read and the column would sit blank
+    # through two of the three daily tranches. `vol_session` is summed from
+    # minute bars instead — see `refresh_volume`. The bar dates above are still
+    # what decides the %chg baseline, and are correct for it.
 
     # ── %chg baseline: the last close strictly before today ──────────────
     base, base_date = None, None
@@ -252,21 +254,6 @@ def snapshot_fields(snap, now: float, today_et: date) -> dict[str, Any]:
         if base_date is not None:
             out["pct_basis_date"] = base_date.isoformat()
     return out
-
-
-def average_volume(seq, today_et: date, avg_days: int = 10) -> float | None:
-    """Mean daily volume over completed sessions, or None.
-
-    `seq` is [(et_date, volume), ...]. Today is excluded however partial its
-    bar is: averaging a half-finished session in drags the denominator down
-    all morning and inflates every RVOL taken from it.
-    """
-    completed = sorted((d, v) for d, v in seq if d < today_et and v > 0)
-    if len(completed) < MIN_AVG_SESSIONS:
-        return None
-    tail = [v for _, v in completed[-max(1, int(avg_days)):]]
-    avg = sum(tail) / len(tail)
-    return avg if avg > 0 else None
 
 
 def _alpaca_client():
@@ -294,47 +281,16 @@ def _feed_arg() -> dict:
         return {}
 
 
-def fetch_daily_volumes(client, syms: list[str]) -> dict[str, list]:
-    """{sym: [(et_date, volume), ...]} over ~45 calendar days.
-
-    Reads the raw bar models rather than the DataFrame so the monitor does not
-    pull pandas in just to average ten numbers.
-    """
-    if not syms or client is None:
-        return {}
-    try:
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-        resp = client.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=list(syms),
-            timeframe=TimeFrame(1, TimeFrameUnit.Day),
-            start=datetime.now(timezone.utc) - timedelta(days=45),
-            **_feed_arg()))
-    except Exception:
-        return {}
-    out: dict[str, list] = {}
-    for sym, bars in (getattr(resp, "data", None) or {}).items():
-        seq = []
-        for b in bars or []:
-            d = _bar_et_date(b)
-            v = _f(getattr(b, "volume", None))
-            if d is not None and v is not None:
-                seq.append((d, v))
-        out[str(sym).upper()] = seq
-    return out
-
-
 def enrich_with_alpaca(rows: list[dict[str, Any]],
                        now: float | None = None,
                        avg_by_sym: dict | None = None,
                        time_adjusted: bool = True,
                        client=None) -> list[dict[str, Any]]:
-    """Attach last, price age, %chg, session volume and RVOL from a snapshot.
+    """Attach last, price age and %chg from an Alpaca snapshot.
 
-    `avg_by_sym` supplies the IEX average daily volume per symbol; without it
-    no RVOL is computed, because the only other average on hand is Stocktwits'
-    consolidated one and that ratio would understate relative volume by more
-    than an order of magnitude.
+    Volume and RVOL do not come from here — see `refresh_volume`, which sums
+    them off minute bars. `avg_by_sym` only re-derives RVOL for rows whose
+    volume a previous pass already established.
     """
     if not rows:
         return rows
@@ -373,9 +329,14 @@ def row_rvol(row: dict, avg_vol: float | None, now: float,
              time_adjusted: bool = True) -> tuple:
     """(rvol, rvol_raw) for one enriched row, or (None, None).
 
-    Both sides are Alpaca IEX daily-bar volume, so the feed's share of the tape
-    cancels and the ratio is comparable to a consolidated one. Feeding
-    Stocktwits' `avg_vol` in here instead would not be.
+    Both sides are sums of Alpaca IEX MINUTE bars — today's so far over the
+    average of completed sessions — so three things line up at once: the feed's
+    share of the tape cancels, the aggregation granularity matches (a daily bar
+    carries odd-lot prints no minute bar does), and pre-market volume is
+    included, which is the only reason this reads at 7:00 rather than 9:30.
+
+    Same helper the dashboard and the funnel use, so the RVOL in this panel and
+    the one in the momentum table are the same measurement.
     """
     vol = row.get("vol_session")
     if vol is None or avg_vol is None:
@@ -599,6 +560,7 @@ class StocktwitsTrending:
                  look_near_low: float = 0.30,
                  look_min_rvol: float | None = None,
                  quote_interval: float = 15.0,
+                 volume_interval: float = 60.0,
                  avg_days: int = 10,
                  rvol_time_adjusted: bool = True):
         self.poll_interval = max(15.0, float(poll_interval))
@@ -607,6 +569,9 @@ class StocktwitsTrending:
         # public, so polling it harder would be rude and pointless; the prices
         # hanging off it go stale in seconds and are what the desk reads.
         self.quote_interval = max(2.0, float(quote_interval))
+        # Today's minute bars for the whole panel are a far bigger payload than
+        # a snapshot, and volume does not move meaningfully in 15s.
+        self.volume_interval = max(10.0, float(volume_interval))
         self.stocks_only = bool(stocks_only)
         self.max_price = float(max_price) if max_price is not None else None
         self.enrich_quotes = bool(enrich_quotes)
@@ -629,28 +594,59 @@ class StocktwitsTrending:
         self._seen: set[str] = set()
         self._prev_look: dict[str, bool] = {}
         self._seeded = False          # suppress alerts on the first poll
-        # Average daily volume changes once every 24h. Symbols with too little
-        # history cache a None: the trending list churns all day, so a fresh
-        # listing is routine and without the negative entry it would be
-        # re-requested on every poll and never resolve.
-        self._avg_vol: dict[str, float | None] = {}
-        self._avg_vol_date: str = ""
+        self.last_volume_ok: float = 0.0
+        self.last_volume_attempt: float = 0.0
 
-    # ── average daily volume (IEX, day-cached) ───────────────────────────
-    def _avg_volumes(self, syms: list[str], now: float, client=None) -> dict:
-        today_et = et_session_date(now)
-        today = today_et.isoformat()
-        if self._avg_vol_date != today:
-            self._avg_vol.clear()
-            self._avg_vol_date = today
-        wanted = [s for s in syms if s not in self._avg_vol]
-        if wanted:
-            client = _alpaca_client() if client is None else client
-            daily = fetch_daily_volumes(client, wanted) if client else {}
-            for s in wanted:
-                self._avg_vol[s] = average_volume(
-                    daily.get(s) or [], today_et, self.avg_days)
-        return self._avg_vol
+    # ── volume + RVOL, off minute bars, on their own slower clock ────────
+    def refresh_volume(self, now: float | None = None, client=None) -> bool:
+        """Sum today's minute bars per symbol and derive RVOL.
+
+        Separate from the quote clock because volume does not need 15s
+        resolution and today's minute bars are a much larger payload than a
+        snapshot. Reuses `morning_funnel`, so this panel's RVOL is the same
+        measurement as the momentum table's rather than a parallel one.
+        """
+        now = time.time() if now is None else now
+        if not self.rows:
+            return False
+        if self.last_volume_attempt and \
+                (now - self.last_volume_attempt) < self.volume_interval:
+            return False
+        self.last_volume_attempt = now
+
+        client = _alpaca_client() if client is None else client
+        if client is None:
+            return False
+        syms = [r["symbol"] for r in self.rows
+                if r.get("symbol") and not r.get("is_crypto")]
+        if not syms:
+            return False
+        try:
+            # Lazy: pulls pandas, which the desk otherwise never needs.
+            import tools.morning_funnel as mf
+            cfg = {"funnel_avg_days": self.avg_days}
+            now_et = datetime.fromtimestamp(now, ET)
+            avg = mf.avg_session_volumes(client, syms, cfg, now_et)
+            minutes = mf.fetch_minutes_today(client, syms, cfg, now_et)
+        except Exception:
+            return False
+
+        for r in self.rows:
+            sym = r.get("symbol")
+            df = minutes.get(sym) if sym else None
+            try:
+                vol = float(df["volume"].sum()) if df is not None \
+                    and not df.empty else None
+            except Exception:
+                vol = None
+            # None, not 0 — "no bars yet" and "traded nothing" both mean there
+            # is no volume evidence, and a 0 would divide into a real RVOL.
+            r["vol_session"] = vol if (vol or 0) > 0 else None
+            r["rvol"], r["rvol_raw"] = row_rvol(
+                r, avg.get(sym), now, time_adjusted=self.rvol_time_adjusted)
+        self.by_symbol = {r["symbol"]: r for r in self.rows}
+        self.last_volume_ok = now
+        return True
 
     def refresh(self, now: float | None = None) -> bool:
         """Re-poll the Stocktwits trending list (and re-quote it)."""
@@ -670,6 +666,7 @@ class StocktwitsTrending:
         self.error = ""
         if self.enrich_quotes:
             self._quote(now)
+            self.refresh_volume(now)
         return True
 
     def refresh_quotes(self, now: float | None = None) -> bool:
@@ -696,10 +693,7 @@ class StocktwitsTrending:
             self.quotes_error = "no Alpaca keys (signal_engine.env)"
             return False
         self.quotes_error = ""
-        syms = [r["symbol"] for r in self.rows
-                if r.get("symbol") and not r.get("is_crypto")]
-        avg = self._avg_volumes(syms, now, client=client) if syms else {}
-        enrich_with_alpaca(self.rows, now=now, avg_by_sym=avg,
+        enrich_with_alpaca(self.rows, now=now,
                            time_adjusted=self.rvol_time_adjusted,
                            client=client)
         self.by_symbol = {r["symbol"]: r for r in self.rows}

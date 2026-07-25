@@ -19,8 +19,6 @@ from datetime import date, datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from stocktwits_trending import (  # noqa: E402
-    MIN_AVG_SESSIONS,
-    average_volume,
     apply_look_highlights,
     range_bar,
     row_rvol,
@@ -104,27 +102,24 @@ def test_no_baseline_is_published_when_the_bar_date_is_unknown():
     assert f["price"] == 11.0          # the price itself is still usable
 
 
-# ── session volume: only from a bar that provably covers today ──────────────
+# ── volume does not come off the daily bar ──────────────────────────────────
 
-def test_todays_bar_supplies_session_volume():
+def test_the_snapshot_publishes_no_volume_at_all():
+    """Measured on IEX, the daily bar excludes pre-market entirely: AAPL on
+    2026-07-24 reported 1,772,167 against 1,771,144 RTH minutes plus 14,059
+    pre-market minutes the bar does not contain. So before 9:30 there is no
+    today-dated bar to read, and a column fed from it sits blank through two of
+    the three daily tranches. Volume is summed from minute bars instead."""
     snap = Snap(daily=Bar(TODAY, close=11.0, volume=500_000))
     f = snapshot_fields(snap, NOW, TODAY)
-    assert f["vol_session"] == 500_000
-    assert f["vol_bar_date"] == TODAY.isoformat()
-
-
-def test_a_stale_bar_supplies_no_session_volume():
-    """Yesterday's completed total must not appear as today's volume — that is
-    the same wrong-day defect T2.1 fixed on the momentum side."""
-    snap = Snap(daily=Bar(YESTERDAY, close=10.0, volume=9_000_000))
-    f = snapshot_fields(snap, NOW, TODAY)
     assert "vol_session" not in f
-    assert f["vol_bar_date"] == YESTERDAY.isoformat()
+    assert f["vol_bar_date"] == TODAY.isoformat()      # still dates the %chg
 
 
-def test_zero_volume_is_not_published_as_a_number():
-    snap = Snap(daily=Bar(TODAY, close=11.0, volume=0))
-    assert "vol_session" not in snapshot_fields(snap, NOW, TODAY)
+def test_the_bar_date_is_still_recorded_for_the_pct_baseline():
+    snap = Snap(daily=Bar(YESTERDAY, close=10.0, volume=9_000_000))
+    assert snapshot_fields(snap, NOW, TODAY)["vol_bar_date"] == \
+        YESTERDAY.isoformat()
 
 
 # ── price age ───────────────────────────────────────────────────────────────
@@ -154,37 +149,9 @@ def test_bar_dates_are_read_in_et_not_the_host_zone():
     assert _bar_et_date(late) == TODAY
 
 
-# ── average volume for the RVOL denominator ─────────────────────────────────
-
-def _seq(n, vol=1_000_000, upto=TODAY):
-    return [(date(2026, 7, 23 - i), vol) for i in range(n)]
-
-
-def test_average_needs_enough_completed_sessions():
-    assert average_volume(_seq(MIN_AVG_SESSIONS - 1), TODAY) is None
-    assert average_volume(_seq(MIN_AVG_SESSIONS), TODAY) == 1_000_000
-
-
-def test_todays_partial_bar_is_excluded_from_its_own_denominator():
-    """Including it drags the average down all morning and inflates every RVOL
-    taken from it."""
-    seq = _seq(MIN_AVG_SESSIONS) + [(TODAY, 1_000)]
-    assert average_volume(seq, TODAY) == 1_000_000
-
-
-def test_average_uses_only_the_last_avg_days_sessions():
-    seq = [(date(2026, 6, 1), 50_000_000)] + _seq(MIN_AVG_SESSIONS)
-    assert average_volume(seq, TODAY, avg_days=MIN_AVG_SESSIONS) == 1_000_000
-
-
-def test_halted_sessions_do_not_count_as_history():
-    assert average_volume([(date(2026, 7, 23 - i), 0)
-                           for i in range(10)], TODAY) is None
-
-
 # ── RVOL only when both sides come from the same feed ───────────────────────
 
-def test_no_rvol_without_an_iex_average():
+def test_no_rvol_without_a_matching_average():
     """Stocktwits' consolidated avg_vol is the only other average on hand and
     dividing an IEX numerator by it understates RVOL by an order of magnitude,
     so the answer is no answer."""

@@ -77,9 +77,15 @@ From `momentum-monitor/stocktwits_trending.py :: display_rows()`:
 Renamed and re-scoped 2026-07-25, because the old names hid which feed and
 which session each number came from:
 
-- `volume` → `vol_session`, published only when `vol_bar_date` proves the bar
-  covers today. Alpaca's `daily_bar` is the last *completed* session until the
-  day's first print, so the old field showed yesterday's total all morning.
+- `volume` → `vol_session`, summed from today's MINUTE bars (04:00 ET on), not
+  from the snapshot's daily bar. Two reasons: the daily bar is the last
+  *completed* session until the day's first print, so the old field showed
+  yesterday's total all morning; and measured on IEX the daily bar excludes
+  pre-market entirely, so a column fed from it sits blank through two of the
+  three tranches. `vol_bar_date` still records the daily bar's date, which is
+  what decides the %chg baseline.
+- `rvol` uses the same `morning_funnel` helpers as the momentum table, so the
+  two panels show the same measurement rather than two parallel ones.
 - `avg_vol` → `avg_vol_consolidated`. It is Stocktwits' consolidated-tape
   average and must never be a denominator for Alpaca's IEX volume; `rvol`
   divides IEX by IEX instead.

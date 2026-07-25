@@ -189,6 +189,9 @@ DEFAULTS = {
     # the prices hanging off it go stale in seconds. Re-quoting does not touch
     # the (unauthenticated, public) Stocktwits endpoint.
     "stocktwits_quote_poll": 15.0,
+    # Volume + RVOL are summed from today's minute bars — a far bigger payload
+    # than a snapshot, and volume does not move meaningfully in 15s.
+    "stocktwits_volume_poll": 60.0,
     "stocktwits_stocks_only": True,
     "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
     "stocktwits_panel_limit": 10,  # max 10 → keys A-J
@@ -1500,6 +1503,7 @@ def main():
     st = StocktwitsTrending(
         poll_interval=st_poll,
         quote_interval=float(cfg.get("stocktwits_quote_poll", 15.0)),
+        volume_interval=float(cfg.get("stocktwits_volume_poll", 60.0)),
         stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
         max_price=float(st_max_px) if st_max_px is not None else None,
         look_min_abs_chg=float(cfg.get("stocktwits_look_min_abs_chg", 3.0)),
@@ -1541,10 +1545,11 @@ def main():
             hz = len(stamps) / 5.0
 
             if st is not None:
-                # refresh() re-quotes as part of a successful list poll; on the
-                # other ~3 of every 4 passes only the quotes move.
+                # refresh() re-quotes and re-volumes as part of a successful
+                # list poll; between polls each rides its own clock.
                 if not st.refresh(t0):
                     st.refresh_quotes(t0)
+                    st.refresh_volume(t0)
                 # Before display_rows() fires on_change -> _st_alert.
                 _st_ctx["by_symbol"] = st.by_symbol
 

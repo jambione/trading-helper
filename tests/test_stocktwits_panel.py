@@ -130,16 +130,13 @@ def test_the_error_clears_once_keys_appear():
     st.rows = [_row()]
     st.quotes_error = "no Alpaca keys (signal_engine.env)"
     import stocktwits_trending as stt
-    orig_c, orig_e, orig_a = (stt._alpaca_client, stt.enrich_with_alpaca,
-                              stt.fetch_daily_volumes)
+    orig_c, orig_e = stt._alpaca_client, stt.enrich_with_alpaca
     stt._alpaca_client = lambda: object()
     stt.enrich_with_alpaca = lambda rows, **kw: rows
-    stt.fetch_daily_volumes = lambda c, syms: {}
     try:
         assert st.refresh_quotes(T0) is True
     finally:
-        (stt._alpaca_client, stt.enrich_with_alpaca,
-         stt.fetch_daily_volumes) = orig_c, orig_e, orig_a
+        stt._alpaca_client, stt.enrich_with_alpaca = orig_c, orig_e
     assert st.quotes_error == ""
 
 
@@ -286,38 +283,73 @@ def test_quote_age_is_none_before_the_first_quote():
     assert StocktwitsTrending(enrich_quotes=False).quote_age(T0) is None
 
 
-# ── the average-volume cache survives a churning trending list ──────────────
+# ── volume + RVOL ride their own, slower clock ──────────────────────────────
 
-def test_symbols_with_no_history_are_negatively_cached():
-    """The trending list turns over all day. Without the None entry a fresh
-    listing would be re-requested on every quote poll and never resolve."""
-    st = StocktwitsTrending(enrich_quotes=False)
-    fetched = []
-
-    import stocktwits_trending as stt
-    orig_client, orig_daily = stt._alpaca_client, stt.fetch_daily_volumes
-    stt._alpaca_client = lambda: object()
-    stt.fetch_daily_volumes = lambda c, syms: (fetched.append(list(syms)), {})[1]
-    try:
-        st._avg_volumes(["AAAA"], T0)
-        st._avg_volumes(["AAAA"], T0 + 30)
-    finally:
-        stt._alpaca_client, stt.fetch_daily_volumes = orig_client, orig_daily
-
-    assert fetched == [["AAAA"]]
-    assert st._avg_vol == {"AAAA": None}
-
-
-def test_the_cache_is_dropped_on_a_new_session_date():
-    st = StocktwitsTrending(enrich_quotes=False)
-    st._avg_vol = {"AAAA": 1_000_000.0}
-    st._avg_vol_date = "1999-01-01"
-
+def test_volume_refreshes_less_often_than_quotes():
+    """Today's minute bars for the whole panel are a far bigger payload than a
+    snapshot, and volume does not move meaningfully in 15s."""
+    st = StocktwitsTrending(quote_interval=15.0, volume_interval=60.0,
+                            enrich_quotes=True)
+    st.rows = [_row()]
     import stocktwits_trending as stt
     orig = stt._alpaca_client
-    stt._alpaca_client = lambda: None
+    stt._alpaca_client = lambda: None          # stops before any fetch
     try:
-        st._avg_volumes([], T0)
+        assert st.refresh_volume(T0) is False  # no client
+        assert st.last_volume_attempt == T0
+        assert st.refresh_volume(T0 + 30) is False
+        assert st.last_volume_attempt == T0    # throttled, not re-attempted
+        st.refresh_volume(T0 + 61)
+        assert st.last_volume_attempt == T0 + 61
     finally:
         stt._alpaca_client = orig
-    assert st._avg_vol == {}
+
+
+def test_volume_and_rvol_come_off_minute_bars():
+    """Same measurement as the momentum table's RVOL: minute-sum over an
+    average of completed sessions, both from morning_funnel."""
+    import pandas as pd
+    import stocktwits_trending as stt
+
+    st = StocktwitsTrending(enrich_quotes=True, rvol_time_adjusted=False)
+    st.rows = [_row(vol_session=None, rvol=None)]
+    idx = pd.date_range("2026-07-24 09:30", periods=4, freq="1min",
+                        tz=stt.ET)
+    df = pd.DataFrame({"volume": [500_000.0] * 4}, index=idx)
+
+    import tools.morning_funnel as mf
+    orig = (stt._alpaca_client, mf.fetch_minutes_today, mf.avg_session_volumes)
+    stt._alpaca_client = lambda: object()
+    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: {"AAAA": df}
+    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {"AAAA": 1_000_000.0}
+    try:
+        assert st.refresh_volume(T0) is True
+    finally:
+        (stt._alpaca_client, mf.fetch_minutes_today,
+         mf.avg_session_volumes) = orig
+
+    row = st.by_symbol["AAAA"]
+    assert row["vol_session"] == 2_000_000.0
+    assert row["rvol"] == 2.0
+
+
+def test_a_symbol_with_no_bars_yet_gets_none_not_zero():
+    """A 0 would divide into a real RVOL and would read as "traded nothing"
+    rather than "no bars yet"."""
+    import stocktwits_trending as stt
+    import tools.morning_funnel as mf
+
+    st = StocktwitsTrending(enrich_quotes=True)
+    st.rows = [_row(vol_session=123.0, rvol=9.9)]
+    orig = (stt._alpaca_client, mf.fetch_minutes_today, mf.avg_session_volumes)
+    stt._alpaca_client = lambda: object()
+    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: {}
+    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {}
+    try:
+        st.refresh_volume(T0)
+    finally:
+        (stt._alpaca_client, mf.fetch_minutes_today,
+         mf.avg_session_volumes) = orig
+
+    assert st.by_symbol["AAAA"]["vol_session"] is None
+    assert st.by_symbol["AAAA"]["rvol"] is None
