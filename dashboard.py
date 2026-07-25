@@ -1097,7 +1097,7 @@ def _price_loop():
 
 # ── Day-volume polling ────────────────────────────────────────────────────────
 
-_VOL_AVG_CACHE: dict = {}          # sym -> avg daily volume
+_VOL_AVG_CACHE: dict = {}          # sym -> avg daily volume, or None
 _VOL_AVG_DATE: str = ""            # ET date the averages were computed for
 
 
@@ -1106,31 +1106,42 @@ def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, today: str) -> dict:
 
     Cached for the ET day — this changes once every 24h, so re-fetching 45
     days of daily bars every minute would be pure waste.
+
+    Symbols with no usable history cache a None. The watchlist is almost
+    entirely different names each day and turns over intraday, so a fresh
+    listing with fewer than five completed sessions is routine here, not an
+    edge case — without the negative entry it would be re-requested every 60s
+    for the rest of the session and never resolve.
     """
     global _VOL_AVG_DATE
-    if _VOL_AVG_DATE == today and _VOL_AVG_CACHE:
-        missing = [t for t in tickers if t not in _VOL_AVG_CACHE]
-        if not missing:
-            return _VOL_AVG_CACHE
-        tickers = missing
-    else:
+    if _VOL_AVG_DATE != today:
         _VOL_AVG_CACHE.clear()
         _VOL_AVG_DATE = today
 
-    daily = mf.fetch_daily(client, tickers, cfg)
+    wanted = [t for t in tickers if t not in _VOL_AVG_CACHE]
+    if not wanted:
+        return _VOL_AVG_CACHE
+
+    daily = mf.fetch_daily(client, wanted, cfg)
     # Same knob the funnel uses, so funnel.rvol and row.rvol agree — T2.2
     # prefers the funnel value and falls back to this one.
     avg_days = int(mf.knobs_from_cfg(cfg)["avg_days"])
-    for sym, df in daily.items():
-        try:
-            import pandas as pd
-            dates = pd.Series(mf._et_index(df).date, index=df.index)
-            completed = df[dates < pd.Timestamp(today).date()]
-            if len(completed) >= 5:
-                _VOL_AVG_CACHE[sym] = float(
-                    completed["volume"].tail(avg_days).mean())
-        except Exception:                                  # noqa: BLE001
-            continue
+    import pandas as pd
+    cutoff = pd.Timestamp(today).date()
+    for sym in wanted:
+        avg = None
+        df = daily.get(sym)
+        if df is not None and not df.empty:
+            try:
+                dates = pd.Series(mf._et_index(df).date, index=df.index)
+                completed = df[dates < cutoff]
+                if len(completed) >= 5:
+                    v = float(completed["volume"].tail(avg_days).mean())
+                    # Guard a symbol whose recent sessions were all halted.
+                    avg = v if v > 0 else None
+            except Exception:                              # noqa: BLE001
+                avg = None
+        _VOL_AVG_CACHE[sym] = avg
     return _VOL_AVG_CACHE
 
 

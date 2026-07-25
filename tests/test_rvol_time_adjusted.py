@@ -146,3 +146,100 @@ def test_adjusted_is_never_below_raw_during_the_session():
     for m in range(0, 391, 15):
         rvol, raw = rvol_pair(0.2 * AVG, AVG, m)
         assert rvol >= raw - 1e-9
+
+
+# ── average-volume cache under a churning watchlist ──────────────────────────
+
+class _FakeFunnel:
+    """Stand-in for tools.morning_funnel: counts daily-bar fetches."""
+
+    OPEN_MIN = OPEN_MIN
+
+    def __init__(self, frames):
+        self.frames = frames
+        self.fetches = []
+
+    def fetch_daily(self, client, tickers, cfg):
+        self.fetches.append(list(tickers))
+        return {t: self.frames[t] for t in tickers if t in self.frames}
+
+    def knobs_from_cfg(self, cfg):
+        return {"avg_days": 10}
+
+    @staticmethod
+    def _et_index(df):
+        return df.index
+
+
+def _daily(n_sessions, volume=AVG, today="2026-07-24"):
+    import pandas as pd
+    end = pd.Timestamp(today) - pd.Timedelta(days=1)
+    idx = pd.DatetimeIndex([end - pd.Timedelta(days=d)
+                            for d in range(n_sessions - 1, -1, -1)])
+    return pd.DataFrame({"volume": [volume] * n_sessions}, index=idx)
+
+
+def _reset_cache(d):
+    d._VOL_AVG_CACHE.clear()
+    d._VOL_AVG_DATE = ""
+
+
+def test_average_volume_is_fetched_once_per_symbol_per_day():
+    import dashboard as d
+    _reset_cache(d)
+    mf = _FakeFunnel({"AAAA": _daily(20)})
+    for _ in range(4):
+        d._vol_avg_volumes(mf, object(), ["AAAA"], {}, "2026-07-24")
+    assert len(mf.fetches) == 1
+    assert d._VOL_AVG_CACHE["AAAA"] == AVG
+
+
+def test_a_symbol_with_no_history_is_not_refetched_every_loop():
+    """The watchlist is different names every day and turns over intraday, so
+    a fresh listing with under five completed sessions is routine. Without a
+    negative cache entry it would be re-requested every 60s all session."""
+    import dashboard as d
+    _reset_cache(d)
+    mf = _FakeFunnel({"NEWCO": _daily(2)})          # only 2 completed sessions
+    for _ in range(5):
+        d._vol_avg_volumes(mf, object(), ["NEWCO"], {}, "2026-07-24")
+    assert len(mf.fetches) == 1, mf.fetches
+    assert d._VOL_AVG_CACHE["NEWCO"] is None
+
+
+def test_a_symbol_absent_from_the_response_is_also_negatively_cached():
+    import dashboard as d
+    _reset_cache(d)
+    mf = _FakeFunnel({})                            # provider returns nothing
+    for _ in range(3):
+        d._vol_avg_volumes(mf, object(), ["GHOST"], {}, "2026-07-24")
+    assert len(mf.fetches) == 1
+    assert d._VOL_AVG_CACHE["GHOST"] is None
+
+
+def test_only_newly_seen_symbols_are_fetched_as_the_list_churns():
+    import dashboard as d
+    _reset_cache(d)
+    mf = _FakeFunnel({s: _daily(20) for s in ("AAAA", "BBBB", "CCCC")})
+    d._vol_avg_volumes(mf, object(), ["AAAA", "BBBB"], {}, "2026-07-24")
+    d._vol_avg_volumes(mf, object(), ["BBBB", "CCCC"], {}, "2026-07-24")
+    assert mf.fetches == [["AAAA", "BBBB"], ["CCCC"]]
+
+
+def test_cache_resets_on_a_new_session_date():
+    import dashboard as d
+    _reset_cache(d)
+    mf = _FakeFunnel({"AAAA": _daily(20)})
+    d._vol_avg_volumes(mf, object(), ["AAAA"], {}, "2026-07-24")
+    d._vol_avg_volumes(mf, object(), ["AAAA"], {}, "2026-07-27")
+    assert len(mf.fetches) == 2
+
+
+def test_an_all_halted_history_caches_none_not_zero():
+    """A zero average would make rvol_pair divide by zero; it returns None."""
+    import dashboard as d
+    _reset_cache(d)
+    mf = _FakeFunnel({"HALT": _daily(20, volume=0.0)})
+    d._vol_avg_volumes(mf, object(), ["HALT"], {}, "2026-07-24")
+    assert d._VOL_AVG_CACHE["HALT"] is None
+    assert rvol_pair(500_000, None, 10) == (None, None)
