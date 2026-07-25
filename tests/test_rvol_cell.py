@@ -13,10 +13,8 @@ from momentum_signal import (  # noqa: E402
     _rvol_cell,
     momentum_columns,
     momentum_table,
-    push_history,
     row_rvol,
 )
-from symbol_history import SymbolHistory  # noqa: E402
 
 T0 = 1753449600.0
 CFG = {**DEFAULTS, "alert_new": False, "alert_burst": False,
@@ -180,18 +178,3 @@ def test_empty_feed_fallback_row_still_fills_every_column():
     cells = [list(c.cells) for c in t.columns]
     assert len(cells) == len(momentum_columns(CFG))
     assert all(len(c) == 1 for c in cells)
-
-
-# ── history ──────────────────────────────────────────────────────────────────
-
-def test_history_records_the_same_value_the_column_shows():
-    h = SymbolHistory(maxlen=10)
-    push_history(h, [{"ticker": "AAAA", "rvol": 1.2,
-                      "funnel": {"rvol": 8.2}}], T0)
-    assert h.series("AAAA", "rvol") == [8.2]
-
-
-def test_history_records_nothing_when_there_is_no_rvol():
-    h = SymbolHistory(maxlen=10)
-    push_history(h, [{"ticker": "AAAA", "rvol_raw": 0.17}], T0)
-    assert h.series("AAAA", "rvol") == []

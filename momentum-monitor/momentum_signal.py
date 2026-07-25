@@ -135,7 +135,6 @@ DEFAULTS = {
     # Price shape. Building, spiking and fading all read +12% on Chg%.
     "spark_enabled": True,
     "spark_width": 20,
-    "spark_field": "price",
     # Below this many samples no spark is drawn: 3 blocks over 6s look exactly
     # like 3 blocks over 4 minutes.
     "spark_min_samples": 5,
@@ -891,15 +890,10 @@ def push_history(history: SymbolHistory, rows: list[dict],
             continue
         live.add(sym)
         with contextlib.suppress(Exception):
-            sp = _sp(r)
             history.push(sym, now,
                          price=r.get("price"),
                          mention_window=r.get("mention_window"),
-                         mention_velocity=sp.get("mention_velocity"),
-                         proximity_pct=sp.get("proximity_pct"),
-                         # Same value the RVOL cell shows (funnel first), so a
-                         # future spark of it matches the column.
-                         rvol=row_rvol(r))
+                         mention_velocity=_sp(r).get("mention_velocity"))
     with contextlib.suppress(Exception):
         history.prune(live)
 
@@ -988,8 +982,7 @@ def _cell_spark(row: dict, ctx: dict) -> str:
     width = max(1, int(cfg.get("spark_width", 20)))
     if hist is None:
         return " " * width
-    field = str(cfg.get("spark_field", "price"))
-    series = hist.series(ctx["sym"], field)
+    series = hist.series(ctx["sym"], "price")
     min_n = int(cfg.get("spark_min_samples", 5))
     txt = spark.sparkline(series, width, min_samples=min_n,
                           flat_pct=float(cfg.get("spark_flat_pct", 0.1)))

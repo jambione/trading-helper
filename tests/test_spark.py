@@ -214,13 +214,6 @@ def test_no_history_object_renders_blank_padding():
     assert column_cells(t, "Shape")[0] == " " * int(CFG["spark_width"])
 
 
-def test_spark_field_is_configurable():
-    hist = _hist("AAAA", [1, 2, 3, 4, 5, 6], field="rvol")
-    assert not any(b in _shape_cells([{"ticker": "AAAA"}], hist)[0]
-                   for b in BLOCKS)
-    cell = _shape_cells([{"ticker": "AAAA"}], hist, spark_field="rvol")[0]
-    assert any(b in cell for b in BLOCKS)
-
 
 # ── column placement ─────────────────────────────────────────────────────────
 

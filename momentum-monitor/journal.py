@@ -50,10 +50,6 @@ try:
 except Exception:                                          # noqa: BLE001
     session_window = None
 
-# Rising-edge kinds this journal understands. `focus` is the desk's own
-# two-leg setup; the rest mirror the Alerter's kinds.
-KINDS = ("new", "burst", "focus", "buy", "st_new", "st_look", "confirmed")
-
 # Cap on unflushed records. Reached only when the disk is failing, in which
 # case the oldest are dropped rather than growing without bound.
 MAX_BUFFER = 2000
@@ -157,7 +153,6 @@ class Journal:
         self._last_flush = 0.0
         self._error_logged = False
         self._log = log
-        self.written = 0
         self.dropped = 0
 
     # ── write ────────────────────────────────────────────────────────────
@@ -170,14 +165,6 @@ class Journal:
             self._buf.append(journal_record(kind, sym, row, ts, **kw))
         except Exception:                                  # noqa: BLE001
             self._note("record failed")
-
-    def add(self, rec: dict) -> None:
-        """Append an already-built record (used for non-row events)."""
-        if not self.enabled or not isinstance(rec, dict):
-            return
-        if len(self._buf) == self._buf.maxlen:
-            self.dropped += 1
-        self._buf.append(rec)
 
     # ── flush ────────────────────────────────────────────────────────────
     def due(self, now: float) -> bool:
@@ -223,7 +210,6 @@ class Journal:
                 # running; these records are gone.
                 self.dropped += len(recs)
                 self._note(f"write failed: {e}")
-        self.written += written
         return written
 
     def close(self) -> int:

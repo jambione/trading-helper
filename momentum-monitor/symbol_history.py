@@ -2,8 +2,8 @@
 
 Memory-only. Nothing here persists across a restart and nothing here does
 I/O — the render loop pushes one sample per symbol per poll and reads back
-short series for sparklines (T3.1), mention-velocity smoothing (T1.3) and
-journal context (T4.1).
+short series for the price sparkline and the mention-trend arrow. Fields are
+added here only when something actually reads them.
 
 Sizing: at the default poll_interval of 2.0s, 120 samples is ~4 minutes of
 tape per symbol. `maxlen` comes from the `history_samples` config key rather
@@ -20,8 +20,7 @@ from collections import deque
 # Sample fields accepted by push(). Anything else is ignored, so a caller
 # that starts sending a new field before this list learns about it degrades
 # to "no data" instead of raising.
-FIELDS = ("price", "mention_window", "mention_velocity", "proximity_pct",
-          "rvol")
+FIELDS = ("price", "mention_window", "mention_velocity")
 
 DEFAULT_MAXLEN = 120
 
@@ -50,7 +49,7 @@ class SymbolHistory:
 
     # ── write ────────────────────────────────────────────────────────────
     def push(self, sym: str, ts: float, *, price=None, mention_window=None,
-             mention_velocity=None, proximity_pct=None, rvol=None) -> None:
+             mention_velocity=None) -> None:
         """Append one sample. Oldest is evicted once the ring is full.
 
         A sample whose every field is None is still recorded: the timestamp
@@ -71,8 +70,6 @@ class SymbolHistory:
             "price": _num(price),
             "mention_window": _num(mention_window),
             "mention_velocity": _num(mention_velocity),
-            "proximity_pct": _num(proximity_pct),
-            "rvol": _num(rvol),
         })
 
     # ── read ─────────────────────────────────────────────────────────────
@@ -87,23 +84,6 @@ class SymbolHistory:
             return []
         return [s[field] for s in ring if s.get(field) is not None]
 
-    def samples(self, sym: str) -> list[dict]:
-        """Raw samples, oldest → newest. Copies, so callers cannot mutate."""
-        ring = self._data.get(str(sym or "").upper())
-        return [dict(s) for s in ring] if ring else []
-
-    def age(self, sym: str) -> float | None:
-        """Seconds spanned by the retained samples, or None if empty.
-
-        This is the span of the ring (newest ts - oldest ts), not time since
-        the symbol first appeared — once the ring saturates, the span stops
-        growing. Use it to decide whether a series is long enough to trust.
-        """
-        ring = self._data.get(str(sym or "").upper())
-        if not ring:
-            return None
-        return ring[-1]["ts"] - ring[0]["ts"]
-
     def count(self, sym: str) -> int:
         ring = self._data.get(str(sym or "").upper())
         return len(ring) if ring else 0
@@ -112,9 +92,6 @@ class SymbolHistory:
         return set(self._data)
 
     # ── lifecycle ────────────────────────────────────────────────────────
-    def drop(self, sym: str) -> None:
-        self._data.pop(str(sym or "").upper(), None)
-
     def prune(self, live: set[str]) -> None:
         """Evict symbols no longer on the feed.
 

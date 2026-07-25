@@ -45,13 +45,6 @@ def test_series_is_oldest_to_newest():
     assert h.series("AAAA", "price") == [3.0, 1.0, 2.0, 9.0]
 
 
-def test_samples_are_copies_callers_cannot_corrupt_the_ring():
-    h = SymbolHistory(maxlen=4)
-    h.push("AAAA", T0, price=1.0)
-    got = h.samples("AAAA")
-    got[0]["price"] = 999.0
-    assert h.series("AAAA", "price") == [1.0]
-
 
 # ── None / bad-value handling ────────────────────────────────────────────────
 
@@ -70,7 +63,6 @@ def test_all_none_sample_is_still_recorded_for_its_timestamp():
     h.push("AAAA", T0 + 4)
     assert h.count("AAAA") == 2
     assert h.series("AAAA", "price") == []
-    assert h.age("AAAA") == 4.0
 
 
 def test_non_numeric_and_nan_values_are_dropped():
@@ -104,7 +96,6 @@ def test_unknown_field_and_symbol_return_empty():
     h.push("AAAA", T0, price=1.0)
     assert h.series("AAAA", "not_a_field") == []
     assert h.series("ZZZZ", "price") == []
-    assert h.age("ZZZZ") is None
     assert h.count("ZZZZ") == 0
 
 
@@ -120,40 +111,13 @@ def test_symbols_are_case_normalized():
 
 def test_every_declared_field_round_trips():
     h = SymbolHistory(maxlen=10)
-    h.push("AAAA", T0, price=3.41, mention_window=9, proximity_pct=100,
-           rvol=6.2)
+    h.push("AAAA", T0, price=3.41, mention_window=9, mention_velocity=7)
     assert h.series("AAAA", "price") == [3.41]
     assert h.series("AAAA", "mention_window") == [9.0]
-    assert h.series("AAAA", "proximity_pct") == [100.0]
-    assert h.series("AAAA", "rvol") == [6.2]
-
-
-# ── age ──────────────────────────────────────────────────────────────────────
-
-def test_age_is_the_span_of_retained_samples():
-    h = SymbolHistory(maxlen=10)
-    h.push("AAAA", T0, price=1.0)
-    assert h.age("AAAA") == 0.0
-    h.push("AAAA", T0 + 30.0, price=1.0)
-    assert h.age("AAAA") == 30.0
-
-
-def test_age_stops_growing_once_the_ring_saturates():
-    h = SymbolHistory(maxlen=3)
-    for i in range(10):
-        h.push("AAAA", T0 + i * 2.0, price=1.0)
-    # Three samples, 2s apart -> 4s span, not the full 18s of pushes.
-    assert h.age("AAAA") == 4.0
+    assert h.series("AAAA", "mention_velocity") == [7.0]
 
 
 # ── lifecycle ────────────────────────────────────────────────────────────────
-
-def test_drop_removes_one_symbol():
-    h = SymbolHistory(maxlen=10)
-    h.push("AAAA", T0, price=1.0)
-    h.push("BBBB", T0, price=1.0)
-    h.drop("AAAA")
-    assert h.symbols() == {"BBBB"}
 
 
 def test_prune_evicts_symbols_absent_from_the_live_set():
@@ -207,15 +171,14 @@ def test_push_history_records_rows_and_prunes_in_one_call():
 
     h = SymbolHistory(maxlen=10)
     rows = [
-        {"ticker": "AAAA", "price": 3.41, "mention_window": 9, "rvol": 6.2,
-         "signal_proximity": {"proximity_pct": 100}},
+        {"ticker": "AAAA", "price": 3.41, "mention_window": 9,
+         "signal_proximity": {"mention_velocity": 7}},
         {"ticker": "BBBB", "price": None, "mention_window": 0},
     ]
     push_history(h, rows, T0)
     assert h.symbols() == {"AAAA", "BBBB"}
     assert h.series("AAAA", "price") == [3.41]
-    assert h.series("AAAA", "proximity_pct") == [100.0]
-    assert h.series("AAAA", "rvol") == [6.2]
+    assert h.series("AAAA", "mention_velocity") == [7.0]
     assert h.series("BBBB", "price") == []
 
     # Next poll drops BBBB from the feed -> its ring is evicted.
