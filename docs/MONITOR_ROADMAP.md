@@ -69,8 +69,22 @@ mostly rendering work.
 
 ### Stocktwits rows
 From `momentum-monitor/stocktwits_trending.py :: display_rows()`:
-`rank`, `symbol`, `price`, `pct_change`, `volume`, `avg_vol`, `high_52w`,
-`low_52w`, `market_cap`, `trending_score`, `look`, `look_reason`.
+`rank`, `symbol`, `price`, `price_ts`, `price_age_sec`, `pct_change`,
+`pct_basis_date`, `vol_session`, `vol_bar_date`, `rvol`, `rvol_raw`,
+`avg_vol_consolidated`, `high_52w`, `low_52w`, `trending_score`, `look`,
+`look_reason`.
+
+Renamed and re-scoped 2026-07-25, because the old names hid which feed and
+which session each number came from:
+
+- `volume` → `vol_session`, published only when `vol_bar_date` proves the bar
+  covers today. Alpaca's `daily_bar` is the last *completed* session until the
+  day's first print, so the old field showed yesterday's total all morning.
+- `avg_vol` → `avg_vol_consolidated`. It is Stocktwits' consolidated-tape
+  average and must never be a denominator for Alpaca's IEX volume; `rvol`
+  divides IEX by IEX instead.
+- `market_cap` removed — nothing consumed it, and its `× 1e6` unit conversion
+  was only "typically" right.
 
 ### Session clock
 `session_clock.py` exports `ET`, `WINDOWS`, `SHOTS`, `session_window()`,

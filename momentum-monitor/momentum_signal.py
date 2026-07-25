@@ -185,14 +185,25 @@ DEFAULTS = {
     # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
     "stocktwits_enabled": True,
     "stocktwits_poll": 60.0,     # seconds between ST API polls
+    # Quotes on their own, faster clock: the ranking barely moves in a minute,
+    # the prices hanging off it go stale in seconds. Re-quoting does not touch
+    # the (unauthenticated, public) Stocktwits endpoint.
+    "stocktwits_quote_poll": 15.0,
     "stocktwits_stocks_only": True,
     "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
     "stocktwits_panel_limit": 10,  # max 10 → keys A-J
+    "stocktwits_rvol_column": True,
+    "stocktwits_avg_days": 10,     # sessions in the RVOL denominator
+    "stocktwits_rvol_time_adjusted": True,
+    "stocktwits_range_width": 11,  # 52w lo→hi track, cells (odd = true centre)
     # LOOK badge: heat + |%chg| + vol + 52w extreme (EXT near high / WASH near low)
     "stocktwits_look_min_abs_chg": 3.0,
     "stocktwits_look_max": 2,
     "stocktwits_look_near_high": 0.70,
     "stocktwits_look_near_low": 0.30,
+    # Absolute volume floor for LOOK, on top of the panel-median test. None
+    # keeps the median alone. Skipped for rows whose RVOL is unknown.
+    "stocktwits_look_min_rvol": 1.5,
 }
 
 
@@ -997,17 +1008,36 @@ def row_rvol(row: dict) -> float | None:
     return v if (v is not None and v > 0) else None
 
 
-def _rvol_cell(row: dict, hot: float = 3.0, warm: float = 1.5) -> str:
-    """`8.2x` / `1.4x` / `—`. Never invents a value when both sources are
-    missing: an absent RVOL must not read as "volume is unremarkable"."""
-    v = row_rvol(row)
-    if v is None:
+def _age_short(sec) -> str:
+    """Compact age: `47s`, `12m`, `3h`. Pre-market a thin name's last print can
+    be hours old, and `9540s` does not read as a warning."""
+    v = _fnum(sec)
+    if v is None or v < 0:
+        return "—"
+    if v < 90:
+        return f"{v:.0f}s"
+    if v < 5400:
+        return f"{v / 60:.0f}m"
+    return f"{v / 3600:.0f}h"
+
+
+def _rvol_text(v, hot: float = 3.0, warm: float = 1.5) -> str:
+    """`8.2x` / `1.4x` / `—` from a value. Shared by both panels so the
+    thresholds and colours cannot drift apart between them."""
+    v = _fnum(v)
+    if v is None or v <= 0:
         return "[dim]—[/dim]"
     if v >= float(hot):
         return f"[bold green]{v:.1f}x[/bold green]"
     if v >= float(warm):
         return f"[yellow]{v:.1f}x[/yellow]"
     return f"[dim]{v:.1f}x[/dim]"
+
+
+def _rvol_cell(row: dict, hot: float = 3.0, warm: float = 1.5) -> str:
+    """`8.2x` / `1.4x` / `—`. Never invents a value when both sources are
+    missing: an absent RVOL must not read as "volume is unremarkable"."""
+    return _rvol_text(row_rvol(row), hot, warm)
 
 
 def _cell_rvol(row: dict, ctx: dict) -> str:
@@ -1218,36 +1248,66 @@ def momentum_table(feed: Feed, now: float, hz: float,
     return t
 
 
+def _fmt_st_rvol(v, cfg: dict | None = None) -> str:
+    cfg = cfg or {}
+    return _rvol_text(v, float(cfg.get("rvol_hot", 3.0)),
+                      float(cfg.get("rvol_warm", 1.5)))
+
+
 def stocktwits_panel(st: StocktwitsTrending,
                      price_by_sym: dict[str, float | None],
                      limit: int = 10,
-                     hotkeys_on: bool = True) -> Panel:
+                     hotkeys_on: bool = True,
+                     cfg: dict | None = None,
+                     now: float | None = None) -> Panel:
     """Stocktwits trending — website columns + letter key (A-J) + LOOK badge."""
-    from stocktwits_trending import fmt_mcap, fmt_vol
+    from stocktwits_trending import fmt_vol, range_bar
 
-    rows = st.display_rows(price_by_sym, limit=min(limit, len(DeskHotkeys.ST_LETTERS)))
+    now = time.time() if now is None else now
+    rows = st.display_rows(price_by_sym,
+                           limit=min(limit, len(DeskHotkeys.ST_LETTERS)),
+                           now=now)
+    cfg = cfg or {}
+    stale_sec = float(cfg.get("price_stale_sec", 20.0))
+    age_on = bool(cfg.get("price_age_enabled", True))
+    rvol_on = bool(cfg.get("stocktwits_rvol_column", True))
+    range_w = int(cfg.get("stocktwits_range_width", 11))
     t = Table(expand=False)
     t.add_column("Key", justify="right", style="bold")
     t.add_column("ST#", justify="right", style="bold magenta")
     t.add_column("Symbol")
     t.add_column("Last", justify="right")
     t.add_column("%Chg", justify="right")
-    t.add_column("Volume", justify="right")
-    t.add_column("52w Hi", justify="right")
-    t.add_column("52w Lo", justify="right")
-    t.add_column("Mkt Cap", justify="right")
+    # Named for its feed on purpose. The free Alpaca plan is IEX-only, a few
+    # percent of the consolidated tape, so this is materially smaller than the
+    # volume the Stocktwits site shows for the same symbol. Labelled "Volume"
+    # it read as the consolidated figure and invited comparison against it.
+    t.add_column("Vol·IEX", justify="right")
+    if rvol_on:
+        t.add_column("RVOL", justify="right")
+    # One track replaces the 52w Hi / 52w Lo pair: position in the range is
+    # what EXT and WASH are actually about, and two absolute prices made the
+    # reader do that division. Mkt Cap is gone — it never changed a decision.
+    t.add_column("52w lo→hi", justify="left")
     t.add_column("Score", justify="right")
     t.add_column("")  # LOOK badge
     n_look = 0
     if not rows:
         msg = st.error or "waiting for first poll…"
-        t.add_row("", "—", f"[dim]{msg}[/dim]", "", "", "", "", "", "", "", "")
+        t.add_row("", "—", f"[dim]{msg}[/dim]",
+                  *([""] * (len(t.columns) - 3)))
     else:
         for i, r in enumerate(rows):
             letter = (DeskHotkeys.ST_LETTERS[i].upper()
                       if hotkeys_on and i < len(DeskHotkeys.ST_LETTERS) else "")
             px = r.get("price")
-            px_s = f"${px:.2f}" if px is not None else "[dim]—[/dim]"
+            if px is None:
+                px_s = "[dim]—[/dim]"
+            else:
+                px_s = f"${px:.2f}"
+                age = r.get("price_age_sec")
+                if age_on and isinstance(age, (int, float)) and age >= stale_sec:
+                    px_s = f"[dim]${px:.2f}·{_age_short(age)}[/dim]"
             chg = r.get("pct_change")
             if chg is None:
                 chg_s = "[dim]—[/dim]"
@@ -1257,7 +1317,8 @@ def stocktwits_panel(st: StocktwitsTrending,
             hi = r.get("high_52w")
             lo = r.get("low_52w")
             sc = r.get("trending_score")
-            vol = r.get("volume") if r.get("volume") is not None else r.get("avg_vol")
+            # Session volume only — never the 30-day average standing in for it.
+            vol = r.get("vol_session")
             look_s = ""
             if r.get("look"):
                 n_look += 1
@@ -1266,25 +1327,35 @@ def stocktwits_panel(st: StocktwitsTrending,
             sym_s = f"[bold cyan]{r['symbol']}[/bold cyan]"
             if r.get("look"):
                 sym_s = f"[bold green]{r['symbol']}[/bold green]"
-            t.add_row(
+            cells = [
                 letter,
                 str(r.get("rank") or "—"),
                 sym_s,
                 px_s,
                 chg_s,
-                fmt_vol(vol),
-                f"${hi:.2f}" if hi is not None else "—",
-                f"${lo:.2f}" if lo is not None else "—",
-                fmt_mcap(r.get("market_cap")),
+                fmt_vol(vol) if vol is not None else "[dim]—[/dim]",
+            ]
+            if rvol_on:
+                cells.append(_fmt_st_rvol(r.get("rvol"), cfg))
+            bar = range_bar(px, lo, hi, width=range_w)
+            cells += [
+                bar or "[dim]—[/dim]",
                 f"{sc:.1f}" if sc is not None else "—",
                 look_s,
-            )
-    age = ""
+            ]
+            t.add_row(*cells)
+    stamp = ""
     if st.last_ok:
-        age = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
+        stamp = f"  ·  {datetime.fromtimestamp(st.last_ok):%H:%M:%S}"
+    # The list timestamp above is the Stocktwits poll. Quotes ride a faster
+    # clock now, so the number the desk actually trades off gets its own age.
+    q = ""
+    q_age = st.quote_age(now) if hasattr(st, "quote_age") else None
+    if q_age is not None and q_age >= stale_sec:
+        q = f"  ·  [yellow]quotes {_age_short(q_age)} old[/yellow]"
     cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
     look_n = f"  ·  {n_look} LOOK" if n_look else ""
-    title = f"TRENDING  ·  A-J load TV{cap}{look_n}{age}"
+    title = f"TRENDING  ·  A-J load TV{cap}{look_n}{stamp}{q}"
     return Panel(t, title=title, title_align="left",
                  border_style="magenta", padding=(0, 1))
 
@@ -1400,8 +1471,10 @@ def main():
     def _st_alert(kind: str, sym: str, detail: str) -> None:
         # Journal the edge regardless of whether it is audible — the alert
         # flags control the speaker, not the evidence.
-        journal.record(kind, sym, st_row_for(sym), time.time(),
-                       st_rank=st_rank_for(sym))
+        row = st_row_for(sym)
+        journal.record(kind, sym, row, time.time(),
+                       st_rank=st_rank_for(sym),
+                       rvol=row.get("rvol"))
         flag = "alert_st_new" if kind == "st_new" else "alert_st_look"
         if cfg.get(flag, True):
             alerter.fire(kind, sym, detail)
@@ -1419,14 +1492,19 @@ def main():
         return st_row_for(sym).get("rank")
 
     hotkeys = DeskHotkeys()
+    st_min_rvol = cfg.get("stocktwits_look_min_rvol", 1.5)
     st = StocktwitsTrending(
         poll_interval=st_poll,
+        quote_interval=float(cfg.get("stocktwits_quote_poll", 15.0)),
         stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
         max_price=float(st_max_px) if st_max_px is not None else None,
         look_min_abs_chg=float(cfg.get("stocktwits_look_min_abs_chg", 3.0)),
         look_max=int(cfg.get("stocktwits_look_max", 2)),
         look_near_high=float(cfg.get("stocktwits_look_near_high", 0.70)),
         look_near_low=float(cfg.get("stocktwits_look_near_low", 0.30)),
+        look_min_rvol=(float(st_min_rvol) if st_min_rvol is not None else None),
+        avg_days=int(cfg.get("stocktwits_avg_days", 10)),
+        rvol_time_adjusted=bool(cfg.get("stocktwits_rvol_time_adjusted", True)),
     ) if st_on else None
 
     st_note = f"  ST={'on' if st_on else 'off'}"
@@ -1459,7 +1537,10 @@ def main():
             hz = len(stamps) / 5.0
 
             if st is not None:
-                st.refresh(t0)
+                # refresh() re-quotes as part of a successful list poll; on the
+                # other ~3 of every 4 passes only the quotes move.
+                if not st.refresh(t0):
+                    st.refresh_quotes(t0)
                 # Before display_rows() fires on_change -> _st_alert.
                 _st_ctx["by_symbol"] = st.by_symbol
 
@@ -1481,7 +1562,7 @@ def main():
                            if row.get("rank") is not None}
                 st_ordered = [r["symbol"] for r in
                               st.display_rows(price_map, limit=st_limit,
-                                              on_change=_st_alert)]
+                                              on_change=_st_alert, now=t0)]
 
             ordered = [str(r.get("ticker") or "").upper()
                        for r in feed.rows[:hotkey_slots]]
@@ -1494,7 +1575,8 @@ def main():
                 history=history, cfg=cfg))
             if st is not None:
                 panels.append(stocktwits_panel(
-                    st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled))
+                    st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled,
+                    cfg=cfg, now=t0))
             panels.append(footer_panel(alerter, hotkeys, hotkey_slots))
             live.update(Group(*panels))
             journal.maybe_flush(t0)

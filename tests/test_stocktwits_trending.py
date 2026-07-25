@@ -7,7 +7,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monit
 from stocktwits_trending import (  # noqa: E402
     parse_trending_payload,
     StocktwitsTrending,
-    fmt_mcap,
     fmt_vol,
 )
 
@@ -60,8 +59,10 @@ def test_parse_fundamentals_columns():
     assert now["rank"] == 1
     assert now["high_52w"] == 210.20
     assert now["low_52w"] == 81.24
-    # millions → dollars
-    assert now["market_cap"] == 105260.0 * 1_000_000.0
+    # Consolidated — named so it cannot be mistaken for an IEX-comparable
+    # figure and divided into the IEX session volume.
+    assert now["avg_vol_consolidated"] == 16.79e6
+    assert "market_cap" not in now
 
 
 def test_stocks_only_and_max_price():
@@ -83,7 +84,6 @@ def test_stocks_only_and_max_price():
 
 
 def test_fmt_helpers():
-    assert fmt_mcap(6.24e9).startswith("$6.24B")
     assert "M" in fmt_vol(57.57e6)
 
 
@@ -119,11 +119,11 @@ def test_look_extension_near_highs():
     rows = [
         {
             "symbol": "AAA", "trending_score": 20.0, "pct_change": 8.0,
-            "volume": 2e6, "price": 9.0, "high_52w": 10.0, "low_52w": 1.0,
+            "vol_session": 2e6, "price": 9.0, "high_52w": 10.0, "low_52w": 1.0,
         },
         {
             "symbol": "BBB", "trending_score": 5.0, "pct_change": 0.5,
-            "volume": 1e5, "price": 5.0, "high_52w": 10.0, "low_52w": 1.0,
+            "vol_session": 1e5, "price": 5.0, "high_52w": 10.0, "low_52w": 1.0,
         },
     ]
     apply_look_highlights(rows, min_abs_chg=3.0, max_looks=2)
@@ -138,7 +138,7 @@ def test_look_washout_near_lows():
     rows = [
         {
             "symbol": "CCC", "trending_score": 15.0, "pct_change": -6.0,
-            "volume": 3e6, "price": 2.0, "high_52w": 20.0, "low_52w": 1.0,
+            "vol_session": 3e6, "price": 2.0, "high_52w": 20.0, "low_52w": 1.0,
         },
     ]
     apply_look_highlights(rows, min_abs_chg=3.0, max_looks=2)
@@ -150,7 +150,7 @@ def test_look_max_caps_highlights():
     from stocktwits_trending import apply_look_highlights
     rows = [
         {"symbol": f"S{i}", "trending_score": 20 - i, "pct_change": 10.0,
-         "volume": 5e6, "price": 9.5, "high_52w": 10.0, "low_52w": 1.0}
+         "vol_session": 5e6, "price": 9.5, "high_52w": 10.0, "low_52w": 1.0}
         for i in range(5)
     ]
     apply_look_highlights(rows, min_abs_chg=3.0, max_looks=2)
