@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from tools import morning_funnel as mf_real  # noqa: E402
 from tools.morning_funnel import (  # noqa: E402
     OPEN_MIN,
     expected_fraction,
@@ -151,32 +152,49 @@ def test_adjusted_is_never_below_raw_during_the_session():
 # ── average-volume cache under a churning watchlist ──────────────────────────
 
 class _FakeFunnel:
-    """Stand-in for tools.morning_funnel: counts daily-bar fetches."""
+    """Stand-in for tools.morning_funnel: counts minute-history fetches.
+
+    The averaging itself is the REAL implementation, so these tests exercise
+    the code that runs in production rather than a copy of it.
+    """
 
     OPEN_MIN = OPEN_MIN
+    avg_session_volume = staticmethod(mf_real.avg_session_volume)
 
     def __init__(self, frames):
         self.frames = frames
         self.fetches = []
 
-    def fetch_daily(self, client, tickers, cfg):
+    def fetch_minutes_history(self, client, tickers, cfg, now_et, days=18):
         self.fetches.append(list(tickers))
         return {t: self.frames[t] for t in tickers if t in self.frames}
 
     def knobs_from_cfg(self, cfg):
         return {"avg_days": 10}
 
-    @staticmethod
-    def _et_index(df):
-        return df.index
 
+def _minutes(n_sessions, volume=AVG, today="2026-07-24", bars=4):
+    """Minute bars over `n_sessions` completed sessions, `volume` per session.
 
-def _daily(n_sessions, volume=AVG, today="2026-07-24"):
+    Minute bars, not daily — an IEX daily bar carries odd-lot volume that no
+    minute bar does, so the average must be summed from the same tape the rvol
+    numerator comes off.
+    """
     import pandas as pd
     end = pd.Timestamp(today) - pd.Timedelta(days=1)
-    idx = pd.DatetimeIndex([end - pd.Timedelta(days=d)
-                            for d in range(n_sessions - 1, -1, -1)])
-    return pd.DataFrame({"volume": [volume] * n_sessions}, index=idx)
+    idx, vols = [], []
+    for d in range(n_sessions - 1, -1, -1):
+        day = end - pd.Timedelta(days=d)
+        for b in range(bars):
+            idx.append(day + pd.Timedelta(hours=10, minutes=b))
+            vols.append(volume / bars)
+    return pd.DataFrame({"volume": vols}, index=pd.DatetimeIndex(idx))
+
+
+def _et(day: str):
+    """Naive ET-dated datetime for the cache key and session cutoff."""
+    import pandas as pd
+    return pd.Timestamp(day + " 10:00").to_pydatetime()
 
 
 def _reset_cache(d):
@@ -187,9 +205,9 @@ def _reset_cache(d):
 def test_average_volume_is_fetched_once_per_symbol_per_day():
     import dashboard as d
     _reset_cache(d)
-    mf = _FakeFunnel({"AAAA": _daily(20)})
+    mf = _FakeFunnel({"AAAA": _minutes(20)})
     for _ in range(4):
-        d._vol_avg_volumes(mf, object(), ["AAAA"], {}, "2026-07-24")
+        d._vol_avg_volumes(mf, object(), ["AAAA"], {}, _et("2026-07-24"))
     assert len(mf.fetches) == 1
     assert d._VOL_AVG_CACHE["AAAA"] == AVG
 
@@ -200,9 +218,9 @@ def test_a_symbol_with_no_history_is_not_refetched_every_loop():
     negative cache entry it would be re-requested every 60s all session."""
     import dashboard as d
     _reset_cache(d)
-    mf = _FakeFunnel({"NEWCO": _daily(2)})          # only 2 completed sessions
+    mf = _FakeFunnel({"NEWCO": _minutes(2)})          # only 2 completed sessions
     for _ in range(5):
-        d._vol_avg_volumes(mf, object(), ["NEWCO"], {}, "2026-07-24")
+        d._vol_avg_volumes(mf, object(), ["NEWCO"], {}, _et("2026-07-24"))
     assert len(mf.fetches) == 1, mf.fetches
     assert d._VOL_AVG_CACHE["NEWCO"] is None
 
@@ -212,7 +230,7 @@ def test_a_symbol_absent_from_the_response_is_also_negatively_cached():
     _reset_cache(d)
     mf = _FakeFunnel({})                            # provider returns nothing
     for _ in range(3):
-        d._vol_avg_volumes(mf, object(), ["GHOST"], {}, "2026-07-24")
+        d._vol_avg_volumes(mf, object(), ["GHOST"], {}, _et("2026-07-24"))
     assert len(mf.fetches) == 1
     assert d._VOL_AVG_CACHE["GHOST"] is None
 
@@ -220,18 +238,18 @@ def test_a_symbol_absent_from_the_response_is_also_negatively_cached():
 def test_only_newly_seen_symbols_are_fetched_as_the_list_churns():
     import dashboard as d
     _reset_cache(d)
-    mf = _FakeFunnel({s: _daily(20) for s in ("AAAA", "BBBB", "CCCC")})
-    d._vol_avg_volumes(mf, object(), ["AAAA", "BBBB"], {}, "2026-07-24")
-    d._vol_avg_volumes(mf, object(), ["BBBB", "CCCC"], {}, "2026-07-24")
+    mf = _FakeFunnel({s: _minutes(20) for s in ("AAAA", "BBBB", "CCCC")})
+    d._vol_avg_volumes(mf, object(), ["AAAA", "BBBB"], {}, _et("2026-07-24"))
+    d._vol_avg_volumes(mf, object(), ["BBBB", "CCCC"], {}, _et("2026-07-24"))
     assert mf.fetches == [["AAAA", "BBBB"], ["CCCC"]]
 
 
 def test_cache_resets_on_a_new_session_date():
     import dashboard as d
     _reset_cache(d)
-    mf = _FakeFunnel({"AAAA": _daily(20)})
-    d._vol_avg_volumes(mf, object(), ["AAAA"], {}, "2026-07-24")
-    d._vol_avg_volumes(mf, object(), ["AAAA"], {}, "2026-07-27")
+    mf = _FakeFunnel({"AAAA": _minutes(20)})
+    d._vol_avg_volumes(mf, object(), ["AAAA"], {}, _et("2026-07-24"))
+    d._vol_avg_volumes(mf, object(), ["AAAA"], {}, _et("2026-07-27"))
     assert len(mf.fetches) == 2
 
 
@@ -239,7 +257,7 @@ def test_an_all_halted_history_caches_none_not_zero():
     """A zero average would make rvol_pair divide by zero; it returns None."""
     import dashboard as d
     _reset_cache(d)
-    mf = _FakeFunnel({"HALT": _daily(20, volume=0.0)})
-    d._vol_avg_volumes(mf, object(), ["HALT"], {}, "2026-07-24")
+    mf = _FakeFunnel({"HALT": _minutes(20, volume=0.0)})
+    d._vol_avg_volumes(mf, object(), ["HALT"], {}, _et("2026-07-24"))
     assert d._VOL_AVG_CACHE["HALT"] is None
     assert rvol_pair(500_000, None, 10) == (None, None)

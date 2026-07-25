@@ -1174,47 +1174,45 @@ _VOL_AVG_CACHE: dict = {}          # sym -> avg daily volume, or None
 _VOL_AVG_DATE: str = ""            # ET date the averages were computed for
 
 
-def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, today: str) -> dict:
-    """Average daily volume per symbol, from completed sessions only.
+def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, now_et) -> dict:
+    """Average session volume per symbol, from completed sessions only.
 
-    Cached for the ET day — this changes once every 24h, so re-fetching 45
-    days of daily bars every minute would be pure waste.
+    Summed from MINUTE bars, not daily bars, because the numerator this divides
+    into is a minute-bar sum. An IEX daily bar carries odd-lot and off-exchange
+    prints that appear in no minute bar — measured at ~30% of the bar for a
+    13K-share/day name and ~0% for AAPL — so a daily-bar average understated
+    rvol by that much on exactly the thin names the watchlist is full of. See
+    `morning_funnel.avg_session_volume`.
 
-    Symbols with no usable history cache a None. The watchlist is almost
-    entirely different names each day and turns over intraday, so a fresh
-    listing with fewer than five completed sessions is routine here, not an
-    edge case — without the negative entry it would be re-requested every 60s
-    for the rest of the session and never resolve.
+    Cached for the ET day; changes once every 24h. Symbols with no usable
+    history cache a None. The watchlist is almost entirely different names each
+    day and turns over intraday, so a fresh listing with fewer than five
+    completed sessions is routine here, not an edge case — without the negative
+    entry it would be re-requested every 60s and never resolve.
     """
     global _VOL_AVG_DATE
-    if _VOL_AVG_DATE != today:
+    # Cache key and session cutoff both come off `now_et`, so they cannot drift
+    # apart and average a session the cache thinks is still open.
+    today_et = now_et.date()
+    stamp = today_et.isoformat()
+    if _VOL_AVG_DATE != stamp:
         _VOL_AVG_CACHE.clear()
-        _VOL_AVG_DATE = today
+        _VOL_AVG_DATE = stamp
 
     wanted = [t for t in tickers if t not in _VOL_AVG_CACHE]
     if not wanted:
         return _VOL_AVG_CACHE
 
-    daily = mf.fetch_daily(client, wanted, cfg)
     # Same knob the funnel uses, so funnel.rvol and row.rvol agree — T2.2
     # prefers the funnel value and falls back to this one.
     avg_days = int(mf.knobs_from_cfg(cfg)["avg_days"])
-    import pandas as pd
-    cutoff = pd.Timestamp(today).date()
+    hist = mf.fetch_minutes_history(client, wanted, cfg, now_et)
     for sym in wanted:
-        avg = None
-        df = daily.get(sym)
-        if df is not None and not df.empty:
-            try:
-                dates = pd.Series(mf._et_index(df).date, index=df.index)
-                completed = df[dates < cutoff]
-                if len(completed) >= 5:
-                    v = float(completed["volume"].tail(avg_days).mean())
-                    # Guard a symbol whose recent sessions were all halted.
-                    avg = v if v > 0 else None
-            except Exception:                              # noqa: BLE001
-                avg = None
-        _VOL_AVG_CACHE[sym] = avg
+        try:
+            _VOL_AVG_CACHE[sym] = mf.avg_session_volume(
+                hist.get(sym), today_et, avg_days)
+        except Exception:                                  # noqa: BLE001
+            _VOL_AVG_CACHE[sym] = None
     return _VOL_AVG_CACHE
 
 
@@ -1255,7 +1253,7 @@ def _vol_loop():
             today = str(now_et.date())
             mins_open = (now_et.hour * 60 + now_et.minute) - mf.OPEN_MIN
 
-            avg_by_sym = _vol_avg_volumes(mf, client, tickers, cfg, today)
+            avg_by_sym = _vol_avg_volumes(mf, client, tickers, cfg, now_et)
             minutes = mf.fetch_minutes_today(client, tickers, cfg, now_et)
 
             vol_data: dict = {}
