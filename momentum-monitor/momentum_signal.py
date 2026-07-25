@@ -74,6 +74,7 @@ except Exception:                                          # noqa: BLE001
 import desk_actions as desk
 from desk_hotkeys import DeskHotkeys
 from stocktwits_trending import StocktwitsTrending
+from symbol_history import SymbolHistory
 
 WatchlistReader = top_movers = None  # OCR movers retired
 
@@ -94,6 +95,9 @@ DEFAULTS = {
     "alert_only_when_hidden": True,  # skip the popup if Terminal is frontmost
     "desktop_toast": True,
     "watchlist_enabled": False,
+    # Per-symbol sample ring (sparklines, mention trend, journal context).
+    # 120 samples ≈ 4 min of tape at poll_interval 2.0s.
+    "history_samples": 120,
     # FOCUS = CM RSI green-long AND both %R lines deep OS toward -100
     "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
     "pctr_focus_lo": -100.0,     # both %R lines >= lo
@@ -436,6 +440,27 @@ class Alerter:
 
 # ── model ────────────────────────────────────────────────────────────────────
 
+def row_rank(row: dict, first_seen: float, now: float,
+             server_idx: int, cfg: dict) -> tuple:
+    """Sort key for one momentum row — lower tuple sorts higher on screen.
+
+    Reproduces the desk's long-standing order exactly: most recently
+    first-seen symbol on top, with the server's mention-rank order (the
+    index the row arrived at in /api/state) breaking ties.
+
+    NOTE on `new_ttl`: freshness does **not** decay out of the ordering.
+    A symbol first seen at 09:31 outranks one first seen at 09:30 for the
+    rest of the session, however old both get. `new_ttl` governs only the
+    NEW badge (`Feed.is_fresh`), never position. Anything that makes the
+    freshness term expire is a behavior change, not a refactor.
+
+    `row`, `now` and `cfg` are unused today. They are the seam T1.2
+    (setup distance) and T5.2 (confluence weighting) plug into, so those
+    tickets can add terms without touching `Feed.ingest`.
+    """
+    return (-first_seen, server_idx)
+
+
 class Feed:
     """Turns successive /api/state snapshots into a display-ordered list and
     the new-symbol / burst rising edges that drive alerts. Newest symbols
@@ -478,10 +503,14 @@ class Feed:
 
         # newest first_seen on top; server order (mention rank) breaks ties
         # via stable sort. Symbols no longer in the feed drop off the list.
-        order = {r.get("ticker", "").upper(): i for i, r in enumerate(rows)}
-        rows.sort(key=lambda r: (-self.first_seen.get(
-            (r.get("ticker") or "").upper(), 0.0),
-            order.get((r.get("ticker") or "").upper(), 999)))
+        order = {(r.get("ticker") or "").upper(): i for i, r in enumerate(rows)}
+
+        def _key(r: dict) -> tuple:
+            sym = (r.get("ticker") or "").upper()
+            return row_rank(r, self.first_seen.get(sym, 0.0), now,
+                            order.get(sym, 999), cfg)
+
+        rows.sort(key=_key)
         self.rows = rows
         self.seeded = True
 
@@ -500,10 +529,111 @@ def _detail(row: dict) -> str:
     return "  ".join(bits)
 
 
+def push_history(history: SymbolHistory, rows: list[dict],
+                 now: float) -> None:
+    """Record one sample per live row, then evict symbols off the feed.
+
+    Call this only on a poll that actually returned state. Re-pushing the
+    previous rows during a feed outage would manufacture flat tape, which
+    reads as "price stopped moving" rather than "we lost the feed" — the
+    exact confusion a sparkline is supposed to prevent.
+    """
+    live: set[str] = set()
+    for r in rows:
+        sym = str(r.get("ticker") or "").upper()
+        if not sym:
+            continue
+        live.add(sym)
+        with contextlib.suppress(Exception):
+            history.push(sym, now,
+                         price=r.get("price"),
+                         mention_window=r.get("mention_window"),
+                         proximity_pct=_sp(r).get("proximity_pct"),
+                         rvol=r.get("rvol"))
+    with contextlib.suppress(Exception):
+        history.prune(live)
+
+
 # ── render ───────────────────────────────────────────────────────────────────
 
 def _fmt(v, spec, none="—"):
     return format(v, spec) if v is not None else none
+
+
+# ── momentum table column spec ───────────────────────────────────────────────
+# The table is built from an ordered (header, add_column kwargs, cell builder)
+# list so later tickets append a column instead of re-editing the render loop.
+# Each builder takes (row, ctx); `ctx` is the per-row render context assembled
+# once in momentum_table(). Builders must be pure — no I/O, no mutation.
+
+def _cell_key(row: dict, ctx: dict) -> str:
+    i = ctx["idx"]
+    return str(i + 1) if (ctx["hotkeys_on"] and i < 9) else ""
+
+
+def _cell_symbol(row: dict, ctx: dict) -> str:
+    return f"[bold cyan]{ctx['sym']}[/bold cyan]"
+
+
+def _cell_added(row: dict, ctx: dict) -> str:
+    seen = ctx["feed"].first_seen.get(ctx["sym"])
+    added = (f"{datetime.fromtimestamp(seen):%H:%M:%S}"
+             if seen is not None else "—")
+    return f"[dim]{added}[/dim]"
+
+
+def _cell_price(row: dict, ctx: dict) -> str:
+    return _fmt(row.get("price"), ".2f")
+
+
+def _cell_chg(row: dict, ctx: dict) -> str:
+    chg = row.get("pct_change")
+    if chg is None:
+        return "—"
+    cc = "green" if chg > 0 else "red" if chg < 0 else "white"
+    return f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]"
+
+
+def _cell_mentions(row: dict, ctx: dict) -> str:
+    win = row.get("mention_window") or 0
+    day = row.get("mention_count") or 0
+    return f"{win}/{day}" if (win or day) else "—"
+
+
+def _cell_setup(row: dict, ctx: dict) -> str:
+    return _rsi_focus_cell(row, ctx["rsi_focus_max"],
+                           ctx["pctr_focus_lo"], ctx["pctr_focus_hi"])
+
+
+def _cell_flags(row: dict, ctx: dict) -> str:
+    flags = []
+    if row.get("find_it_first"):
+        flags.append("[bold black on green]🥇FIRST[/]")
+    if ctx["feed"].is_fresh(ctx["sym"], ctx["now"]):
+        flags.append("[bold black on cyan] NEW [/]")
+    if row.get("mention_burst"):
+        flags.append("[bold black on yellow]🔥BURST[/]")
+    conf = row.get("confluence")
+    if isinstance(conf, dict) and conf.get("count", 0) >= 2:
+        flags.append(f"[magenta]⚡{conf['count']}[/magenta]")
+    # Stocktwits trending rank (same list as stocktwits.com/sentiment)
+    rk = ctx["st_rank"].get(ctx["sym"])
+    if rk is not None:
+        flags.append(f"[bold black on magenta] ST#{rk} [/]")
+    return " ".join(flags)
+
+
+MOMENTUM_COLUMNS = [
+    ("#",        {"justify": "right", "style": "bold"}, _cell_key),
+    ("Symbol",   {},                                    _cell_symbol),
+    ("Added",    {"justify": "right"},                  _cell_added),
+    ("Price",    {"justify": "right"},                  _cell_price),
+    ("Chg%",     {"justify": "right"},                  _cell_chg),
+    ("Mentions", {"justify": "right"},                  _cell_mentions),
+    # Combined CM RSI + %R deep-OS cue (not RSI alone)
+    ("Setup",    {"justify": "right"},                  _cell_setup),
+    ("",         {},                                    _cell_flags),
+]
 
 
 def momentum_table(feed: Feed, now: float, hz: float,
@@ -511,57 +641,36 @@ def momentum_table(feed: Feed, now: float, hz: float,
                    rsi_focus_max: float = 35.0,
                    pctr_focus_lo: float = -100.0,
                    pctr_focus_hi: float = -75.0,
-                   st_rank: dict[str, int] | None = None) -> Table:
+                   st_rank: dict[str, int] | None = None,
+                   columns: list | None = None) -> Table:
+    cols = MOMENTUM_COLUMNS if columns is None else columns
     t = Table(expand=False)
-    t.add_column("#", justify="right", style="bold")
-    t.add_column("Symbol")
-    t.add_column("Added", justify="right")
-    t.add_column("Price", justify="right")
-    t.add_column("Chg%", justify="right")
-    t.add_column("Mentions", justify="right")
-    # Combined CM RSI + %R deep-OS cue (not RSI alone)
-    t.add_column("Setup", justify="right")
-    t.add_column("")
+    for header, opts, _ in cols:
+        t.add_column(header, **opts)
     st_rank = st_rank or {}
     for i, r in enumerate(feed.rows):
-        sym = str(r.get("ticker") or "?").upper()
-        key = str(i + 1) if (hotkeys_on and i < 9) else ""
-        seen = feed.first_seen.get(sym)
-        added = (f"{datetime.fromtimestamp(seen):%H:%M:%S}"
-                 if seen is not None else "—")
-        chg = r.get("pct_change")
-        cc = ("green" if (chg or 0) > 0 else "red" if (chg or 0) < 0
-              else "white")
-        win = r.get("mention_window") or 0
-        day = r.get("mention_count") or 0
-        mtxt = f"{win}/{day}" if (win or day) else "—"
-        flags = []
-        if r.get("find_it_first"):
-            flags.append("[bold black on green]🥇FIRST[/]")
-        if feed.is_fresh(sym, now):
-            flags.append("[bold black on cyan] NEW [/]")
-        if r.get("mention_burst"):
-            flags.append("[bold black on yellow]🔥BURST[/]")
-        conf = r.get("confluence")
-        if isinstance(conf, dict) and conf.get("count", 0) >= 2:
-            flags.append(f"[magenta]⚡{conf['count']}[/magenta]")
-        # Stocktwits trending rank (same list as stocktwits.com/sentiment)
-        rk = st_rank.get(sym)
-        if rk is not None:
-            flags.append(f"[bold black on magenta] ST#{rk} [/]")
-        t.add_row(
-            key,
-            f"[bold cyan]{sym}[/bold cyan]",
-            f"[dim]{added}[/dim]",
-            _fmt(r.get("price"), ".2f"),
-            f"[{cc}]{_fmt(chg, '+.1f')}[/{cc}]" if chg is not None else "—",
-            mtxt,
-            _rsi_focus_cell(r, rsi_focus_max, pctr_focus_lo, pctr_focus_hi),
-            " ".join(flags),
-        )
+        ctx = {
+            "idx": i,
+            "sym": str(r.get("ticker") or "?").upper(),
+            "feed": feed,
+            "now": now,
+            "hotkeys_on": hotkeys_on,
+            "rsi_focus_max": rsi_focus_max,
+            "pctr_focus_lo": pctr_focus_lo,
+            "pctr_focus_hi": pctr_focus_hi,
+            "st_rank": st_rank,
+        }
+        cells = []
+        for _, _, build in cols:
+            # One bad cell must not take the desk down (ground rule 4).
+            try:
+                cells.append(build(r, ctx))
+            except Exception:                              # noqa: BLE001
+                cells.append("[dim]—[/dim]")
+        t.add_row(*cells)
     if not feed.rows:
         t.add_row("", "[dim]no momentum tickers in the feed[/dim]",
-                  "", "", "", "", "", "")
+                  *([""] * (len(cols) - 2)))
     return t
 
 
@@ -734,6 +843,7 @@ def main():
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
+    history = SymbolHistory(maxlen=int(cfg.get("history_samples", 120)))
 
     def _st_alert(kind: str, sym: str, detail: str) -> None:
         flag = "alert_st_new" if kind == "st_new" else "alert_st_look"
@@ -768,6 +878,7 @@ def main():
             state = fetch_state()
             if state is not None:
                 feed.ingest(state, t0, alerter, cfg)
+                push_history(history, feed.rows, t0)
             stale = (t0 - feed.last_ok) > STALE_AFTER if feed.last_ok else \
                     (state is None)
             stamps.append(t0)
