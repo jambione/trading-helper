@@ -126,7 +126,10 @@ def test_flag_off_removes_the_column_entirely():
     headers = [h for h, _, _ in momentum_columns(
         {**CFG, "rvol_column_enabled": False})]
     assert "RVOL" not in headers
-    assert headers == [h for h, _, _ in MOMENTUM_COLUMNS]
+    # With every optional column off, the set is exactly the historical one.
+    assert [h for h, _, _ in momentum_columns(
+        {**CFG, "rvol_column_enabled": False, "spark_enabled": False})] == \
+        [h for h, _, _ in MOMENTUM_COLUMNS]
 
 
 def test_no_cfg_yields_the_historical_set():

@@ -73,6 +73,7 @@ except Exception:                                          # noqa: BLE001
     _plyer = None
 
 import desk_actions as desk
+import spark
 from desk_hotkeys import DeskHotkeys
 from stocktwits_trending import StocktwitsTrending
 from symbol_history import SymbolHistory
@@ -123,6 +124,18 @@ DEFAULTS = {
     "rvol_column_enabled": True,
     "rvol_hot": 3.0,
     "rvol_warm": 1.5,
+    # Price shape. Building, spiking and fading all read +12% on Chg%.
+    "spark_enabled": True,
+    "spark_width": 20,
+    "spark_field": "price",
+    # Below this many samples no spark is drawn: 3 blocks over 6s look exactly
+    # like 3 blocks over 4 minutes.
+    "spark_min_samples": 5,
+    # Smallest peak-to-trough move (% of the window midpoint) allowed to draw
+    # shape. Per-row min→max scaling fills the full height whatever the range,
+    # so without this a stock ticking 10.00/10.01 draws the same violent
+    # zigzag as one moving 30%. Set 0.0 for pure min→max.
+    "spark_flat_pct": 0.1,
     # Mention acceleration arrow. The derivative is the signal, not the count.
     "mention_trend_enabled": True,
     # Floor on samples before an arrow is shown. 10 (not the roadmap's 8) so
@@ -942,6 +955,26 @@ def _cell_rvol(row: dict, ctx: dict) -> str:
                       float(cfg.get("rvol_warm", 1.5)))
 
 
+def _cell_spark(row: dict, ctx: dict) -> str:
+    """Fixed-width shape column, padded so the table cannot jitter as symbols
+    accumulate history. Empty when there is not enough tape to draw honestly."""
+    cfg = ctx.get("cfg") or {}
+    hist = ctx.get("history")
+    width = max(1, int(cfg.get("spark_width", 20)))
+    if hist is None:
+        return " " * width
+    field = str(cfg.get("spark_field", "price"))
+    series = hist.series(ctx["sym"], field)
+    min_n = int(cfg.get("spark_min_samples", 5))
+    txt = spark.sparkline(series, width, min_samples=min_n,
+                          flat_pct=float(cfg.get("spark_flat_pct", 0.1)))
+    if not txt:
+        return " " * width
+    d = spark.direction(series, min_n)
+    color = "green" if d > 0 else "red" if d < 0 else "dim"
+    return f"[{color}]{txt}[/{color}]" + " " * (width - len(txt))
+
+
 def _cell_mentions(row: dict, ctx: dict) -> str:
     win = row.get("mention_window") or 0
     day = row.get("mention_count") or 0
@@ -1040,11 +1073,14 @@ MOMENTUM_COLUMNS = [
     ("",         {},                                    _cell_flags),
 ]
 
-# Optional columns: (config flag, insert-after header, spec). Inserted in the
-# order listed; "after" is matched against the headers present at that point.
+# Optional columns: (config flag, anchor headers, spec). Each is inserted
+# immediately after the first anchor present at that point, so placement stays
+# correct however many of the other optional columns are switched off.
 OPTIONAL_COLUMNS = [
-    ("rvol_column_enabled", "Chg%",
+    ("rvol_column_enabled", ("Chg%",),
      ("RVOL", {"justify": "right"}, _cell_rvol)),
+    ("spark_enabled", ("RVOL", "Chg%"),
+     ("Shape", {"justify": "left"}, _cell_spark)),
 ]
 
 
@@ -1058,11 +1094,17 @@ def momentum_columns(cfg: dict | None = None) -> list:
     if cfg is None:
         return list(MOMENTUM_COLUMNS)
     cols = list(MOMENTUM_COLUMNS)
-    for flag, after, spec in OPTIONAL_COLUMNS:
+    for flag, anchors, spec in OPTIONAL_COLUMNS:
         if not cfg.get(flag, True):
             continue
-        i = next((n for n, (h, _, _) in enumerate(cols) if h == after), None)
-        cols.insert(len(cols) if i is None else i + 1, spec)
+        at = len(cols)
+        for anchor in anchors:
+            i = next((n for n, (h, _, _) in enumerate(cols) if h == anchor),
+                     None)
+            if i is not None:
+                at = i + 1
+                break
+        cols.insert(at, spec)
     return cols
 
 
