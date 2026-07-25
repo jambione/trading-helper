@@ -20,6 +20,7 @@ Run (from repo root or this folder):
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import json
 import math
@@ -75,6 +76,7 @@ except Exception:                                          # noqa: BLE001
 import desk_actions as desk
 import spark
 from desk_hotkeys import DeskHotkeys
+from journal import Journal
 from stocktwits_trending import StocktwitsTrending
 from symbol_history import SymbolHistory
 
@@ -124,6 +126,12 @@ DEFAULTS = {
     "rvol_column_enabled": True,
     "rvol_hot": 3.0,
     "rvol_warm": 1.5,
+    # Session journal — one JSONL record per rising edge, the only thing here
+    # that produces evidence rather than a hypothesis. Runtime state: the
+    # directory is gitignored.
+    "journal_enabled": True,
+    "journal_dir": "journal",
+    "journal_flush_sec": 5.0,
     # Price shape. Building, spiking and fading all read +12% on Chg%.
     "spark_enabled": True,
     "spark_width": 20,
@@ -756,6 +764,11 @@ class Feed:
         # Server-published config from /api/state, used to size derived
         # windows against the server's own (e.g. mention_alert_window).
         self.server_cfg: dict = {}
+        # Rising edges detected on the most recent ingest, as (kind, row).
+        # Deliberately independent of the alert_* flags: `alert_buy` defaults
+        # false, so journaling off the alerter's call sites would silently
+        # never record a buy — the most valuable record there is.
+        self.edges: list[tuple[str, dict]] = []
         self.seeded = False                # suppress alerts on the first poll
         self.rows: list[dict] = []
         self.last_ok = 0.0
@@ -769,6 +782,7 @@ class Feed:
         p_lo = float(cfg.get("pctr_focus_lo", -100.0))
         p_hi = float(cfg.get("pctr_focus_hi", -75.0))
         live: set[str] = set()
+        edges: list[tuple[str, dict]] = []
         for r in rows:
             sym = str(r.get("ticker") or "").upper()
             if not sym:
@@ -782,8 +796,14 @@ class Feed:
             # have been lit for ten minutes before the monitor started. Record
             # None so the age renders blank instead of a fresh-looking 0:00.
             # It stays None until the setup actually drops and re-fires.
+            was_lit = sym in self.focus_since
             if rsi_focus_trigger(r, rsi_max, p_lo, p_hi)[1]:
                 self.focus_since.setdefault(sym, now if self.seeded else None)
+                # Only a transition we actually observed is an edge. A setup
+                # already lit on the seeding poll fired before we were
+                # watching, so recording it at `now` would date it wrongly.
+                if self.seeded and not was_lit:
+                    edges.append(("focus", r))
             else:
                 self.focus_since.pop(sym, None)
             burst = bool(r.get("mention_burst"))
@@ -792,15 +812,19 @@ class Feed:
             if is_new:
                 self.first_seen[sym] = now
             if self.seeded:
-                if is_new and cfg.get("alert_new"):
-                    alerter.fire("new", sym, _detail(r))
-                if (burst and not self.prev_burst.get(sym)
-                        and cfg.get("alert_burst")):
-                    alerter.fire("burst", sym,
-                                 f"{r.get('mention_window', '?')} in window")
-                if (buy and not self.prev_buy.get(sym)
-                        and cfg.get("alert_buy")):
-                    alerter.fire("buy", sym, _detail(r))
+                if is_new:
+                    edges.append(("new", r))
+                    if cfg.get("alert_new"):
+                        alerter.fire("new", sym, _detail(r))
+                if burst and not self.prev_burst.get(sym):
+                    edges.append(("burst", r))
+                    if cfg.get("alert_burst"):
+                        alerter.fire("burst", sym,
+                                     f"{r.get('mention_window', '?')} in window")
+                if buy and not self.prev_buy.get(sym):
+                    edges.append(("buy", r))
+                    if cfg.get("alert_buy"):
+                        alerter.fire("buy", sym, _detail(r))
             self.prev_burst[sym] = burst
             self.prev_buy[sym] = buy
 
@@ -820,6 +844,7 @@ class Feed:
 
         rows.sort(key=_key)
         self.rows = rows
+        self.edges = edges
         self.seeded = True
 
     def is_fresh(self, sym: str, now: float) -> bool:
@@ -1320,11 +1345,35 @@ def main():
     feed = Feed(cfg)
     alerter = Alerter(cfg)
     history = SymbolHistory(maxlen=int(cfg.get("history_samples", 120)))
+    journal = Journal(HERE / str(cfg.get("journal_dir", "journal")),
+                      flush_sec=float(cfg.get("journal_flush_sec", 5.0)),
+                      enabled=bool(cfg.get("journal_enabled", True)),
+                      log=console.print)
+    # The desk is stopped with Ctrl+C every day: SIGINT raises
+    # KeyboardInterrupt, which unwinds to sys.exit(0) in __main__ and runs
+    # atexit handlers. The last few records must not be lost.
+    atexit.register(journal.close)
 
     def _st_alert(kind: str, sym: str, detail: str) -> None:
+        # Journal the edge regardless of whether it is audible — the alert
+        # flags control the speaker, not the evidence.
+        journal.record(kind, sym, st_row_for(sym), time.time(),
+                       st_rank=st_rank_for(sym))
         flag = "alert_st_new" if kind == "st_new" else "alert_st_look"
         if cfg.get(flag, True):
             alerter.fire(kind, sym, detail)
+
+    # Refreshed each loop so the ST on_change callback can attach live
+    # context. ST rows carry `price` and `pct_change` under the same key names
+    # the momentum rows use, so one lookup serves rank and record alike.
+    _st_ctx: dict = {"by_symbol": {}}
+
+    def st_row_for(sym: str) -> dict:
+        r = _st_ctx["by_symbol"].get((sym or "").upper())
+        return r if isinstance(r, dict) else {}
+
+    def st_rank_for(sym: str):
+        return st_row_for(sym).get("rank")
 
     hotkeys = DeskHotkeys()
     st = StocktwitsTrending(
@@ -1355,6 +1404,11 @@ def main():
             if state is not None:
                 feed.ingest(state, t0, alerter, cfg)
                 push_history(history, feed.rows, t0)
+                for kind, row in feed.edges:
+                    sym = str(row.get("ticker") or "").upper()
+                    journal.record(kind, sym, row, t0,
+                                   st_rank=st_rank_for(sym),
+                                   rvol=row_rvol(row))
             stale = (t0 - feed.last_ok) > STALE_AFTER if feed.last_ok else \
                     (state is None)
             stamps.append(t0)
@@ -1363,6 +1417,8 @@ def main():
 
             if st is not None:
                 st.refresh(t0)
+                # Before display_rows() fires on_change -> _st_alert.
+                _st_ctx["by_symbol"] = st.by_symbol
 
             # Prices from momentum feed (fallback for ST filter)
             price_map: dict[str, float | None] = {}
@@ -1398,6 +1454,7 @@ def main():
                     st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled))
             panels.append(footer_panel(alerter, hotkeys, hotkey_slots))
             live.update(Group(*panels))
+            journal.maybe_flush(t0)
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
