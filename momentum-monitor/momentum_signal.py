@@ -1261,7 +1261,7 @@ def stocktwits_panel(st: StocktwitsTrending,
                      cfg: dict | None = None,
                      now: float | None = None) -> Panel:
     """Stocktwits trending — website columns + letter key (A-J) + LOOK badge."""
-    from stocktwits_trending import fmt_vol, range_bar
+    from stocktwits_trending import fmt_vol, range_cell
 
     now = time.time() if now is None else now
     rows = st.display_rows(price_by_sym,
@@ -1337,9 +1337,8 @@ def stocktwits_panel(st: StocktwitsTrending,
             ]
             if rvol_on:
                 cells.append(_fmt_st_rvol(r.get("rvol"), cfg))
-            bar = range_bar(px, lo, hi, width=range_w)
             cells += [
-                bar or "[dim]—[/dim]",
+                range_cell(px, lo, hi, width=range_w) or "[dim]—[/dim]",
                 f"{sc:.1f}" if sc is not None else "—",
                 look_s,
             ]
@@ -1350,8 +1349,13 @@ def stocktwits_panel(st: StocktwitsTrending,
     # The list timestamp above is the Stocktwits poll. Quotes ride a faster
     # clock now, so the number the desk actually trades off gets its own age.
     q = ""
+    q_err = getattr(st, "quotes_error", "")
     q_age = st.quote_age(now) if hasattr(st, "quote_age") else None
-    if q_age is not None and q_age >= stale_sec:
+    if q_err:
+        # Without quotes the panel is Stocktwits-only. Say it once in the title
+        # rather than leaving five blank columns to be interpreted.
+        q = f"  ·  [bold yellow]{q_err}[/bold yellow]"
+    elif q_age is not None and q_age >= stale_sec:
         q = f"  ·  [yellow]quotes {_age_short(q_age)} old[/yellow]"
     cap = (f"  ·  max ${st.max_price:g}" if st.max_price is not None else "")
     look_n = f"  ·  {n_look} LOOK" if n_look else ""

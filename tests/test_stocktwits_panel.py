@@ -74,6 +74,75 @@ def test_a_new_52w_high_is_marked_distinctly():
 
 # ── volume names its feed ────────────────────────────────────────────────────
 
+def test_the_52w_bounds_survive_having_no_quote_feed():
+    """Regression: the bounds come from Stocktwits and need no Alpaca keys, but
+    the track needs a current price to place its marker. Collapsing Hi/Lo into
+    one column must not throw away data that was visible before it."""
+    st = _st([_row(price=None, low_52w=19.51, high_52w=52.24)])
+    cell = column_cells(_table(st), "52w lo→hi")[0]
+    assert "19.51" in cell and "52.24" in cell
+
+
+def test_no_bounds_and_no_price_is_still_a_dash():
+    st = _st([_row(price=None, low_52w=None, high_52w=None)])
+    assert "—" in column_cells(_table(st), "52w lo→hi")[0]
+
+
+def test_a_known_price_still_draws_the_track_not_the_bounds():
+    cell = column_cells(_table(_st([_row(price=5.0)])), "52w lo→hi")[0]
+    assert "●" in cell
+
+
+def test_missing_credentials_are_named_in_the_title():
+    """Five blank columns with nothing explaining them is how a morning gets
+    wasted. Without keys the panel is Stocktwits-only and says so."""
+    st = _st([_row()])
+    st.quotes_error = "no Alpaca keys (signal_engine.env)"
+    assert "no Alpaca keys" in stocktwits_panel(st, {}, cfg=DEFAULTS).title
+
+
+def test_the_credential_warning_outranks_the_staleness_warning():
+    """A stale-quote age is meaningless when quotes never ran at all."""
+    st = _st([_row()])
+    st.quotes_error = "no Alpaca keys (signal_engine.env)"
+    st.last_quote_ok = T0 - 9000
+    title = stocktwits_panel(st, {}, cfg=DEFAULTS).title
+    assert "no Alpaca keys" in title
+    assert "quotes" not in title
+
+
+def test_a_quote_attempt_without_keys_reports_rather_than_pretending():
+    st = StocktwitsTrending(enrich_quotes=True)
+    st.rows = [_row()]
+    import stocktwits_trending as stt
+    orig = stt._alpaca_client
+    stt._alpaca_client = lambda: None
+    try:
+        assert st.refresh_quotes(T0) is False
+    finally:
+        stt._alpaca_client = orig
+    assert "Alpaca keys" in st.quotes_error
+    assert st.last_quote_ok == 0.0      # never claim a successful quote
+
+
+def test_the_error_clears_once_keys_appear():
+    st = StocktwitsTrending(enrich_quotes=True)
+    st.rows = [_row()]
+    st.quotes_error = "no Alpaca keys (signal_engine.env)"
+    import stocktwits_trending as stt
+    orig_c, orig_e, orig_a = (stt._alpaca_client, stt.enrich_with_alpaca,
+                              stt.fetch_daily_volumes)
+    stt._alpaca_client = lambda: object()
+    stt.enrich_with_alpaca = lambda rows, **kw: rows
+    stt.fetch_daily_volumes = lambda c, syms: {}
+    try:
+        assert st.refresh_quotes(T0) is True
+    finally:
+        (stt._alpaca_client, stt.enrich_with_alpaca,
+         stt.fetch_daily_volumes) = orig_c, orig_e, orig_a
+    assert st.quotes_error == ""
+
+
 def test_the_volume_column_names_the_iex_feed():
     """Labelled plain "Volume" it read as the consolidated figure the
     Stocktwits site shows, which it is a few percent of."""

@@ -327,7 +327,8 @@ def fetch_daily_volumes(client, syms: list[str]) -> dict[str, list]:
 def enrich_with_alpaca(rows: list[dict[str, Any]],
                        now: float | None = None,
                        avg_by_sym: dict | None = None,
-                       time_adjusted: bool = True) -> list[dict[str, Any]]:
+                       time_adjusted: bool = True,
+                       client=None) -> list[dict[str, Any]]:
     """Attach last, price age, %chg, session volume and RVOL from a snapshot.
 
     `avg_by_sym` supplies the IEX average daily volume per symbol; without it
@@ -338,7 +339,7 @@ def enrich_with_alpaca(rows: list[dict[str, Any]],
     if not rows:
         return rows
     now = time.time() if now is None else now
-    client = _alpaca_client()
+    client = _alpaca_client() if client is None else client
     if client is None:
         return rows
     syms = [r["symbol"] for r in rows if r.get("symbol") and not r.get("is_crypto")]
@@ -460,6 +461,24 @@ def range_bar(price: float | None, lo: float | None,
     colour = "green" if frac >= 0.70 else "red" if frac <= 0.30 else "white"
     return (f"[dim]{'─' * i}[/dim][{colour}]●[/{colour}]"
             f"[dim]{'─' * (w - 1 - i)}[/dim]")
+
+
+def range_cell(price: float | None, lo: float | None, hi: float | None,
+               width: int = 11) -> str:
+    """The 52w track, or the bare bounds when the marker cannot be placed.
+
+    The bounds come from Stocktwits and need no quote feed; the marker needs a
+    current price and does. Falling all the way back to "—" would throw away
+    data that is present and was visible before this column replaced the
+    separate 52w Hi / 52w Lo pair.
+    """
+    bar = range_bar(price, lo, hi, width)
+    if bar:
+        return bar
+    lo_f, hi_f = _f(lo), _f(hi)
+    if lo_f is None or hi_f is None:
+        return ""
+    return f"[dim]{lo_f:.2f}–{hi_f:.2f}[/dim]"
 
 
 def _row_vol(r: dict) -> float | None:
@@ -606,6 +625,7 @@ class StocktwitsTrending:
         self.last_quote_ok: float = 0.0
         self.last_quote_attempt: float = 0.0
         self.error: str = ""
+        self.quotes_error: str = ""
         self._seen: set[str] = set()
         self._prev_look: dict[str, bool] = {}
         self._seeded = False          # suppress alerts on the first poll
@@ -617,7 +637,7 @@ class StocktwitsTrending:
         self._avg_vol_date: str = ""
 
     # ── average daily volume (IEX, day-cached) ───────────────────────────
-    def _avg_volumes(self, syms: list[str], now: float) -> dict:
+    def _avg_volumes(self, syms: list[str], now: float, client=None) -> dict:
         today_et = et_session_date(now)
         today = today_et.isoformat()
         if self._avg_vol_date != today:
@@ -625,7 +645,7 @@ class StocktwitsTrending:
             self._avg_vol_date = today
         wanted = [s for s in syms if s not in self._avg_vol]
         if wanted:
-            client = _alpaca_client()
+            client = _alpaca_client() if client is None else client
             daily = fetch_daily_volumes(client, wanted) if client else {}
             for s in wanted:
                 self._avg_vol[s] = average_volume(
@@ -668,11 +688,20 @@ class StocktwitsTrending:
 
     def _quote(self, now: float) -> bool:
         self.last_quote_attempt = now
+        client = _alpaca_client()
+        if client is None:
+            # Say so rather than rendering a silent wall of dashes. Without
+            # keys the panel is Stocktwits-only — no price, no %chg, no volume,
+            # no RVOL — and nothing on screen explained why.
+            self.quotes_error = "no Alpaca keys (signal_engine.env)"
+            return False
+        self.quotes_error = ""
         syms = [r["symbol"] for r in self.rows
                 if r.get("symbol") and not r.get("is_crypto")]
-        avg = self._avg_volumes(syms, now) if syms else {}
+        avg = self._avg_volumes(syms, now, client=client) if syms else {}
         enrich_with_alpaca(self.rows, now=now, avg_by_sym=avg,
-                           time_adjusted=self.rvol_time_adjusted)
+                           time_adjusted=self.rvol_time_adjusted,
+                           client=client)
         self.by_symbol = {r["symbol"]: r for r in self.rows}
         self.last_quote_ok = now
         return True
