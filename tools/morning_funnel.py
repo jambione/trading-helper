@@ -63,6 +63,41 @@ def expected_fraction(mins_since_open: float) -> float:
     return 1.0
 
 
+def rvol_pair(vol_so_far, avg_vol, mins_since_open: float,
+              time_adjusted: bool = True) -> tuple:
+    """(rvol, rvol_raw) from today's volume so far — or (None, None).
+
+    `vol_so_far` MUST be today's cumulative volume including pre-market, i.e.
+    summed from minute bars fetched with extended_hours=True. Do not pass a
+    daily-bar volume: before the regular session opens, the latest daily bar
+    is *yesterday's completed total*, and dividing that by a fraction of a day
+    reports a wildly high pace for a perfectly ordinary stock.
+
+    `rvol_raw` is the naive full-day ratio (what the old code reported, minus
+    the broken numerator). `rvol` divides the average by the share of a normal
+    day's volume that should be done by now, so 3.0 means "3x the usual pace
+    for this time of day" at any hour, pre-market included.
+
+    Returns (None, None) rather than a placeholder whenever the inputs cannot
+    support a real answer — no volume yet, or no average to compare against.
+    """
+    try:
+        vol = float(vol_so_far)
+        avg = float(avg_vol)
+    except (TypeError, ValueError):
+        return None, None
+    if not (vol > 0) or not (avg > 0):
+        return None, None
+
+    raw = vol / avg
+    if not time_adjusted:
+        return raw, raw
+    frac = expected_fraction(mins_since_open)
+    if not (frac > 0):
+        return raw, raw
+    return vol / (avg * frac), raw
+
+
 # ── candidate gathering ─────────────────────────────────────────────────────
 def _clean(t) -> str:
     t = str(t or "").strip().upper()

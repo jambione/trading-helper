@@ -1097,41 +1097,119 @@ def _price_loop():
 
 # ── Day-volume polling ────────────────────────────────────────────────────────
 
-def _vol_loop():
-    """Fetch day volume + relative volume for watchlist tickers via yfinance.
-    Runs every 60 seconds in a background thread and writes into STATE.tickers
-    so the values flow through to the /api/state response automatically.
+_VOL_AVG_CACHE: dict = {}          # sym -> avg daily volume
+_VOL_AVG_DATE: str = ""            # ET date the averages were computed for
+
+
+def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, today: str) -> dict:
+    """Average daily volume per symbol, from completed sessions only.
+
+    Cached for the ET day — this changes once every 24h, so re-fetching 45
+    days of daily bars every minute would be pure waste.
     """
-    _BATCH = 50
+    global _VOL_AVG_DATE
+    if _VOL_AVG_DATE == today and _VOL_AVG_CACHE:
+        missing = [t for t in tickers if t not in _VOL_AVG_CACHE]
+        if not missing:
+            return _VOL_AVG_CACHE
+        tickers = missing
+    else:
+        _VOL_AVG_CACHE.clear()
+        _VOL_AVG_DATE = today
+
+    daily = mf.fetch_daily(client, tickers, cfg)
+    # Same knob the funnel uses, so funnel.rvol and row.rvol agree — T2.2
+    # prefers the funnel value and falls back to this one.
+    avg_days = int(mf.knobs_from_cfg(cfg)["avg_days"])
+    for sym, df in daily.items():
+        try:
+            import pandas as pd
+            dates = pd.Series(mf._et_index(df).date, index=df.index)
+            completed = df[dates < pd.Timestamp(today).date()]
+            if len(completed) >= 5:
+                _VOL_AVG_CACHE[sym] = float(
+                    completed["volume"].tail(avg_days).mean())
+        except Exception:                                  # noqa: BLE001
+            continue
+    return _VOL_AVG_CACHE
+
+
+def _vol_loop():
+    """Day volume + time-adjusted relative volume for watchlist tickers.
+
+    Source is Alpaca minute bars for today from 04:00 ET with
+    extended_hours=True, summed — i.e. true volume-so-far including
+    pre-market. This replaced yfinance `fast_info.last_volume`, which is the
+    last *daily* bar: before the regular session opens that is yesterday's
+    completed total, so both `day_vol` and `rvol` described the wrong day
+    during the pre-market tranches. See tools.morning_funnel.rvol_pair.
+
+    Publishes nothing at all for a symbol with no volume today (weekends,
+    holidays, halted or untraded names). A blank volume cell is correct;
+    a stale one from a previous session is not.
+
+    Runs every 60s in a background thread and writes into STATE.tickers so
+    the values flow through to /api/state automatically.
+    """
+    try:
+        import tools.morning_funnel as mf   # lazy: pulls pandas into this thread
+    except Exception as e:                                  # noqa: BLE001
+        log.warning(f"[VOL] disabled — import failed: {e}")
+        return
+
     while True:
         try:
             tickers = load_tickers()
-            if tickers:
-                import yfinance as yf
-                vol_data: dict = {}
-                for i in range(0, len(tickers), _BATCH):
-                    batch = tickers[i:i + _BATCH]
-                    try:
-                        tks = yf.Tickers(" ".join(batch))
-                        for sym in batch:
-                            try:
-                                fi = tks.tickers[sym].fast_info
-                                day_vol = int(getattr(fi, "last_volume", 0) or 0)
-                                avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
-                                if day_vol > 0:
-                                    vol_data[sym] = {
-                                        "day_vol": day_vol,
-                                        "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
-                                    }
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        log.debug("[VOL] batch %d-%d failed: %s", i, i + _BATCH, e)
-                with STATE.lock:
-                    for sym, vd in vol_data.items():
-                        STATE.tickers.setdefault(sym, {}).update(vd)
-                log.debug(f"[VOL] updated volume for {len(vol_data)}/{len(tickers)} tickers")
-        except Exception as e:
+            client = STATE.data_client
+            if not tickers or client is None:
+                time.sleep(5 if client is None else 60)
+                continue
+
+            cfg = STATE.cfg
+            time_adj = bool(cfg.get("rvol_time_adjusted", True))
+            now_et = datetime.now(ET)
+            today = str(now_et.date())
+            mins_open = (now_et.hour * 60 + now_et.minute) - mf.OPEN_MIN
+
+            avg_by_sym = _vol_avg_volumes(mf, client, tickers, cfg, today)
+            minutes = mf.fetch_minutes_today(client, tickers, cfg, now_et)
+
+            vol_data: dict = {}
+            stale: list = []
+            for sym in tickers:
+                df = minutes.get(sym)
+                if df is None or df.empty:
+                    stale.append(sym)
+                    continue
+                try:
+                    vol_so_far = float(df["volume"].sum())
+                    rvol, rvol_raw = mf.rvol_pair(
+                        vol_so_far, avg_by_sym.get(sym), mins_open, time_adj)
+                    if vol_so_far <= 0:
+                        stale.append(sym)
+                        continue
+                    vol_data[sym] = {
+                        "day_vol": int(vol_so_far),
+                        "rvol": round(rvol, 2) if rvol is not None else None,
+                        "rvol_raw": (round(rvol_raw, 2)
+                                     if rvol_raw is not None else None),
+                    }
+                except Exception:                          # noqa: BLE001
+                    stale.append(sym)
+
+            with STATE.lock:
+                for sym, vd in vol_data.items():
+                    STATE.tickers.setdefault(sym, {}).update(vd)
+                # Drop values we can no longer stand behind rather than
+                # leaving yesterday's numbers on screen.
+                for sym in stale:
+                    row = STATE.tickers.get(sym)
+                    if row:
+                        for k in ("day_vol", "rvol", "rvol_raw"):
+                            row.pop(k, None)
+            log.debug("[VOL] %d/%d tickers  mins_open=%d  adj=%s",
+                      len(vol_data), len(tickers), mins_open, time_adj)
+        except Exception as e:                             # noqa: BLE001
             log.debug(f"[VOL] {e}")
         time.sleep(60)
 
