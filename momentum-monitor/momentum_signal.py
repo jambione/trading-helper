@@ -102,6 +102,25 @@ DEFAULTS = {
     "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
     "pctr_focus_lo": -100.0,     # both %R lines >= lo
     "pctr_focus_hi": -75.0,      # both %R lines <= hi
+    # How long FOCUS has been lit. A setup that fired 12s ago and one sitting
+    # for 6 minutes are different trades.
+    "focus_age_enabled": True,
+    "focus_age_fresh_sec": 60.0,
+    "focus_age_stale_sec": 180.0,
+    # Distance-to-trigger: turns the binary Setup column into a queue.
+    "setup_distance_enabled": True,
+    "setup_near_threshold": 0.25,
+    # How much the engine's own 3-indicator completion counts toward the
+    # distance vs the desk's two FOCUS legs. 0.0 = legs only.
+    "setup_proximity_weight": 0.35,
+    # Reordering rows by setup distance is OFF until it has been watched for
+    # a few sessions — ship the column first (roadmap T1.2).
+    "setup_sort_enabled": False,
+    # Mention acceleration arrow. The derivative is the signal, not the count.
+    "mention_trend_enabled": True,
+    "mention_trend_min_samples": 8,
+    "mention_trend_rise": 1.5,
+    "mention_trend_fall": 0.6,
     # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
     "stocktwits_enabled": True,
     "stocktwits_poll": 60.0,     # seconds between ST API polls
@@ -266,10 +285,186 @@ def _setup_readout(rsi: float,
     return "·".join(parts) if len(parts) > 1 else parts[0]
 
 
-def _rsi_focus_cell(row: dict,
+def _focus_age_str(seconds: float | None) -> str:
+    """M:SS since FOCUS lit — "0:14", "6:02", "" when not lit.
+
+    Capped at "9:59+" so the Setup column cannot widen without bound on a
+    setup that has been sitting all morning.
+    """
+    s = _fnum(seconds)
+    if s is None or s < 0:
+        return ""
+    if s >= 600:
+        return "9:59+"
+    return f"{int(s) // 60}:{int(s) % 60:02d}"
+
+
+def _focus_age_markup(seconds: float | None,
+                      fresh_sec: float = 60.0,
+                      stale_sec: float = 180.0) -> str:
+    """Coloured age chip. A stale FOCUS should look stale."""
+    txt = _focus_age_str(seconds)
+    if not txt:
+        return ""
+    s = _fnum(seconds) or 0.0
+    color = ("green" if s < float(fresh_sec)
+             else "yellow" if s < float(stale_sec) else "dim")
+    return f"[{color}]{txt}[/{color}]"
+
+
+def _clamp01(v: float) -> float:
+    return 0.0 if v < 0.0 else 1.0 if v > 1.0 else float(v)
+
+
+def setup_distance(row: dict,
+                   rsi_max: float = 35.0,
+                   pctr_lo: float = -100.0,
+                   pctr_hi: float = -75.0,
+                   *,
+                   proximity_weight: float = 0.35) -> float | None:
+    """How far this row is from firing FOCUS.
+
+    0.0 = firing now, 1.0 = far away, None = untracked or no CM RSI yet.
+
+    A row that satisfies both legs returns exactly 0.0 and nothing can push
+    it off zero. That matters because `proximity_pct` is the engine's
+    *three*-indicator completion — it includes MACD, which FOCUS does not —
+    so a genuinely firing setup with no MACD cross reports well under 100.
+    Blending it into a live FOCUS would rank it behind near-misses.
+
+    Non-firing rows are floored just above zero so a firing row always sorts
+    ahead of every near-miss, including the case where the legs look in-band
+    but the engine's `pctr_deep_os` / falling flags withhold the trigger.
+    """
+    sp = _sp(row)
+    if not sp:
+        return None
+    rsi = _cm_rsi_value(row)
+    if rsi is None:
+        return None
+    if rsi_focus_trigger(row, rsi_max, pctr_lo, pctr_hi)[1]:
+        return 0.0
+
+    hi = float(pctr_hi)
+    lo = float(pctr_lo)
+    legs: list[float] = []
+
+    # RSI leg: how far above the green-long ceiling, over the range that
+    # remains above it.
+    if _rsi_leg_ok(row, rsi_max):
+        legs.append(0.0)
+    else:
+        span = max(1e-9, 100.0 - float(rsi_max))
+        legs.append(_clamp01((rsi - float(rsi_max)) / span))
+
+    # %R leg: the worse of fast/slow, measured outside the deep-OS band.
+    fast, slow = _pctr_pair(row)
+    vals = [v for v in (fast, slow) if v is not None]
+    if not vals:
+        legs.append(1.0)
+    elif _pctr_leg_ok(row, lo, hi):
+        legs.append(0.0)
+    else:
+        span = max(1e-9, abs(hi))
+        gaps = [(v - hi) / span if v > hi
+                else (lo - v) / span if v < lo else 0.0 for v in vals]
+        legs.append(_clamp01(max(gaps)))
+
+    dist = sum(legs) / len(legs)
+
+    # Blend in the engine's own completion number — do not ignore it.
+    prox = _fnum(sp.get("proximity_pct"))
+    if prox is not None:
+        w = _clamp01(proximity_weight)
+        dist = (1.0 - w) * dist + w * _clamp01(1.0 - prox / 100.0)
+
+    # Strictly greater than a firing row's 0.0.
+    return min(1.0, max(1e-3, dist))
+
+
+def setup_shortfall(row: dict,
                     max_lvl: float = 35.0,
                     pctr_lo: float = -100.0,
                     pctr_hi: float = -75.0) -> str:
+    """Which legs still have to move, and to where: 'rsi 38→35  %R -72→-75'.
+
+    Only the failing legs appear. Empty string when both are satisfied.
+    """
+    bits = []
+    rsi = _cm_rsi_value(row)
+    if rsi is not None and not _rsi_leg_ok(row, max_lvl):
+        bits.append(f"rsi {rsi:.0f}→{float(max_lvl):.0f}")
+    if not _pctr_leg_ok(row, pctr_lo, pctr_hi):
+        hi = float(pctr_hi)
+        outside = [v for v in _pctr_pair(row) if v is not None and v > hi]
+        if outside:
+            bits.append(f"%R {max(outside):.0f}→{hi:.0f}")
+    return "  ".join(bits)
+
+
+def mention_trend(hist_series: list[float],
+                  engine_velocity: float | None = None,
+                  rise: float = 1.5,
+                  fall: float = 0.6,
+                  min_samples: int = 8) -> str:
+    """Direction of mention flow: "↑↑" | "↑" | "→" | "↓" | "".
+
+    Compares the mean of the recent half of the window against the older
+    half. Returns "" below `min_samples` — an arrow computed off two points
+    is noise, not information.
+
+    On `engine_velocity`: the engine's `mention_velocity` is a *level* (a
+    count inside its rolling window), not a rate, so it carries no direction
+    on its own and cannot "take precedence" over a computed trend. What it
+    can do is contribute the freshest observation. The caller therefore picks
+    ONE scale per call — pass the mention_velocity series together with the
+    live engine value, or the mention_window series with None — and this
+    function appends the live value as the newest sample. Mixing the two
+    scales in one series would fabricate a jump.
+    """
+    series = [v for v in (hist_series or []) if v is not None]
+    ev = _fnum(engine_velocity)
+    if ev is not None:
+        series = [*series, ev]
+    if len(series) < max(2, int(min_samples)):
+        return ""
+
+    half = len(series) // 2
+    older, recent = series[:half], series[half:]
+    o = sum(older) / len(older)
+    r = sum(recent) / len(recent)
+
+    if o <= 0:
+        # Coming off zero is a rise only if there is something there now.
+        return "↑↑" if r > 0 else "→"
+    ratio = r / o
+    strong = float(rise) * float(rise)      # 1.5 -> 2.25x is "↑↑"
+    if ratio >= strong:
+        return "↑↑"
+    if ratio >= float(rise):
+        return "↑"
+    if ratio <= float(fall):
+        return "↓"
+    return "→"
+
+
+def _mention_trend_color(arrow: str) -> str:
+    if arrow.startswith("↑"):
+        return "green"
+    if arrow.startswith("↓"):
+        return "red"
+    return "dim"
+
+
+def _rsi_focus_cell(row: dict,
+                    max_lvl: float = 35.0,
+                    pctr_lo: float = -100.0,
+                    pctr_hi: float = -75.0,
+                    *,
+                    age: float | None = None,
+                    near: str | None = None,
+                    fresh_sec: float = 60.0,
+                    stale_sec: float = 180.0) -> str:
     """Rich markup for the Setup column (combined CM RSI + %R cue).
 
     Empty:
@@ -280,6 +475,13 @@ def _rsi_focus_cell(row: dict,
       dim  17           RSI only (%R not published yet)
     Full setup:
       FOCUS  3·−99/−77  both legs true — number is RSI·fast/slow %R
+      FOCUS 0:14  3·−99/−77   with `age` (T1.1)
+    Near miss (`near` supplied by the caller, T1.2):
+      NEAR  rsi 38→35  %R −72→−75
+
+    `age` and `near` are opt-in parameters, not config lookups: the caller
+    decides whether the features are on. Omitting both renders exactly what
+    this cell has always rendered.
     """
     rsi, hit = rsi_focus_trigger(row, max_lvl, pctr_lo, pctr_hi)
     if rsi is None:
@@ -290,8 +492,14 @@ def _rsi_focus_cell(row: dict,
     fast, slow = _pctr_pair(row)
     readout = _setup_readout(rsi, fast, slow)
     if hit:
-        return (f"[bold black on green] FOCUS [/] "
-                f"[bold green]{readout}[/bold green]")
+        chip = _focus_age_markup(age, fresh_sec, stale_sec)
+        lead = "[bold black on green] FOCUS [/]"
+        if chip:
+            lead += f" {chip}"
+        return f"{lead} [bold green]{readout}[/bold green]"
+    if near:
+        return (f"[bold yellow]NEAR[/bold yellow] "
+                f"[yellow]{near}[/yellow]")
     return f"[dim]{readout}[/dim]"
 
 
@@ -454,10 +662,30 @@ def row_rank(row: dict, first_seen: float, now: float,
     NEW badge (`Feed.is_fresh`), never position. Anything that makes the
     freshness term expire is a behavior change, not a refactor.
 
-    `row`, `now` and `cfg` are unused today. They are the seam T1.2
-    (setup distance) and T5.2 (confluence weighting) plug into, so those
-    tickets can add terms without touching `Feed.ingest`.
+    With `setup_sort_enabled` (default off) a setup-distance term is
+    inserted *beneath* freshness but above server order, so it reorders only
+    symbols that were first seen in the same poll — which is every symbol on
+    the opening snapshot, and none thereafter. Appending it after
+    `server_idx` instead would be dead weight: server_idx is unique per row,
+    so nothing downstream of it can ever break a tie.
+
+    `now` is unused today; it is the seam T5.2 plugs into.
     """
+    if cfg and cfg.get("setup_sort_enabled"):
+        try:
+            d = setup_distance(
+                row,
+                float(cfg.get("rsi_focus_max", 35.0)),
+                float(cfg.get("pctr_focus_lo", -100.0)),
+                float(cfg.get("pctr_focus_hi", -75.0)),
+                proximity_weight=float(cfg.get("setup_proximity_weight",
+                                               0.35)),
+            )
+        except Exception:                                  # noqa: BLE001
+            d = None
+        # Untracked rows carry no setup information — park them with the
+        # far-away rows rather than ahead of a measured near-miss.
+        return (-first_seen, 1.0 if d is None else d, server_idx)
     return (-first_seen, server_idx)
 
 
@@ -472,6 +700,8 @@ class Feed:
         self.first_seen: dict[str, float] = {}
         self.prev_burst: dict[str, bool] = {}
         self.prev_buy: dict[str, bool] = {}
+        # When FOCUS lit for each symbol currently in it. Absent = not lit.
+        self.focus_since: dict[str, float] = {}
         self.seeded = False                # suppress alerts on the first poll
         self.rows: list[dict] = []
         self.last_ok = 0.0
@@ -479,10 +709,22 @@ class Feed:
     def ingest(self, state: dict, now: float, alerter: Alerter, cfg: dict):
         rows = list(state.get("tickers") or [])
         self.last_ok = now
+        rsi_max = float(cfg.get("rsi_focus_max", 35.0))
+        p_lo = float(cfg.get("pctr_focus_lo", -100.0))
+        p_hi = float(cfg.get("pctr_focus_hi", -75.0))
+        live: set[str] = set()
         for r in rows:
             sym = str(r.get("ticker") or "").upper()
             if not sym:
                 continue
+            live.add(sym)
+            # FOCUS rising edge. setdefault keeps the original stamp while
+            # the setup stays lit; dropping out clears it so a re-fire
+            # restarts the clock rather than resuming it.
+            if rsi_focus_trigger(r, rsi_max, p_lo, p_hi)[1]:
+                self.focus_since.setdefault(sym, now)
+            else:
+                self.focus_since.pop(sym, None)
             burst = bool(r.get("mention_burst"))
             buy = _is_buy(r)
             is_new = sym not in self.first_seen
@@ -501,6 +743,11 @@ class Feed:
             self.prev_burst[sym] = burst
             self.prev_buy[sym] = buy
 
+        # A symbol that left the feed must not resume its old FOCUS clock
+        # when it comes back.
+        for gone in [s for s in self.focus_since if s not in live]:
+            del self.focus_since[gone]
+
         # newest first_seen on top; server order (mention rank) breaks ties
         # via stable sort. Symbols no longer in the feed drop off the list.
         order = {(r.get("ticker") or "").upper(): i for i, r in enumerate(rows)}
@@ -516,6 +763,11 @@ class Feed:
 
     def is_fresh(self, sym: str, now: float) -> bool:
         return now - self.first_seen.get(sym, 0.0) <= self.new_ttl
+
+    def focus_age(self, sym: str, now: float) -> float | None:
+        """Seconds since FOCUS lit for `sym`, or None if it is not lit."""
+        since = self.focus_since.get(sym)
+        return None if since is None else max(0.0, now - since)
 
 
 def _detail(row: dict) -> str:
@@ -545,10 +797,12 @@ def push_history(history: SymbolHistory, rows: list[dict],
             continue
         live.add(sym)
         with contextlib.suppress(Exception):
+            sp = _sp(r)
             history.push(sym, now,
                          price=r.get("price"),
                          mention_window=r.get("mention_window"),
-                         proximity_pct=_sp(r).get("proximity_pct"),
+                         mention_velocity=sp.get("mention_velocity"),
+                         proximity_pct=sp.get("proximity_pct"),
                          rvol=r.get("rvol"))
     with contextlib.suppress(Exception):
         history.prune(live)
@@ -597,12 +851,65 @@ def _cell_chg(row: dict, ctx: dict) -> str:
 def _cell_mentions(row: dict, ctx: dict) -> str:
     win = row.get("mention_window") or 0
     day = row.get("mention_count") or 0
-    return f"{win}/{day}" if (win or day) else "—"
+    if not (win or day):
+        # No mentions at all: "— →" would dress up an absence as a reading.
+        return "—"
+    arrow = _mention_arrow(row, ctx)
+    if not arrow:
+        return f"{win}/{day}"
+    return f"{win}/{day} [{_mention_trend_color(arrow)}]{arrow}[/]"
+
+
+def _mention_arrow(row: dict, ctx: dict) -> str:
+    """Trend arrow for the Mentions cell, or "" when the feature is off or
+    there is not enough tape yet.
+
+    Prefers the engine's mention_velocity series when it has accumulated
+    enough samples — it is the higher-resolution number — and falls back to
+    the polled mention_window series. One scale per call: the live engine
+    value is only ever appended to its own series.
+    """
+    cfg = ctx.get("cfg") or {}
+    hist = ctx.get("history")
+    if hist is None or not cfg.get("mention_trend_enabled", True):
+        return ""
+    sym = ctx["sym"]
+    min_n = int(cfg.get("mention_trend_min_samples", 8))
+    rise = float(cfg.get("mention_trend_rise", 1.5))
+    fall = float(cfg.get("mention_trend_fall", 0.6))
+    engine_vel = _fnum(_sp(row).get("mention_velocity"))
+
+    vel = hist.series(sym, "mention_velocity")
+    if len(vel) + (1 if engine_vel is not None else 0) >= min_n:
+        return mention_trend(vel, engine_vel, rise, fall, min_n)
+    return mention_trend(hist.series(sym, "mention_window"), None,
+                         rise, fall, min_n)
 
 
 def _cell_setup(row: dict, ctx: dict) -> str:
-    return _rsi_focus_cell(row, ctx["rsi_focus_max"],
-                           ctx["pctr_focus_lo"], ctx["pctr_focus_hi"])
+    cfg = ctx.get("cfg") or {}
+    rsi_max = ctx["rsi_focus_max"]
+    p_lo, p_hi = ctx["pctr_focus_lo"], ctx["pctr_focus_hi"]
+
+    age = None
+    if cfg.get("focus_age_enabled", True):
+        feed = ctx.get("feed")
+        if feed is not None and hasattr(feed, "focus_age"):
+            age = feed.focus_age(ctx["sym"], ctx["now"])
+
+    near = None
+    if cfg.get("setup_distance_enabled", True):
+        d = setup_distance(row, rsi_max, p_lo, p_hi,
+                           proximity_weight=float(
+                               cfg.get("setup_proximity_weight", 0.35)))
+        if d is not None and 0.0 < d < float(
+                cfg.get("setup_near_threshold", 0.25)):
+            near = setup_shortfall(row, rsi_max, p_lo, p_hi) or None
+
+    return _rsi_focus_cell(
+        row, rsi_max, p_lo, p_hi, age=age, near=near,
+        fresh_sec=float(cfg.get("focus_age_fresh_sec", 60.0)),
+        stale_sec=float(cfg.get("focus_age_stale_sec", 180.0)))
 
 
 def _cell_flags(row: dict, ctx: dict) -> str:
@@ -642,7 +949,9 @@ def momentum_table(feed: Feed, now: float, hz: float,
                    pctr_focus_lo: float = -100.0,
                    pctr_focus_hi: float = -75.0,
                    st_rank: dict[str, int] | None = None,
-                   columns: list | None = None) -> Table:
+                   columns: list | None = None,
+                   history=None,
+                   cfg: dict | None = None) -> Table:
     cols = MOMENTUM_COLUMNS if columns is None else columns
     t = Table(expand=False)
     for header, opts, _ in cols:
@@ -659,6 +968,8 @@ def momentum_table(feed: Feed, now: float, hz: float,
             "pctr_focus_lo": pctr_focus_lo,
             "pctr_focus_hi": pctr_focus_hi,
             "st_rank": st_rank,
+            "history": history,
+            "cfg": cfg or {},
         }
         cells = []
         for _, _, build in cols:
@@ -915,7 +1226,8 @@ def main():
             panels = [header_panel(feed, t0, hz, stale)]
             panels.append(momentum_table(
                 feed, t0, hz, hotkeys.enabled,
-                rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank))
+                rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank,
+                history=history, cfg=cfg))
             if st is not None:
                 panels.append(stocktwits_panel(
                     st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled))

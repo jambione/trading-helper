@@ -20,7 +20,8 @@ from collections import deque
 # Sample fields accepted by push(). Anything else is ignored, so a caller
 # that starts sending a new field before this list learns about it degrades
 # to "no data" instead of raising.
-FIELDS = ("price", "mention_window", "proximity_pct", "rvol")
+FIELDS = ("price", "mention_window", "mention_velocity", "proximity_pct",
+          "rvol")
 
 DEFAULT_MAXLEN = 120
 
@@ -49,7 +50,7 @@ class SymbolHistory:
 
     # ── write ────────────────────────────────────────────────────────────
     def push(self, sym: str, ts: float, *, price=None, mention_window=None,
-             proximity_pct=None, rvol=None) -> None:
+             mention_velocity=None, proximity_pct=None, rvol=None) -> None:
         """Append one sample. Oldest is evicted once the ring is full.
 
         A sample whose every field is None is still recorded: the timestamp
@@ -69,6 +70,7 @@ class SymbolHistory:
             "ts": t,
             "price": _num(price),
             "mention_window": _num(mention_window),
+            "mention_velocity": _num(mention_velocity),
             "proximity_pct": _num(proximity_pct),
             "rvol": _num(rvol),
         })
