@@ -16,10 +16,12 @@ from spark import BLOCKS, FLAT, direction, sparkline  # noqa: E402
 from symbol_history import SymbolHistory  # noqa: E402
 
 T0 = 1753449600.0
+# spark_enabled ships FALSE (the price feed is too coarse pre-market to draw
+# a trustworthy shape), so these tests opt in explicitly.
 CFG = {**DEFAULTS, "alert_new": False, "alert_burst": False,
        "alert_buy": False, "focus_age_enabled": False,
        "setup_distance_enabled": False, "mention_trend_enabled": False,
-       "rvol_column_enabled": False}
+       "rvol_column_enabled": False, "spark_enabled": True}
 
 
 def _heights(s: str) -> list[int]:
@@ -242,3 +244,47 @@ def test_historical_columns_keep_their_order_with_both_optionals_on():
         {**CFG, "rvol_column_enabled": True, "spark_enabled": True})]
     base = [h for h, _, _ in MOMENTUM_COLUMNS]
     assert [h for h in headers if h in base] == base
+
+
+# ── refusing to draw the poll cadence ────────────────────────────────────────
+
+def test_ships_disabled_because_the_price_feed_is_too_coarse():
+    """dashboard.py falls back to a 30s Finnhub REST poll pre-market, which at
+    a 2s sample interval is ~15 identical samples per real observation. A level
+    survives being 30s stale; a shape does not."""
+    assert DEFAULTS["spark_enabled"] is False
+    assert "Shape" not in [h for h, _, _ in momentum_columns(DEFAULTS)]
+
+
+def test_a_window_of_one_repeated_price_draws_nothing():
+    """15 samples of the same price is the poll cadence, not the tape."""
+    hist = _hist("AAAA", [3.41] * 15)
+    cell = _shape_cells([{"ticker": "AAAA"}], hist)[0]
+    assert not any(b in cell for b in BLOCKS)
+    assert cell == " " * int(CFG["spark_width"])
+
+
+def test_two_distinct_prices_is_still_not_enough():
+    hist = _hist("AAAA", [3.41] * 8 + [3.44] * 7)
+    assert not any(b in _shape_cells([{"ticker": "AAAA"}], hist)[0]
+                   for b in BLOCKS)
+
+
+def test_three_distinct_prices_clears_the_gate():
+    hist = _hist("AAAA", [3.41] * 5 + [3.44] * 5 + [3.47] * 5)
+    assert any(b in _shape_cells([{"ticker": "AAAA"}], hist)[0]
+               for b in BLOCKS)
+
+
+def test_distinct_gate_is_configurable():
+    hist = _hist("AAAA", [3.41] * 8 + [3.44] * 7)
+    assert any(b in _shape_cells([{"ticker": "AAAA"}], hist,
+                                 spark_min_distinct=2)[0] for b in BLOCKS)
+    assert not any(b in _shape_cells([{"ticker": "AAAA"}], hist,
+                                     spark_min_distinct=5)[0] for b in BLOCKS)
+
+
+def test_a_genuinely_ticking_price_is_unaffected():
+    hist = _hist("AAAA", [3.40 + i * 0.01 for i in range(12)])
+    assert any(b in _shape_cells([{"ticker": "AAAA"}], hist)[0]
+               for b in BLOCKS)

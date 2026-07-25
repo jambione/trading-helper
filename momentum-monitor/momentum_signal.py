@@ -133,7 +133,20 @@ DEFAULTS = {
     "journal_dir": "journal",
     "journal_flush_sec": 5.0,
     # Price shape. Building, spiking and fading all read +12% on Chg%.
-    "spark_enabled": True,
+    #
+    # DEFAULT OFF. The idea is sound but the input is not good enough in the
+    # windows that matter. dashboard.py's price loop takes Finnhub WebSocket
+    # ticks when they exist, but its own comment notes "in pre-market/
+    # after-hours, WebSocket is often idle" — and there the price comes from a
+    # 30s Finnhub REST poll, which WINS the merge over the 5s Alpaca fallback.
+    # At a 2.0s sample interval that is ~15 identical samples per real
+    # observation, so a 10-block spark can be drawn from a single price.
+    # A level tolerates being 30s stale; a SHAPE does not — the derivative is
+    # exactly what coarse granularity destroys. Two of the three tranches
+    # (07:00, 08:30) are pre-market, so the column is least trustworthy when
+    # it would be used most.
+    # Turn on only for regular-hours use, and see spark_min_distinct below.
+    "spark_enabled": False,
     # 10 blocks ≈ 20s of tape at a 2.0s poll. The building/spiking/fading
     # distinction survives at half the width of the roadmap's 20, and the
     # column is the widest thing on the row.
@@ -141,6 +154,14 @@ DEFAULTS = {
     # Below this many samples no spark is drawn: 3 blocks over 6s look exactly
     # like 3 blocks over 4 minutes.
     "spark_min_samples": 5,
+    # Distinct price values required in the window before shape is drawn.
+    # This is the self-check: the feed publishes no usable observation
+    # timestamp (see below), so the only way to tell "the tape is moving" from
+    # "I am sampling faster than the price updates" is to count how many
+    # different prices are actually in the window. One or two distinct values
+    # across ten samples means the picture would be the poll cadence, not the
+    # tape — so draw nothing.
+    "spark_min_distinct": 3,
     # Smallest peak-to-trough move (% of the window midpoint) allowed to draw
     # shape. Per-row min→max scaling fills the full height whatever the range,
     # so without this a stock ticking 10.00/10.01 draws the same violent
@@ -986,6 +1007,14 @@ def _cell_spark(row: dict, ctx: dict) -> str:
     if hist is None:
         return " " * width
     series = hist.series(ctx["sym"], "price")
+    # Refuse to draw a picture of the polling interval. `price` updates on
+    # streamed trades when there are any, but falls back to a 30s REST poll
+    # pre-market — so a window of samples can hold a single real observation.
+    # Counting distinct values is the only staleness check available: the feed's
+    # `price_ts` is rewritten every 10Hz loop pass whether or not the price
+    # changed, so it always reads fresh and detects nothing.
+    if len(set(series)) < int(cfg.get("spark_min_distinct", 3)):
+        return " " * width
     min_n = int(cfg.get("spark_min_samples", 5))
     txt = spark.sparkline(series, width, min_samples=min_n,
                           flat_pct=float(cfg.get("spark_flat_pct", 0.1)))
