@@ -8,6 +8,7 @@ from momentum_signal import (  # noqa: E402
     DEFAULTS,
     Feed,
     mention_trend,
+    mention_trend_floor,
     momentum_table,
     push_history,
 )
@@ -133,16 +134,16 @@ def _hist_with(sym, field, values):
 
 
 def test_arrow_is_appended_to_the_mentions_cell():
-    hist = _hist_with("AAAA", "mention_window", [1, 1, 1, 1, 8, 9, 10, 11])
-    rows = [{"ticker": "AAAA", "mention_window": 11, "mention_count": 47}]
+    hist = _hist_with("AAAA", "mention_window", [1] * 5 + [8, 9, 10, 11, 12])
+    rows = [{"ticker": "AAAA", "mention_window": 12, "mention_count": 47}]
     cell = _mentions_cells(rows, hist)[0]
-    assert cell.startswith("11/47 ")
+    assert cell.startswith("12/47 ")
     assert "↑↑" in cell
     assert "green" in cell
 
 
 def test_falling_arrow_is_red():
-    hist = _hist_with("AAAA", "mention_window", [10, 9, 8, 7, 2, 1, 1, 1])
+    hist = _hist_with("AAAA", "mention_window", [10] * 5 + [2, 1, 1, 1, 1])
     rows = [{"ticker": "AAAA", "mention_window": 1, "mention_count": 47}]
     cell = _mentions_cells(rows, hist)[0]
     assert "↓" in cell
@@ -150,7 +151,7 @@ def test_falling_arrow_is_red():
 
 
 def test_flat_arrow_is_dim():
-    hist = _hist_with("AAAA", "mention_window", [4] * 8)
+    hist = _hist_with("AAAA", "mention_window", [4] * 10)
     rows = [{"ticker": "AAAA", "mention_window": 4, "mention_count": 47}]
     cell = _mentions_cells(rows, hist)[0]
     assert "→" in cell
@@ -164,10 +165,10 @@ def test_cell_is_exactly_as_today_below_min_samples():
 
 
 def test_cell_is_exactly_as_today_when_flag_off():
-    hist = _hist_with("AAAA", "mention_window", [1, 1, 1, 1, 8, 9, 10, 11])
-    rows = [{"ticker": "AAAA", "mention_window": 11, "mention_count": 47}]
+    hist = _hist_with("AAAA", "mention_window", [1] * 5 + [8, 9, 10, 11, 12])
+    rows = [{"ticker": "AAAA", "mention_window": 12, "mention_count": 47}]
     assert _mentions_cells(rows, hist,
-                           mention_trend_enabled=False)[0] == "11/47"
+                           mention_trend_enabled=False)[0] == "12/47"
 
 
 def test_no_history_object_renders_as_today():
@@ -183,6 +184,81 @@ def test_a_row_with_no_mentions_gets_no_arrow():
     hist = _hist_with("AAAA", "mention_window", [0] * 10)
     rows = [{"ticker": "AAAA", "mention_window": 0, "mention_count": 0}]
     assert _mentions_cells(rows, hist)[0] == "—"
+
+
+# ── sample floor derived from the server's real window ───────────────────────
+
+def test_floor_requires_each_half_to_span_the_mention_window():
+    """Each sample counts mentions over the server's trailing 10s window, so
+    one mention appears in 5 consecutive 2s samples. If a compared half spans
+    less than 10s the same mention lands in both halves and the "derivative"
+    measures one event twice. Halves must span >= the window."""
+    cfg = {"mention_trend_min_samples": 8, "poll_interval": 2.0}
+    # 8 samples = 16s of tape, halves of 8s each -> below the 10s window.
+    assert mention_trend_floor(cfg, {"mention_alert_window": 10}) == 10
+
+
+def test_floor_scales_with_the_window():
+    cfg = {"mention_trend_min_samples": 8, "poll_interval": 2.0}
+    assert mention_trend_floor(cfg, {"mention_alert_window": 30}) == 30
+    assert mention_trend_floor(cfg, {"mention_alert_window": 60}) == 60
+
+
+def test_floor_scales_with_the_poll_interval():
+    """A slower poll needs fewer samples to span the same wall-clock window."""
+    win = {"mention_alert_window": 10}
+    assert mention_trend_floor(
+        {"mention_trend_min_samples": 2, "poll_interval": 10.0}, win) == 2
+    assert mention_trend_floor(
+        {"mention_trend_min_samples": 2, "poll_interval": 1.0}, win) == 20
+
+
+def test_configured_value_wins_when_it_is_stricter():
+    cfg = {"mention_trend_min_samples": 40, "poll_interval": 2.0}
+    assert mention_trend_floor(cfg, {"mention_alert_window": 10}) == 40
+
+
+def test_floor_falls_back_when_the_server_publishes_no_window():
+    cfg = {"mention_trend_min_samples": 8, "poll_interval": 2.0}
+    assert mention_trend_floor(cfg, None) == 8
+    assert mention_trend_floor(cfg, {}) == 8
+    assert mention_trend_floor(cfg, {"mention_alert_window": 0}) == 8
+    assert mention_trend_floor(cfg, {"mention_alert_window": "junk"}) == 8
+
+
+def test_floor_is_applied_to_the_rendered_cell():
+    """With the real 10s window, 8 samples must NOT produce an arrow."""
+    hist = _hist_with("AAAA", "mention_window", [1, 1, 1, 1, 8, 9, 10, 11])
+    rows = [{"ticker": "AAAA", "mention_window": 11, "mention_count": 47}]
+    f = Feed(CFG)
+    f.rows = rows
+    f.server_cfg = {"mention_alert_window": 10}
+    t = momentum_table(f, T0, 0.5, True, cfg=CFG, history=hist)
+    assert next(iter(list(t.columns)[5].cells)) == "11/47"
+
+
+def test_arrow_appears_once_the_derived_floor_is_met():
+    hist = _hist_with("AAAA", "mention_window",
+                      [1] * 5 + [9] * 5)          # 10 samples, halves of 10s
+    rows = [{"ticker": "AAAA", "mention_window": 9, "mention_count": 47}]
+    f = Feed(CFG)
+    f.rows = rows
+    f.server_cfg = {"mention_alert_window": 10}
+    t = momentum_table(f, T0, 0.5, True, cfg=CFG, history=hist)
+    assert "↑" in next(iter(list(t.columns)[5].cells))
+
+
+def test_server_window_is_captured_from_the_feed():
+    f = Feed(CFG)
+    f.ingest({"tickers": [{"ticker": "AAAA"}],
+              "config": {"mention_alert_window": 30}},
+             T0, _NullAlerterMT(), CFG)
+    assert f.server_cfg.get("mention_alert_window") == 30
+
+
+class _NullAlerterMT:
+    def fire(self, *a, **k):
+        pass
 
 
 # ── source precedence ────────────────────────────────────────────────────────

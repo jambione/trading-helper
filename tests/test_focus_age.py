@@ -35,6 +35,15 @@ def _ingest(feed, sp_by_sym, now):
     feed.ingest({"tickers": rows}, now, _NullAlerter(), CFG)
 
 
+def _seeded_feed(now=T0 - 2.0):
+    """A Feed past its first poll, so later FOCUS transitions are observed
+    rising edges. On the seeding poll we cannot know how long a setup has
+    already been lit, so ages there are deliberately unknown."""
+    f = Feed(CFG)
+    _ingest(f, {"SEED": IDLE_SP}, now)
+    return f
+
+
 # ── formatter ────────────────────────────────────────────────────────────────
 
 def test_focus_age_str_formats():
@@ -71,17 +80,67 @@ def test_focus_age_color_boundaries_are_exclusive_at_the_low_end():
 # ── edges ────────────────────────────────────────────────────────────────────
 
 def test_age_starts_at_zero_on_the_rising_edge():
-    f = Feed(CFG)
+    f = _seeded_feed()
     _ingest(f, {"AAAA": FOCUS_SP}, T0)
     assert f.focus_age("AAAA", T0) == 0.0
     assert _focus_age_str(f.focus_age("AAAA", T0)) == "0:00"
 
 
 def test_age_accumulates_while_focus_holds():
-    f = Feed(CFG)
+    f = _seeded_feed()
     for i in range(4):
         _ingest(f, {"AAAA": FOCUS_SP}, T0 + i * 2.0)
     assert f.focus_age("AAAA", T0 + 6.0) == 6.0
+
+
+# ── already lit when we started ───────────────────────────────────────────────
+
+def test_focus_lit_on_the_seeding_poll_has_no_age():
+    """A setup already lit before the monitor started may have been lit for
+    ten minutes. Claiming a fresh 0:00 would be a wrong number that looks
+    like information."""
+    f = Feed(CFG)
+    _ingest(f, {"AAAA": FOCUS_SP}, T0)          # first poll ever
+    assert f.in_focus("AAAA") is True
+    assert f.focus_age("AAAA", T0) is None
+    assert f.focus_age("AAAA", T0 + 600.0) is None
+
+
+def test_unknown_age_stays_unknown_while_it_holds():
+    f = Feed(CFG)
+    _ingest(f, {"AAAA": FOCUS_SP}, T0)
+    for i in range(1, 6):
+        _ingest(f, {"AAAA": FOCUS_SP}, T0 + i * 2.0)
+    assert f.focus_age("AAAA", T0 + 10.0) is None
+
+
+def test_unknown_age_becomes_measured_after_a_real_refire():
+    f = Feed(CFG)
+    _ingest(f, {"AAAA": FOCUS_SP}, T0)          # lit at startup, age unknown
+    _ingest(f, {"AAAA": IDLE_SP}, T0 + 10.0)    # dropped — now observable
+    _ingest(f, {"AAAA": FOCUS_SP}, T0 + 20.0)   # genuine rising edge
+    assert f.focus_age("AAAA", T0 + 20.0) == 0.0
+
+
+def test_unknown_age_renders_a_blank_chip_not_zero():
+    f = Feed(CFG)
+    _ingest(f, {"AAAA": FOCUS_SP}, T0)
+    f.rows = [{"ticker": "AAAA", "signal_proximity": FOCUS_SP}]
+    t = momentum_table(f, T0 + 300.0, 0.5, True,
+                       cfg={**CFG, "setup_distance_enabled": False})
+    cell = next(iter(list(t.columns)[6].cells))
+    assert "FOCUS" in cell
+    assert "0:00" not in cell
+    assert "5:00" not in cell
+
+
+def test_in_focus_distinguishes_unlit_from_unknown_age():
+    f = Feed(CFG)
+    _ingest(f, {"AAAA": FOCUS_SP, "BBBB": IDLE_SP}, T0)
+    assert f.in_focus("AAAA") is True
+    assert f.in_focus("BBBB") is False
+    assert f.focus_age("AAAA", T0) is None      # same render, different meaning
+    assert f.focus_age("BBBB", T0) is None
 
 
 def test_falling_edge_clears_the_timer():
@@ -117,7 +176,7 @@ def test_never_lit_symbol_has_no_age():
 
 
 def test_focus_clock_is_per_symbol():
-    f = Feed(CFG)
+    f = _seeded_feed()
     _ingest(f, {"AAAA": FOCUS_SP, "BBBB": IDLE_SP}, T0)
     _ingest(f, {"AAAA": FOCUS_SP, "BBBB": FOCUS_SP}, T0 + 10.0)
     assert f.focus_age("AAAA", T0 + 10.0) == 10.0
@@ -154,7 +213,7 @@ def test_flag_off_renders_the_cell_exactly_as_today():
     """
     phase0 = ("[bold black on green] FOCUS [/] "
               "[bold green]22·-91/-88[/bold green]")
-    f = Feed(CFG)
+    f = _seeded_feed()
     _ingest(f, {"AAAA": FOCUS_SP}, T0)
     f.rows = [{"ticker": "AAAA", "signal_proximity": FOCUS_SP}]
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -118,7 +119,12 @@ DEFAULTS = {
     "setup_sort_enabled": False,
     # Mention acceleration arrow. The derivative is the signal, not the count.
     "mention_trend_enabled": True,
-    "mention_trend_min_samples": 8,
+    # Floor on samples before an arrow is shown. 10 (not the roadmap's 8) so
+    # that even without the server's published mention_alert_window the two
+    # compared halves each span the shipped 10s window — see
+    # mention_trend_floor(). Raised automatically when the server says its
+    # window is wider.
+    "mention_trend_min_samples": 10,
     "mention_trend_rise": 1.5,
     "mention_trend_fall": 0.6,
     # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
@@ -448,6 +454,29 @@ def mention_trend(hist_series: list[float],
     return "→"
 
 
+def mention_trend_floor(cfg: dict, server_cfg: dict | None = None) -> int:
+    """Smallest sample count at which the trend arrow means anything.
+
+    Each sample is a count over the server's *trailing* window
+    (`mention_alert_window`, 10s by default). One mention therefore shows up
+    in every sample taken during the following 10 seconds. If a compared half
+    spans less than that window, the same mention lands in both halves and the
+    "derivative" is measuring one event twice — a rise that isn't there.
+
+    So require each half to span at least a full window:
+        half_span = (n / 2) * poll_interval >= mention_window
+    At the shipped 2.0s poll and 10s window that is 10 samples, not the
+    roadmap's 8. Falls back to the configured value when the server does not
+    publish its window.
+    """
+    want = int(cfg.get("mention_trend_min_samples", 8))
+    poll = _fnum(cfg.get("poll_interval")) or 2.0
+    win = _fnum((server_cfg or {}).get("mention_alert_window"))
+    if win is None or win <= 0 or poll <= 0:
+        return max(2, want)
+    return max(2, want, math.ceil(2.0 * win / poll))
+
+
 def _mention_trend_color(arrow: str) -> str:
     if arrow.startswith("↑"):
         return "green"
@@ -700,8 +729,14 @@ class Feed:
         self.first_seen: dict[str, float] = {}
         self.prev_burst: dict[str, bool] = {}
         self.prev_buy: dict[str, bool] = {}
-        # When FOCUS lit for each symbol currently in it. Absent = not lit.
-        self.focus_since: dict[str, float] = {}
+        # When FOCUS lit, per symbol currently in it. Absent = not lit.
+        # A None value means "lit, but we never saw it fire" — a symbol that
+        # was already in FOCUS on our first poll. We do not know its age, so
+        # we must not claim one (see ingest()).
+        self.focus_since: dict[str, float | None] = {}
+        # Server-published config from /api/state, used to size derived
+        # windows against the server's own (e.g. mention_alert_window).
+        self.server_cfg: dict = {}
         self.seeded = False                # suppress alerts on the first poll
         self.rows: list[dict] = []
         self.last_ok = 0.0
@@ -709,6 +744,8 @@ class Feed:
     def ingest(self, state: dict, now: float, alerter: Alerter, cfg: dict):
         rows = list(state.get("tickers") or [])
         self.last_ok = now
+        if isinstance(state.get("config"), dict):
+            self.server_cfg = state["config"]
         rsi_max = float(cfg.get("rsi_focus_max", 35.0))
         p_lo = float(cfg.get("pctr_focus_lo", -100.0))
         p_hi = float(cfg.get("pctr_focus_hi", -75.0))
@@ -721,8 +758,13 @@ class Feed:
             # FOCUS rising edge. setdefault keeps the original stamp while
             # the setup stays lit; dropping out clears it so a re-fire
             # restarts the clock rather than resuming it.
+            #
+            # On the seeding poll we have not observed an edge — the setup may
+            # have been lit for ten minutes before the monitor started. Record
+            # None so the age renders blank instead of a fresh-looking 0:00.
+            # It stays None until the setup actually drops and re-fires.
             if rsi_focus_trigger(r, rsi_max, p_lo, p_hi)[1]:
-                self.focus_since.setdefault(sym, now)
+                self.focus_since.setdefault(sym, now if self.seeded else None)
             else:
                 self.focus_since.pop(sym, None)
             burst = bool(r.get("mention_burst"))
@@ -764,8 +806,16 @@ class Feed:
     def is_fresh(self, sym: str, now: float) -> bool:
         return now - self.first_seen.get(sym, 0.0) <= self.new_ttl
 
+    def in_focus(self, sym: str) -> bool:
+        """True if FOCUS is lit, regardless of whether we know since when."""
+        return sym in self.focus_since
+
     def focus_age(self, sym: str, now: float) -> float | None:
-        """Seconds since FOCUS lit for `sym`, or None if it is not lit."""
+        """Seconds since FOCUS lit, or None if not lit *or* age unknown.
+
+        Both cases render blank, which is the point: we never display an age
+        we did not measure. Use in_focus() to distinguish them.
+        """
         since = self.focus_since.get(sym)
         return None if since is None else max(0.0, now - since)
 
@@ -874,7 +924,8 @@ def _mention_arrow(row: dict, ctx: dict) -> str:
     if hist is None or not cfg.get("mention_trend_enabled", True):
         return ""
     sym = ctx["sym"]
-    min_n = int(cfg.get("mention_trend_min_samples", 8))
+    feed = ctx.get("feed")
+    min_n = mention_trend_floor(cfg, getattr(feed, "server_cfg", None))
     rise = float(cfg.get("mention_trend_rise", 1.5))
     fall = float(cfg.get("mention_trend_fall", 0.6))
     engine_vel = _fnum(_sp(row).get("mention_velocity"))
