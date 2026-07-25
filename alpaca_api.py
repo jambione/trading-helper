@@ -153,7 +153,18 @@ def get_latest_trade_price(data_client, ticker: str, cfg: dict = None) -> Option
         return None
 
 
-def get_latest_trade_prices(data_client, tickers: list, cfg: dict = None) -> dict:
+def get_latest_trade_quotes(data_client, tickers: list, cfg: dict = None) -> dict:
+    """{ticker: (price, trade_unix_ts)} for the latest trade on each symbol.
+
+    Same request as get_latest_trade_prices, but keeps the trade's own
+    timestamp. That is the real observation time — the moment the print
+    happened — as opposed to when we fetched it, which is what a poll-time
+    stamp records. Consumers that need to know how stale a price is cannot
+    work without it.
+
+    Falls back to 0.0 for the timestamp when the SDK does not supply one, so
+    callers must treat 0.0 as "unknown age", never as "epoch".
+    """
     cfg = cfg or {}
     if not tickers or data_client is None:
         return {}
@@ -167,15 +178,30 @@ def get_latest_trade_prices(data_client, tickers: list, cfg: dict = None) -> dic
         ))
         results = {}
         for t in tickers:
+            trade = resp.get(t)
+            price = getattr(trade, "price", None) if trade is not None else None
+            if price is None:
+                continue
+            ts = getattr(trade, "timestamp", None)
+            obs = getattr(ts, "timestamp", None)
             try:
-                trade = resp.get(t)
-                if trade is not None and getattr(trade, "price", None) is not None:
-                    results[t] = float(trade.price)
-            except Exception:
+                results[t] = (float(price), float(obs()) if obs else 0.0)
+            except (TypeError, ValueError):
                 continue
         return results
 
     try:
         return _fetch()
-    except Exception:
+    except Exception:                                      # noqa: BLE001
         return {}
+
+
+def get_latest_trade_prices(data_client, tickers: list, cfg: dict = None) -> dict:
+    """{ticker: price} for the latest trade on each symbol.
+
+    Thin projection of get_latest_trade_quotes so the request, the parsing and
+    the error handling exist once. Prefer the quotes form: without the trade
+    timestamp there is no way to tell a live print from a stale one.
+    """
+    return {t: p for t, (p, _) in
+            get_latest_trade_quotes(data_client, tickers, cfg).items()}

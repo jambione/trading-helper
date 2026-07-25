@@ -102,6 +102,11 @@ DEFAULTS = {
     # Per-symbol sample ring (sparklines, mention trend, journal context).
     # 120 samples ≈ 4 min of tape at poll_interval 2.0s.
     "history_samples": 120,
+    # Mark a price that is no longer a current print. The server publishes
+    # price_age_sec = seconds since the trade itself (not since we fetched it),
+    # so a quiet symbol can be seen to be quiet instead of looking live.
+    "price_age_enabled": True,
+    "price_stale_sec": 20.0,
     # FOCUS = CM RSI green-long AND both %R lines deep OS toward -100
     "rsi_focus_max": 35.0,       # CM RSI-2 in [0, max)
     "pctr_focus_lo": -100.0,     # both %R lines >= lo
@@ -951,7 +956,20 @@ def _cell_added(row: dict, ctx: dict) -> str:
 
 
 def _cell_price(row: dict, ctx: dict) -> str:
-    return _fmt(row.get("price"), ".2f")
+    """Price, dimmed with its age when the print is no longer current.
+
+    The number itself is never withheld — a 40s-old price is still roughly
+    right and is what you have. But it must not read as live, because on this
+    desk the difference decides whether you hit a bid.
+    """
+    txt = _fmt(row.get("price"), ".2f")
+    cfg = ctx.get("cfg") or {}
+    if txt == "—" or not cfg.get("price_age_enabled", True):
+        return txt
+    age = _fnum(row.get("price_age_sec"))
+    if age is None or age < float(cfg.get("price_stale_sec", 20.0)):
+        return txt
+    return f"[dim]{txt}·{age:.0f}s[/dim]"
 
 
 def _cell_chg(row: dict, ctx: dict) -> str:

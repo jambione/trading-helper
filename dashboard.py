@@ -943,18 +943,72 @@ def tv_status() -> dict:
 # ── Price polling ─────────────────────────────────────────────────────────────
 
 # Alpaca fallback runs in its own thread so it never blocks the price loop.
-_alpaca_price_cache: dict = {}          # last results from Alpaca fallback
+# ticker -> (price, observed_unix_ts). The timestamp is the TRADE's own time,
+# not when we fetched it, so downstream can tell a live print from a stale one.
+_alpaca_price_cache: dict = {}
 _alpaca_cache_lock = threading.Lock()
 _alpaca_fallback_running = False
+
+# A price older than this is not trusted as current: the Alpaca fallback is
+# polled for the symbol even if Finnhub has something, and the fresher of the
+# two wins the merge.
+_PRICE_STALE_SEC = 20.0
+
+
+def stream_covered(fh_prices: dict, now: float,
+                   stale_sec: float = _PRICE_STALE_SEC) -> set:
+    """Symbols whose streamed price is young enough to still be current.
+
+    Only these are excluded from the Alpaca fallback poll. Previously *any*
+    Finnhub price counted, so a symbol that printed once and went quiet kept
+    the 5s fallback switched off for the rest of the session — and pre-market,
+    where the stream is often idle, that was the normal case.
+    """
+    covered = set()
+    for t, d in (fh_prices or {}).items():
+        try:
+            if not d.get("price"):
+                continue
+            obs = float(d.get("ts_unix") or 0)
+        except (TypeError, ValueError):
+            continue
+        # No timestamp means unknown age, which is not the same as current.
+        if obs > 0 and (now - obs) <= stale_sec:
+            covered.add(t)
+    return covered
+
+
+def freshest_prices(*sources: dict) -> dict:
+    """Merge {ticker: (price, observed_ts)} maps, newest observation winning.
+
+    Preferring a source over an observation time is what let a 90s-old stream
+    tick beat a 5s-old Alpaca print. Ties keep the earlier source so repeated
+    merges of unchanged input cannot flap between polls.
+    """
+    merged: dict = {}
+    for src in sources:
+        for t, val in (src or {}).items():
+            try:
+                p, obs = float(val[0]), float(val[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            cur = merged.get(t)
+            if cur is None or obs > cur[1]:
+                merged[t] = (p, obs)
+    return merged
 
 
 def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
     """Fetch Alpaca latest-trade prices in a background thread and cache the result."""
     global _alpaca_fallback_running
     try:
-        prices = _api.get_latest_trade_prices(client, tickers, cfg)
+        quotes = _api.get_latest_trade_quotes(client, tickers, cfg)
+        now = time.time()
         with _alpaca_cache_lock:
-            _alpaca_price_cache.update(prices)
+            for t, (p, ts) in quotes.items():
+                # An absent or implausible trade time falls back to fetch time,
+                # which is at most one poll interval off.
+                _alpaca_price_cache[t] = (p, ts if ts and ts > 0 else now)
     finally:
         _alpaca_fallback_running = False
 
@@ -1035,14 +1089,20 @@ def _price_loop():
             now    = time.time()
 
             if tickers and client:
-                # Primary: Finnhub real-time stream prices (zero extra HTTP cost)
+                # Primary: Finnhub real-time stream prices (zero extra HTTP cost).
+                # Only prices young enough to still be current count as
+                # "covered" — a symbol that printed once and went quiet must not
+                # keep the Alpaca fallback switched off for the rest of the
+                # session. Pre-market the stream is often idle, which is exactly
+                # when this mattered most.
                 finnhub_prices: dict = {}
                 if FINNHUB_STATE.connected:
                     with FINNHUB_STATE.lock:
-                        for t in tickers:
-                            d = FINNHUB_STATE.prices.get(t)
-                            if d and d.get("price"):
-                                finnhub_prices[t] = float(d["price"])
+                        fh_snap = {t: FINNHUB_STATE.prices.get(t)
+                                   for t in tickers
+                                   if FINNHUB_STATE.prices.get(t)}
+                    for t in stream_covered(fh_snap, now):
+                        finnhub_prices[t] = float(fh_snap[t]["price"])
 
                 # Finnhub REST quote poll — supplements WebSocket during extended hours
                 # when no trades have streamed yet. 30s cadence, free-tier safe.
@@ -1070,20 +1130,33 @@ def _price_loop():
                         daemon=True, name="alpaca-fallback",
                     ).start()
 
-                # Merge: Finnhub REST/WebSocket wins over cached Alpaca values
+                # Merge on FRESHNESS, not on source. Preferring Finnhub
+                # unconditionally meant a stream tick from 90s ago beat an
+                # Alpaca print from 5s ago — and pre-market, where the stream
+                # idles, that was the normal case.
                 with _alpaca_cache_lock:
                     cached_alpaca = dict(_alpaca_price_cache)
                 with FINNHUB_STATE.lock:
-                    fh_all = {t: float(d["price"]) for t, d in FINNHUB_STATE.prices.items() if d.get("price")}
-                all_prices = {**cached_alpaca, **fh_all}
+                    fh_all = {t: (float(d["price"]),
+                                  float(d.get("ts_unix") or 0))
+                              for t, d in FINNHUB_STATE.prices.items()
+                              if d.get("price")}
+
+                merged = freshest_prices(cached_alpaca, fh_all)
 
                 with STATE.lock:
-                    for t, p in all_prices.items():
+                    for t, (p, obs) in merged.items():
                         if t not in tickers:
                             continue
                         entry = STATE.tickers.setdefault(t, {})
                         entry["price"]    = round(p, 4)
+                        # price_ts is a WRITE time and always reads fresh; it is
+                        # kept only because the web UI shows it. price_age_sec is
+                        # the real answer to "how old is this number" — seconds
+                        # since the print itself.
                         entry["price_ts"] = ts
+                        entry["price_age_sec"] = (round(max(0.0, now - obs), 1)
+                                                  if obs > 0 else None)
 
             _fail_streak = 0
         except Exception as e:

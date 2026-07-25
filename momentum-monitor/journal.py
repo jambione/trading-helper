@@ -93,6 +93,11 @@ def journal_record(kind: str, sym: str, row: dict, ts: float, *,
     sp = sp if isinstance(sp, dict) else {}
 
     for key, src in (("price", row.get("price")),
+                     # Seconds since the print `price` came from. T4.2 needs
+                     # this to exclude events whose entry reference was stale:
+                     # a forward return measured from a 60s-old price is
+                     # measuring from the wrong place.
+                     ("price_age_sec", row.get("price_age_sec")),
                      ("pct_change", row.get("pct_change")),
                      ("mention_window", row.get("mention_window")),
                      ("mention_count", row.get("mention_count")),
