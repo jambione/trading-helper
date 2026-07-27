@@ -5,6 +5,8 @@
   "alert_new": true,
   "alert_burst": true,
   "alert_buy": false,
+  "alert_mention_flow": true,
+  "mention_flow_alert_min": 2.0,
   "alert_cooldown": 60.0,
   "desktop_toast": true,
   "watchlist_enabled": false,

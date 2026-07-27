@@ -30,7 +30,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.request import Request as _UReq, urlopen
 
@@ -182,6 +182,17 @@ DEFAULTS = {
     "mention_trend_min_samples": 10,
     "mention_trend_rise": 1.5,
     "mention_trend_fall": 0.6,
+    # Beep when a symbol's arrow crosses into "↑↑" (recent half >= rise² over
+    # the older half — 2.25x at the shipped 1.5).
+    "alert_mention_flow": True,
+    # …but only once the flow is at a level worth turning to look at.
+    # mention_trend() calls ANY rise off a zero base "↑↑", so without a floor
+    # every symbol going from no mentions to one would fire — which on this
+    # feed is most of them, most of the time. This is the mean of the same
+    # recent half the arrow compared, in mentions per server window. Set 0.0
+    # to alert on every ↑↑; raise toward the engine's own "hot" bar
+    # (PRIORITY_MENTIONS, 5) to only hear about real crowds.
+    "mention_flow_alert_min": 2.0,
     # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
     "stocktwits_enabled": True,
     "stocktwits_poll": 60.0,     # seconds between ST API polls
@@ -723,7 +734,8 @@ class Alerter:
         _beep()
         msg = {"new": f"NEW {sym}", "burst": f"BURST {sym}",
                "buy": f"BUY {sym}", "st_new": f"NEW-ST {sym}",
-               "st_look": f"LOOK {sym}"}.get(kind, f"{kind} {sym}")
+               "st_look": f"LOOK {sym}",
+               "mflow": f"FLOW {sym}"}.get(kind, f"{kind} {sym}")
         if detail:
             msg += f"  {detail}"
         self.recent.insert(0, f"{datetime.now():%H:%M:%S}  {msg}")
@@ -798,6 +810,10 @@ class Feed:
         self.first_seen: dict[str, float] = {}
         self.prev_burst: dict[str, bool] = {}
         self.prev_buy: dict[str, bool] = {}
+        # Latch for the Mentions "↑↑" alert. Holds the *alertable* condition
+        # (arrow AND level), not the raw arrow: a symbol that sat at "↑↑" on a
+        # trickle and then genuinely took off has to be able to fire.
+        self.prev_mention_flow: dict[str, bool] = {}
         # When FOCUS lit, per symbol currently in it. Absent = not lit.
         # A None value means "lit, but we never saw it fire" — a symbol that
         # was already in FOCUS on our first poll. We do not know its age, so
@@ -888,6 +904,54 @@ class Feed:
         self.rows = rows
         self.edges = edges
         self.seeded = True
+
+    def detect_mention_flow(self, history, now: float, alerter,
+                            cfg: dict) -> None:
+        """Rising edge into "↑↑" on the Mentions arrow, per symbol.
+
+        Deliberately not part of ingest(): the arrow is a function of the
+        sample ring, and ingest() runs before this poll's sample is pushed
+        into it. The render loop calls this straight after push_history(), so
+        the arrow tested here is the one about to be drawn.
+
+        It is read via _mention_arrow() — the same function the cell renders,
+        not a reimplementation of it — so the beep and the screen cannot
+        drift apart. Edges land in self.edges alongside new/burst/buy/focus so
+        the journal records them like any other.
+
+        No seeding guard is needed. `history` is memory-only and starts empty,
+        so the arrow is "" until the sample floor is met; there is no "already
+        rising before we were watching" case to suppress.
+        """
+        if history is None or not cfg.get("mention_trend_enabled", True):
+            return
+        floor = _fnum(cfg.get("mention_flow_alert_min", 2.0)) or 0.0
+        live: set[str] = set()
+        for r in self.rows:
+            sym = str(r.get("ticker") or "").upper()
+            if not sym:
+                continue
+            live.add(sym)
+            ctx = {"cfg": cfg, "history": history, "sym": sym, "feed": self}
+            # Level is only consulted for the arrow that can alert, so the
+            # common row costs one arrow and nothing else.
+            level = (mention_flow_level(_mention_series(r, ctx))
+                     if _mention_arrow(r, ctx) == "↑↑" else None)
+            hot = level is not None and level >= floor
+            was_hot = self.prev_mention_flow.get(sym, False)
+            self.prev_mention_flow[sym] = hot
+            if not hot or was_hot:
+                continue
+            self.edges.append(("mflow", r))
+            if cfg.get("alert_mention_flow", True):
+                detail = _detail(r)
+                alerter.fire("mflow", sym,
+                             f"{level:.0f}/window  {detail}".rstrip())
+
+        # A symbol that leaves the feed loses its history to prune(), so
+        # holding its old latch would suppress the re-fire when it returns.
+        for gone in [s for s in self.prev_mention_flow if s not in live]:
+            del self.prev_mention_flow[gone]
 
     def is_fresh(self, sym: str, now: float) -> bool:
         return now - self.first_seen.get(sym, 0.0) <= self.new_ttl
@@ -1088,31 +1152,52 @@ def _cell_mentions(row: dict, ctx: dict) -> str:
     return f"{win}/{day} [{_mention_trend_color(arrow)}]{arrow}[/]"
 
 
-def _mention_arrow(row: dict, ctx: dict) -> str:
-    """Trend arrow for the Mentions cell, or "" when the feature is off or
-    there is not enough tape yet.
+def _mention_series(row: dict, ctx: dict) -> list:
+    """The one series the Mentions arrow is computed from, live value already
+    appended.
 
     Prefers the engine's mention_velocity series when it has accumulated
     enough samples — it is the higher-resolution number — and falls back to
     the polled mention_window series. One scale per call: the live engine
     value is only ever appended to its own series.
-    """
-    cfg = ctx.get("cfg") or {}
-    hist = ctx.get("history")
-    if hist is None or not cfg.get("mention_trend_enabled", True):
-        return ""
-    sym = ctx["sym"]
-    feed = ctx.get("feed")
-    min_n = mention_trend_floor(cfg, getattr(feed, "server_cfg", None))
-    rise = float(cfg.get("mention_trend_rise", 1.5))
-    fall = float(cfg.get("mention_trend_fall", 0.6))
-    engine_vel = _fnum(_sp(row).get("mention_velocity"))
 
-    vel = hist.series(sym, "mention_velocity")
+    Split out so the ↑↑ alert can measure the *level* of the same half the
+    arrow compared without re-deciding which series that was.
+    """
+    hist = ctx.get("history")
+    if hist is None:
+        return []
+    sym = ctx["sym"]
+    min_n = mention_trend_floor(ctx.get("cfg") or {},
+                                getattr(ctx.get("feed"), "server_cfg", None))
+    engine_vel = _fnum(_sp(row).get("mention_velocity"))
+    vel = list(hist.series(sym, "mention_velocity"))
     if len(vel) + (1 if engine_vel is not None else 0) >= min_n:
-        return mention_trend(vel, engine_vel, rise, fall, min_n)
-    return mention_trend(hist.series(sym, "mention_window"), None,
-                         rise, fall, min_n)
+        return [*vel, engine_vel] if engine_vel is not None else vel
+    return list(hist.series(sym, "mention_window"))
+
+
+def mention_flow_level(series: list) -> float | None:
+    """Mean of the recent half — the same half mention_trend() ratioed, so a
+    "↑↑" and its level always describe the same samples. None when empty."""
+    vals = [v for v in (series or []) if v is not None]
+    if not vals:
+        return None
+    recent = vals[len(vals) // 2:]
+    return sum(recent) / len(recent) if recent else None
+
+
+def _mention_arrow(row: dict, ctx: dict) -> str:
+    """Trend arrow for the Mentions cell, or "" when the feature is off or
+    there is not enough tape yet."""
+    cfg = ctx.get("cfg") or {}
+    if ctx.get("history") is None or not cfg.get("mention_trend_enabled", True):
+        return ""
+    return mention_trend(
+        _mention_series(row, ctx), None,
+        float(cfg.get("mention_trend_rise", 1.5)),
+        float(cfg.get("mention_trend_fall", 0.6)),
+        mention_trend_floor(cfg, getattr(ctx.get("feed"), "server_cfg", None)))
 
 
 def _cell_setup(row: dict, ctx: dict) -> str:
@@ -1257,6 +1342,43 @@ def _fmt_st_rvol(v, cfg: dict | None = None) -> str:
                       float(cfg.get("rvol_warm", 1.5)))
 
 
+def _session_tag(iso: str) -> str:
+    """`2026-07-24` → `Fri`. Empty when the date is missing or unparseable —
+    the marker is what stops the number reading as today's, so a bare number
+    with no tag is not an acceptable fallback; the caller drops to `—`."""
+    try:
+        return date.fromisoformat(str(iso)).strftime("%a")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _st_chg_cell(row: dict) -> str:
+    """%Chg for one trending row.
+
+    Today's move when there is one, in green/red. When today has not printed,
+    the number `pct_change` carries is the last close measured against itself
+    — structurally 0.00%, which reads as "flat" when it means "not trading
+    yet". So fall back to the last completed session's move, dimmed and
+    tagged with its weekday, which is also what stocktwits.com shows in that
+    column pre-market.
+
+    Dim + tag is the whole safety property: the two numbers answer different
+    questions and must never be renderable in the same style. Nothing here
+    touches `pct_change`, which is what the LOOK gate reads.
+    """
+    chg = row.get("pct_change")
+    if chg is not None and row.get("pct_is_today"):
+        cc = "green" if chg >= 0 else "red"
+        return f"[{cc}]{chg:+.2f}%[/{cc}]"
+    prev = row.get("pct_change_prev")
+    tag = _session_tag(row.get("prev_session_date"))
+    if prev is not None and tag:
+        return f"[dim]{prev:+.1f}% {tag}[/dim]"
+    # No today session and no completed one to fall back on. The 0.00% that
+    # `pct_change` would print here is the plausible wrong number.
+    return "[dim]—[/dim]"
+
+
 def stocktwits_panel(st: StocktwitsTrending,
                      price_by_sym: dict[str, float | None],
                      limit: int = 10,
@@ -1311,12 +1433,7 @@ def stocktwits_panel(st: StocktwitsTrending,
                 age = r.get("price_age_sec")
                 if age_on and isinstance(age, (int, float)) and age >= stale_sec:
                     px_s = f"[dim]${px:.2f}·{_age_short(age)}[/dim]"
-            chg = r.get("pct_change")
-            if chg is None:
-                chg_s = "[dim]—[/dim]"
-            else:
-                cc = "green" if chg >= 0 else "red"
-                chg_s = f"[{cc}]{chg:+.2f}%[/{cc}]"
+            chg_s = _st_chg_cell(r)
             hi = r.get("high_52w")
             lo = r.get("low_52w")
             sc = r.get("trending_score")
@@ -1533,6 +1650,10 @@ def main():
             if state is not None:
                 feed.ingest(state, t0, alerter, cfg)
                 push_history(history, feed.rows, t0)
+                # After the push — the arrow is a function of the ring, and
+                # this poll's sample has to be in it. Before the journal loop
+                # so the edges it appends get recorded too.
+                feed.detect_mention_flow(history, t0, alerter, cfg)
                 for kind, row in feed.edges:
                     sym = str(row.get("ticker") or "").upper()
                     journal.record(kind, sym, row, t0,

@@ -253,6 +253,27 @@ def snapshot_fields(snap, now: float, today_et: date) -> dict[str, Any]:
         out["pct_change"] = (px - base) / base * 100.0
         if base_date is not None:
             out["pct_basis_date"] = base_date.isoformat()
+
+    # Does `pct_change` describe today at all? Only if the print behind `price`
+    # is today's. Before the first trade of the day px IS the last close and
+    # `base` is that same close, so pct_change is 0.00% by construction — a
+    # true statement ("unmoved since Friday") that reads on screen as a flat
+    # market. The renderer needs to tell that apart from a real 0.00%.
+    print_date = _bar_et_date(latest) if latest is not None else None
+    out["pct_is_today"] = print_date == today_et
+
+    # The last completed session's move — what stocktwits.com shows in its
+    # %Change column pre-market. Its own field, NEVER merged into pct_change:
+    # `apply_look_highlights` gates the LOOK badge on |pct_change|, and feeding
+    # it an inherited move is exactly the defect described above. Computable
+    # only when today has not printed, because that is the case where `daily`
+    # is the last completed session and `prev` is the one before it.
+    if d_date is not None and d_date < today_et and prev is not None:
+        p_close = _f(getattr(prev, "close", None))
+        d_close = _f(getattr(daily, "close", None))
+        if p_close and p_close > 0 and d_close is not None:
+            out["pct_change_prev"] = (d_close - p_close) / p_close * 100.0
+            out["prev_session_date"] = d_date.isoformat()
     return out
 
 
