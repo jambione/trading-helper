@@ -79,6 +79,7 @@ PORT               = 8888
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
 NEWS_FILE          = Path("news.json")
 SWING_FILE         = Path("swing_candidates.json")
+RS_FILE            = Path("rs_ratings.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
 PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
@@ -197,6 +198,39 @@ def load_swing() -> list:
     except Exception as e:
         log.warning(f"[SWING] Failed to load swing_candidates.json: {e}")
         return []
+
+
+# ── Relative strength ─────────────────────────────────────────────────────────
+# Written by rs_screener.py once a day after the close. Unlike the swing and
+# momentum surfaces this is a DAILY statistic computed off completed sessions —
+# it does not move intraday, and the header's as_of says which tape it is from.
+#
+# The whole payload is served, not just the rows: an RS rating is not
+# interpretable without the population it was ranked against, and the price
+# series is not comparable to anything without knowing its adjustment and feed.
+
+_rs_cache: dict = {"mtime": -1.0, "payload": {}}
+
+def load_rs() -> dict:
+    """Read rs_ratings.json, cache by mtime. Returns the full payload (header
+    plus `rows`), or {} when the screener has never run."""
+    try:
+        if not RS_FILE.exists():
+            return {}
+        mtime = RS_FILE.stat().st_mtime
+        if mtime == _rs_cache["mtime"]:
+            return _rs_cache["payload"]
+        import json as _json
+        payload = _json.loads(RS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            payload = {}
+        if not isinstance(payload.get("rows"), list):
+            payload["rows"] = []
+        _rs_cache.update(mtime=mtime, payload=payload)
+        return payload
+    except Exception as e:
+        log.warning(f"[RS] Failed to load rs_ratings.json: {e}")
+        return {}
 
 
 # ── Suggestions ──────────────────────────────────────────────────────────────
@@ -1364,6 +1398,7 @@ def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
     swing    = load_swing()   # file read — confluence overlay applied under lock below
+    rs       = load_rs()      # file read — daily, served whole (header + rows)
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
     # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
     mention_rank = _build_mention_rank(set(tickers))
@@ -1435,6 +1470,22 @@ def _snapshot() -> dict:
                 row["confluence"] = {"sources": conf, "count": len(conf)}
             swing_rows.append(row)
 
+        # RS candidates get the same live-confluence overlay: a name that has
+        # been beating the market for months AND is being talked about right now
+        # is the pairing the screener exists to surface. The rating itself is
+        # left alone — it is a completed-session number and must not be restated
+        # by anything intraday.
+        rs_payload = dict(rs) if rs else {}
+        if rs_payload.get("rows"):
+            rs_rows = []
+            for c in rs_payload["rows"]:
+                row = dict(c)
+                conf = _confluence_sources(c.get("ticker"))
+                if len(conf) >= 2:
+                    row["confluence"] = {"sources": conf, "count": len(conf)}
+                rs_rows.append(row)
+            rs_payload["rows"] = rs_rows
+
         # Merge signal-engine proximity + build badge. Done here (not just in the
         # /api/state HTTP handler) so the WebSocket stream — which the frontend
         # actually consumes — carries signal_proximity and the version too.
@@ -1468,6 +1519,7 @@ def _snapshot() -> dict:
             "funnel":  _funnel_snapshot(f_rows, f_ts, now_ts, now_et, STATE.cfg),
             "market_sentiment": market_sent,
             "swing":   swing_rows,
+            "rs":      rs_payload,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
             # Trading-engine status — trader mode + risk guard written by
@@ -1899,6 +1951,103 @@ async def api_swing_check(request: Request):
         import swing_screener
         cfg = load_config()
         return [swing_screener.evaluate(s, cfg) for s in symbols]
+
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(None, _run)
+    return JSONResponse({"results": results})
+
+
+@app.get("/api/rs")
+async def api_rs():
+    """Relative-strength ratings from rs_ratings.json (written by rs_screener.py).
+
+    Returns the whole payload, header included, plus live run progress. The
+    header is not optional context: `population` is what makes a percentile
+    interpretable, and `as_of` / `adjustment` / `feed` say which tape produced
+    it. A bare list of rows would be a number without its units.
+    """
+    payload = dict(load_rs())
+    try:
+        import rs_screener
+        payload["progress"] = rs_screener.progress()
+    except Exception:                                      # noqa: BLE001
+        pass
+    return JSONResponse(payload)
+
+
+# One screen at a time, same guard as the swing refresh. An RS run is far
+# heavier — a cold cache is a few hundred Alpaca requests.
+_rs_refresh_lock = threading.Lock()
+
+@app.post("/api/rs/refresh")
+async def api_rs_refresh():
+    """Trigger an on-demand RS screen. Runs in a worker thread; poll /api/rs for
+    progress, since a cold-cache run takes minutes rather than seconds."""
+    if not _rs_refresh_lock.acquire(blocking=False):
+        return JSONResponse({"ok": False, "status": "already-running"}, status_code=409)
+
+    def _run():
+        try:
+            import rs_screener
+            rs_screener.run_screen(load_config())
+            _rs_cache["mtime"] = -1.0             # force reload on next serve
+        except Exception as e:
+            # RunRefused lands here too: a refused run is a successful outcome
+            # for the previous file, which stays exactly as it was.
+            log.warning(f"[RS] refresh failed: {e}")
+        finally:
+            _rs_refresh_lock.release()
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run)
+    return JSONResponse({"ok": True, "status": "started"})
+
+
+@app.post("/api/rs/check")
+async def api_rs_check(request: Request):
+    """What did these symbols rate, including ones the filters dropped?
+
+    Reads the ratings table rs_screener writes for the WHOLE ranked population,
+    not just the served rows. That is what makes the percentile auditable: if a
+    name is missing from the list you can still see the rating it earned and the
+    population it earned it against.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    seen: dict[str, None] = {}
+    for tok in re.split(r"[,\s]+", str(body.get("symbols", "")).upper()):
+        if tok:
+            seen.setdefault(tok, None)
+    symbols = list(seen)[:25]
+    if not symbols:
+        return JSONResponse({"results": []})
+
+    def _run():
+        import rs_cache
+        import rs_screener
+        cfg = load_config()
+        served = {r["ticker"]: r for r in load_rs().get("rows", [])}
+        try:
+            cache = rs_cache.BarCache(rs_screener._cache_path(cfg),
+                                      adjustment=str(cfg.get("rs_bar_adjustment", "split")))
+        except Exception as e:                             # noqa: BLE001
+            return [{"ticker": s, "error": str(e)} for s in symbols]
+        try:
+            out = []
+            for symbol in symbols:
+                history = cache.rating_history(symbol, limit=10)
+                out.append({
+                    "ticker": symbol,
+                    "served": symbol in served,
+                    "row": served.get(symbol),
+                    "history": history,
+                    "rated": bool(history),
+                })
+            return out
+        finally:
+            cache.close()
 
     loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, _run)

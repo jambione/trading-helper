@@ -91,6 +91,57 @@ DEFAULT_CONFIG = {
     "swing_enrich_cap":           90,     # max technical survivors sent to Finnhub — calls are now
                                            # paced to the free-tier ~60/min limit, so a full run takes
                                            # a few minutes rather than bursting past the quota
+
+    # ── RS screener (IBD-style relative strength) ────────────
+    # rs_screener.py ranks SPLIT-ADJUSTED daily closes against SPY over the FULL
+    # bar-covered universe, THEN applies the filters below. Ranking before
+    # filtering is the whole point: a percentile taken over the survivors of a
+    # strength screen would make "RS 90" mean top 10% of an already-strong
+    # subset rather than top 10% of the market.
+    "rs_screener_enabled":        False,  # launch rs_screener.py from start_all
+    "rs_universe_source":       "alpaca", # alpaca | finviz | file (rs_universe.json always wins)
+    "rs_cache_path":  "rs_cache.sqlite",  # SQLite bar cache; rebuild with --rebuild
+    "rs_bar_adjustment":        "split",  # split | all — NEVER raw, which is Alpaca's
+                                           # default and turns every split into a fake
+                                           # ±50-90% move. "all" also restates on every
+                                           # ex-div date, so the cache would need daily
+                                           # repair across most of the universe.
+    "rs_backfill_calendar_days":  400,    # ≈275 sessions; 252 sessions ≈ 366 days + holiday slack
+    "rs_lookback_sessions":       252,    # the 12-month anchor
+    "rs_overlap_sessions":          5,    # re-fetched every run — this overlap IS the split detector
+    "rs_split_tolerance":       0.005,    # close move that means "the vendor restated history";
+                                           # smallest common split is 3:2 (+50%), late-print
+                                           # revisions are fractions of a cent
+    "rs_ffill_limit":               2,    # sessions a price may be carried across a no-print day
+    "rs_min_coverage":           0.80,    # fraction of benchmark sessions with a REAL bar
+    "rs_min_population":          500,    # below this, no rating is published at all
+    "rs_max_stale_frac":         0.10,    # above this, refuse to overwrite the previous file
+    "rs_max_p0_staleness_sessions": 1,    # every symbol's P0 must be the same session
+    "rs_form":               "trailing",  # trailing (IBD) | quarters (non-overlapping)
+    "rs_benchmark":              "SPY",
+    "rs_exclude_etp":            True,    # strip ETFs/ETPs from the SERVED list, not the ranking
+    "rs_chunk_size":              100,    # symbols per Alpaca request on a backfill
+    "rs_incremental_chunk_size":  300,    # …and on the daily path, where only a few
+                                           # sessions per symbol come back so the
+                                           # 10k-bar page cap is nowhere near binding
+    "rs_max_req_per_min":         100,    # of Alpaca's 200 — the key is shared with the engine
+    "rs_use_partial_session":   False,    # as_of is always a COMPLETED session
+    "rs_settle_after":         "18:00",   # ET; today's bar is excluded before this
+    "rs_run_times":          ["18:30"],   # once a day. RS is a 12-month statistic; recomputing
+                                           # it midday produces churn carrying no information.
+    "rs_limit":                   100,    # rows kept in rs_ratings.json
+    # Filters — applied AFTER the percentile.
+    "rs_min_rs_rating":            80,
+    "rs_min_price":              10.0,
+    "rs_min_avg_vol_50d":      500000.0,  # IEX volume, NOT consolidated — bars are IEX-only, so
+                                           # this is a fraction of the real tape. See the measured
+                                           # error table at tools/morning_funnel.py:196-210.
+    "rs_require_above_sma50":    True,
+    "rs_require_above_sma200":  False,
+    "rs_use_rvol_filter":       False,    # use_X/min_X pairing rather than a null sentinel: the
+    "rs_min_rvol":                1.5,    # config panel round-trips an empty number as "", not null
+    "rs_use_adr_filter":        False,
+    "rs_min_adr_pct":             3.0,
 }
 
 # Keys the dashboard API is allowed to update
@@ -132,6 +183,38 @@ SAFE_CONFIG_KEYS = [
     "swing_run_times",
     "swing_limit",
     "swing_enrich_cap",
+    "rs_screener_enabled",
+    "rs_universe_source",
+    "rs_cache_path",
+    "rs_bar_adjustment",
+    "rs_backfill_calendar_days",
+    "rs_lookback_sessions",
+    "rs_overlap_sessions",
+    "rs_split_tolerance",
+    "rs_ffill_limit",
+    "rs_min_coverage",
+    "rs_min_population",
+    "rs_max_stale_frac",
+    "rs_max_p0_staleness_sessions",
+    "rs_form",
+    "rs_benchmark",
+    "rs_exclude_etp",
+    "rs_chunk_size",
+    "rs_incremental_chunk_size",
+    "rs_max_req_per_min",
+    "rs_use_partial_session",
+    "rs_settle_after",
+    "rs_run_times",
+    "rs_limit",
+    "rs_min_rs_rating",
+    "rs_min_price",
+    "rs_min_avg_vol_50d",
+    "rs_require_above_sma50",
+    "rs_require_above_sma200",
+    "rs_use_rvol_filter",
+    "rs_min_rvol",
+    "rs_use_adr_filter",
+    "rs_min_adr_pct",
 ]
 
 
