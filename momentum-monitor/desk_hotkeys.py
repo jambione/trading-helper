@@ -43,9 +43,19 @@ class DeskHotkeys:
         self._busy = False
         self._lock = threading.Lock()
         self._on_focus: Optional[Callable[[str], None]] = None
+        # Latest-wins request slot. A TradingView load takes about a second of
+        # AppleScript and keystrokes; the reader thread used to run it inline and
+        # DROP anything pressed meanwhile, so tapping 3 then 5 left you on 3 with
+        # no sign the 5 registered. Handing the work to a loader thread that only
+        # ever honours the most recent request means the last key you pressed is
+        # always the one you end up on, and the keyboard never stops responding.
+        self._pending: Optional[tuple[str, str]] = None
+        self._wake = threading.Event()
         if self.enabled:
             threading.Thread(target=self._reader, daemon=True,
                              name="desk-keys").start()
+            threading.Thread(target=self._loader, daemon=True,
+                             name="desk-tv-load").start()
 
     def set_focus_callback(self, cb: Callable[[str], None]):
         self._on_focus = cb
@@ -146,31 +156,42 @@ class DeskHotkeys:
         low = key.lower()
 
         with self._lock:
-            if self._busy:
-                return
             tag = ""
             if key == self.SPACE or key == " ":
                 sym = self._top
-                action = "load"
             elif key in self._by_key:
                 sym = self._by_key[key]
-                action = "load"
             elif low in self._st_by_key:
                 sym = self._st_by_key[low]
-                action = "load"
                 tag = "ST "
             else:
                 return
             if not sym:
                 self._status = f"{datetime.now():%H:%M:%S}  no symbol"
                 return
-            self._busy = True
+            # Overwrite rather than queue: if three keys are pressed while a
+            # load runs, loading all three in turn is slower AND lands somewhere
+            # you did not ask for last. Only the newest request is worth doing.
+            self._pending = (sym, tag)
+        self._wake.set()
 
-        try:
-            self._load(sym, tag=tag)
-        finally:
+    def _loader(self):
+        """Serialise TradingView loads off the reader thread, newest request wins."""
+        while True:
+            self._wake.wait()
             with self._lock:
-                self._busy = False
+                self._wake.clear()
+                pending, self._pending = self._pending, None
+                if pending is None:
+                    continue
+                self._busy = True
+            try:
+                self._load(pending[0], tag=pending[1])
+            except Exception as e:                         # noqa: BLE001
+                self._set(f"TV load error {e}")
+            finally:
+                with self._lock:
+                    self._busy = False
 
     def _load(self, sym: str, tag: str = ""):
         self._set_focus(sym)
