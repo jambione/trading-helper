@@ -98,6 +98,19 @@ DEFAULTS = {
     "alert_notify_duration": 5.0,    # seconds before an OS popup auto-dismisses
     "alert_only_when_hidden": True,  # skip the popup if Terminal is frontmost
     "desktop_toast": True,
+    # Alert sound. Was Windows-only (a raw 880Hz square wave); macOS got nothing
+    # at all, so the desk was effectively silent except for the throttled
+    # banner. Sounds are now per kind — see ALERT_SOUNDS — so a FOCUS firing and
+    # a symbol merely appearing are distinguishable without looking at the
+    # screen. Audition them with:  python momentum_signal.py --sounds
+    "alert_sound": True,
+    "alert_sound_volume": 0.35,      # 0.0-1.0; deliberately well under full
+    "alert_sound_name": "Submarine",  # fallback for kinds not in ALERT_SOUNDS
+    "alert_sound_min_gap": 1.5,      # global floor between sounds, on top of
+                                      # alert_cooldown — that cooldown is per
+                                      # (kind, symbol), so a wide burst at the
+                                      # open would otherwise overlap into noise
+    "alert_sound_by_kind": {},       # e.g. {"burst": "Glass"} to override one
     "watchlist_enabled": False,
     # Per-symbol sample ring (sparklines, mention trend, journal context).
     # 120 samples ≈ 4 min of tape at poll_interval 2.0s.
@@ -614,13 +627,104 @@ def _rsi_focus_cell(row: dict,
 
 # ── alerting ─────────────────────────────────────────────────────────────────
 
-def _beep():
+# macOS ships these in /System/Library/Sounds. Chosen by how often each alert
+# actually fires: the frequent ones are brief and soft so a busy pre-market does
+# not turn into an alarm, and only the two you would stop and look at get
+# something assertive. Basso/Funk/Sosumi/Frog are deliberately unused — they are
+# the jarring end of the set, and Basso is macOS's error sound.
+ALERT_SOUNDS = {
+    "new":      "Tink",        # a symbol appeared — very frequent, soft click
+    "st_new":   "Pop",         # new on the Stocktwits panel — also frequent
+    "mflow":    "Bottle",      # mention flow building — hollow, mellow
+    "burst":    "Submarine",   # mention burst — deep, calm, carries
+    "st_look":  "Glass",       # LOOK badge — bright chime
+    "focus":    "Hero",        # the FOCUS setup fired — rare, worth looking up
+    "buy":      "Hero",
+}
+DEFAULT_ALERT_SOUND = "Submarine"
+
+_SOUND_DIR = "/System/Library/Sounds"
+_last_sound_at = 0.0
+_sound_lock = threading.Lock()
+
+
+def sound_for(kind: str, cfg: dict | None = None) -> str:
+    """Sound name for an alert kind. `alert_sound_by_kind` overrides per kind,
+    `alert_sound_name` overrides the fallback."""
+    cfg = cfg or {}
+    overrides = cfg.get("alert_sound_by_kind") or {}
+    if isinstance(overrides, dict) and kind in overrides:
+        return str(overrides[kind])
+    if kind in ALERT_SOUNDS:
+        return ALERT_SOUNDS[kind]
+    return str(cfg.get("alert_sound_name", DEFAULT_ALERT_SOUND))
+
+
+def _play(path: str, volume: float) -> None:
+    """Play one file and reap the process. Runs on a throwaway thread."""
+    try:
+        subprocess.run(["afplay", "-v", f"{volume:.2f}", path],
+                       check=False, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:                                      # noqa: BLE001
+        pass
+
+
+def _beep(kind: str = "", cfg: dict | None = None) -> None:
+    """Alert sound, per kind, non-blocking.
+
+    This used to be Windows-only, so on macOS the desk was silent apart from the
+    notification banner — which is throttled to one per alert_notify_interval
+    (180s) and skipped entirely while the terminal is frontmost. In practice
+    that meant no sound at all on the machine it runs on.
+
+    Playback happens on a short-lived thread: afplay takes ~0.5-1.5s to finish
+    and the render loop must not wait for it. The thread (rather than a bare
+    Popen) is what reaps the child, so a long session does not accumulate
+    zombies.
+
+    A global minimum gap applies ON TOP of the Alerter's per-symbol cooldown.
+    That cooldown is per (kind, symbol), so twenty different symbols bursting at
+    the open would each be entitled to fire at once and the sounds would overlap
+    into noise rather than telling you anything.
+    """
+    cfg = cfg or {}
+    if not cfg.get("alert_sound", True):
+        return
+
+    global _last_sound_at
+    now = time.time()
+    gap = float(cfg.get("alert_sound_min_gap", 1.5))
+    with _sound_lock:
+        if now - _last_sound_at < gap:
+            return
+        _last_sound_at = now
+
     if sys.platform == "win32":
         try:
             import winsound
-            winsound.Beep(880, 180)
+            # PlaySound with a system alias, not Beep(880, 180): Beep is a raw
+            # square wave through the motherboard timer and is genuinely harsh.
+            winsound.PlaySound("SystemAsterisk",
+                               winsound.SND_ALIAS | winsound.SND_ASYNC)
         except Exception:                                  # noqa: BLE001
             pass
+        return
+
+    if sys.platform != "darwin":
+        return
+
+    name = sound_for(kind, cfg)
+    path = os.path.join(_SOUND_DIR, f"{name}.aiff")
+    if not os.path.exists(path):
+        path = os.path.join(_SOUND_DIR, f"{DEFAULT_ALERT_SOUND}.aiff")
+        if not os.path.exists(path):
+            return
+    try:
+        volume = max(0.0, min(1.0, float(cfg.get("alert_sound_volume", 0.35))))
+    except (TypeError, ValueError):
+        volume = 0.35
+    threading.Thread(target=_play, args=(path, volume), daemon=True).start()
 
 
 # Maps $TERM_PROGRAM (set by the terminal running this script) to the process
@@ -638,7 +742,7 @@ _NOTIFY_GROUP = "brasfield-momentum"
 
 
 def _macos_notify(title: str, message: str, sound: bool = True,
-                   auto_dismiss: float = 5.0) -> None:
+                   auto_dismiss: float = 5.0, sound_name: str = "") -> None:
     """Notification Center banner. Prefers `terminal-notifier` (brew) so
     clicking the banner brings the monitor's terminal to the front via
     `-activate`; plain `osascript display notification` can't do that — Apple
@@ -657,7 +761,11 @@ def _macos_notify(title: str, message: str, sound: bool = True,
         cmd = [tn, "-title", title, "-message", message,
                "-group", _NOTIFY_GROUP]
         if sound:
-            cmd += ["-sound", "default"]
+            # Name the sound rather than taking "default": the system default
+            # alert sound is whatever is set in System Settings, so the banner
+            # and the desk's own alert would disagree about what an event
+            # sounds like.
+            cmd += ["-sound", sound_name or DEFAULT_ALERT_SOUND]
         bundle_id = _TERM_BUNDLE_IDS.get(os.environ.get("TERM_PROGRAM", ""))
         if bundle_id:
             cmd += ["-activate", bundle_id]
@@ -681,7 +789,7 @@ def _macos_notify(title: str, message: str, sound: bool = True,
 
     script = f'display notification "{esc(message)}" with title "{esc(title)}"'
     if sound:
-        script += ' sound name "Glass"'
+        script += f' sound name "{esc(sound_name or DEFAULT_ALERT_SOUND)}"'
     try:
         subprocess.run(["osascript", "-e", script], check=False, timeout=5,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -716,6 +824,7 @@ class Alerter:
     symbols/kinds still caps out at one popup per `alert_notify_interval`."""
 
     def __init__(self, cfg: dict):
+        self.cfg = cfg
         self.cooldown = float(cfg.get("alert_cooldown", 60.0))
         self.toast = bool(cfg.get("desktop_toast", True))
         self.notify_interval = float(cfg.get("alert_notify_interval", 180.0))
@@ -731,7 +840,7 @@ class Alerter:
         if now - self._last.get(key, 0.0) < self.cooldown:
             return
         self._last[key] = now
-        _beep()
+        _beep(kind, self.cfg)
         msg = {"new": f"NEW {sym}", "burst": f"BURST {sym}",
                "buy": f"BUY {sym}", "st_new": f"NEW-ST {sym}",
                "st_look": f"LOOK {sym}",
@@ -744,8 +853,14 @@ class Alerter:
                 and not (self.only_when_hidden and _monitor_visible())):
             self._last_notify = now
             if sys.platform == "darwin":
+                # Silent banner: _beep above already played this event's sound,
+                # and the banner's own would land on top of it as a double
+                # strike for one alert. _beep is the single audio path, so the
+                # volume and min-gap settings actually govern everything you
+                # hear.
                 _macos_notify(f"Momentum · {msg.split()[0]} {sym}",
                                detail or "momentum alert",
+                               sound=False,
                                auto_dismiss=self.notify_duration)
             elif _plyer is not None:
                 try:
@@ -1713,8 +1828,44 @@ def main():
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
 
+def _audition_sounds() -> None:
+    """Play each alert kind's sound in turn so they can be chosen by ear.
+
+    Names like "Bottle" and "Sosumi" say nothing about what they sound like, and
+    picking an alert tone off a list is how you end up with one you resent at
+    04:00. Every sound macOS ships is listed after the mapped ones.
+    """
+    cfg = load_config()
+    volume = float(cfg.get("alert_sound_volume", 0.35))
+    console = Console()
+    console.print(f"[bold]Alert sounds[/bold]  volume={volume}  "
+                  f"(set alert_sound_volume / alert_sound_by_kind in "
+                  f"momentum_config.json)\n")
+
+    label = {"new": "a symbol appeared", "st_new": "new on Stocktwits",
+             "mflow": "mention flow building", "burst": "mention burst",
+             "st_look": "LOOK badge", "focus": "FOCUS setup fired",
+             "buy": "buy signal"}
+    for kind, sound in ALERT_SOUNDS.items():
+        console.print(f"  {kind:9s} {sound:10s} [dim]{label.get(kind, '')}[/dim]")
+        _play(os.path.join(_SOUND_DIR, f"{sound}.aiff"), volume)
+        time.sleep(0.35)
+
+    others = sorted({p[:-5] for p in os.listdir(_SOUND_DIR) if p.endswith(".aiff")}
+                    - set(ALERT_SOUNDS.values())) if os.path.isdir(_SOUND_DIR) else []
+    if others:
+        console.print("\n[dim]Also available (unmapped):[/dim]")
+        for sound in others:
+            console.print(f"  {'':9s} {sound}")
+            _play(os.path.join(_SOUND_DIR, f"{sound}.aiff"), volume)
+            time.sleep(0.35)
+
+
 if __name__ == "__main__":
     try:
-        main()
+        if "--sounds" in sys.argv:
+            _audition_sounds()
+        else:
+            main()
     except KeyboardInterrupt:
         sys.exit(0)
