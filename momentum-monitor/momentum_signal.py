@@ -679,7 +679,10 @@ class ChartWatcher:
         self._prox: dict | None = None
         self._readout: list[str] | None = None
         self._symbol: str | None = None
-        self._error: str | None = None
+        # Seeded so the first second on screen — before the opening capture
+        # and tesseract pass land — reads as "warming up" rather than as a
+        # failure the user might go chasing.
+        self._error: str | None = "starting"
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -2075,7 +2078,17 @@ def main():
                     # this source does not depend on.
                     prox, lines, csym = chart_watcher.snapshot()
                     csym = csym or chart_symbol.get(hotkeys, t0)
-                    cstate, cdetail = buy_circle({"signal_proximity": prox}, cfg)
+                    if prox is None:
+                        # Say why the SCREEN read failed. Handing a None to
+                        # buy_circle() gets "untracked", which is the engine's
+                        # vocabulary — it means "not in the tracked set", and
+                        # this source has no tracked set. A wrong reason is
+                        # worse than none: it sends you to fix the engine.
+                        cstate = "unknown"
+                        cdetail = chart_watcher.error() or "no chart read"
+                    else:
+                        cstate, cdetail = buy_circle(
+                            {"signal_proximity": prox}, cfg)
                     readout_strip = chart_readout_markup(lines)
                 else:
                     csym = chart_symbol.get(hotkeys, t0)
