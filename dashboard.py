@@ -297,8 +297,15 @@ def _track_mention(ticker: str):
         ).start()
 
 
-_BURST_LOG      = Path(__file__).parent / "benchmarks" / "mention_bursts.jsonl"
-_PRICE_SPIKE_LOG = Path(__file__).parent / "benchmarks" / "price_spikes.jsonl"
+# Redirectable so the suite does not append synthetic bursts to the real
+# benchmark record. These files are analysis input — a run that injects rows
+# with null prices and identical timestamps quietly corrupts the dataset any
+# later threshold work would be calibrated against. Same reasoning as
+# TRADE_GUARD_STATE_FILE; see tests/conftest.py.
+_BENCH_DIR      = Path(os.getenv("BENCHMARK_DIR")
+                       or (Path(__file__).parent / "benchmarks"))
+_BURST_LOG      = _BENCH_DIR / "mention_bursts.jsonl"
+_PRICE_SPIKE_LOG = _BENCH_DIR / "price_spikes.jsonl"
 
 
 def _is_price_spike_alert(a: dict) -> bool:
