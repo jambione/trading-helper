@@ -65,12 +65,23 @@ def rightmost_data_x(img: np.ndarray, colors: tuple) -> int | None:
 def line_y(img: np.ndarray, color: str, edge: int = 14,
            x_end: int | None = None) -> float | None:
     """Median row of `color` pixels in the strip ending at x_end (the
-    newest data column). None if the color isn't present there."""
+    newest data column). None if the color isn't present there.
+
+    Presence is judged on pixel COUNT, not on how many rows the colour
+    spans. Requiring two distinct rows quietly rejected any line that
+    happened to be flat — it occupies exactly one row — so a MACD signal
+    resting on its average, or %R pinned at the floor, read as "no data"
+    at precisely the moments those readings matter most. A flat line still
+    paints most of the strip's width; a stray anti-aliased pixel does not.
+    """
     if x_end is None:
         x_end = img.shape[1] - 4
     strip = img[:, max(0, x_end - edge):x_end + 1]
-    rows = np.where(color_mask(strip, color).any(axis=1))[0]
-    if len(rows) < 2:
+    mask = color_mask(strip, color)
+    if int(mask.sum()) < 3:
+        return None
+    rows = np.where(mask.any(axis=1))[0]
+    if len(rows) == 0:
         return None
     return float(np.median(rows))
 
@@ -101,15 +112,34 @@ def read_star(img: np.ndarray) -> dict | None:
 
 
 def read_heart(img: np.ndarray) -> dict | None:
-    """{'w': white-line val, 'b': blue-line val (0..-100), 'shade': red|blue|none}"""
+    """{'w': white-line val, 'b': blue-line val (0..-100), 'shade': red|blue|none}
+
+    Each line is sampled at its OWN newest column, the way read_check already
+    does. Sharing one x_end silently drops whichever line renders shorter — on
+    a live chart the white line has been seen ending ~80px before the blue,
+    which returned w=None on every read while blue looked perfectly healthy.
+    A line that has genuinely stopped is still rejected below.
+    """
     h = img.shape[0]
-    x_end = rightmost_data_x(img, ("white", "blue"))
-    if x_end is None:
+    wx = rightmost_data_x(img, ("white",))
+    bx = rightmost_data_x(img, ("blue",))
+    if wx is None and bx is None:
         return None
-    wy = line_y(img, "white", x_end=x_end)
-    by = line_y(img, "blue", x_end=x_end)
+
+    # Guard against reading a line that stopped rather than one that merely
+    # renders a few px shorter: past this much lag it is history, not "now".
+    newest = max(x for x in (wx, bx) if x is not None)
+    max_lag = max(20, int(img.shape[1] * 0.2))
+    if wx is not None and newest - wx > max_lag:
+        wx = None
+    if bx is not None and newest - bx > max_lag:
+        bx = None
+
+    wy = line_y(img, "white", x_end=wx) if wx is not None else None
+    by = line_y(img, "blue", x_end=bx) if bx is not None else None
     if wy is None and by is None:
         return None
+    x_end = newest
     w = y_to_value(wy, h, 0.0, -100.0) if wy is not None else None
     b = y_to_value(by, h, 0.0, -100.0) if by is not None else None
     # dominant shading near the newest data (fills are dim -> loose test)
