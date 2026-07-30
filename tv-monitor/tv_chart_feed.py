@@ -33,7 +33,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import tv_capture_mac                                       # noqa: E402
 import tv_signal                                            # noqa: E402
 from tv_core import (Trail, line_series, read_check, read_heart,  # noqa: E402
-                     read_star, series_direction, y_to_value)
+                     read_star, series_direction, series_shape,
+                     y_to_value)
 
 # How far back a slope looks. Short enough to feel live on a 1m chart, long
 # enough that one noisy frame cannot flip an arrow on its own.
@@ -69,7 +70,17 @@ RELOCATE_EVERY = 30.0
 STALE_AFTER = 10.0
 
 UP, DOWN, FLAT = "up", "down", "flat"
-_ARROW = {UP: "↑", DOWN: "↓", FLAT: "→"}
+TURNING_UP, TURNING_DOWN = "turning_up", "turning_down"
+
+# ↗ and ↘ are the ones to look for: the line has changed its mind. %R turning
+# up off the floor is the entry cue the strategy is built around, and MACD's
+# gap rolling over is the warning that a move is done.
+_ARROW = {UP: "↑", DOWN: "↓", FLAT: "→",
+          TURNING_UP: "↗", TURNING_DOWN: "↘"}
+
+# A turn counts as heading that way for leg purposes — it IS the direction of
+# travel, and catching it is the whole point of watching the turn.
+_RISING = (UP, TURNING_UP)
 
 
 def direction(delta: float | None, flat_band: float) -> str | None:
@@ -268,8 +279,8 @@ class ChartFeed:
                 ("pct_b", self.heart_b, FLAT_PCT, FLAT_PCT_HIST),
                 ("m", self.macd, FLAT_M, FLAT_M_HIST)):
             hist = v.get(f"{key}_hist") or []
-            dir_, _ = series_direction(hist, hist_band)
-            out[key] = dir_ if dir_ is not None else direction(trail.slope(w), band)
+            shape = series_shape(hist, hist_band)
+            out[key] = shape if shape is not None else direction(trail.slope(w), band)
         return out
 
     def readout(self, now: float | None = None) -> list[str] | None:
@@ -325,10 +336,10 @@ class ChartFeed:
             self.last_error = f"{'/'.join(missing)} panel unreadable"
             return None
 
-        cm_ok = r is not None and r < 40.0 and d["r"] == UP
-        pctr_ok = ((w_ is not None and d["pct_w"] == UP)
-                   or (b_ is not None and d["pct_b"] == UP))
-        macd_ok = m is not None and (m > 0 or d["m"] == UP)
+        cm_ok = r is not None and r < 40.0 and d["r"] in _RISING
+        pctr_ok = ((w_ is not None and d["pct_w"] in _RISING)
+                   or (b_ is not None and d["pct_b"] in _RISING))
+        macd_ok = m is not None and (m > 0 or d["m"] in _RISING)
 
         legs = int(cm_ok) + int(pctr_ok) + int(macd_ok)
         pct = round(legs / 3 * 100)
@@ -336,7 +347,7 @@ class ChartFeed:
             "strategy": "three_indicator",
             "source": "chart",
             "bars_fetched": True,
-            "cm_rsi": r, "cm_ok": cm_ok, "cm_rsi_rising": d["r"] == UP,
+            "cm_rsi": r, "cm_ok": cm_ok, "cm_rsi_rising": d["r"] in _RISING,
             "pctr": w_, "pctr_slow": b_, "pctr_ok": pctr_ok,
             "macd_ok": macd_ok,
             "proximity_pct": pct,

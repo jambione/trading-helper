@@ -152,3 +152,34 @@ def test_stale_feed_reports_nothing():
     feed.last_ok = 0.0
     assert feed.proximity(now=1e6) is None
     assert feed.readout(now=1e6) is None
+
+
+# ── a turn counts as direction of travel ─────────────────────────────────────
+
+def test_turning_up_lights_the_leg():
+    """%R turning up off the floor is the cue the strategy is built on — it
+    must not have to wait for a sustained climb to register."""
+    feed = _primed(r=30.0, pct_w=-90.0, pct_b=-85.0, m=-1.0)
+    feed._values["pct_w_hist"] = ([float(-90 - x) for x in range(20)]
+                                  + [float(-110 + x * 2) for x in range(20)])
+    d = feed.directions()
+    assert d["pct_w"] == "turning_up"
+    prox = feed.proximity(now=1e12)
+    assert prox is not None and prox["pctr_ok"], "a turn up did not light the leg"
+
+
+def test_turning_down_does_not_light_the_leg():
+    feed = _primed(r=30.0, pct_w=-40.0, pct_b=-40.0, m=-1.0)
+    for k in ("pct_w_hist", "pct_b_hist"):
+        feed._values[k] = ([float(-80 + x * 2) for x in range(20)]
+                           + [float(-40 - x) for x in range(20)])
+    d = feed.directions()
+    assert d["pct_w"] == "turning_down"
+    prox = feed.proximity(now=1e12)
+    assert prox is not None and not prox["pctr_ok"]
+
+
+def test_arrows_distinguish_turns_from_trends():
+    assert F.arrow("turning_up") == "↗"
+    assert F.arrow("turning_down") == "↘"
+    assert F.arrow(F.UP) == "↑" and F.arrow(F.DOWN) == "↓"

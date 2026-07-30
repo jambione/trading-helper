@@ -378,3 +378,36 @@ def test_series_direction_tolerates_gaps():
 def test_series_on_a_blank_panel_is_empty():
     from tv_core import line_series
     assert line_series(_panel(), "white", span=200, points=20) == []
+
+
+# ── turns ────────────────────────────────────────────────────────────────────
+# One direction across the whole span hides the moment worth seeing: a %R line
+# that fell for thirty bars then turned up over the last eight averages to
+# "down", and that turn off the floor is the entry cue.
+
+def test_turn_up_is_not_reported_as_down():
+    from tv_core import series_direction, series_shape
+    fell_then_rose = [float(x) for x in range(40, 10, -1)] + \
+                     [float(x) for x in range(10, 30)]
+    assert series_direction(fell_then_rose, 6.0)[0] == "down"   # the averaging
+    assert series_shape(fell_then_rose, 6.0) == "turning_up"    # the turn
+
+
+def test_roll_over_is_not_reported_as_up():
+    from tv_core import series_shape
+    rose_then_fell = [float(x) for x in range(10, 40)] + \
+                     [float(x) for x in range(40, 20, -1)]
+    assert series_shape(rose_then_fell, 6.0) == "turning_down"
+
+
+def test_sustained_moves_keep_their_plain_direction():
+    from tv_core import series_shape
+    assert series_shape([float(x) for x in range(40)], 6.0) == "up"
+    assert series_shape([float(40 - x) for x in range(40)], 6.0) == "down"
+    assert series_shape([10.0] * 40, 6.0) == "flat"
+
+
+def test_shape_needs_enough_points():
+    from tv_core import series_shape
+    assert series_shape([1.0, 2.0, 3.0], 6.0) is None
+    assert series_shape([], 6.0) is None

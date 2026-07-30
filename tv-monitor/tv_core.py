@@ -162,6 +162,44 @@ def series_direction(vals: list[float | None],
     return "flat", delta
 
 
+def series_shape(vals: list[float | None], flat_band: float,
+                 min_points: int = 8) -> str | None:
+    """Where the line has been AND where it is heading now.
+
+    up | down | turning_up | turning_down | flat, or None if unreadable.
+
+    A single direction across the whole span hides the thing worth seeing. A
+    %R line that fell for thirty bars and turned up over the last eight still
+    averages to "down", and that turn off the floor is the entry cue — the
+    same for MACD's gap rolling over while its overall slope is still positive.
+    So each half is measured separately and disagreement is reported as a turn
+    rather than smoothed into the average.
+
+    The half band is deliberately lower than `flat_band`: each half covers
+    about half the bars, so holding it to the full-span threshold would call
+    real movement flat and never report a turn at all.
+    """
+    got = [v for v in vals if v is not None]
+    if len(got) < min_points:
+        return None
+    mid = len(got) // 2
+    half_band = flat_band * 0.6
+    first, _ = series_direction(got[:mid], half_band, min_points=3)
+    second, _ = series_direction(got[mid:], half_band, min_points=3)
+    if first is None or second is None:
+        return series_direction(got, flat_band)[0]
+
+    if first == "down" and second == "up":
+        return "turning_up"
+    if first == "up" and second == "down":
+        return "turning_down"
+    if "up" in (first, second) and "down" not in (first, second):
+        return "up"
+    if "down" in (first, second) and "up" not in (first, second):
+        return "down"
+    return "flat"
+
+
 def y_to_value(y: float, height: int, top_val: float,
                bottom_val: float) -> float:
     return top_val + (y / max(1, height - 1)) * (bottom_val - top_val)
