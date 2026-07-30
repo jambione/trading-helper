@@ -103,8 +103,16 @@ def arrow(dir_: str | None) -> str:
     return _ARROW.get(dir_ or "", "·")
 
 
+# How much each indicator counts toward the combined arrow. %R Trend Exhaustion
+# leads: it is the one the strategy is actually built around — deep, turning up
+# off the floor — while MACD is confirmation that the turn has follow-through.
+# The pair sums to 2.0 so the verdict thresholds below keep the meaning they
+# were tuned with; shifting the split re-weights without rescaling anything.
+PCT_WEIGHT = 1.3
+MACD_WEIGHT = 2.0 - PCT_WEIGHT
+
 # Combined verdict → (glyph, rich style, label). %R and MACD each contribute
-# ±1.0 to ±2.5 through shape_score, so the sum runs roughly -5..+5.
+# ±1.0 to ±2.5 through shape_score, weighted above, so the sum runs -5..+5.
 TREND_STYLES = {
     "surging": ("⇈", "bold green",   "up"),
     "rising":  ("↗", "green",        "up"),
@@ -159,8 +167,8 @@ def trend_verdict(pct_shape: str | None, macd_shape: str | None,
     if pct_shape is None and macd_shape is None:
         return "unknown"
 
-    pct = shape_score(pct_shape, pct_delta, FLAT_PCT_HIST)
-    macd = shape_score(macd_shape, macd_delta, FLAT_M_HIST)
+    pct = shape_score(pct_shape, pct_delta, FLAT_PCT_HIST) * PCT_WEIGHT
+    macd = shape_score(macd_shape, macd_delta, FLAT_M_HIST) * MACD_WEIGHT
 
     # Opposing signs are a conflict at any magnitude. A strong %R against a
     # weak MACD is still the two indicators saying different things, and
@@ -169,12 +177,16 @@ def trend_verdict(pct_shape: str | None, macd_shape: str | None,
     if pct * macd < 0:
         return "mixed"
 
+    # Both must be moving to earn a doubled glyph, whatever the weights say.
+    # ⇈ means the chart agrees with itself; without this, a heavily weighted
+    # %R could reach it alone and the glyph would stop meaning agreement.
+    both_moving = pct != 0.0 and macd != 0.0
     score = pct + macd
-    if score >= 3.0:
+    if score >= 3.0 and both_moving:
         return "surging"
     if score >= 1.0:
         return "rising"
-    if score <= -3.0:
+    if score <= -3.0 and both_moving:
         return "sinking"
     if score <= -1.0:
         return "falling"

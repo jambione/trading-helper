@@ -205,7 +205,18 @@ def test_agreement_alone_is_not_enough_for_the_doubled_glyph():
 
 def test_one_indicator_moving_is_only_rising():
     assert F.trend_verdict("up", "flat") == "rising"
-    assert F.trend_verdict("flat", "down") == "falling"
+    assert F.trend_verdict("flat", "down", 0.0, -F.FLAT_M_HIST * 4) == "falling"
+
+
+def test_a_marginal_macd_alone_calls_nothing():
+    """Down-weighting MACD means a lone barely-past-flat move no longer
+    clears the threshold, while a lone %R at the same strength does. That is
+    the weighting doing its job, not a gap — a decisive MACD alone still
+    registers."""
+    assert F.trend_verdict("flat", "down") == "mixed"          # marginal
+    assert F.trend_verdict("flat", "down",
+                           0.0, -F.FLAT_M_HIST * 4) == "falling"   # decisive
+    assert F.trend_verdict("up", "flat") == "rising"           # %R, marginal
 
 
 def test_disagreement_is_reported_as_mixed_not_averaged():
@@ -263,3 +274,38 @@ def test_one_indicator_alone_cannot_reach_the_doubled_glyph():
     """⇈ means both agree. A single strong mover is only ↗."""
     assert F.trend_verdict("turning_up", "flat",
                            F.FLAT_PCT_HIST * 10, 0.0) == "rising"
+
+
+# ── %R carries more weight than MACD ─────────────────────────────────────────
+# %R Trend Exhaustion is what the strategy is built around — deep, turning up
+# off the floor. MACD is confirmation that the turn has follow-through.
+
+def test_pct_r_outweighs_macd():
+    """Same shapes, same strength — the verdict depends on which one is loud."""
+    P, M = F.FLAT_PCT_HIST, F.FLAT_M_HIST
+    pct_led = F.trend_verdict("up", "up", P * 4, M * 1.0)
+    macd_led = F.trend_verdict("up", "up", P * 1.0, M * 4)
+    assert pct_led == "surging"
+    assert macd_led == "rising", "MACD alone should not carry the doubled glyph"
+
+
+def test_weights_sum_to_two_so_thresholds_keep_meaning():
+    """The split re-weights without rescaling: two minimum contributions still
+    total 2.0, which is what the rising/surging cut points were tuned against."""
+    assert F.PCT_WEIGHT + F.MACD_WEIGHT == pytest.approx(2.0)
+    assert F.PCT_WEIGHT > F.MACD_WEIGHT
+
+
+def test_a_weighted_indicator_still_cannot_reach_the_doubled_glyph_alone():
+    """⇈ means the chart agrees with itself. Weighting must not let %R get
+    there on its own, however hard it moves."""
+    assert F.trend_verdict("up", "flat", F.FLAT_PCT_HIST * 20, 0.0) == "rising"
+    assert F.trend_verdict("down", "flat", -F.FLAT_PCT_HIST * 20, 0.0) == "falling"
+    assert F.trend_verdict("turning_up", "flat",
+                           F.FLAT_PCT_HIST * 20, 0.0) == "rising"
+
+
+def test_weighting_does_not_override_a_conflict():
+    """A loud %R against a quiet MACD stays a conflict, not a %R win."""
+    assert F.trend_verdict("up", "down",
+                           F.FLAT_PCT_HIST * 20, -F.FLAT_M_HIST) == "mixed"
