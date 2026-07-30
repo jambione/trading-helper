@@ -99,6 +99,69 @@ def line_y(img: np.ndarray, color: str, edge: int = 14,
     return float(np.median(rows))
 
 
+def line_series(img: np.ndarray, color: str, x_end: int | None = None,
+                span: int = 160, points: int = 40) -> list[float | None]:
+    """The plotted line's row at evenly spaced columns, oldest → newest.
+
+    The trend does not have to be accumulated in wall-clock time: the panel
+    already holds the line's whole visible history, one column per slice of
+    chart. Sampling backwards from the newest column reads that history
+    directly, so a slope is available on the first frame instead of after
+    45 seconds of watching, it survives a restart, and it measures the shape
+    of the plot rather than however the sampler happened to tick.
+
+    `span` is how many columns back to cover — chart columns, not bars, since
+    bar width moves with zoom. None entries mark columns where the line was
+    not found; callers decide whether enough of it is present to trust.
+
+    The mask is computed once for the whole panel rather than per column,
+    which is what makes this affordable at 40 points across three panels.
+    """
+    if x_end is None:
+        x_end = rightmost_data_x(img, (color,))
+        if x_end is None:
+            return []
+    x0 = max(0, x_end - int(span))
+    if x_end - x0 < 4:
+        return []
+
+    mask = color_mask(img, color)
+    xs = np.linspace(x0, x_end, num=max(2, int(points))).astype(int)
+    out: list[float | None] = []
+    for x in xs:
+        # A narrow neighbourhood, so a 1px line with an anti-aliased gap at
+        # exactly this column still resolves.
+        lo, hi = max(0, x - 2), min(mask.shape[1], x + 3)
+        rows = np.where(mask[:, lo:hi].any(axis=1))[0]
+        out.append(float(np.median(rows)) if rows.size else None)
+    return out
+
+
+def series_direction(vals: list[float | None],
+                     flat_band: float,
+                     min_points: int = 6) -> tuple[str | None, float | None]:
+    """(direction, change) over a value series, oldest → newest.
+
+    Compares the median of the newest third against the oldest third rather
+    than fitting a line: indicator plots are noisy and a median ignores the
+    odd column the mask missed, where a least-squares fit would chase it.
+    Returns (None, None) when too little of the line was readable — not flat,
+    because unread is not the same as unmoving.
+    """
+    got = [v for v in vals if v is not None]
+    if len(got) < min_points:
+        return None, None
+    third = max(2, len(got) // 3)
+    old = float(np.median(got[:third]))
+    new = float(np.median(got[-third:]))
+    delta = new - old
+    if delta > flat_band:
+        return "up", delta
+    if delta < -flat_band:
+        return "down", delta
+    return "flat", delta
+
+
 def y_to_value(y: float, height: int, top_val: float,
                bottom_val: float) -> float:
     return top_val + (y / max(1, height - 1)) * (bottom_val - top_val)

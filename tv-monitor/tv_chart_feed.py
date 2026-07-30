@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import tv_capture_mac                                       # noqa: E402
 import tv_signal                                            # noqa: E402
-from tv_core import Trail, read_check, read_heart, read_star  # noqa: E402
+from tv_core import (Trail, line_series, read_check, read_heart,  # noqa: E402
+                     read_star, series_direction, y_to_value)
 
 # How far back a slope looks. Short enough to feel live on a 1m chart, long
 # enough that one noisy frame cannot flip an arrow on its own.
@@ -44,6 +45,21 @@ SLOPE_WINDOW = 45.0
 FLAT_R = 2.0
 FLAT_PCT = 2.0
 FLAT_M = 0.6
+
+# How much of the plotted line to read back for the trend, in chart columns.
+# Columns rather than bars because bar width moves with zoom; ~160px covers a
+# meaningful recent stretch at normal zoom without reaching back so far that a
+# turn gets averaged away.
+TREND_SPAN = 160
+TREND_POINTS = 40
+
+# Flat bands for the plot-history trend. Deliberately wider than the tick
+# bands above: those measure 45 seconds, these measure ~40 bars, and over that
+# much chart an indicator that moved two points has not really done anything.
+# Same units as their live counterparts.
+FLAT_R_HIST = 6.0
+FLAT_PCT_HIST = 6.0
+FLAT_M_HIST = 1.5
 
 # Re-locating costs a tesseract pass, so it is not done every poll — but it has
 # to happen often enough to survive a window resize or a layout change.
@@ -81,9 +97,13 @@ class ChartFeed:
 
     def __init__(self,
                  slope_window: float = SLOPE_WINDOW,
-                 relocate_every: float = RELOCATE_EVERY):
+                 relocate_every: float = RELOCATE_EVERY,
+                 trend_span: int = TREND_SPAN,
+                 trend_points: int = TREND_POINTS):
         self.slope_window = float(slope_window)
         self.relocate_every = float(relocate_every)
+        self.trend_span = int(trend_span)
+        self.trend_points = int(trend_points)
 
         self.cap = tv_capture_mac.WindowCapture()
         self.rect: dict | None = None
@@ -168,23 +188,63 @@ class ChartFeed:
     def _read(self, panels: dict) -> dict | None:
         out: dict = {}
         if "star" in panels:
-            s = read_star(np.asarray(self.cap.grab(panels["star"])))
+            img = np.asarray(self.cap.grab(panels["star"]))
+            s = read_star(img)
             if s:
                 out["r"] = s.get("value")
+                # Trend straight off the plot: the line's own history is in
+                # the panel, so this is right on the first frame instead of
+                # after 45s of sampling. Star's line is grey with red/green
+                # only at the extremes, so all three are tried.
+                out["r_hist"] = self._panel_series(img, ("gray", "red", "green"),
+                                                   100.0, 0.0)
         if "heart" in panels:
-            h = read_heart(np.asarray(self.cap.grab(panels["heart"])))
+            img = np.asarray(self.cap.grab(panels["heart"]))
+            h = read_heart(img)
             if h:
                 out["pct_w"], out["pct_b"] = h.get("w"), h.get("b")
                 out["shade"] = h.get("shade")
+                out["pct_w_hist"] = self._panel_series(img, ("white",), 0.0, -100.0)
+                out["pct_b_hist"] = self._panel_series(img, ("blue",), 0.0, -100.0)
         # The third slot is keyed "fire" by the locator — that name is left
         # over from the LazyBear squeeze panel this layout no longer carries.
         # It is MACD here, so it is read as MACD.
         macd_key = "check" if "check" in panels else "fire"
         if macd_key in panels:
-            c = read_check(np.asarray(self.cap.grab(panels[macd_key])))
+            img = np.asarray(self.cap.grab(panels[macd_key]))
+            c = read_check(img)
             if c:
                 out["m"] = c.get("gap")
+                # The gap, not the signal line's height. `m` is signal-minus-MA
+                # as a percentage of panel height, so its history has to be the
+                # same difference — tracking the signal's absolute position
+                # would report "rising" for a line climbing while its MA
+                # climbed faster, which is the gap closing.
+                sig = self._panel_series(img, ("green", "red"), 100.0, 0.0)
+                ma = self._panel_series(img, ("yellow",), 100.0, 0.0)
+                out["m_hist"] = [
+                    None if (a is None or b is None) else a - b
+                    for a, b in zip(sig, ma)
+                ] if sig and ma else []
         return out or None
+
+    def _panel_series(self, img, colors: tuple[str, ...],
+                      top_val: float, bottom_val: float) -> list:
+        """The newest stretch of a plotted line, in indicator units.
+
+        Tries each colour and keeps the longest run: TradingView recolours a
+        line at its extremes (star greys through red and green, MACD's signal
+        flips green to red), so no single mask covers the whole plot.
+        """
+        h = img.shape[0]
+        best: list = []
+        for c in colors:
+            got = line_series(img, c, span=self.trend_span,
+                              points=self.trend_points)
+            if sum(v is not None for v in got) > sum(v is not None for v in best):
+                best = got
+        return [None if v is None else y_to_value(v, h, top_val, bottom_val)
+                for v in best]
 
     # ── reporting ───────────────────────────────────────────────────────────
 
@@ -193,14 +253,24 @@ class ChartFeed:
         return self.last_ok > 0 and (now - self.last_ok) <= STALE_AFTER
 
     def directions(self) -> dict:
-        """Per-indicator up/down/flat, or None where history is too short."""
-        w = self.slope_window
-        return {
-            "r": direction(self.star.slope(w), FLAT_R),
-            "pct_w": direction(self.heart_w.slope(w), FLAT_PCT),
-            "pct_b": direction(self.heart_b.slope(w), FLAT_PCT),
-            "m": direction(self.macd.slope(w), FLAT_M),
-        }
+        """Per-indicator up/down/flat, or None when it could not be measured.
+
+        Prefers the shape of the plotted line itself — that history is on the
+        chart already, so it is right on the first frame and after a restart.
+        Falls back to the wall-clock sampler for any panel whose line was too
+        broken to read back, which is the only case the Trail still serves.
+        """
+        v, w = self._values, self.slope_window
+        out = {}
+        for key, trail, band, hist_band in (
+                ("r", self.star, FLAT_R, FLAT_R_HIST),
+                ("pct_w", self.heart_w, FLAT_PCT, FLAT_PCT_HIST),
+                ("pct_b", self.heart_b, FLAT_PCT, FLAT_PCT_HIST),
+                ("m", self.macd, FLAT_M, FLAT_M_HIST)):
+            hist = v.get(f"{key}_hist") or []
+            dir_, _ = series_direction(hist, hist_band)
+            out[key] = dir_ if dir_ is not None else direction(trail.slope(w), band)
+        return out
 
     def readout(self, now: float | None = None) -> list[str] | None:
         """The R / % / M lines, values with direction arrows.

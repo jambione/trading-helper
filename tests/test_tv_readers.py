@@ -325,3 +325,56 @@ def test_hundred_below_the_zero_is_read_as_negative():
                                     (584, 0.0), (643, 100.0)])
     assert got is not None
     assert got["heart"][1] == pytest.approx(643, abs=3)
+
+
+# ── trend read from the plot's own history ───────────────────────────────────
+# The panel holds the line's whole visible history, so a slope is available on
+# the first frame instead of after 45s of wall-clock sampling — and it survives
+# a restart, which the sampler never did.
+
+def _sloped(h=60, w=400, y0=50, y1=10, colour=WHITE):
+    """A line running from row y0 on the left to y1 on the right."""
+    img = _panel(h=h, w=w)
+    for x in range(w):
+        y = int(round(y0 + (y1 - y0) * x / (w - 1)))
+        img[y, x, :3] = colour
+    return img
+
+
+def test_series_follows_a_rising_line():
+    from tv_core import line_series
+    # Screen rows fall as the value rises, so a rising plot means decreasing y.
+    vals = line_series(_sloped(y0=50, y1=10), "white", span=300, points=20)
+    got = [v for v in vals if v is not None]
+    assert len(got) >= 15
+    assert got[0] > got[-1], "row should decrease left-to-right on a rising line"
+
+
+def test_series_direction_on_real_slopes():
+    from tv_core import series_direction
+    rising = [float(v) for v in range(0, 40)]
+    falling = list(reversed(rising))
+    flat = [10.0 + (i % 2) * 0.2 for i in range(40)]
+    assert series_direction(rising, 6.0)[0] == "up"
+    assert series_direction(falling, 6.0)[0] == "down"
+    assert series_direction(flat, 6.0)[0] == "flat"
+
+
+def test_series_direction_needs_enough_points():
+    """Too little of the line readable is 'unknown', never 'flat'."""
+    from tv_core import series_direction
+    assert series_direction([1.0, 2.0, None, None], 6.0) == (None, None)
+    assert series_direction([], 6.0) == (None, None)
+
+
+def test_series_direction_tolerates_gaps():
+    """A column the mask missed must not drag the trend — hence a median,
+    not a least-squares fit that would chase the outlier."""
+    from tv_core import series_direction
+    vals = [0.0, 5.0, None, 15.0, None, 25.0, 30.0, 35.0, 40.0, 45.0]
+    assert series_direction(vals, 6.0)[0] == "up"
+
+
+def test_series_on_a_blank_panel_is_empty():
+    from tv_core import line_series
+    assert line_series(_panel(), "white", span=200, points=20) == []
