@@ -634,13 +634,13 @@ TREND_STYLES = {
 }
 
 
-def trend_markup(trend: str | None, detail: str, sym: str | None) -> str | None:
-    """The corner chip as an arrow: 'ZCMD 2/3 ⇈'.
+def trend_markup(trend: str | None, sym: str | None) -> str | None:
+    """The corner chip: 'ZCMD ⇈'.
 
-    An arrow says which way %R and MACD are heading; the leg count still rides
-    alongside because "complete" and "improving" are different questions. A
-    setup can be 1-of-3 and clearly building, or 2-of-3 and rolling over, and
-    the two glyphs disagreeing is information rather than a contradiction.
+    Symbol and arrow, nothing else. The leg count used to ride along here, but
+    two verdicts side by side is one more than the corner can carry — the
+    readout strip underneath already gives R / %R / MACD with their own
+    arrows, which is the same evidence in a form you can actually check.
 
     Returns None when there is no trend to show, so the caller can fall back
     to the dot rather than print a meaningless arrow.
@@ -648,8 +648,7 @@ def trend_markup(trend: str | None, detail: str, sym: str | None) -> str | None:
     if not trend or trend == "unknown":
         return None
     glyph, style = TREND_STYLES.get(trend, TREND_STYLES["unknown"])
-    body = f"{sym or '—'} {detail}".strip()
-    return f"[{style}]{body} {glyph}[/{style}]"
+    return f"[{style}]{sym or '—'} {glyph}[/{style}]"
 
 
 def circle_markup(state: str, detail: str, sym: str | None) -> str:
@@ -2142,7 +2141,7 @@ def main():
                     # the corner is never blank.
                     if cfg.get("buy_circle_arrow", True):
                         circle = trend_markup(
-                            (prox or {}).get("chart_trend"), cdetail, csym)
+                            (prox or {}).get("chart_trend"), csym)
                 else:
                     csym = chart_symbol.get(hotkeys, t0)
                     # A dead feed must not leave a stale green sitting in the

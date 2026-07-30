@@ -223,21 +223,24 @@ def test_chart_read_is_cached_within_ttl(monkeypatch):
 
 # ── the arrow chip ───────────────────────────────────────────────────────────
 
-def test_arrow_carries_symbol_legs_and_direction():
+def test_arrow_is_symbol_and_glyph_only():
+    """The corner carries one verdict. R / %R / MACD with their own arrows are
+    in the readout strip underneath, where they can be checked."""
     from momentum_signal import trend_markup
-    chip = trend_markup("surging", "2/3 rsi", "QBTS")
-    assert chip and "QBTS" in chip and "2/3 rsi" in chip and "⇈" in chip
+    chip = trend_markup("surging", "QBTS")
+    assert chip and "QBTS" in chip and "⇈" in chip
+    assert "/3" not in chip and "rsi" not in chip
 
 
 def test_arrow_glyph_per_state():
     from momentum_signal import trend_markup
     for state, glyph in (("surging", "⇈"), ("rising", "↗"), ("mixed", "→"),
                          ("falling", "↘"), ("sinking", "⇊")):
-        assert glyph in trend_markup(state, "", "QBTS")
+        assert glyph in trend_markup(state, "QBTS")
 
 
 def test_no_trend_falls_back_to_the_dot():
     """The corner must never be blank: unreadable trend keeps the circle."""
     from momentum_signal import trend_markup
-    assert trend_markup(None, "1/3", "QBTS") is None
-    assert trend_markup("unknown", "1/3", "QBTS") is None
+    assert trend_markup(None, "QBTS") is None
+    assert trend_markup("unknown", "QBTS") is None
