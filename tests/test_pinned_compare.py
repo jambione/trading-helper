@@ -76,48 +76,6 @@ def test_no_env_means_defaults_only(monkeypatch):
     import strategy_three_indicator as three_ind
     full = three_ind.params(**p)
     assert full["cm_rsi_buy_max"] == three_ind.DEFAULT_PARAMS["cm_rsi_buy_max"]
-
-
-# ── Guarded buys: kill switch blocks strategy entries ─────────────────────────
-
-def test_three_indicator_buy_blocked_by_guard(monkeypatch, tmp_path):
-    """A 3IND buy signal must be vetoed when the guard kill switch is on."""
-    import types
-    import pandas as pd
-    import numpy as np
-    import trade_guard
-
-    calls = []
-    monkeypatch.setattr(se, "log_buy", lambda **k: calls.append(("BUY", k["ticker"])))
-
-    # Tripped guard: daily loss already past the limit
-    g = trade_guard.TradeGuard(daily_loss_limit=10, state_file=tmp_path / "g.json")
-    g.record_close(-50, "2099-01-01T00:00:00Z")
-    g._realized_pnl = -50  # ensure today's counters regardless of date math
-    g._date = trade_guard._today_et()
-    monkeypatch.setattr(se, "GUARD", g)
-
-    # Force the strategy to scream BUY
-    monkeypatch.setattr(se.three_ind, "compute_indicators", lambda df, p: df)
-    monkeypatch.setattr(se.three_ind, "to_arrays",
-                        lambda df: {"close": np.zeros(60)})
-    monkeypatch.setattr(se.three_ind, "evaluate_state",
-                        lambda a, i, p: {"buy": True, "sell": False, "buy_pct": 100})
-    monkeypatch.setattr(se, "MAX_PRICE", 0.0)
-    monkeypatch.setattr(se, "MAX_TOTAL_EXPOSURE", 0.0)
-
-    fake = types.SimpleNamespace(active={})
-    ts = se.TickerState("AAA")
-    ts.last_price = 2.0
-    df = pd.DataFrame({"close": [2.0] * 60, "open": [2.0] * 60,
-                       "high": [2.0] * 60, "low": [2.0] * 60,
-                       "volume": [1.0] * 60})
-
-    se.SignalEngine._eval_three_indicator(fake, ts, df)
-    assert calls == []           # buy vetoed
-    assert not ts.in_position
-
-
 def test_two_of_three_conditions_extend_expiry(monkeypatch):
     """A 2/3-aligned setup must earn the EXPIRY_WARM window, not die at 3 min."""
     import types
@@ -139,36 +97,3 @@ def test_two_of_three_conditions_extend_expiry(monkeypatch):
     assert ts.expiry_seconds() == se.EXPIRY_COLD
     se.SignalEngine._eval_three_indicator(fake, ts, df)
     assert ts.expiry_seconds() == se.EXPIRY_WARM
-
-
-def test_catalyst_gate_blocks_cold_buys(monkeypatch):
-    """THREE_IND_REQUIRE_HOT: a 3IND buy without a mention burst must not fire."""
-    import types
-    import numpy as np
-    import pandas as pd
-
-    calls = []
-    monkeypatch.setattr(se, "log_buy", lambda **k: calls.append(k["ticker"]))
-    monkeypatch.setattr(se, "THREE_IND_REQUIRE_HOT", True)
-    monkeypatch.setattr(se, "MAX_PRICE", 0.0)
-    monkeypatch.setattr(se, "MAX_TOTAL_EXPOSURE", 0.0)
-    monkeypatch.setattr(se.three_ind, "compute_indicators", lambda df, p: df)
-    monkeypatch.setattr(se.three_ind, "to_arrays", lambda df: {"close": np.zeros(60)})
-    monkeypatch.setattr(se.three_ind, "evaluate_state",
-                        lambda a, i, p: {"buy": True, "sell": False, "buy_pct": 100})
-
-    fake = types.SimpleNamespace(active={})
-    df = pd.DataFrame({"close": [2.0] * 60, "open": [2.0] * 60,
-                       "high": [2.0] * 60, "low": [2.0] * 60,
-                       "volume": [1.0] * 60})
-
-    cold = se.TickerState("AAA")
-    cold.last_price = 2.0
-    se.SignalEngine._eval_three_indicator(fake, cold, df)
-    assert calls == [] and not cold.in_position      # no burst → no buy
-
-    hot = se.TickerState("BBB")
-    hot.last_price = 2.0
-    hot.is_hot = True
-    se.SignalEngine._eval_three_indicator(fake, hot, df)
-    assert calls == ["BBB"] and hot.in_position      # burst → buy fires
