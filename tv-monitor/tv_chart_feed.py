@@ -228,6 +228,18 @@ class ChartFeed:
         r, m = v.get("r"), v.get("m")
         w_, b_ = v.get("pct_w"), v.get("pct_b")
 
+        # Every leg must have been READ before any of them can be counted. A
+        # panel that failed is not the same as an indicator that is not lit,
+        # but a leg count cannot express the difference — "1/3" would quietly
+        # assert two indicators are unfavourable when one of them was simply
+        # never seen. Report which panel is missing and let the circle go dim.
+        missing = [name for name, val in
+                   (("RSI", r), ("%R", w_ if w_ is not None else b_), ("MACD", m))
+                   if val is None]
+        if missing:
+            self.last_error = f"{'/'.join(missing)} panel unreadable"
+            return None
+
         cm_ok = r is not None and r < 40.0 and d["r"] == UP
         pctr_ok = ((w_ is not None and d["pct_w"] == UP)
                    or (b_ is not None and d["pct_b"] == UP))

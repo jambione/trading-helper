@@ -1953,6 +1953,16 @@ def main():
         chart_watcher.start()
         if not chart_watcher.available:
             chart_watcher = None
+    # Say which source the circle is on. The two report failures in different
+    # vocabularies, and "pending" from the engine looks identical on screen to
+    # a screen-read problem — this is the line that tells them apart.
+    if cfg.get("buy_circle_enabled", True):
+        if chart_watcher is not None:
+            console.print("[dim]buy circle: reading the TradingView window[/dim]")
+        else:
+            why = ("chart reader unavailable — no Quartz/tesseract"
+                   if chart_feed is None else "configured for engine")
+            console.print(f"[dim]buy circle: engine signal_proximity ({why})[/dim]")
     history = SymbolHistory(maxlen=int(cfg.get("history_samples", 120)))
     journal = Journal(HERE / str(cfg.get("journal_dir", "journal")),
                       flush_sec=float(cfg.get("journal_flush_sec", 5.0)),
