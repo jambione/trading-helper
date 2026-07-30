@@ -33,6 +33,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+import tv_capture_mac
 from tv_core import (LeaderTracker, Trail, bullish_score, combine,
                      grid_cells, master_verdict, read_check, read_heart,
                      read_squeeze, read_star, trend5)
@@ -296,6 +297,10 @@ def find_tv_windows() -> list[dict]:
     """All visible browser windows, best-first: titles that look like a
     TradingView chart (ticker+price or the word itself) sort ahead. The
     caller confirms by actually locating the indicator panels."""
+    if sys.platform == "darwin":
+        # Quartz enumerates windows and captures them by id, so the chart can
+        # sit behind the monitor's own terminal and still read correctly.
+        return tv_capture_mac.find_windows()
     if sys.platform != "win32":
         return []
     from ctypes import wintypes
@@ -495,10 +500,44 @@ def _fit_scale(pts: list[tuple[float, float]]) -> tuple[float, float] | None:
         return None
     ys = np.array([p[0] for p in pts], float)
     vs = np.array([p[1] for p in pts], float)
-    if vs.max() - vs.min() < 5:
+    # Extrapolating a narrow span to the full 0..100 multiplies every pixel of
+    # OCR noise by 100/span. A 5-unit span was a 20x multiplier, which is what
+    # made located panel heights wander between frames. Below this, decline and
+    # let the caller derive the band from its equal-height sibling — a known
+    # geometry beats a wildly levered measurement.
+    if vs.max() - vs.min() < 40:
         return None
     a, b = np.polyfit(vs, ys, 1)
     return (float(a), float(b)) if a < -0.05 else None
+
+
+def _leading_minus(th: np.ndarray, left: int, top: int,
+                   width: int, height: int) -> bool:
+    """True when the glyph opening this bbox is a minus rather than a digit.
+
+    The axis OCR runs with a digit whitelist, and TradingView renders its
+    negatives with U+2212 rather than ASCII '-', so tesseract drops the sign
+    but still stretches the bbox over it: '100.00' comes back 39px wide on the
+    star axis and 47px on heart's -100. Without this the heart gridline reads
+    +100, lands in star's band, and the scale fit sees one value at two rows
+    and gives up - which is why the whole panel locate returned None on macOS.
+
+    A minus is ink confined to a thin band at mid-height; every digit spans
+    most of the box. Probe only the first few columns: reach as far as the
+    next glyph and a tall digit swamps the test.
+    """
+    if height < 5 or width < 8:
+        return False
+    band = th[top:top + height, left:left + 6]
+    if band.size == 0:
+        return False
+    rows = np.flatnonzero((band == 0).any(axis=1))
+    if rows.size == 0:
+        return False
+    extent = rows[-1] - rows[0] + 1
+    centre = (rows[0] + rows[-1]) / 2.0
+    return (extent <= max(2, height // 3)
+            and abs(centre - height / 2.0) <= height / 3.0)
 
 
 def _axis_columns(toks: list) -> list[tuple[int, list]]:
@@ -532,6 +571,30 @@ def _assign_panels(toks: list) -> dict | None:
     {name: (top_y, bottom_y)} keyed to value 100/0 (star) and 0/-100
     (heart), or None when neither panel can be anchored."""
     zeros = sorted(y for y, v in toks if abs(v) < 0.6)
+
+    # Each panel has a scale nothing else on the chart shares: star runs
+    # exactly 100..0, heart exactly 0..-100. That is a strong enough prior to
+    # repair OCR rather than just filter it. TradingView's "-100.00" comes back
+    # as 109, 400 or 100 depending on the frame, and _is_gridline drops all but
+    # the last — which then lands in star's band and drags its fit. Two rules,
+    # both leaning on the known scales:
+    #
+    #   1. A magnitude near 100 IS the 100 line; snap it. No legitimate label
+    #      sits at 109 on either panel.
+    #   2. Sign comes from position, not from glyphs. Star's band ends at the
+    #      first zero; anything below that belongs to heart, so its 100 is
+    #      -100 whether or not the minus survived OCR.
+    first_zero = zeros[0] if zeros else None
+    snapped: list[tuple[float, float]] = []
+    for y, v in toks:
+        if 90.0 <= abs(v) <= 115.0:
+            v = 100.0 if v > 0 else -100.0
+        if (v > 0 and first_zero is not None and y > first_zero
+                and _is_gridline(v)):
+            v = -v                      # below star's floor => heart's scale
+        snapped.append((y, v))
+    toks = snapped
+
     star_gl = [(y, v) for y, v in toks if _is_gridline(v) and 5 <= v <= 100]
     heart_gl = [(y, v) for y, v in toks if _is_gridline(v) and -100 <= v <= -5]
 
@@ -630,6 +693,11 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
             v = float(txt)
         except ValueError:
             continue
+        # Recover the sign the digit whitelist threw away, or heart's -100
+        # masquerades as a star gridline.
+        if v > 0 and _leading_minus(th, d["left"][i], d["top"][i],
+                                    d["width"][i], d["height"][i]):
+            v = -v
         toks.append((d["top"][i] + d["height"][i] / 2,
                      x_crop + d["left"][i], v))
 
@@ -1288,8 +1356,13 @@ def main():
 
     console.print("[bold]TradingView monitor - Ctrl+C to stop.[/bold] "
                   "Keep the chart(s) visible on screen.")
-    with mss.mss() as sct, Live(console=console,
-                                refresh_per_second=2) as live:
+    # macOS reads the window by id through Quartz (works when the chart is
+    # covered); everywhere else mss grabs the screen rect. WindowCapture
+    # duck-types mss.grab(), so nothing below this line cares which it got.
+    capture_backend = (tv_capture_mac.WindowCapture()
+                       if tv_capture_mac.AVAILABLE else mss.mss())
+    with capture_backend as sct, Live(console=console,
+                                      refresh_per_second=2) as live:
         while True:
             t0 = time.time()
             found = tracker.get(sct) or []
