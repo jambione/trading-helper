@@ -617,9 +617,14 @@ def buy_circle(row: dict | None, cfg: dict | None = None) -> tuple[str, str]:
 
 
 def circle_markup(state: str, detail: str, sym: str | None) -> str:
-    """The corner chip: '● ZCMD 2/3 macd', '○ ZCMD pending'."""
+    """The corner chip: 'ZCMD 2/3 macd ●', 'ZCMD pending ○'.
+
+    The glyph goes LAST so it is the rightmost thing on the header's top
+    border — the light is the whole point, and it should be where the eye
+    lands rather than trailing a string of leg names.
+    """
     glyph, style, label = CIRCLE_STYLES.get(state, CIRCLE_STYLES["unknown"])
-    return f"[{style}]{glyph} {sym or '—'} {detail or label}[/{style}]"
+    return f"[{style}]{sym or '—'} {detail or label} {glyph}[/{style}]"
 
 
 class ChartSymbol:
