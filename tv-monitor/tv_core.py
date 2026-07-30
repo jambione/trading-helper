@@ -99,7 +99,7 @@ def line_y(img: np.ndarray, color: str, edge: int = 14,
     return float(np.median(rows))
 
 
-def line_series(img: np.ndarray, color: str, x_end: int | None = None,
+def line_series(img: np.ndarray, color: str | tuple, x_end: int | None = None,
                 span: int = 160, points: int = 40) -> list[float | None]:
     """The plotted line's row at evenly spaced columns, oldest → newest.
 
@@ -110,6 +110,14 @@ def line_series(img: np.ndarray, color: str, x_end: int | None = None,
     45 seconds of watching, it survives a restart, and it measures the shape
     of the plot rather than however the sampler happened to tick.
 
+    `color` may be a tuple, and for a recolouring line it must be. TradingView
+    draws one plot in several colours — MACD's signal is green rising and red
+    falling, CM RSI-2's line is grey with red and green at the extremes — so
+    reading a single colour reads a fragment of the line and silently drops the
+    rest. Measured on a live chart: green covered 25 of 40 columns and red 34,
+    and taking the longer one discarded exactly the recent green upturn, so a
+    visibly rising MACD reported as falling. The masks are OR-ed instead.
+
     `span` is how many columns back to cover — chart columns, not bars, since
     bar width moves with zoom. None entries mark columns where the line was
     not found; callers decide whether enough of it is present to trust.
@@ -117,15 +125,19 @@ def line_series(img: np.ndarray, color: str, x_end: int | None = None,
     The mask is computed once for the whole panel rather than per column,
     which is what makes this affordable at 40 points across three panels.
     """
+    colors = (color,) if isinstance(color, str) else tuple(color)
     if x_end is None:
-        x_end = rightmost_data_x(img, (color,))
+        x_end = rightmost_data_x(img, colors)
         if x_end is None:
             return []
     x0 = max(0, x_end - int(span))
     if x_end - x0 < 4:
         return []
 
-    mask = color_mask(img, color)
+    mask = None
+    for c in colors:
+        cm = color_mask(img, c)
+        mask = cm if mask is None else (mask | cm)
     xs = np.linspace(x0, x_end, num=max(2, int(points))).astype(int)
     out: list[float | None] = []
     for x in xs:

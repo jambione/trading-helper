@@ -107,6 +107,7 @@ WHITE = (220, 220, 220)
 BLUE = (220, 60, 40)        # BGRA: high B, low R
 YELLOW = (60, 200, 200)
 GREEN = (60, 200, 60)
+RED = (40, 40, 220)      # BGRA: high R, low B/G
 
 
 def test_flat_line_is_found():
@@ -447,3 +448,42 @@ def test_third_panel_is_the_plot_not_the_time_axis(meta):
     assert p["fire"]["height"] <= sibling * 1.6, (
         f"third panel {p['fire']['height']}px against siblings ~{sibling:.0f}px")
     assert p["fire"]["height"] >= 20
+
+
+def test_recolouring_line_is_read_whole():
+    """MACD's signal is green rising and red falling — one plot, two colours.
+
+    Reading a single colour reads a fragment. Measured live: green covered 25
+    of 40 columns and red 34, so taking the longer one kept the old falling
+    stretch and discarded the recent green upturn — a visibly rising MACD
+    reported as falling, with no error anywhere.
+    """
+    from tv_core import line_series, series_shape
+
+    h, w = 60, 400
+    img = _panel(h=h, w=w)
+    # Falls in red across the first half, rises in green across the second.
+    for x in range(w // 2):
+        img[10 + x // 10, x, :3] = RED
+    for x in range(w // 2, w):
+        img[30 - (x - w // 2) // 10, x, :3] = GREEN
+
+    def shape_of(colour):
+        # Rows fall as the plot rises, so invert into indicator units.
+        got = line_series(img, colour, span=w, points=40)
+        return series_shape([None if v is None else float(h - v) for v in got],
+                            3.0)[0]
+
+    # Each colour anchors to ITS OWN rightmost column, so a single-colour read
+    # does not merely lose points — it ends in the wrong place and describes a
+    # different stretch of chart entirely.
+    assert shape_of("red") == "down", "red alone sees only the falling half"
+    assert shape_of(("green", "red")) == "turning_up", "the turn was missed"
+
+
+def test_single_colour_string_still_works():
+    """The tuple form is additive — existing callers pass a bare string."""
+    from tv_core import line_series
+    img = _sloped(y0=50, y1=10, colour=WHITE)
+    assert sum(v is not None
+               for v in line_series(img, "white", span=300, points=20)) >= 15

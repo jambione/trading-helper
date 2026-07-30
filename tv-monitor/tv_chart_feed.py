@@ -333,19 +333,17 @@ class ChartFeed:
                       top_val: float, bottom_val: float) -> list:
         """The newest stretch of a plotted line, in indicator units.
 
-        Tries each colour and keeps the longest run: TradingView recolours a
-        line at its extremes (star greys through red and green, MACD's signal
-        flips green to red), so no single mask covers the whole plot.
+        All the line's colours at once. This used to try each and keep the
+        longest run, which reads a fragment: the signal line is green where it
+        rises and red where it falls, so the "best" colour is whichever
+        direction dominated the span — and the other half, including any recent
+        turn, was dropped.
         """
         h = img.shape[0]
-        best: list = []
-        for c in colors:
-            got = line_series(img, c, span=self.trend_span,
-                              points=self.trend_points)
-            if sum(v is not None for v in got) > sum(v is not None for v in best):
-                best = got
+        got = line_series(img, colors, span=self.trend_span,
+                          points=self.trend_points)
         return [None if v is None else y_to_value(v, h, top_val, bottom_val)
-                for v in best]
+                for v in got]
 
     # ── reporting ───────────────────────────────────────────────────────────
 
