@@ -15,7 +15,7 @@
     },
     "fire": {
       "top": 654,
-      "height": 139
+      "height": 50
     }
   },
   "expected": {
@@ -31,5 +31,6 @@
     "fire": {
       "gap": -2.158273381294964
     }
-  }
+  },
+  "note": "locate values re-derived after the third panel's bottom was fixed; the original recording captured the mis-bounded height"
 }

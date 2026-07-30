@@ -751,7 +751,33 @@ def locate_tv_panels(win_img: np.ndarray, rect: dict) -> dict | None:
     divs = _panel_dividers(gray_full, max(0, int(h_bot) - 4), H - 30,
                            px0, px1)
     f_top = min((dv for dv in divs if dv >= h_bot - 2), default=int(h_bot) + 4)
-    f_bot = H - 30
+    # Bottom at the NEXT divider, not the chart floor.
+    #
+    # Running to H-30 was right for the squeeze panel this slot was written
+    # for: its histogram sits on a zero line, its own gridlines read as
+    # dividers, and clipping the bars was the failure to avoid — so enclosing
+    # the time axis below was harmless.
+    #
+    # It is wrong for MACD, which is what actually occupies this slot. The
+    # captured region came back as a thin strip of plot on top of the time
+    # axis and the chart toolbar: the lines were clipped at the top, and the
+    # gap — reported as a percentage of panel height — was being divided by a
+    # height that was mostly dead space. Both the magnitude and, once a line
+    # left the crop, the sign.
+    below = [dv for dv in divs if dv > f_top + 15]
+    if below:
+        f_bot = int(min(below))
+    else:
+        # TradingView draws no divider above the time axis, so the last pane
+        # has no bottom edge to find — measured on a live chart, the only
+        # divider below heart was this panel's own top. Fall back to the
+        # sibling panes' height: the layout stacks equal-height indicator
+        # panes, which is the same assumption _assign_panels already makes
+        # when it derives one band from the other. Capped at the chart floor
+        # so a bad read cannot run off the bottom.
+        sib = int(round(((assign["star"][1] - assign["star"][0])
+                         + (assign["heart"][1] - assign["heart"][0])) / 2))
+        f_bot = min(H - 30, f_top + max(20, sib))
     if f_bot - f_top >= 15:
         panels["fire"] = region(f_top + 3, f_bot - 3)
 

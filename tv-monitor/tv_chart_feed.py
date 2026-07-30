@@ -357,10 +357,11 @@ class ChartFeed:
                 ("pct_b", self.heart_b, FLAT_PCT, FLAT_PCT_HIST),
                 ("m", self.macd, FLAT_M, FLAT_M_HIST)):
             hist = v.get(f"{key}_hist") or []
-            shape = series_shape(hist, hist_band)
+            shape, delta = series_shape(hist, hist_band)
             out[key] = shape if shape is not None else direction(trail.slope(w), band)
-            # How far it moved over the span, for the magnitude weighting.
-            out[f"{key}_delta"] = series_direction(hist, hist_band)[1]
+            # The move that `shape` describes — whole span for a trend, second
+            # half for a turn — so magnitude and direction never disagree.
+            out[f"{key}_delta"] = delta
         return out
 
     def readout(self, now: float | None = None) -> list[str] | None:

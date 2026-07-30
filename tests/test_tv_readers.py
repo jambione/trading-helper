@@ -390,24 +390,60 @@ def test_turn_up_is_not_reported_as_down():
     fell_then_rose = [float(x) for x in range(40, 10, -1)] + \
                      [float(x) for x in range(10, 30)]
     assert series_direction(fell_then_rose, 6.0)[0] == "down"   # the averaging
-    assert series_shape(fell_then_rose, 6.0) == "turning_up"    # the turn
+    assert series_shape(fell_then_rose, 6.0)[0] == "turning_up"  # the turn
 
 
 def test_roll_over_is_not_reported_as_up():
     from tv_core import series_shape
     rose_then_fell = [float(x) for x in range(10, 40)] + \
                      [float(x) for x in range(40, 20, -1)]
-    assert series_shape(rose_then_fell, 6.0) == "turning_down"
+    assert series_shape(rose_then_fell, 6.0)[0] == "turning_down"
 
 
 def test_sustained_moves_keep_their_plain_direction():
     from tv_core import series_shape
-    assert series_shape([float(x) for x in range(40)], 6.0) == "up"
-    assert series_shape([float(40 - x) for x in range(40)], 6.0) == "down"
-    assert series_shape([10.0] * 40, 6.0) == "flat"
+    assert series_shape([float(x) for x in range(40)], 6.0)[0] == "up"
+    assert series_shape([float(40 - x) for x in range(40)], 6.0)[0] == "down"
+    assert series_shape([10.0] * 40, 6.0)[0] == "flat"
 
 
 def test_shape_needs_enough_points():
     from tv_core import series_shape
-    assert series_shape([1.0, 2.0, 3.0], 6.0) is None
-    assert series_shape([], 6.0) is None
+    assert series_shape([1.0, 2.0, 3.0], 6.0) == (None, None)
+    assert series_shape([], 6.0) == (None, None)
+
+
+def test_turn_magnitude_is_the_turn_not_the_span():
+    """A turn's strength is how hard it is turning now.
+
+    Measuring it across the whole span leaves the old direction in the number —
+    seen live on MACD, which reported shape "up" beside a whole-span delta of
+    -1.45, so an upward reading was weighted by a downward move.
+    """
+    from tv_core import series_direction, series_shape
+    fell_far_rose_a_little = ([float(100 - 4 * x) for x in range(20)]
+                              + [float(20 + x) for x in range(20)])
+    shape, delta = series_shape(fell_far_rose_a_little, 6.0)
+    assert shape == "turning_up"
+    assert delta > 0, "a turn up must carry a positive magnitude"
+    whole = series_direction(fell_far_rose_a_little, 6.0)[1]
+    assert whole < 0, "the whole span still nets downward — that is the trap"
+
+
+def test_third_panel_is_the_plot_not_the_time_axis(meta):
+    """The MACD pane ran to the chart floor, swallowing the time axis and the
+    toolbar — plot clipped at the top, and a gap reported as a percentage of a
+    height that was mostly dead space. It should be comparable to its siblings,
+    not three times their size."""
+    _tesseract_or_skip()
+    import tv_signal
+
+    tv_signal.load_config()
+    win = _load("window")
+    rect = {"left": 0, "top": 0, "width": win.shape[1], "height": win.shape[0]}
+    p = tv_signal.locate_tv_panels(win, rect)
+    assert p is not None and "fire" in p
+    sibling = (p["star"]["height"] + p["heart"]["height"]) / 2
+    assert p["fire"]["height"] <= sibling * 1.6, (
+        f"third panel {p['fire']['height']}px against siblings ~{sibling:.0f}px")
+    assert p["fire"]["height"] >= 20

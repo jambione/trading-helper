@@ -163,10 +163,19 @@ def series_direction(vals: list[float | None],
 
 
 def series_shape(vals: list[float | None], flat_band: float,
-                 min_points: int = 8) -> str | None:
+                 min_points: int = 8) -> tuple[str | None, float | None]:
     """Where the line has been AND where it is heading now.
 
-    up | down | turning_up | turning_down | flat, or None if unreadable.
+    Returns (shape, delta) where delta is the movement that shape actually
+    describes — the whole span for a sustained move, but the SECOND HALF for a
+    turn. Those are different numbers and mixing them was wrong: a turn's
+    strength is how hard it is turning now, not the net across a span that
+    still contains the old direction. Caught live on MACD, which reported shape
+    "up" beside a whole-span delta of -1.45, so an upward reading was being
+    weighted by the size of a downward move.
+
+    shape is up | down | turning_up | turning_down | flat, or None when
+    unreadable.
 
     A single direction across the whole span hides the thing worth seeing. A
     %R line that fell for thirty bars and turned up over the last eight still
@@ -181,23 +190,26 @@ def series_shape(vals: list[float | None], flat_band: float,
     """
     got = [v for v in vals if v is not None]
     if len(got) < min_points:
-        return None
+        return None, None
     mid = len(got) // 2
     half_band = flat_band * 0.6
     first, _ = series_direction(got[:mid], half_band, min_points=3)
-    second, _ = series_direction(got[mid:], half_band, min_points=3)
+    second, second_delta = series_direction(got[mid:], half_band, min_points=3)
+    whole, whole_delta = series_direction(got, flat_band)
     if first is None or second is None:
-        return series_direction(got, flat_band)[0]
+        return whole, whole_delta
 
+    # A turn is described by where it is heading, so its magnitude is the
+    # second half's move. A sustained move is described by the whole span.
     if first == "down" and second == "up":
-        return "turning_up"
+        return "turning_up", second_delta
     if first == "up" and second == "down":
-        return "turning_down"
+        return "turning_down", second_delta
     if "up" in (first, second) and "down" not in (first, second):
-        return "up"
+        return "up", whole_delta
     if "down" in (first, second) and "up" not in (first, second):
-        return "down"
-    return "flat"
+        return "down", whole_delta
+    return "flat", whole_delta
 
 
 def y_to_value(y: float, height: int, top_val: float,
