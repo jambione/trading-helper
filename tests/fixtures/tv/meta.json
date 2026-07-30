@@ -1,0 +1,35 @@
+{
+  "title": "UPST 26.08 \u25bc \u22121.95% Unnamed",
+  "window": [
+    1322,
+    826
+  ],
+  "locate": {
+    "star": {
+      "top": 511,
+      "height": 55
+    },
+    "heart": {
+      "top": 582,
+      "height": 56
+    },
+    "fire": {
+      "top": 654,
+      "height": 139
+    }
+  },
+  "expected": {
+    "star": {
+      "value": 55.55555555555556,
+      "color": "none"
+    },
+    "heart": {
+      "w": -50.90909090909091,
+      "b": -86.36363636363636,
+      "shade": "none"
+    },
+    "fire": {
+      "gap": -2.158273381294964
+    }
+  }
+}
