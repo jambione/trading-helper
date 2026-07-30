@@ -544,12 +544,18 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
     # IEX only — free with every Alpaca account. SIP needs Algo Trader Plus.
     feeds = ("iex",)
     for feed in feeds:
+        # sort=desc, NOT asc. `limit` truncates from whichever end the sort
+        # starts at, so ascending returned the OLDEST `count` bars in the
+        # lookback window — with the 5-day default that meant indicators were
+        # computed on bars from three days ago and published as current. The
+        # frame is flipped back to oldest-first below, which is what every
+        # indicator downstream expects.
         params = {
             "timeframe": timeframe,
             "start":     start_dt,   # fetch from N days ago, not just today
             "limit":     count,
             "feed":      feed,
-            "sort":      "asc",
+            "sort":      "desc",
         }
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=10)
@@ -566,7 +572,10 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
             })
             for col in ("open", "high", "low", "close", "volume"):
                 df[col] = df[col].astype(float)
-            df = df.reset_index(drop=True)
+            # Back to oldest-first: the API gave us newest-first so that
+            # `limit` kept the recent end, but every indicator reads forward
+            # and takes .iloc[-1] as "now".
+            df = df.iloc[::-1].reset_index(drop=True)
 
             if len(df) >= min_needed:
                 print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓"

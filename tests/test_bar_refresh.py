@@ -118,3 +118,63 @@ def test_subsequent_path_requires_bars_fetched():
     ts.last_bar_minute = int(time.time() // 60)
     ts.last_bar_fetch = time.time() - 30
     assert not _should_fetch(ts, secs_past_minute=10.0)
+
+
+# ── fetch_bars ordering ───────────────────────────────────────────────────────
+# `limit` truncates from whichever end `sort` starts at. Ascending returned the
+# OLDEST `count` bars in the lookback window, so with the 5-day default the
+# engine computed CM RSI-2 / %R / MACD on bars three days old and published
+# them as current readings. Verified live: sort=asc gave SPY bars ending
+# 2026-07-27 while the clock read 2026-07-30.
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def _bars_newest_first(n=60):
+    """What Alpaca returns for sort=desc: newest first."""
+    return [{"t": f"2026-07-30T{15 - (i // 60):02d}:{59 - (i % 60):02d}:00Z",
+             "o": 10.0, "h": 11.0, "l": 9.0, "c": 10.5, "v": 1000.0}
+            for i in range(n)]
+
+
+def test_fetch_bars_requests_newest_first(monkeypatch):
+    seen = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen.update(params or {})
+        return _FakeResp({"bars": _bars_newest_first()})
+
+    monkeypatch.setattr(se.requests, "get", fake_get)
+    se.fetch_bars("SPY", "k", "s")
+    assert seen.get("sort") == "desc", (
+        "ascending + limit keeps the OLDEST bars in the window")
+
+
+def test_fetch_bars_returns_oldest_first(monkeypatch):
+    """Indicators read forward and take .iloc[-1] as now, so the frame handed
+    back must be ascending even though the API was asked for descending."""
+    monkeypatch.setattr(se.requests, "get",
+                        lambda *a, **k: _FakeResp({"bars": _bars_newest_first()}))
+    df = se.fetch_bars("SPY", "k", "s")
+    assert df is not None
+    times = list(df["time"])
+    assert times == sorted(times), "frame is not oldest-first"
+
+
+def test_fetch_bars_keeps_the_newest_bar(monkeypatch):
+    """The whole point: the last row is the most recent bar available."""
+    payload = _bars_newest_first()
+    newest = payload[0]["t"]
+    monkeypatch.setattr(se.requests, "get",
+                        lambda *a, **k: _FakeResp({"bars": payload}))
+    df = se.fetch_bars("SPY", "k", "s")
+    assert df is not None
+    assert df["time"].iloc[-1] == newest
