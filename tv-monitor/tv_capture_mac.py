@@ -89,16 +89,22 @@ def find_windows(browsers: tuple[str, ...] = BROWSERS,
                 "width": width, "height": height,
                 "id": int(w.get("kCGWindowNumber", 0))}
         low = title.lower()
-        score = 0 if "tradingview" in low else (1 if _looks_like_chart(title) else 2)
+        score = 0 if "tradingview" in low else (1 if looks_like_chart(title) else 2)
         scored.append((score, -(width * height), rect, title))
 
     scored.sort(key=lambda x: (x[0], x[1]))
     return [(r, t) for _, _, r, t in scored]
 
 
-def _looks_like_chart(title: str) -> bool:
+def looks_like_chart(title: str) -> bool:
     """'STKH 2.71 ▼ −24.72% Unnamed' — symbol then price, TradingView's tab
-    title. Kept local so this module stays importable without tv_signal."""
+    title. Kept local so this module stays importable without tv_signal.
+
+    Public because it doubles as the cheap gate on whether reading is worth
+    attempting at all: the title tracks the ACTIVE tab, so a browser sitting
+    on some other page fails this in about a millisecond, rather than costing
+    a capture and a 200ms tesseract pass to discover there are no panels.
+    """
     parts = title.split()
     if len(parts) < 2:
         return False

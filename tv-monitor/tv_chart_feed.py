@@ -112,7 +112,22 @@ class ChartFeed:
             self.panels = None
             return False
 
-        rect, title = wins[0]
+        # Gate before spending anything. find_tv_windows costs ~1ms and lists
+        # every browser window; a capture is ~33ms and the tesseract axis pass
+        # ~200ms. The window TITLE tracks the active tab, so a browser sitting
+        # on some other page is rejected here rather than after a third of a
+        # second of work that could only ever fail. Minimised and hidden
+        # windows never reach this — Quartz is queried on-screen-only — which
+        # matters because a window the compositor has stopped drawing would
+        # otherwise hand back a stale frame that still parses.
+        charts = [(r, t) for r, t in wins
+                  if tv_capture_mac.looks_like_chart(t)
+                  or "tradingview" in (t or "").lower()]
+        if not charts:
+            self.last_error = "chart tab not in front"
+            return False
+
+        rect, title = charts[0]
         moved = self.rect != rect
         self.rect = rect
         self.symbol = _symbol_from_title(title) or self.symbol
