@@ -103,13 +103,8 @@ def arrow(dir_: str | None) -> str:
     return _ARROW.get(dir_ or "", "·")
 
 
-# How much each shape counts toward "where is this heading". A turn outweighs a
-# sustained move on purpose: by the time a climb is well established the move
-# has largely happened, and the turn off the floor is the part worth catching.
-_SHAPE_SCORE = {TURNING_UP: 2, UP: 1, FLAT: 0, DOWN: -1, TURNING_DOWN: -2}
-
 # Combined verdict → (glyph, rich style, label). %R and MACD each contribute
-# -2..+2, so the sum runs -4..+4.
+# ±1.0 to ±2.5 through shape_score, so the sum runs roughly -5..+5.
 TREND_STYLES = {
     "surging": ("⇈", "bold green",   "up"),
     "rising":  ("↗", "green",        "up"),
@@ -120,7 +115,35 @@ TREND_STYLES = {
 }
 
 
-def trend_verdict(pct_shape: str | None, macd_shape: str | None) -> str:
+def shape_score(shape: str | None, delta: float | None,
+                flat_band: float) -> float:
+    """One indicator's contribution: which way, weighted by how decisively.
+
+    Direction alone treats a %R that crawled seven points the same as one that
+    ran forty, which is the difference between drift and a real move. Strength
+    is measured in flat-bands rather than raw units so %R and MACD — different
+    scales entirely — can be compared and summed: 1.0 is just past flat, 2.0 is
+    twice the band or more.
+
+    A turn adds half a band on top. It stays a bonus rather than a multiplier
+    because a decisive turn and a decisive trend deserve similar weight, and
+    the turn is already the harder thing to see.
+    """
+    if shape in (TURNING_UP, UP):
+        sign = 1.0
+    elif shape in (TURNING_DOWN, DOWN):
+        sign = -1.0
+    else:
+        return 0.0
+    strength = abs(delta or 0.0) / max(1e-9, flat_band)
+    weight = min(2.0, max(1.0, strength))
+    turn = 0.5 if shape in (TURNING_UP, TURNING_DOWN) else 0.0
+    return sign * (weight + turn)
+
+
+def trend_verdict(pct_shape: str | None, macd_shape: str | None,
+                  pct_delta: float | None = None,
+                  macd_delta: float | None = None) -> str:
     """Where %R and MACD together say this is heading.
 
     Only these two. CM RSI-2 at length 2 whips between extremes bar to bar —
@@ -135,18 +158,25 @@ def trend_verdict(pct_shape: str | None, macd_shape: str | None) -> str:
     """
     if pct_shape is None and macd_shape is None:
         return "unknown"
-    score = (_SHAPE_SCORE.get(pct_shape or "", 0)
-             + _SHAPE_SCORE.get(macd_shape or "", 0))
-    both = pct_shape is not None and macd_shape is not None
-    if both and pct_shape != macd_shape and score == 0:
-        return "mixed"          # one up, one down — say so
-    if score >= 3:
+
+    pct = shape_score(pct_shape, pct_delta, FLAT_PCT_HIST)
+    macd = shape_score(macd_shape, macd_delta, FLAT_M_HIST)
+
+    # Opposing signs are a conflict at any magnitude. A strong %R against a
+    # weak MACD is still the two indicators saying different things, and
+    # letting the louder one win would report a direction the chart does not
+    # agree on. Magnitude only earns weight once they point the same way.
+    if pct * macd < 0:
+        return "mixed"
+
+    score = pct + macd
+    if score >= 3.0:
         return "surging"
-    if score >= 1:
+    if score >= 1.0:
         return "rising"
-    if score <= -3:
+    if score <= -3.0:
         return "sinking"
-    if score <= -1:
+    if score <= -1.0:
         return "falling"
     return "mixed"
 
@@ -329,6 +359,8 @@ class ChartFeed:
             hist = v.get(f"{key}_hist") or []
             shape = series_shape(hist, hist_band)
             out[key] = shape if shape is not None else direction(trail.slope(w), band)
+            # How far it moved over the span, for the magnitude weighting.
+            out[f"{key}_delta"] = series_direction(hist, hist_band)[1]
         return out
 
     def readout(self, now: float | None = None) -> list[str] | None:
@@ -408,8 +440,10 @@ class ChartFeed:
             # setup can be 1-of-3 and clearly building or 2-of-3 and rolling
             # over. Carried alongside rather than folded in, so neither
             # question has to be answered with the other's evidence.
-            "chart_trend": trend_verdict(d.get("pct_w") or d.get("pct_b"),
-                                         d.get("m")),
+            "chart_trend": trend_verdict(
+                d.get("pct_w") or d.get("pct_b"), d.get("m"),
+                d.get("pct_w_delta") if d.get("pct_w") else d.get("pct_b_delta"),
+                d.get("m_delta")),
         }
 
 

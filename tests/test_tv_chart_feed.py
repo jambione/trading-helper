@@ -191,10 +191,16 @@ def test_arrows_distinguish_turns_from_trends():
 # 2-of-3 and rolling over.
 
 def test_agreement_earns_the_strong_glyphs():
-    assert F.trend_verdict("turning_up", "turning_up") == "surging"
-    assert F.trend_verdict("turning_up", "up") == "surging"
-    assert F.trend_verdict("turning_down", "turning_down") == "sinking"
-    assert F.trend_verdict("down", "turning_down") == "sinking"
+    """The doubled glyphs need both agreement AND conviction."""
+    p, m = F.FLAT_PCT_HIST * 2, F.FLAT_M_HIST * 2
+    assert F.trend_verdict("turning_up", "turning_up", p, m) == "surging"
+    assert F.trend_verdict("turning_down", "turning_down", -p, -m) == "sinking"
+    assert F.trend_verdict("down", "turning_down", -p, -m) == "sinking"
+
+
+def test_agreement_alone_is_not_enough_for_the_doubled_glyph():
+    """Two indicators barely past flat agree on very little."""
+    assert F.trend_verdict("turning_up", "up") == "rising"
 
 
 def test_one_indicator_moving_is_only_rising():
@@ -216,6 +222,44 @@ def test_unreadable_trend_is_unknown():
 
 def test_a_turn_outweighs_a_sustained_move():
     """By the time a climb is established the move has largely happened."""
-    assert (F._SHAPE_SCORE["turning_up"] > F._SHAPE_SCORE["up"])
+    band = F.FLAT_PCT_HIST
+    assert F.shape_score("turning_up", band, band) > F.shape_score("up", band, band)
     assert F.trend_verdict("turning_up", "flat") == "rising"
-    assert F.trend_verdict("turning_up", "up") == "surging"
+
+
+# ── magnitude ────────────────────────────────────────────────────────────────
+# Direction alone treats a crawl and a run as the same thing.
+
+def test_bigger_moves_score_higher():
+    band = F.FLAT_PCT_HIST
+    weak = F.shape_score("up", band * 1.0, band)
+    mid = F.shape_score("up", band * 1.5, band)
+    strong = F.shape_score("up", band * 4.0, band)
+    assert weak < mid < strong
+    assert strong == pytest.approx(2.0), "strength is capped, not unbounded"
+
+
+def test_same_shapes_different_strength_give_different_verdicts():
+    """Both up either way — but a drift is not a run."""
+    drift = F.trend_verdict("up", "up", F.FLAT_PCT_HIST, F.FLAT_M_HIST)
+    run = F.trend_verdict("up", "up", F.FLAT_PCT_HIST * 3, F.FLAT_M_HIST * 3)
+    assert drift == "rising"
+    assert run == "surging"
+
+
+def test_strength_is_normalised_across_indicators():
+    """%R and MACD are on different scales; equal strength must score equal."""
+    assert (F.shape_score("up", F.FLAT_PCT_HIST * 2, F.FLAT_PCT_HIST)
+            == F.shape_score("up", F.FLAT_M_HIST * 2, F.FLAT_M_HIST))
+
+
+def test_a_loud_indicator_cannot_override_a_conflict():
+    """A big %R move against a small MACD move is still disagreement."""
+    assert F.trend_verdict("up", "down",
+                           F.FLAT_PCT_HIST * 5, -F.FLAT_M_HIST) == "mixed"
+
+
+def test_one_indicator_alone_cannot_reach_the_doubled_glyph():
+    """⇈ means both agree. A single strong mover is only ↗."""
+    assert F.trend_verdict("turning_up", "flat",
+                           F.FLAT_PCT_HIST * 10, 0.0) == "rising"
