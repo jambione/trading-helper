@@ -44,6 +44,15 @@ HERE = Path(__file__).parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(ROOT / "tv-monitor"))
+
+# Reading the three indicators off the TradingView window itself. Optional:
+# needs macOS + Quartz + tesseract, and the desk runs fine without it — the
+# buy circle just falls back to the engine's numbers.
+try:
+    import tv_chart_feed as chart_feed
+except Exception:                                          # noqa: BLE001
+    chart_feed = None
 
 if sys.platform == "win32":
     import ctypes
@@ -151,7 +160,14 @@ DEFAULTS = {
     # "chart" reads the TradingView tab title (notices manual symbol changes);
     # "hotkey" trusts only what we sent to TV ourselves.
     "buy_circle_symbol_source": "chart",
-    "buy_circle_chart_poll_sec": 2.0,
+    "buy_circle_chart_poll_sec": 1.0,
+    # Where the three indicator values come from. "chart" screen-reads the
+    # TradingView panels — works for any charted symbol, needs no engine, and
+    # agrees with what you see by construction. "engine" uses signal_proximity
+    # off /api/state, which only covers symbols the engine tracks and computes
+    # on Alpaca IEX rather than the chart's own feed. Falls back to "engine"
+    # automatically when the screen reader is unavailable.
+    "buy_circle_source": "chart",
     # Relative volume column. A $2 stock on 8x volume is a different animal
     # from one on 1.1x. Source is funnel.rvol, else the row's own rvol — both
     # time-adjusted server-side (T2.1). Never synthesised here.
@@ -635,6 +651,78 @@ class ChartSymbol:
             except Exception:                                  # noqa: BLE001
                 self._sym = None
         return self._sym or fallback
+
+
+class ChartWatcher:
+    """Reads the TradingView window on its own thread and publishes the result.
+
+    Capture plus a tesseract axis pass costs far more than the desk's 2s poll
+    can absorb inline, and it has nothing to do with the dashboard feed, so it
+    runs alongside and hands over whatever it last saw. The render loop never
+    blocks on a screengrab.
+
+    Publishes three things under one lock: a signal_proximity-shaped dict for
+    buy_circle(), the R/%/M readout lines, and the charted symbol. All three
+    go None together when the feed goes quiet — a half-updated readout beside
+    a live circle would be worse than no readout.
+    """
+
+    def __init__(self, cfg: dict):
+        self.interval = float(cfg.get("buy_circle_chart_poll_sec", 1.0))
+        self._feed = chart_feed.ChartFeed() if chart_feed else None
+        self._lock = threading.Lock()
+        self._prox: dict | None = None
+        self._readout: list[str] | None = None
+        self._symbol: str | None = None
+        self._error: str | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def available(self) -> bool:
+        return self._feed is not None
+
+    def start(self) -> None:
+        if not self.available or self._thread:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="chart-ocr")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._feed.poll()
+                prox = self._feed.proximity()
+                readout = self._feed.readout()
+                sym = self._feed.symbol
+                err = self._feed.last_error
+            except Exception as e:                         # noqa: BLE001
+                # A screengrab failure must never take the desk down with it.
+                prox = readout = sym = None
+                err = f"{type(e).__name__}: {e}"
+            with self._lock:
+                self._prox, self._readout = prox, readout
+                self._symbol, self._error = sym, err
+            self._stop.wait(self.interval)
+
+    def snapshot(self) -> tuple[dict | None, list[str] | None, str | None]:
+        with self._lock:
+            return self._prox, self._readout, self._symbol
+
+    def error(self) -> str | None:
+        with self._lock:
+            return self._error
+
+
+def chart_readout_markup(lines: list[str] | None) -> str | None:
+    """The R / % / M readout as one dim strip for a panel border."""
+    if not lines:
+        return None
+    return "[dim]" + "   ".join(lines) + "[/dim]"
 
 
 def mention_trend(hist_series: list[float],
@@ -1746,7 +1834,8 @@ def stocktwits_panel(st: StocktwitsTrending,
 
 
 def header_panel(feed: Feed, now: float, hz: float,
-                 stale: bool, circle: str | None = None) -> Panel:
+                 stale: bool, circle: str | None = None,
+                 readout: str | None = None) -> Panel:
     n = len(feed.rows)
     src = _dashboard_url()
     if stale:
@@ -1760,8 +1849,11 @@ def header_panel(feed: Feed, now: float, hz: float,
         line += f"   [dim]{session_line()}[/dim]"
     # The buy-readiness circle rides the top border, right-aligned — the
     # top-right corner of the whole monitor, with no extra panel or reflow.
+    # The raw indicator readout sits in the bottom border directly under it,
+    # so the numbers the circle was computed from are always next to it.
     return Panel(Align.center(line), border_style="red" if stale else "cyan",
-                 padding=(0, 1), title=circle, title_align="right")
+                 padding=(0, 1), title=circle, title_align="right",
+                 subtitle=readout, subtitle_align="right")
 
 
 def positions_panel(positions: dict, focus: str | None) -> Panel:
@@ -1846,6 +1938,13 @@ def main():
     feed = Feed(cfg)
     alerter = Alerter(cfg)
     chart_symbol = ChartSymbol(cfg)
+    chart_watcher = None
+    if (cfg.get("buy_circle_enabled", True)
+            and str(cfg.get("buy_circle_source", "chart")).lower() == "chart"):
+        chart_watcher = ChartWatcher(cfg)
+        chart_watcher.start()
+        if not chart_watcher.available:
+            chart_watcher = None
     history = SymbolHistory(maxlen=int(cfg.get("history_samples", 120)))
     journal = Journal(HERE / str(cfg.get("journal_dir", "journal")),
                       flush_sec=float(cfg.get("journal_flush_sec", 5.0)),
@@ -1962,17 +2061,27 @@ def main():
                        for r in feed.rows[:hotkey_slots]]
             hotkeys.update(ordered, st_ordered if st_on else None)
 
-            circle = None
+            circle = readout_strip = None
             if cfg.get("buy_circle_enabled", True):
-                csym = chart_symbol.get(hotkeys, t0)
-                # A dead feed must not leave a stale green sitting in the
-                # corner — the row we would read is however old the last poll
-                # was, which is exactly what `stale` means.
-                cstate, cdetail = (("unknown", "stale") if stale
-                                   else buy_circle(feed.row_for(csym), cfg))
+                if chart_watcher is not None and chart_watcher.available:
+                    # Read straight off the chart: works for whatever symbol
+                    # is charted, needs no engine, and cannot disagree with
+                    # what is on screen. `stale` is the dashboard feed, which
+                    # this source does not depend on.
+                    prox, lines, csym = chart_watcher.snapshot()
+                    csym = csym or chart_symbol.get(hotkeys, t0)
+                    cstate, cdetail = buy_circle({"signal_proximity": prox}, cfg)
+                    readout_strip = chart_readout_markup(lines)
+                else:
+                    csym = chart_symbol.get(hotkeys, t0)
+                    # A dead feed must not leave a stale green sitting in the
+                    # corner — the row we would read is however old the last
+                    # poll was, which is exactly what `stale` means.
+                    cstate, cdetail = (("unknown", "stale") if stale
+                                       else buy_circle(feed.row_for(csym), cfg))
                 circle = circle_markup(cstate, cdetail, csym)
 
-            panels = [header_panel(feed, t0, hz, stale, circle)]
+            panels = [header_panel(feed, t0, hz, stale, circle, readout_strip)]
             panels.append(momentum_table(
                 feed, t0, hz, hotkeys.enabled,
                 rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank,

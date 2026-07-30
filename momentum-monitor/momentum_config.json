@@ -17,7 +17,7 @@
   "buy_circle_green_min": 100.0,
   "buy_circle_yellow_min": 67.0,
   "buy_circle_symbol_source": "chart",
-  "buy_circle_chart_poll_sec": 2.0,
+  "buy_circle_chart_poll_sec": 1.0,
   "stocktwits_enabled": true,
   "stocktwits_poll": 60.0,
   "stocktwits_stocks_only": true,
@@ -25,6 +25,7 @@
   "stocktwits_panel_limit": 10,
   "stocktwits_look_min_abs_chg": 3.0,
   "stocktwits_look_max": 2,
-  "stocktwits_look_near_high": 0.70,
-  "stocktwits_look_near_low": 0.30
+  "stocktwits_look_near_high": 0.7,
+  "stocktwits_look_near_low": 0.3,
+  "buy_circle_source": "chart"
 }
