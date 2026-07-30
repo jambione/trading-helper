@@ -38,7 +38,20 @@ def color_mask(strip: np.ndarray, name: str) -> np.ndarray:
     if name == "blue":
         return (b > 140) & (b - r > 20) & (g < b)
     if name == "white":
-        return (r > 170) & (g > 170) & (b > 170)
+        # Anti-aliasing is why this is not simply "> 170 everywhere". The %R
+        # white line is 1px on a steep slope, so its brightness spreads across
+        # neighbouring pixels and the newest columns peak around 140-160 —
+        # measured on a live chart, where the last 19 columns held two white
+        # pixels and line_y needs three. The line read as absent precisely at
+        # the right-hand edge, which is the only part anyone cares about.
+        #
+        # Dropping the threshold alone would start matching gridlines, so
+        # neutrality carries the weight instead: white is grey, and the blue
+        # and red plots are not. Gridlines here measure ~60-90 and stay out on
+        # brightness; blue is ~(220,60,40) and stays out on spread.
+        mx = np.maximum(np.maximum(r, g), b)
+        mn = np.minimum(np.minimum(r, g), b)
+        return (mn > 120) & (mx - mn < 45)
     if name == "yellow":
         return (r > 130) & (g > 150) & (b < 130)
     if name == "gray":

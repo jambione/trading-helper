@@ -263,3 +263,65 @@ def test_leading_minus_detects_sign_and_ignores_digits():
     digit = np.full((h, w), 255, dtype=np.uint8)
     digit[0:h, 1:4] = 0                            # full-height stroke
     assert not tv_signal._leading_minus(digit, 0, 0, w, h)
+
+
+# ── the two failures that looked like flakiness ──────────────────────────────
+
+def test_antialiased_white_line_is_found():
+    """A 1px line on a slope never reaches full brightness.
+
+    The %R white line peaked around 140-160 on its newest columns, under the
+    old >170-everywhere test, so it read as absent at exactly the right-hand
+    edge — the only part that matters. Neutrality does the discriminating now,
+    which is what lets the brightness bar come down safely.
+    """
+    img = _panel(h=60, w=300)
+    img[30, :, :3] = (150, 148, 145)          # dim, but neutral
+    assert line_y(img, "white", x_end=299) == pytest.approx(30, abs=1)
+
+
+def test_dim_gridline_is_not_a_white_line():
+    """Chart gridlines measure ~60-90 and must stay out."""
+    img = _panel(h=60, w=300)
+    img[30, :, :3] = (80, 80, 80)
+    assert line_y(img, "white", x_end=299) is None
+
+
+def test_blue_plot_is_not_white():
+    """Colour spread keeps the blue %R line out of the white mask."""
+    img = _panel(h=60, w=300)
+    img[30, :, :3] = (220, 60, 40)            # BGRA blue
+    assert not color_mask(img, "white").any()
+    assert color_mask(img, "blue").any()
+
+
+def test_sub_dollar_price_ladder_is_not_a_zero_line():
+    """Panel location broke on cheap stocks, not at random.
+
+    _assign_panels treated anything under 0.6 as an axis zero. On a $0.36 name
+    the whole price ladder — 0.31 through 0.39 — qualified, the topmost anchored
+    star's floor near the top of the chart, and the sign rule flipped star's own
+    100 to -100. locate returned None on every frame for exactly the low-priced
+    names this desk watches most.
+    """
+    import tv_signal
+
+    ladder = [(161, 0.39), (200, 0.38), (239, 0.37), (317, 0.35),
+              (474, 0.31), (511, 100.0), (566, 0.0), (584, 0.0), (643, -100.0)]
+    got = tv_signal._assign_panels(ladder)
+    assert got is not None, "sub-dollar price labels swallowed the zero line"
+    s_top, s_bot = got["star"]
+    h_top, h_bot = got["heart"]
+    assert s_top == pytest.approx(511, abs=3)   # star anchored on its own 100
+    assert s_bot == pytest.approx(566, abs=3)
+    assert h_top < h_bot and h_top >= s_bot - 4
+
+
+def test_hundred_below_the_zero_is_read_as_negative():
+    """heart's -100 loses its minus to the digit whitelist; position recovers
+    the sign. Only the 100 line is ambiguous enough to flip."""
+    import tv_signal
+    got = tv_signal._assign_panels([(511, 100.0), (566, 0.0),
+                                    (584, 0.0), (643, 100.0)])
+    assert got is not None
+    assert got["heart"][1] == pytest.approx(643, abs=3)

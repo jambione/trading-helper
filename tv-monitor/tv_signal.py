@@ -570,7 +570,14 @@ def _assign_panels(toks: list) -> dict | None:
     label-calibrated whenever its own labels are present. Returns
     {name: (top_y, bottom_y)} keyed to value 100/0 (star) and 0/-100
     (heart), or None when neither panel can be anchored."""
-    zeros = sorted(y for y, v in toks if abs(v) < 0.6)
+    # A zero line is 0.00 / 0.0000, not "small". The old 0.6 window was meant
+    # to absorb OCR noise, but on a sub-dollar stock the whole PRICE ladder
+    # sits under it — GSUN at $0.36 labels 0.31 through 0.39, every one of
+    # which registered as a zero. The topmost then anchored star's floor near
+    # the top of the chart and the sign rule below flipped star's own 100 to
+    # -100, so locate returned None on exactly the low-priced names this desk
+    # watches most.
+    zeros = sorted(y for y, v in toks if abs(v) < 0.05)
 
     # Each panel has a scale nothing else on the chart shares: star runs
     # exactly 100..0, heart exactly 0..-100. That is a strong enough prior to
@@ -589,8 +596,11 @@ def _assign_panels(toks: list) -> dict | None:
     for y, v in toks:
         if 90.0 <= abs(v) <= 115.0:
             v = 100.0 if v > 0 else -100.0
-        if (v > 0 and first_zero is not None and y > first_zero
-                and _is_gridline(v)):
+        # Only the 100 line is ambiguous — it is the one whose minus TradingView
+        # renders with a glyph the digit whitelist drops. Flipping any positive
+        # gridline below the first zero was too broad: one stray low label
+        # anchors the wrong row and takes star's scale with it.
+        if (v >= 90.0 and first_zero is not None and y > first_zero):
             v = -v                      # below star's floor => heart's scale
         snapped.append((y, v))
     toks = snapped
