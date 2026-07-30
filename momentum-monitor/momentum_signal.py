@@ -138,6 +138,20 @@ DEFAULTS = {
     # Reordering rows by setup distance is OFF until it has been watched for
     # a few sessions — ship the column first (roadmap T1.2).
     "setup_sort_enabled": False,
+    # Buy-readiness circle, top-right of the header. Counts the three chart
+    # indicators (CM RSI-2, %R Trend Exhaustion, MACD) lit on the *charted*
+    # symbol. Needs STRATEGY_MODE=three_indicator on the engine, else it stays
+    # dim by design rather than guessing. Cut points are the engine's own
+    # buy_zone/aligning boundaries, restated here so they can be tuned without
+    # touching the engine — note buy_pct is quantised to 0/33/67/100, so real
+    # sensitivity tuning lives in the engine's THREE_IND_* params.
+    "buy_circle_enabled": True,
+    "buy_circle_green_min": 100.0,
+    "buy_circle_yellow_min": 67.0,
+    # "chart" reads the TradingView tab title (notices manual symbol changes);
+    # "hotkey" trusts only what we sent to TV ourselves.
+    "buy_circle_symbol_source": "chart",
+    "buy_circle_chart_poll_sec": 2.0,
     # Relative volume column. A $2 stock on 8x volume is a different animal
     # from one on 1.1x. Source is funnel.rvol, else the row's own rvol — both
     # time-adjusted server-side (T2.1). Never synthesised here.
@@ -499,6 +513,128 @@ def setup_shortfall(row: dict,
         if outside:
             bits.append(f"%R {max(outside):.0f}→{hi:.0f}")
     return "  ".join(bits)
+
+
+# ── Buy-readiness circle ─────────────────────────────────────────────────────
+# The three indicators on the chart — CM RSI-2, %R Trend Exhaustion, MACD — each
+# publish one boolean in signal_proximity. Count the lit ones, colour the circle.
+#
+# This deliberately does NOT track the Setup column, and that is not a bug.
+# FOCUS wants both %R lines deep-oversold and *falling* toward -100 ("catch it
+# while it is still washing out"); the strategy's pctr_ok wants the fast line
+# *rising* toward 0 ("the turn is confirmed"). Near-opposite readings of the
+# same indicator, so they light at different moments on the same symbol.
+# setup_distance() is the wrong basis here for the same reason its own docstring
+# gives: it excludes MACD by design, and MACD is one of the three legs.
+
+# (signal_proximity key, short name shown when the leg is dark)
+CIRCLE_LEGS = (("cm_ok", "rsi"), ("pctr_ok", "%R"), ("macd_ok", "macd"))
+
+# state → (glyph, rich style, fallback label)
+CIRCLE_STYLES = {
+    "go":      ("●", "bold green",   "BUY"),
+    "near":    ("●", "bold yellow",  "NEAR"),
+    "no":      ("●", "red",          "NO"),
+    "hold":    ("◉", "bold cyan",    "HOLD"),
+    "exit":    ("●", "bold magenta", "EXIT"),
+    "unknown": ("○", "dim",          "—"),
+}
+
+
+def buy_circle(row: dict | None, cfg: dict | None = None) -> tuple[str, str]:
+    """Buy-readiness of one symbol as (state, detail).
+
+    state ∈ go | near | no | hold | exit | unknown.
+
+    `unknown` is a fourth state on purpose. Red means we measured the setup and
+    it is not there; dim means we could not measure it. Rendering absence as red
+    would invent a verdict nobody computed — the rule focus_age() already
+    follows for ages it did not observe.
+    """
+    cfg = cfg or {}
+    sp = _sp(row) if isinstance(row, dict) else {}
+
+    # Strategy guard. proximity_state() returns three different shapes sharing
+    # these key names: under STRATEGY_MODE=alert, proximity_pct is *mention
+    # velocity* and status is still watching/aligning/buy_zone. Reading those
+    # blindly would glow green because a symbol is being talked about, with no
+    # indicator basis whatsoever.
+    # Three distinct reasons to stay dim, and they need different fixes:
+    # untracked = the engine has no row for this symbol (chart something on the
+    # desk list, or add it); wrong mode = the engine is not running the
+    # three-indicator strategy; pending = tracked, bars still warming up.
+    if not sp:
+        return "unknown", "untracked"
+    if sp.get("strategy") != "three_indicator":
+        return "unknown", "wrong mode"
+    if not sp.get("bars_fetched") or sp.get("cm_rsi") is None:
+        return "unknown", "pending"
+
+    # Already holding it — "is this a good time to buy" is the wrong question,
+    # so it gets its own colour rather than a misleading red or green.
+    if sp.get("status") == "exit_signal":
+        return "exit", ""
+    if sp.get("in_position"):
+        return "hold", ""
+
+    lit = [name for key, name in CIRCLE_LEGS if sp.get(key)]
+    missing = [name for key, name in CIRCLE_LEGS if not sp.get(key)]
+    detail = f"{len(lit)}/{len(CIRCLE_LEGS)}"
+    if missing:
+        detail += " " + " ".join(missing)
+
+    pct = _fnum(sp.get("proximity_pct"))
+    pct = 0.0 if pct is None else pct
+    green = _fnum(cfg.get("buy_circle_green_min"))
+    green = 100.0 if green is None else green
+    yellow = _fnum(cfg.get("buy_circle_yellow_min"))
+    yellow = 67.0 if yellow is None else yellow
+
+    # buy_zone is the engine's own buy_signal(), which additionally requires the
+    # legs to align within confirm_window. Honour it directly so the desk can
+    # never read non-green while the dashboard reads BUY ZONE for the same row.
+    if sp.get("status") == "buy_zone" or pct >= green:
+        return "go", detail
+    if pct >= yellow:
+        return "near", detail
+    return "no", detail
+
+
+def circle_markup(state: str, detail: str, sym: str | None) -> str:
+    """The corner chip: '● ZCMD 2/3 macd', '○ ZCMD pending'."""
+    glyph, style, label = CIRCLE_STYLES.get(state, CIRCLE_STYLES["unknown"])
+    return f"[{style}]{glyph} {sym or '—'} {detail or label}[/{style}]"
+
+
+class ChartSymbol:
+    """The symbol on the TradingView chart, cached behind a TTL.
+
+    tv_focus_symbol() spawns an osascript subprocess to read the browser tab
+    title, so it must not run on every repaint. Falls back to the hotkey focus —
+    the last symbol *we* sent to TV — when the read comes back empty, which
+    covers non-Mac, no TV tab, and AppleScript errors alike (it swallows all
+    three to None). The tab title is preferred because it is the only source
+    that notices you changing the symbol in TradingView by hand.
+    """
+
+    def __init__(self, cfg: dict | None = None):
+        cfg = cfg or {}
+        self.source = str(cfg.get("buy_circle_symbol_source", "chart")).lower()
+        self.ttl = float(cfg.get("buy_circle_chart_poll_sec", 2.0))
+        self._sym: str | None = None
+        self._read_at = 0.0
+
+    def get(self, hotkeys, now: float) -> str | None:
+        fallback = hotkeys.focus_symbol() if hotkeys is not None else None
+        if self.source != "chart":
+            return fallback
+        if now - self._read_at >= self.ttl:
+            self._read_at = now
+            try:
+                self._sym = desk.tv_focus_symbol()
+            except Exception:                                  # noqa: BLE001
+                self._sym = None
+        return self._sym or fallback
 
 
 def mention_trend(hist_series: list[float],
@@ -1084,6 +1220,16 @@ class Feed:
         since = self.focus_since.get(sym)
         return None if since is None else max(0.0, now - since)
 
+    def row_for(self, sym: str | None) -> dict | None:
+        """Latest row for `sym`, or None when the engine is not tracking it."""
+        if not sym:
+            return None
+        want = str(sym).upper()
+        for r in self.rows:
+            if str(r.get("ticker") or "").upper() == want:
+                return r
+        return None
+
 
 def _detail(row: dict) -> str:
     px = row.get("price")
@@ -1600,7 +1746,7 @@ def stocktwits_panel(st: StocktwitsTrending,
 
 
 def header_panel(feed: Feed, now: float, hz: float,
-                 stale: bool) -> Panel:
+                 stale: bool, circle: str | None = None) -> Panel:
     n = len(feed.rows)
     src = _dashboard_url()
     if stale:
@@ -1612,8 +1758,10 @@ def header_panel(feed: Feed, now: float, hz: float,
                 f"[dim]{hz:.1f} polls/s · {src}[/dim]")
     if session_line:
         line += f"   [dim]{session_line()}[/dim]"
+    # The buy-readiness circle rides the top border, right-aligned — the
+    # top-right corner of the whole monitor, with no extra panel or reflow.
     return Panel(Align.center(line), border_style="red" if stale else "cyan",
-                 padding=(0, 1))
+                 padding=(0, 1), title=circle, title_align="right")
 
 
 def positions_panel(positions: dict, focus: str | None) -> Panel:
@@ -1697,6 +1845,7 @@ def main():
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
+    chart_symbol = ChartSymbol(cfg)
     history = SymbolHistory(maxlen=int(cfg.get("history_samples", 120)))
     journal = Journal(HERE / str(cfg.get("journal_dir", "journal")),
                       flush_sec=float(cfg.get("journal_flush_sec", 5.0)),
@@ -1813,7 +1962,17 @@ def main():
                        for r in feed.rows[:hotkey_slots]]
             hotkeys.update(ordered, st_ordered if st_on else None)
 
-            panels = [header_panel(feed, t0, hz, stale)]
+            circle = None
+            if cfg.get("buy_circle_enabled", True):
+                csym = chart_symbol.get(hotkeys, t0)
+                # A dead feed must not leave a stale green sitting in the
+                # corner — the row we would read is however old the last poll
+                # was, which is exactly what `stale` means.
+                cstate, cdetail = (("unknown", "stale") if stale
+                                   else buy_circle(feed.row_for(csym), cfg))
+                circle = circle_markup(cstate, cdetail, csym)
+
+            panels = [header_panel(feed, t0, hz, stale, circle)]
             panels.append(momentum_table(
                 feed, t0, hz, hotkeys.enabled,
                 rsi_focus_max, pctr_focus_lo, pctr_focus_hi, st_rank,
