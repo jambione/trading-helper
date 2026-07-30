@@ -183,3 +183,39 @@ def test_arrows_distinguish_turns_from_trends():
     assert F.arrow("turning_up") == "↗"
     assert F.arrow("turning_down") == "↘"
     assert F.arrow(F.UP) == "↑" and F.arrow(F.DOWN) == "↓"
+
+
+# ── direction of travel from %R + MACD ───────────────────────────────────────
+# A leg count says whether the setup is complete; this says which way it is
+# going. They are different questions and a row can be 1-of-3 and building or
+# 2-of-3 and rolling over.
+
+def test_agreement_earns_the_strong_glyphs():
+    assert F.trend_verdict("turning_up", "turning_up") == "surging"
+    assert F.trend_verdict("turning_up", "up") == "surging"
+    assert F.trend_verdict("turning_down", "turning_down") == "sinking"
+    assert F.trend_verdict("down", "turning_down") == "sinking"
+
+
+def test_one_indicator_moving_is_only_rising():
+    assert F.trend_verdict("up", "flat") == "rising"
+    assert F.trend_verdict("flat", "down") == "falling"
+
+
+def test_disagreement_is_reported_as_mixed_not_averaged():
+    """%R climbing while MACD rolls over is not 'flat' — it is a conflict,
+    and averaging it into a direction neither indicator supports would be a
+    claim the chart does not make."""
+    assert F.trend_verdict("up", "down") == "mixed"
+    assert F.trend_verdict("turning_up", "turning_down") == "mixed"
+
+
+def test_unreadable_trend_is_unknown():
+    assert F.trend_verdict(None, None) == "unknown"
+
+
+def test_a_turn_outweighs_a_sustained_move():
+    """By the time a climb is established the move has largely happened."""
+    assert (F._SHAPE_SCORE["turning_up"] > F._SHAPE_SCORE["up"])
+    assert F.trend_verdict("turning_up", "flat") == "rising"
+    assert F.trend_verdict("turning_up", "up") == "surging"

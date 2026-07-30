@@ -103,6 +103,54 @@ def arrow(dir_: str | None) -> str:
     return _ARROW.get(dir_ or "", "·")
 
 
+# How much each shape counts toward "where is this heading". A turn outweighs a
+# sustained move on purpose: by the time a climb is well established the move
+# has largely happened, and the turn off the floor is the part worth catching.
+_SHAPE_SCORE = {TURNING_UP: 2, UP: 1, FLAT: 0, DOWN: -1, TURNING_DOWN: -2}
+
+# Combined verdict → (glyph, rich style, label). %R and MACD each contribute
+# -2..+2, so the sum runs -4..+4.
+TREND_STYLES = {
+    "surging": ("⇈", "bold green",   "up"),
+    "rising":  ("↗", "green",        "up"),
+    "mixed":   ("→", "yellow",       "mixed"),
+    "falling": ("↘", "red",          "down"),
+    "sinking": ("⇊", "bold red",     "down"),
+    "unknown": ("·", "dim",          "—"),
+}
+
+
+def trend_verdict(pct_shape: str | None, macd_shape: str | None) -> str:
+    """Where %R and MACD together say this is heading.
+
+    Only these two. CM RSI-2 at length 2 whips between extremes bar to bar —
+    useful as a level ("is it low"), close to meaningless as a direction, so
+    letting it vote would mostly add noise. %R Trend Exhaustion and MACD are
+    the two that actually trend.
+
+    Agreement is what earns the strong glyphs: both heading the same way is a
+    different statement from one moving while the other sits still, and
+    outright disagreement is worth showing as disagreement rather than
+    averaging into a direction neither indicator supports.
+    """
+    if pct_shape is None and macd_shape is None:
+        return "unknown"
+    score = (_SHAPE_SCORE.get(pct_shape or "", 0)
+             + _SHAPE_SCORE.get(macd_shape or "", 0))
+    both = pct_shape is not None and macd_shape is not None
+    if both and pct_shape != macd_shape and score == 0:
+        return "mixed"          # one up, one down — say so
+    if score >= 3:
+        return "surging"
+    if score >= 1:
+        return "rising"
+    if score <= -3:
+        return "sinking"
+    if score <= -1:
+        return "falling"
+    return "mixed"
+
+
 class ChartFeed:
     """Polls one TradingView window and reports indicator direction."""
 
@@ -354,6 +402,14 @@ class ChartFeed:
             "status": ("buy_zone" if pct >= 100 else
                        "aligning" if pct >= 67 else "watching"),
             "in_position": False,
+            # Direction of travel from %R and MACD, for the corner indicator.
+            # Separate from the leg count on purpose: the legs answer "is the
+            # setup complete", this answers "which way is it going", and a
+            # setup can be 1-of-3 and clearly building or 2-of-3 and rolling
+            # over. Carried alongside rather than folded in, so neither
+            # question has to be answered with the other's evidence.
+            "chart_trend": trend_verdict(d.get("pct_w") or d.get("pct_b"),
+                                         d.get("m")),
         }
 
 

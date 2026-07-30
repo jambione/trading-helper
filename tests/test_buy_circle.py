@@ -219,3 +219,25 @@ def test_chart_read_is_cached_within_ttl(monkeypatch):
     assert len(calls) == 1          # osascript must not run every repaint
     cs.get(_Hotkeys(None), T0 + 11)
     assert len(calls) == 2
+
+
+# ── the arrow chip ───────────────────────────────────────────────────────────
+
+def test_arrow_carries_symbol_legs_and_direction():
+    from momentum_signal import trend_markup
+    chip = trend_markup("surging", "2/3 rsi", "QBTS")
+    assert chip and "QBTS" in chip and "2/3 rsi" in chip and "⇈" in chip
+
+
+def test_arrow_glyph_per_state():
+    from momentum_signal import trend_markup
+    for state, glyph in (("surging", "⇈"), ("rising", "↗"), ("mixed", "→"),
+                         ("falling", "↘"), ("sinking", "⇊")):
+        assert glyph in trend_markup(state, "", "QBTS")
+
+
+def test_no_trend_falls_back_to_the_dot():
+    """The corner must never be blank: unreadable trend keeps the circle."""
+    from momentum_signal import trend_markup
+    assert trend_markup(None, "1/3", "QBTS") is None
+    assert trend_markup("unknown", "1/3", "QBTS") is None

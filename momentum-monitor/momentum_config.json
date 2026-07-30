@@ -27,5 +27,6 @@
   "stocktwits_look_max": 2,
   "stocktwits_look_near_high": 0.7,
   "stocktwits_look_near_low": 0.3,
-  "buy_circle_source": "chart"
+  "buy_circle_source": "chart",
+  "buy_circle_arrow": true
 }

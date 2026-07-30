@@ -168,6 +168,11 @@ DEFAULTS = {
     # on Alpaca IEX rather than the chart's own feed. Falls back to "engine"
     # automatically when the screen reader is unavailable.
     "buy_circle_source": "chart",
+    # Corner indicator: an arrow for direction of travel (%R + MACD) rather
+    # than a dot for leg count. False keeps the dot. The leg count rides along
+    # either way — "is the setup complete" and "which way is it going" are
+    # different questions and the arrow answers the second.
+    "buy_circle_arrow": True,
     # Relative volume column. A $2 stock on 8x volume is a different animal
     # from one on 1.1x. Source is funnel.rvol, else the row's own rvol — both
     # time-adjusted server-side (T2.1). Never synthesised here.
@@ -614,6 +619,37 @@ def buy_circle(row: dict | None, cfg: dict | None = None) -> tuple[str, str]:
     if pct >= yellow:
         return "near", detail
     return "no", detail
+
+
+# Direction-of-travel glyphs for the corner, mirroring tv_chart_feed's verdict.
+# Kept here rather than imported so the desk still renders when the screen
+# reader is unavailable and the circle falls back to the engine.
+TREND_STYLES = {
+    "surging": ("⇈", "bold green"),
+    "rising":  ("↗", "green"),
+    "mixed":   ("→", "yellow"),
+    "falling": ("↘", "red"),
+    "sinking": ("⇊", "bold red"),
+    "unknown": ("·", "dim"),
+}
+
+
+def trend_markup(trend: str | None, detail: str, sym: str | None) -> str | None:
+    """The corner chip as an arrow: 'ZCMD 2/3 ⇈'.
+
+    An arrow says which way %R and MACD are heading; the leg count still rides
+    alongside because "complete" and "improving" are different questions. A
+    setup can be 1-of-3 and clearly building, or 2-of-3 and rolling over, and
+    the two glyphs disagreeing is information rather than a contradiction.
+
+    Returns None when there is no trend to show, so the caller can fall back
+    to the dot rather than print a meaningless arrow.
+    """
+    if not trend or trend == "unknown":
+        return None
+    glyph, style = TREND_STYLES.get(trend, TREND_STYLES["unknown"])
+    body = f"{sym or '—'} {detail}".strip()
+    return f"[{style}]{body} {glyph}[/{style}]"
 
 
 def circle_markup(state: str, detail: str, sym: str | None) -> str:
@@ -2100,6 +2136,13 @@ def main():
                         cstate, cdetail = buy_circle(
                             {"signal_proximity": prox}, cfg)
                     readout_strip = chart_readout_markup(lines)
+                    # Prefer the direction arrow when the chart gave us one: it
+                    # answers "which way is this going", which a dot cannot.
+                    # Falls through to the dot when the trend is unreadable, so
+                    # the corner is never blank.
+                    if cfg.get("buy_circle_arrow", True):
+                        circle = trend_markup(
+                            (prox or {}).get("chart_trend"), cdetail, csym)
                 else:
                     csym = chart_symbol.get(hotkeys, t0)
                     # A dead feed must not leave a stale green sitting in the
@@ -2107,7 +2150,10 @@ def main():
                     # poll was, which is exactly what `stale` means.
                     cstate, cdetail = (("unknown", "stale") if stale
                                        else buy_circle(feed.row_for(csym), cfg))
-                circle = circle_markup(cstate, cdetail, csym)
+                # The dot is the fallback: engine source, or a chart read with
+                # no legible trend. Only fills in if the arrow did not.
+                if circle is None:
+                    circle = circle_markup(cstate, cdetail, csym)
 
             panels = [header_panel(feed, t0, hz, stale, circle, readout_strip)]
             panels.append(momentum_table(
