@@ -293,6 +293,11 @@ STRATEGY_MODE  = os.getenv("STRATEGY_MODE", "momentum").lower()
 # and evaluate the strategy on a forming candle that updates every tick — closing
 # the gap with TradingView. Only consumed by the three_indicator path.
 REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
+# Seconds without a trade before the realtime bars are considered stale and the
+# engine falls back to freshly-fetched Alpaca bars. Two 1-minute bars: long
+# enough that a thin symbol pausing between prints does not flap the source,
+# short enough that a dropped stream cannot quietly freeze the indicators.
+RT_BARS_MAX_STALE = float(os.getenv("REALTIME_BARS_MAX_STALE", "120"))
 
 # Minimum seconds to hold a three_indicator position before a strategy reversal
 # may close it — guards against per-second buy/sell flip-flop on the forming bar.
@@ -1564,6 +1569,9 @@ class SignalEngine:
 
         # Realtime bar aggregator — fed by live trade callbacks when enabled.
         self.rt_bars = RealtimeBarAggregator()
+        # Tickers currently falling back off stale realtime bars. Transition
+        # tracking only, so the log records the switch rather than every bar.
+        self._rt_stale: set[str] = set()
         if STRATEGY_MODE == "three_indicator":
             print(f"[STRATEGY] three_indicator active  (exit={THREE_IND_PARAMS['exit_mode']}, "
                   f"realtime_bars={'on' if REALTIME_BARS else 'off'}, trader={TRADER_MODE})")
@@ -1915,11 +1923,34 @@ class SignalEngine:
     # ── 3-indicator strategy evaluation (gated by STRATEGY_MODE) ──────────────
 
     def _strategy_df(self, ts: TickerState, fallback_df):
-        """Realtime aggregated bars when enabled and sufficient, else the fetched bars."""
+        """Realtime aggregated bars when enabled, sufficient, and *fresh*.
+
+        Freshness is not optional. The aggregator keeps its sealed history and
+        its forming bar when the trade stream drops, so get_bars() goes on
+        returning a full-looking frame whose newest bar silently ages. Computing
+        CM RSI-2 / %R / MACD on a frozen candle and publishing them as current
+        readings is strictly worse than the ≤60s-old Alpaca bars already in
+        hand: the desk cannot tell a stale indicator from a live one, and a
+        buy-readiness verdict built on it looks exactly as confident.
+
+        age_seconds() returns None for a ticker no trade has ever touched —
+        seeded-but-unfed, or simply not trading. That is unusable, not fresh.
+        """
         if REALTIME_BARS:
-            rt = self.rt_bars.get_bars(ts.ticker)
-            if rt is not None and len(rt) >= MACD_SLOW + MACD_SIG + 5:
-                return rt
+            age = self.rt_bars.age_seconds(ts.ticker)
+            if age is not None and age <= RT_BARS_MAX_STALE:
+                rt = self.rt_bars.get_bars(ts.ticker)
+                if rt is not None and len(rt) >= MACD_SLOW + MACD_SIG + 5:
+                    if ts.ticker in self._rt_stale:
+                        self._rt_stale.discard(ts.ticker)
+                        print(f"  [{ticker_tag(ts.ticker)}] ▶ realtime bars live again")
+                    return rt
+            elif ts.ticker not in self._rt_stale:
+                # Log the transition only — this runs on every bar close.
+                self._rt_stale.add(ts.ticker)
+                stale_for = "no trades yet" if age is None else f"{age:.0f}s stale"
+                print(f"  [{ticker_tag(ts.ticker)}] ⏸ realtime bars {stale_for} — "
+                      f"falling back to Alpaca bars")
         return fallback_df
 
     def _eval_three_indicator(self, ts: TickerState, df):
