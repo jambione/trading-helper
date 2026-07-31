@@ -244,3 +244,44 @@ def test_no_trend_falls_back_to_the_dot():
     from momentum_signal import trend_markup
     assert trend_markup(None, "QBTS") is None
     assert trend_markup("unknown", "QBTS") is None
+
+
+# ── the readout says where its numbers came from ─────────────────────────────
+# Twice a desk silently running on the engine was debugged as though it were
+# reading the screen — once chasing "pending" that came from bars, once an
+# impossible MACD gap. Both sources render plausible-looking values, so a
+# fallback is invisible exactly when it matters.
+
+def test_chart_readout_is_tagged():
+    from momentum_signal import chart_readout_markup
+    out = chart_readout_markup(["R - 43 ↘", "% - -17 ↑", "M - 19.4 ↘"], "chart")
+    assert out and "chart" in out and "R - 43 ↘" in out
+
+
+def test_engine_readout_is_tagged_and_distinguishable():
+    from momentum_signal import chart_readout_markup, engine_readout_markup
+    row = _row(cm_rsi=22.0, pctr=-45.0, pctr_slow=-30.0, macd_ok=True)
+    eng = engine_readout_markup(row)
+    chart = chart_readout_markup(["R - 43 ↘"], "chart")
+    assert eng and "engine" in eng
+    assert "engine" not in chart and "chart" not in eng
+
+
+def test_engine_readout_carries_its_own_legs():
+    from momentum_signal import engine_readout_markup
+    out = engine_readout_markup(_row(cm_rsi=22.0, pctr=-45.0, pctr_slow=-30.0,
+                                     macd_ok=True))
+    assert "22" in out and "-45" in out and "-30" in out
+
+
+def test_engine_readout_absent_without_a_row():
+    """No row is not the same as a row with no values — stay silent."""
+    from momentum_signal import engine_readout_markup
+    assert engine_readout_markup(None) is None
+    assert engine_readout_markup({}) is None
+
+
+def test_engine_readout_survives_missing_indicators():
+    from momentum_signal import engine_readout_markup
+    out = engine_readout_markup(_row(cm_rsi=None, pctr=None, pctr_slow=None))
+    assert out is not None and "—" in out

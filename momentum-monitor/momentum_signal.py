@@ -762,11 +762,43 @@ class ChartWatcher:
             return self._error
 
 
-def chart_readout_markup(lines: list[str] | None) -> str | None:
-    """The R / % / M readout as one dim strip for a panel border."""
+def chart_readout_markup(lines: list[str] | None,
+                         source: str = "chart") -> str | None:
+    """The R / % / M readout as one strip for a panel border, source tagged.
+
+    The tag is not decoration. Twice now a desk silently running on the engine
+    has been debugged as though it were reading the screen — once chasing
+    "pending" that came from bars, once an impossible MACD gap — because
+    nothing on screen said which source produced the numbers. A fallback is
+    invisible precisely when it matters, since both sources render values that
+    look equally plausible.
+    """
     if not lines:
         return None
-    return "[dim]" + "   ".join(lines) + "[/dim]"
+    tag = "cyan" if source == "chart" else "yellow"
+    return f"[{tag}]{source}[/{tag}][dim]  " + "   ".join(lines) + "[/dim]"
+
+
+def engine_readout_markup(row: dict | None) -> str | None:
+    """The engine's own three legs, so the fallback still shows its working.
+
+    Previously the strip simply vanished on the engine path, which reads as
+    "no data" rather than "different data" — and left the corner glyph as the
+    only thing on screen, with nothing to say where it came from.
+    """
+    sp = _sp(row) if isinstance(row, dict) else {}
+    if not sp:
+        return None
+    rsi = _fnum(sp.get("cm_rsi"))
+    fast, slow = _pctr_pair(row) if isinstance(row, dict) else (None, None)
+    bits = [f"R - {rsi:.0f}" if rsi is not None else "R - —"]
+    if fast is not None or slow is not None:
+        bits.append("% - " + ", ".join(f"{v:.0f}" for v in (fast, slow)
+                                       if v is not None))
+    else:
+        bits.append("% - —")
+    bits.append("M - " + ("✓" if sp.get("macd_ok") else "—"))
+    return "[yellow]engine[/yellow][dim]  " + "   ".join(bits) + "[/dim]"
 
 
 def mention_trend(hist_series: list[float],
@@ -2117,6 +2149,7 @@ def main():
 
             circle = readout_strip = None
             if cfg.get("buy_circle_enabled", True):
+                # Falling back without saying so is the failure this guards.
                 if chart_watcher is not None and chart_watcher.available:
                     # Read straight off the chart: works for whatever symbol
                     # is charted, needs no engine, and cannot disagree with
@@ -2148,8 +2181,10 @@ def main():
                     # A dead feed must not leave a stale green sitting in the
                     # corner — the row we would read is however old the last
                     # poll was, which is exactly what `stale` means.
+                    erow = feed.row_for(csym)
                     cstate, cdetail = (("unknown", "stale") if stale
-                                       else buy_circle(feed.row_for(csym), cfg))
+                                       else buy_circle(erow, cfg))
+                    readout_strip = engine_readout_markup(erow)
                 # The dot is the fallback: engine source, or a chart read with
                 # no legible trend. Only fills in if the arrow did not.
                 if circle is None:
