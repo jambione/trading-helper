@@ -213,18 +213,18 @@ def test_a_marginal_macd_alone_calls_nothing():
     clears the threshold, while a lone %R at the same strength does. That is
     the weighting doing its job, not a gap — a decisive MACD alone still
     registers."""
-    assert F.trend_verdict("flat", "down") == "mixed"          # marginal
+    assert F.trend_verdict("flat", "down") == "flat"              # marginal
     assert F.trend_verdict("flat", "down",
                            0.0, -F.FLAT_M_HIST * 4) == "falling"   # decisive
     assert F.trend_verdict("up", "flat") == "rising"           # %R, marginal
 
 
-def test_disagreement_is_reported_as_mixed_not_averaged():
+def test_disagreement_is_reported_as_conflict_not_averaged():
     """%R climbing while MACD rolls over is not 'flat' — it is a conflict,
     and averaging it into a direction neither indicator supports would be a
     claim the chart does not make."""
-    assert F.trend_verdict("up", "down") == "mixed"
-    assert F.trend_verdict("turning_up", "turning_down") == "mixed"
+    assert F.trend_verdict("up", "down") == "conflict"
+    assert F.trend_verdict("turning_up", "turning_down") == "conflict"
 
 
 def test_unreadable_trend_is_unknown():
@@ -267,7 +267,7 @@ def test_strength_is_normalised_across_indicators():
 def test_a_loud_indicator_cannot_override_a_conflict():
     """A big %R move against a small MACD move is still disagreement."""
     assert F.trend_verdict("up", "down",
-                           F.FLAT_PCT_HIST * 5, -F.FLAT_M_HIST) == "mixed"
+                           F.FLAT_PCT_HIST * 5, -F.FLAT_M_HIST) == "conflict"
 
 
 def test_one_indicator_alone_cannot_reach_the_doubled_glyph():
@@ -308,4 +308,19 @@ def test_a_weighted_indicator_still_cannot_reach_the_doubled_glyph_alone():
 def test_weighting_does_not_override_a_conflict():
     """A loud %R against a quiet MACD stays a conflict, not a %R win."""
     assert F.trend_verdict("up", "down",
-                           F.FLAT_PCT_HIST * 20, -F.FLAT_M_HIST) == "mixed"
+                           F.FLAT_PCT_HIST * 20, -F.FLAT_M_HIST) == "conflict"
+
+
+def test_conflict_and_flat_are_different_states():
+    """A caution and a quiet tape must not share a glyph.
+
+    "%R climbing while MACD rolls over" is the chart arguing with itself;
+    "nothing moving" is just quiet. Reading the same → for both is how a
+    warning gets mistaken for nothing happening.
+    """
+    P, M = F.FLAT_PCT_HIST, F.FLAT_M_HIST
+    assert F.trend_verdict("up", "down", P * 8, -M * 8) == "conflict"
+    assert F.trend_verdict("flat", "flat", 0.0, 0.0) == "flat"
+    assert F.TREND_STYLES["conflict"][0] != F.TREND_STYLES["flat"][0]
+    # conflict is a caution, flat is background — they must not share a colour
+    assert F.TREND_STYLES["conflict"][1] != F.TREND_STYLES["flat"][1]

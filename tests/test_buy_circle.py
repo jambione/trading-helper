@@ -234,7 +234,7 @@ def test_arrow_is_symbol_and_glyph_only():
 
 def test_arrow_glyph_per_state():
     from momentum_signal import trend_markup
-    for state, glyph in (("surging", "⇈"), ("rising", "↗"), ("mixed", "→"),
+    for state, glyph in (("surging", "⇈"), ("rising", "↗"), ("conflict", "⇄"),
                          ("falling", "↘"), ("sinking", "⇊")):
         assert glyph in trend_markup(state, "QBTS")
 

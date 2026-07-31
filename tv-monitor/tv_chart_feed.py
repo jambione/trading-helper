@@ -113,13 +113,18 @@ MACD_WEIGHT = 2.0 - PCT_WEIGHT
 
 # Combined verdict → (glyph, rich style, label). %R and MACD each contribute
 # ±1.0 to ±2.5 through shape_score, weighted above, so the sum runs -5..+5.
+# conflict and flat were one glyph, and they are not one state. "%R climbing
+# while MACD rolls over" is a caution — the chart is arguing with itself. "both
+# sitting still" is just quiet. Reading → for the first is how you mistake a
+# warning for nothing happening.
 TREND_STYLES = {
-    "surging": ("⇈", "bold green",   "up"),
-    "rising":  ("↗", "green",        "up"),
-    "mixed":   ("→", "yellow",       "mixed"),
-    "falling": ("↘", "red",          "down"),
-    "sinking": ("⇊", "bold red",     "down"),
-    "unknown": ("·", "dim",          "—"),
+    "surging":  ("⇈", "bold green",   "up"),
+    "rising":   ("↗", "green",        "up"),
+    "conflict": ("⇄", "yellow",       "conflict"),
+    "flat":     ("→", "dim",          "flat"),
+    "falling":  ("↘", "red",          "down"),
+    "sinking":  ("⇊", "bold red",     "down"),
+    "unknown":  ("·", "dim",          "—"),
 }
 
 
@@ -175,7 +180,7 @@ def trend_verdict(pct_shape: str | None, macd_shape: str | None,
     # letting the louder one win would report a direction the chart does not
     # agree on. Magnitude only earns weight once they point the same way.
     if pct * macd < 0:
-        return "mixed"
+        return "conflict"
 
     # Both must be moving to earn a doubled glyph, whatever the weights say.
     # ⇈ means the chart agrees with itself; without this, a heavily weighted
@@ -190,7 +195,8 @@ def trend_verdict(pct_shape: str | None, macd_shape: str | None,
         return "sinking"
     if score <= -1.0:
         return "falling"
-    return "mixed"
+    # Neither disagreement nor enough movement to call a direction.
+    return "flat"
 
 
 class ChartFeed:

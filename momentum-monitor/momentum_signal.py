@@ -625,12 +625,13 @@ def buy_circle(row: dict | None, cfg: dict | None = None) -> tuple[str, str]:
 # Kept here rather than imported so the desk still renders when the screen
 # reader is unavailable and the circle falls back to the engine.
 TREND_STYLES = {
-    "surging": ("⇈", "bold green"),
-    "rising":  ("↗", "green"),
-    "mixed":   ("→", "yellow"),
-    "falling": ("↘", "red"),
-    "sinking": ("⇊", "bold red"),
-    "unknown": ("·", "dim"),
+    "surging":  ("⇈", "bold green"),
+    "rising":   ("↗", "green"),
+    "conflict": ("⇄", "yellow"),      # the two indicators disagree
+    "flat":     ("→", "dim"),         # nothing moving
+    "falling":  ("↘", "red"),
+    "sinking":  ("⇊", "bold red"),
+    "unknown":  ("·", "dim"),
 }
 
 
