@@ -38,7 +38,20 @@ def color_mask(strip: np.ndarray, name: str) -> np.ndarray:
     if name == "blue":
         return (b > 140) & (b - r > 20) & (g < b)
     if name == "white":
-        return (r > 170) & (g > 170) & (b > 170)
+        # Anti-aliasing is why this is not simply "> 170 everywhere". The %R
+        # white line is 1px on a steep slope, so its brightness spreads across
+        # neighbouring pixels and the newest columns peak around 140-160 —
+        # measured on a live chart, where the last 19 columns held two white
+        # pixels and line_y needs three. The line read as absent precisely at
+        # the right-hand edge, which is the only part anyone cares about.
+        #
+        # Dropping the threshold alone would start matching gridlines, so
+        # neutrality carries the weight instead: white is grey, and the blue
+        # and red plots are not. Gridlines here measure ~60-90 and stay out on
+        # brightness; blue is ~(220,60,40) and stays out on spread.
+        mx = np.maximum(np.maximum(r, g), b)
+        mn = np.minimum(np.minimum(r, g), b)
+        return (mn > 120) & (mx - mn < 45)
     if name == "yellow":
         return (r > 130) & (g > 150) & (b < 130)
     if name == "gray":
@@ -65,14 +78,150 @@ def rightmost_data_x(img: np.ndarray, colors: tuple) -> int | None:
 def line_y(img: np.ndarray, color: str, edge: int = 14,
            x_end: int | None = None) -> float | None:
     """Median row of `color` pixels in the strip ending at x_end (the
-    newest data column). None if the color isn't present there."""
+    newest data column). None if the color isn't present there.
+
+    Presence is judged on pixel COUNT, not on how many rows the colour
+    spans. Requiring two distinct rows quietly rejected any line that
+    happened to be flat — it occupies exactly one row — so a MACD signal
+    resting on its average, or %R pinned at the floor, read as "no data"
+    at precisely the moments those readings matter most. A flat line still
+    paints most of the strip's width; a stray anti-aliased pixel does not.
+    """
     if x_end is None:
         x_end = img.shape[1] - 4
     strip = img[:, max(0, x_end - edge):x_end + 1]
-    rows = np.where(color_mask(strip, color).any(axis=1))[0]
-    if len(rows) < 2:
+    mask = color_mask(strip, color)
+    if int(mask.sum()) < 3:
+        return None
+    rows = np.where(mask.any(axis=1))[0]
+    if len(rows) == 0:
         return None
     return float(np.median(rows))
+
+
+def line_series(img: np.ndarray, color: str | tuple, x_end: int | None = None,
+                span: int = 160, points: int = 40) -> list[float | None]:
+    """The plotted line's row at evenly spaced columns, oldest → newest.
+
+    The trend does not have to be accumulated in wall-clock time: the panel
+    already holds the line's whole visible history, one column per slice of
+    chart. Sampling backwards from the newest column reads that history
+    directly, so a slope is available on the first frame instead of after
+    45 seconds of watching, it survives a restart, and it measures the shape
+    of the plot rather than however the sampler happened to tick.
+
+    `color` may be a tuple, and for a recolouring line it must be. TradingView
+    draws one plot in several colours — MACD's signal is green rising and red
+    falling, CM RSI-2's line is grey with red and green at the extremes — so
+    reading a single colour reads a fragment of the line and silently drops the
+    rest. Measured on a live chart: green covered 25 of 40 columns and red 34,
+    and taking the longer one discarded exactly the recent green upturn, so a
+    visibly rising MACD reported as falling. The masks are OR-ed instead.
+
+    `span` is how many columns back to cover — chart columns, not bars, since
+    bar width moves with zoom. None entries mark columns where the line was
+    not found; callers decide whether enough of it is present to trust.
+
+    The mask is computed once for the whole panel rather than per column,
+    which is what makes this affordable at 40 points across three panels.
+    """
+    colors = (color,) if isinstance(color, str) else tuple(color)
+    if x_end is None:
+        x_end = rightmost_data_x(img, colors)
+        if x_end is None:
+            return []
+    x0 = max(0, x_end - int(span))
+    if x_end - x0 < 4:
+        return []
+
+    mask = None
+    for c in colors:
+        cm = color_mask(img, c)
+        mask = cm if mask is None else (mask | cm)
+    xs = np.linspace(x0, x_end, num=max(2, int(points))).astype(int)
+    out: list[float | None] = []
+    for x in xs:
+        # A narrow neighbourhood, so a 1px line with an anti-aliased gap at
+        # exactly this column still resolves.
+        lo, hi = max(0, x - 2), min(mask.shape[1], x + 3)
+        rows = np.where(mask[:, lo:hi].any(axis=1))[0]
+        out.append(float(np.median(rows)) if rows.size else None)
+    return out
+
+
+def series_direction(vals: list[float | None],
+                     flat_band: float,
+                     min_points: int = 6) -> tuple[str | None, float | None]:
+    """(direction, change) over a value series, oldest → newest.
+
+    Compares the median of the newest third against the oldest third rather
+    than fitting a line: indicator plots are noisy and a median ignores the
+    odd column the mask missed, where a least-squares fit would chase it.
+    Returns (None, None) when too little of the line was readable — not flat,
+    because unread is not the same as unmoving.
+    """
+    got = [v for v in vals if v is not None]
+    if len(got) < min_points:
+        return None, None
+    third = max(2, len(got) // 3)
+    old = float(np.median(got[:third]))
+    new = float(np.median(got[-third:]))
+    delta = new - old
+    if delta > flat_band:
+        return "up", delta
+    if delta < -flat_band:
+        return "down", delta
+    return "flat", delta
+
+
+def series_shape(vals: list[float | None], flat_band: float,
+                 min_points: int = 8) -> tuple[str | None, float | None]:
+    """Where the line has been AND where it is heading now.
+
+    Returns (shape, delta) where delta is the movement that shape actually
+    describes — the whole span for a sustained move, but the SECOND HALF for a
+    turn. Those are different numbers and mixing them was wrong: a turn's
+    strength is how hard it is turning now, not the net across a span that
+    still contains the old direction. Caught live on MACD, which reported shape
+    "up" beside a whole-span delta of -1.45, so an upward reading was being
+    weighted by the size of a downward move.
+
+    shape is up | down | turning_up | turning_down | flat, or None when
+    unreadable.
+
+    A single direction across the whole span hides the thing worth seeing. A
+    %R line that fell for thirty bars and turned up over the last eight still
+    averages to "down", and that turn off the floor is the entry cue — the
+    same for MACD's gap rolling over while its overall slope is still positive.
+    So each half is measured separately and disagreement is reported as a turn
+    rather than smoothed into the average.
+
+    The half band is deliberately lower than `flat_band`: each half covers
+    about half the bars, so holding it to the full-span threshold would call
+    real movement flat and never report a turn at all.
+    """
+    got = [v for v in vals if v is not None]
+    if len(got) < min_points:
+        return None, None
+    mid = len(got) // 2
+    half_band = flat_band * 0.6
+    first, _ = series_direction(got[:mid], half_band, min_points=3)
+    second, second_delta = series_direction(got[mid:], half_band, min_points=3)
+    whole, whole_delta = series_direction(got, flat_band)
+    if first is None or second is None:
+        return whole, whole_delta
+
+    # A turn is described by where it is heading, so its magnitude is the
+    # second half's move. A sustained move is described by the whole span.
+    if first == "down" and second == "up":
+        return "turning_up", second_delta
+    if first == "up" and second == "down":
+        return "turning_down", second_delta
+    if "up" in (first, second) and "down" not in (first, second):
+        return "up", whole_delta
+    if "down" in (first, second) and "up" not in (first, second):
+        return "down", whole_delta
+    return "flat", whole_delta
 
 
 def y_to_value(y: float, height: int, top_val: float,
@@ -101,15 +250,34 @@ def read_star(img: np.ndarray) -> dict | None:
 
 
 def read_heart(img: np.ndarray) -> dict | None:
-    """{'w': white-line val, 'b': blue-line val (0..-100), 'shade': red|blue|none}"""
+    """{'w': white-line val, 'b': blue-line val (0..-100), 'shade': red|blue|none}
+
+    Each line is sampled at its OWN newest column, the way read_check already
+    does. Sharing one x_end silently drops whichever line renders shorter — on
+    a live chart the white line has been seen ending ~80px before the blue,
+    which returned w=None on every read while blue looked perfectly healthy.
+    A line that has genuinely stopped is still rejected below.
+    """
     h = img.shape[0]
-    x_end = rightmost_data_x(img, ("white", "blue"))
-    if x_end is None:
+    wx = rightmost_data_x(img, ("white",))
+    bx = rightmost_data_x(img, ("blue",))
+    if wx is None and bx is None:
         return None
-    wy = line_y(img, "white", x_end=x_end)
-    by = line_y(img, "blue", x_end=x_end)
+
+    # Guard against reading a line that stopped rather than one that merely
+    # renders a few px shorter: past this much lag it is history, not "now".
+    newest = max(x for x in (wx, bx) if x is not None)
+    max_lag = max(20, int(img.shape[1] * 0.2))
+    if wx is not None and newest - wx > max_lag:
+        wx = None
+    if bx is not None and newest - bx > max_lag:
+        bx = None
+
+    wy = line_y(img, "white", x_end=wx) if wx is not None else None
+    by = line_y(img, "blue", x_end=bx) if bx is not None else None
     if wy is None and by is None:
         return None
+    x_end = newest
     w = y_to_value(wy, h, 0.0, -100.0) if wy is not None else None
     b = y_to_value(by, h, 0.0, -100.0) if by is not None else None
     # dominant shading near the newest data (fills are dim -> loose test)

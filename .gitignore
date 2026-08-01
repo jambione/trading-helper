@@ -27,6 +27,13 @@ signal_state.json
 swing_candidates.json
 swing_universe.json
 
+# RS screener — ranked output + local universe override. The bar cache is a few
+# hundred MB of rebuildable vendor data; the glob matters because WAL mode also
+# creates rs_cache.sqlite-wal and -shm.
+rs_ratings.json
+rs_universe.json
+rs_cache.sqlite*
+
 # Local control script artifacts
 .trading.pids
 logs/
@@ -57,3 +64,10 @@ conf/
 flow_monitor/flow_log.csv
 config/trade_bridge.json
 active_symbol.json
+
+# Momentum desk session journal — runtime state, one JSONL per session date.
+# May contain a full record of trading activity; does not belong in git.
+momentum-monitor/journal/
+
+# Full Claude research write-ups (panel only shows the ticker trailer JSON).
+momentum-monitor/claude_reports/

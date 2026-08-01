@@ -9,10 +9,13 @@ Quick links:
 - Signal engine: `signal_engine.py`
 - Indicators: `signals.py`
 - Alpaca execution: `alpaca_trader.py`
+- Swing screener: `swing_screener.py`
+- Relative-strength screener: `rs_screener.py` (+ `rs_core.py`, `rs_cache.py`, `rs_fetch.py`)
 - Config: `config.py`, `config/bot_config.json`, `config/secrets.example.json`
 
 Docs (see `docs/`)
 - Onboarding guide: `docs/ONBOARDING.md`
+- Relative strength (formula, free-tier limits): `docs/RELATIVE_STRENGTH.md`
 - Ticker recognition notes: `docs/TICKER_RECOGNITION_SUMMARY.md`,
   `docs/TICKER_RECOGNITION_IMPROVEMENTS.md`, `docs/CODX_FIX_SUMMARY.md`
 

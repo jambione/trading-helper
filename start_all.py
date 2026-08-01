@@ -116,6 +116,21 @@ def main() -> None:
     else:
         print('Swing screener->  disabled (set swing_screener_enabled: true in config/bot_config.json)')
 
+    # ── RS screener — only launched when enabled in config ────────────────────
+    if cfg.get('rs_screener_enabled', False):
+        rs = subprocess.Popen(
+            [VENV_PYTHON, 'rs_screener.py'],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=utf8_env,
+        )
+        threading.Thread(target=_stream, args=(rs, '[rs]      '), daemon=True).start()
+        procs['rs'] = rs
+        print('RS screener   ->  running (one run/day after the close; logs prefixed [rs])')
+    else:
+        print('RS screener   ->  disabled (set rs_screener_enabled: true in config/bot_config.json)')
+
     print('Press Ctrl+C to stop all.\n')
 
     try:

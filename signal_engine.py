@@ -1,47 +1,45 @@
 #!/usr/bin/env python3
 """
-signal_engine.py — Automated RSI + MACD Signal Engine
+signal_engine.py — indicator engine. Measures and publishes; does not trade.
 
-Polls the dashboard for highlighted (mentioned) tickers, fetches
-historical bars from Alpaca for indicator warmup, then tracks MACD
-histogram momentum to fire buy/sell signals.
+Watches the tickers the dashboard surfaces, fetches bars from Alpaca, and
+computes indicators against them every second. Its entire output is
+signal_state.json, which dashboard.py merges into /api/state — that is how the
+web dashboard, the momentum desk, and the buy circle get their numbers.
+
+It used to place orders too: entry logic sat inline with the measurement, and
+exits (stop-loss, take-profit, ATR trail, time stop, RSI-overbought, reversal)
+fired from the per-second price check. All of it is gone. Trading is manual —
+the desk's B/S hotkeys and the dashboard, which route through alpaca_trader and
+trade_bridge directly. Those modules are untouched; this engine simply no
+longer calls them.
+
+Keeping the split clean matters more than it looks: the reading and the
+decision to act were interleaved, and the reading is what everything
+downstream consumes.
 
 HOW IT WORKS
 ────────────
-1. Every 5 s (DASHBOARD_POLL_INTERVAL), polls the dashboard's /api/state
-   to detect newly highlighted tickers.  Price data from the dashboard
-   is used only as a fallback — real-time prices come from Finnhub.
+1. Every DASHBOARD_POLL_INTERVAL seconds, poll /api/state for tickers worth
+   watching — mentioned, mention_burst, find_it_first, or (TRACK_DESK_TICKERS)
+   anything on the desk list.
 
-2. Tickers enter the active watchlist (capped at MAX_ACTIVE_TICKERS) when
-   mentioned, mention_burst, find_it_first, or (TRACK_DESK_TICKERS) present
-   on the dashboard ticker list — then are subscribed for live prices.
+2. Fetch up to BAR_COUNT 1-minute bars per ticker from Alpaca, staggered so
+   they do not all hit at once, refreshed once per BAR_REFRESH seconds.
 
-3. Finnhub WebSocket provides real-time trade prices during market hours
-   (free tier, up to 50 symbols).  get_latest_price() is called each
-   second to keep last_price current — no extra network round-trips.
+3. Every second, inject the live price as the forming bar's close and
+   recompute, so published indicators move between bar closes instead of
+   freezing for up to a minute.
 
-4. Every second, logs each active ticker's proximity to the buy signal.
-   RSI and MACD histogram are recomputed each second by injecting the
-   live Finnhub price as the forming bar's close into the cached bar
-   DataFrame — so indicators reflect real-time price movement rather
-   than being frozen until the next closed bar arrives.
+4. STRATEGY_MODE selects which indicators are published:
+     • three_indicator — CM RSI-2, %R Trend Exhaustion, MACD (what the buy
+       circle reads)
+     • momentum        — classic RSI + MACD histogram
+     • alert           — mention velocity as proximity
 
-5. Once per clock minute (aligned to the minute boundary + stagger),
-   fetches up to 200 × 1-Min bars from Alpaca per active ticker.
-   The freshly closed bar locks in confirmed RSI/MACD values and runs
-   the BUY/SELL signal check.  Bar fetches are staggered so tickers
-   don't all hit Alpaca at the same second.
-
-6. Expiry:
-     • 3 min  (EXPIRY_COLD)   — ticker never showed a positive histogram
-     • 10 min (EXPIRY_WARM)   — ticker showed positive hist at least once
-       (we give it more time since it came close to a signal)
-
-7. MACD histogram momentum rules (per ticker):
-     • Area growing  → hist positive AND rising  → safe to BUY
-     • Area shrinking → hist was growing, now falling → time to SELL
-
-8. Logs every BUY and SELL to signal_log.json (and prints to console).
+5. Expiry:
+     • EXPIRY_COLD — ticker never showed a positive histogram
+     • EXPIRY_WARM — it did at least once, so it gets longer
 
 PRICE DATA PRIORITY
 ───────────────────
@@ -96,8 +94,6 @@ from signals import (
 )
 
 # ── Import Alpaca trader module (optional — activated by TRADER_MODE) ─────────
-import alpaca_trader
-import trade_guard
 import version
 
 # ── Live prices: Alpaca IEX poll (default) and optional Finnhub WebSocket ─────
@@ -232,9 +228,6 @@ TAKE_PROFIT    = float(os.getenv("TAKE_PROFIT", "0.0"))   # % e.g. 2.0  (fixed, 
 # DYNAMIC_EXIT=vwap  — stop = VWAP at buy time (sell if price falls below VWAP)
 #                       take = buy_price + ATR_MULT × ATR above VWAP entry
 # DYNAMIC_EXIT=off   — use fixed STOP_LOSS / TAKE_PROFIT percentages (default)
-DYNAMIC_EXIT   = os.getenv("DYNAMIC_EXIT", "off").lower().strip()
-ATR_MULT_STOP  = float(os.getenv("ATR_MULT_STOP",  "1.5"))  # ATR multiples for stop
-ATR_MULT_TAKE  = float(os.getenv("ATR_MULT_TAKE",  "2.0"))  # ATR multiples for take-profit
 
 # Minimum seconds to hold a position before a MACD reversal sell can fire.
 # Prevents buying and immediately selling on a one-tick histogram dip.
@@ -256,7 +249,6 @@ TRADER_MODE      = os.getenv("TRADER_MODE",   "off").lower().strip()
 TRADE_AMOUNT     = float(os.getenv("TRADE_AMOUNT", "500"))   # $ per BUY signal
 MAX_PRICE        = float(os.getenv("MAX_PRICE", "0"))         # skip BUY if price > this (0 = no limit)
 EXTENDED_HOURS   = os.getenv("EXTENDED_HOURS", "false").lower() in ("true", "1", "yes")  # premarket/afterhours orders
-EXT_LIMIT_OFFSET = float(os.getenv("EXTENDED_LIMIT_OFFSET_PCT", "0"))  # nudge ext-hours limits for fills (e.g. 0.2)
 
 # ── Buy signal filters (all off by default) ───────────────────────────────────
 BUY_FILTER_VWAP    = os.getenv("BUY_FILTER_VWAP",    "false").lower() in ("true","1","yes")
@@ -293,6 +285,11 @@ STRATEGY_MODE  = os.getenv("STRATEGY_MODE", "momentum").lower()
 # and evaluate the strategy on a forming candle that updates every tick — closing
 # the gap with TradingView. Only consumed by the three_indicator path.
 REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
+# Seconds without a trade before the realtime bars are considered stale and the
+# engine falls back to freshly-fetched Alpaca bars. Two 1-minute bars: long
+# enough that a thin symbol pausing between prints does not flap the source,
+# short enough that a dropped stream cannot quietly freeze the indicators.
+RT_BARS_MAX_STALE = float(os.getenv("REALTIME_BARS_MAX_STALE", "120"))
 
 # Minimum seconds to hold a three_indicator position before a strategy reversal
 # may close it — guards against per-second buy/sell flip-flop on the forming bar.
@@ -350,11 +347,6 @@ PDT_PROTECT          = os.getenv("PDT_PROTECT", "warn").lower().strip()
 RECONCILE_INTERVAL_S = int(os.getenv("RECONCILE_INTERVAL_S",  "60"))
 
 # Account-level risk guard — gates every BUY, records every closed trade.
-GUARD = trade_guard.TradeGuard(
-    daily_loss_limit   = DAILY_LOSS_LIMIT,
-    max_trades_per_day = MAX_TRADES_PER_DAY,
-    pdt_protect        = PDT_PROTECT,
-)
 
 # ── Alert strategy (STRATEGY_MODE=alert) ──────────────────────────────────────
 # The thesis the backtests pointed to: on low-float microcaps, indicator ENTRIES
@@ -539,12 +531,18 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
     # IEX only — free with every Alpaca account. SIP needs Algo Trader Plus.
     feeds = ("iex",)
     for feed in feeds:
+        # sort=desc, NOT asc. `limit` truncates from whichever end the sort
+        # starts at, so ascending returned the OLDEST `count` bars in the
+        # lookback window — with the 5-day default that meant indicators were
+        # computed on bars from three days ago and published as current. The
+        # frame is flipped back to oldest-first below, which is what every
+        # indicator downstream expects.
         params = {
             "timeframe": timeframe,
             "start":     start_dt,   # fetch from N days ago, not just today
             "limit":     count,
             "feed":      feed,
-            "sort":      "asc",
+            "sort":      "desc",
         }
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=10)
@@ -561,7 +559,10 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
             })
             for col in ("open", "high", "low", "close", "volume"):
                 df[col] = df[col].astype(float)
-            df = df.reset_index(drop=True)
+            # Back to oldest-first: the API gave us newest-first so that
+            # `limit` kept the recent end, but every indicator reads forward
+            # and takes .iloc[-1] as "now".
+            df = df.iloc[::-1].reset_index(drop=True)
 
             if len(df) >= min_needed:
                 print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓"
@@ -669,76 +670,6 @@ def _append_log(entry: dict):
                 os.unlink(tmp_path)
             except Exception:
                 pass
-
-def log_buy(ticker: str, price: float, rsi: float, hist: float,
-            priority: bool = False, mention_velocity: int = 0,
-            atr: float = None, vwap: float = None,
-            rvol: float = None, cm_rsi_ok: bool = None, obv_ok: bool = None):
-    """
-    Log a BUY signal to signal_log.json and the console.
-    priority=True means the RSI filter was bypassed because the ticker was hot.
-    """
-    ts    = _now_iso()
-    entry = {"action": "BUY", "ticker": ticker,
-             "price": round(price, 4), "rsi": round(rsi, 2),
-             "macd_hist": round(hist, 6), "time": ts}
-    if priority:
-        entry["priority"]         = True
-        entry["mention_velocity"] = mention_velocity
-    if atr is not None:
-        entry["atr"] = round(atr, 6)
-    if vwap is not None:
-        entry["vwap"] = round(vwap, 4)
-    if rvol is not None:
-        entry["rvol"] = round(rvol, 2)
-    if cm_rsi_ok is not None:
-        entry["cm_rsi_ok"] = cm_rsi_ok
-    if obv_ok is not None:
-        entry["obv_ok"] = obv_ok
-    _append_log(entry)
-    prio_tag = f"  🔥 PRIORITY — velocity={mention_velocity}/10s" if priority else ""
-    print(f"\n  {'='*60}")
-    print(f"  🟢 BUY  {ticker}  ${price:.2f}  RSI={rsi:.1f}  hist={hist:+.4f}  [{ts}]{prio_tag}")
-    print(f"  {'='*60}\n")
-    # Forward to Alpaca trader if enabled (off / paper / live).
-    # Returns the order result so callers can schedule a fill-price rebase.
-    return alpaca_trader.buy(ticker=ticker, price=price, rsi=rsi, hist=hist)
-
-
-def track_fill(ts: "TickerState", order) -> None:
-    """
-    Schedule a fill-price check a few seconds after a real BUY order was
-    submitted, so TP/SL bands get rebased to the actual filled_avg_price.
-    No-op when the trader is off (order is None / not ok).
-    """
-    if isinstance(order, dict) and order.get("ok") and order.get("order_id"):
-        ts.pending_order_id = order["order_id"]
-        ts.fill_check_at    = time.time() + 3.0
-
-
-def log_sell(ticker: str, price: float, buy_price: float,
-             rsi: float, hist: float, buy_time: str, reason: str = "reversal",
-             hold_minutes: float = None):
-    ts  = _now_iso()
-    pnl = round((price - buy_price) / buy_price * 100, 2)
-    entry = {"action": "SELL", "ticker": ticker,
-             "price": round(price, 4), "buy_price": round(buy_price, 4),
-             "pnl_pct": pnl, "rsi": round(rsi, 2), "reason": reason,
-             "macd_hist": round(hist, 6), "time": ts, "buy_time": buy_time}
-    if hold_minutes is not None:
-        entry["hold_minutes"] = hold_minutes
-    _append_log(entry)
-    sign = "+" if pnl >= 0 else ""
-    print(f"\n  {'='*60}")
-    print(f"  🔴 SELL {ticker}  ${price:.2f}  P&L={sign}{pnl}%  [{reason}]  hist={hist:+.4f}  [{ts}]")
-    print(f"  {'='*60}\n")
-    # Feed the risk guard (daily P&L kill switch + PDT day-trade counting)
-    pnl_dollars = (price - buy_price) / buy_price * TRADE_AMOUNT if buy_price else 0.0
-    GUARD.record_close(pnl_dollars=pnl_dollars, buy_time_iso=buy_time)
-    # Forward to Alpaca trader if enabled
-    alpaca_trader.sell(ticker=ticker, price=price, rsi=rsi, hist=hist,
-                       buy_price=buy_price)
-
 
 # ── Per-ticker state ──────────────────────────────────────────────────────────
 
@@ -1221,10 +1152,16 @@ class TickerState:
 
     def update_momentum(self, hist: float, price: float, rsi: float,
                         open_positions: int = 0):
-        """
-        Apply one indicator reading — check for BUY/SELL signals and update state.
-        Called by _refresh_ticker() after each bar fetch.
-        open_positions: total number of currently open positions (for exposure cap).
+        """Record one indicator reading and track histogram momentum.
+
+        This used to open the position and manage every exit — time stop, ATR
+        trailing stop, stop-loss, take-profit, RSI-overbought, reversal — all
+        interleaved with the measurement itself. The engine no longer trades,
+        so what stays is the measurement: the histogram state the dashboard
+        renders and the expiry rule reads.
+
+        `open_positions` is retained in the signature because callers still
+        pass it; the exposure cap was its only consumer.
         """
         self.last_price = price
         self.last_rsi   = rsi
@@ -1233,262 +1170,23 @@ class TickerState:
         if hist > 0:
             self.ever_positive_hist = True
 
-        # ── Time stop ─────────────────────────────────────────────────────────
-        if (MAX_HOLD_MINUTES > 0
-                and self.in_position
-                and self.buy_time_ts is not None
-                and (time.time() - self.buy_time_ts) >= MAX_HOLD_MINUTES * 60):
-            hold_min = (time.time() - self.buy_time_ts) / 60
-            log_sell(
-                ticker       = self.ticker,
-                price        = price,
-                buy_price    = self.buy_price,
-                rsi          = rsi,
-                hist         = hist,
-                buy_time     = self.buy_time,
-                reason       = f"time_stop ({hold_min:.1f}min >= {MAX_HOLD_MINUTES}min)",
-                hold_minutes = round(hold_min, 1),
-            )
-            self.in_position  = False
-            self.buy_price    = None
-            self.buy_time     = None
-            self.buy_time_ts  = None
-            self.dyn_stop     = None
-            self.dyn_take     = None
-            self.hist_growing = False
-            self.priority_buy = False
-            self.prev_hist    = hist
-            return
-
-        # ── ATR trailing stop — move stop up as price rises ───────────────────
-        # Only active in ATR dynamic mode.  Each bar, if price made a new high
-        # since entry, ratchet the stop up to (new_high - ATR_MULT_STOP × ATR).
-        # The stop only ever moves up — never down.
-        if (self.in_position
-                and DYNAMIC_EXIT == "atr"
-                and self.last_atr and self.last_atr > 0
-                and self.dyn_stop is not None):
-            if self.high_since_buy is None or price > self.high_since_buy:
-                self.high_since_buy = price
-                new_trail = price - ATR_MULT_STOP * self.last_atr
-                if new_trail > self.dyn_stop:
-                    self.dyn_stop = new_trail
-                    print(f"  [{ticker_tag(self.ticker)}] 📐 trail stop raised → "
-                          f"${self.dyn_stop:.3f}  (high=${self.high_since_buy:.3f})")
-
-        # ── Stop-loss / take-profit check ─────────────────────────────────────
-        if self.in_position and self.buy_price is not None:
-            pnl_pct = (price - self.buy_price) / self.buy_price * 100
-
-            reason = None
-            if DYNAMIC_EXIT in ("atr", "vwap") and self.dyn_stop is not None:
-                # Dynamic mode — check absolute price levels set at entry
-                if price <= self.dyn_stop:
-                    reason = (f"DYNAMIC STOP ({DYNAMIC_EXIT.upper()}) "
-                              f"${price:.3f} ≤ ${self.dyn_stop:.3f}")
-                elif self.dyn_take is not None and price >= self.dyn_take:
-                    reason = (f"DYNAMIC TAKE ({DYNAMIC_EXIT.upper()}) "
-                              f"${price:.3f} ≥ ${self.dyn_take:.3f}")
-            else:
-                # Fixed % mode (legacy)
-                if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
-                    reason = "STOP LOSS"
-                elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
-                    reason = "TAKE PROFIT"
-
-            if reason:
-                hold_minutes = round((time.time() - self.buy_time_ts) / 60, 1) if self.buy_time_ts else None
-                log_sell(
-                    ticker       = self.ticker,
-                    price        = price,
-                    buy_price    = self.buy_price,
-                    rsi          = rsi,
-                    hist         = hist,
-                    buy_time     = self.buy_time,
-                    reason       = reason,
-                    hold_minutes = hold_minutes,
-                )
-                self.in_position  = False
-                self.buy_price    = None
-                self.buy_time     = None
-                self.buy_time_ts  = None
-                self.dyn_stop     = None
-                self.dyn_take     = None
-                self.high_since_buy = None
-                self.hist_growing = False
-                self.priority_buy = False
-                self.prev_hist    = hist
-                return
-
-        # ── RSI overbought exit (on confirmed bar close) ───────────────────────
-        # Sells any open position — priority or normal — when RSI rises above
-        # RSI_SELL_OVERBOUGHT.  This mirrors the per-second check in
-        # _check_proximity, but fires on the cleaner confirmed-bar RSI value.
-        if RSI_SELL_OVERBOUGHT > 0 and self.in_position and rsi >= RSI_SELL_OVERBOUGHT:
-            hold_minutes = round((time.time() - self.buy_time_ts) / 60, 1) if self.buy_time_ts else None
-            log_sell(
-                ticker       = self.ticker,
-                price        = price,
-                buy_price    = self.buy_price,
-                rsi          = rsi,
-                hist         = hist,
-                buy_time     = self.buy_time,
-                reason       = f"RSI overbought ({rsi:.1f} >= {RSI_SELL_OVERBOUGHT})",
-                hold_minutes = hold_minutes,
-            )
-            self.in_position  = False
-            self.buy_price    = None
-            self.buy_time     = None
-            self.buy_time_ts  = None
-            self.hist_growing = False
-            self.priority_buy = False
-            self.prev_hist    = hist
-            return
-
         prev = self.prev_hist
-
         if prev is not None:
             if hist > 0 and hist > prev:
-                # ── Histogram growing ──────────────────────────────────────────
-                self.hist_grow_count = min(self.hist_grow_count + 1, HIST_CONFIRM_BARS)
+                self.hist_grow_count = min(self.hist_grow_count + 1,
+                                           HIST_CONFIRM_BARS)
                 if self.hist_grow_count >= HIST_CONFIRM_BARS and not self.hist_growing:
                     print(f"  [{ticker_tag(self.ticker)}] 📈 histogram CONFIRMED GROWING"
                           f"  ({self.hist_grow_count} bars)  hist={hist:+.4f}"
                           f"  RSI={rsi:.1f}  price={price:.2f}")
                     self.hist_growing = True
-                elif self.hist_grow_count < HIST_CONFIRM_BARS:
-                    print(f"  [{ticker_tag(self.ticker)}] 📈 histogram growing "
-                          f"({self.hist_grow_count}/{HIST_CONFIRM_BARS} bars)  "
-                          f"hist={hist:+.4f} — waiting for confirmation")
-
             elif hist <= 0 or hist < prev:
-                # ── Histogram negative or shrinking ───────────────────────────
                 if self.hist_growing:
-                    # Was confirmed growing — check for reversal sell
-                    min_hold = HOT_MIN_HOLD_SECONDS if self.priority_buy else MIN_HOLD_SECONDS
-                    hold_s = (time.time() - self.buy_time_ts) if self.buy_time_ts else None
-                    still_in_hold = (
-                        self.in_position
-                        and hold_s is not None
-                        and hold_s < min_hold
-                    )
-                    if still_in_hold:
-                        print(f"  [{ticker_tag(self.ticker)}] 📉 histogram reversing "
-                              f"but holding — only {hold_s:.0f}s in position "
-                              f"(min hold={min_hold}s{'🔥' if self.priority_buy else ''})")
-                    else:
-                        print(f"  [{ticker_tag(self.ticker)}] 📉 histogram REVERSING"
-                              f"  hist={hist:+.4f} (was {prev:+.4f})"
-                              f"  RSI={rsi:.1f}  price={price:.2f}")
-                        if self.in_position:
-                            hold_minutes = round((time.time() - self.buy_time_ts) / 60, 1) if self.buy_time_ts else None
-                            log_sell(
-                                ticker       = self.ticker,
-                                price        = price,
-                                buy_price    = self.buy_price,
-                                rsi          = rsi,
-                                hist         = hist,
-                                buy_time     = self.buy_time,
-                                reason       = "reversal",
-                                hold_minutes = hold_minutes,
-                            )
-                            self.in_position  = False
-                            self.buy_price    = None
-                            self.buy_time     = None
-                            self.buy_time_ts  = None
-                            self.priority_buy = False
-                        self.dyn_stop        = None
-                        self.dyn_take        = None
-                        self.high_since_buy  = None
-                        self.hist_growing    = False
-                        self.hist_grow_count = 0
-                else:
-                    # Not yet confirmed — just reset the counter
-                    self.hist_grow_count = 0
-
-        # ── BUY check ─────────────────────────────────────────────────────────
-        # Normal path  : MACD growing + RSI below overbought threshold
-        # Priority path: MACD growing + ticker is HOT (RSI filter bypassed)
-        # The crowd is already moving — waiting on RSI means missing the trade.
-        rsi_ok_for_buy = (rsi < RSI_BUY_MAX) or self.is_hot
-        price_ok       = price > 0 and (MAX_PRICE <= 0 or price <= MAX_PRICE)
-        if not price_ok and MAX_PRICE > 0 and self.hist_growing and not self.in_position:
-            print(f"  [{ticker_tag(self.ticker)}] ⛔ skipping BUY — "
-                  f"${price:.2f} exceeds MAX_PRICE=${MAX_PRICE:.2f}")
-
-        # Portfolio exposure cap — don't open another position if we're at the limit
-        exposure_ok = True
-        if MAX_TOTAL_EXPOSURE > 0 and not self.in_position:
-            deployed = open_positions * TRADE_AMOUNT
-            if deployed >= MAX_TOTAL_EXPOSURE:
-                exposure_ok = False
-                if self.hist_growing and price_ok:
-                    print(f"  [{ticker_tag(self.ticker)}] 💰 skipping BUY — "
-                          f"exposure cap reached (${deployed:.0f} / ${MAX_TOTAL_EXPOSURE:.0f})")
-
-        # Optional confirmation filters — bypassed entirely for HOT tickers.
-        # Hot tickers have already earned their pass through the mention surge —
-        # requiring OBV/CM RSI/RVOL confirmation on top of that would negate
-        # the whole point of the priority system.  RSI is also bypassed above.
-        if self.is_hot:
-            filters_ok = True
-        else:
-            filter_reasons = []
-            if BUY_FILTER_VWAP and self.last_vwap and self.last_vwap > 0:
-                if price <= self.last_vwap:
-                    filter_reasons.append(f"price ${price:.2f} ≤ VWAP ${self.last_vwap:.2f}")
-            if BUY_FILTER_OBV and not self.last_obv_ok:
-                filter_reasons.append("OBV not trending up")
-            if BUY_FILTER_CM_RSI and not self.last_cm_rsi_ok:
-                filter_reasons.append("CM RSI not approaching oversold")
-            if BUY_FILTER_RVOL and (self.last_rvol is None or self.last_rvol < RVOL_MIN):
-                rvol_str = f"{self.last_rvol:.1f}x" if self.last_rvol else "unknown"
-                filter_reasons.append(f"RVOL {rvol_str} < {RVOL_MIN}x")
-            filters_ok = len(filter_reasons) == 0
-            if not filters_ok:
-                print(f"  [{ticker_tag(self.ticker)}] 🚫 BUY filtered — {', '.join(filter_reasons)}")
-
-        guard_ok = True
-        if self.hist_growing and not self.in_position and rsi_ok_for_buy and price_ok and filters_ok and exposure_ok:
-            guard_ok, guard_why = GUARD.allow_buy()
-            if not guard_ok:
-                print(f"  [{ticker_tag(self.ticker)}] 🛡️ BUY blocked — {guard_why}")
-
-        if guard_ok and self.hist_growing and not self.in_position and rsi_ok_for_buy and price_ok and filters_ok and exposure_ok:
-            order = log_buy(
-                ticker           = self.ticker,
-                price            = price,
-                rsi              = rsi,
-                hist             = hist,
-                priority         = self.is_hot,
-                mention_velocity = self.mention_velocity,
-                atr              = self.last_atr,
-                vwap             = self.last_vwap,
-                rvol             = self.last_rvol,
-            )
-            self.in_position  = True
-            self.buy_price    = price
-            self.buy_time     = _now_iso()
-            self.buy_time_ts  = time.time()
-            self.priority_buy = self.is_hot   # record how we entered
-            track_fill(self, order)
-
-            # Compute dynamic exit levels at the moment of entry
-            self.dyn_stop = None
-            self.dyn_take = None
-            if DYNAMIC_EXIT == "atr" and self.last_atr and self.last_atr > 0:
-                self.dyn_stop = price - ATR_MULT_STOP * self.last_atr
-                self.dyn_take = price + ATR_MULT_TAKE * self.last_atr
-                print(f"  [{ticker_tag(self.ticker)}] 📐 ATR exits — "
-                      f"stop=${self.dyn_stop:.3f}  take=${self.dyn_take:.3f}  "
-                      f"(ATR={self.last_atr:.4f})")
-            elif DYNAMIC_EXIT == "vwap" and self.last_vwap and self.last_vwap > 0:
-                self.dyn_stop = self.last_vwap   # exit if price drops below VWAP
-                self.dyn_take = (price + ATR_MULT_TAKE * self.last_atr
-                                 if self.last_atr and self.last_atr > 0 else None)
-                tp_str = f"  take=${self.dyn_take:.3f}" if self.dyn_take else ""
-                print(f"  [{ticker_tag(self.ticker)}] 📐 VWAP exits — "
-                      f"stop=VWAP@${self.dyn_stop:.3f}{tp_str}")
+                    print(f"  [{ticker_tag(self.ticker)}] 📉 histogram REVERSING"
+                          f"  hist={hist:+.4f} (was {prev:+.4f})"
+                          f"  RSI={rsi:.1f}  price={price:.2f}")
+                    self.hist_growing = False
+                self.hist_grow_count = 0
 
         self.prev_hist = hist
 
@@ -1526,25 +1224,6 @@ class SignalEngine:
 
         # Initialise Alpaca trader (off / paper / live — set by TRADER_MODE)
         # BRACKET_EXITS=on|off|auto — auto attaches OTOCO when both SL and TP > 0
-        _be = os.getenv("BRACKET_EXITS", "auto").strip().lower()
-        if _be in ("0", "false", "off", "no"):
-            _use_brackets = False
-        elif _be in ("1", "true", "on", "yes"):
-            _use_brackets = True
-        else:
-            _use_brackets = None  # auto from SL/TP
-        alpaca_trader.init(
-            mode           = TRADER_MODE,
-            api_key        = self.api_key,
-            secret_key     = self.secret_key,
-            trade_amount   = TRADE_AMOUNT,
-            extended_hours = EXTENDED_HOURS,
-            limit_offset_pct = EXT_LIMIT_OFFSET,
-            stop_loss_pct  = STOP_LOSS,
-            take_profit_pct = TAKE_PROFIT,
-            use_brackets   = _use_brackets,
-        )
-
         # Live prices: Alpaca IEX poll (default) and/or Finnhub WebSocket
         if PRICE_SOURCE in ("alpaca", "both", "auto") and self.api_key and self.secret_key:
             ok = alpaca_px.start_alpaca_price_poll(
@@ -1564,19 +1243,19 @@ class SignalEngine:
 
         # Realtime bar aggregator — fed by live trade callbacks when enabled.
         self.rt_bars = RealtimeBarAggregator()
+        # Tickers currently falling back off stale realtime bars. Transition
+        # tracking only, so the log records the switch rather than every bar.
+        self._rt_stale: set[str] = set()
         if STRATEGY_MODE == "three_indicator":
-            print(f"[STRATEGY] three_indicator active  (exit={THREE_IND_PARAMS['exit_mode']}, "
-                  f"realtime_bars={'on' if REALTIME_BARS else 'off'}, trader={TRADER_MODE})")
+            print("[STRATEGY] three_indicator active  "
+                  f"(realtime_bars={'on' if REALTIME_BARS else 'off'})")
             if REALTIME_BARS:
                 register_trade_callback(
                     lambda sym, price, vol, ts: self.rt_bars.on_trade(sym, price, vol, ts)
                 )
                 print("[STRATEGY] realtime bars: aggregating live OHLCV from price poll/stream")
         elif STRATEGY_MODE == "alert":
-            print(f"[STRATEGY] alert active  (entry=mention burst, "
-                  f"exit=trail {ALERT_TRAIL_STOP:.0f}% + hard {ALERT_HARD_STOP:.0f}%, "
-                  f"min_hold={ALERT_MIN_HOLD}s, trader={TRADER_MODE})")
-            print("[STRATEGY] the catalyst is the buy; exits are the validated trail+hard-stop recipe")
+            print("[STRATEGY] alert active  (proximity = mention velocity)")
 
         # Pin compare tickers from startup — never expire and get realtime
         # forming-bar evaluation, for side-by-side validation against TradingView.
@@ -1585,28 +1264,6 @@ class SignalEngine:
             self._known_mentioned.add(sym)
             request_subscribe([sym])
             print(f"  📌 PINNED {sym} — compare ticker (never expires, realtime eval)")
-
-        # Adopt open Alpaca positions left over from a previous run so the
-        # backstop exits (SL/TP/strategy sell) protect them across restarts.
-        # buy_time restarts at adoption — min-hold timers begin again, but the
-        # entry price is the true avg_entry_price so exit bands are correct.
-        self._last_reconcile: float = 0.0
-        if alpaca_trader.is_active():
-            for sym, pos in (alpaca_trader.get_open_positions() or {}).items():
-                ts = self.active.get(sym)
-                if ts is None:
-                    offset = self._stagger_index * BAR_STAGGER
-                    self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
-                    ts = TickerState(sym, fetch_offset_s=offset)
-                    self.active[sym] = ts
-                    self._known_mentioned.add(sym)
-                    request_subscribe([sym])
-                ts.in_position = True
-                ts.buy_price   = pos["avg_entry_price"]
-                ts.buy_time    = _now_iso()
-                ts.buy_time_ts = time.time()
-                print(f"  ♻️  ADOPTED {sym} — open Alpaca position "
-                      f"{pos['qty']} @ ${pos['avg_entry_price']:.4f} (exits armed)")
 
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
@@ -1904,10 +1561,6 @@ class SignalEngine:
             if REALTIME_BARS and not self.rt_bars.is_seeded(ts.ticker):
                 self.rt_bars.seed(ts.ticker, df)
             self._eval_three_indicator(ts, self._strategy_df(ts, df))
-        elif STRATEGY_MODE == "alert":
-            # Entry/exit run every second on the live price in _check_proximity;
-            # nothing to do on a closed bar except keep the dashboard fed.
-            self._eval_alert(ts)
         else:
             ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val,
                                open_positions=open_pos)
@@ -1915,19 +1568,45 @@ class SignalEngine:
     # ── 3-indicator strategy evaluation (gated by STRATEGY_MODE) ──────────────
 
     def _strategy_df(self, ts: TickerState, fallback_df):
-        """Realtime aggregated bars when enabled and sufficient, else the fetched bars."""
+        """Realtime aggregated bars when enabled, sufficient, and *fresh*.
+
+        Freshness is not optional. The aggregator keeps its sealed history and
+        its forming bar when the trade stream drops, so get_bars() goes on
+        returning a full-looking frame whose newest bar silently ages. Computing
+        CM RSI-2 / %R / MACD on a frozen candle and publishing them as current
+        readings is strictly worse than the ≤60s-old Alpaca bars already in
+        hand: the desk cannot tell a stale indicator from a live one, and a
+        buy-readiness verdict built on it looks exactly as confident.
+
+        age_seconds() returns None for a ticker no trade has ever touched —
+        seeded-but-unfed, or simply not trading. That is unusable, not fresh.
+        """
         if REALTIME_BARS:
-            rt = self.rt_bars.get_bars(ts.ticker)
-            if rt is not None and len(rt) >= MACD_SLOW + MACD_SIG + 5:
-                return rt
+            age = self.rt_bars.age_seconds(ts.ticker)
+            if age is not None and age <= RT_BARS_MAX_STALE:
+                rt = self.rt_bars.get_bars(ts.ticker)
+                if rt is not None and len(rt) >= MACD_SLOW + MACD_SIG + 5:
+                    if ts.ticker in self._rt_stale:
+                        self._rt_stale.discard(ts.ticker)
+                        print(f"  [{ticker_tag(ts.ticker)}] ▶ realtime bars live again")
+                    return rt
+            elif ts.ticker not in self._rt_stale:
+                # Log the transition only — this runs on every bar close.
+                self._rt_stale.add(ts.ticker)
+                stale_for = "no trades yet" if age is None else f"{age:.0f}s stale"
+                print(f"  [{ticker_tag(ts.ticker)}] ⏸ realtime bars {stale_for} — "
+                      f"falling back to Alpaca bars")
         return fallback_df
 
     def _eval_three_indicator(self, ts: TickerState, df):
         """
-        Evaluate strategy_three_indicator on `df` and act via alpaca_trader
-        (TRADER_MODE governs paper/live). Entry/exit bookkeeping mirrors
-        update_momentum; protective stop-loss/take-profit still fire in
-        _check_proximity, so risk management is unchanged.
+        Compute CM RSI-2 / %R Trend Exhaustion / MACD on `df` and publish the
+        breakdown. Evaluation only — the engine does not trade.
+
+        It used to place the order too, and the entry logic sat directly under
+        this computation. That coupling is why the split matters: the reading
+        is what the desk and the buy circle consume, and it has to keep running
+        untouched now that nothing acts on it.
         """
         if df is None or len(df) < MACD_SLOW + MACD_SIG + 5:
             return
@@ -1952,294 +1631,35 @@ class SignalEngine:
         # engine's positive-histogram rule, which never runs in this mode).
         if st.get("buy_pct", 0) >= 67:
             ts.ever_positive_hist = True
-
-        price = ts.last_price if ts.last_price is not None else float(df["close"].iloc[-1])
-        if price <= 0:
-            return
-
-        if not ts.in_position:
-            if not st["buy"]:
-                return
-            # Catalyst gate: on alert-pool names the burst IS the edge —
-            # indicator-only entries backtested negative across all configs.
-            if THREE_IND_REQUIRE_HOT and not ts.is_hot and not ts.pinned:
-                print(f"  [{ticker_tag(ts.ticker)}] ⏸ 3IND buy signal but no mention "
-                      f"burst (THREE_IND_REQUIRE_HOT) — waiting for the catalyst")
-                return
-            if MAX_PRICE > 0 and price > MAX_PRICE:
-                return
-            if MAX_TOTAL_EXPOSURE > 0:
-                open_pos = sum(1 for t in self.active.values() if t.in_position)
-                if open_pos * TRADE_AMOUNT >= MAX_TOTAL_EXPOSURE:
-                    return
-            guard_ok, guard_why = GUARD.allow_buy()
-            if not guard_ok:
-                print(f"  [{ticker_tag(ts.ticker)}] 🛡️ BUY blocked — {guard_why}")
-                return
-            print(f"  [{ticker_tag(ts.ticker)}] ✅ 3IND BUY signal  price=${price:.2f}")
-            order = log_buy(
-                ticker=ts.ticker, price=price,
-                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
-                priority=ts.is_hot, mention_velocity=ts.mention_velocity,
-                atr=ts.last_atr, vwap=ts.last_vwap, rvol=ts.last_rvol,
-            )
-            ts.in_position  = True
-            ts.buy_price    = price
-            ts.buy_time     = _now_iso()
-            ts.buy_time_ts  = time.time()
-            ts.priority_buy = ts.is_hot
-            track_fill(ts, order)
-        else:
-            # Hold guard against per-second flip-flop on the forming bar.
-            if ts.buy_time_ts and (time.time() - ts.buy_time_ts) < THREE_IND_MIN_HOLD:
-                return
-            if not st["sell"]:
-                return
-            hold_min = round((time.time() - ts.buy_time_ts) / 60, 1) if ts.buy_time_ts else None
-            print(f"  [{ticker_tag(ts.ticker)}] 🔻 3IND SELL signal  price=${price:.2f}")
-            log_sell(
-                ticker=ts.ticker, price=price, buy_price=ts.buy_price,
-                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
-                buy_time=ts.buy_time, reason="3ind_reversal", hold_minutes=hold_min,
-            )
-            ts.in_position    = False
-            ts.buy_price      = None
-            ts.buy_time       = None
-            ts.buy_time_ts    = None
-            ts.dyn_stop       = None
-            ts.dyn_take       = None
             ts.high_since_buy = None
             ts.priority_buy   = False
 
     # ── Alert strategy evaluation (gated by STRATEGY_MODE=alert) ──────────────
 
-    def _eval_alert(self, ts: TickerState):
-        """
-        The alert engine. Entry = the catalyst (ticker is hot from a mention
-        burst); exit = trailing stop + hard stop, the recipe validated in
-        backtest_exits.py. Deliberately uses NO indicator, NO time cap and NO
-        take-profit — those tested worse. Runs every second on the live price.
-        """
-        price = ts.last_price
-        if price is None or price <= 0:
-            return
-
-        if not ts.in_position:
-            # ── ENTRY: the mention burst is the signal ───────────────────────
-            if not ts.is_hot:
-                return
-            if MAX_PRICE > 0 and price > MAX_PRICE:
-                return
-            if MAX_TOTAL_EXPOSURE > 0:
-                open_pos = sum(1 for t in self.active.values() if t.in_position)
-                if open_pos * TRADE_AMOUNT >= MAX_TOTAL_EXPOSURE:
-                    return
-            # Optional falling-knife veto — skip if already dumping vs last close.
-            if ALERT_REQUIRE_GREEN and ts.cached_df is not None and len(ts.cached_df) >= 2:
-                prev_close = float(ts.cached_df["close"].iloc[-2])
-                if prev_close > 0 and price < prev_close:
-                    print(f"  [{ticker_tag(ts.ticker)}] ⛔ alert BUY vetoed — "
-                          f"price ${price:.2f} below prior close ${prev_close:.2f} (falling)")
-                    return
-
-            guard_ok, guard_why = GUARD.allow_buy()
-            if not guard_ok:
-                print(f"  [{ticker_tag(ts.ticker)}] 🛡️ BUY blocked — {guard_why}")
-                return
-
-            print(f"  [{ticker_tag(ts.ticker)}] ✅ ALERT BUY  price=${price:.2f}  "
-                  f"velocity={ts.mention_velocity}  (mention burst)")
-            order = log_buy(
-                ticker=ts.ticker, price=price,
-                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
-                priority=True, mention_velocity=ts.mention_velocity,
-                atr=ts.last_atr, vwap=ts.last_vwap, rvol=ts.last_rvol,
-            )
-            ts.in_position    = True
-            ts.buy_price      = price
-            ts.buy_time       = _now_iso()
-            ts.buy_time_ts    = time.time()
-            ts.priority_buy   = True
-            ts.high_since_buy = price
-            track_fill(ts, order)
-            # Broker trail is placed after fill confirmation (see fill rebase)
-            # so qty is known; flag so we attach once.
-            ts.needs_broker_trail = bool(
-                BROKER_TRAIL and ALERT_TRAIL_STOP > 0 and order and order.get("ok"))
-            return
-
-        # ── EXIT: trailing stop + hard stop ──────────────────────────────────
-        if ts.high_since_buy is None or price > ts.high_since_buy:
-            ts.high_since_buy = price   # ratchet the peak up
-
-        # Brief min-hold so a momentary dip on the entry tick can't insta-stop.
-        if ts.buy_time_ts and (time.time() - ts.buy_time_ts) < ALERT_MIN_HOLD:
-            return
-
-        reason = None
-        if ALERT_HARD_STOP > 0 and price <= ts.buy_price * (1 - ALERT_HARD_STOP / 100.0):
-            reason = f"alert_hard_stop (-{ALERT_HARD_STOP:.0f}%)"
-        elif (ALERT_TRAIL_STOP > 0 and ts.high_since_buy
-              and price <= ts.high_since_buy * (1 - ALERT_TRAIL_STOP / 100.0)):
-            peak_gain = (ts.high_since_buy - ts.buy_price) / ts.buy_price * 100
-            reason = (f"alert_trail_stop (-{ALERT_TRAIL_STOP:.0f}% from peak "
-                      f"+{peak_gain:.1f}%)")
-
-        if reason:
-            hold_min = round((time.time() - ts.buy_time_ts) / 60, 1) if ts.buy_time_ts else None
-            print(f"  [{ticker_tag(ts.ticker)}] 🔻 ALERT SELL  price=${price:.2f}  [{reason}]")
-            log_sell(
-                ticker=ts.ticker, price=price, buy_price=ts.buy_price,
-                rsi=ts.last_rsi or 0, hist=ts.last_hist or 0,
-                buy_time=ts.buy_time, reason=reason, hold_minutes=hold_min,
-            )
-            ts.in_position    = False
-            ts.buy_price      = None
-            ts.buy_time       = None
-            ts.buy_time_ts    = None
-            ts.high_since_buy = None
-            ts.priority_buy   = False
-
-    # ── Every-second proximity check ──────────────────────────────────────────
-
     def _check_proximity(self, ts: TickerState):
         """
-        Every second:
-          1. Pull the latest Finnhub price (pure in-memory dict read — no I/O).
-          2. Check stop-loss / take-profit against the live price immediately.
-          3. If we have cached bars, inject the live price as the last bar's
-             close and recompute RSI + MACD — giving per-second indicator
-             updates rather than waiting for the next closed bar.
-          4. Log the proximity summary.
+        Every second: refresh the live price, re-run the indicators against it,
+        and log the proximity summary.
 
-        NOTE: BUY/SELL momentum signals are NOT fired here — only on confirmed
-        closed bars in _refresh_bars.  This prevents the forming bar's
-        fluctuating histogram from triggering false signals mid-minute.
+        This also used to be where money moved — a fill-price rebase, the alert
+        strategy's entry, real-time stop-loss / take-profit, and an RSI
+        overbought exit all fired from here on the live tick. None of that
+        remains; the engine measures and publishes, and trading is manual.
+
+        The forming-bar inject stays and matters: it is what makes CM RSI-2 and
+        the %R pills move between bar closes instead of freezing for up to a
+        minute.
         """
-        # ── 1. Refresh price from Finnhub ─────────────────────────────────────
         fh_price = get_latest_price(ts.ticker)
         if fh_price is not None:
             ts.last_price = fh_price
 
-        # ── Fill-price rebase ──────────────────────────────────────────────────
-        # A few seconds after a BUY order is submitted, look it up and rebase
-        # buy_price to the actual filled_avg_price — with a 1-2% take-profit,
-        # slippage on the entry can otherwise eat the whole target.
-        if ts.pending_order_id and ts.fill_check_at and time.time() >= ts.fill_check_at:
-            o = alpaca_trader.get_order(ts.pending_order_id)
-            if o and o.get("filled_avg_price"):
-                fill = o["filled_avg_price"]
-                if ts.in_position and ts.buy_price and fill > 0:
-                    if abs(fill - ts.buy_price) / ts.buy_price >= 0.0005:
-                        print(f"  [{ticker_tag(ts.ticker)}] 🧾 fill rebase — "
-                              f"entry ${ts.buy_price:.4f} → ${fill:.4f}")
-                    ts.buy_price = fill
-                # Attach broker trailing stop once fill qty is real
-                if getattr(ts, "needs_broker_trail", False) and alpaca_trader.is_active():
-                    fq = o.get("filled_qty")
-                    alpaca_trader.place_trailing_stop(
-                        ts.ticker, trail_percent=ALERT_TRAIL_STOP,
-                        qty=float(fq) if fq else None)
-                    ts.needs_broker_trail = False
-                ts.pending_order_id = None
-                ts.fill_check_at    = None
-            elif o and o.get("status") in ("OrderStatus.CANCELED", "canceled",
-                                           "OrderStatus.EXPIRED", "expired",
-                                           "OrderStatus.REJECTED", "rejected"):
-                print(f"  [{ticker_tag(ts.ticker)}] ⚠️  BUY order {o['status']} — "
-                      f"position will be cleared by the next reconcile")
-                ts.pending_order_id = None
-                ts.fill_check_at    = None
-            elif ts.buy_time_ts and time.time() - ts.buy_time_ts > 60:
-                # Not filled after a minute — stop polling; reconcile takes over
-                ts.pending_order_id = None
-                ts.fill_check_at    = None
-            else:
-                ts.fill_check_at = time.time() + 3.0   # not filled yet — retry
-
-        # ── Alert mode: entry on the mention burst, exit on trailing/hard stop.
-        # Runs every second on the live price and bypasses the momentum-specific
-        # SL/TP/RSI exits below (the alert recipe defines its own exits).
-        if STRATEGY_MODE == "alert":
-            self._eval_alert(ts)
-            ts.check_count += 1
-            print(ts.proximity_summary())
-            return
-
-        if fh_price is not None:
-            # ── 2. Real-time stop-loss / take-profit check ─────────────────────
-            # Check SL/TP on every tick so we don't have to wait up to a minute
-            # for the next bar fetch to exit a losing or winning position.
-            # Dynamic (ATR/VWAP) exit levels are checked here too — they were
-            # previously only checked on bar closes, causing up to 60s of slippage.
-            if ts.in_position and ts.buy_price is not None:
-                pnl_pct = (fh_price - ts.buy_price) / ts.buy_price * 100
-
-                reason = None
-                if DYNAMIC_EXIT in ("atr", "vwap") and ts.dyn_stop is not None:
-                    if fh_price <= ts.dyn_stop:
-                        reason = (f"DYNAMIC STOP ({DYNAMIC_EXIT.upper()}) RT "
-                                  f"${fh_price:.3f} ≤ ${ts.dyn_stop:.3f}")
-                    elif ts.dyn_take is not None and fh_price >= ts.dyn_take:
-                        reason = (f"DYNAMIC TAKE ({DYNAMIC_EXIT.upper()}) RT "
-                                  f"${fh_price:.3f} ≥ ${ts.dyn_take:.3f}")
-                else:
-                    if STOP_LOSS > 0 and pnl_pct <= -STOP_LOSS:
-                        reason = "STOP LOSS (RT)"
-                    elif TAKE_PROFIT > 0 and pnl_pct >= TAKE_PROFIT:
-                        reason = "TAKE PROFIT (RT)"
-
-                if reason:
-                    log_sell(
-                        ticker    = ts.ticker,
-                        price     = fh_price,
-                        buy_price = ts.buy_price,
-                        rsi       = ts.last_rsi or 0,
-                        hist      = ts.last_hist or 0,
-                        buy_time  = ts.buy_time,
-                        reason    = reason,
-                    )
-                    ts.in_position   = False
-                    ts.buy_price     = None
-                    ts.buy_time      = None
-                    ts.buy_time_ts   = None
-                    ts.dyn_stop      = None
-                    ts.dyn_take      = None
-                    ts.high_since_buy = None
-                    ts.hist_growing  = False
-                    ts.priority_buy  = False
-
-            # ── Real-time RSI overbought exit ─────────────────────────────────
-            # Check the live RSI every second so we exit overbought positions
-            # immediately rather than waiting for the next confirmed bar.
-            # Applies to ALL positions — priority or normal.
-            if (RSI_SELL_OVERBOUGHT > 0
-                    and ts.in_position
-                    and ts.last_rsi is not None
-                    and ts.last_rsi >= RSI_SELL_OVERBOUGHT):
-                log_sell(
-                    ticker    = ts.ticker,
-                    price     = fh_price,
-                    buy_price = ts.buy_price,
-                    rsi       = ts.last_rsi,
-                    hist      = ts.last_hist or 0,
-                    buy_time  = ts.buy_time,
-                    reason    = f"RSI overbought RT ({ts.last_rsi:.1f} >= {RSI_SELL_OVERBOUGHT})",
-                )
-                ts.in_position  = False
-                ts.buy_price    = None
-                ts.buy_time     = None
-                ts.hist_growing = False
-                ts.priority_buy = False
-
-        # ── 3. Recompute indicators using live price as forming-bar close ──────
-        # Inject the current price into the last bar of the cached DataFrame
-        # and recompute RSI + MACD so the proximity log shows live values.
-        # For HOT tickers we also run the full momentum/BUY check on the live
-        # values — no waiting up to 60 s for the next confirmed bar to close.
+        # Inject the live price as the forming bar's close and recompute, so
+        # the dashboard shows current indicator values rather than the last
+        # closed bar's.
         if ts.cached_df is not None and ts.last_price is not None:
-            # Skip the full recompute when price hasn't moved more than half a cent —
-            # indicators are unchanged and the DataFrame copy + compute is expensive.
+            # Skip when price has not moved half a cent — the indicators would
+            # be unchanged and the copy plus recompute is the expensive part.
             price_moved = (
                 ts._last_computed_price is None or
                 abs(ts.last_price - ts._last_computed_price) >= 0.005
@@ -2249,7 +1669,8 @@ class SignalEngine:
                     ts._last_computed_price = ts.last_price
                     df_live = ts.cached_df.copy()
                     df_live.at[df_live.index[-1], "close"] = ts.last_price
-                    rsi_live, hist_live, atr_live, vwap_live, rvol_live, cm_rsi_live, obv_live = compute_indicators(df_live)
+                    (rsi_live, hist_live, atr_live, vwap_live, rvol_live,
+                     cm_rsi_live, obv_live) = compute_indicators(df_live)
                     ts.last_rsi       = rsi_live
                     ts.last_hist      = hist_live
                     if atr_live  > 0: ts.last_atr  = atr_live
@@ -2258,29 +1679,18 @@ class SignalEngine:
                     ts.last_cm_rsi_ok = cm_rsi_live
                     ts.last_obv_ok    = obv_live
 
-                    # Refresh strategy state whenever price moves and bars are
-                    # loaded so the desk RSI / CM pills actually change.
-                    # Trade entries stay gated inside _eval_three_indicator
-                    # (THREE_IND_REQUIRE_HOT etc). Momentum mode still only
-                    # auto-trades on live values for hot tickers to avoid
-                    # mid-candle false BUYs.
                     if ts.bars_fetched and STRATEGY_MODE == "three_indicator":
-                        # Forming-bar inject → update cm_rsi for every tracked
-                        # name (not only hot/pinned/in_position).
                         self._eval_three_indicator(
                             ts, self._strategy_df(ts, df_live))
-                    elif ts.bars_fetched and ts.is_hot:
-                        open_pos = sum(
-                            1 for t in self.active.values() if t.in_position)
-                        ts.update_momentum(
-                            hist           = hist_live,
-                            price          = ts.last_price,
-                            rsi            = rsi_live,
-                            open_positions = open_pos,
-                        )
-
+                    elif ts.bars_fetched:
+                        # Was gated to hot tickers only, because running it on
+                        # the forming bar could fire a false BUY. It cannot buy
+                        # anything now, so every tracked name gets live values.
+                        ts.update_momentum(hist=hist_live, price=ts.last_price,
+                                           rsi=rsi_live)
                 except Exception as e:
-                    print(f"  [engine] live recompute error for {ts.ticker}: {e}", flush=True)
+                    print(f"  [engine] live recompute error for {ts.ticker}: {e}",
+                          flush=True)
 
         ts.check_count += 1
         print(ts.proximity_summary())
@@ -2309,98 +1719,26 @@ class SignalEngine:
             # Allow re-adding if the ticker gets mentioned again later
             self._known_mentioned.discard(sym)
 
-    # ── Position reconciliation ───────────────────────────────────────────────
-
-    def _reconcile_positions(self):
-        """
-        Engine ↔ Alpaca position sync, every RECONCILE_INTERVAL_S seconds:
-          • engine-open but Alpaca-flat → the position was closed outside the
-            engine (Alpaca UI, rejected/expired order) — clear local state so
-            the engine doesn't manage a phantom position.
-          • Alpaca-open but engine-flat → adopt it so backstop exits protect it.
-        Buys younger than the grace period are skipped — a just-submitted
-        notional order can take a few seconds to appear as a position.
-        """
-        positions = alpaca_trader.get_open_positions()
-        if positions is None:
-            return   # trader off or API error — nothing trustworthy to sync to
-
-        GRACE_S = 120
-        now = time.time()
-
-        for sym, ts in self.active.items():
-            if ts.in_position and sym not in positions:
-                if ts.buy_time_ts and now - ts.buy_time_ts < GRACE_S:
-                    continue
-                print(f"  [{ticker_tag(sym)}] ♻️  reconcile — Alpaca shows no position "
-                      f"(closed externally?). Clearing local position state.")
-                ts.in_position      = False
-                ts.buy_price        = None
-                ts.buy_time         = None
-                ts.buy_time_ts      = None
-                ts.dyn_stop         = None
-                ts.dyn_take         = None
-                ts.high_since_buy   = None
-                ts.priority_buy     = False
-                ts.pending_order_id = None
-                ts.fill_check_at    = None
-
-        for sym, pos in positions.items():
-            ts = self.active.get(sym)
-            if ts is None:
-                offset = self._stagger_index * BAR_STAGGER
-                self._stagger_index = (self._stagger_index + 1) % MAX_ACTIVE_TICKERS
-                ts = TickerState(sym, fetch_offset_s=offset)
-                self.active[sym] = ts
-                self._known_mentioned.add(sym)
-                request_subscribe([sym])
-            if not ts.in_position:
-                ts.in_position = True
-                ts.buy_price   = pos["avg_entry_price"]
-                ts.buy_time    = _now_iso()
-                ts.buy_time_ts = now
-                print(f"  [{ticker_tag(sym)}] ♻️  reconcile — adopted Alpaca position "
-                      f"{pos['qty']} @ ${pos['avg_entry_price']:.4f} (exits armed)")
-
-    # ── Signal state persistence ──────────────────────────────────────────────
-
     def _write_signal_state(self):
         """
         Write per-ticker proximity data to signal_state.json.
 
-        Called every SIGNAL_STATE_INTERVAL seconds (default 5 s) from the main
-        loop.  dashboard.py reads this file and merges it into the /api/state
-        response so the dashboard can render signal proximity progress bars
-        without needing a direct connection to the signal engine process.
+        Called every SIGNAL_STATE_INTERVAL seconds from the main loop.
+        dashboard.py reads this file and merges it into /api/state, which is
+        how the desk and the buy circle receive indicator values without
+        talking to this process directly. It is the engine's whole output now.
 
-        File format:
-        {
-          "updated": "2026-05-26T12:00:00Z",
-          "tickers": {
-            "AAPL": { "proximity_pct": 67, "status": "buy_zone", ... },
-            ...
-          }
-        }
+        The trader/risk block it used to publish is gone with the trading:
+        there are no engine positions to report, no exposure to cap, and no
+        kill switch to trip. Manual trades go through the desk and the
+        dashboard, which own their own state.
         """
         try:
-            open_pos = sum(1 for t in self.active.values() if t.in_position)
             payload = {
                 "updated": _now_iso(),
                 "version": version.get_version(),   # which engine build is running
                 "started": self._started,           # when this engine booted
                 "strategy": STRATEGY_MODE,
-                "trader": {
-                    "mode":         TRADER_MODE,
-                    "trade_amount": TRADE_AMOUNT,
-                },
-                # Risk guard snapshot — kill switch, daily P&L, PDT counters —
-                # plus live exposure, for the dashboard's engine panel.
-                "risk": {
-                    **GUARD.state(),
-                    "open_positions":     open_pos,
-                    "exposure":           round(open_pos * TRADE_AMOUNT, 2),
-                    "max_total_exposure": MAX_TOTAL_EXPOSURE,
-                },
                 "tickers": {
                     sym: ts.proximity_state()
                     for sym, ts in self.active.items()
@@ -2416,15 +1754,14 @@ class SignalEngine:
 
     def run(self):
         print("=" * 60)
-        print("  Signal Engine — RSI + MACD Momentum")
+        print("  Signal Engine — indicators only, no trading")
         print(f"  Dashboard     : {DASHBOARD_URL}")
         print(f"  Auth user     : {DASHBOARD_USER or '(none)'}")
         print(f"  Price source  : {PRICE_SOURCE}")
         print(f"  Finnhub key   : {'✓ loaded' if self.finnhub_key else '✗ missing (ok if PRICE_SOURCE=alpaca)'}")
         print(f"  Alpaca key    : {'✓ loaded' if self.api_key else '✗ missing'}")
         print(f"  Massive key   : {'✓ loaded — alert tickers use Massive bars first' if self.massive.is_configured() else '✗ not set — using Alpaca only (set MASSIVE_API_KEY)'}")
-        trader_label = {"off": "off — log only", "paper": "PAPER trading", "live": "⚠️  LIVE trading"}.get(TRADER_MODE, TRADER_MODE)
-        print(f"  Trader mode   : {trader_label}  (${TRADE_AMOUNT:.0f}/trade)")
+        print("  Trading       : none — this engine only measures and publishes")
         print(f"  Loop cadence  : every {POLL_INTERVAL}s")
         print(f"  Dashboard poll: every {DASHBOARD_POLL_INTERVAL}s (new ticker detection only)")
         print(f"  Bar refresh   : every {BAR_REFRESH}s (staggered {BAR_STAGGER}s apart)")
@@ -2436,13 +1773,9 @@ class SignalEngine:
         print(f"  Max tickers   : {MAX_ACTIVE_TICKERS}")
         print(f"  RSI buy max   : {RSI_BUY_MAX}  (bypassed when ticker is hot)")
         if PRIORITY_MENTIONS > 0:
-            print(f"  Priority BUY  : {PRIORITY_MENTIONS}+ mentions in {PRIORITY_WINDOW_SECONDS}s → RSI filter OFF")
+            print(f"  Priority tag  : {PRIORITY_MENTIONS}+ mentions in {PRIORITY_WINDOW_SECONDS}s → marks a ticker hot")
         else:
-            print("  Priority BUY  : disabled (PRIORITY_MENTIONS=0)")
-        if RSI_SELL_OVERBOUGHT > 0:
-            print(f"  RSI sell      : exit position when RSI >= {RSI_SELL_OVERBOUGHT}")
-        else:
-            print("  RSI sell      : disabled (RSI_SELL_OVERBOUGHT=0)")
+            print("  Priority tag  : disabled (PRIORITY_MENTIONS=0)")
         print(f"  Log file      : {LOG_FILE}")
         print("=" * 60)
 
@@ -2488,11 +1821,6 @@ class SignalEngine:
 
                 # 3. Drop expired tickers
                 self._expire_tickers()
-
-                # 3b. Reconcile engine positions with Alpaca reality
-                if now - self._last_reconcile >= RECONCILE_INTERVAL_S:
-                    self._reconcile_positions()
-                    self._last_reconcile = time.time()
 
                 # 4. Write signal_state.json so the dashboard can render
                 #    the visual proximity bars (throttled to every SIGNAL_STATE_INTERVAL s)

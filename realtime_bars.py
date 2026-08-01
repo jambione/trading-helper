@@ -23,6 +23,7 @@ Thread-safe: the Finnhub stream runs on its own thread.
 from __future__ import annotations
 
 import threading
+import time
 
 import pandas as pd
 
@@ -81,6 +82,11 @@ class RealtimeBarAggregator:
         self._lock = threading.Lock()
         self._sealed: dict[str, list[dict]] = {}   # ticker → list of bar rows (oldest→newest)
         self._forming: dict[str, _Bar] = {}        # ticker → current forming bar
+        # ts_ms of the newest trade folded in, per ticker. Without this the
+        # aggregator cannot tell a live stream from a dead one: sealed history
+        # and the forming bar both survive a disconnect, so get_bars() keeps
+        # returning a full-looking frame whose newest bar is silently ageing.
+        self._last_ts: dict[str, int] = {}
 
     # ── Seeding ───────────────────────────────────────────────────────────────
 
@@ -115,6 +121,10 @@ class RealtimeBarAggregator:
             return
         minute = _epoch_minute(ts_ms)
         with self._lock:
+            # Newest wins: an out-of-order print from an already-sealed minute
+            # is dropped below, but it still proves the stream is alive, and it
+            # must never drag the freshness clock backwards.
+            self._last_ts[ticker] = max(self._last_ts.get(ticker, 0), int(ts_ms))
             cur = self._forming.get(ticker)
             if cur is None:
                 self._forming[ticker] = _Bar(minute, price, volume)
@@ -152,3 +162,28 @@ class RealtimeBarAggregator:
         with self._lock:
             b = self._forming.get(ticker)
             return b.as_row() if b else None
+
+    # ── Freshness ───────────────────────────────────────────────────────────────
+
+    def last_trade_ms(self, ticker: str) -> int | None:
+        """ts_ms of the newest trade folded in, or None if never fed."""
+        with self._lock:
+            return self._last_ts.get(ticker)
+
+    def age_seconds(self, ticker: str, now_ms: float | None = None) -> float | None:
+        """Seconds since this ticker's newest trade, or None if never fed.
+
+        None means "no realtime data at all" — a seeded-but-unfed ticker, or one
+        that has never traded. Callers must treat None as unusable, not fresh:
+        seed() fills sealed history, so get_bars() returns a healthy-looking
+        frame for a ticker no trade has ever touched.
+
+        Measured from the trade's own timestamp rather than its arrival time, so
+        this also catches a stream that is connected but serving stale prints.
+        """
+        with self._lock:
+            last = self._last_ts.get(ticker)
+        if last is None:
+            return None
+        now_ms = time.time() * 1000.0 if now_ms is None else float(now_ms)
+        return max(0.0, (now_ms - last) / 1000.0)

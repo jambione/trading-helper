@@ -1,0 +1,489 @@
+"""Pixel readers against real captured panels.
+
+Every reader bug found on this chart returned None or a wrong number rather
+than raising — a panel simply went blank, or a leg quietly read as unlit. None
+of it was reachable from the existing suite, which only ever exercised the
+screen-free helpers. These tests run the readers over PNGs captured off a live
+TradingView window (tests/fixtures/tv/, values in meta.json recorded at capture
+time) and pin the specific failures that got through.
+"""
+import json
+import os
+import sys
+
+import numpy as np
+import pytest
+
+cv2 = pytest.importorskip("cv2")
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tv-monitor"))
+
+from tv_core import (  # noqa: E402
+    color_mask, line_y, read_check, read_heart, read_star, rightmost_data_x,
+)
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "tv")
+
+
+def _load(name):
+    """Fixture as BGRA, matching what mss/Quartz hand the readers."""
+    path = os.path.join(FIXTURES, f"{name}.png")
+    if not os.path.exists(path):
+        pytest.skip(f"missing fixture {name}.png")
+    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2BGRA)
+
+
+@pytest.fixture(scope="module")
+def meta():
+    path = os.path.join(FIXTURES, "meta.json")
+    if not os.path.exists(path):
+        pytest.skip("missing meta.json")
+    with open(path) as fh:
+        return json.load(fh)
+
+
+# ── readers reproduce their captured values ──────────────────────────────────
+
+def test_star_matches_capture(meta):
+    got = read_star(_load("star"))
+    assert got is not None
+    assert got["value"] == pytest.approx(meta["expected"]["star"]["value"], abs=1.5)
+    assert 0.0 <= got["value"] <= 100.0
+
+
+def test_heart_matches_capture(meta):
+    got = read_heart(_load("heart"))
+    exp = meta["expected"]["heart"]
+    assert got is not None
+    for key in ("w", "b"):
+        if exp.get(key) is None:
+            continue
+        assert got[key] is not None, f"{key} line went unread"
+        assert got[key] == pytest.approx(exp[key], abs=2.0)
+        assert -100.0 <= got[key] <= 0.0
+
+
+def test_check_matches_capture(meta):
+    got = read_check(_load("fire"))
+    assert got is not None
+    assert got["gap"] == pytest.approx(meta["expected"]["fire"]["gap"], abs=1.5)
+
+
+# ── fail closed, never confidently wrong ─────────────────────────────────────
+
+@pytest.mark.parametrize("reader", [read_star, read_heart, read_check])
+def test_blank_panel_reads_none(reader):
+    """A black crop is a failed capture. It must not resolve to a value."""
+    assert reader(np.zeros((60, 400, 4), dtype=np.uint8)) is None
+
+
+@pytest.mark.parametrize("reader", [read_star, read_heart, read_check])
+def test_noise_panel_reads_none_or_in_range(reader):
+    """Random pixels must not yield an out-of-range reading."""
+    rng = np.random.default_rng(0)
+    noise = rng.integers(0, 60, (60, 400, 4), dtype=np.uint8)   # dark noise
+    got = reader(noise)
+    if got is None:
+        return
+    if "value" in got:
+        assert 0.0 <= got["value"] <= 100.0
+    for key in ("w", "b"):
+        if got.get(key) is not None:
+            assert -100.0 <= got[key] <= 0.0
+
+
+# ── regressions for the bugs that shipped ────────────────────────────────────
+
+def _panel(h=60, w=300):
+    return np.zeros((h, w, 4), dtype=np.uint8)
+
+
+def _draw_row(img, y, bgr, x0=0, x1=None):
+    img[y, x0:(x1 if x1 is not None else img.shape[1]), :3] = bgr
+
+
+WHITE = (220, 220, 220)
+BLUE = (220, 60, 40)        # BGRA: high B, low R
+YELLOW = (60, 200, 200)
+GREEN = (60, 200, 60)
+RED = (40, 40, 220)      # BGRA: high R, low B/G
+
+
+def test_flat_line_is_found():
+    """A perfectly flat line occupies ONE row.
+
+    line_y used to require a colour to span two distinct rows, so a flat line
+    read as no-data — exactly when MACD rests on its average or %R pins to the
+    floor, which is when the reading matters most.
+    """
+    img = _panel()
+    _draw_row(img, 30, WHITE)
+    assert line_y(img, "white", x_end=img.shape[1] - 1) == pytest.approx(30, abs=1)
+
+
+def test_single_stray_pixel_is_not_a_line():
+    """The flat-line fix must not turn anti-aliasing noise into a reading."""
+    img = _panel()
+    img[10, 250, :3] = WHITE
+    assert line_y(img, "white", x_end=img.shape[1] - 1) is None
+
+
+def test_heart_reads_both_lines_when_one_ends_early():
+    """The %R lines can end at different columns.
+
+    read_heart sampled both at a single shared x_end taken from the longer
+    line, so the shorter one returned None on every frame while the other
+    looked healthy. Each line is now sampled at its own newest column.
+    """
+    # Gap sized from the observed case: white ended 82px behind blue on a
+    # 788px panel, ~10%. Comfortably inside the staleness guard, which exists
+    # to reject a line that stopped rather than one rendering a touch shorter.
+    img = _panel(h=100, w=300)
+    _draw_row(img, 30, WHITE, 0, 270)      # white stops ~10% early
+    _draw_row(img, 70, BLUE, 0, 300)       # blue runs to the edge
+    got = read_heart(img)
+    assert got is not None
+    assert got["w"] is not None, "short line dropped"
+    assert got["b"] is not None
+    assert got["w"] > got["b"]             # white higher on a 0..-100 scale
+
+
+def test_heart_rejects_a_line_that_stopped_long_ago():
+    """Sampling each line separately must not resurrect stale history."""
+    img = _panel(h=100, w=400)
+    _draw_row(img, 30, WHITE, 0, 40)       # ancient
+    _draw_row(img, 70, BLUE, 0, 400)
+    got = read_heart(img)
+    assert got is not None
+    assert got["w"] is None
+    assert got["b"] is not None
+
+
+def test_check_handles_lines_ending_at_different_columns():
+    img = _panel(h=100, w=300)
+    _draw_row(img, 20, GREEN, 0, 280)
+    _draw_row(img, 60, YELLOW, 0, 300)
+    got = read_check(img)
+    assert got is not None
+    assert got["gap"] > 0                  # signal above its MA -> bullish
+
+
+def test_colour_mask_channel_order_is_bgra():
+    """Quartz hands back B,G,R,A. A swap here silently inverts every reading."""
+    img = _panel(h=10, w=10)
+    img[:, :, :3] = (0, 0, 255)            # BGRA red
+    assert color_mask(img, "red").any()
+    assert not color_mask(img, "blue").any()
+
+
+def test_rightmost_data_x_finds_the_newest_column():
+    img = _panel()
+    _draw_row(img, 20, WHITE, 0, 173)
+    assert rightmost_data_x(img, ("white",)) == 172
+    assert rightmost_data_x(img, ("yellow",)) is None
+
+
+# ── panel location, against a captured window ────────────────────────────────
+# Two of the six bugs lived here and both were invisible without a real window:
+# locate returned None on every frame because a Unicode minus was dropped, and
+# located bounds wandered because a narrow label span got extrapolated to the
+# full scale.
+
+def _tesseract_or_skip():
+    pytest.importorskip("pytesseract")
+    import shutil
+    if not shutil.which("tesseract"):
+        pytest.skip("tesseract binary not installed")
+
+
+def test_locate_finds_all_panels(meta):
+    _tesseract_or_skip()
+    import tv_signal
+
+    tv_signal.load_config()
+    win = _load("window")
+    rect = {"left": 0, "top": 0,
+            "width": win.shape[1], "height": win.shape[0]}
+    panels = tv_signal.locate_tv_panels(win, rect)
+    assert panels is not None, "locate returned None on a known-good window"
+    assert {"star", "heart"} <= set(panels)
+
+    for name, exp in meta["locate"].items():
+        if name not in panels:
+            continue
+        assert panels[name]["top"] == pytest.approx(exp["top"], abs=6)
+        assert panels[name]["height"] == pytest.approx(exp["height"], abs=6)
+
+
+def test_locate_is_deterministic(meta):
+    """Same pixels in, same bounds out — the wander was the bug."""
+    _tesseract_or_skip()
+    import tv_signal
+
+    tv_signal.load_config()
+    win = _load("window")
+    rect = {"left": 0, "top": 0, "width": win.shape[1], "height": win.shape[0]}
+    runs = [tv_signal.locate_tv_panels(win, rect) for _ in range(3)]
+    assert all(r is not None for r in runs)
+    for name in ("star", "heart"):
+        tops = {r[name]["top"] for r in runs}
+        heights = {r[name]["height"] for r in runs}
+        assert len(tops) == 1 and len(heights) == 1
+
+
+def test_heart_band_is_below_star_and_similar_height(meta):
+    """star runs 100..0 and heart 0..-100 — adjacent, comparable bands.
+
+    Guards the sign recovery: if heart's -100 is misread as +100 it lands in
+    star's band and heart collapses or inverts.
+    """
+    _tesseract_or_skip()
+    import tv_signal
+
+    tv_signal.load_config()
+    win = _load("window")
+    rect = {"left": 0, "top": 0, "width": win.shape[1], "height": win.shape[0]}
+    p = tv_signal.locate_tv_panels(win, rect)
+    assert p is not None
+    assert p["heart"]["top"] >= p["star"]["top"] + p["star"]["height"] - 4
+    ratio = p["heart"]["height"] / max(1, p["star"]["height"])
+    assert 0.6 <= ratio <= 1.6, f"implausible heart/star height ratio {ratio:.2f}"
+
+
+def test_leading_minus_detects_sign_and_ignores_digits():
+    """TradingView renders U+2212; the digit whitelist drops it, so the sign
+    is recovered from the bbox. A digit must never be mistaken for one."""
+    import tv_signal
+
+    h, w = 9, 40
+    th = np.full((h, w), 255, dtype=np.uint8)     # OTSU output: ink is 0
+    th[4, 0:6] = 0                                 # a minus: thin, mid-height
+    assert tv_signal._leading_minus(th, 0, 0, w, h)
+
+    digit = np.full((h, w), 255, dtype=np.uint8)
+    digit[0:h, 1:4] = 0                            # full-height stroke
+    assert not tv_signal._leading_minus(digit, 0, 0, w, h)
+
+
+# ── the two failures that looked like flakiness ──────────────────────────────
+
+def test_antialiased_white_line_is_found():
+    """A 1px line on a slope never reaches full brightness.
+
+    The %R white line peaked around 140-160 on its newest columns, under the
+    old >170-everywhere test, so it read as absent at exactly the right-hand
+    edge — the only part that matters. Neutrality does the discriminating now,
+    which is what lets the brightness bar come down safely.
+    """
+    img = _panel(h=60, w=300)
+    img[30, :, :3] = (150, 148, 145)          # dim, but neutral
+    assert line_y(img, "white", x_end=299) == pytest.approx(30, abs=1)
+
+
+def test_dim_gridline_is_not_a_white_line():
+    """Chart gridlines measure ~60-90 and must stay out."""
+    img = _panel(h=60, w=300)
+    img[30, :, :3] = (80, 80, 80)
+    assert line_y(img, "white", x_end=299) is None
+
+
+def test_blue_plot_is_not_white():
+    """Colour spread keeps the blue %R line out of the white mask."""
+    img = _panel(h=60, w=300)
+    img[30, :, :3] = (220, 60, 40)            # BGRA blue
+    assert not color_mask(img, "white").any()
+    assert color_mask(img, "blue").any()
+
+
+def test_sub_dollar_price_ladder_is_not_a_zero_line():
+    """Panel location broke on cheap stocks, not at random.
+
+    _assign_panels treated anything under 0.6 as an axis zero. On a $0.36 name
+    the whole price ladder — 0.31 through 0.39 — qualified, the topmost anchored
+    star's floor near the top of the chart, and the sign rule flipped star's own
+    100 to -100. locate returned None on every frame for exactly the low-priced
+    names this desk watches most.
+    """
+    import tv_signal
+
+    ladder = [(161, 0.39), (200, 0.38), (239, 0.37), (317, 0.35),
+              (474, 0.31), (511, 100.0), (566, 0.0), (584, 0.0), (643, -100.0)]
+    got = tv_signal._assign_panels(ladder)
+    assert got is not None, "sub-dollar price labels swallowed the zero line"
+    s_top, s_bot = got["star"]
+    h_top, h_bot = got["heart"]
+    assert s_top == pytest.approx(511, abs=3)   # star anchored on its own 100
+    assert s_bot == pytest.approx(566, abs=3)
+    assert h_top < h_bot and h_top >= s_bot - 4
+
+
+def test_hundred_below_the_zero_is_read_as_negative():
+    """heart's -100 loses its minus to the digit whitelist; position recovers
+    the sign. Only the 100 line is ambiguous enough to flip."""
+    import tv_signal
+    got = tv_signal._assign_panels([(511, 100.0), (566, 0.0),
+                                    (584, 0.0), (643, 100.0)])
+    assert got is not None
+    assert got["heart"][1] == pytest.approx(643, abs=3)
+
+
+# ── trend read from the plot's own history ───────────────────────────────────
+# The panel holds the line's whole visible history, so a slope is available on
+# the first frame instead of after 45s of wall-clock sampling — and it survives
+# a restart, which the sampler never did.
+
+def _sloped(h=60, w=400, y0=50, y1=10, colour=WHITE):
+    """A line running from row y0 on the left to y1 on the right."""
+    img = _panel(h=h, w=w)
+    for x in range(w):
+        y = int(round(y0 + (y1 - y0) * x / (w - 1)))
+        img[y, x, :3] = colour
+    return img
+
+
+def test_series_follows_a_rising_line():
+    from tv_core import line_series
+    # Screen rows fall as the value rises, so a rising plot means decreasing y.
+    vals = line_series(_sloped(y0=50, y1=10), "white", span=300, points=20)
+    got = [v for v in vals if v is not None]
+    assert len(got) >= 15
+    assert got[0] > got[-1], "row should decrease left-to-right on a rising line"
+
+
+def test_series_direction_on_real_slopes():
+    from tv_core import series_direction
+    rising = [float(v) for v in range(0, 40)]
+    falling = list(reversed(rising))
+    flat = [10.0 + (i % 2) * 0.2 for i in range(40)]
+    assert series_direction(rising, 6.0)[0] == "up"
+    assert series_direction(falling, 6.0)[0] == "down"
+    assert series_direction(flat, 6.0)[0] == "flat"
+
+
+def test_series_direction_needs_enough_points():
+    """Too little of the line readable is 'unknown', never 'flat'."""
+    from tv_core import series_direction
+    assert series_direction([1.0, 2.0, None, None], 6.0) == (None, None)
+    assert series_direction([], 6.0) == (None, None)
+
+
+def test_series_direction_tolerates_gaps():
+    """A column the mask missed must not drag the trend — hence a median,
+    not a least-squares fit that would chase the outlier."""
+    from tv_core import series_direction
+    vals = [0.0, 5.0, None, 15.0, None, 25.0, 30.0, 35.0, 40.0, 45.0]
+    assert series_direction(vals, 6.0)[0] == "up"
+
+
+def test_series_on_a_blank_panel_is_empty():
+    from tv_core import line_series
+    assert line_series(_panel(), "white", span=200, points=20) == []
+
+
+# ── turns ────────────────────────────────────────────────────────────────────
+# One direction across the whole span hides the moment worth seeing: a %R line
+# that fell for thirty bars then turned up over the last eight averages to
+# "down", and that turn off the floor is the entry cue.
+
+def test_turn_up_is_not_reported_as_down():
+    from tv_core import series_direction, series_shape
+    fell_then_rose = [float(x) for x in range(40, 10, -1)] + \
+                     [float(x) for x in range(10, 30)]
+    assert series_direction(fell_then_rose, 6.0)[0] == "down"   # the averaging
+    assert series_shape(fell_then_rose, 6.0)[0] == "turning_up"  # the turn
+
+
+def test_roll_over_is_not_reported_as_up():
+    from tv_core import series_shape
+    rose_then_fell = [float(x) for x in range(10, 40)] + \
+                     [float(x) for x in range(40, 20, -1)]
+    assert series_shape(rose_then_fell, 6.0)[0] == "turning_down"
+
+
+def test_sustained_moves_keep_their_plain_direction():
+    from tv_core import series_shape
+    assert series_shape([float(x) for x in range(40)], 6.0)[0] == "up"
+    assert series_shape([float(40 - x) for x in range(40)], 6.0)[0] == "down"
+    assert series_shape([10.0] * 40, 6.0)[0] == "flat"
+
+
+def test_shape_needs_enough_points():
+    from tv_core import series_shape
+    assert series_shape([1.0, 2.0, 3.0], 6.0) == (None, None)
+    assert series_shape([], 6.0) == (None, None)
+
+
+def test_turn_magnitude_is_the_turn_not_the_span():
+    """A turn's strength is how hard it is turning now.
+
+    Measuring it across the whole span leaves the old direction in the number —
+    seen live on MACD, which reported shape "up" beside a whole-span delta of
+    -1.45, so an upward reading was weighted by a downward move.
+    """
+    from tv_core import series_direction, series_shape
+    fell_far_rose_a_little = ([float(100 - 4 * x) for x in range(20)]
+                              + [float(20 + x) for x in range(20)])
+    shape, delta = series_shape(fell_far_rose_a_little, 6.0)
+    assert shape == "turning_up"
+    assert delta > 0, "a turn up must carry a positive magnitude"
+    whole = series_direction(fell_far_rose_a_little, 6.0)[1]
+    assert whole < 0, "the whole span still nets downward — that is the trap"
+
+
+def test_third_panel_is_the_plot_not_the_time_axis(meta):
+    """The MACD pane ran to the chart floor, swallowing the time axis and the
+    toolbar — plot clipped at the top, and a gap reported as a percentage of a
+    height that was mostly dead space. It should be comparable to its siblings,
+    not three times their size."""
+    _tesseract_or_skip()
+    import tv_signal
+
+    tv_signal.load_config()
+    win = _load("window")
+    rect = {"left": 0, "top": 0, "width": win.shape[1], "height": win.shape[0]}
+    p = tv_signal.locate_tv_panels(win, rect)
+    assert p is not None and "fire" in p
+    sibling = (p["star"]["height"] + p["heart"]["height"]) / 2
+    assert p["fire"]["height"] <= sibling * 1.6, (
+        f"third panel {p['fire']['height']}px against siblings ~{sibling:.0f}px")
+    assert p["fire"]["height"] >= 20
+
+
+def test_recolouring_line_is_read_whole():
+    """MACD's signal is green rising and red falling — one plot, two colours.
+
+    Reading a single colour reads a fragment. Measured live: green covered 25
+    of 40 columns and red 34, so taking the longer one kept the old falling
+    stretch and discarded the recent green upturn — a visibly rising MACD
+    reported as falling, with no error anywhere.
+    """
+    from tv_core import line_series, series_shape
+
+    h, w = 60, 400
+    img = _panel(h=h, w=w)
+    # Falls in red across the first half, rises in green across the second.
+    for x in range(w // 2):
+        img[10 + x // 10, x, :3] = RED
+    for x in range(w // 2, w):
+        img[30 - (x - w // 2) // 10, x, :3] = GREEN
+
+    def shape_of(colour):
+        # Rows fall as the plot rises, so invert into indicator units.
+        got = line_series(img, colour, span=w, points=40)
+        return series_shape([None if v is None else float(h - v) for v in got],
+                            3.0)[0]
+
+    # Each colour anchors to ITS OWN rightmost column, so a single-colour read
+    # does not merely lose points — it ends in the wrong place and describes a
+    # different stretch of chart entirely.
+    assert shape_of("red") == "down", "red alone sees only the falling half"
+    assert shape_of(("green", "red")) == "turning_up", "the turn was missed"
+
+
+def test_single_colour_string_still_works():
+    """The tuple form is additive — existing callers pass a bare string."""
+    from tv_core import line_series
+    img = _sloped(y0=50, y1=10, colour=WHITE)
+    assert sum(v is not None
+               for v in line_series(img, "white", span=300, points=20)) >= 15

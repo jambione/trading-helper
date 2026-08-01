@@ -111,10 +111,61 @@ BRAVE_TV_TAB = int(os.environ.get("BRAVE_TV_TAB", "1"))
 try:
     import pyautogui as _pag
     _pag.FAILSAFE = False   # don't abort when mouse hits corner
+    # pyautogui sleeps PAUSE seconds after EVERY public call, and the default is
+    # 0.1s. workflow_add_tv made nine such calls for a 4-character ticker —
+    # hotkey, escape, click, one press per letter, enter, Option+W — so the
+    # default alone cost ~0.9s per load, invisible in the source. (press/hotkey/
+    # click each cost exactly one PAUSE, not one per key: they call the private
+    # platformModule._keyDown/_keyUp internally rather than the decorated
+    # public wrappers.) Typing via write() instead of a press-per-letter loop
+    # drops it further, to six calls. 20ms still yields the event loop between
+    # keystrokes; the places that genuinely need to wait now poll for the thing
+    # they are waiting on instead of guessing.
+    _pag.PAUSE = float(os.environ.get("TV_PAG_PAUSE", "0.02"))
     _PAG_OK = True
 except ImportError:
     _PAG_OK = False
     print("[WARN] pyautogui not installed — keyboard automation disabled. Run: pip install pyautogui")
+
+
+# ── TradingView load tuning ───────────────────────────────────────────────────
+# An AppleScript round-trip costs ~100ms (measured: frontmost 123ms, tab title
+# 99ms, window bounds 86ms), so polling only beats a fixed sleep where the wait
+# was longer than that. Where there is no cheap thing to poll — the chart canvas
+# taking keyboard focus after a click — a short sleep is still the honest
+# answer, just a smaller one.
+TV_SETTLE_SEC = float(os.environ.get("TV_SETTLE_SEC", "0.12"))   # post-click focus
+TV_TYPE_INTERVAL = float(os.environ.get("TV_TYPE_INTERVAL", "0.012"))
+TV_POLL_SEC = float(os.environ.get("TV_POLL_SEC", "0.06"))
+TV_FOCUS_TIMEOUT = float(os.environ.get("TV_FOCUS_TIMEOUT", "2.0"))
+TV_LOAD_TIMEOUT = float(os.environ.get("TV_LOAD_TIMEOUT", "2.5"))
+
+
+def _wait_until(predicate, timeout: float, poll: float = None) -> bool:
+    """Poll `predicate` until it is true or `timeout` elapses.
+
+    Returns True if it became true. The first check happens immediately — the
+    common case is that the thing already happened, and a fixed sleep pays the
+    full price every time for the rare case where it has not.
+    """
+    poll = TV_POLL_SEC if poll is None else poll
+    deadline = time.time() + timeout
+    while True:
+        try:
+            if predicate():
+                return True
+        except Exception:                                  # noqa: BLE001
+            pass
+        if time.time() >= deadline:
+            return False
+        time.sleep(poll)
+
+
+def _frontmost_app() -> str:
+    code, out = _osascript(
+        'tell application "System Events" to return name of first '
+        'application process whose frontmost is true')
+    return (out or "").strip() if code == 0 else ""
 
 
 # =============================================================================
@@ -170,10 +221,18 @@ def _app_is_running(app_name: str) -> bool:
 
 
 def _focus_app(app_name: str) -> bool:
-    """Bring an app to the foreground via AppleScript."""
+    """Bring an app to the foreground via AppleScript.
+
+    Returns once the app is actually frontmost rather than after a fixed 0.4s
+    guess. When it is already frontmost — the normal case while working a list
+    of symbols — this costs one AppleScript round-trip and no sleep at all.
+    """
+    if _frontmost_app() == app_name:
+        return True
     code, _ = _osascript(f'tell application "{app_name}" to activate')
-    time.sleep(0.4)
-    return code == 0
+    if code != 0:
+        return False
+    return _wait_until(lambda: _frontmost_app() == app_name, TV_FOCUS_TIMEOUT)
 
 
 def _launch_app(app_name: str, bundle_path: str | None = None) -> bool:
@@ -326,43 +385,65 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
         print(f"  ❌ ADD_TV failed — could not focus {browser}")
         return False
 
-    time.sleep(0.3)
+    # Already parked on the TradingView tab? Then the tab switch and the escape
+    # that undoes its address-bar focus are both pure cost. This is the common
+    # case once you are working a list, and skipping it is most of the gain.
+    on_chart = read_tv_symbol()
 
-    # Cmd+tab_num — switch to the pinned TradingView tab
-    # On macOS, browser tab shortcuts are Cmd+1…Cmd+9 (not Ctrl)
-    _pag.hotkey("command", str(tab_num))
-    time.sleep(0.6)
+    if on_chart == ticker:
+        # Nothing to type. The old path retyped the symbol, waited for the
+        # chart to "change" to what it already showed, and then saved it —
+        # same end state, several seconds later.
+        #
+        # Still click the canvas first: read_tv_symbol() reads the TAB TITLE,
+        # which answers correctly even when keyboard focus is sitting in the
+        # address bar, and Option+W sent there does nothing at all.
+        cx, cy = _chart_click_point(browser)
+        _pag.click(cx, cy)
+        time.sleep(TV_SETTLE_SEC)
+        _pag.hotkey("option", "w")
+        print(f"  ✅ ADD_TV done: {ticker} (already on chart)")
+        return True
 
-    # Escape — return focus from address bar to the page
-    _pag.press("escape")
-    time.sleep(0.2)
+    if on_chart is None:
+        # Cmd+tab_num — switch to the pinned TradingView tab
+        # On macOS, browser tab shortcuts are Cmd+1…Cmd+9 (not Ctrl)
+        _pag.hotkey("command", str(tab_num))
+        _wait_until(lambda: read_tv_symbol() is not None, TV_FOCUS_TIMEOUT)
+
+        # Escape — return focus from address bar to the page
+        _pag.press("escape")
 
     # Click the chart canvas to ensure it has keyboard focus. The point is
     # computed from the browser window's real bounds, so moving or resizing
     # windows no longer sends the keystrokes to the wrong app.
     cx, cy = _chart_click_point(browser)
     _pag.click(cx, cy)
-    time.sleep(0.5)
+    # No cheap way to observe the canvas taking focus, so this one stays a
+    # sleep — just a short one. Everything downstream is verified anyway.
+    time.sleep(TV_SETTLE_SEC)
 
     # Type ticker — TradingView opens symbol search on first keypress
-    for letter in ticker:
-        _pag.press(letter.lower())
-        time.sleep(0.05)
-
-    time.sleep(0.4)
+    _pag.write(ticker.lower(), interval=TV_TYPE_INTERVAL)
     _pag.press("enter")       # confirm symbol
-    time.sleep(0.3)
 
     # Confirm the chart actually loaded the symbol before saving it. Without
     # this the function reported success even when the keystrokes went to the
     # wrong window — and Option+W could add whatever symbol WAS on the chart
     # to the watchlist. Verify first, then save.
-    loaded = None
-    for _ in range(6):
-        loaded = read_tv_symbol()
-        if loaded == ticker:
-            break
-        time.sleep(0.25)
+    #
+    # This poll replaces the fixed 0.4s + 0.3s that used to run before it: the
+    # read is the wait. It is also the only thing standing between a missed
+    # keystroke and the wrong symbol in the watchlist, so it keeps its full
+    # timeout — quicker must not mean looser.
+    seen: list[str | None] = [None]
+
+    def _chart_shows_ticker() -> bool:
+        seen[0] = read_tv_symbol()
+        return seen[0] == ticker
+
+    _wait_until(_chart_shows_ticker, TV_LOAD_TIMEOUT)
+    loaded = seen[0]
 
     if loaded != ticker:
         print(f"  ❌ ADD_TV failed: chart shows {loaded or 'unknown'}, expected {ticker}")

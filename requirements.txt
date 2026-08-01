@@ -4,6 +4,13 @@ alpaca-py
 pandas
 numpy
 websockets
+# Used directly by swing_screener, signal_engine, massive_client, the backtests
+# and the RS Finviz adapter. It arrived transitively via yfinance/alpaca-py for
+# a long time; listed explicitly so dropping either does not break them.
+requests
+# Only the optional Finviz universe adapter (rs_universe_source: "finviz").
+# Parses with the stdlib html.parser — lxml is deliberately not required.
+beautifulsoup4
 pydantic>=2.0
 httpx>=0.27
 yfinance>=0.2.50

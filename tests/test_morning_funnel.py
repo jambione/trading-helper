@@ -23,6 +23,11 @@ KNOBS = {"min_price": 1.5, "max_price": 60.0, "min_rvol": 1.5,
          "max_candidates": 25, "refresh_sec": 150.0, "avg_days": 10}
 
 
+# The minute-based average session volume production now supplies to evaluate().
+# A daily-bar average is not interchangeable — see mf.avg_session_volume.
+AVG_VOL = 1_000_000.0
+
+
 # ── synthetic data builders ─────────────────────────────────────────────────
 def daily_df(prev_close=10.0, avg_vol=1_000_000, days=12):
     idx = pd.bdate_range(end="2026-07-09", periods=days, tz=ET)
@@ -104,7 +109,8 @@ def test_gather_candidates_rejects_junk_and_caps(tmp_path):
 # ── evaluate: scoring and filters ───────────────────────────────────────────
 def test_strong_candidate_scores_high():
     row = mf.evaluate("HOLO", daily_df(), minute_df(),
-                      quote=(10.60, 10.62), now_et=NOW, knobs=KNOBS)
+                      quote=(10.60, 10.62), now_et=NOW, knobs=KNOBS,
+                      avg_vol=AVG_VOL)
     assert row["rejects"] == []
     assert 2.5 < row["rvol"] < 3.5          # 460k vs 1M-avg day at 9:50 pace
     assert 4.0 < row["chg_pct"] < 9.0       # opened ~+5% and drifting up
@@ -114,7 +120,8 @@ def test_strong_candidate_scores_high():
 
 def test_low_rvol_rejected_after_open():
     row = mf.evaluate("DEAD", daily_df(), minute_df(vol_per_bar=5_000),
-                      quote=None, now_et=NOW, knobs=KNOBS)
+                      quote=None, now_et=NOW, knobs=KNOBS,
+                      avg_vol=AVG_VOL)
     assert "low rvol" in row["rejects"]
     assert row["score"] == 0.0
 
@@ -138,7 +145,8 @@ def test_premarket_no_pace_rejects():
     row = mf.evaluate("GAP", daily_df(),
                       minute_df(start="2026-07-10 08:30", bars=25,
                                 vol_per_bar=2_000),
-                      quote=None, now_et=pre_now, knobs=KNOBS)
+                      quote=None, now_et=pre_now, knobs=KNOBS,
+                      avg_vol=AVG_VOL)
     assert "low rvol" not in row["rejects"]
     assert "illiquid" not in row["rejects"]
     # premarket gap read from last trade vs prior close
@@ -180,12 +188,15 @@ def test_missing_data_rejected():
 
 def test_rank_orders_by_score_rejects_last():
     strong = mf.evaluate("STRG", daily_df(), minute_df(),
-                         quote=None, now_et=NOW, knobs=KNOBS)
+                         quote=None, now_et=NOW, knobs=KNOBS,
+                         avg_vol=AVG_VOL)
     mild = mf.evaluate("MILD", daily_df(),
                        minute_df(base=10.05, drift=0.002, vol_per_bar=12_000),
-                       quote=None, now_et=NOW, knobs=KNOBS)
+                       quote=None, now_et=NOW, knobs=KNOBS,
+                       avg_vol=AVG_VOL)
     dead = mf.evaluate("DEAD", daily_df(), minute_df(vol_per_bar=4_000),
-                       quote=None, now_et=NOW, knobs=KNOBS)
+                       quote=None, now_et=NOW, knobs=KNOBS,
+                       avg_vol=AVG_VOL)
     ranked = mf.rank([dead, mild, strong])
     assert [r["sym"] for r in ranked] == ["STRG", "MILD", "DEAD"]
 
@@ -193,9 +204,10 @@ def test_rank_orders_by_score_rejects_last():
 def test_build_view_renders():
     """Smoke test: the rich view builds for both good and rejected rows."""
     rows = mf.rank([
-        mf.evaluate("STRG", daily_df(), minute_df(), (10.60, 10.62), NOW, KNOBS),
+        mf.evaluate("STRG", daily_df(), minute_df(), (10.60, 10.62), NOW,
+                    KNOBS, avg_vol=AVG_VOL),
         mf.evaluate("DEAD", daily_df(), minute_df(vol_per_bar=4_000),
-                    None, NOW, KNOBS),
+                    None, NOW, KNOBS, avg_vol=AVG_VOL),
     ])
     import io
     from rich.console import Console

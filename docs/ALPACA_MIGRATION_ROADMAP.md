@@ -121,7 +121,7 @@ This is the "what does Alpaca give us that Webull didn't" ask. Some of these are
 
 ---
 
-## 8. Suggested execution order for Grok
+## 8. Suggested execution order for Claude
 
 1. Phase 1 (provider parity) — lowest risk, reuses proven code, immediately testable against paper.
 2. Phase 2 landmine relocation (§2) — mechanical, do it before any deletion.

@@ -63,6 +63,41 @@ def expected_fraction(mins_since_open: float) -> float:
     return 1.0
 
 
+def rvol_pair(vol_so_far, avg_vol, mins_since_open: float,
+              time_adjusted: bool = True) -> tuple:
+    """(rvol, rvol_raw) from today's volume so far — or (None, None).
+
+    `vol_so_far` MUST be today's cumulative volume including pre-market, i.e.
+    summed from minute bars fetched with extended_hours=True. Do not pass a
+    daily-bar volume: before the regular session opens, the latest daily bar
+    is *yesterday's completed total*, and dividing that by a fraction of a day
+    reports a wildly high pace for a perfectly ordinary stock.
+
+    `rvol_raw` is the naive full-day ratio (what the old code reported, minus
+    the broken numerator). `rvol` divides the average by the share of a normal
+    day's volume that should be done by now, so 3.0 means "3x the usual pace
+    for this time of day" at any hour, pre-market included.
+
+    Returns (None, None) rather than a placeholder whenever the inputs cannot
+    support a real answer — no volume yet, or no average to compare against.
+    """
+    try:
+        vol = float(vol_so_far)
+        avg = float(avg_vol)
+    except (TypeError, ValueError):
+        return None, None
+    if not (vol > 0) or not (avg > 0):
+        return None, None
+
+    raw = vol / avg
+    if not time_adjusted:
+        return raw, raw
+    frac = expected_fraction(mins_since_open)
+    if not (frac > 0):
+        return raw, raw
+    return vol / (avg * frac), raw
+
+
 # ── candidate gathering ─────────────────────────────────────────────────────
 def _clean(t) -> str:
     t = str(t or "").strip().upper()
@@ -131,10 +166,71 @@ def _et_index(df: pd.DataFrame) -> pd.DatetimeIndex:
     return idx.tz_convert(ET) if getattr(idx, "tz", None) is not None else idx
 
 
+# Completed sessions needed before an average means anything. A fresh listing
+# or a name halted all week gives a denominator that is noise.
+MIN_AVG_SESSIONS = 5
+
+
+def sum_by_session(minutes: pd.DataFrame | None) -> dict:
+    """{et_date: total volume} from a minute-bar frame. Pure."""
+    if minutes is None or minutes.empty or "volume" not in minutes:
+        return {}
+    out: dict = {}
+    for d, v in zip(_et_index(minutes).date, minutes["volume"].to_numpy()):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f > 0:
+            out[d] = out.get(d, 0.0) + f
+    return out
+
+
+def avg_session_volume(minutes: pd.DataFrame | None, today,
+                       avg_days: int = 10,
+                       min_sessions: int = MIN_AVG_SESSIONS) -> float | None:
+    """Mean total minute-bar volume over completed sessions, or None.
+
+    THE denominator for any rvol whose numerator is a minute-bar sum. A daily
+    bar is NOT interchangeable with a day of summed minute bars, and the gap
+    is not small. Measured on IEX over 7 sessions (2026-07-24):
+
+        >1M shares/day  minute-sum / daily-bar = 1.000
+        ~150-650K                               0.955-0.996
+        ~70K                                    0.926
+        ~20K                                    0.812
+        ~13K                                    0.698   (worst session 0.475)
+        ~2K                                     0.670
+
+    The daily bar carries odd-lot and off-exchange prints that appear in no
+    minute bar. So dividing a minute-sum numerator by a daily-bar average
+    understates rvol by up to ~30% — worst on exactly the thin, low-float names
+    this desk exists to find, and directly under `funnel_min_rvol`, where a
+    true 2.0 reads 1.4 and the candidate is dropped.
+
+    Today is excluded however partial it is: averaging a half-finished session
+    in drags the denominator down all morning and inflates the rvol taken
+    from it.
+    """
+    sessions = {d: v for d, v in sum_by_session(minutes).items() if d < today}
+    if len(sessions) < max(1, int(min_sessions)):
+        return None
+    tail = [v for _, v in sorted(sessions.items())[-max(1, int(avg_days)):]]
+    avg = sum(tail) / len(tail)
+    return avg if avg > 0 else None
+
+
 def evaluate(sym: str, daily: pd.DataFrame | None, minutes: pd.DataFrame | None,
-             quote: tuple | None, now_et: datetime, knobs: dict) -> dict:
+             quote: tuple | None, now_et: datetime, knobs: dict,
+             avg_vol: float | None = None) -> dict:
     """Score one candidate. Returns a row dict; row["rejects"] non-empty
-    means it failed a hard tradeability filter and gets score 0."""
+    means it failed a hard tradeability filter and gets score 0.
+
+    `avg_vol` must be the MINUTE-BASED average session volume — see
+    `avg_session_volume` for why a daily-bar average cannot stand in for it.
+    Without it no rvol is reported, rather than a figure biased low by as much
+    as a third. `daily` is still used for prev_close, which is unaffected.
+    """
     row = {"sym": sym, "price": None, "chg_pct": None, "gap_pct": None,
            "rvol": None, "spread_pct": None, "dollar_min": None,
            "wr": None, "state": "…", "rejects": [], "score": 0.0}
@@ -151,7 +247,6 @@ def evaluate(sym: str, daily: pd.DataFrame | None, minutes: pd.DataFrame | None,
         row["rejects"].append("no data")
         return row
     prev_close = float(completed["close"].iloc[-1])
-    avg_vol = float(completed["volume"].tail(knobs["avg_days"]).mean())
 
     if minutes is None or minutes.empty:
         row["rejects"].append("no data")
@@ -173,8 +268,8 @@ def evaluate(sym: str, daily: pd.DataFrame | None, minutes: pd.DataFrame | None,
     else:                                   # still premarket
         row["gap_pct"] = row["chg_pct"]
 
-    if avg_vol > 0:
-        row["rvol"] = float(m["volume"].sum()) / (avg_vol * expected_fraction(mins_open))
+    # One implementation of the ratio, shared with the dashboard and the desk.
+    row["rvol"], _ = rvol_pair(float(m["volume"].sum()), avg_vol, mins_open)
     # dollar volume per wall-clock minute over the last 15 min — bar-only
     # minutes (sparse premarket tape) must not inflate the pace
     recent = m[m_et >= now_et - timedelta(minutes=15)]
@@ -297,6 +392,61 @@ def fetch_minutes_today(client, tickers: list, cfg: dict, now_et: datetime) -> d
         return {}
 
 
+def fetch_minutes_history(client, tickers: list, cfg: dict, now_et: datetime,
+                          days: int = 18) -> dict:
+    """1Min bars over the trailing `days` calendar days, batched.
+
+    Wide enough that MIN_AVG_SESSIONS..avg_days completed sessions fall inside
+    it across weekends and holidays. Same endpoint and feed as
+    `fetch_minutes_today`, which is the point — the rvol numerator and
+    denominator have to come off the same tape. Measured cost: 30 symbols over
+    18 days is ~113k bars in ~2.3s, and callers cache the result for the ET day.
+    """
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    start = (now_et - timedelta(days=max(1, int(days)))).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    try:
+        req = StockBarsRequest(
+            symbol_or_symbols=tickers,
+            timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+            start=start.astimezone(timezone.utc),
+            **_get_feed_arg(cfg))
+        return _split_batch(client.get_stock_bars(req).df, tickers)
+    except Exception:
+        return {}
+
+
+# Average session volume changes once every 24h. Cached for the ET day, with
+# negative entries: the watchlist is different names most days and turns over
+# intraday, so a symbol with too little history is routine and without the None
+# it would be re-requested every scan and never resolve.
+_AVG_VOL_CACHE: dict = {}
+_AVG_VOL_DATE: str = ""
+
+
+def avg_session_volumes(client, tickers: list, cfg: dict, now_et: datetime,
+                        days: int = 18) -> dict:
+    """{sym: minute-based average session volume or None}, day-cached."""
+    global _AVG_VOL_DATE
+    today = now_et.date()
+    stamp = today.isoformat()
+    if _AVG_VOL_DATE != stamp:
+        _AVG_VOL_CACHE.clear()
+        _AVG_VOL_DATE = stamp
+
+    wanted = [t for t in tickers if t not in _AVG_VOL_CACHE]
+    if not wanted or client is None:
+        return _AVG_VOL_CACHE
+
+    avg_days = int(knobs_from_cfg(cfg)["avg_days"])
+    hist = fetch_minutes_history(client, wanted, cfg, now_et, days=days)
+    for sym in wanted:
+        _AVG_VOL_CACHE[sym] = avg_session_volume(
+            hist.get(sym), today, avg_days)
+    return _AVG_VOL_CACHE
+
+
 def fetch_quotes(client, tickers: list, cfg: dict) -> dict:
     from alpaca.data.requests import StockLatestQuoteRequest
     try:
@@ -390,8 +540,11 @@ def scan_once(client, tickers: list, cfg: dict, knobs: dict, now_et=None) -> lis
     daily = fetch_daily(client, tickers, cfg)
     minutes = fetch_minutes_today(client, tickers, cfg, now_et)
     quotes = fetch_quotes(client, tickers, cfg)
+    # Day-cached, and off the same minute tape as the numerator above.
+    avg = avg_session_volumes(client, tickers, cfg, now_et)
     return rank([evaluate(t, daily.get(t), minutes.get(t), quotes.get(t),
-                          now_et, knobs) for t in tickers])
+                          now_et, knobs, avg_vol=avg.get(t))
+                 for t in tickers])
 
 
 def main() -> int:

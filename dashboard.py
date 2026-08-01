@@ -79,6 +79,7 @@ PORT               = 8888
 TICKER_LOG         = Path("transcription/wb_watchlist.json")
 NEWS_FILE          = Path("news.json")
 SWING_FILE         = Path("swing_candidates.json")
+RS_FILE            = Path("rs_ratings.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
 PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
@@ -199,6 +200,39 @@ def load_swing() -> list:
         return []
 
 
+# ── Relative strength ─────────────────────────────────────────────────────────
+# Written by rs_screener.py once a day after the close. Unlike the swing and
+# momentum surfaces this is a DAILY statistic computed off completed sessions —
+# it does not move intraday, and the header's as_of says which tape it is from.
+#
+# The whole payload is served, not just the rows: an RS rating is not
+# interpretable without the population it was ranked against, and the price
+# series is not comparable to anything without knowing its adjustment and feed.
+
+_rs_cache: dict = {"mtime": -1.0, "payload": {}}
+
+def load_rs() -> dict:
+    """Read rs_ratings.json, cache by mtime. Returns the full payload (header
+    plus `rows`), or {} when the screener has never run."""
+    try:
+        if not RS_FILE.exists():
+            return {}
+        mtime = RS_FILE.stat().st_mtime
+        if mtime == _rs_cache["mtime"]:
+            return _rs_cache["payload"]
+        import json as _json
+        payload = _json.loads(RS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            payload = {}
+        if not isinstance(payload.get("rows"), list):
+            payload["rows"] = []
+        _rs_cache.update(mtime=mtime, payload=payload)
+        return payload
+    except Exception as e:
+        log.warning(f"[RS] Failed to load rs_ratings.json: {e}")
+        return {}
+
+
 # ── Suggestions ──────────────────────────────────────────────────────────────
 
 def load_suggestions() -> list:
@@ -263,8 +297,15 @@ def _track_mention(ticker: str):
         ).start()
 
 
-_BURST_LOG      = Path(__file__).parent / "benchmarks" / "mention_bursts.jsonl"
-_PRICE_SPIKE_LOG = Path(__file__).parent / "benchmarks" / "price_spikes.jsonl"
+# Redirectable so the suite does not append synthetic bursts to the real
+# benchmark record. These files are analysis input — a run that injects rows
+# with null prices and identical timestamps quietly corrupts the dataset any
+# later threshold work would be calibrated against. Same reasoning as
+# TRADE_GUARD_STATE_FILE; see tests/conftest.py.
+_BENCH_DIR      = Path(os.getenv("BENCHMARK_DIR")
+                       or (Path(__file__).parent / "benchmarks"))
+_BURST_LOG      = _BENCH_DIR / "mention_bursts.jsonl"
+_PRICE_SPIKE_LOG = _BENCH_DIR / "price_spikes.jsonl"
 
 
 def _is_price_spike_alert(a: dict) -> bool:
@@ -943,18 +984,72 @@ def tv_status() -> dict:
 # ── Price polling ─────────────────────────────────────────────────────────────
 
 # Alpaca fallback runs in its own thread so it never blocks the price loop.
-_alpaca_price_cache: dict = {}          # last results from Alpaca fallback
+# ticker -> (price, observed_unix_ts). The timestamp is the TRADE's own time,
+# not when we fetched it, so downstream can tell a live print from a stale one.
+_alpaca_price_cache: dict = {}
 _alpaca_cache_lock = threading.Lock()
 _alpaca_fallback_running = False
+
+# A price older than this is not trusted as current: the Alpaca fallback is
+# polled for the symbol even if Finnhub has something, and the fresher of the
+# two wins the merge.
+_PRICE_STALE_SEC = 20.0
+
+
+def stream_covered(fh_prices: dict, now: float,
+                   stale_sec: float = _PRICE_STALE_SEC) -> set:
+    """Symbols whose streamed price is young enough to still be current.
+
+    Only these are excluded from the Alpaca fallback poll. Previously *any*
+    Finnhub price counted, so a symbol that printed once and went quiet kept
+    the 5s fallback switched off for the rest of the session — and pre-market,
+    where the stream is often idle, that was the normal case.
+    """
+    covered = set()
+    for t, d in (fh_prices or {}).items():
+        try:
+            if not d.get("price"):
+                continue
+            obs = float(d.get("ts_unix") or 0)
+        except (TypeError, ValueError):
+            continue
+        # No timestamp means unknown age, which is not the same as current.
+        if obs > 0 and (now - obs) <= stale_sec:
+            covered.add(t)
+    return covered
+
+
+def freshest_prices(*sources: dict) -> dict:
+    """Merge {ticker: (price, observed_ts)} maps, newest observation winning.
+
+    Preferring a source over an observation time is what let a 90s-old stream
+    tick beat a 5s-old Alpaca print. Ties keep the earlier source so repeated
+    merges of unchanged input cannot flap between polls.
+    """
+    merged: dict = {}
+    for src in sources:
+        for t, val in (src or {}).items():
+            try:
+                p, obs = float(val[0]), float(val[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            cur = merged.get(t)
+            if cur is None or obs > cur[1]:
+                merged[t] = (p, obs)
+    return merged
 
 
 def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
     """Fetch Alpaca latest-trade prices in a background thread and cache the result."""
     global _alpaca_fallback_running
     try:
-        prices = _api.get_latest_trade_prices(client, tickers, cfg)
+        quotes = _api.get_latest_trade_quotes(client, tickers, cfg)
+        now = time.time()
         with _alpaca_cache_lock:
-            _alpaca_price_cache.update(prices)
+            for t, (p, ts) in quotes.items():
+                # An absent or implausible trade time falls back to fetch time,
+                # which is at most one poll interval off.
+                _alpaca_price_cache[t] = (p, ts if ts and ts > 0 else now)
     finally:
         _alpaca_fallback_running = False
 
@@ -1035,14 +1130,20 @@ def _price_loop():
             now    = time.time()
 
             if tickers and client:
-                # Primary: Finnhub real-time stream prices (zero extra HTTP cost)
+                # Primary: Finnhub real-time stream prices (zero extra HTTP cost).
+                # Only prices young enough to still be current count as
+                # "covered" — a symbol that printed once and went quiet must not
+                # keep the Alpaca fallback switched off for the rest of the
+                # session. Pre-market the stream is often idle, which is exactly
+                # when this mattered most.
                 finnhub_prices: dict = {}
                 if FINNHUB_STATE.connected:
                     with FINNHUB_STATE.lock:
-                        for t in tickers:
-                            d = FINNHUB_STATE.prices.get(t)
-                            if d and d.get("price"):
-                                finnhub_prices[t] = float(d["price"])
+                        fh_snap = {t: FINNHUB_STATE.prices.get(t)
+                                   for t in tickers
+                                   if FINNHUB_STATE.prices.get(t)}
+                    for t in stream_covered(fh_snap, now):
+                        finnhub_prices[t] = float(fh_snap[t]["price"])
 
                 # Finnhub REST quote poll — supplements WebSocket during extended hours
                 # when no trades have streamed yet. 30s cadence, free-tier safe.
@@ -1070,20 +1171,33 @@ def _price_loop():
                         daemon=True, name="alpaca-fallback",
                     ).start()
 
-                # Merge: Finnhub REST/WebSocket wins over cached Alpaca values
+                # Merge on FRESHNESS, not on source. Preferring Finnhub
+                # unconditionally meant a stream tick from 90s ago beat an
+                # Alpaca print from 5s ago — and pre-market, where the stream
+                # idles, that was the normal case.
                 with _alpaca_cache_lock:
                     cached_alpaca = dict(_alpaca_price_cache)
                 with FINNHUB_STATE.lock:
-                    fh_all = {t: float(d["price"]) for t, d in FINNHUB_STATE.prices.items() if d.get("price")}
-                all_prices = {**cached_alpaca, **fh_all}
+                    fh_all = {t: (float(d["price"]),
+                                  float(d.get("ts_unix") or 0))
+                              for t, d in FINNHUB_STATE.prices.items()
+                              if d.get("price")}
+
+                merged = freshest_prices(cached_alpaca, fh_all)
 
                 with STATE.lock:
-                    for t, p in all_prices.items():
+                    for t, (p, obs) in merged.items():
                         if t not in tickers:
                             continue
                         entry = STATE.tickers.setdefault(t, {})
                         entry["price"]    = round(p, 4)
+                        # price_ts is a WRITE time and always reads fresh; it is
+                        # kept only because the web UI shows it. price_age_sec is
+                        # the real answer to "how old is this number" — seconds
+                        # since the print itself.
                         entry["price_ts"] = ts
+                        entry["price_age_sec"] = (round(max(0.0, now - obs), 1)
+                                                  if obs > 0 else None)
 
             _fail_streak = 0
         except Exception as e:
@@ -1097,41 +1211,128 @@ def _price_loop():
 
 # ── Day-volume polling ────────────────────────────────────────────────────────
 
-def _vol_loop():
-    """Fetch day volume + relative volume for watchlist tickers via yfinance.
-    Runs every 60 seconds in a background thread and writes into STATE.tickers
-    so the values flow through to the /api/state response automatically.
+_VOL_AVG_CACHE: dict = {}          # sym -> avg daily volume, or None
+_VOL_AVG_DATE: str = ""            # ET date the averages were computed for
+
+
+def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, now_et) -> dict:
+    """Average session volume per symbol, from completed sessions only.
+
+    Summed from MINUTE bars, not daily bars, because the numerator this divides
+    into is a minute-bar sum. An IEX daily bar carries odd-lot and off-exchange
+    prints that appear in no minute bar — measured at ~30% of the bar for a
+    13K-share/day name and ~0% for AAPL — so a daily-bar average understated
+    rvol by that much on exactly the thin names the watchlist is full of. See
+    `morning_funnel.avg_session_volume`.
+
+    Cached for the ET day; changes once every 24h. Symbols with no usable
+    history cache a None. The watchlist is almost entirely different names each
+    day and turns over intraday, so a fresh listing with fewer than five
+    completed sessions is routine here, not an edge case — without the negative
+    entry it would be re-requested every 60s and never resolve.
     """
-    _BATCH = 50
+    global _VOL_AVG_DATE
+    # Cache key and session cutoff both come off `now_et`, so they cannot drift
+    # apart and average a session the cache thinks is still open.
+    today_et = now_et.date()
+    stamp = today_et.isoformat()
+    if _VOL_AVG_DATE != stamp:
+        _VOL_AVG_CACHE.clear()
+        _VOL_AVG_DATE = stamp
+
+    wanted = [t for t in tickers if t not in _VOL_AVG_CACHE]
+    if not wanted:
+        return _VOL_AVG_CACHE
+
+    # Same knob the funnel uses, so funnel.rvol and row.rvol agree — T2.2
+    # prefers the funnel value and falls back to this one.
+    avg_days = int(mf.knobs_from_cfg(cfg)["avg_days"])
+    hist = mf.fetch_minutes_history(client, wanted, cfg, now_et)
+    for sym in wanted:
+        try:
+            _VOL_AVG_CACHE[sym] = mf.avg_session_volume(
+                hist.get(sym), today_et, avg_days)
+        except Exception:                                  # noqa: BLE001
+            _VOL_AVG_CACHE[sym] = None
+    return _VOL_AVG_CACHE
+
+
+def _vol_loop():
+    """Day volume + time-adjusted relative volume for watchlist tickers.
+
+    Source is Alpaca minute bars for today from 04:00 ET with
+    extended_hours=True, summed — i.e. true volume-so-far including
+    pre-market. This replaced yfinance `fast_info.last_volume`, which is the
+    last *daily* bar: before the regular session opens that is yesterday's
+    completed total, so both `day_vol` and `rvol` described the wrong day
+    during the pre-market tranches. See tools.morning_funnel.rvol_pair.
+
+    Publishes nothing at all for a symbol with no volume today (weekends,
+    holidays, halted or untraded names). A blank volume cell is correct;
+    a stale one from a previous session is not.
+
+    Runs every 60s in a background thread and writes into STATE.tickers so
+    the values flow through to /api/state automatically.
+    """
+    try:
+        import tools.morning_funnel as mf   # lazy: pulls pandas into this thread
+    except Exception as e:                                  # noqa: BLE001
+        log.warning(f"[VOL] disabled — import failed: {e}")
+        return
+
     while True:
         try:
             tickers = load_tickers()
-            if tickers:
-                import yfinance as yf
-                vol_data: dict = {}
-                for i in range(0, len(tickers), _BATCH):
-                    batch = tickers[i:i + _BATCH]
-                    try:
-                        tks = yf.Tickers(" ".join(batch))
-                        for sym in batch:
-                            try:
-                                fi = tks.tickers[sym].fast_info
-                                day_vol = int(getattr(fi, "last_volume", 0) or 0)
-                                avg_vol = int(getattr(fi, "three_month_average_volume", 0) or 0)
-                                if day_vol > 0:
-                                    vol_data[sym] = {
-                                        "day_vol": day_vol,
-                                        "rvol": round(day_vol / avg_vol, 2) if avg_vol > 0 else None,
-                                    }
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        log.debug("[VOL] batch %d-%d failed: %s", i, i + _BATCH, e)
-                with STATE.lock:
-                    for sym, vd in vol_data.items():
-                        STATE.tickers.setdefault(sym, {}).update(vd)
-                log.debug(f"[VOL] updated volume for {len(vol_data)}/{len(tickers)} tickers")
-        except Exception as e:
+            client = STATE.data_client
+            if not tickers or client is None:
+                time.sleep(5 if client is None else 60)
+                continue
+
+            cfg = STATE.cfg
+            time_adj = bool(cfg.get("rvol_time_adjusted", True))
+            now_et = datetime.now(ET)
+            today = str(now_et.date())
+            mins_open = (now_et.hour * 60 + now_et.minute) - mf.OPEN_MIN
+
+            avg_by_sym = _vol_avg_volumes(mf, client, tickers, cfg, now_et)
+            minutes = mf.fetch_minutes_today(client, tickers, cfg, now_et)
+
+            vol_data: dict = {}
+            stale: list = []
+            for sym in tickers:
+                df = minutes.get(sym)
+                if df is None or df.empty:
+                    stale.append(sym)
+                    continue
+                try:
+                    vol_so_far = float(df["volume"].sum())
+                    rvol, rvol_raw = mf.rvol_pair(
+                        vol_so_far, avg_by_sym.get(sym), mins_open, time_adj)
+                    if vol_so_far <= 0:
+                        stale.append(sym)
+                        continue
+                    vol_data[sym] = {
+                        "day_vol": int(vol_so_far),
+                        "rvol": round(rvol, 2) if rvol is not None else None,
+                        "rvol_raw": (round(rvol_raw, 2)
+                                     if rvol_raw is not None else None),
+                    }
+                except Exception:                          # noqa: BLE001
+                    stale.append(sym)
+
+            with STATE.lock:
+                for sym, vd in vol_data.items():
+                    STATE.tickers.setdefault(sym, {}).update(vd)
+                # Drop values we can no longer stand behind rather than
+                # leaving yesterday's numbers on screen.
+                for sym in stale:
+                    row = STATE.tickers.get(sym)
+                    if row:
+                        for k in ("day_vol", "rvol", "rvol_raw"):
+                            row.pop(k, None)
+            log.debug("[VOL] %d/%d tickers  mins_open=%d  adj=%s",
+                      len(vol_data), len(tickers), mins_open, time_adj)
+        except Exception as e:                             # noqa: BLE001
             log.debug(f"[VOL] {e}")
         time.sleep(60)
 
@@ -1204,6 +1405,7 @@ def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
     swing    = load_swing()   # file read — confluence overlay applied under lock below
+    rs       = load_rs()      # file read — daily, served whole (header + rows)
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
     # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
     mention_rank = _build_mention_rank(set(tickers))
@@ -1275,6 +1477,22 @@ def _snapshot() -> dict:
                 row["confluence"] = {"sources": conf, "count": len(conf)}
             swing_rows.append(row)
 
+        # RS candidates get the same live-confluence overlay: a name that has
+        # been beating the market for months AND is being talked about right now
+        # is the pairing the screener exists to surface. The rating itself is
+        # left alone — it is a completed-session number and must not be restated
+        # by anything intraday.
+        rs_payload = dict(rs) if rs else {}
+        if rs_payload.get("rows"):
+            rs_rows = []
+            for c in rs_payload["rows"]:
+                row = dict(c)
+                conf = _confluence_sources(c.get("ticker"))
+                if len(conf) >= 2:
+                    row["confluence"] = {"sources": conf, "count": len(conf)}
+                rs_rows.append(row)
+            rs_payload["rows"] = rs_rows
+
         # Merge signal-engine proximity + build badge. Done here (not just in the
         # /api/state HTTP handler) so the WebSocket stream — which the frontend
         # actually consumes — carries signal_proximity and the version too.
@@ -1308,6 +1526,7 @@ def _snapshot() -> dict:
             "funnel":  _funnel_snapshot(f_rows, f_ts, now_ts, now_et, STATE.cfg),
             "market_sentiment": market_sent,
             "swing":   swing_rows,
+            "rs":      rs_payload,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
             # Trading-engine status — trader mode + risk guard written by
@@ -1739,6 +1958,103 @@ async def api_swing_check(request: Request):
         import swing_screener
         cfg = load_config()
         return [swing_screener.evaluate(s, cfg) for s in symbols]
+
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(None, _run)
+    return JSONResponse({"results": results})
+
+
+@app.get("/api/rs")
+async def api_rs():
+    """Relative-strength ratings from rs_ratings.json (written by rs_screener.py).
+
+    Returns the whole payload, header included, plus live run progress. The
+    header is not optional context: `population` is what makes a percentile
+    interpretable, and `as_of` / `adjustment` / `feed` say which tape produced
+    it. A bare list of rows would be a number without its units.
+    """
+    payload = dict(load_rs())
+    try:
+        import rs_screener
+        payload["progress"] = rs_screener.progress()
+    except Exception:                                      # noqa: BLE001
+        pass
+    return JSONResponse(payload)
+
+
+# One screen at a time, same guard as the swing refresh. An RS run is far
+# heavier — a cold cache is a few hundred Alpaca requests.
+_rs_refresh_lock = threading.Lock()
+
+@app.post("/api/rs/refresh")
+async def api_rs_refresh():
+    """Trigger an on-demand RS screen. Runs in a worker thread; poll /api/rs for
+    progress, since a cold-cache run takes minutes rather than seconds."""
+    if not _rs_refresh_lock.acquire(blocking=False):
+        return JSONResponse({"ok": False, "status": "already-running"}, status_code=409)
+
+    def _run():
+        try:
+            import rs_screener
+            rs_screener.run_screen(load_config())
+            _rs_cache["mtime"] = -1.0             # force reload on next serve
+        except Exception as e:
+            # RunRefused lands here too: a refused run is a successful outcome
+            # for the previous file, which stays exactly as it was.
+            log.warning(f"[RS] refresh failed: {e}")
+        finally:
+            _rs_refresh_lock.release()
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run)
+    return JSONResponse({"ok": True, "status": "started"})
+
+
+@app.post("/api/rs/check")
+async def api_rs_check(request: Request):
+    """What did these symbols rate, including ones the filters dropped?
+
+    Reads the ratings table rs_screener writes for the WHOLE ranked population,
+    not just the served rows. That is what makes the percentile auditable: if a
+    name is missing from the list you can still see the rating it earned and the
+    population it earned it against.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    seen: dict[str, None] = {}
+    for tok in re.split(r"[,\s]+", str(body.get("symbols", "")).upper()):
+        if tok:
+            seen.setdefault(tok, None)
+    symbols = list(seen)[:25]
+    if not symbols:
+        return JSONResponse({"results": []})
+
+    def _run():
+        import rs_cache
+        import rs_screener
+        cfg = load_config()
+        served = {r["ticker"]: r for r in load_rs().get("rows", [])}
+        try:
+            cache = rs_cache.BarCache(rs_screener._cache_path(cfg),
+                                      adjustment=str(cfg.get("rs_bar_adjustment", "split")))
+        except Exception as e:                             # noqa: BLE001
+            return [{"ticker": s, "error": str(e)} for s in symbols]
+        try:
+            out = []
+            for symbol in symbols:
+                history = cache.rating_history(symbol, limit=10)
+                out.append({
+                    "ticker": symbol,
+                    "served": symbol in served,
+                    "row": served.get(symbol),
+                    "history": history,
+                    "rated": bool(history),
+                })
+            return out
+        finally:
+            cache.close()
 
     loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, _run)
