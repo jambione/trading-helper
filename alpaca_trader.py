@@ -450,6 +450,92 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
         return {"ok": False, "order_id": None, "status": "error"}
 
 
+def cancel_open_orders(ticker: str | None = None) -> dict:
+    """Cancel open orders for one symbol, or all symbols when ticker is None.
+
+    Returns {"ok": bool, "canceled": int, "kept": int, "errors": list}.
+    """
+    if not is_active():
+        return {"ok": False, "canceled": 0, "kept": 0, "errors": ["trader off"]}
+    canceled = 0
+    errors: list[str] = []
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        filt = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)
+        if ticker:
+            filt = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN, symbols=[ticker.upper()], limit=50)
+        open_orders = list(_client.get_orders(filter=filt) or [])
+    except Exception as e:
+        log.warning("[TRADER] list open orders failed: %s", e)
+        return {"ok": False, "canceled": 0, "kept": 0, "errors": [str(e)]}
+
+    for o in open_orders:
+        try:
+            _client.cancel_order_by_id(o.id)
+            canceled += 1
+        except Exception as e:
+            errors.append(f"{getattr(o, 'id', '?')}: {e}")
+            log.warning("[TRADER] cancel %s failed: %s", getattr(o, "id", "?"), e)
+    if canceled:
+        print(f"  [TRADER] canceled {canceled} open order(s)"
+              + (f" for {ticker.upper()}" if ticker else ""))
+    return {"ok": True, "canceled": canceled, "kept": 0, "errors": errors}
+
+
+def dedupe_open_orders(keep: str = "newest") -> dict:
+    """Leave at most one open order per (symbol, side); cancel the rest.
+
+    keep: "newest" (default) keeps the most recently submitted order.
+    Returns {"ok", "canceled", "kept", "by_symbol"}.
+    """
+    if not is_active():
+        return {"ok": False, "canceled": 0, "kept": 0, "by_symbol": {}}
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        open_orders = list(_client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)) or [])
+    except Exception as e:
+        return {"ok": False, "canceled": 0, "kept": 0, "by_symbol": {},
+                "errors": [str(e)]}
+
+    # Group by (symbol, side)
+    groups: dict[tuple, list] = {}
+    for o in open_orders:
+        sym = str(getattr(o, "symbol", "") or "").upper()
+        side = str(getattr(o, "side", "") or "").split(".")[-1].lower()
+        if not sym:
+            continue
+        groups.setdefault((sym, side), []).append(o)
+
+    canceled = 0
+    kept = 0
+    by_symbol: dict[str, int] = {}
+    for (sym, side), orders in groups.items():
+        def _ts(o):
+            t = getattr(o, "submitted_at", None) or getattr(o, "created_at", None)
+            try:
+                return t.timestamp() if t is not None else 0.0
+            except Exception:
+                return 0.0
+        orders.sort(key=_ts, reverse=(keep == "newest"))
+        # keep[0], cancel the rest
+        kept += 1
+        by_symbol[sym] = by_symbol.get(sym, 0) + 1
+        for o in orders[1:]:
+            try:
+                _client.cancel_order_by_id(o.id)
+                canceled += 1
+            except Exception as e:
+                log.warning("[TRADER] dedupe cancel %s failed: %s",
+                            getattr(o, "id", "?"), e)
+    if canceled:
+        print(f"  [TRADER] deduped open orders: canceled {canceled}, kept {kept}")
+    return {"ok": True, "canceled": canceled, "kept": kept, "by_symbol": by_symbol}
+
+
 def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0.0) -> dict:
     """
     Desk EXIT: cancel any OPEN orders for the symbol, then close 100% of the position.
@@ -469,20 +555,7 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
     ticker = ticker.upper()
 
     # 1) Cancel resting orders for this symbol (esp. an unfilled buy limit).
-    canceled = 0
-    try:
-        from alpaca.trading.requests import GetOrdersRequest
-        from alpaca.trading.enums import QueryOrderStatus
-        open_orders = _client.get_orders(
-            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[ticker]))
-        for o in open_orders or []:
-            try:
-                _client.cancel_order_by_id(o.id)
-                canceled += 1
-            except Exception as e:
-                log.warning("[TRADER] cancel %s failed: %s", getattr(o, "id", "?"), e)
-    except Exception as e:
-        log.warning("[TRADER] list/cancel open orders for %s failed: %s", ticker, e)
+    canceled = int(cancel_open_orders(ticker).get("canceled") or 0)
 
     # 2) Do we actually hold anything?
     try:
@@ -604,6 +677,140 @@ def get_positions_detail() -> Optional[dict]:
     except Exception as e:
         log.warning("[TRADER] get_positions_detail failed: %s", e)
         return None
+
+
+def size_by_risk(equity: float, risk_pct: float, entry: float, stop: float) -> int:
+    """Whole shares such that a stop fill loses no more than risk_pct of equity.
+
+    ``entry`` and ``stop`` must bracket a real loss (entry > stop for a long);
+    anything else has no defined risk to size against, so this returns 0
+    rather than guessing a share count from a malformed price pair.
+    """
+    if equity <= 0 or entry <= 0 or stop <= 0 or stop >= entry:
+        return 0
+    risk_dollars = equity * (max(0.0, risk_pct) / 100.0)
+    per_share_risk = entry - stop
+    return max(0, int(risk_dollars // per_share_risk))
+
+
+def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
+                      target_price: Optional[float] = None) -> dict:
+    """RTH market BUY for an exact share count, with exact stop/target prices.
+
+    Unlike ``buy()``, this takes broker-ready prices computed by the caller
+    (e.g. from a risk-sized entry plan) rather than the module's global
+    percent-based bracket settings — the two paths don't interact.
+
+    With ``target_price``: a single OTOCO bracket order (TP + SL), same shape
+    as a scale-out tranche that closes itself at the first target.
+    Without it: a plain market buy plus a standalone stop-loss sell for the
+    same qty — the SL-only tranche that's meant to ride and later have its
+    stop replaced (moved to breakeven, or swapped for a trailing stop).
+
+    Returns {"ok", "buy_order_id", "stop_order_id", "status"}.
+    """
+    ticker = ticker.upper()
+    qty = float(qty)
+    if not is_active() or qty <= 0 or stop_price is None or stop_price <= 0:
+        return {"ok": False, "buy_order_id": None, "stop_order_id": None,
+                "status": None}
+
+    try:
+        from alpaca.trading.requests import (
+            MarketOrderRequest, StopOrderRequest,
+            TakeProfitRequest, StopLossRequest,
+        )
+        from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+        sl = round(float(stop_price), 2)
+        sl_limit = round(sl * 0.999, 2)
+
+        if target_price is not None and float(target_price) > 0:
+            tp = round(float(target_price), 2)
+            order = _client.submit_order(
+                MarketOrderRequest(
+                    symbol=ticker, qty=qty,
+                    side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
+                    order_class=OrderClass.BRACKET,
+                    take_profit=TakeProfitRequest(limit_price=tp),
+                    stop_loss=StopLossRequest(stop_price=sl, limit_price=sl_limit),
+                )
+            )
+            print(f"  [TRADER] 📐 bracket(exact)  {ticker}  qty={qty}  "
+                  f"TP=${tp:.2f}  SL=${sl:.2f}")
+            _log_action("BUY", ticker, tp, 0.0, 0.0,
+                        order_id=str(order.id), order_status=str(order.status),
+                        note=f"bracket_exact tp={tp} sl={sl}")
+            return {"ok": True, "buy_order_id": str(order.id),
+                    "stop_order_id": None, "status": str(order.status)}
+
+        # No target — plain buy, then a standalone stop sell for the same qty.
+        buy_order = _client.submit_order(
+            MarketOrderRequest(
+                symbol=ticker, qty=qty,
+                side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
+            )
+        )
+        stop_order = _client.submit_order(
+            StopOrderRequest(
+                symbol=ticker, qty=qty,
+                side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                stop_price=sl,
+            )
+        )
+        print(f"  [TRADER] 📐 buy+stop(exact)  {ticker}  qty={qty}  SL=${sl:.2f}")
+        _log_action("BUY", ticker, sl, 0.0, 0.0,
+                    order_id=str(buy_order.id), order_status=str(buy_order.status),
+                    note=f"buy_plus_stop sl={sl} stop_order={stop_order.id}")
+        return {"ok": True, "buy_order_id": str(buy_order.id),
+                "stop_order_id": str(stop_order.id),
+                "status": str(buy_order.status)}
+    except Exception as e:
+        print(f"  [TRADER] ❌  bracket(exact) failed: {e}")
+        _log_action("BUY_ERROR", ticker, 0.0, 0.0, 0.0, error=str(e))
+        return {"ok": False, "buy_order_id": None, "stop_order_id": None,
+                "status": "error"}
+
+
+def replace_stop(ticker: str, old_stop_order_id: Optional[str],
+                 *, trail_percent: Optional[float] = None,
+                 stop_price: Optional[float] = None) -> dict:
+    """Cancel a resting protective order and replace it for the same symbol.
+
+    Used to move a tranche's stop to breakeven, or swap it for a trailing
+    stop, once its sibling tranche's target fills. Sizes to the full
+    remaining open position — correct at that point, since the sibling
+    tranche's shares are already gone from the merged Alpaca position.
+    """
+    if not is_active():
+        return {"ok": False, "order_id": None, "status": None}
+    ticker = ticker.upper()
+    if old_stop_order_id:
+        try:
+            _client.cancel_order_by_id(old_stop_order_id)
+        except Exception:
+            pass  # already filled/canceled — fine, we still replace below
+    if trail_percent is not None and float(trail_percent) > 0:
+        return place_trailing_stop(ticker, float(trail_percent))
+    if stop_price is not None and float(stop_price) > 0:
+        try:
+            from alpaca.trading.requests import StopOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+            pos = _client.get_open_position(ticker)
+            qty = float(pos.qty)
+            if qty <= 0:
+                return {"ok": False, "order_id": None, "status": "no_qty"}
+            order = _client.submit_order(
+                StopOrderRequest(
+                    symbol=ticker, qty=qty,
+                    side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                    stop_price=round(float(stop_price), 2),
+                )
+            )
+            return {"ok": True, "order_id": str(order.id), "status": str(order.status)}
+        except Exception as e:
+            return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
+    return {"ok": False, "order_id": None, "status": "no_replacement_given"}
 
 
 def place_trailing_stop(ticker: str, trail_percent: float,

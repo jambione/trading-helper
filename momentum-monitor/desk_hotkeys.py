@@ -4,7 +4,7 @@ Windows: msvcrt
 macOS / Linux: termios cbreak + select (non-blocking)
 
 Trading (Alpaca B/S) and T=grab-TV were removed from this desk — letter keys
-are reserved for Stocktwits trending load.
+are reserved for Stocktwits trending (A–J) and Claude suggestions (K–T).
 """
 from __future__ import annotations
 
@@ -25,11 +25,15 @@ class DeskHotkeys:
       SPACE focus + load top (newest) momentum row
       A-J   focus + load Stocktwits trending row (panel order)
             A = 1st ST row, B = 2nd, … J = 10th
+      K-T   focus + load Claude suggestion row (panel order)
+            K = 1st Claude row, … T = 10th
     """
 
     SPACE = " "
     # Full A–J for ST panel (B/S/T free — no longer buy/sell/TV-grab)
     ST_LETTERS = tuple("abcdefghij")
+    # K–T for Claude suggestions panel (no overlap with ST)
+    CLAUDE_LETTERS = tuple("klmnopqrst")
 
     def __init__(self):
         self.tv_ok = actions.tv_load_available()
@@ -38,6 +42,7 @@ class DeskHotkeys:
         self.focus: Optional[str] = None
         self._by_key: dict[str, str] = {}       # "1".."9" → momentum symbol
         self._st_by_key: dict[str, str] = {}    # "a".."j" → Stocktwits symbol
+        self._claude_by_key: dict[str, str] = {}  # "k".."t" → Claude symbol
         self._top: Optional[str] = None
         self._status = ""
         self._busy = False
@@ -60,8 +65,10 @@ class DeskHotkeys:
     def set_focus_callback(self, cb: Callable[[str], None]):
         self._on_focus = cb
 
-    def update(self, ordered: list[str], st_ordered: Optional[list[str]] = None):
-        """ordered = momentum 1-9; st_ordered = Stocktwits A-J map."""
+    def update(self, ordered: list[str],
+               st_ordered: Optional[list[str]] = None,
+               claude_ordered: Optional[list[str]] = None):
+        """ordered = momentum 1-9; st_ordered = A-J; claude_ordered = K-T."""
         with self._lock:
             self._by_key = {str(i + 1): s for i, s in enumerate(ordered[:9])}
             self._top = ordered[0] if ordered else None
@@ -70,11 +77,22 @@ class DeskHotkeys:
                 for letter, sym in zip(self.ST_LETTERS, st_ordered):
                     if sym:
                         self._st_by_key[letter] = str(sym).upper()
+            self._claude_by_key = {}
+            if claude_ordered:
+                for letter, sym in zip(self.CLAUDE_LETTERS, claude_ordered):
+                    if sym:
+                        self._claude_by_key[letter] = str(sym).upper()
 
     def st_letter_for_index(self, i: int) -> str:
         """Letter shown in the ST panel for row index 0..9, or ''."""
         if 0 <= i < len(self.ST_LETTERS):
             return self.ST_LETTERS[i].upper()
+        return ""
+
+    def claude_letter_for_index(self, i: int) -> str:
+        """Letter shown in the Claude panel for row index 0..9, or ''."""
+        if 0 <= i < len(self.CLAUDE_LETTERS):
+            return self.CLAUDE_LETTERS[i].upper()
         return ""
 
     def status(self) -> str:
@@ -164,6 +182,9 @@ class DeskHotkeys:
             elif low in self._st_by_key:
                 sym = self._st_by_key[low]
                 tag = "ST "
+            elif low in self._claude_by_key:
+                sym = self._claude_by_key[low]
+                tag = "Claude "
             else:
                 return
             if not sym:

@@ -68,3 +68,6 @@ active_symbol.json
 # Momentum desk session journal — runtime state, one JSONL per session date.
 # May contain a full record of trading activity; does not belong in git.
 momentum-monitor/journal/
+
+# Full Claude research write-ups (panel only shows the ticker trailer JSON).
+momentum-monitor/claude_reports/

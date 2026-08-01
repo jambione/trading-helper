@@ -1,6 +1,7 @@
-"""Momentum desk monitor — Discord momentum + Stocktwits + TradingView load.
+"""Momentum desk monitor — Discord momentum + Stocktwits + Claude + TradingView load.
 
-Polls the dashboard /api/state feed and Stocktwits trending.
+Polls the dashboard /api/state feed, Stocktwits trending, and optional Claude
+suggestions.
 Setup column: green FOCUS when CM RSI-2 and deep %R both fire (signal_proximity).
 
 No Alpaca buy/sell in this desk (B/S/T are Stocktwits letter keys).
@@ -39,6 +40,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
@@ -87,6 +89,7 @@ import spark
 from desk_hotkeys import DeskHotkeys
 from journal import Journal
 from stocktwits_trending import StocktwitsTrending
+from claude_suggest import ClaudeSuggestions
 from symbol_history import SymbolHistory
 
 WatchlistReader = top_movers = None  # OCR movers retired
@@ -266,6 +269,59 @@ DEFAULTS = {
     # Absolute volume floor for LOOK, on top of the panel-median test. None
     # keeps the median alone. Skipped for rows whose RVOL is unknown.
     "stocktwits_look_min_rvol": 1.5,
+    # Claude (xAI) suggestions panel — keys K-T. Same quote columns as ST.
+    # Off by default until XAI_API_KEY + claude_prompt.txt are set.
+    # Research prompt is 6–18m multi-month ideas → slow poll, no $30 filter.
+    "claude_enabled": False,
+    # claude_cli | cli (Claude Build) | api (xAI HTTP paid)
+    "claude_backend": "claude_cli",
+    "claude_cli_bin": "claude",     # claude binary when backend=claude_cli; grok when cli
+    "claude_poll": 14400.0,         # 4h default: swing ideas don't need hourly
+    "claude_quote_poll": 15.0,
+    "claude_volume_poll": 60.0,
+    "claude_model": "sonnet",       # Claude alias; use grok-4.5 when backend=cli|api
+    "claude_effort": "xhigh",       # research effort: low|medium|high|xhigh|max
+    # Fixed ET run times beat interval polling: most of a run's cost is search
+    # fees, and off-hours searches re-derive the same macro on a closed tape.
+    "claude_research_times": ["04:00", "11:00", "13:00"],
+    "claude_research_weekdays_only": True,
+    "claude_research_catchup_min": 120,
+    "claude_prompt_file": "claude_prompt.txt",
+    "claude_request_timeout": 600.0,
+    "claude_panel_limit": 7,
+    "claude_max_price": 100.0,  # panel + prompt: only show / prefer names under this
+    "claude_live_search": True,
+    # Token efficiency (full process, bounded execution):
+    "claude_search_tools": "web",   # web | web_x | none (api backend)
+    "claude_max_turns": 8,          # cap agent/search loops
+    "claude_max_output_tokens": 10000,  # api backend
+    "claude_use_prior_context": True,
+    "claude_save_reports": True,
+    "claude_trading_enabled": False,
+    "claude_trade_amount": 1000.0,  # $ per Claude paper buy
+    "claude_max_positions": 5,
+    "claude_max_buys_per_poll": 3,
+    "claude_max_sells_per_poll": 5,
+    # Risk-sized entries (claude_positions.py): stop/scale-out/trailing/time
+    # rules are enforced mechanically by real broker orders once a position
+    # opens — only the entry decision and the thesis-break check use Claude.
+    "claude_risk_pct": 1.0,          # max % of account risked per trade
+    "claude_trade_style": "Moderate position",
+    "claude_min_reward_risk": 3.0,   # reject entries below this R:R
+    # Show Alpaca paper/live holdings + resting orders under the CLAUDE panel.
+    "positions_panel_enabled": True,
+    "positions_poll": 5.0,        # seconds between position/order refreshes
+    "claude_rvol_column": True,
+    "claude_avg_days": 10,
+    "claude_rvol_time_adjusted": True,
+    "claude_range_width": 11,
+    "claude_look_min_abs_chg": 3.0,
+    "claude_look_max": 2,
+    "claude_look_near_high": 0.70,
+    "claude_look_near_low": 0.30,
+    "claude_look_min_rvol": 1.5,
+    "alert_claude_new": True,
+    "alert_claude_look": True,
 }
 
 
@@ -935,9 +991,11 @@ def _rsi_focus_cell(row: dict,
 ALERT_SOUNDS = {
     "new":      "Tink",        # a symbol appeared — very frequent, soft click
     "st_new":   "Pop",         # new on the Stocktwits panel — also frequent
+    "claude_new": "Pop",         # new on the Claude panel
     "mflow":    "Bottle",      # mention flow building — hollow, mellow
     "burst":    "Submarine",   # mention burst — deep, calm, carries
     "st_look":  "Glass",       # LOOK badge — bright chime
+    "claude_look": "Glass",      # LOOK badge on a Claude row
     "focus":    "Hero",        # the FOCUS setup fired — rare, worth looking up
     "buy":      "Hero",
 }
@@ -1144,6 +1202,8 @@ class Alerter:
         msg = {"new": f"NEW {sym}", "burst": f"BURST {sym}",
                "buy": f"BUY {sym}", "st_new": f"NEW-ST {sym}",
                "st_look": f"LOOK {sym}",
+               "claude_new": f"NEW-CLAUDE {sym}",
+               "claude_look": f"LOOK-CLAUDE {sym}",
                "mflow": f"FLOW {sym}"}.get(kind, f"{kind} {sym}")
         if detail:
             msg += f"  {detail}"
@@ -1909,6 +1969,126 @@ def stocktwits_panel(st: StocktwitsTrending,
                  border_style="magenta", padding=(0, 1))
 
 
+def claude_panel(gs: ClaudeSuggestions,
+               price_by_sym: dict[str, float | None],
+               limit: int = 10,
+               hotkeys_on: bool = True,
+               cfg: dict | None = None,
+               now: float | None = None) -> Panel:
+    """Claude suggestions — same market columns as TRENDING + Why + LOOK."""
+    from stocktwits_trending import fmt_vol, range_cell
+
+    now = time.time() if now is None else now
+    rows = gs.display_rows(price_by_sym,
+                           limit=min(limit, len(DeskHotkeys.CLAUDE_LETTERS)),
+                           now=now)
+    cfg = cfg or {}
+    stale_sec = float(cfg.get("price_stale_sec", 20.0))
+    age_on = bool(cfg.get("price_age_enabled", True))
+    rvol_on = bool(cfg.get("claude_rvol_column", True))
+    range_w = int(cfg.get("claude_range_width", 11))
+    t = Table(expand=False)
+    t.add_column("Key", justify="right", style="bold")
+    t.add_column("G#", justify="right", style="bold yellow")
+    t.add_column("Symbol")
+    t.add_column("Last", justify="right")
+    t.add_column("%Chg", justify="right")
+    t.add_column("Vol·IEX", justify="right")
+    if rvol_on:
+        t.add_column("RVOL", justify="right")
+    t.add_column("52w lo→hi", justify="left")
+    t.add_column("Score", justify="right")
+    t.add_column("Why", justify="left")
+    t.add_column("")  # LOOK badge
+    n_look = 0
+    if not rows:
+        # No data rows — leave the table blank and put status in the title
+        # only. Putting a long error into a Symbol cell reflows every column.
+        pass
+    else:
+        for i, r in enumerate(rows):
+            letter = (DeskHotkeys.CLAUDE_LETTERS[i].upper()
+                      if hotkeys_on and i < len(DeskHotkeys.CLAUDE_LETTERS) else "")
+            px = r.get("price")
+            if px is None:
+                px_s = "[dim]—[/dim]"
+            else:
+                px_s = f"${px:.2f}"
+                age = r.get("price_age_sec")
+                if age_on and isinstance(age, (int, float)) and age >= stale_sec:
+                    px_s = f"[dim]${px:.2f}·{_age_short(age)}[/dim]"
+            chg_s = _st_chg_cell(r)
+            hi = r.get("high_52w")
+            lo = r.get("low_52w")
+            sc = r.get("trending_score")
+            vol = r.get("vol_session")
+            look_s = ""
+            if r.get("look"):
+                n_look += 1
+                reason = r.get("look_reason") or ""
+                look_s = f"[bold black on green] LOOK {reason} [/]"
+            sym_s = f"[bold cyan]{r['symbol']}[/bold cyan]"
+            if r.get("look"):
+                sym_s = f"[bold green]{r['symbol']}[/bold green]"
+            why = (r.get("reason") or "").strip()
+            why_s = f"[dim]{why[:36]}[/dim]" if why else ""
+            cells = [
+                letter,
+                str(r.get("rank") or "—"),
+                sym_s,
+                px_s,
+                chg_s,
+                fmt_vol(vol) if vol is not None else "[dim]—[/dim]",
+            ]
+            if rvol_on:
+                cells.append(_fmt_st_rvol(r.get("rvol"), cfg))
+            cells += [
+                range_cell(px, lo, hi, width=range_w) or "[dim]—[/dim]",
+                f"{sc:.1f}" if sc is not None else "—",
+                why_s,
+                look_s,
+            ]
+            t.add_row(*cells)
+    stamp = ""
+    if gs.last_ok:
+        stamp = f"  ·  {datetime.fromtimestamp(gs.last_ok):%H:%M:%S}"
+    q = ""
+    q_err = getattr(gs, "quotes_error", "")
+    q_age = gs.quote_age(now) if hasattr(gs, "quote_age") else None
+    if q_err:
+        q = f"  ·  [bold yellow]{q_err}[/bold yellow]"
+    elif q_age is not None and q_age >= stale_sec:
+        q = f"  ·  [yellow]quotes {_age_short(q_age)} old[/yellow]"
+    cap = (f"  ·  max ${gs.max_price:g}" if gs.max_price is not None else "")
+    look_n = f"  ·  {n_look} LOOK" if n_look else ""
+    model = getattr(gs, "model", "") or ""
+    model_s = f"  ·  {model}" if model else ""
+    trade_mode = getattr(gs, "trading_mode", "off") or "off"
+    if getattr(gs, "trading", False):
+        if trade_mode == "paper":
+            trade_s = "  ·  [bold green]PAPER trade ON[/bold green]"
+        else:
+            trade_s = "  ·  [yellow]trade off (need Alpaca paper keys)[/yellow]"
+    else:
+        trade_s = ""
+    n_trades = len(getattr(gs, "last_trades", None) or [])
+    trade_n = f"  ·  {n_trades} orders" if n_trades else ""
+    # Status / errors go in the title — never into a table cell (that reflows
+    # the whole panel into the "broken columns" look).
+    status_s = ""
+    if not rows:
+        err = (gs.error or "waiting for first Claude poll…").replace("\n", " ")
+        if len(err) > 70:
+            err = err[:67] + "…"
+        status_s = f"  ·  [dim]{err}[/dim]"
+    title = (
+        f"CLAUDE  ·  K-T load TV{cap}{look_n}{trade_s}{trade_n}"
+        f"{model_s}{stamp}{q}{status_s}"
+    )
+    return Panel(t, title=title, title_align="left",
+                 border_style="yellow", padding=(0, 1))
+
+
 def header_panel(feed: Feed, now: float, hz: float,
                  stale: bool, circle: str | None = None,
                  readout: str | None = None) -> Panel:
@@ -1932,41 +2112,149 @@ def header_panel(feed: Feed, now: float, hz: float,
                  subtitle=readout, subtitle_align="right")
 
 
-def positions_panel(positions: dict, focus: str | None) -> Panel:
-    """Live P&L for every open Alpaca position. Focused symbol highlighted."""
+def _fetch_open_orders() -> list[dict]:
+    """Open Alpaca orders as simple dicts. Empty list when off / error."""
+    try:
+        import alpaca_trader
+        if not alpaca_trader.is_active():
+            return []
+        client = getattr(alpaca_trader, "_client", None)
+        if client is None:
+            return []
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            raw = client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=50))
+        except Exception:
+            raw = client.get_orders() or []
+            raw = [o for o in raw
+                   if str(getattr(o, "status", "")).lower()
+                   in ("new", "accepted", "pending_new", "partially_filled",
+                       "orderstatus.accepted", "orderstatus.new")]
+        out = []
+        seen: set[tuple] = set()
+        for o in raw or []:
+            try:
+                row = {
+                    "symbol": str(getattr(o, "symbol", "") or "").upper(),
+                    "side": str(getattr(o, "side", "") or "").split(".")[-1].lower(),
+                    "qty": float(getattr(o, "qty", 0) or 0),
+                    "filled": float(getattr(o, "filled_qty", 0) or 0),
+                    "type": str(getattr(o, "type", "") or "").split(".")[-1].lower(),
+                    "status": str(getattr(o, "status", "") or "").split(".")[-1].lower(),
+                    "limit": float(getattr(o, "limit_price", 0) or 0) or None,
+                }
+                key = (row["symbol"], row["side"], row["qty"], row["limit"],
+                       row["status"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(row)
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
+def positions_panel(positions: dict | None,
+                    focus: str | None = None,
+                    *,
+                    open_orders: list[dict] | None = None,
+                    mode: str = "paper",
+                    error: str = "") -> Panel:
+    """Live P&L for open Alpaca positions + resting open orders.
+
+    Claude paper buys often sit as ACCEPTED limits when the market is closed —
+    those are not positions yet, so we show them under OPEN ORDERS.
+    """
+    positions = positions or {}
+    open_orders = open_orders or []
     total_pl = sum(float(p.get("pl") or 0) for p in positions.values())
-    tcol = "green" if total_pl >= 0 else "red"
-    t = Table.grid(expand=False, padding=(0, 2))
-    t.add_column(justify="left")     # symbol
-    t.add_column(justify="right")    # qty
-    t.add_column(justify="right")    # entry
-    t.add_column(justify="right")    # last
-    t.add_column(justify="right")    # P&L $
-    t.add_column(justify="right")    # P&L %
-    t.add_column(justify="right")    # mkt value
-    for sym in sorted(positions):
-        p = positions[sym]
-        pl, plpc = float(p.get("pl") or 0), float(p.get("plpc") or 0)
-        c = "green" if pl >= 0 else "red"
-        marker = "▶ " if focus and sym == focus.upper() else "  "
-        name = f"[bold cyan]{marker}{sym}[/bold cyan]"
-        t.add_row(
-            name,
-            f"[white]{p.get('qty', 0):g} sh[/white]",
-            f"[dim]entry[/dim] ${p.get('avg_entry', 0):.2f}",
-            f"[dim]last[/dim] ${p.get('current', 0):.2f}",
-            f"[{c}]{'+' if pl >= 0 else ''}${pl:,.2f}[/{c}]",
-            f"[{c}]{'+' if plpc >= 0 else ''}{plpc:.2f}%[/{c}]",
-            f"[dim]${p.get('mkt_val', 0):,.0f}[/dim]",
+    tcol = ("green" if total_pl >= 0 else "red") if positions else "yellow"
+    mode_tag = "PAPER" if str(mode).lower() == "paper" else str(mode).upper()
+
+    body = Table(expand=False, box=None, padding=(0, 1))
+    body.add_column("Symbol", style="bold cyan")
+    body.add_column("Qty", justify="right")
+    body.add_column("Entry", justify="right")
+    body.add_column("Last", justify="right")
+    body.add_column("P&L $", justify="right")
+    body.add_column("P&L %", justify="right")
+    body.add_column("Mkt", justify="right")
+
+    if positions:
+        for sym in sorted(positions):
+            p = positions[sym]
+            pl = float(p.get("pl") or 0)
+            plpc = float(p.get("plpc") or 0)
+            c = "green" if pl >= 0 else "red"
+            marker = "▶ " if focus and sym == focus.upper() else ""
+            body.add_row(
+                f"{marker}{sym}",
+                f"{float(p.get('qty') or 0):g}",
+                f"${float(p.get('avg_entry') or 0):.2f}",
+                f"${float(p.get('current') or 0):.2f}",
+                f"[{c}]{'+' if pl >= 0 else ''}${pl:,.2f}[/{c}]",
+                f"[{c}]{'+' if plpc >= 0 else ''}{plpc:.2f}%[/{c}]",
+                f"${float(p.get('mkt_val') or 0):,.0f}",
+            )
+    else:
+        body.add_row("[dim]—[/dim]", "[dim]flat[/dim]",
+                     "", "", "", "", "")
+
+    # Resting orders (accepted limits waiting for fill)
+    orders_table = None
+    if open_orders:
+        orders_table = Table(expand=False, box=None, padding=(0, 1))
+        orders_table.add_column("Side", justify="right")
+        orders_table.add_column("Symbol", style="bold")
+        orders_table.add_column("Qty", justify="right")
+        orders_table.add_column("Type")
+        orders_table.add_column("Limit", justify="right")
+        orders_table.add_column("Status")
+        for o in open_orders:
+            side = (o.get("side") or "").upper()
+            sc = "green" if side == "BUY" else "red"
+            lim = o.get("limit")
+            lim_s = f"${lim:.2f}" if lim else "—"
+            orders_table.add_row(
+                f"[{sc}]{side or '—'}[/{sc}]",
+                str(o.get("symbol") or "—"),
+                f"{float(o.get('qty') or 0):g}",
+                str(o.get("type") or "—"),
+                lim_s,
+                str(o.get("status") or "—"),
+            )
+
+    if error:
+        content = Text.from_markup(f"[dim]{error}[/dim]")
+    elif orders_table is not None:
+        content = Group(
+            body,
+            Text(""),
+            Text.from_markup(
+                "[bold]OPEN ORDERS[/bold]  [dim](not filled yet)[/dim]"
+            ),
+            orders_table,
         )
-    title = (f"POSITIONS ({len(positions)})   "
-             f"total P&L [{tcol}]{'+' if total_pl >= 0 else ''}${total_pl:,.2f}[/{tcol}]")
-    return Panel(t, title=title, title_align="left",
-                 border_style=tcol, padding=(0, 1))
+    else:
+        content = body
+
+    n_pos = len(positions)
+    n_ord = len(open_orders)
+    pl_s = (f"  total P&L [{tcol}]{'+' if total_pl >= 0 else ''}"
+            f"${total_pl:,.2f}[/{tcol}]" if n_pos else "")
+    ord_s = f"  ·  {n_ord} resting" if n_ord else ""
+    title = f"{mode_tag} POSITIONS ({n_pos}){pl_s}{ord_s}"
+    return Panel(content, title=title, title_align="left",
+                 border_style=tcol if n_pos else "yellow", padding=(0, 1))
 
 
 def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
-                 hotkey_slots: int) -> Panel:
+                 hotkey_slots: int,
+                 *, st_on: bool = True, claude_on: bool = False) -> Panel:
     lines = []
     if alerter.recent:
         lines.append("[dim]" + "   ·   ".join(alerter.recent[:3]) + "[/dim]")
@@ -1977,8 +2265,12 @@ def footer_panel(alerter: Alerter, hotkeys: DeskHotkeys,
         f"[{desk.platform_label()}]"
     )
     if hotkeys.enabled:
-        hint = (f"[dim]1-{hotkey_slots}/space: momentum → TV   ·   "
-                f"A-J: Stocktwits → TV[/dim]")
+        parts = [f"1-{hotkey_slots}/space: momentum → TV"]
+        if st_on:
+            parts.append("A-J: Stocktwits → TV")
+        if claude_on:
+            parts.append("K-T: Claude → TV")
+        hint = "[dim]" + "   ·   ".join(parts) + "[/dim]"
         st = hotkeys.status()
         if st:
             hint += f"     [bold green]{st}[/bold green]"
@@ -2009,10 +2301,41 @@ def main():
     st_poll = float(cfg.get("stocktwits_poll", 60.0))
     st_max_px = cfg.get("stocktwits_max_price", 30.0)
     st_limit = min(10, int(cfg.get("stocktwits_panel_limit", 10)))
+    claude_on = bool(cfg.get("claude_enabled", False))
+    claude_poll = float(cfg.get("claude_poll", 3600.0))
+    claude_max_px = cfg.get("claude_max_price", None)
+    claude_limit = min(10, int(cfg.get("claude_panel_limit", 7)))
+    positions_on = bool(cfg.get("positions_panel_enabled", True))
+    positions_poll = max(2.0, float(cfg.get("positions_poll", 5.0)))
 
     console = Console()
     feed = Feed(cfg)
     alerter = Alerter(cfg)
+
+    # Paper/live account for the POSITIONS panel (and desk B/S if used).
+    # Claude trading init is separate (always paper); this mirrors env TRADER_MODE.
+    pos_mode = "off"
+    if positions_on or bool(cfg.get("claude_trading_enabled", False)):
+        try:
+            pos_mode = desk.init_trader(cfg) or "off"
+        except Exception:
+            pos_mode = "off"
+        # Prefer Claude's forced-paper session when trading is on so we read the
+        # same account Claude is buying into.
+        if bool(cfg.get("claude_trading_enabled", False)):
+            try:
+                import claude_trading as gt
+                gm = gt.init_for_claude(
+                    trade_amount=float(cfg.get("claude_trade_amount", 1000.0)),
+                    max_positions=int(cfg.get("claude_max_positions", 5)),
+                    max_buys_per_poll=int(cfg.get("claude_max_buys_per_poll", 3)),
+                    max_sells_per_poll=int(cfg.get("claude_max_sells_per_poll", 5)),
+                )
+                if gm == "paper":
+                    pos_mode = "paper"
+            except Exception:
+                pass
+        console.print(f"[dim]positions panel: alpaca mode={pos_mode}[/dim]")
     chart_symbol = ChartSymbol(cfg)
     chart_watcher = None
     if (cfg.get("buy_circle_enabled", True)
@@ -2052,10 +2375,20 @@ def main():
         if cfg.get(flag, True):
             alerter.fire(kind, sym, detail)
 
+    def _claude_alert(kind: str, sym: str, detail: str) -> None:
+        row = claude_row_for(sym)
+        journal.record(kind, sym, row, time.time(),
+                       st_rank=row.get("rank"),
+                       rvol=row.get("rvol"))
+        flag = "alert_claude_new" if kind == "claude_new" else "alert_claude_look"
+        if cfg.get(flag, True):
+            alerter.fire(kind, sym, detail)
+
     # Refreshed each loop so the ST on_change callback can attach live
     # context. ST rows carry `price` and `pct_change` under the same key names
     # the momentum rows use, so one lookup serves rank and record alike.
     _st_ctx: dict = {"by_symbol": {}}
+    _claude_ctx: dict = {"by_symbol": {}}
 
     def st_row_for(sym: str) -> dict:
         r = _st_ctx["by_symbol"].get((sym or "").upper())
@@ -2063,6 +2396,10 @@ def main():
 
     def st_rank_for(sym: str):
         return st_row_for(sym).get("rank")
+
+    def claude_row_for(sym: str) -> dict:
+        r = _claude_ctx["by_symbol"].get((sym or "").upper())
+        return r if isinstance(r, dict) else {}
 
     hotkeys = DeskHotkeys()
     st_min_rvol = cfg.get("stocktwits_look_min_rvol", 1.5)
@@ -2081,17 +2418,111 @@ def main():
         rvol_time_adjusted=bool(cfg.get("stocktwits_rvol_time_adjusted", True)),
     ) if st_on else None
 
+    claude_min_rvol = cfg.get("claude_look_min_rvol", 1.5)
+    gs = ClaudeSuggestions(
+        poll_interval=claude_poll,
+        quote_interval=float(cfg.get("claude_quote_poll", 15.0)),
+        volume_interval=float(cfg.get("claude_volume_poll", 60.0)),
+        max_price=float(claude_max_px) if claude_max_px is not None else None,
+        look_min_abs_chg=float(cfg.get("claude_look_min_abs_chg", 3.0)),
+        look_max=int(cfg.get("claude_look_max", 2)),
+        look_near_high=float(cfg.get("claude_look_near_high", 0.70)),
+        look_near_low=float(cfg.get("claude_look_near_low", 0.30)),
+        look_min_rvol=(float(claude_min_rvol) if claude_min_rvol is not None else None),
+        avg_days=int(cfg.get("claude_avg_days", 10)),
+        rvol_time_adjusted=bool(cfg.get("claude_rvol_time_adjusted", True)),
+        model=str(cfg.get("claude_model", "sonnet")),
+        prompt_file=str(cfg.get("claude_prompt_file", "claude_prompt.txt")),
+        request_timeout=float(cfg.get("claude_request_timeout", 600.0)),
+        panel_limit=claude_limit,
+        live_search=bool(cfg.get("claude_live_search", True)),
+        save_reports=bool(cfg.get("claude_save_reports", True)),
+        trading=bool(cfg.get("claude_trading_enabled", False)),
+        trade_amount=float(cfg.get("claude_trade_amount", 1000.0)),
+        max_positions=int(cfg.get("claude_max_positions", 5)),
+        max_buys_per_poll=int(cfg.get("claude_max_buys_per_poll", 3)),
+        max_sells_per_poll=int(cfg.get("claude_max_sells_per_poll", 5)),
+        max_turns=int(cfg.get("claude_max_turns", 8)),
+        max_output_tokens=int(cfg.get("claude_max_output_tokens", 10000)),
+        search_tools=str(cfg.get("claude_search_tools", "web")),
+        use_prior_context=bool(cfg.get("claude_use_prior_context", True)),
+        backend=str(cfg.get("claude_backend", "claude_cli")),
+        cli_bin=str(cfg.get("claude_cli_bin", "claude") or "claude"),
+        effort=str(cfg.get("claude_effort", "xhigh") or "xhigh"),
+        research_times=cfg.get("claude_research_times",
+                               ["04:00", "11:00", "13:00"]),
+        research_weekdays_only=bool(
+            cfg.get("claude_research_weekdays_only", True)),
+        research_catchup_min=int(cfg.get("claude_research_catchup_min", 120)),
+        risk_pct=float(cfg.get("claude_risk_pct", 1.0)),
+        trade_style=str(cfg.get("claude_trade_style", "Moderate position")),
+        min_reward_risk=float(cfg.get("claude_min_reward_risk", 3.0)),
+    ) if claude_on else None
+
     st_note = f"  ST={'on' if st_on else 'off'}"
+    claude_note = f"  Claude={'on' if claude_on else 'off'}"
+    if gs is not None and gs.trading:
+        claude_note += f"/trade={gs.trading_mode}"
     console.print(
         f"[bold]Momentum desk[/bold]  {desk.platform_label()}  "
-        f"TV={'on' if desk.tv_load_available() else 'off'}{st_note}  "
+        f"TV={'on' if desk.tv_load_available() else 'off'}{st_note}{claude_note}  "
         f"— Ctrl+C to stop.\n"
         f"Polling {_dashboard_url()}/api/state"
-        + (f"  ·  Stocktwits every {st_poll:.0f}s\n" if st_on else "\n")
-        + f"[dim]1-9/space momentum → TV   ·   A-J Stocktwits → TV[/dim]"
+        + (f"  ·  Stocktwits every {st_poll:.0f}s" if st_on else "")
+        + (f"  ·  Claude every {claude_poll:.0f}s" if claude_on else "")
+        + "\n"
+        + "[dim]1-9/space momentum → TV"
+        + ("   ·   A-J Stocktwits → TV" if st_on else "")
+        + ("   ·   K-T Claude → TV" if claude_on else "")
+        + "[/dim]"
     )
 
     stamps: list[float] = []
+    # Cached Alpaca holdings — refreshed on a slower clock than the 2s UI loop.
+    _pos_cache: dict = {
+        "positions": {},
+        "orders": [],
+        "error": "",
+        "last": 0.0,
+        "mode": pos_mode,
+    }
+
+    _claude_positions_last = [0.0]
+
+    def _manage_claude_positions(now: float) -> None:
+        # Mechanical checks only (order status, breakeven/trailing-stop
+        # replacement, time-stop) — no LLM call, so this can ride the same
+        # slow clock as the positions panel regardless of whether that
+        # panel is actually enabled.
+        if not bool(cfg.get("claude_trading_enabled", False)):
+            return
+        if (now - _claude_positions_last[0]) < positions_poll:
+            return
+        _claude_positions_last[0] = now
+        try:
+            import claude_positions as cp
+            cp.manage_open_positions(now)
+        except Exception:
+            pass
+
+    def _refresh_positions(now: float, force: bool = False) -> None:
+        _manage_claude_positions(now)
+        if not positions_on or _pos_cache["mode"] in ("", "off"):
+            return
+        if (not force and _pos_cache["last"]
+                and (now - _pos_cache["last"]) < positions_poll):
+            return
+        _pos_cache["last"] = now
+        try:
+            detail = desk.positions_detail()
+            _pos_cache["positions"] = detail if isinstance(detail, dict) else {}
+            _pos_cache["orders"] = _fetch_open_orders()
+            _pos_cache["error"] = ""
+        except Exception as e:  # noqa: BLE001
+            _pos_cache["error"] = str(e)[:80]
+            _pos_cache["positions"] = {}
+            _pos_cache["orders"] = []
+
     with Live(console=console, refresh_per_second=2, screen=False) as live:
         while True:
             t0 = time.time()
@@ -2114,6 +2545,8 @@ def main():
             stamps[:] = [x for x in stamps if t0 - x <= 5]
             hz = len(stamps) / 5.0
 
+            _refresh_positions(t0)
+
             if st is not None:
                 # refresh() re-quotes and re-volumes as part of a successful
                 # list poll; between polls each rides its own clock.
@@ -2123,7 +2556,13 @@ def main():
                 # Before display_rows() fires on_change -> _st_alert.
                 _st_ctx["by_symbol"] = st.by_symbol
 
-            # Prices from momentum feed (fallback for ST filter)
+            if gs is not None:
+                if not gs.refresh(t0):
+                    gs.refresh_quotes(t0)
+                    gs.refresh_volume(t0)
+                _claude_ctx["by_symbol"] = gs.by_symbol
+
+            # Prices from momentum feed (fallback for ST / Claude filter)
             price_map: dict[str, float | None] = {}
             for r in feed.rows:
                 s = str(r.get("ticker") or "").upper()
@@ -2143,9 +2582,19 @@ def main():
                               st.display_rows(price_map, limit=st_limit,
                                               on_change=_st_alert, now=t0)]
 
+            claude_ordered: list[str] = []
+            if gs is not None:
+                claude_ordered = [r["symbol"] for r in
+                                gs.display_rows(price_map, limit=claude_limit,
+                                                on_change=_claude_alert, now=t0)]
+
             ordered = [str(r.get("ticker") or "").upper()
                        for r in feed.rows[:hotkey_slots]]
-            hotkeys.update(ordered, st_ordered if st_on else None)
+            hotkeys.update(
+                ordered,
+                st_ordered if st_on else None,
+                claude_ordered if claude_on else None,
+            )
 
             circle = readout_strip = None
             if cfg.get("buy_circle_enabled", True):
@@ -2199,7 +2648,20 @@ def main():
                 panels.append(stocktwits_panel(
                     st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled,
                     cfg=cfg, now=t0))
-            panels.append(footer_panel(alerter, hotkeys, hotkey_slots))
+            if gs is not None:
+                panels.append(claude_panel(
+                    gs, price_map, limit=claude_limit, hotkeys_on=hotkeys.enabled,
+                    cfg=cfg, now=t0))
+            if positions_on and _pos_cache["mode"] not in ("", "off"):
+                panels.append(positions_panel(
+                    _pos_cache["positions"],
+                    hotkeys.focus_symbol(),
+                    open_orders=_pos_cache["orders"],
+                    mode=_pos_cache["mode"],
+                    error=_pos_cache["error"],
+                ))
+            panels.append(footer_panel(
+                alerter, hotkeys, hotkey_slots, st_on=st_on, claude_on=claude_on))
             live.update(Group(*panels))
             journal.maybe_flush(t0)
             time.sleep(max(0.0, interval - (time.time() - t0)))

@@ -55,7 +55,8 @@ def played(monkeypatch):
 def test_each_alert_kind_maps_to_its_own_sound():
     """A FOCUS firing and a symbol merely appearing must be distinguishable
     without looking at the screen."""
-    kinds = ("new", "st_new", "mflow", "burst", "st_look", "focus", "buy")
+    kinds = ("new", "st_new", "claude_new", "mflow", "burst",
+             "st_look", "claude_look", "focus", "buy")
     assert set(ms.ALERT_SOUNDS) == set(kinds)
     assert ms.sound_for("new") != ms.sound_for("focus")
 
@@ -65,6 +66,8 @@ def test_the_frequent_kinds_get_the_brief_soft_sounds():
     becomes something you resent at 04:00."""
     assert ms.sound_for("new") == "Tink"
     assert ms.sound_for("st_new") == "Pop"
+    assert ms.sound_for("claude_new") == "Pop"
+    assert ms.sound_for("claude_look") == "Glass"
     assert ms.sound_for("focus") == "Hero"
     assert ms.sound_for("buy") == "Hero"
 
