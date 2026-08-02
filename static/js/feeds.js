@@ -6,8 +6,8 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe } from './store.js?v=69';
-import { api }       from './api.js?v=69';
+import { subscribe } from './store.js?v=71';
+import { api }       from './api.js?v=71';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -20,7 +20,7 @@ export function init(panelEl, kind) {
     ? 'Waiting for AI research…'
     : 'Waiting for trending data…';
 
-  // Default sort matches server ranking: trending by score desc, Claude by
+  // Default sort matches server ranking: trending by score desc, AI by
   // server order (rank) until the user picks a column.
   let sortCol   = kind === 'trending' ? 'score' : 'rank';
   let sortDir   = kind === 'trending' ? -1 : 1;  // -1 = desc, 1 = asc
@@ -37,7 +37,7 @@ export function init(panelEl, kind) {
       } else {
         sortCol = col;
         // Strings asc; numeric metrics default high-first (desc)
-        sortDir = col === 'ticker' ? 1 : -1;
+        sortDir = (col === 'ticker' || col === 'src') ? 1 : -1;
       }
       _updateSortHeaders(headerEls, sortCol, sortDir);
       if (lastRows.length) _paint(rowsEl, lastRows, kind, sortCol, sortDir, empty);
@@ -53,26 +53,35 @@ export function init(panelEl, kind) {
 
     // The list poll and the quote poll fail independently — surface whichever
     // is broken, since a stale price is not obvious from the number alone.
-    const err = p.error || p.quotes_error || '';
+    // Schedule notices ("next research run…") are status, not hard failures:
+    // show them only when the list is empty; otherwise use next_run_label.
+    let err = p.error || p.quotes_error || '';
+    if (_isScheduleNotice(err) && rows.length) {
+      err = p.quotes_error || '';
+    }
     if (errEl) {
       errEl.hidden = !err;
       errEl.textContent = err;
+      errEl.classList.toggle('feed-error--info', _isScheduleNotice(err));
     }
 
     if (countEl) countEl.textContent = rows.length ? `${rows.length} ideas` : '';
-    if (stampEl) stampEl.textContent = _stamp(p.last_ok);
+    if (stampEl) stampEl.textContent = _stampLine(p);
 
     if (!rows.length) {
       lastRows = [];
       if (lastKey !== '∅') {
-        rowsEl.innerHTML = `<span class="tx-placeholder">${empty}</span>`;
+        const hint = _isScheduleNotice(p.error)
+          ? (p.error || empty)
+          : empty;
+        rowsEl.innerHTML = `<span class="tx-placeholder">${_esc(hint)}</span>`;
         lastKey = '∅';
       }
       return;
     }
 
     const key = rows.map(r =>
-      `${r.symbol}:${r.price ?? ''}:${r.pct_change ?? ''}:${r.trending_score ?? ''}:${r.vol_session ?? ''}:${r.rvol ?? ''}:${r.position_pct ?? ''}`,
+      `${r.symbol}:${r.source_mark || ''}:${r.price ?? ''}:${r.pct_change ?? ''}:${r.trending_score ?? ''}:${r.vol_session ?? ''}:${r.rvol ?? ''}:${r.position_pct ?? ''}:${r.reason || ''}`,
     ).join('|');
     lastRows = rows;
     if (key === lastKey) return;
@@ -103,6 +112,8 @@ function _applySort(rows, sortCol, sortDir) {
     switch (sortCol) {
       case 'ticker':
         return sortDir * (a.symbol || '').localeCompare(b.symbol || '');
+      case 'src':
+        return sortDir * String(a.source_mark || '').localeCompare(String(b.source_mark || ''));
       case 'price': {
         const av = a.price ?? nullHi;
         const bv = b.price ?? nullHi;
@@ -179,23 +190,41 @@ function _row(r, kind) {
   const rvol = r.rvol != null ? `${Number(r.rvol).toFixed(2)}×` : '—';
   const volCls = (r.rvol ?? 0) >= 1.5 ? ' cell-vol vol-high' : ' cell-vol';
 
-  let last = '—';
-  if (kind === 'claude') {
-    if (r.position_pct != null) last = `${Number(r.position_pct).toFixed(0)}%`;
-  } else if (r.trending_score != null) {
-    last = Number(r.trending_score).toFixed(1);
-  }
-
   const rank = r.rank != null
     ? `<span class="feed-rank">${_esc(String(r.rank))}</span>`
     : '';
 
-  // Claude thesis under the grid — columns stay aligned with the header.
-  let thesis = '';
   if (kind === 'claude') {
+    const mark = _esc(r.source_mark || _markFromSource(r.source) || 'A');
+    const score = r.trending_score != null
+      ? Number(r.trending_score).toFixed(1)
+      : '—';
+    const size = r.position_pct != null
+      ? `${Number(r.position_pct).toFixed(0)}%`
+      : '—';
+    let thesis = '';
     const why = r.reason || r.summary || '';
     if (why) thesis += `<div class="feed-why">${_esc(why)}</div>`;
     if (r.invalidation) thesis += `<div class="feed-invalid">✕ ${_esc(r.invalidation)}</div>`;
+
+    return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click to add ${sym} to the watchlist">`
+         + `<div class="${colsClass}">`
+         +   `<div class="cell-ticker">${rank}${sym}</div>`
+         +   `<div class="cell-src" title="A=Anthropic · X=xAI · AX=both">${mark}</div>`
+         +   `<div class="cell-price">${price}</div>`
+         +   `<div class="${chgCls}">${chg}</div>`
+         +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
+         +   `<div class="cell-vol">${_esc(rvol)}</div>`
+         +   `<div class="cell-vol cell-score">${_esc(score)}</div>`
+         +   `<div class="cell-vol cell-score">${_esc(size)}</div>`
+         + `</div>`
+         + thesis
+         + `</div>`;
+  }
+
+  let last = '—';
+  if (r.trending_score != null) {
+    last = Number(r.trending_score).toFixed(1);
   }
 
   return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click to add ${sym} to the watchlist">`
@@ -207,7 +236,6 @@ function _row(r, kind) {
        +   `<div class="cell-vol">${_esc(rvol)}</div>`
        +   `<div class="cell-vol cell-score">${_esc(last)}</div>`
        + `</div>`
-       + thesis
        + `</div>`;
 }
 
@@ -225,6 +253,30 @@ async function _add(el, symbol) {
       el.classList.remove('ticker-row--selected');
     }, 800);
   }
+}
+
+function _isScheduleNotice(err) {
+  if (!err) return false;
+  const s = String(err).toLowerCase();
+  return s.startsWith('next research') || s === 'no research times configured'
+    || s.startsWith('a:next research') || s.startsWith('x:next research');
+}
+
+function _markFromSource(source) {
+  const s = String(source || '').toLowerCase();
+  if (s === 'both' || s === 'merged' || s === 'ax') return 'AX';
+  if (s === 'xai' || s === 'grok') return 'X';
+  if (s === 'anthropic' || s === 'claude') return 'A';
+  return '';
+}
+
+function _stampLine(p) {
+  const parts = [];
+  const t = _stamp(p.last_ok);
+  if (t) parts.push(t);
+  if (p.next_run_label) parts.push(`next ${p.next_run_label}`);
+  if (p.model) parts.push(String(p.model));
+  return parts.join(' · ');
 }
 
 function _stamp(ts) {

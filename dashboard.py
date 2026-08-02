@@ -300,20 +300,36 @@ def build_ai_suggestions(
     c_ok = float((claude_payload or {}).get("last_ok") or 0) or 0.0
     g_ok = float((grok_payload or {}).get("last_ok") or 0) or 0.0
     last_ok = max(c_ok, g_ok)
+
+    def _hard_error(payload: dict | None, rows: list) -> str:
+        """Schedule 'next research…' is status when empty; not a failure with rows."""
+        err = str((payload or {}).get("error") or "").strip()
+        if not err:
+            return ""
+        soft = err.lower().startswith("next research") or err == "no research times configured"
+        if soft and rows:
+            return ""
+        return err
+
+    c_err = _hard_error(claude_payload, c_rows)
+    g_err = _hard_error(grok_payload, g_rows)
     errs = []
-    if (claude_payload or {}).get("error") and not c_rows:
-        errs.append(f"A:{(claude_payload or {}).get('error')}")
-    if (grok_payload or {}).get("error") and not g_rows:
-        errs.append(f"X:{(grok_payload or {}).get('error')}")
+    if c_err and not c_rows:
+        errs.append(f"A:{c_err}")
+    if g_err and not g_rows:
+        errs.append(f"X:{g_err}")
     n_ax = sum(1 for r in merged if r.get("agreement"))
+    if errs and not merged:
+        merged_error = " · ".join(errs)
+    elif merged:
+        # Prefer hard errors only; schedule text lives in next_run_label.
+        merged_error = c_err or g_err or ""
+    else:
+        merged_error = c_err or g_err or ""
     return {
         "updated": time.time(),
         "last_ok": last_ok,
-        "error": " · ".join(errs) if errs and not merged else (
-            (claude_payload or {}).get("error")
-            or (grok_payload or {}).get("error")
-            or ""
-        ),
+        "error": merged_error,
         "quotes_error": (claude_payload or {}).get("quotes_error")
                         or (grok_payload or {}).get("quotes_error")
                         or "",

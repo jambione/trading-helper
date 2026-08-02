@@ -751,9 +751,9 @@ body.mobile .auto-alert-toggle { display: none !important; }
 body.mobile [data-panel="tradingview"] { display: none !important; }
 body.mobile #ticker-tv-resizer         { display: none !important; }
 
-/* ── Mobile: swipeable pager (Momentum ⇄ Trending ⇄ Claude) ─────
+/* ── Mobile: swipeable pager (Momentum ⇄ Trending ⇄ AI) ─────────
    The grid becomes a horizontal scroll-snap strip: Momentum is slide 1
-   (leftmost, shown first), Trending slide 2, Claude slide 3. The tab bar
+   (leftmost, shown first), Trending slide 2, AI research slide 3. The tab bar
    mirrors and drives the scroll position (mobilePager.js). */
 .mobile-pager-tabs { display: none; }
 body.mobile .mobile-pager-tabs {
@@ -806,7 +806,7 @@ body.mobile .main-grid > [data-panel="claude"] {
 }
 body.mobile .main-grid > [data-panel="tickers"]  { order: 1; }  /* Momentum first */
 body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending second */
-body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* Claude third   */
+body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
 body.mobile .watchlist-cols { grid-template-columns: 1fr 76px 64px 52px; }
@@ -1441,10 +1441,19 @@ body.mobile .icon-btn {
 .panel-watchlist { /* glass — inherits from .panel */ }
 
 /* ════════════════════════════════════════════════════════════
-   TRENDING / CLAUDE FEED PANELS
+   TRENDING / AI FEED PANELS
 ═════════════════════════════════════════════════════════════ */
 .panel-trending,
 .panel-claude { /* glass — inherits from .panel */ }
+
+.panel-claude .panel-subtitle {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-left: 6px;
+  text-transform: uppercase;
+}
 
 /* Sortable headers + rows — same chrome as Momentum Stocks (ticker-row) */
 .feed-table-header {
@@ -1456,8 +1465,12 @@ body.mobile .icon-btn {
 .feed-cols {
   display: grid;
   align-items: center;
-  /* Ticker | Price | Chg% | Vol | RVOL | Score/Size */
+  /* Ticker | Price | Chg% | Vol | RVOL | Score */
   grid-template-columns: 1fr 58px 54px 48px 48px 44px;
+}
+/* AI: Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size */
+.feed-cols--claude {
+  grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px;
 }
 .feed-table-header .feed-cols {
   padding: 10px 0;
@@ -1470,6 +1483,24 @@ body.mobile .icon-btn {
 }
 .feed-table-header .th[data-sort-col="ticker"] {
   text-align: left;
+}
+.feed-table-header .th[data-sort-col="src"] {
+  text-align: center;
+}
+
+.feed-rows .cell-src {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent, #7dd3fc);
+}
+
+.feed-error--info {
+  color: var(--text-muted);
+  background: var(--nav2);
+  border-color: var(--border-hi);
 }
 
 .feed-rows {

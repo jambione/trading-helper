@@ -5,24 +5,24 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=69';
-import { subscribe, set }                        from './store.js?v=69';
-import { init as initFeeds }                     from './feeds.js?v=69';
-import { init as initTickers }                   from './tickers.js?v=69';
-import { init as initTradingView }               from './tradingview.js?v=69';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=69';
-import { init as initResizer }                   from './resizer.js?v=69';
-import * as controls                             from './controls.js?v=69';
-import * as notifications                        from './notifications.js?v=69';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=69';
-import { init as initNews }                      from './news.js?v=69';
-import { init as initLeaderboard }               from './leaderboard.js?v=69';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=69';
-import { init as initEngine }                    from './engine.js?v=69';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=69';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=69';
+import { connect, on, api }                      from './api.js?v=71';
+import { subscribe, set }                        from './store.js?v=71';
+import { init as initFeeds }                     from './feeds.js?v=71';
+import { init as initTickers }                   from './tickers.js?v=71';
+import { init as initTradingView }               from './tradingview.js?v=71';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=71';
+import { init as initResizer }                   from './resizer.js?v=71';
+import * as controls                             from './controls.js?v=71';
+import * as notifications                        from './notifications.js?v=71';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=71';
+import { init as initNews }                      from './news.js?v=71';
+import { init as initLeaderboard }               from './leaderboard.js?v=71';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=71';
+import { init as initEngine }                    from './engine.js?v=71';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=71';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=71';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=69';
+import { init as initMobilePager }                from './mobilePager.js?v=71';
 
 // Build badge — shows which code the dashboard and the signal engine are each
 // running, so a stale or mismatched process is obvious at a glance. Amber when
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  // Trending and Claude panels are server-fed (WebSocket), so they work hosted too.
+  // Trending and AI research panels are server-fed (WebSocket), so they work hosted too.
   try { initFeeds(document.querySelector('[data-panel="trending"]'), 'trending'); } catch (e) { console.error('[app] initFeeds trending', e); }
   try { initFeeds(document.querySelector('[data-panel="claude"]'), 'claude'); }      catch (e) { console.error('[app] initFeeds claude', e); }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
@@ -185,7 +185,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=69');
+    const m = await import('./admin.js?v=71');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

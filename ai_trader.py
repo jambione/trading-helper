@@ -93,12 +93,82 @@ def _write_json(path: Path, payload: dict) -> None:
                 pass
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _hydrate_suggestions(gs: AiSuggestions) -> int:
+    """Load last published ideas so a restart / off-slot loop does not blank the UI."""
+    data = _read_json(SUGGESTIONS_FILE)
+    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+    if not rows:
+        return 0
+    gs.rows = list(rows)
+    gs.by_symbol = {
+        str(r.get("symbol") or "").upper(): r
+        for r in gs.rows
+        if r.get("symbol")
+    }
+    try:
+        gs.last_ok = float(data.get("last_ok") or 0) or 0.0
+    except (TypeError, ValueError):
+        gs.last_ok = 0.0
+    path = data.get("last_report_path") or ""
+    if path:
+        gs.last_report_path = str(path)
+    # Schedule-only notices are not failures once we have displayable rows.
+    err = str(gs.error or data.get("error") or "")
+    if err.lower().startswith("next research") or err == "no research times configured":
+        gs.error = ""
+    elif not gs.error and data.get("error"):
+        soft = str(data.get("error") or "")
+        if not soft.lower().startswith("next research"):
+            gs.error = soft
+    return len(gs.rows)
+
+
 def _suggestions_payload(gs: AiSuggestions, now: float) -> dict:
-    """Keys the desk AI panel / merge path consume."""
+    """Keys the desk AI panel / merge path consume.
+
+    While waiting for the next research slot the in-memory list is often empty
+    after a process restart. Prefer last published rows so dashboard/monitor
+    keep showing the prior research until a new run replaces them.
+    """
+    rows = list(gs.rows)
+    last_ok = gs.last_ok
+    report = gs.last_report_path
+    error = gs.error or ""
+
+    if not rows and not last_ok:
+        prev = _read_json(SUGGESTIONS_FILE)
+        prev_rows = prev.get("rows") if isinstance(prev.get("rows"), list) else []
+        try:
+            prev_ok = float(prev.get("last_ok") or 0) or 0.0
+        except (TypeError, ValueError):
+            prev_ok = 0.0
+        if prev_rows and prev_ok:
+            rows = list(prev_rows)
+            last_ok = prev_ok
+            report = prev.get("last_report_path") or report
+
+    # "next research run Mon 04:00 ET" is status, not a hard failure when we
+    # still have ideas to show.
+    if rows and (
+        error.lower().startswith("next research")
+        or error == "no research times configured"
+    ):
+        error = ""
+
     return {
         "updated": now,
-        "last_ok": gs.last_ok,
-        "error": gs.error,
+        "last_ok": last_ok,
+        "error": error,
         "quotes_error": gs.quotes_error,
         "last_quote_ok": gs.last_quote_ok,
         "model": gs.model,
@@ -108,9 +178,9 @@ def _suggestions_payload(gs: AiSuggestions, now: float) -> dict:
         "trading_mode": gs.trading_mode,
         "max_price": gs.max_price,
         "next_run_label": gs.next_run_label(now),
-        "last_report_path": gs.last_report_path,
+        "last_report_path": report,
         "last_trades": gs.last_trades,
-        "rows": list(gs.rows),
+        "rows": rows,
     }
 
 
@@ -207,6 +277,7 @@ def main() -> None:
         return
 
     gs = _build_suggestions(cfg)
+    n_hydrated = _hydrate_suggestions(gs)
     positions_poll = float(
         _cfg(cfg, "ai_positions_poll_sec", "claude_positions_poll_sec", 5.0))
 
@@ -214,6 +285,9 @@ def main() -> None:
           f"trading={gs.trading} mode={gs.trading_mode}", flush=True)
     print(f"[ai] research times {gs.research_times or '(interval)'} ET — "
           f"next {gs.next_run_label() or 'n/a'}", flush=True)
+    if n_hydrated:
+        print(f"[ai] hydrated {n_hydrated} idea(s) from {SUGGESTIONS_FILE.name}",
+              flush=True)
     if gs.trading and gs.trading_mode == "off":
         print("[ai] WARNING: trading requested but no Alpaca session — "
               "check signal_engine.env", flush=True)
