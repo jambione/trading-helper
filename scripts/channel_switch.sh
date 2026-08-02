@@ -13,7 +13,7 @@ echo "========================================"
 echo ""
 
 echo "[1/1] Opening -daytrading-alerts and docking Discord right..."
-"$REPO/venv/bin/python" "$REPO/open_discord_alerts.py" \
+"$REPO/.venv/bin/python" "$REPO/open_discord_alerts.py" \
     && echo "      ✓ Alert channel docked right." \
     || echo "      ⚠ Could not auto-open — open -daytrading-alerts and dock it right manually."
 

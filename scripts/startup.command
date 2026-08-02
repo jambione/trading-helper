@@ -139,9 +139,11 @@ fi
 # ── 2. Discord ─────────────────────────────────────────────────────────────
 echo ""
 echo "[2/5] Opening Discord → -daytrading-alerts..."
-if [ -x "$REPO/venv/bin/python" ]; then
-    "$REPO/venv/bin/python" "$REPO/open_discord_alerts.py" \
-        && echo "      ✓ Discord opened & docked" \
+if [ -x "$REPO/.venv/bin/python" ]; then
+    # --no-dock: arrange_windows.sh (step 4) positions Discord for its final
+    # spot, so docking it here first is redundant.
+    "$REPO/.venv/bin/python" "$REPO/open_discord_alerts.py" --no-dock \
+        && echo "      ✓ Discord opened" \
         || echo "      ⚠ Could not auto-open Discord — do it manually"
 else
     echo "      ⚠ venv/python missing — open Discord manually"

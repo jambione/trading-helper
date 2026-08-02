@@ -26,6 +26,7 @@
   "mention_alert_threshold": 2,
   "mention_alert_window": 10,
   "swing_screener_enabled": false,
+  "trending_screener_enabled": true,
   "swing_full_market": true,
   "swing_min_dollar_vol": 5000000.0,
   "swing_max_price": 100.0,
@@ -143,5 +144,6 @@
     }
   },
   "push_vapid_public_key": "BK0bAv93snexOxFTXQLXOoFJZu3MNgAor4L6bU6RcouygbbW2qHyuH5f_ChJ1h1SBKpoxsw_TdWLdXsFBYD-J3Q",
-  "rvol_time_adjusted": true
+  "rvol_time_adjusted": true,
+  "claude_research_enabled": true
 }

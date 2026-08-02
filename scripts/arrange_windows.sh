@@ -5,7 +5,15 @@
 DELAY="${1:-6}"
 sleep "$DELAY"
 
-osascript << 'APPLESCRIPT'
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ -x "$REPO/.venv/bin/python" ]; then
+    MONITOR_PY="$REPO/.venv/bin/python"
+else
+    MONITOR_PY="python3"
+fi
+
+osascript << APPLESCRIPT
 -- Get usable screen size from Finder desktop bounds
 tell application "Finder"
     set screenBounds to bounds of window of desktop
@@ -13,82 +21,25 @@ tell application "Finder"
     set screenH to item 4 of screenBounds
 end tell
 
--- Brave takes 70% on the left; Discord fills the remaining 30% on the right.
-set leftW  to (screenW * 0.70) as integer
+-- Discord takes 60% on the left; the momentum monitor fills the remaining 40% on the right.
+set leftW  to (screenW * 0.60) as integer
 set rightX to leftW
 set rightW to screenW - leftW
 
--- ── Brave Browser ────────────────────────────────────────────────────────────
--- Goal: TradingView pinned as tab 1, Brave sized to the left 70% of screen.
--- Strategy:
---   • If TV is already tab 1 → skip (already pinned from a prior session).
---   • If TV is open elsewhere → activate that tab, then pin via Tab menu once.
---   • If TV is not open at all → open it, then pin once.
--- We avoid the "set active tab to tab 1" call on pinned tabs (errors in Brave).
-
-tell application "Brave Browser"
+-- ── Momentum monitor ─────────────────────────────────────────────────────────
+-- momentum_signal.py needs its own TTY for single-key hotkeys, so it gets a
+-- fresh Terminal window rather than reusing the one running mac_agent.
+tell application "Terminal"
     activate
-    delay 0.5
-    set tvURL to "https://www.tradingview.com/chart/?symbol=TSLA"
-    set tvIsFirst to false
-
-    if (count of tabs of window 1) > 0 then
-        if (URL of tab 1 of window 1) contains "tradingview.com" then
-            set tvIsFirst to true
-        end if
-    end if
-
-    if not tvIsFirst then
-        -- Search all tabs for an existing TradingView tab
-        set tvFound to false
-        repeat with t in tabs of window 1
-            if URL of t contains "tradingview.com" then
-                set active tab of window 1 to t
-                set tvFound to true
-                exit repeat
-            end if
-        end repeat
-        -- Not open → open it (becomes the active tab automatically)
-        if not tvFound then
-            open location tvURL
-            delay 2
-        end if
-    end if
-end tell
-
--- Pin the active TV tab via the Tab menu (only when it wasn't already at pos 1).
--- One click pins it and moves it to position 1. Skipping on the fast path prevents
--- accidentally toggling it OFF on repeat runs.
-if not tvIsFirst then
-    delay 0.3
-    tell application "System Events"
-        tell process "Brave Browser"
-            try
-                click menu item "Pin Tab" of menu "Tab" of menu bar 1
-                delay 0.3
-            end try
-        end tell
-    end tell
-end if
-
--- Switch to tab 1 (TV is there after pinning, or was already there)
-tell application "System Events"
-    tell process "Brave Browser"
-        keystroke "1" using command down
-        delay 0.2
-    end tell
-end tell
-
--- Size Brave to the left 70% of the screen
-tell application "System Events"
-    tell process "Brave Browser"
-        set position of front window to {0, 0}
-        set size of front window to {leftW, screenH}
-    end tell
+    set agentWindow to front window
+    do script "cd $REPO && $MONITOR_PY momentum-monitor/momentum_signal.py"
+    delay 1
+    set monitorWindow to front window
+    set bounds of monitorWindow to {rightX, 0, screenW, screenH}
 end tell
 
 -- ── Discord ───────────────────────────────────────────────────────────────────
--- Dock to the right so the OCR source can read the -daytrading-alerts channel.
+-- Dock to the left so the OCR source can read the -daytrading-alerts channel.
 tell application "System Events"
     set discordOpen to (exists process "Discord")
 end tell
@@ -99,16 +50,16 @@ if discordOpen then
         tell application "System Events"
             tell process "Discord"
                 if (count of windows) > 0 then
-                    set position of window 1 to {rightX, 0}
-                    set size of window 1 to {rightW, screenH}
+                    set position of window 1 to {0, 0}
+                    set size of window 1 to {leftW, screenH}
                 end if
             end tell
         end tell
     end try
 end if
 
--- Minimize the Terminal window (mac_agent stays running, just hidden)
+-- Minimize the original startup Terminal window (mac_agent stays running, just hidden)
 tell application "Terminal"
-    set miniaturized of front window to true
+    set miniaturized of agentWindow to true
 end tell
 APPLESCRIPT

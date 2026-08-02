@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Locate Python ─────────────────────────────────────────────────────────────
-VENV_PYTHON="$ROOT/venv/bin/python"
+VENV_PYTHON="$ROOT/.venv/bin/python"
 if [ -f "$VENV_PYTHON" ]; then
     PYEXE="$VENV_PYTHON"
 elif command -v python3 &>/dev/null; then

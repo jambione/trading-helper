@@ -40,7 +40,7 @@ fi
 
 # ── 2. Open Discord → -daytrading-alerts and dock right for OCR ───────────────
 echo "[2/3] Opening Discord → -daytrading-alerts (docked right)..."
-"$REPO/venv/bin/python" "$REPO/open_discord_alerts.py" \
+"$REPO/.venv/bin/python" "$REPO/open_discord_alerts.py" \
     && echo "      ✓ Discord alert channel docked right." \
     || echo "      ⚠ Could not auto-open — open -daytrading-alerts and dock it right manually."
 

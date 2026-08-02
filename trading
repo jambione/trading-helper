@@ -22,8 +22,8 @@ URL="http://localhost:${PORT}"
 LOGDIR="$ROOT/logs"
 PIDFILE="$ROOT/.trading.pids"
 
-if [ -x "venv/bin/python" ]; then
-    PY="venv/bin/python"
+if [ -x ".venv/bin/python" ]; then
+    PY=".venv/bin/python"
 else
     echo "⚠ venv not found — using system python3 (MLX Whisper may be unavailable)."
     PY="python3"
