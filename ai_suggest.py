@@ -1199,6 +1199,157 @@ def _record_usage(entry: dict[str, Any]) -> None:
         pass
 
 
+def load_token_metrics(
+    path: Path | None = None,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Load rows from ``token_metrics.jsonl`` (oldest first).
+
+    ``limit`` keeps only the last N rows (still returned oldest→newest).
+    """
+    p = path or TOKEN_METRICS_PATH
+    rows: list[dict[str, Any]] = []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        return []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    if limit is not None and limit > 0 and len(rows) > limit:
+        rows = rows[-limit:]
+    return rows
+
+
+def latest_token_usage(path: Path | None = None) -> dict[str, Any]:
+    """Most recent usage row, or {} if none."""
+    rows = load_token_metrics(path, limit=1)
+    return dict(rows[-1]) if rows else {}
+
+
+def summarize_token_metrics(
+    path: Path | None = None,
+    *,
+    day: str | None = "today",
+    since_ts: float | None = None,
+) -> dict[str, Any]:
+    """Aggregate token_metrics.jsonl for a desk day or a since timestamp.
+
+    ``day``:
+      - ``\"today\"`` (default) — calendar day in America/New_York
+      - ``\"YYYY-MM-DD\"`` — that ET calendar day
+      - ``None`` / ``\"all\"`` — every row (optionally filtered by ``since_ts``)
+
+    Safe for dashboard hot path: one file read, O(n) over a small JSONL.
+    """
+    rows = load_token_metrics(path)
+    day_key = None if day in (None, "", "all") else str(day).strip().lower()
+    if day_key == "today":
+        day_key = datetime.now(ET).strftime("%Y-%m-%d")
+
+    def _in_window(r: dict[str, Any]) -> bool:
+        try:
+            ts = float(r.get("ts") or 0)
+        except (TypeError, ValueError):
+            return False
+        if since_ts is not None and ts < float(since_ts):
+            return False
+        if day_key:
+            try:
+                d = datetime.fromtimestamp(ts, tz=ET).strftime("%Y-%m-%d")
+            except (OSError, OverflowError, ValueError):
+                return False
+            if d != day_key:
+                return False
+        return True
+
+    filtered = [r for r in rows if _in_window(r)]
+    by_phase: dict[str, dict[str, Any]] = {}
+    by_backend: dict[str, dict[str, Any]] = {}
+    total_cost = 0.0
+    total_in = 0
+    total_out = 0
+    total_cache_read = 0
+    total_cache_create = 0
+
+    def _bump(bucket: dict[str, dict[str, Any]], key: str, r: dict[str, Any],
+              cost: float, tin: int, tout: int) -> None:
+        slot = bucket.setdefault(key, {
+            "n": 0, "total_cost_usd": 0.0,
+            "input_tokens": 0, "output_tokens": 0,
+        })
+        slot["n"] += 1
+        slot["total_cost_usd"] = round(slot["total_cost_usd"] + cost, 6)
+        slot["input_tokens"] += tin
+        slot["output_tokens"] += tout
+
+    for r in filtered:
+        try:
+            cost = float(r.get("total_cost_usd") or 0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        try:
+            tin = int(r.get("input_tokens") or 0)
+        except (TypeError, ValueError):
+            tin = 0
+        try:
+            tout = int(r.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            tout = 0
+        try:
+            tcr = int(r.get("cache_read_input_tokens") or 0)
+        except (TypeError, ValueError):
+            tcr = 0
+        try:
+            tcc = int(r.get("cache_creation_input_tokens") or 0)
+        except (TypeError, ValueError):
+            tcc = 0
+        total_cost += cost
+        total_in += tin
+        total_out += tout
+        total_cache_read += tcr
+        total_cache_create += tcc
+        phase = str(r.get("phase") or "unknown")
+        backend = str(r.get("backend") or "unknown")
+        _bump(by_phase, phase, r, cost, tin, tout)
+        _bump(by_backend, backend, r, cost, tin, tout)
+
+    last = dict(filtered[-1]) if filtered else latest_token_usage(path)
+    # Compact last for API: drop huge optional fields if ever added.
+    last_compact = {
+        k: last[k]
+        for k in (
+            "ts", "backend", "phase", "model", "effort", "num_turns",
+            "total_cost_usd", "input_tokens", "output_tokens",
+            "cache_read_input_tokens", "cache_creation_input_tokens",
+            "reasoning_tokens", "total_tokens", "duration_ms",
+        )
+        if k in last and last[k] is not None
+    } if last else {}
+
+    return {
+        "day": day_key or "all",
+        "path": str(path or TOKEN_METRICS_PATH),
+        "count": len(filtered),
+        "total_cost_usd": round(total_cost, 6),
+        "input_tokens": total_in,
+        "output_tokens": total_out,
+        "cache_read_input_tokens": total_cache_read,
+        "cache_creation_input_tokens": total_cache_create,
+        "by_phase": by_phase,
+        "by_backend": by_backend,
+        "last": last_compact,
+    }
+
+
 def call_claude_cli(
     prompt: str,
     *,

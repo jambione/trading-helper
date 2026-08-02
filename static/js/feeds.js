@@ -276,6 +276,24 @@ function _stampLine(p) {
   if (t) parts.push(t);
   if (p.next_run_label) parts.push(`next ${p.next_run_label}`);
   if (p.model) parts.push(String(p.model));
+  // Token spend: prefer day rollup, else last single call.
+  const day = p.token_day;
+  if (day && day.count > 0 && day.total_cost_usd != null) {
+    const cost = Number(day.total_cost_usd);
+    const label = Number.isFinite(cost)
+      ? `$${cost.toFixed(cost >= 1 ? 2 : 3)} today (${day.count})`
+      : `${day.count} calls today`;
+    parts.push(label);
+  } else {
+    const u = p.last_usage;
+    if (u && u.total_cost_usd != null) {
+      const cost = Number(u.total_cost_usd);
+      if (Number.isFinite(cost)) {
+        const phase = u.phase ? String(u.phase) : 'call';
+        parts.push(`last ${phase} $${cost.toFixed(cost >= 1 ? 2 : 3)}`);
+      }
+    }
+  }
   return parts.join(' · ');
 }
 

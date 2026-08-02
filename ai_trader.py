@@ -190,6 +190,34 @@ def _suggestions_payload(
     ):
         error = ""
 
+    # Prefer in-memory last_usage (just finished a call); else latest metrics row
+    # so a restart still surfaces cost on the desk without re-running research.
+    usage = dict(getattr(gs, "last_usage", None) or {})
+    if not usage:
+        try:
+            from ai_suggest import latest_token_usage
+            usage = latest_token_usage()
+            # Only attach if it matches this source's backend family.
+            backend = str(usage.get("backend") or "")
+            if src == SOURCE_ANTHROPIC and "grok" in backend:
+                usage = {}
+            elif src == SOURCE_XAI and "claude" in backend:
+                usage = {}
+        except Exception:
+            usage = {}
+    last_usage_out = None
+    if usage:
+        last_usage_out = {
+            k: usage[k]
+            for k in (
+                "ts", "backend", "phase", "model", "effort", "num_turns",
+                "total_cost_usd", "input_tokens", "output_tokens",
+                "cache_read_input_tokens", "cache_creation_input_tokens",
+                "reasoning_tokens", "total_tokens", "duration_ms",
+            )
+            if k in usage and usage[k] is not None
+        }
+
     return {
         "updated": now,
         "last_ok": last_ok,
@@ -205,6 +233,7 @@ def _suggestions_payload(
         "next_run_label": gs.next_run_label(now),
         "last_report_path": report,
         "last_trades": gs.last_trades if src == SOURCE_ANTHROPIC else [],
+        "last_usage": last_usage_out or {},
         "rows": rows,
     }
 

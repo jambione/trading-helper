@@ -1,4 +1,5 @@
 """Claude suggestions parse + panel columns for the momentum monitor."""
+import json
 import os
 import sys
 
@@ -484,3 +485,63 @@ def test_parse_claude_rich_suggestion_shape():
     assert rows[0]["symbol"] == "TVTX"
     assert rows[0]["trending_score"] == 8.5
     assert "Filspari" in rows[0]["reason"]
+
+
+def test_summarize_token_metrics_day_and_latest(tmp_path):
+    from datetime import datetime
+    from ai_suggest import (
+        ET,
+        latest_token_usage,
+        load_token_metrics,
+        summarize_token_metrics,
+    )
+
+    # Fixed ET day so the test is timezone-stable.
+    day = "2026-08-02"
+    noon_et = datetime(2026, 8, 2, 12, 0, tzinfo=ET).timestamp()
+    other_day = datetime(2026, 8, 1, 12, 0, tzinfo=ET).timestamp()
+    path = tmp_path / "token_metrics.jsonl"
+    rows = [
+        {
+            "ts": other_day, "backend": "claude_cli", "phase": "research",
+            "total_cost_usd": 0.5, "input_tokens": 100, "output_tokens": 50,
+        },
+        {
+            "ts": noon_et, "backend": "claude_cli", "phase": "research",
+            "model": "sonnet", "total_cost_usd": 0.4,
+            "input_tokens": 200, "output_tokens": 80,
+            "cache_read_input_tokens": 10, "cache_creation_input_tokens": 5,
+        },
+        {
+            "ts": noon_et + 60, "backend": "claude_cli", "phase": "entry",
+            "model": "sonnet", "total_cost_usd": 0.2,
+            "input_tokens": 50, "output_tokens": 40,
+        },
+        {
+            "ts": noon_et + 120, "backend": "grok_cli", "phase": "research",
+            "model": "grok-4.5", "total_cost_usd": 0.15,
+            "input_tokens": 1000, "output_tokens": 100,
+        },
+    ]
+    path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    all_rows = load_token_metrics(path)
+    assert len(all_rows) == 4
+    last = latest_token_usage(path)
+    assert last["phase"] == "research"
+    assert last["backend"] == "grok_cli"
+
+    day_sum = summarize_token_metrics(path, day=day)
+    assert day_sum["day"] == day
+    assert day_sum["count"] == 3
+    assert abs(day_sum["total_cost_usd"] - 0.75) < 1e-9
+    assert day_sum["by_phase"]["research"]["n"] == 2
+    assert day_sum["by_phase"]["entry"]["n"] == 1
+    assert day_sum["by_backend"]["claude_cli"]["n"] == 2
+    assert day_sum["by_backend"]["grok_cli"]["n"] == 1
+    assert day_sum["last"]["backend"] == "grok_cli"
+
+    all_sum = summarize_token_metrics(path, day="all")
+    assert all_sum["count"] == 4
+    assert abs(all_sum["total_cost_usd"] - 1.25) < 1e-9
