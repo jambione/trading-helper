@@ -47,6 +47,12 @@ trending_stocks.json
 .trading.pids
 logs/
 
+# Visitor / auth audit trails (may contain IPs and user agents)
+traffic_log.json
+traffic_log.json.tmp
+login_log.json
+login_log.json.tmp
+
 # Spell-pipeline learned-correction runtime state (per-machine, regenerated)
 config/learned_corrections.json
 config/pending_corrections.json

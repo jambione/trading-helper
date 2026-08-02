@@ -137,6 +137,8 @@ export const api = {
   burstAlert:      ticker   => request('POST', '/api/tickers/burst',          { ticker }),
   createTVAlert:   ticker   => request('POST', '/api/tickers/create-tv-alert', { ticker }),
   loginLog:        ()       => request('GET',  '/api/login-log'),
+  trafficLog:      (hours = 24, limit = 200) =>
+    request('GET',  `/api/traffic-log?hours=${hours}&limit=${limit}`),
   activeSessions:  ()       => request('GET',  '/api/active-sessions'),
   addSuggestion:    msg       => request('POST',   '/api/suggestions', { message: msg }),
   getSuggestions:   ()        => request('GET',    '/api/suggestions'),

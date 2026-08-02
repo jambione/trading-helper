@@ -56,6 +56,13 @@ from starlette.responses import JSONResponse as _SJSONResponse
 from auth import (check_credentials, create_token, verify_token, is_auth_required,
                    create_user, user_exists, get_token_username, is_admin_user)
 from login_log import record_login, get_log as get_login_log
+from traffic_log import (
+    record_hit as record_traffic_hit,
+    get_log as get_traffic_log,
+    summarize as summarize_traffic,
+    client_meta_from_request,
+    client_ip_from_request,
+)
 
 from config import load_config, save_config, SAFE_CONFIG_KEYS
 from session_clock import session_window, next_shot
@@ -326,6 +333,19 @@ def build_ai_suggestions(
         merged_error = c_err or g_err or ""
     else:
         merged_error = c_err or g_err or ""
+    # Prefer Anthropic last_usage (entry path), else Grok, else file latest.
+    last_usage = (claude_payload or {}).get("last_usage") or {}
+    if not last_usage:
+        last_usage = (grok_payload or {}).get("last_usage") or {}
+    token_day: dict = {}
+    try:
+        from ai_suggest import latest_token_usage, summarize_token_metrics
+        token_day = summarize_token_metrics(day="today")
+        if not last_usage:
+            last_usage = latest_token_usage() or {}
+    except Exception:
+        token_day = {}
+
     return {
         "updated": time.time(),
         "last_ok": last_ok,
@@ -354,6 +374,8 @@ def build_ai_suggestions(
                             or (grok_payload or {}).get("last_report_path")
                             or "",
         "last_trades": (claude_payload or {}).get("last_trades") or [],
+        "last_usage": last_usage if isinstance(last_usage, dict) else {},
+        "token_day": token_day,
         "n_anthropic": len(c_rows),
         "n_xai": len(g_rows),
         "n_agreement": n_ax,
@@ -1734,6 +1756,8 @@ def _snapshot() -> dict:
             "grok_suggestions":   grok_suggestions,
             # Preferred for the AI panel: agreement-first merge (A / X / AX).
             "ai_suggestions":     ai_suggestions,
+            # Token spend for the ET day (same object as ai_suggestions.token_day).
+            "ai_token_metrics":   (ai_suggestions or {}).get("token_day") or {},
             "ai_positions":       claude_positions,
             "claude_positions":   claude_positions,  # legacy alias
             "trending":           trending,
@@ -1840,6 +1864,10 @@ class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Auth is opt-in — disabled by default for local use
         if not is_auth_required():
+            # Still track named sessions when a token / ?user=jmb is present
+            token, username = _request_identity(request)
+            if username:
+                _touch_session(username)
             return await call_next(request)
 
         path = request.url.path
@@ -1862,8 +1890,40 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# Middleware is applied outermost-last: CORS wraps AuthMiddleware wraps app
+class _TrafficMiddleware(BaseHTTPMiddleware):
+    """Record meaningful hits (page loads, actions, presence) with IP + geo."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        try:
+            path = request.url.path
+            method = request.method
+            meta = client_meta_from_request(request)
+            _token, username = _request_identity(request)
+            status = getattr(response, "status_code", None)
+            # Avoid blocking the response path on disk I/O / debounce locks.
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(
+                None,
+                lambda p=path, m=method, st=status, mt=meta, u=username: record_traffic_hit(
+                    path=p,
+                    method=m,
+                    status=st,
+                    ip=mt["ip"],
+                    user_agent=mt["user_agent"],
+                    cf_country=mt.get("cf_country") or "",
+                    cf_ray=mt.get("cf_ray") or "",
+                    username=u or "",
+                ),
+            )
+        except Exception:
+            log.exception("[traffic] middleware record failed")
+        return response
+
+
+# Middleware is applied outermost-last: CORS wraps Traffic wraps Auth wraps app
 app.add_middleware(_AuthMiddleware)
+app.add_middleware(_TrafficMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -2019,21 +2079,36 @@ async def auth_login(request: Request):
         username = str(body.get("username", "")).strip()
         password = str(body.get("password", ""))
 
-        # Prefer Cloudflare real-IP header; fall back to X-Forwarded-For, then direct peer
-        ip = (
-            request.headers.get("CF-Connecting-IP")
-            or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-            or (request.client.host if request.client else "unknown")
-        )
-        ua = request.headers.get("user-agent", "")
+        meta = client_meta_from_request(request)
+        ip = meta["ip"]
+        ua = meta["user_agent"]
+        cf_country = meta.get("cf_country") or ""
 
         ok = check_credentials(username, password)
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: record_login(username, ip, ua, success=ok))
+        await loop.run_in_executor(
+            None,
+            lambda: record_login(username, ip, ua, success=ok, cf_country=cf_country),
+        )
         await loop.run_in_executor(None, lambda: send_login_email(username, ok, ip=ip, ua=ua))
+        # Explicit traffic row (middleware also records POSTs; this tags username).
+        await loop.run_in_executor(
+            None,
+            lambda: record_traffic_hit(
+                path="/auth/login",
+                method="POST",
+                status=200 if ok else 401,
+                ip=ip,
+                user_agent=ua,
+                cf_country=cf_country,
+                username=username if ok else "",
+                event="auth",
+            ),
+        )
 
         if not ok:
             return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
+        _touch_session(username.lower())
         return JSONResponse({"ok": True, "token": create_token(username)})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -2208,6 +2283,23 @@ async def api_grok():
 async def api_ai_suggestions():
     """Merged AI list: Anthropic + xAI, agreement first (A / X / AX marks)."""
     return JSONResponse(build_ai_suggestions())
+
+
+@app.get("/api/ai/token-metrics")
+async def api_ai_token_metrics(day: str = "today"):
+    """Token / cost rollup from claude_reports/token_metrics.jsonl.
+
+    Query ``day=today`` (default ET calendar day), ``day=YYYY-MM-DD``, or
+    ``day=all``.
+    """
+    try:
+        from ai_suggest import summarize_token_metrics
+        return JSONResponse(summarize_token_metrics(day=day or "today"))
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            {"count": 0, "error": str(e)[:200], "day": day or "today"},
+            status_code=500,
+        )
 
 
 @app.get("/api/ai/positions")
@@ -2773,10 +2865,39 @@ async def api_active_sessions(request: Request):
 
 
 @app.get("/api/login-log")
-async def api_login_log():
+async def api_login_log(request: Request):
+    _token, username = _request_identity(request)
+    if is_auth_required() and not is_admin_user(username):
+        return JSONResponse({"ok": False, "error": "Admin access required"}, status_code=403)
     loop    = asyncio.get_running_loop()
     entries = await loop.run_in_executor(None, get_login_log)
-    return JSONResponse({"entries": entries})
+    return JSONResponse({"ok": True, "entries": entries})
+
+
+@app.get("/api/traffic-log")
+async def api_traffic_log(request: Request):
+    """Recent meaningful hits (page / auth / action / presence). Admin when auth on."""
+    _token, username = _request_identity(request)
+    if is_auth_required() and not is_admin_user(username):
+        return JSONResponse({"ok": False, "error": "Admin access required"}, status_code=403)
+    limit = 200
+    try:
+        limit = min(1000, max(1, int(request.query_params.get("limit", "200"))))
+    except ValueError:
+        pass
+    hours = 24.0
+    try:
+        hours = max(0.25, float(request.query_params.get("hours", "24")))
+    except ValueError:
+        pass
+    loop = asyncio.get_running_loop()
+    summary = await loop.run_in_executor(None, lambda: summarize_traffic(hours))
+    entries = await loop.run_in_executor(None, lambda: get_traffic_log(limit))
+    return JSONResponse({
+        "ok": True,
+        "summary": summary,
+        "entries": entries,
+    })
 
 
 @app.post("/api/suggestions")

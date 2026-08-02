@@ -234,7 +234,22 @@ def get_token_username(token: str) -> str:
 # ── Auth toggle ───────────────────────────────────────────────────────────────
 
 def is_auth_required() -> bool:
-    return False
+    """
+    Returns True when dashboard auth is required.
+
+    Config (first match wins):
+      1. secrets.json key ``require_auth``
+      2. env REQUIRE_AUTH
+      3. default False (open dashboard; traffic_log still records visitors)
+
+    Set require_auth true in config/secrets.json to force login for remote use.
+    """
+    val = _load_secrets().get("require_auth")
+    if val is None:
+        val = os.getenv("REQUIRE_AUTH", "false")
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() not in ("false", "0", "no", "")
 
 
 # ── Bootstrap: ensure jmb is always an admin ─────────────────────────────────
