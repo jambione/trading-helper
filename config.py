@@ -186,6 +186,27 @@ DEFAULT_CONFIG = {
     "claude_min_reward_risk":     3.0,    # reject entries below this R:R
     "claude_positions_poll_sec":  5.0,    # mechanical manage_open_positions tick
 
+    # ── Grok research source (xAI subscription via Grok CLI) ──────────────────
+    # Parallel AI suggestion source — not a backend switch for Claude. Measured
+    # 2026-08-02 A/B (research_ab): max_turns=4 ≥ quality of 8 with fewer
+    # tokens; subscription path is backend=cli (grok login), not XAI_API_KEY.
+    # Research/trading both ship OFF until the publisher is wired and cut over.
+    # See docs/AI_RENAME.md for post-multi-source naming cleanup.
+    "grok_research_enabled":   False,   # scheduled Grok research (when publisher exists)
+    "grok_trading_enabled":    False,   # never place orders from Grok alone (v1)
+    "grok_backend":            "cli",   # subscription: grok CLI / grok login
+    "grok_cli_bin":            "grok",
+    "grok_model":              "grok-4.5",
+    "grok_max_turns":               4,  # A/B: t4 beat t8 on quality/token impact
+    "grok_live_search":         True,
+    "grok_use_prior_context":  False,
+    "grok_research_times": ["04:00", "11:00", "13:00"],
+    "grok_research_weekdays_only": True,
+    "grok_research_catchup_min": 120,
+    "grok_prompt_file": "claude_prompt.txt",  # shared research prompt for now
+    "grok_request_timeout":   600.0,
+    "grok_save_reports":       True,
+
     # ── Trending screener (trending_screener.py) ──────────────────────────────
     # Stocktwits carries no usable quotes, so rows are enriched from Alpaca.
     # LOOK badges are NOT computed here — those thresholds are desk display
@@ -301,6 +322,20 @@ SAFE_CONFIG_KEYS = [
     "claude_trade_style",
     "claude_min_reward_risk",
     "claude_positions_poll_sec",
+    "grok_research_enabled",
+    "grok_trading_enabled",
+    "grok_backend",
+    "grok_cli_bin",
+    "grok_model",
+    "grok_max_turns",
+    "grok_live_search",
+    "grok_use_prior_context",
+    "grok_research_times",
+    "grok_research_weekdays_only",
+    "grok_research_catchup_min",
+    "grok_prompt_file",
+    "grok_request_timeout",
+    "grok_save_reports",
     "trending_screener_enabled",
     "stocktwits_poll",
     "stocktwits_quote_poll",

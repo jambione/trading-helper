@@ -2,6 +2,22 @@
 
 **When:** After Grok is a live research source (publish → `/api/state` → desk panel), as its **own PR** — not mixed into the first Grok feature PR.
 
+## Measured Grok defaults (2026-08-02 A/B)
+
+Config stubs already exist (`grok_*` in `config.py` / `bot_config.json`). Until the
+publisher is wired, leave `grok_research_enabled` / `grok_trading_enabled` **false**.
+
+| Key | Intended production value | Why |
+|-----|---------------------------|-----|
+| `grok_backend` | `cli` | xAI **subscription** via `grok login`, not `XAI_API_KEY` |
+| `grok_model` | `grok-4.5` | CLI default |
+| `grok_max_turns` | **4** | t4 ≥ t8 quality, ~20% fewer impact tokens (n=1 + confirm) |
+| `grok_live_search` | `true` | research quality |
+| `grok_trading_enabled` | `false` | research-only until multi-day review |
+| `grok_prompt_file` | `claude_prompt.txt` | shared; JSON-first rule enforced in prompt |
+
+Metrics: `tools/research_ab.py --backend cli` → `benchmarks/research_ab/`.
+
 **Why:** Today “Claude” names the whole AI-suggestions system (`claude_trader.py`, `claude_suggestions.json`, `claude_*` config). With two sources, that name only fits the Anthropic backend.
 
 **Criteria for “done”:** Fresh checkout + docs still make sense; no remaining implication that all AI research *is* Claude; provider-specific symbols still say Claude/Grok clearly.

@@ -129,7 +129,8 @@ def default_matrix() -> list[dict[str, Any]]:
         "use_prior_context": True,
     })
 
-    # Grok via xAI subscription (CLI).
+    # Grok via xAI subscription (CLI). Default production hypothesis: max_turns=4
+    # (A/B 2026-08-02). Keep t8 only as a regression cell, not the default.
     for turns in (4, 8):
         cells.append({
             "id": f"grok_t{turns}",

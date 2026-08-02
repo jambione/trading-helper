@@ -174,6 +174,11 @@ def test_defaults_have_claude_off():
     assert DEFAULT_CONFIG["claude_trader_enabled"] is False
     assert DEFAULT_CONFIG["claude_research_enabled"] is False
     assert DEFAULT_CONFIG["claude_trading_enabled"] is False
+    # Grok source stubs (subscription CLI) — research/trading off until wired.
+    assert DEFAULT_CONFIG["grok_research_enabled"] is False
+    assert DEFAULT_CONFIG["grok_trading_enabled"] is False
+    assert DEFAULT_CONFIG["grok_backend"] == "cli"
+    assert DEFAULT_CONFIG["grok_max_turns"] == 4
 
 
 def test_monitor_defaults_cannot_trade():
@@ -181,8 +186,9 @@ def test_monitor_defaults_cannot_trade():
     server and the desk could both manage the same account."""
     for key in ("claude_trading_enabled", "claude_risk_pct",
                 "claude_trade_amount", "claude_backend", "claude_model",
-                "claude_research_times"):
-        assert key not in DEFAULTS, f"{key} belongs to claude_trader.py"
+                "claude_research_times", "grok_research_enabled",
+                "grok_trading_enabled", "grok_backend"):
+        assert key not in DEFAULTS, f"{key} belongs to the server trader"
 
 
 def _et(y, m, d, hour):
