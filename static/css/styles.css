@@ -3110,7 +3110,7 @@ body.mobile .engine-bar { display: none !important; }
 .toast--dismissing { animation: toast-out 0.22s ease forwards; }
 
 /* ── Hidden elements (user preference) ────────────────────── */
-.donate-bar                                              { display: none !important; }
+/* donate-bar is visible again (was display:none) — see .donate-bar above */
 body.user-jmb .engine-bar,
 body.engine-visible .engine-bar                         { display: none !important; }
 [data-signal-bar]                                       { display: none !important; }
