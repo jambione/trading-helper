@@ -6,9 +6,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from conftest import column_cells  # noqa: E402
-import claude_suggest as cs  # noqa: E402
-from claude_suggest import (  # noqa: E402
-    ClaudeSuggestions,
+import ai_suggest as cs  # noqa: E402
+from ai_suggest import (  # noqa: E402
+    AiSuggestions,
     _place_qualifying_entries,
     parse_model_text,
     parse_suggestions,
@@ -41,7 +41,7 @@ def test_parse_suggestions_object():
 
 
 def test_source_marks_anthropic_and_xai():
-    from claude_suggest import (
+    from ai_suggest import (
         ai_source_mark,
         normalize_ai_source,
         parse_suggestions,
@@ -60,7 +60,7 @@ def test_source_marks_anthropic_and_xai():
 
 
 def test_merge_suggestion_rows_agreement_first():
-    from claude_suggest import merge_suggestion_rows
+    from ai_suggest import merge_suggestion_rows
 
     a = [
         {"symbol": "ONLYA", "rank": 1, "trending_score": 9.0, "reason": "a-only",
@@ -135,7 +135,7 @@ def test_parse_dedupes_symbols():
 
 
 def test_display_rows_max_price_and_limit():
-    gs = ClaudeSuggestions(enrich_quotes=False, max_price=30.0)
+    gs = AiSuggestions(enrich_quotes=False, max_price=30.0)
     gs.rows = [
         {"symbol": "CHEAP", "rank": 1, "trending_score": 5, "price": 4.0,
          "reason": "a", "is_crypto": False},
@@ -151,7 +151,7 @@ def test_display_rows_max_price_and_limit():
 
 
 def _gs(rows, **kw):
-    gs = ClaudeSuggestions(enrich_quotes=False, max_price=None, **kw)
+    gs = AiSuggestions(enrich_quotes=False, max_price=None, **kw)
     gs.rows = rows
     gs.by_symbol = {r["symbol"]: r for r in rows}
     gs.last_ok = T0
@@ -237,10 +237,12 @@ def test_defaults_have_claude_off():
     # The monitor only renders: the panel switch and its price filter.
     assert DEFAULTS.get("claude_enabled") is False
     assert DEFAULTS.get("claude_max_price") == 100.0
-    # Everything that runs or spends lives with claude_trader.py on the server,
+    # Everything that runs or spends lives with ai_trader.py on the server,
     # and every switch that can place an order ships off.
     assert DEFAULT_CONFIG["claude_live_search"] is True
     assert DEFAULT_CONFIG["claude_backend"] == "claude_cli"
+    assert DEFAULT_CONFIG["ai_trader_enabled"] is False
+    assert DEFAULT_CONFIG["ai_trading_enabled"] is False
     assert DEFAULT_CONFIG["claude_trader_enabled"] is False
     assert DEFAULT_CONFIG["claude_research_enabled"] is False
     assert DEFAULT_CONFIG["claude_trading_enabled"] is False
@@ -254,7 +256,8 @@ def test_defaults_have_claude_off():
 def test_monitor_defaults_cannot_trade():
     """The desk is a renderer. If a trading knob reappears in its config, the
     server and the desk could both manage the same account."""
-    for key in ("claude_trading_enabled", "claude_risk_pct",
+    for key in ("ai_trading_enabled", "ai_risk_pct", "ai_trade_amount",
+                "claude_trading_enabled", "claude_risk_pct",
                 "claude_trade_amount", "claude_backend", "claude_model",
                 "claude_research_times", "grok_research_enabled",
                 "grok_trading_enabled", "grok_backend"):
@@ -269,7 +272,7 @@ def _et(y, m, d, hour):
 
 
 def test_research_times_parse_from_json_or_env_string():
-    from claude_suggest import parse_research_times
+    from ai_suggest import parse_research_times
 
     assert parse_research_times(["04:00", "08:30", "13:00"]) == [
         (4, 0), (8, 30), (13, 0)]
@@ -281,7 +284,7 @@ def test_research_times_parse_from_json_or_env_string():
 
 def test_each_scheduled_time_fires_once_per_day():
     """4:00, 8:30 and 13:00 ET each run once — and only once."""
-    from claude_suggest import due_slot
+    from ai_suggest import due_slot
 
     times = [(4, 0), (8, 30), (13, 0)]
     kw = dict(times=times, catchup_min=120)
@@ -300,7 +303,7 @@ def test_each_scheduled_time_fires_once_per_day():
 
 def test_missed_slots_run_once_on_current_data_not_replayed():
     """A desk down all morning should run the latest slot, not all three."""
-    from claude_suggest import due_slot
+    from ai_suggest import due_slot
 
     times = [(4, 0), (8, 30), (13, 0)]
     # 13:30 ET with nothing run today → the 13:00 slot, skipping 04:00/08:30.
@@ -310,14 +313,14 @@ def test_missed_slots_run_once_on_current_data_not_replayed():
 
 def test_stale_slots_expire_rather_than_firing_on_dead_data():
     """Starting the desk at 23:00 must not fire the 13:00 run."""
-    from claude_suggest import due_slot
+    from ai_suggest import due_slot
 
     assert due_slot(_et(2026, 8, 5, 23), times=[(13, 0)],
                     catchup_min=120, last_slot="") is None
 
 
 def test_weekends_are_skipped():
-    from claude_suggest import due_slot
+    from ai_suggest import due_slot
 
     times = [(4, 0), (8, 30), (13, 0)]
     # Sat 2026-08-08 / Sun 2026-08-09 at 09:00 ET.
@@ -328,7 +331,7 @@ def test_weekends_are_skipped():
 
 
 def test_refresh_off_schedule_reports_the_next_run_and_does_not_poll():
-    gs = ClaudeSuggestions(enrich_quotes=False)
+    gs = AiSuggestions(enrich_quotes=False)
     assert gs.refresh(now=_et(2026, 8, 9, 3)) is False   # Sunday 03:00 ET
     assert gs.last_attempt == 0.0
     assert "next research run" in gs.error
@@ -403,6 +406,9 @@ class _StubPositions:
 def _run_entry_gate(monkeypatch, *, ready=True, market_open=True):
     trading = _StubTrading(ready=ready, market_open=market_open)
     positions = _StubPositions()
+    monkeypatch.setitem(sys.modules, "ai_trading", trading)
+    monkeypatch.setitem(sys.modules, "ai_positions", positions)
+    # Legacy module names still imported in some paths
     monkeypatch.setitem(sys.modules, "claude_trading", trading)
     monkeypatch.setitem(sys.modules, "claude_positions", positions)
     rows = [{"symbol": "NVDA", "trending_score": 9.0, "reason": "test"}]
@@ -435,7 +441,7 @@ def test_entry_checks_skipped_when_claude_trading_not_ready(monkeypatch):
 
 
 def test_parse_ranked_prose_fallback():
-    from claude_suggest import parse_model_text
+    from ai_suggest import parse_model_text
     text = """
 ## Final ranking
 1. **MU** (highest risk-adj): Extreme undervaluation to structural HBM growth.
@@ -447,7 +453,7 @@ def test_parse_ranked_prose_fallback():
 
 
 def test_cli_resolver_and_default_backend():
-    from claude_suggest import (
+    from ai_suggest import (
         DEFAULT_BACKEND, resolve_grok_cli, resolve_claude_cli,
         cli_available, claude_cli_available,
     )
@@ -461,7 +467,7 @@ def test_cli_resolver_and_default_backend():
 
 
 def test_parse_claude_rich_suggestion_shape():
-    from claude_suggest import parse_model_text
+    from ai_suggest import parse_model_text
     text = '''
     {
       "suggestions": [

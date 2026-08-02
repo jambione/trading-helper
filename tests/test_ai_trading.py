@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import claude_trading as gt  # noqa: E402
+import ai_trading as gt  # noqa: E402
 
 
 def test_tool_definitions_include_buy_and_sell():

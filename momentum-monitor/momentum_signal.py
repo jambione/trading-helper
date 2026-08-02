@@ -88,7 +88,7 @@ import desk_actions as desk
 import spark
 from desk_hotkeys import DeskHotkeys
 from journal import Journal
-from remote_feeds import RemoteClaudeSuggestions, RemoteStocktwitsTrending
+from remote_feeds import RemoteAiSuggestions, RemoteStocktwitsTrending
 from symbol_history import SymbolHistory
 
 WatchlistReader = top_movers = None  # OCR movers retired
@@ -1939,7 +1939,7 @@ def _ai_source_cell(row: dict) -> str:
     mark = str(row.get("source_mark") or "").upper().strip()
     if not mark:
         try:
-            from claude_suggest import ai_source_mark, normalize_ai_source
+            from ai_suggest import ai_source_mark, normalize_ai_source
             src = normalize_ai_source(row.get("source"))
             if src == "both" or row.get("agreement"):
                 mark = "AX"
@@ -1960,7 +1960,7 @@ def _ai_source_cell(row: dict) -> str:
     return f"[dim]{mark or '?'}[/dim]"
 
 
-def claude_panel(gs: ClaudeSuggestions,
+def claude_panel(gs: AiSuggestions,
                price_by_sym: dict[str, float | None],
                limit: int = 10,
                hotkeys_on: bool = True,
@@ -2399,7 +2399,7 @@ def main():
     ) if st_on else None
 
     claude_min_rvol = cfg.get("claude_look_min_rvol", 1.5)
-    gs = RemoteClaudeSuggestions(
+    gs = RemoteAiSuggestions(
         max_price=float(claude_max_px) if claude_max_px is not None else None,
         look_min_abs_chg=float(cfg.get("claude_look_min_abs_chg", 3.0)),
         look_max=int(cfg.get("claude_look_max", 2)),
@@ -2594,10 +2594,12 @@ def main():
                 panels.append(claude_panel(
                     gs, price_map, limit=claude_limit, hotkeys_on=hotkeys.enabled,
                     cfg=cfg, now=t0))
-            # The Claude desk's own book, reported by the server. Kept separate
+            # The AI desk's own book, reported by the server. Kept separate
             # from the manual book below: they can be different accounts, and
             # merging them would hide which one a position belongs to.
-            claude_pos = (state or {}).get("claude_positions") or {}
+            claude_pos = ((state or {}).get("ai_positions")
+                          or (state or {}).get("claude_positions")
+                          or {})
             if claude_pos.get("positions") or claude_pos.get("open_orders"):
                 panels.append(positions_panel(
                     claude_pos.get("positions"),
@@ -2605,7 +2607,7 @@ def main():
                     open_orders=claude_pos.get("open_orders"),
                     mode=claude_pos.get("mode", "paper"),
                     error=claude_pos.get("error", ""),
-                    label="CLAUDE POSITIONS",
+                    label="AI POSITIONS",
                 ))
             if positions_on and _pos_cache["mode"] not in ("", "off"):
                 panels.append(positions_panel(

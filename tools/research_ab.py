@@ -58,7 +58,7 @@ def _load_env() -> None:
 
 _load_env()
 
-from claude_suggest import (  # noqa: E402
+from ai_suggest import (  # noqa: E402
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_MAX_TURNS,
     DEFAULT_PROMPT_FILE,

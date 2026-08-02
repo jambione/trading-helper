@@ -13,6 +13,7 @@ const _state = {
   funnel:         /** @type {Object} */ ({}),
   trending:           /** @type {Object} */ ({}),
   claude_suggestions: /** @type {Object} */ ({}),
+  ai_suggestions: /** @type {Object} */ ({}),
   price_spikes:       /** @type {Object[]} */ ([]),
   config:         {},
   selectedTicker: /** @type {string|null} */ (null),

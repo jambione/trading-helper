@@ -1,6 +1,12 @@
 # AI suggestions rename checklist
 
-**When:** After Grok is a live research source (publish → `/api/state` → desk panel), as its **own PR** — not mixed into the first Grok feature PR.
+**Status (2026-08-02):** Phase 1 **done** on `feature/grok-ai-suggestions` —
+modules renamed (`ai_suggest` / `ai_trader` / `ai_positions` / `ai_trading`),
+shared config `ai_*` with legacy `claude_*` aliases, launchers use `ai_trader.py`,
+thin shims keep old import paths for one release. Per-source wire files
+(`claude_suggestions.json`, `grok_suggestions.json`) kept on purpose.
+
+**When (original):** After Grok is a live research source…
 
 ## Measured Grok defaults (2026-08-02 A/B)
 
@@ -14,7 +20,7 @@ publisher is wired, leave `grok_research_enabled` / `grok_trading_enabled` **fal
 | `grok_max_turns` | **4** | t4 ≥ t8 quality, ~20% fewer impact tokens (n=1 + confirm) |
 | `grok_live_search` | `true` | research quality |
 | `grok_trading_enabled` | `false` | research-only until multi-day review |
-| `grok_prompt_file` | `claude_prompt.txt` | shared; JSON-first rule enforced in prompt |
+| `grok_prompt_file` | `ai_prompt.txt` | shared; JSON-first rule enforced in prompt |
 
 Metrics: `tools/research_ab.py --backend cli` → `benchmarks/research_ab/`.
 
@@ -45,14 +51,14 @@ Avoid renaming mid-feature. Prefer **additive Grok names first**, then this pass
 | `claude_trader.py` | `ai_trader.py` (orchestrates sources; owns trading loop) |
 | `claude_positions.py` | `ai_positions.py` |
 | `claude_trading.py` | `ai_trading.py` |
-| `claude_prompt.txt` | `ai_prompt.txt` (shared), or keep per-source prompt files |
+| `ai_prompt.txt` | `ai_prompt.txt` (shared), or keep per-source prompt files |
 | `claude_suggestions.json` | keep as Claude wire file; add `grok_suggestions.json` |
 | `claude_positions_state.json` | `ai_positions_state.json` |
 | `claude_reports/` | `ai_reports/` (optional subdirs `claude/`, `grok/`) |
 | `logs/claude.log` | `logs/ai_trader.log` |
-| `tests/test_claude_suggest.py` | `tests/test_ai_suggest.py` |
-| `tests/test_claude_positions.py` | `tests/test_ai_positions.py` |
-| `tests/test_claude_trading.py` | `tests/test_ai_trading.py` |
+| `tests/test_ai_suggest.py` | `tests/test_ai_suggest.py` |
+| `tests/test_ai_positions.py` | `tests/test_ai_positions.py` |
+| `tests/test_ai_trading.py` | `tests/test_ai_trading.py` |
 | `_manual_research_run.py` | keep name; add `--source claude\|grok\|all` |
 
 Provider-only helpers stay named for the provider (`call_claude_cli`, `call_grok_cli`).
@@ -107,8 +113,8 @@ In `config.py` / `load_config()`:
 
 | Today | After |
 |-------|--------|
-| `ClaudeSuggestions` | `AiSuggestions` or `SuggestionFeed` |
-| `RemoteClaudeSuggestions` | `RemoteSuggestionFeed` (state key + title params) |
+| `AiSuggestions` | `AiSuggestions` or `SuggestionFeed` |
+| `RemoteAiSuggestions` | `RemoteSuggestionFeed` (state key + title params) |
 | `claude_panel(...)` | `suggestion_panel(title=..., feed=...)` |
 | `load_claude_suggestions` | `load_claude_suggestions` + `load_grok_suggestions`, or `load_suggestions(source)` |
 | `CLAUDE_SUGGESTIONS_FILE` | source-specific constants |

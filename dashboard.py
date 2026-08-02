@@ -82,7 +82,8 @@ SWING_FILE         = Path("swing_candidates.json")
 RS_FILE            = Path("rs_ratings.json")
 CLAUDE_SUGGESTIONS_FILE = Path("claude_suggestions.json")
 GROK_SUGGESTIONS_FILE   = Path("grok_suggestions.json")
-CLAUDE_POSITIONS_FILE   = Path("claude_positions_state.json")
+AI_POSITIONS_FILE       = Path("ai_positions_state.json")
+CLAUDE_POSITIONS_FILE   = Path("claude_positions_state.json")  # legacy alias
 TRENDING_FILE      = Path("trending_stocks.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
@@ -238,9 +239,9 @@ def load_rs() -> dict:
 
 
 # ── Claude trader + trending screener ─────────────────────────────────────────
-# Written by claude_trader.py and trending_screener.py, which do the Claude
-# research, the risk-sized entries, and the Stocktwits poll. The momentum
-# monitor used to do all three itself; it now renders these from /api/state.
+# Written by ai_trader.py and trending_screener.py (Anthropic research +
+# risk-sized entries + Stocktwits poll). Grok ideas land in grok_suggestions.json.
+# The monitor renders from /api/state only.
 #
 # Served whole rather than rows-only, for the same reason as RS: the header
 # says whether the desk is trading, in which mode, when the next research run
@@ -289,7 +290,7 @@ def build_ai_suggestions(
     grok_payload: dict | None = None,
 ) -> dict:
     """Merge Anthropic + xAI rows for the desk (agreement first, A/X/AX marks)."""
-    from claude_suggest import merge_suggestion_rows
+    from ai_suggest import merge_suggestion_rows
 
     claude_payload = claude_payload if claude_payload is not None else load_claude_suggestions()
     grok_payload = grok_payload if grok_payload is not None else load_grok_suggestions()
@@ -344,11 +345,19 @@ def build_ai_suggestions(
     }
 
 
-_claude_positions_cache: dict = {"mtime": -1.0, "payload": {}}
+_ai_positions_cache: dict = {"mtime": -1.0, "payload": {}}
 
-def load_claude_positions() -> dict:
+def load_ai_positions() -> dict:
+    """Shared trading book — prefer ai_positions_state.json, else legacy path."""
+    payload = _load_json_payload(AI_POSITIONS_FILE, _ai_positions_cache, "AI")
+    if payload:
+        return payload
     return _load_json_payload(
-        CLAUDE_POSITIONS_FILE, _claude_positions_cache, "CLAUDE")
+        CLAUDE_POSITIONS_FILE, _ai_positions_cache, "AI")
+
+
+# Back-compat name used by older clients / docs
+load_claude_positions = load_ai_positions
 
 
 _trending_cache: dict = {"mtime": -1.0, "payload": {}}
@@ -1533,7 +1542,7 @@ def _snapshot() -> dict:
     claude_suggestions = load_claude_suggestions()
     grok_suggestions   = load_grok_suggestions()
     ai_suggestions     = build_ai_suggestions(claude_suggestions, grok_suggestions)
-    claude_positions   = load_claude_positions()
+    claude_positions   = load_ai_positions()
     trending           = load_trending()
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
     # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
@@ -1661,7 +1670,8 @@ def _snapshot() -> dict:
             "grok_suggestions":   grok_suggestions,
             # Preferred for the AI panel: agreement-first merge (A / X / AX).
             "ai_suggestions":     ai_suggestions,
-            "claude_positions":   claude_positions,
+            "ai_positions":       claude_positions,
+            "claude_positions":   claude_positions,  # legacy alias
             "trending":           trending,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
@@ -2120,7 +2130,7 @@ async def api_rs():
 
 @app.get("/api/claude")
 async def api_claude():
-    """Claude research ideas from claude_suggestions.json (claude_trader.py)."""
+    """Anthropic research ideas from claude_suggestions.json (ai_trader.py)."""
     return JSONResponse(load_claude_suggestions())
 
 
@@ -2136,10 +2146,16 @@ async def api_ai_suggestions():
     return JSONResponse(build_ai_suggestions())
 
 
+@app.get("/api/ai/positions")
+async def api_ai_positions():
+    """AI desk positions, resting orders and realized performance."""
+    return JSONResponse(load_ai_positions())
+
+
 @app.get("/api/claude/positions")
 async def api_claude_positions():
-    """Claude desk positions, resting orders and realized performance."""
-    return JSONResponse(load_claude_positions())
+    """Legacy alias for /api/ai/positions."""
+    return JSONResponse(load_ai_positions())
 
 
 @app.get("/api/trending")

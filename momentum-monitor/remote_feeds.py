@@ -1,9 +1,9 @@
 """Display-only feeds fed from the dashboard instead of polled locally.
 
-The Claude research desk and the Stocktwits trending poll both run on the
-server now (claude_trader.py / trending_screener.py). Their rows arrive in the
-/api/state payload the monitor already fetches every tick, so the panels need
-data without any network work of their own.
+AI research and the Stocktwits trending poll run on the server now
+(ai_trader.py / trending_screener.py). Their rows arrive in the /api/state
+payload the monitor already fetches every tick, so the panels need data
+without any network work of their own.
 
 These subclass the real feeds rather than reimplementing them: claude_panel()
 and stocktwits_panel() call display_rows() and read .error/.last_ok/.model off
@@ -13,7 +13,7 @@ methods that would hit the network are stubbed out.
 """
 from typing import Any
 
-from claude_suggest import ClaudeSuggestions
+from ai_suggest import AiSuggestions
 from stocktwits_trending import StocktwitsTrending
 
 
@@ -45,7 +45,7 @@ class _RemoteMixin:
         rows = list(payload.get("rows") or [])
         # Ensure every row carries A/X provenance for the desk Src column.
         try:
-            from claude_suggest import (
+            from ai_suggest import (
                 SOURCE_MARK,
                 ai_source_mark,
                 normalize_ai_source,
@@ -88,7 +88,7 @@ class RemoteStocktwitsTrending(_RemoteMixin, StocktwitsTrending):
         self._ingest_common(payload)
 
 
-class RemoteClaudeSuggestions(_RemoteMixin, ClaudeSuggestions):
+class RemoteAiSuggestions(_RemoteMixin, AiSuggestions):
     def ingest(self, payload: dict[str, Any] | None,
                now: float | None = None) -> None:
         # Default Anthropic when payload predates source tagging; Grok
@@ -98,7 +98,7 @@ class RemoteClaudeSuggestions(_RemoteMixin, ClaudeSuggestions):
             default = payload.get("source") or payload.get("backend")
             if default:
                 try:
-                    from claude_suggest import source_from_backend
+                    from ai_suggest import source_from_backend
                     # backend strings (claude_cli / cli) → anthropic / xai
                     if str(default).lower() in (
                             "claude_cli", "claude", "cli", "grok_cli", "api"):

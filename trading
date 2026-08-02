@@ -99,11 +99,14 @@ cmd_start() {
     _running "signal_engine.py" && eng_up=1
     _running "discord_source.py" && disc_up=1
     _running "trending_screener.py" && trend_up=1
-    _running "claude_trader.py"     && claude_up=1
+    _running "ai_trader.py"     && claude_up=1
 
     # A disabled producer counts as "up" so it never blocks the early return.
     _cfg_flag trending_screener_enabled || trend_up=1
-    _cfg_flag claude_trader_enabled     || claude_up=1
+    # Prefer ai_trader_enabled; accept legacy claude_trader_enabled.
+    if ! _cfg_flag ai_trader_enabled && ! _cfg_flag claude_trader_enabled; then
+        claude_up=1
+    fi
 
     # Fully up — nothing to do (except ensure tunnel if requested).
     if [ "$dash_up" = 1 ] && [ "$eng_up" = 1 ] && [ "$disc_up" = 1 ] \
@@ -164,9 +167,9 @@ cmd_start() {
         echo "$!" >> "$PIDFILE"
     fi
 
-    # Producers for the Trending and Claude panels. They publish
-    # trending_stocks.json / claude_suggestions.json, which dashboard.py merges
-    # into /api/state — without them those panels stay empty.
+    # Producers for Trending + AI panels. They publish trending_stocks.json /
+    # claude_suggestions.json (Anthropic), which dashboard.py merges into
+    # /api/state — without them those panels stay empty.
     if [ "$trend_up" = 0 ]; then
         echo "Starting trending screener"
         nohup "$PY" -u trending_screener.py >"$LOGDIR/trending.log" 2>&1 &
@@ -174,8 +177,8 @@ cmd_start() {
     fi
 
     if [ "$claude_up" = 0 ]; then
-        echo "Starting Claude trader"
-        nohup "$PY" -u claude_trader.py >"$LOGDIR/claude.log" 2>&1 &
+        echo "Starting AI trader (Anthropic research)"
+        nohup "$PY" -u ai_trader.py >"$LOGDIR/ai_trader.log" 2>&1 &
         echo "$!" >> "$PIDFILE"
     fi
 
@@ -198,7 +201,7 @@ cmd_stop() {
     pkill -TERM -f "signal_engine.py"     2>/dev/null || true
     pkill -TERM -f "dashboard.py"         2>/dev/null || true
     pkill -TERM -f "trending_screener.py" 2>/dev/null || true
-    pkill -TERM -f "claude_trader.py"     2>/dev/null || true
+    pkill -TERM -f "ai_trader.py"     2>/dev/null || true
     _stop_tunnel
     sleep 2
     # Force-kill anything still alive.
@@ -206,7 +209,7 @@ cmd_stop() {
     pkill -KILL -f "signal_engine.py"     2>/dev/null || true
     pkill -KILL -f "dashboard.py"         2>/dev/null || true
     pkill -KILL -f "trending_screener.py" 2>/dev/null || true
-    pkill -KILL -f "claude_trader.py"     2>/dev/null || true
+    pkill -KILL -f "ai_trader.py"     2>/dev/null || true
     rm -f "$PIDFILE"
     echo "✅ Stopped (incl. tunnel)."
 }
@@ -217,7 +220,7 @@ cmd_status() {
     e=$(pgrep -f "signal_engine.py"    | tr '\n' ' ' || true)
     g=$(pgrep -f "discord_source.py"   | tr '\n' ' ' || true)
     t=$(pgrep -f "trending_screener.py" | tr '\n' ' ' || true)
-    c=$(pgrep -f "claude_trader.py"    | tr '\n' ' ' || true)
+    c=$(pgrep -f "ai_trader.py"    | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
     echo "discord   : ${g:-not running}"
