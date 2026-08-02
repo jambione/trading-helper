@@ -1934,13 +1934,34 @@ def stocktwits_panel(st: StocktwitsTrending,
                  border_style="magenta", padding=(0, 1))
 
 
+def _ai_source_cell(row: dict) -> str:
+    """A = Anthropic (Claude), X = xAI (Grok). Falls back from free-form tags."""
+    try:
+        from claude_suggest import ai_source_mark
+        mark = (row.get("source_mark") or ai_source_mark(row.get("source"))).upper()
+    except Exception:  # noqa: BLE001
+        mark = str(row.get("source_mark") or row.get("source") or "?").upper()[:1]
+        if mark in ("C",):  # legacy "claude"
+            mark = "A"
+        if mark in ("G",):
+            mark = "X"
+    if mark == "A":
+        return "[bold magenta]A[/bold magenta]"
+    if mark == "X":
+        return "[bold cyan]X[/bold cyan]"
+    return f"[dim]{mark or '?'}[/dim]"
+
+
 def claude_panel(gs: ClaudeSuggestions,
                price_by_sym: dict[str, float | None],
                limit: int = 10,
                hotkeys_on: bool = True,
                cfg: dict | None = None,
                now: float | None = None) -> Panel:
-    """Claude suggestions — same market columns as TRENDING + Why + LOOK."""
+    """AI suggestions — same market columns as TRENDING + Src + Why + LOOK.
+
+    Src: A = Anthropic (Claude), X = xAI (Grok).
+    """
     from stocktwits_trending import fmt_vol, range_cell
 
     now = time.time() if now is None else now
@@ -1955,6 +1976,7 @@ def claude_panel(gs: ClaudeSuggestions,
     t = Table(expand=False)
     t.add_column("Key", justify="right", style="bold")
     t.add_column("G#", justify="right", style="bold yellow")
+    t.add_column("Src", justify="center", style="bold")
     t.add_column("Symbol")
     t.add_column("Last", justify="right")
     t.add_column("%Chg", justify="right")
@@ -2000,6 +2022,7 @@ def claude_panel(gs: ClaudeSuggestions,
             cells = [
                 letter,
                 str(r.get("rank") or "—"),
+                _ai_source_cell(r),
                 sym_s,
                 px_s,
                 chg_s,
@@ -2047,7 +2070,8 @@ def claude_panel(gs: ClaudeSuggestions,
             err = err[:67] + "…"
         status_s = f"  ·  [dim]{err}[/dim]"
     title = (
-        f"CLAUDE  ·  K-T load TV{cap}{look_n}{trade_s}{trade_n}"
+        f"AI  ·  [magenta]A[/]=Anthropic  [cyan]X[/]=xAI  ·  K-T load TV"
+        f"{cap}{look_n}{trade_s}{trade_n}"
         f"{model_s}{stamp}{q}{status_s}"
     )
     return Panel(t, title=title, title_align="left",

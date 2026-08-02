@@ -34,14 +34,34 @@ class _RemoteMixin:
     # must not read as "nothing is trending" when the truth is "nobody asked".
     _NOT_PUBLISHED = "not published by the dashboard — is the server job on?"
 
-    def _ingest_common(self, payload: dict[str, Any] | None) -> None:
+    def _ingest_common(self, payload: dict[str, Any] | None,
+                       *, default_source: str | None = None) -> None:
         if not payload:
             self.rows = []
             self.by_symbol = {}
             self.last_ok = 0.0
             self.error = self._NOT_PUBLISHED
             return
-        rows = payload.get("rows") or []
+        rows = list(payload.get("rows") or [])
+        # Ensure every row carries A/X provenance for the desk Src column.
+        try:
+            from claude_suggest import (
+                SOURCE_MARK,
+                ai_source_mark,
+                normalize_ai_source,
+            )
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                raw = r.get("source") or default_source
+                src = normalize_ai_source(raw)
+                if src == "unknown" and default_source:
+                    src = normalize_ai_source(default_source)
+                if src != "unknown":
+                    r["source"] = src
+                    r["source_mark"] = SOURCE_MARK.get(src) or ai_source_mark(src)
+        except Exception:  # noqa: BLE001
+            pass
         self.rows = rows
         self.by_symbol = {r["symbol"]: r for r in rows if r.get("symbol")}
         self.last_ok = payload.get("last_ok") or 0.0
@@ -59,7 +79,21 @@ class RemoteStocktwitsTrending(_RemoteMixin, StocktwitsTrending):
 class RemoteClaudeSuggestions(_RemoteMixin, ClaudeSuggestions):
     def ingest(self, payload: dict[str, Any] | None,
                now: float | None = None) -> None:
-        self._ingest_common(payload)
+        # Default Anthropic when payload predates source tagging; Grok
+        # publisher should set source=xai per row (or payload-level source).
+        default = None
+        if payload:
+            default = payload.get("source") or payload.get("backend")
+            if default:
+                try:
+                    from claude_suggest import source_from_backend
+                    # backend strings (claude_cli / cli) → anthropic / xai
+                    if str(default).lower() in (
+                            "claude_cli", "claude", "cli", "grok_cli", "api"):
+                        default = source_from_backend(str(default))
+                except Exception:  # noqa: BLE001
+                    pass
+        self._ingest_common(payload, default_source=default or "anthropic")
         if not payload:
             return
         self.model = payload.get("model") or self.model

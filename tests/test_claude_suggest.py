@@ -36,6 +36,27 @@ def test_parse_suggestions_object():
     assert rows[0]["reason"] == "AI momentum"
     assert rows[1]["trending_score"] == 7.0
     assert rows[3]["trending_score"] is None
+    assert rows[0]["source"] == "anthropic"
+    assert rows[0]["source_mark"] == "A"
+
+
+def test_source_marks_anthropic_and_xai():
+    from claude_suggest import (
+        ai_source_mark,
+        normalize_ai_source,
+        parse_suggestions,
+        source_from_backend,
+    )
+    assert normalize_ai_source("claude_cli") == "anthropic"
+    assert normalize_ai_source("grok") == "xai"
+    assert ai_source_mark("claude") == "A"
+    assert ai_source_mark("xai") == "X"
+    assert source_from_backend("cli") == "xai"
+    assert source_from_backend("claude_cli") == "anthropic"
+    x_rows = parse_suggestions(
+        {"suggestions": [{"symbol": "SOFI", "score": 8}]}, source="xai")
+    assert x_rows[0]["source"] == "xai"
+    assert x_rows[0]["source_mark"] == "X"
 
 
 def test_parse_bare_array_and_fences():
@@ -132,8 +153,8 @@ def _headers(table):
 
 def test_claude_panel_columns_match_trending_shape():
     heads = _headers(_table(_gs([_row()])))
-    # Same market columns as TRENDING, plus Why.
-    for required in ("Key", "G#", "Symbol", "Last", "%Chg", "Vol·IEX",
+    # Same market columns as TRENDING, plus Src + Why.
+    for required in ("Key", "G#", "Src", "Symbol", "Last", "%Chg", "Vol·IEX",
                      "RVOL", "52w lo→hi", "Score", "Why"):
         assert required in heads, heads
 
@@ -142,6 +163,21 @@ def test_claude_panel_shows_reason_and_score():
     table = _table(_gs([_row(reason="AI chip demand", trending_score=9.5)]))
     assert "AI chip demand" in column_cells(table, "Why")[0]
     assert "9.5" in column_cells(table, "Score")[0]
+
+
+def test_claude_panel_shows_source_marks():
+    rows = [
+        _row(sym="AAA", rank=1, source="anthropic", source_mark="A"),
+        _row(sym="BBB", rank=2, source="xai", source_mark="X"),
+    ]
+    table = _table(_gs(rows))
+    src = column_cells(table, "Src")
+    # Markup stripped or raw — accept either plain letter or styled fragment.
+    assert any("A" in c for c in src)
+    assert any("X" in c for c in src)
+    panel = claude_panel(_gs(rows), {}, limit=10, hotkeys_on=True, cfg=DEFAULTS)
+    assert "Anthropic" in str(panel.title)
+    assert "xAI" in str(panel.title)
 
 
 def test_claude_panel_keys_are_k_through_t():

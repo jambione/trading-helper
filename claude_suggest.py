@@ -306,8 +306,59 @@ def _best_suggestions_payload(text: str) -> Any:
     return blobs[-1]
 
 
-def parse_suggestions(payload: Any) -> list[dict[str, Any]]:
-    """Normalize model JSON → list of suggestion rows (symbol, score, reason)."""
+# Canonical AI research sources (desk marks + merge provenance).
+# Display letters: A = Anthropic (Claude), X = xAI (Grok).
+SOURCE_ANTHROPIC = "anthropic"
+SOURCE_XAI = "xai"
+SOURCE_MARK = {
+    SOURCE_ANTHROPIC: "A",
+    SOURCE_XAI: "X",
+}
+
+
+def normalize_ai_source(value: str | None) -> str:
+    """Map backend / free-form tags to ``anthropic`` | ``xai`` | ``unknown``."""
+    s = (value or "").strip().lower()
+    if not s:
+        return "unknown"
+    if s in ("a", "anthropic", "claude", "claude_cli"):
+        return SOURCE_ANTHROPIC
+    if s in ("x", "xai", "grok", "grok_cli", "cli", "api"):
+        # ``cli`` / ``api`` are the historical Grok backends in this module.
+        return SOURCE_XAI
+    if "anthropic" in s or s.startswith("claude"):
+        return SOURCE_ANTHROPIC
+    if "xai" in s or "grok" in s:
+        return SOURCE_XAI
+    return "unknown"
+
+
+def ai_source_mark(value: str | None) -> str:
+    """Single-letter desk mark: A (Anthropic), X (xAI), ? (unknown)."""
+    return SOURCE_MARK.get(normalize_ai_source(value), "?")
+
+
+def source_from_backend(backend: str | None) -> str:
+    """Canonical source id for a claude_suggest backend string."""
+    b = (backend or DEFAULT_BACKEND).strip().lower()
+    if b in ("claude_cli", "claude"):
+        return SOURCE_ANTHROPIC
+    if b in ("cli", "grok_cli", "api"):
+        return SOURCE_XAI
+    return normalize_ai_source(b)
+
+
+def parse_suggestions(payload: Any,
+                      *,
+                      source: str | None = SOURCE_ANTHROPIC,
+                      ) -> list[dict[str, Any]]:
+    """Normalize model JSON → list of suggestion rows (symbol, score, reason).
+
+    ``source`` tags each row for multi-provider provenance (Anthropic vs xAI).
+    """
+    src = normalize_ai_source(source)
+    if src == "unknown":
+        src = SOURCE_ANTHROPIC
     items: list[Any]
     if isinstance(payload, dict):
         for key in ("suggestions", "stocks", "tickers", "symbols", "results"):
@@ -401,12 +452,16 @@ def parse_suggestions(payload: Any) -> list[dict[str, Any]]:
             "price": None,
             "pct_change": None,
             "vol_session": None,
-            "source": "claude",
+            "source": src,  # anthropic | xai — desk shows A / X
+            "source_mark": SOURCE_MARK.get(src, "?"),
         })
     return out
 
 
-def _parse_ranked_prose(text: str) -> list[dict[str, Any]]:
+def _parse_ranked_prose(text: str,
+                        *,
+                        source: str | None = SOURCE_ANTHROPIC,
+                        ) -> list[dict[str, Any]]:
     """Fallback when the model forgets the JSON trailer.
 
     Only matches **bold tickers** on ranked lines (e.g. ``1. **MU**: …``).
@@ -438,17 +493,21 @@ def _parse_ranked_prose(text: str) -> list[dict[str, Any]]:
              "reason": "from research ranking"}
             for i, s in enumerate(found)
         ]
-    })
+    }, source=source)
 
 
-def parse_model_text(text: str) -> list[dict[str, Any]]:
+def parse_model_text(text: str,
+                     *,
+                     source: str | None = SOURCE_ANTHROPIC,
+                     ) -> list[dict[str, Any]]:
     try:
-        rows = parse_suggestions(_best_suggestions_payload(text))
+        rows = parse_suggestions(
+            _best_suggestions_payload(text), source=source)
         if rows:
             return rows
     except Exception:
         pass
-    return _parse_ranked_prose(text)
+    return _parse_ranked_prose(text, source=source)
 
 
 def ensure_json_trailer(
@@ -1886,7 +1945,8 @@ class ClaudeSuggestions:
                     trade_style=self.trade_style,
                     min_reward_risk=self.min_reward_risk,
                 )
-                rows = parse_model_text(text)
+                rows = parse_model_text(
+                    text, source=source_from_backend(self.backend))
                 if last_usage:
                     self.last_usage = dict(last_usage)
                 # Annotate rows with any paper trades from this poll.
