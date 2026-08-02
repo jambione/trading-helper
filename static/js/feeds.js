@@ -1,8 +1,8 @@
 /**
- * feeds.js — Trending (Stocktwits) and Claude research panels
+ * feeds.js — Trending (Stocktwits) and AI research panels
  *
- * Both render the same market columns — the Claude rows just carry a thesis
- * line the trending rows don't have. Click a row to add it to the watchlist.
+ * Both render the same market columns — AI rows carry a thesis line and
+ * optional source mark (A/X/AX). Click a row to add it to the watchlist.
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
@@ -17,7 +17,7 @@ export function init(panelEl, kind) {
   const stampEl = panelEl.querySelector(`[data-${kind}-stamp]`);
   const errEl   = panelEl.querySelector(`[data-${kind}-error]`);
   const empty   = kind === 'claude'
-    ? 'Waiting for Claude research…'
+    ? 'Waiting for AI research…'
     : 'Waiting for trending data…';
 
   // Default sort matches server ranking: trending by score desc, Claude by
@@ -45,6 +45,8 @@ export function init(panelEl, kind) {
   });
   _updateSortHeaders(headerEls, sortCol, sortDir);
 
+  // AI panel prefers merged ai_suggestions (A/X/AX); store mirrors it onto
+  // claude_suggestions for older snapshots.
   subscribe(kind === 'claude' ? 'claude_suggestions' : 'trending', payload => {
     const p    = payload ?? {};
     const rows = Array.isArray(p.rows) ? p.rows : [];

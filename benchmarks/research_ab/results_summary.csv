@@ -1,0 +1,4 @@
+ts,experiment_id,cell_id,run_idx,error,quality_0_100,n_suggestions,total_cost_usd,total_tokens_impact,quality_per_usd,quality_per_1k_tokens,backend,model,effort,max_turns,live_search,use_prior_context,wall_sec
+1785678935.634825,20260802T135434Z_d23f5a,grok_t4,0,,84.5,6,0.2229696,141522,378.98,0.6,cli,grok-4.5,,4,True,False,61.33
+1785679003.198647,20260802T135434Z_d23f5a,grok_t8,0,,82.7,6,0.2136724,174131,387.04,0.47,cli,grok-4.5,,8,True,False,67.56
+1785679238.030284,20260802T135948Z_5f2c39,grok_t4,0,,95.1,6,0.1377768,111102,690.25,0.86,cli,grok-4.5,,4,True,False,49.38

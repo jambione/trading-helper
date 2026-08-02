@@ -88,7 +88,7 @@ import desk_actions as desk
 import spark
 from desk_hotkeys import DeskHotkeys
 from journal import Journal
-from remote_feeds import RemoteClaudeSuggestions, RemoteStocktwitsTrending
+from remote_feeds import RemoteAiSuggestions, RemoteStocktwitsTrending
 from symbol_history import SymbolHistory
 
 WatchlistReader = top_movers = None  # OCR movers retired
@@ -1934,13 +1934,42 @@ def stocktwits_panel(st: StocktwitsTrending,
                  border_style="magenta", padding=(0, 1))
 
 
-def claude_panel(gs: ClaudeSuggestions,
+def _ai_source_cell(row: dict) -> str:
+    """A = Anthropic, X = xAI, AX = both agreed. Falls back from free-form tags."""
+    mark = str(row.get("source_mark") or "").upper().strip()
+    if not mark:
+        try:
+            from ai_suggest import ai_source_mark, normalize_ai_source
+            src = normalize_ai_source(row.get("source"))
+            if src == "both" or row.get("agreement"):
+                mark = "AX"
+            else:
+                mark = ai_source_mark(row.get("source")).upper()
+        except Exception:  # noqa: BLE001
+            mark = "?"
+    if mark in ("C", "CLAUDE", "ANTHROPIC"):
+        mark = "A"
+    if mark in ("G", "GROK"):
+        mark = "X"
+    if mark in ("BOTH", "AX", "A+X", "XA"):
+        return "[bold white on blue] AX [/]"
+    if mark == "A":
+        return "[bold magenta]A[/bold magenta]"
+    if mark == "X":
+        return "[bold cyan]X[/bold cyan]"
+    return f"[dim]{mark or '?'}[/dim]"
+
+
+def claude_panel(gs: AiSuggestions,
                price_by_sym: dict[str, float | None],
                limit: int = 10,
                hotkeys_on: bool = True,
                cfg: dict | None = None,
                now: float | None = None) -> Panel:
-    """Claude suggestions — same market columns as TRENDING + Why + LOOK."""
+    """AI suggestions — same market columns as TRENDING + Src + Why + LOOK.
+
+    Src: A = Anthropic (Claude), X = xAI (Grok).
+    """
     from stocktwits_trending import fmt_vol, range_cell
 
     now = time.time() if now is None else now
@@ -1955,6 +1984,7 @@ def claude_panel(gs: ClaudeSuggestions,
     t = Table(expand=False)
     t.add_column("Key", justify="right", style="bold")
     t.add_column("G#", justify="right", style="bold yellow")
+    t.add_column("Src", justify="center", style="bold")
     t.add_column("Symbol")
     t.add_column("Last", justify="right")
     t.add_column("%Chg", justify="right")
@@ -2000,6 +2030,7 @@ def claude_panel(gs: ClaudeSuggestions,
             cells = [
                 letter,
                 str(r.get("rank") or "—"),
+                _ai_source_cell(r),
                 sym_s,
                 px_s,
                 chg_s,
@@ -2047,7 +2078,9 @@ def claude_panel(gs: ClaudeSuggestions,
             err = err[:67] + "…"
         status_s = f"  ·  [dim]{err}[/dim]"
     title = (
-        f"CLAUDE  ·  K-T load TV{cap}{look_n}{trade_s}{trade_n}"
+        f"AI  ·  [magenta]A[/]=Anthropic  [cyan]X[/]=xAI  "
+        f"[white on blue]AX[/]=both  ·  K-T load TV"
+        f"{cap}{look_n}{trade_s}{trade_n}"
         f"{model_s}{stamp}{q}{status_s}"
     )
     return Panel(t, title=title, title_align="left",
@@ -2366,7 +2399,7 @@ def main():
     ) if st_on else None
 
     claude_min_rvol = cfg.get("claude_look_min_rvol", 1.5)
-    gs = RemoteClaudeSuggestions(
+    gs = RemoteAiSuggestions(
         max_price=float(claude_max_px) if claude_max_px is not None else None,
         look_min_abs_chg=float(cfg.get("claude_look_min_abs_chg", 3.0)),
         look_max=int(cfg.get("claude_look_max", 2)),
@@ -2455,7 +2488,15 @@ def main():
                 if st is not None:
                     st.ingest(state.get("trending"), t0)
                 if gs is not None:
-                    gs.ingest(state.get("claude_suggestions"), t0)
+                    # Prefer server-merged list (A/X/AX). Fall back to Claude-only
+                    # publish so older dashboards still populate the panel.
+                    ai_payload = state.get("ai_suggestions")
+                    if not (isinstance(ai_payload, dict) and (
+                            ai_payload.get("rows") is not None
+                            or ai_payload.get("error")
+                            or ai_payload.get("last_ok"))):
+                        ai_payload = state.get("claude_suggestions")
+                    gs.ingest(ai_payload, t0)
 
             # Before display_rows() fires on_change -> _st_alert.
             if st is not None:
@@ -2553,10 +2594,12 @@ def main():
                 panels.append(claude_panel(
                     gs, price_map, limit=claude_limit, hotkeys_on=hotkeys.enabled,
                     cfg=cfg, now=t0))
-            # The Claude desk's own book, reported by the server. Kept separate
+            # The AI desk's own book, reported by the server. Kept separate
             # from the manual book below: they can be different accounts, and
             # merging them would hide which one a position belongs to.
-            claude_pos = (state or {}).get("claude_positions") or {}
+            claude_pos = ((state or {}).get("ai_positions")
+                          or (state or {}).get("claude_positions")
+                          or {})
             if claude_pos.get("positions") or claude_pos.get("open_orders"):
                 panels.append(positions_panel(
                     claude_pos.get("positions"),
@@ -2564,7 +2607,7 @@ def main():
                     open_orders=claude_pos.get("open_orders"),
                     mode=claude_pos.get("mode", "paper"),
                     error=claude_pos.get("error", ""),
-                    label="CLAUDE POSITIONS",
+                    label="AI POSITIONS",
                 ))
             if positions_on and _pos_cache["mode"] not in ("", "off"):
                 panels.append(positions_panel(

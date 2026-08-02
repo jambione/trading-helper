@@ -242,7 +242,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.news              !== undefined) update.news              = snap.news;
     if (snap.engine)                          update.engine            = snap.engine;
     if (snap.trending          !== undefined) update.trending          = snap.trending;
-    if (snap.claude_suggestions !== undefined) update.claude_suggestions = snap.claude_suggestions;
+    // Prefer merged AI list (A/X/AX); fall back to Anthropic-only publish.
+    if (snap.ai_suggestions !== undefined) {
+      update.ai_suggestions = snap.ai_suggestions;
+      update.claude_suggestions = snap.ai_suggestions;
+    } else if (snap.claude_suggestions !== undefined) {
+      update.claude_suggestions = snap.claude_suggestions;
+    }
     if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);

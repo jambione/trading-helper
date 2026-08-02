@@ -1,26 +1,26 @@
-"""One-off manual trigger for Claude stock research, bypassing the weekday/
-time-slot schedule. Builds the same ClaudeSuggestions claude_trader.py runs,
+"""One-off manual trigger for Anthropic AI research, bypassing the weekday/
+time-slot schedule. Builds the same AiSuggestions ai_trader.py runs,
 then forces research_times empty so refresh() fires immediately instead of
 waiting for the next 04:00/11:00/13:00 weekday slot.
 
-Trading follows config/bot_config.json's claude_trading_enabled — pass
+Trading follows config/bot_config.json's ai_trading_enabled — pass
 --no-trade to research without placing any orders.
 
-Run: venv/bin/python _manual_research_run.py [--no-trade]
+Run: .venv/bin/python _manual_research_run.py [--no-trade]
 """
 from __future__ import annotations
 
 import sys
 import time
 
-import claude_trader
+import ai_trader
 from config import load_config
 
 cfg = load_config()
 if "--no-trade" in sys.argv:
-    cfg = {**cfg, "claude_trading_enabled": False}
+    cfg = {**cfg, "ai_trading_enabled": False, "claude_trading_enabled": False}
 
-gs = claude_trader._build_suggestions(cfg)
+gs = ai_trader._build_suggestions(cfg)
 gs.research_times = []  # forced immediate run — bypasses the weekday/slot gate
 
 print(f"backend={gs.backend} model={gs.model} effort={gs.effort} "

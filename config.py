@@ -143,28 +143,39 @@ DEFAULT_CONFIG = {
     "rs_use_adr_filter":        False,
     "rs_min_adr_pct":             3.0,
 
-    # ── Claude trader (claude_trader.py) ──────────────────────────────────────
-    # Research runs the Claude Code CLI on a fixed ET schedule and publishes
-    # ranked ideas to claude_suggestions.json. When claude_trading_enabled is
-    # also true, qualifying ideas become real Alpaca bracket orders and
-    # claude_positions.manage_open_positions() enforces the stop/scale-out/
-    # trailing/time rules mechanically — only entry and thesis-break use Claude.
+    # ── AI trader (ai_trader.py) — multi-source research desk ─────────────────
+    # Shared process/settings (ai_*). Anthropic-specific knobs stay claude_*.
+    # Grok-specific knobs stay grok_*. Monitor is display-only.
     #
-    # These are the SERVER's copy of these settings. The monitor's
-    # momentum_config.json keeps only display tuning; it no longer trades.
-    "claude_trader_enabled":     False,   # launch claude_trader.py from start_all
-    "claude_research_enabled":   False,   # run the scheduled research prompt
-    "claude_trading_enabled":    False,   # place real orders off that research
+    # Legacy claude_trader_enabled / claude_trading_enabled / claude_max_price
+    # etc. still work via load_config() aliases for one release.
+    "ai_trader_enabled":       False,   # launch ai_trader.py from trading/start_all
+    "ai_trading_enabled":      False,   # place real orders off Anthropic research
+    "ai_max_price":            100.0,
+    "ai_quote_poll":            15.0,
+    "ai_volume_poll":           60.0,
+    "ai_avg_days":                10,
+    "ai_rvol_time_adjusted":    True,
+    "ai_trade_amount":        1000.0,
+    "ai_max_positions":            5,
+    "ai_max_buys_per_poll":        3,
+    "ai_max_sells_per_poll":       5,
+    "ai_risk_pct":               1.0,
+    "ai_trade_style": "Moderate position",
+    "ai_min_reward_risk":        3.0,
+    "ai_positions_poll_sec":     5.0,
+    "ai_prompt_file": "ai_prompt.txt",
+
+    # Anthropic (Claude) research source — provider-specific
+    "claude_research_enabled":   False,
     "claude_backend":       "claude_cli",
     "claude_cli_bin":          "claude",
     "claude_model":            "sonnet",
     "claude_effort":            "xhigh",  # low|medium|high|xhigh|max
-    # Fixed ET run times beat interval polling: most of a run's cost is search
-    # fees, and off-hours searches re-derive the same macro on a closed tape.
     "claude_research_times": ["04:00", "11:00", "13:00"],
     "claude_research_weekdays_only": True,
-    "claude_research_catchup_min": 120,   # how late a missed slot may still fire
-    "claude_prompt_file": "claude_prompt.txt",
+    "claude_research_catchup_min": 120,
+    "claude_prompt_file": "ai_prompt.txt",
     "claude_request_timeout":   600.0,
     "claude_live_search":        True,
     "claude_search_tools":      "web",
@@ -172,19 +183,38 @@ DEFAULT_CONFIG = {
     "claude_max_output_tokens": 10000,
     "claude_use_prior_context":  True,
     "claude_save_reports":       True,
-    "claude_max_price":         100.0,    # prompt prefers names under this
-    "claude_quote_poll":         15.0,    # re-quote published rows
-    "claude_volume_poll":        60.0,    # re-sum today's minute bars for RVOL
-    "claude_avg_days":             10,    # sessions in the RVOL denominator
+    # Legacy aliases (mirrored in load_config from ai_* when missing)
+    "claude_trader_enabled":     False,
+    "claude_trading_enabled":    False,
+    "claude_max_price":         100.0,
+    "claude_quote_poll":         15.0,
+    "claude_volume_poll":        60.0,
+    "claude_avg_days":             10,
     "claude_rvol_time_adjusted": True,
     "claude_trade_amount":     1000.0,
     "claude_max_positions":         5,
     "claude_max_buys_per_poll":     3,
     "claude_max_sells_per_poll":    5,
-    "claude_risk_pct":            1.0,    # max % of account risked per trade
+    "claude_risk_pct":            1.0,
     "claude_trade_style": "Moderate position",
-    "claude_min_reward_risk":     3.0,    # reject entries below this R:R
-    "claude_positions_poll_sec":  5.0,    # mechanical manage_open_positions tick
+    "claude_min_reward_risk":     3.0,
+    "claude_positions_poll_sec":  5.0,
+
+    # ── Grok research source (xAI subscription via Grok CLI) ──────────────────
+    "grok_research_enabled":   False,   # scheduled Grok research (when publisher exists)
+    "grok_trading_enabled":    False,   # never place orders from Grok alone (v1)
+    "grok_backend":            "cli",   # subscription: grok CLI / grok login
+    "grok_cli_bin":            "grok",
+    "grok_model":              "grok-4.5",
+    "grok_max_turns":               4,  # A/B: t4 beat t8 on quality/token impact
+    "grok_live_search":         True,
+    "grok_use_prior_context":  False,
+    "grok_research_times": ["04:00", "11:00", "13:00"],
+    "grok_research_weekdays_only": True,
+    "grok_research_catchup_min": 120,
+    "grok_prompt_file": "ai_prompt.txt",  # shared research prompt for now
+    "grok_request_timeout":   600.0,
+    "grok_save_reports":       True,
 
     # ── Trending screener (trending_screener.py) ──────────────────────────────
     # Stocktwits carries no usable quotes, so rows are enriched from Alpaca.
@@ -270,6 +300,22 @@ SAFE_CONFIG_KEYS = [
     "rs_min_rvol",
     "rs_use_adr_filter",
     "rs_min_adr_pct",
+    "ai_trader_enabled",
+    "ai_trading_enabled",
+    "ai_max_price",
+    "ai_quote_poll",
+    "ai_volume_poll",
+    "ai_avg_days",
+    "ai_rvol_time_adjusted",
+    "ai_trade_amount",
+    "ai_max_positions",
+    "ai_max_buys_per_poll",
+    "ai_max_sells_per_poll",
+    "ai_risk_pct",
+    "ai_trade_style",
+    "ai_min_reward_risk",
+    "ai_positions_poll_sec",
+    "ai_prompt_file",
     "claude_trader_enabled",
     "claude_research_enabled",
     "claude_trading_enabled",
@@ -301,6 +347,20 @@ SAFE_CONFIG_KEYS = [
     "claude_trade_style",
     "claude_min_reward_risk",
     "claude_positions_poll_sec",
+    "grok_research_enabled",
+    "grok_trading_enabled",
+    "grok_backend",
+    "grok_cli_bin",
+    "grok_model",
+    "grok_max_turns",
+    "grok_live_search",
+    "grok_use_prior_context",
+    "grok_research_times",
+    "grok_research_weekdays_only",
+    "grok_research_catchup_min",
+    "grok_prompt_file",
+    "grok_request_timeout",
+    "grok_save_reports",
     "trending_screener_enabled",
     "stocktwits_poll",
     "stocktwits_quote_poll",
@@ -309,6 +369,42 @@ SAFE_CONFIG_KEYS = [
     "stocktwits_avg_days",
     "stocktwits_rvol_time_adjusted",
 ]
+
+
+# Shared AI keys ↔ legacy claude_* names (one-release dual-read).
+_AI_CONFIG_ALIASES: list[tuple[str, str]] = [
+    ("ai_trader_enabled", "claude_trader_enabled"),
+    ("ai_trading_enabled", "claude_trading_enabled"),
+    ("ai_max_price", "claude_max_price"),
+    ("ai_quote_poll", "claude_quote_poll"),
+    ("ai_volume_poll", "claude_volume_poll"),
+    ("ai_avg_days", "claude_avg_days"),
+    ("ai_rvol_time_adjusted", "claude_rvol_time_adjusted"),
+    ("ai_trade_amount", "claude_trade_amount"),
+    ("ai_max_positions", "claude_max_positions"),
+    ("ai_max_buys_per_poll", "claude_max_buys_per_poll"),
+    ("ai_max_sells_per_poll", "claude_max_sells_per_poll"),
+    ("ai_risk_pct", "claude_risk_pct"),
+    ("ai_trade_style", "claude_trade_style"),
+    ("ai_min_reward_risk", "claude_min_reward_risk"),
+    ("ai_positions_poll_sec", "claude_positions_poll_sec"),
+    ("ai_prompt_file", "claude_prompt_file"),
+]
+
+
+def _apply_ai_config_aliases(cfg: dict) -> dict:
+    """Fill missing ai_* from claude_* and vice versa so either name works."""
+    for new, old in _AI_CONFIG_ALIASES:
+        new_set = new in cfg and cfg[new] is not None
+        old_set = old in cfg and cfg[old] is not None
+        if new_set and not old_set:
+            cfg[old] = cfg[new]
+        elif old_set and not new_set:
+            cfg[new] = cfg[old]
+        elif new_set and old_set:
+            # Prefer explicit ai_* when both present and differ.
+            cfg[old] = cfg[new]
+    return cfg
 
 
 def load_config() -> dict:
@@ -331,7 +427,7 @@ def load_config() -> dict:
                         cfg[k] = secrets[k]
         except Exception as e:
             print(f"[CFG] Failed to load secrets ({e})")
-    return cfg
+    return _apply_ai_config_aliases(cfg)
 
 
 def _write_json(path: Path, data: dict):

@@ -34,9 +34,13 @@ rs_ratings.json
 rs_universe.json
 rs_cache.sqlite*
 
-# Claude trader + trending screener runtime output (regenerated each loop)
+# AI trader + trending screener runtime output (regenerated each loop)
+# Prefer ai_* / grok_*; keep claude_* names for older dual-write paths.
 claude_suggestions.json
 claude_positions_state.json
+ai_suggestions.json
+ai_positions_state.json
+grok_suggestions.json
 trending_stocks.json
 
 # Local control script artifacts

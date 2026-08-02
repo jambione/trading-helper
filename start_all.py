@@ -131,24 +131,24 @@ def main() -> None:
     else:
         print('RS screener   ->  disabled (set rs_screener_enabled: true in config/bot_config.json)')
 
-    # ── Claude trader — only launched when enabled in config ──────────────────
-    # This is the only process here that can place broker orders. Before
-    # enabling it, confirm the desk monitor's momentum_config.json has
-    # claude_trading_enabled: false — two processes managing the same account
-    # would double every entry.
-    if cfg.get('claude_trader_enabled', False):
-        claude = subprocess.Popen(
-            [VENV_PYTHON, 'claude_trader.py'],
+    # ── AI trader — only launched when enabled in config ──────────────────────
+    # This is the only process here that can place broker orders. The desk
+    # monitor must never trade (display-only).
+    _ai_on = bool(cfg.get('ai_trader_enabled', False)
+                  or cfg.get('claude_trader_enabled', False))
+    if _ai_on:
+        ai = subprocess.Popen(
+            [VENV_PYTHON, 'ai_trader.py'],
             cwd=ROOT,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=utf8_env,
         )
-        threading.Thread(target=_stream, args=(claude, '[claude]  '), daemon=True).start()
-        procs['claude'] = claude
-        print('Claude trader ->  running (scheduled research + entries; logs prefixed [claude])')
+        threading.Thread(target=_stream, args=(ai, '[ai]      '), daemon=True).start()
+        procs['ai'] = ai
+        print('AI trader     ->  running (scheduled research + entries; logs prefixed [ai])')
     else:
-        print('Claude trader ->  disabled (set claude_trader_enabled: true in config/bot_config.json)')
+        print('AI trader     ->  disabled (set ai_trader_enabled: true in config/bot_config.json)')
 
     # ── Trending screener — only launched when enabled in config ──────────────
     if cfg.get('trending_screener_enabled', False):

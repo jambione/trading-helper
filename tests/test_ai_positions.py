@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import alpaca_trader  # noqa: E402
-import claude_positions as cp  # noqa: E402
+import ai_positions as cp  # noqa: E402
 
 
 def _state_path(tmp_path):
