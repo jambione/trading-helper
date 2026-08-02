@@ -2,7 +2,7 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import claude_trading as gt  # noqa: E402
 

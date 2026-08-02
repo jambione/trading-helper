@@ -80,6 +80,9 @@ TICKER_LOG         = Path("transcription/wb_watchlist.json")
 NEWS_FILE          = Path("news.json")
 SWING_FILE         = Path("swing_candidates.json")
 RS_FILE            = Path("rs_ratings.json")
+CLAUDE_SUGGESTIONS_FILE = Path("claude_suggestions.json")
+CLAUDE_POSITIONS_FILE   = Path("claude_positions_state.json")
+TRENDING_FILE      = Path("trending_stocks.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
 PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
@@ -231,6 +234,58 @@ def load_rs() -> dict:
     except Exception as e:
         log.warning(f"[RS] Failed to load rs_ratings.json: {e}")
         return {}
+
+
+# ── Claude trader + trending screener ─────────────────────────────────────────
+# Written by claude_trader.py and trending_screener.py, which do the Claude
+# research, the risk-sized entries, and the Stocktwits poll. The momentum
+# monitor used to do all three itself; it now renders these from /api/state.
+#
+# Served whole rather than rows-only, for the same reason as RS: the header
+# says whether the desk is trading, in which mode, when the next research run
+# is, and what went wrong — none of which the rows can convey on their own. A
+# stale row list with no error field reads as "nothing is happening" when the
+# truth may be "the CLI is missing."
+
+def _load_json_payload(path: Path, cache: dict, label: str) -> dict:
+    """Read a screener payload, cached by mtime. {} when it has never run."""
+    try:
+        if not path.exists():
+            return {}
+        mtime = path.stat().st_mtime
+        if mtime == cache["mtime"]:
+            return cache["payload"]
+        import json as _json
+        payload = _json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            payload = {}
+        if not isinstance(payload.get("rows"), list):
+            payload["rows"] = []
+        cache.update(mtime=mtime, payload=payload)
+        return payload
+    except Exception as e:
+        log.warning(f"[{label}] Failed to load {path.name}: {e}")
+        return {}
+
+
+_claude_suggestions_cache: dict = {"mtime": -1.0, "payload": {}}
+
+def load_claude_suggestions() -> dict:
+    return _load_json_payload(
+        CLAUDE_SUGGESTIONS_FILE, _claude_suggestions_cache, "CLAUDE")
+
+
+_claude_positions_cache: dict = {"mtime": -1.0, "payload": {}}
+
+def load_claude_positions() -> dict:
+    return _load_json_payload(
+        CLAUDE_POSITIONS_FILE, _claude_positions_cache, "CLAUDE")
+
+
+_trending_cache: dict = {"mtime": -1.0, "payload": {}}
+
+def load_trending() -> dict:
+    return _load_json_payload(TRENDING_FILE, _trending_cache, "TRENDING")
 
 
 # ── Suggestions ──────────────────────────────────────────────────────────────
@@ -1406,6 +1461,9 @@ def _snapshot() -> dict:
     news     = load_news()
     swing    = load_swing()   # file read — confluence overlay applied under lock below
     rs       = load_rs()      # file read — daily, served whole (header + rows)
+    claude_suggestions = load_claude_suggestions()
+    claude_positions   = load_claude_positions()
+    trending           = load_trending()
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
     # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
     mention_rank = _build_mention_rank(set(tickers))
@@ -1527,6 +1585,9 @@ def _snapshot() -> dict:
             "market_sentiment": market_sent,
             "swing":   swing_rows,
             "rs":      rs_payload,
+            "claude_suggestions": claude_suggestions,
+            "claude_positions":   claude_positions,
+            "trending":           trending,
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
             # Trading-engine status — trader mode + risk guard written by
@@ -1980,6 +2041,24 @@ async def api_rs():
     except Exception:                                      # noqa: BLE001
         pass
     return JSONResponse(payload)
+
+
+@app.get("/api/claude")
+async def api_claude():
+    """Claude research ideas from claude_suggestions.json (claude_trader.py)."""
+    return JSONResponse(load_claude_suggestions())
+
+
+@app.get("/api/claude/positions")
+async def api_claude_positions():
+    """Claude desk positions, resting orders and realized performance."""
+    return JSONResponse(load_claude_positions())
+
+
+@app.get("/api/trending")
+async def api_trending():
+    """Stocktwits trending from trending_stocks.json (trending_screener.py)."""
+    return JSONResponse(load_trending())
 
 
 # One screen at a time, same guard as the swing refresh. An RS run is far

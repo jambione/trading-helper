@@ -131,6 +131,40 @@ def main() -> None:
     else:
         print('RS screener   ->  disabled (set rs_screener_enabled: true in config/bot_config.json)')
 
+    # ── Claude trader — only launched when enabled in config ──────────────────
+    # This is the only process here that can place broker orders. Before
+    # enabling it, confirm the desk monitor's momentum_config.json has
+    # claude_trading_enabled: false — two processes managing the same account
+    # would double every entry.
+    if cfg.get('claude_trader_enabled', False):
+        claude = subprocess.Popen(
+            [VENV_PYTHON, 'claude_trader.py'],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=utf8_env,
+        )
+        threading.Thread(target=_stream, args=(claude, '[claude]  '), daemon=True).start()
+        procs['claude'] = claude
+        print('Claude trader ->  running (scheduled research + entries; logs prefixed [claude])')
+    else:
+        print('Claude trader ->  disabled (set claude_trader_enabled: true in config/bot_config.json)')
+
+    # ── Trending screener — only launched when enabled in config ──────────────
+    if cfg.get('trending_screener_enabled', False):
+        trending = subprocess.Popen(
+            [VENV_PYTHON, 'trending_screener.py'],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=utf8_env,
+        )
+        threading.Thread(target=_stream, args=(trending, '[trending]'), daemon=True).start()
+        procs['trending'] = trending
+        print('Trending      ->  running (Stocktwits poll; logs prefixed [trending])')
+    else:
+        print('Trending      ->  disabled (set trending_screener_enabled: true in config/bot_config.json)')
+
     print('Press Ctrl+C to stop all.\n')
 
     try:

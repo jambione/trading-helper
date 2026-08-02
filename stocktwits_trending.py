@@ -41,7 +41,7 @@ _UA = (
     "BrasfieldMomentum/1.0"
 )
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 
 # `tools.morning_funnel` (relative volume) lives under the repo root. Put it on
 # the path here rather than relying on whoever imported this module.

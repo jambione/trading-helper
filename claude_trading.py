@@ -18,8 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-HERE = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -39,7 +38,7 @@ _sells_this_poll = 0
 _trade_log: list[dict[str, Any]] = []
 _lock = threading.Lock()
 
-TRADE_LOG_PATH = HERE / "claude_reports" / "trades.jsonl"
+TRADE_LOG_PATH = ROOT / "claude_reports" / "trades.jsonl"
 
 
 def _load_env() -> None:

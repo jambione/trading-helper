@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Server-side Stocktwits trending poll.
+
+Publishes trending_stocks.json, which dashboard.py merges into /api/state so
+the momentum monitor can render the panel without polling Stocktwits itself.
+
+Stocktwits' trending payload carries no usable quotes — price, %chg and volume
+are all backfilled from Alpaca, so rows land here already enriched.
+
+LOOK badges and the max_price panel filter are deliberately NOT applied here:
+those thresholds are desk display settings that live in the monitor's
+momentum_config.json and are applied by display_rows() at render time. This
+file publishes the full ranked list.
+
+    python3 trending_screener.py
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+def _load_env_file(path: Path) -> None:
+    """Parse KEY=VALUE lines into os.environ. Shell environment always wins."""
+    if not path.exists():
+        return
+    loaded = 0
+    with open(path, encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.split(" #", 1)[0].strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+                loaded += 1
+    if loaded:
+        print(f"[ENV] Loaded {loaded} setting(s) from signal_engine.env",
+              flush=True)
+
+
+# Quote enrichment needs Alpaca keys, which live only in signal_engine.env.
+_load_env_file(ROOT / "signal_engine.env")
+
+from config import load_config  # noqa: E402
+from stocktwits_trending import StocktwitsTrending  # noqa: E402
+
+TRENDING_FILE = ROOT / "trending_stocks.json"
+
+LOOP_SLEEP = 5.0
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    """Atomic replace — dashboard.py may read this file mid-write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, default=str)
+        except Exception:
+            os.close(fd)
+            raise
+        Path(tmp_path).replace(path)
+        tmp_path = None
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def main() -> None:
+    cfg = load_config()
+
+    st = StocktwitsTrending(
+        poll_interval=float(cfg.get("stocktwits_poll", 60.0)),
+        stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
+        max_price=None,          # panel filter — applied by the monitor
+        quote_interval=float(cfg.get("stocktwits_quote_poll", 15.0)),
+        volume_interval=float(cfg.get("stocktwits_volume_poll", 60.0)),
+        avg_days=int(cfg.get("stocktwits_avg_days", 10)),
+        rvol_time_adjusted=bool(cfg.get("stocktwits_rvol_time_adjusted", True)),
+    )
+
+    print(f"[trending] polling Stocktwits every {st.poll_interval:.0f}s "
+          f"(quotes {st.quote_interval:.0f}s, volume {st.volume_interval:.0f}s)",
+          flush=True)
+
+    while True:
+        t0 = time.time()
+
+        if not st.refresh(t0):
+            st.refresh_quotes(t0)
+            st.refresh_volume(t0)
+
+        _write_json(TRENDING_FILE, {
+            "updated": t0,
+            "last_ok": st.last_ok,
+            "error": st.error,
+            "quotes_error": st.quotes_error,
+            "last_quote_ok": st.last_quote_ok,
+            "rows": list(st.rows),
+        })
+
+        time.sleep(LOOP_SLEEP)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[trending] stopped.", flush=True)

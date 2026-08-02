@@ -88,8 +88,7 @@ import desk_actions as desk
 import spark
 from desk_hotkeys import DeskHotkeys
 from journal import Journal
-from stocktwits_trending import StocktwitsTrending
-from claude_suggest import ClaudeSuggestions
+from remote_feeds import RemoteClaudeSuggestions, RemoteStocktwitsTrending
 from symbol_history import SymbolHistory
 
 WatchlistReader = top_movers = None  # OCR movers retired
@@ -244,16 +243,10 @@ DEFAULTS = {
     # to alert on every ↑↑; raise toward the engine's own "hot" bar
     # (PRIORITY_MENTIONS, 5) to only hear about real crowds.
     "mention_flow_alert_min": 2.0,
-    # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J
+    # Stocktwits free trending (stocktwits.com/sentiment) — keys A-J.
+    # Polled by the server's trending_screener.py and delivered in /api/state;
+    # everything here is display tuning applied at render time.
     "stocktwits_enabled": True,
-    "stocktwits_poll": 60.0,     # seconds between ST API polls
-    # Quotes on their own, faster clock: the ranking barely moves in a minute,
-    # the prices hanging off it go stale in seconds. Re-quoting does not touch
-    # the (unauthenticated, public) Stocktwits endpoint.
-    "stocktwits_quote_poll": 15.0,
-    # Volume + RVOL are summed from today's minute bars — a far bigger payload
-    # than a snapshot, and volume does not move meaningfully in 15s.
-    "stocktwits_volume_poll": 60.0,
     "stocktwits_stocks_only": True,
     "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
     "stocktwits_panel_limit": 10,  # max 10 → keys A-J
@@ -269,46 +262,18 @@ DEFAULTS = {
     # Absolute volume floor for LOOK, on top of the panel-median test. None
     # keeps the median alone. Skipped for rows whose RVOL is unknown.
     "stocktwits_look_min_rvol": 1.5,
-    # Claude (xAI) suggestions panel — keys K-T. Same quote columns as ST.
-    # Off by default until XAI_API_KEY + claude_prompt.txt are set.
-    # Research prompt is 6–18m multi-month ideas → slow poll, no $30 filter.
+    # Claude suggestions panel — keys K-T. Same quote columns as ST.
+    #
+    # The research, the entries and the position management all run on the
+    # server (claude_trader.py) and arrive in /api/state. The keys below are
+    # display tuning only; the model, schedule, risk sizing and trading
+    # switches live in config/bot_config.json next to the process that uses
+    # them. Nothing here can place an order.
     "claude_enabled": False,
-    # claude_cli | cli (Claude Build) | api (xAI HTTP paid)
-    "claude_backend": "claude_cli",
-    "claude_cli_bin": "claude",     # claude binary when backend=claude_cli; grok when cli
-    "claude_poll": 14400.0,         # 4h default: swing ideas don't need hourly
-    "claude_quote_poll": 15.0,
-    "claude_volume_poll": 60.0,
-    "claude_model": "sonnet",       # Claude alias; use grok-4.5 when backend=cli|api
-    "claude_effort": "xhigh",       # research effort: low|medium|high|xhigh|max
-    # Fixed ET run times beat interval polling: most of a run's cost is search
-    # fees, and off-hours searches re-derive the same macro on a closed tape.
-    "claude_research_times": ["04:00", "11:00", "13:00"],
-    "claude_research_weekdays_only": True,
-    "claude_research_catchup_min": 120,
-    "claude_prompt_file": "claude_prompt.txt",
-    "claude_request_timeout": 600.0,
     "claude_panel_limit": 7,
-    "claude_max_price": 100.0,  # panel + prompt: only show / prefer names under this
-    "claude_live_search": True,
-    # Token efficiency (full process, bounded execution):
-    "claude_search_tools": "web",   # web | web_x | none (api backend)
-    "claude_max_turns": 8,          # cap agent/search loops
-    "claude_max_output_tokens": 10000,  # api backend
-    "claude_use_prior_context": True,
-    "claude_save_reports": True,
-    "claude_trading_enabled": False,
-    "claude_trade_amount": 1000.0,  # $ per Claude paper buy
-    "claude_max_positions": 5,
-    "claude_max_buys_per_poll": 3,
-    "claude_max_sells_per_poll": 5,
-    # Risk-sized entries (claude_positions.py): stop/scale-out/trailing/time
-    # rules are enforced mechanically by real broker orders once a position
-    # opens — only the entry decision and the thesis-break check use Claude.
-    "claude_risk_pct": 1.0,          # max % of account risked per trade
-    "claude_trade_style": "Moderate position",
-    "claude_min_reward_risk": 3.0,   # reject entries below this R:R
-    # Show Alpaca paper/live holdings + resting orders under the CLAUDE panel.
+    "claude_max_price": 100.0,  # panel filter: only show names under this
+    # Show the desk's own Alpaca holdings + resting orders (manual B/S keys).
+    # The Claude desk's book is reported separately by the server.
     "positions_panel_enabled": True,
     "positions_poll": 5.0,        # seconds between position/order refreshes
     "claude_rvol_column": True,
@@ -2163,7 +2128,8 @@ def positions_panel(positions: dict | None,
                     *,
                     open_orders: list[dict] | None = None,
                     mode: str = "paper",
-                    error: str = "") -> Panel:
+                    error: str = "",
+                    label: str = "POSITIONS") -> Panel:
     """Live P&L for open Alpaca positions + resting open orders.
 
     Claude paper buys often sit as ACCEPTED limits when the market is closed —
@@ -2247,7 +2213,7 @@ def positions_panel(positions: dict | None,
     pl_s = (f"  total P&L [{tcol}]{'+' if total_pl >= 0 else ''}"
             f"${total_pl:,.2f}[/{tcol}]" if n_pos else "")
     ord_s = f"  ·  {n_ord} resting" if n_ord else ""
-    title = f"{mode_tag} POSITIONS ({n_pos}){pl_s}{ord_s}"
+    title = f"{mode_tag} {label} ({n_pos}){pl_s}{ord_s}"
     return Panel(content, title=title, title_align="left",
                  border_style=tcol if n_pos else "yellow", padding=(0, 1))
 
@@ -2298,11 +2264,9 @@ def main():
     pctr_focus_lo = float(cfg.get("pctr_focus_lo", -100.0))
     pctr_focus_hi = float(cfg.get("pctr_focus_hi", -75.0))
     st_on = bool(cfg.get("stocktwits_enabled", True))
-    st_poll = float(cfg.get("stocktwits_poll", 60.0))
     st_max_px = cfg.get("stocktwits_max_price", 30.0)
     st_limit = min(10, int(cfg.get("stocktwits_panel_limit", 10)))
     claude_on = bool(cfg.get("claude_enabled", False))
-    claude_poll = float(cfg.get("claude_poll", 3600.0))
     claude_max_px = cfg.get("claude_max_price", None)
     claude_limit = min(10, int(cfg.get("claude_panel_limit", 7)))
     positions_on = bool(cfg.get("positions_panel_enabled", True))
@@ -2312,29 +2276,15 @@ def main():
     feed = Feed(cfg)
     alerter = Alerter(cfg)
 
-    # Paper/live account for the POSITIONS panel (and desk B/S if used).
-    # Claude trading init is separate (always paper); this mirrors env TRADER_MODE.
+    # Paper/live account for the POSITIONS panel and the desk's own B/S keys.
+    # This is the manual book only — the Claude desk runs on the server and
+    # reports its positions through /api/state.
     pos_mode = "off"
-    if positions_on or bool(cfg.get("claude_trading_enabled", False)):
+    if positions_on:
         try:
             pos_mode = desk.init_trader(cfg) or "off"
         except Exception:
             pos_mode = "off"
-        # Prefer Claude's forced-paper session when trading is on so we read the
-        # same account Claude is buying into.
-        if bool(cfg.get("claude_trading_enabled", False)):
-            try:
-                import claude_trading as gt
-                gm = gt.init_for_claude(
-                    trade_amount=float(cfg.get("claude_trade_amount", 1000.0)),
-                    max_positions=int(cfg.get("claude_max_positions", 5)),
-                    max_buys_per_poll=int(cfg.get("claude_max_buys_per_poll", 3)),
-                    max_sells_per_poll=int(cfg.get("claude_max_sells_per_poll", 5)),
-                )
-                if gm == "paper":
-                    pos_mode = "paper"
-            except Exception:
-                pass
         console.print(f"[dim]positions panel: alpaca mode={pos_mode}[/dim]")
     chart_symbol = ChartSymbol(cfg)
     chart_watcher = None
@@ -2403,10 +2353,7 @@ def main():
 
     hotkeys = DeskHotkeys()
     st_min_rvol = cfg.get("stocktwits_look_min_rvol", 1.5)
-    st = StocktwitsTrending(
-        poll_interval=st_poll,
-        quote_interval=float(cfg.get("stocktwits_quote_poll", 15.0)),
-        volume_interval=float(cfg.get("stocktwits_volume_poll", 60.0)),
+    st = RemoteStocktwitsTrending(
         stocks_only=bool(cfg.get("stocktwits_stocks_only", True)),
         max_price=float(st_max_px) if st_max_px is not None else None,
         look_min_abs_chg=float(cfg.get("stocktwits_look_min_abs_chg", 3.0)),
@@ -2419,10 +2366,7 @@ def main():
     ) if st_on else None
 
     claude_min_rvol = cfg.get("claude_look_min_rvol", 1.5)
-    gs = ClaudeSuggestions(
-        poll_interval=claude_poll,
-        quote_interval=float(cfg.get("claude_quote_poll", 15.0)),
-        volume_interval=float(cfg.get("claude_volume_poll", 60.0)),
+    gs = RemoteClaudeSuggestions(
         max_price=float(claude_max_px) if claude_max_px is not None else None,
         look_min_abs_chg=float(cfg.get("claude_look_min_abs_chg", 3.0)),
         look_max=int(cfg.get("claude_look_max", 2)),
@@ -2431,32 +2375,7 @@ def main():
         look_min_rvol=(float(claude_min_rvol) if claude_min_rvol is not None else None),
         avg_days=int(cfg.get("claude_avg_days", 10)),
         rvol_time_adjusted=bool(cfg.get("claude_rvol_time_adjusted", True)),
-        model=str(cfg.get("claude_model", "sonnet")),
-        prompt_file=str(cfg.get("claude_prompt_file", "claude_prompt.txt")),
-        request_timeout=float(cfg.get("claude_request_timeout", 600.0)),
         panel_limit=claude_limit,
-        live_search=bool(cfg.get("claude_live_search", True)),
-        save_reports=bool(cfg.get("claude_save_reports", True)),
-        trading=bool(cfg.get("claude_trading_enabled", False)),
-        trade_amount=float(cfg.get("claude_trade_amount", 1000.0)),
-        max_positions=int(cfg.get("claude_max_positions", 5)),
-        max_buys_per_poll=int(cfg.get("claude_max_buys_per_poll", 3)),
-        max_sells_per_poll=int(cfg.get("claude_max_sells_per_poll", 5)),
-        max_turns=int(cfg.get("claude_max_turns", 8)),
-        max_output_tokens=int(cfg.get("claude_max_output_tokens", 10000)),
-        search_tools=str(cfg.get("claude_search_tools", "web")),
-        use_prior_context=bool(cfg.get("claude_use_prior_context", True)),
-        backend=str(cfg.get("claude_backend", "claude_cli")),
-        cli_bin=str(cfg.get("claude_cli_bin", "claude") or "claude"),
-        effort=str(cfg.get("claude_effort", "xhigh") or "xhigh"),
-        research_times=cfg.get("claude_research_times",
-                               ["04:00", "11:00", "13:00"]),
-        research_weekdays_only=bool(
-            cfg.get("claude_research_weekdays_only", True)),
-        research_catchup_min=int(cfg.get("claude_research_catchup_min", 120)),
-        risk_pct=float(cfg.get("claude_risk_pct", 1.0)),
-        trade_style=str(cfg.get("claude_trade_style", "Moderate position")),
-        min_reward_risk=float(cfg.get("claude_min_reward_risk", 3.0)),
     ) if claude_on else None
 
     st_note = f"  ST={'on' if st_on else 'off'}"
@@ -2468,8 +2387,8 @@ def main():
         f"TV={'on' if desk.tv_load_available() else 'off'}{st_note}{claude_note}  "
         f"— Ctrl+C to stop.\n"
         f"Polling {_dashboard_url()}/api/state"
-        + (f"  ·  Stocktwits every {st_poll:.0f}s" if st_on else "")
-        + (f"  ·  Claude every {claude_poll:.0f}s" if claude_on else "")
+        + (f"  ·  Stocktwits + Claude served by the dashboard"
+           if (st_on or claude_on) else "")
         + "\n"
         + "[dim]1-9/space momentum → TV"
         + ("   ·   A-J Stocktwits → TV" if st_on else "")
@@ -2487,26 +2406,7 @@ def main():
         "mode": pos_mode,
     }
 
-    _claude_positions_last = [0.0]
-
-    def _manage_claude_positions(now: float) -> None:
-        # Mechanical checks only (order status, breakeven/trailing-stop
-        # replacement, time-stop) — no LLM call, so this can ride the same
-        # slow clock as the positions panel regardless of whether that
-        # panel is actually enabled.
-        if not bool(cfg.get("claude_trading_enabled", False)):
-            return
-        if (now - _claude_positions_last[0]) < positions_poll:
-            return
-        _claude_positions_last[0] = now
-        try:
-            import claude_positions as cp
-            cp.manage_open_positions(now)
-        except Exception:
-            pass
-
     def _refresh_positions(now: float, force: bool = False) -> None:
-        _manage_claude_positions(now)
         if not positions_on or _pos_cache["mode"] in ("", "off"):
             return
         if (not force and _pos_cache["last"]
@@ -2547,19 +2447,20 @@ def main():
 
             _refresh_positions(t0)
 
-            if st is not None:
-                # refresh() re-quotes and re-volumes as part of a successful
-                # list poll; between polls each rides its own clock.
-                if not st.refresh(t0):
-                    st.refresh_quotes(t0)
-                    st.refresh_volume(t0)
-                # Before display_rows() fires on_change -> _st_alert.
-                _st_ctx["by_symbol"] = st.by_symbol
+            # Both panels ride the /api/state payload already fetched above —
+            # the server polls Stocktwits and runs Claude, not this loop. A
+            # failed fetch leaves the last rows up rather than blanking the
+            # panel; the header already says the feed is stale.
+            if state is not None:
+                if st is not None:
+                    st.ingest(state.get("trending"), t0)
+                if gs is not None:
+                    gs.ingest(state.get("claude_suggestions"), t0)
 
+            # Before display_rows() fires on_change -> _st_alert.
+            if st is not None:
+                _st_ctx["by_symbol"] = st.by_symbol
             if gs is not None:
-                if not gs.refresh(t0):
-                    gs.refresh_quotes(t0)
-                    gs.refresh_volume(t0)
                 _claude_ctx["by_symbol"] = gs.by_symbol
 
             # Prices from momentum feed (fallback for ST / Claude filter)
@@ -2652,6 +2553,19 @@ def main():
                 panels.append(claude_panel(
                     gs, price_map, limit=claude_limit, hotkeys_on=hotkeys.enabled,
                     cfg=cfg, now=t0))
+            # The Claude desk's own book, reported by the server. Kept separate
+            # from the manual book below: they can be different accounts, and
+            # merging them would hide which one a position belongs to.
+            claude_pos = (state or {}).get("claude_positions") or {}
+            if claude_pos.get("positions") or claude_pos.get("open_orders"):
+                panels.append(positions_panel(
+                    claude_pos.get("positions"),
+                    hotkeys.focus_symbol(),
+                    open_orders=claude_pos.get("open_orders"),
+                    mode=claude_pos.get("mode", "paper"),
+                    error=claude_pos.get("error", ""),
+                    label="CLAUDE POSITIONS",
+                ))
             if positions_on and _pos_cache["mode"] not in ("", "off"):
                 panels.append(positions_panel(
                     _pos_cache["positions"],
@@ -2659,6 +2573,7 @@ def main():
                     open_orders=_pos_cache["orders"],
                     mode=_pos_cache["mode"],
                     error=_pos_cache["error"],
+                    label="DESK POSITIONS",
                 ))
             panels.append(footer_panel(
                 alerter, hotkeys, hotkey_slots, st_on=st_on, claude_on=claude_on))

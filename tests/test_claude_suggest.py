@@ -162,12 +162,27 @@ def test_claude_panel_empty_shows_error_in_title():
 
 
 def test_defaults_have_claude_off():
+    from config import DEFAULT_CONFIG
+
+    # The monitor only renders: the panel switch and its price filter.
     assert DEFAULTS.get("claude_enabled") is False
-    assert DEFAULTS.get("claude_poll", 0) >= 60
-    # Desk price filter for Claude suggestions (under $100).
     assert DEFAULTS.get("claude_max_price") == 100.0
-    assert DEFAULTS.get("claude_live_search") is True
-    assert DEFAULTS.get("claude_backend") == "claude_cli"
+    # Everything that runs or spends lives with claude_trader.py on the server,
+    # and every switch that can place an order ships off.
+    assert DEFAULT_CONFIG["claude_live_search"] is True
+    assert DEFAULT_CONFIG["claude_backend"] == "claude_cli"
+    assert DEFAULT_CONFIG["claude_trader_enabled"] is False
+    assert DEFAULT_CONFIG["claude_research_enabled"] is False
+    assert DEFAULT_CONFIG["claude_trading_enabled"] is False
+
+
+def test_monitor_defaults_cannot_trade():
+    """The desk is a renderer. If a trading knob reappears in its config, the
+    server and the desk could both manage the same account."""
+    for key in ("claude_trading_enabled", "claude_risk_pct",
+                "claude_trade_amount", "claude_backend", "claude_model",
+                "claude_research_times"):
+        assert key not in DEFAULTS, f"{key} belongs to claude_trader.py"
 
 
 def _et(y, m, d, hour):
@@ -248,11 +263,13 @@ def test_refresh_off_schedule_reports_the_next_run_and_does_not_poll():
 def test_defaults_are_three_scheduled_runs_at_full_depth():
     """Cost is dominated by search fees, not thinking tokens, so effort buys
     cheap depth — spend is cut by running three times a day instead."""
-    assert DEFAULTS["claude_effort"] == "xhigh"
+    from config import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG["claude_effort"] == "xhigh"
     # 11:00 and 13:00 are both inside RTH (04:00 is pre-market prep only) —
     # two real chances a day to actually open a position, not just one.
-    assert DEFAULTS["claude_research_times"] == ["04:00", "11:00", "13:00"]
-    assert DEFAULTS["claude_research_weekdays_only"] is True
+    assert DEFAULT_CONFIG["claude_research_times"] == ["04:00", "11:00", "13:00"]
+    assert DEFAULT_CONFIG["claude_research_weekdays_only"] is True
 
 
 class _StubTrading:

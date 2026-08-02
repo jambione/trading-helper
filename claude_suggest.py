@@ -36,8 +36,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-ROOT = Path(__file__).resolve().parent.parent
-HERE = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -58,7 +57,7 @@ DEFAULT_XAI_MODEL = "grok-4.5"
 DEFAULT_PROMPT_FILE = "claude_prompt.txt"
 # Full research + agent tools is slow; default well above chat-only timeouts.
 DEFAULT_TIMEOUT = 600.0
-REPORT_DIR = HERE / "claude_reports"
+REPORT_DIR = ROOT / "claude_reports"
 TOKEN_METRICS_PATH = REPORT_DIR / "token_metrics.jsonl"
 SCHEDULE_STATE_PATH = REPORT_DIR / "schedule_state.json"
 
@@ -200,7 +199,7 @@ def prompt_path(cfg_name: str | None = None) -> Path:
     name = (cfg_name or DEFAULT_PROMPT_FILE).strip() or DEFAULT_PROMPT_FILE
     p = Path(name)
     if not p.is_absolute():
-        p = HERE / p
+        p = ROOT / p
     return p
 
 

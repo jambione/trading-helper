@@ -142,6 +142,61 @@ DEFAULT_CONFIG = {
     "rs_min_rvol":                1.5,    # config panel round-trips an empty number as "", not null
     "rs_use_adr_filter":        False,
     "rs_min_adr_pct":             3.0,
+
+    # ── Claude trader (claude_trader.py) ──────────────────────────────────────
+    # Research runs the Claude Code CLI on a fixed ET schedule and publishes
+    # ranked ideas to claude_suggestions.json. When claude_trading_enabled is
+    # also true, qualifying ideas become real Alpaca bracket orders and
+    # claude_positions.manage_open_positions() enforces the stop/scale-out/
+    # trailing/time rules mechanically — only entry and thesis-break use Claude.
+    #
+    # These are the SERVER's copy of these settings. The monitor's
+    # momentum_config.json keeps only display tuning; it no longer trades.
+    "claude_trader_enabled":     False,   # launch claude_trader.py from start_all
+    "claude_research_enabled":   False,   # run the scheduled research prompt
+    "claude_trading_enabled":    False,   # place real orders off that research
+    "claude_backend":       "claude_cli",
+    "claude_cli_bin":          "claude",
+    "claude_model":            "sonnet",
+    "claude_effort":            "xhigh",  # low|medium|high|xhigh|max
+    # Fixed ET run times beat interval polling: most of a run's cost is search
+    # fees, and off-hours searches re-derive the same macro on a closed tape.
+    "claude_research_times": ["04:00", "11:00", "13:00"],
+    "claude_research_weekdays_only": True,
+    "claude_research_catchup_min": 120,   # how late a missed slot may still fire
+    "claude_prompt_file": "claude_prompt.txt",
+    "claude_request_timeout":   600.0,
+    "claude_live_search":        True,
+    "claude_search_tools":      "web",
+    "claude_max_turns":             8,
+    "claude_max_output_tokens": 10000,
+    "claude_use_prior_context":  True,
+    "claude_save_reports":       True,
+    "claude_max_price":         100.0,    # prompt prefers names under this
+    "claude_quote_poll":         15.0,    # re-quote published rows
+    "claude_volume_poll":        60.0,    # re-sum today's minute bars for RVOL
+    "claude_avg_days":             10,    # sessions in the RVOL denominator
+    "claude_rvol_time_adjusted": True,
+    "claude_trade_amount":     1000.0,
+    "claude_max_positions":         5,
+    "claude_max_buys_per_poll":     3,
+    "claude_max_sells_per_poll":    5,
+    "claude_risk_pct":            1.0,    # max % of account risked per trade
+    "claude_trade_style": "Moderate position",
+    "claude_min_reward_risk":     3.0,    # reject entries below this R:R
+    "claude_positions_poll_sec":  5.0,    # mechanical manage_open_positions tick
+
+    # ── Trending screener (trending_screener.py) ──────────────────────────────
+    # Stocktwits carries no usable quotes, so rows are enriched from Alpaca.
+    # LOOK badges are NOT computed here — those thresholds are desk display
+    # settings and stay in the monitor's momentum_config.json.
+    "trending_screener_enabled": False,   # launch trending_screener.py
+    "stocktwits_poll":           60.0,    # seconds between Stocktwits polls
+    "stocktwits_quote_poll":     15.0,
+    "stocktwits_volume_poll":    60.0,
+    "stocktwits_stocks_only":    True,
+    "stocktwits_avg_days":         10,
+    "stocktwits_rvol_time_adjusted": True,
 }
 
 # Keys the dashboard API is allowed to update
@@ -215,6 +270,44 @@ SAFE_CONFIG_KEYS = [
     "rs_min_rvol",
     "rs_use_adr_filter",
     "rs_min_adr_pct",
+    "claude_trader_enabled",
+    "claude_research_enabled",
+    "claude_trading_enabled",
+    "claude_backend",
+    "claude_cli_bin",
+    "claude_model",
+    "claude_effort",
+    "claude_research_times",
+    "claude_research_weekdays_only",
+    "claude_research_catchup_min",
+    "claude_prompt_file",
+    "claude_request_timeout",
+    "claude_live_search",
+    "claude_search_tools",
+    "claude_max_turns",
+    "claude_max_output_tokens",
+    "claude_use_prior_context",
+    "claude_save_reports",
+    "claude_max_price",
+    "claude_quote_poll",
+    "claude_volume_poll",
+    "claude_avg_days",
+    "claude_rvol_time_adjusted",
+    "claude_trade_amount",
+    "claude_max_positions",
+    "claude_max_buys_per_poll",
+    "claude_max_sells_per_poll",
+    "claude_risk_pct",
+    "claude_trade_style",
+    "claude_min_reward_risk",
+    "claude_positions_poll_sec",
+    "trending_screener_enabled",
+    "stocktwits_poll",
+    "stocktwits_quote_poll",
+    "stocktwits_volume_poll",
+    "stocktwits_stocks_only",
+    "stocktwits_avg_days",
+    "stocktwits_rvol_time_adjusted",
 ]
 
 

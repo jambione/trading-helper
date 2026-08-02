@@ -34,6 +34,11 @@ rs_ratings.json
 rs_universe.json
 rs_cache.sqlite*
 
+# Claude trader + trending screener runtime output (regenerated each loop)
+claude_suggestions.json
+claude_positions_state.json
+trending_stocks.json
+
 # Local control script artifacts
 .trading.pids
 logs/
@@ -70,4 +75,4 @@ active_symbol.json
 momentum-monitor/journal/
 
 # Full Claude research write-ups (panel only shows the ticker trailer JSON).
-momentum-monitor/claude_reports/
+claude_reports/

@@ -24,8 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-HERE = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -37,7 +36,7 @@ from claude_suggest import (  # noqa: E402
     call_claude_cli,
 )
 
-REPORT_DIR = HERE / "claude_reports"
+REPORT_DIR = ROOT / "claude_reports"
 POSITIONS_STATE_PATH = REPORT_DIR / "positions_state.json"
 OUTCOMES_PATH = REPORT_DIR / "outcomes.jsonl"
 

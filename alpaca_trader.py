@@ -645,6 +645,53 @@ def get_open_positions() -> Optional[dict]:
         return None
 
 
+def get_open_orders(limit: int = 50) -> list[dict]:
+    """
+    Resting orders as plain dicts: {symbol, side, qty, filled, type, status, limit}.
+    Empty list when the trader is off or the call fails — callers render a
+    panel from this and an exception would take the whole surface down.
+    """
+    if not is_active() or _client is None:
+        return []
+    try:
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            raw = _client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=limit))
+        except Exception:
+            raw = _client.get_orders() or []
+            raw = [o for o in raw
+                   if str(getattr(o, "status", "")).lower()
+                   in ("new", "accepted", "pending_new", "partially_filled",
+                       "orderstatus.accepted", "orderstatus.new")]
+        out: list[dict] = []
+        seen: set[tuple] = set()
+        for o in raw or []:
+            try:
+                row = {
+                    "symbol": str(getattr(o, "symbol", "") or "").upper(),
+                    "side":   str(getattr(o, "side", "") or "").split(".")[-1].lower(),
+                    "qty":    _f(o, "qty"),
+                    "filled": _f(o, "filled_qty"),
+                    "type":   str(getattr(o, "type", "") or "").split(".")[-1].lower(),
+                    "status": str(getattr(o, "status", "") or "").split(".")[-1].lower(),
+                    "limit":  _f(o, "limit_price") or None,
+                }
+                key = (row["symbol"], row["side"], row["qty"], row["limit"],
+                       row["status"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(row)
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        log.warning("[TRADER] get_open_orders failed: %s", e)
+        return []
+
+
 def _f(obj, attr) -> float:
     try:
         v = getattr(obj, attr, 0)

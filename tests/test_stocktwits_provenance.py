@@ -16,7 +16,7 @@ import os
 import sys
 from datetime import date, datetime, timezone
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from stocktwits_trending import (  # noqa: E402
     apply_look_highlights,
