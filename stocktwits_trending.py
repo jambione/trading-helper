@@ -573,7 +573,7 @@ class StocktwitsTrending:
     """Throttled cache of Stocktwits trending (default poll ~60s)."""
 
     def __init__(self, poll_interval: float = 60.0, stocks_only: bool = True,
-                 max_price: float | None = 30.0,
+                 max_price: float | None = 35.0,
                  enrich_quotes: bool = True,
                  look_min_abs_chg: float = 3.0,
                  look_max: int = 2,

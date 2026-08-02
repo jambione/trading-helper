@@ -382,6 +382,53 @@ def load_trending() -> dict:
     return _load_json_payload(TRENDING_FILE, _trending_cache, "TRENDING")
 
 
+def filter_trending_by_max_price(
+    payload: dict | None,
+    max_price: float | None,
+) -> dict:
+    """Drop names at/above max_price when last price is known (same rule as monitor)."""
+    payload = dict(payload or {})
+    rows = list(payload.get("rows") or [])
+    if max_price is None:
+        payload["max_price"] = None
+        payload["rows"] = rows
+        return payload
+    try:
+        cap = float(max_price)
+    except (TypeError, ValueError):
+        payload["max_price"] = None
+        payload["rows"] = rows
+        return payload
+    kept: list = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        px = r.get("price")
+        try:
+            if px is not None and float(px) >= cap:
+                continue
+        except (TypeError, ValueError):
+            pass
+        kept.append(r)
+    payload["rows"] = kept
+    payload["max_price"] = cap
+    return payload
+
+
+def _trending_max_price_from_cfg(cfg: dict | None = None) -> float | None:
+    """Prefer stocktwits_max_price; fall back to trending_max_price; default $35."""
+    cfg = cfg if cfg is not None else (STATE.cfg if hasattr(STATE, "cfg") else {})
+    raw = cfg.get("stocktwits_max_price")
+    if raw is None:
+        raw = cfg.get("trending_max_price", 35.0)
+    if raw is None or raw == "" or raw is False:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 35.0
+
+
 # ── Suggestions ──────────────────────────────────────────────────────────────
 
 def load_suggestions() -> list:
@@ -1559,7 +1606,8 @@ def _snapshot() -> dict:
     grok_suggestions   = load_grok_suggestions()
     ai_suggestions     = build_ai_suggestions(claude_suggestions, grok_suggestions)
     claude_positions   = load_ai_positions()
-    trending           = load_trending()
+    trending           = filter_trending_by_max_price(
+        load_trending(), _trending_max_price_from_cfg(STATE.cfg))
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
     # main lock below — threading.Lock is non-reentrant; nested acquisition deadlocks.
     mention_rank = _build_mention_rank(set(tickers))
@@ -2177,7 +2225,8 @@ async def api_claude_positions():
 @app.get("/api/trending")
 async def api_trending():
     """Stocktwits trending from trending_stocks.json (trending_screener.py)."""
-    return JSONResponse(load_trending())
+    return JSONResponse(filter_trending_by_max_price(
+        load_trending(), _trending_max_price_from_cfg(STATE.cfg)))
 
 
 # One screen at a time, same guard as the swing refresh. An RS run is far

@@ -1967,17 +1967,30 @@ class AiSuggestions:
         self._lock = threading.Lock()
         self._fetching = False
 
+    def _schedule_state_path(self) -> Path:
+        """Per-source schedule file so Anthropic and Grok can share the same clock.
+
+        Claude keeps the historical path; Grok uses a sibling file. Sharing one
+        last_slot would let whichever source claimed the slot first suppress the
+        other for that research window.
+        """
+        src = source_from_backend(self.backend)
+        if src == SOURCE_XAI:
+            return REPORT_DIR / "schedule_state_grok.json"
+        return SCHEDULE_STATE_PATH
+
     def _load_last_slot(self) -> str:
         try:
-            data = json.loads(SCHEDULE_STATE_PATH.read_text(encoding="utf-8"))
+            data = json.loads(self._schedule_state_path().read_text(encoding="utf-8"))
             return str(data.get("last_slot") or "")
         except Exception:
             return ""
 
     def _save_last_slot(self, slot: str) -> None:
         try:
-            SCHEDULE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            SCHEDULE_STATE_PATH.write_text(
+            path = self._schedule_state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
                 json.dumps({"last_slot": slot}), encoding="utf-8")
         except Exception:
             pass

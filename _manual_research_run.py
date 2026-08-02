@@ -52,13 +52,15 @@ def main() -> int:
         print(f"quote enrich skipped: {e}", flush=True)
 
     now = time.time()
-    payload = ai_trader._suggestions_payload(gs, now)
-    ai_trader._write_json(ai_trader.SUGGESTIONS_FILE, payload)
+    path = ai_trader.CLAUDE_SUGGESTIONS_FILE
+    payload = ai_trader._suggestions_payload(
+        gs, now, path=path, source=ai_trader.SOURCE_ANTHROPIC)
+    ai_trader._write_json(path, payload)
 
     print(f"\ndone in {time.time() - started:.0f}s", flush=True)
     if gs.error:
         print(f"error: {gs.error}", flush=True)
-    print(f"published: {ai_trader.SUGGESTIONS_FILE}", flush=True)
+    print(f"published: {path}", flush=True)
     print(f"report: {gs.last_report_path or '(none)'}", flush=True)
     print(f"suggestions: {len(payload['rows'])}", flush=True)
     for r in payload["rows"]:

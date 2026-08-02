@@ -66,7 +66,7 @@ def test_parse_fundamentals_columns():
 
 
 def test_stocks_only_and_max_price():
-    st = StocktwitsTrending(poll_interval=60, stocks_only=True, max_price=30.0,
+    st = StocktwitsTrending(poll_interval=60, stocks_only=True, max_price=35.0,
                             enrich_quotes=False)
     st.rows = [r for r in parse_trending_payload(SAMPLE)
                if r["is_equity"] and not r["is_crypto"]]
@@ -77,10 +77,17 @@ def test_stocks_only_and_max_price():
             r["price"] = 96.0
         if r["symbol"] == "ONDS":
             r["price"] = 8.4
+    # Boundary: at the cap is excluded (>= max_price)
+    st.rows.append({
+        "symbol": "EDGE", "rank": 99, "price": 35.0,
+        "is_equity": True, "is_crypto": False,
+    })
+    st.by_symbol["EDGE"] = st.rows[-1]
     shown = st.display_rows(limit=10)
     syms = [r["symbol"] for r in shown]
     assert "ONDS" in syms
     assert "NOW" not in syms
+    assert "EDGE" not in syms
 
 
 def test_fmt_helpers():

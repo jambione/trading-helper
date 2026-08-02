@@ -114,7 +114,7 @@
   "claude_trade_style": "Moderate position",
   "claude_min_reward_risk": 3.0,
   "claude_positions_poll_sec": 5.0,
-  "grok_research_enabled": false,
+  "grok_research_enabled": true,
   "grok_trading_enabled": false,
   "grok_backend": "cli",
   "grok_cli_bin": "grok",
@@ -190,7 +190,8 @@
     9,
     15
   ],
-  "trending_max_price": 5,
+  "trending_max_price": 35.0,
+  "stocktwits_max_price": 35.0,
   "wr_oversold": -75,
   "wr_overbought": -20,
   "cm_rsi_overbought": 70,

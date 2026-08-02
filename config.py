@@ -201,8 +201,9 @@ DEFAULT_CONFIG = {
     "claude_positions_poll_sec":  5.0,
 
     # ── Grok research source (xAI subscription via Grok CLI) ──────────────────
-    "grok_research_enabled":   False,   # scheduled Grok research (when publisher exists)
+    "grok_research_enabled":   False,   # scheduled Grok research via ai_trader.py
     "grok_trading_enabled":    False,   # never place orders from Grok alone (v1)
+    "grok_max_price":          100.0,   # display / idea price ceiling ($)
     "grok_backend":            "cli",   # subscription: grok CLI / grok login
     "grok_cli_bin":            "grok",
     "grok_model":              "grok-4.5",
@@ -219,7 +220,8 @@ DEFAULT_CONFIG = {
     # ── Trending screener (trending_screener.py) ──────────────────────────────
     # Stocktwits carries no usable quotes, so rows are enriched from Alpaca.
     # LOOK badges are NOT computed here — those thresholds are desk display
-    # settings and stay in the monitor's momentum_config.json.
+    # settings and stay in the monitor's momentum_config.json. max_price is
+    # applied by the dashboard (web panel) and the monitor (display_rows).
     "trending_screener_enabled": False,   # launch trending_screener.py
     "stocktwits_poll":           60.0,    # seconds between Stocktwits polls
     "stocktwits_quote_poll":     15.0,
@@ -227,6 +229,8 @@ DEFAULT_CONFIG = {
     "stocktwits_stocks_only":    True,
     "stocktwits_avg_days":         10,
     "stocktwits_rvol_time_adjusted": True,
+    "stocktwits_max_price":      35.0,    # hide names at/above this last ($)
+    "trending_max_price":        35.0,    # alias used by older bot_config keys
 }
 
 # Keys the dashboard API is allowed to update
@@ -361,7 +365,10 @@ SAFE_CONFIG_KEYS = [
     "grok_prompt_file",
     "grok_request_timeout",
     "grok_save_reports",
+    "grok_max_price",
     "trending_screener_enabled",
+    "stocktwits_max_price",
+    "trending_max_price",
     "stocktwits_poll",
     "stocktwits_quote_poll",
     "stocktwits_volume_poll",

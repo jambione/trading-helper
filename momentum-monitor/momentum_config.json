@@ -21,7 +21,7 @@
   "buy_circle_chart_poll_sec": 1.0,
   "stocktwits_enabled": true,
   "stocktwits_stocks_only": true,
-  "stocktwits_max_price": 30.0,
+  "stocktwits_max_price": 35.0,
   "stocktwits_panel_limit": 10,
   "stocktwits_look_min_abs_chg": 3.0,
   "stocktwits_look_max": 2,

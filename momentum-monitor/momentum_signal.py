@@ -248,7 +248,7 @@ DEFAULTS = {
     # everything here is display tuning applied at render time.
     "stocktwits_enabled": True,
     "stocktwits_stocks_only": True,
-    "stocktwits_max_price": 30.0,  # panel filter when price known; None = no filter
+    "stocktwits_max_price": 35.0,  # panel filter when price known; None = no filter
     "stocktwits_panel_limit": 10,  # max 10 → keys A-J
     "stocktwits_rvol_column": True,
     "stocktwits_avg_days": 10,     # sessions in the RVOL denominator
@@ -2297,7 +2297,7 @@ def main():
     pctr_focus_lo = float(cfg.get("pctr_focus_lo", -100.0))
     pctr_focus_hi = float(cfg.get("pctr_focus_hi", -75.0))
     st_on = bool(cfg.get("stocktwits_enabled", True))
-    st_max_px = cfg.get("stocktwits_max_price", 30.0)
+    st_max_px = cfg.get("stocktwits_max_price", 35.0)
     st_limit = min(10, int(cfg.get("stocktwits_panel_limit", 10)))
     claude_on = bool(cfg.get("claude_enabled", False))
     claude_max_px = cfg.get("claude_max_price", None)
