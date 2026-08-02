@@ -19,7 +19,7 @@
   "buy_circle_yellow_min": 67.0,
   "buy_circle_symbol_source": "chart",
   "buy_circle_chart_poll_sec": 1.0,
-  "stocktwits_enabled": false,
+  "stocktwits_enabled": true,
   "stocktwits_stocks_only": true,
   "stocktwits_max_price": 30.0,
   "stocktwits_panel_limit": 10,
