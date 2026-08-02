@@ -22,7 +22,7 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=65" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=69" />
         <script src="https://s3.tradingview.com/tv.js"></script>
     </head>
     <body>
@@ -181,63 +181,15 @@
             <div data-engine-body class="engine-body hidden"></div>
         </section>
 
-        <!-- Mobile-only pager tabs: swipe between Momentum and Swing -->
+        <!-- Mobile-only pager tabs: swipe between Momentum, Trending and Claude -->
         <div class="mobile-pager-tabs" data-pager-tabs>
             <button type="button" class="mobile-pager-tab is-active" data-pager-target="tickers">Momentum</button>
-            <button type="button" class="mobile-pager-tab" data-pager-target="transcript">Swing</button>
+            <button type="button" class="mobile-pager-tab" data-pager-target="trending">Trending</button>
+            <button type="button" class="mobile-pager-tab" data-pager-target="claude">Claude</button>
         </div>
 
         <main class="main-grid">
-            <!-- ── LEFT: Discord Alerts (OCR source) ──────────────── -->
-            <section data-panel="transcript" class="panel panel-transcript">
-                <div class="panel-header">
-                    <span class="panel-title">Discord Alerts</span>
-                    <div class="tx-status-row">
-                        <div data-tx-dot class="tx-dot"></div>
-                        <span data-tx-label class="tx-label">OFFLINE</span>
-                    </div>
-                </div>
-
-                <div class="tx-controls">
-                    <div class="tx-meta">
-                        <span data-tx-count class="tx-count"
-                            >0 tickers captured today</span
-                        >
-                    </div>
-                </div>
-
-                <div class="alert-columns">
-                    <div class="alert-col alert-col--regular">
-                        <div class="alert-col-header">Alerts</div>
-                        <div data-regular-box class="transcript-box">
-                            <span class="tx-placeholder">Waiting…</span>
-                        </div>
-                    </div>
-                    <div class="alert-col alert-col--squeeze">
-                        <div class="alert-col-header">Squeeze</div>
-                        <div data-squeeze-box class="transcript-box">
-                            <span class="tx-placeholder">No squeezes…</span>
-                        </div>
-                    </div>
-                    <div class="alert-col alert-col--swing">
-                        <div class="alert-col-header">
-                            <span>Swing</span>
-                            <button data-swing-refresh class="swing-refresh-btn" title="Refresh swing candidates now">⟳</button>
-                        </div>
-                        <form data-swing-check-form class="swing-check">
-                            <input data-swing-check-input class="swing-check-input" type="text"
-                                   placeholder="Check symbols e.g. AAPL, T, AA" autocomplete="off" spellcheck="false">
-                            <button type="submit" class="swing-check-btn" title="Test these symbols against the swing filters">Check</button>
-                        </form>
-                        <div data-swing-check-results class="swing-check-results" hidden></div>
-                        <div data-swing-box class="transcript-box">
-                            <span class="tx-placeholder">No candidates…</span>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ── CENTER: Watchlist ──────────────────────────────── -->
+            <!-- ── LEFT: Watchlist ────────────────────────────────── -->
             <section data-panel="tickers" class="panel panel-watchlist">
                 <div class="panel-header">
                     <div class="panel-header-left">
@@ -283,6 +235,60 @@
                 </div>
 
                 <div data-ticker-rows class="watchlist-rows"></div>
+            </section>
+
+            <!-- ── CENTER: Trending (Stocktwits) ──────────────────── -->
+            <section data-panel="trending" class="panel panel-trending">
+                <div class="panel-header">
+                    <div class="panel-header-left">
+                        <span class="panel-title">Trending Stocks</span>
+                        <span data-trending-count class="ticker-count"></span>
+                    </div>
+                    <div class="panel-header-right">
+                        <span data-trending-stamp class="feed-stamp"></span>
+                    </div>
+                </div>
+                <div class="feed-table-header">
+                    <div class="feed-cols feed-cols--trending">
+                        <div class="th" data-sort-col="ticker">Ticker</div>
+                        <div class="th" data-sort-col="price">Price</div>
+                        <div class="th" data-sort-col="chg">Chg%</div>
+                        <div class="th" data-sort-col="vol">Vol</div>
+                        <div class="th" data-sort-col="rvol">RVOL</div>
+                        <div class="th" data-sort-col="score">Score</div>
+                    </div>
+                </div>
+                <div data-trending-error class="feed-error" hidden></div>
+                <div data-trending-rows class="feed-rows">
+                    <span class="tx-placeholder">Waiting for trending data…</span>
+                </div>
+            </section>
+
+            <!-- ── RIGHT: Claude research ─────────────────────────── -->
+            <section data-panel="claude" class="panel panel-claude">
+                <div class="panel-header">
+                    <div class="panel-header-left">
+                        <span class="panel-title">Claude</span>
+                        <span data-claude-count class="ticker-count"></span>
+                    </div>
+                    <div class="panel-header-right">
+                        <span data-claude-stamp class="feed-stamp"></span>
+                    </div>
+                </div>
+                <div class="feed-table-header">
+                    <div class="feed-cols feed-cols--claude">
+                        <div class="th" data-sort-col="ticker">Ticker</div>
+                        <div class="th" data-sort-col="price">Price</div>
+                        <div class="th" data-sort-col="chg">Chg%</div>
+                        <div class="th" data-sort-col="vol">Vol</div>
+                        <div class="th" data-sort-col="rvol">RVOL</div>
+                        <div class="th" data-sort-col="size">Size</div>
+                    </div>
+                </div>
+                <div data-claude-error class="feed-error" hidden></div>
+                <div data-claude-rows class="feed-rows">
+                    <span class="tx-placeholder">Waiting for Claude research…</span>
+                </div>
             </section>
         </main>
 
@@ -670,7 +676,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=65"></script>
+        <script type="module" src="/static/js/app.js?v=69"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

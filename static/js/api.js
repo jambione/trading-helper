@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=65';
+import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=69';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -145,9 +145,6 @@ export const api = {
   saveTickerFeed:  items    => request('POST', '/api/ticker-feed', { items }),
   getNews:         ()       => request('GET',  '/api/news'),
   saveNews:        items    => request('POST', '/api/news',        { items }),
-  getSwing:        ()       => request('GET',  '/api/swing'),
-  refreshSwing:    ()       => request('POST', '/api/swing/refresh'),
-  checkSwing:      symbols  => request('POST', '/api/swing/check', { symbols }),
   // Trading engine (mutations need localhost or X-Engine-Secret)
   getEngineConfig: ()       => request('GET',  '/api/engine/config'),
   setEngineConfig: (values, secret) =>

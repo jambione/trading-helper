@@ -5,24 +5,24 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=65';
-import { subscribe, set }                        from './store.js?v=65';
-import { init as initTranscription }             from './transcription.js?v=65';
-import { init as initTickers }                   from './tickers.js?v=65';
-import { init as initTradingView }               from './tradingview.js?v=65';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=65';
-import { init as initResizer }                   from './resizer.js?v=65';
-import * as controls                             from './controls.js?v=65';
-import * as notifications                        from './notifications.js?v=65';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=65';
-import { init as initNews }                      from './news.js?v=65';
-import { init as initLeaderboard }               from './leaderboard.js?v=65';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=65';
-import { init as initEngine }                    from './engine.js?v=65';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=65';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=65';
+import { connect, on, api }                      from './api.js?v=69';
+import { subscribe, set }                        from './store.js?v=69';
+import { init as initFeeds }                     from './feeds.js?v=69';
+import { init as initTickers }                   from './tickers.js?v=69';
+import { init as initTradingView }               from './tradingview.js?v=69';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=69';
+import { init as initResizer }                   from './resizer.js?v=69';
+import * as controls                             from './controls.js?v=69';
+import * as notifications                        from './notifications.js?v=69';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=69';
+import { init as initNews }                      from './news.js?v=69';
+import { init as initLeaderboard }               from './leaderboard.js?v=69';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=69';
+import { init as initEngine }                    from './engine.js?v=69';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=69';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=69';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=65';
+import { init as initMobilePager }                from './mobilePager.js?v=69';
 
 // Build badge — shows which code the dashboard and the signal engine are each
 // running, so a stale or mismatched process is obvious at a glance. Amber when
@@ -109,8 +109,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Initialize UI components ─────────────────────────────────
   // Wrapped individually so one failure doesn't block the rest.
-  // Discord Alerts panel is server-fed (WebSocket), so it works hosted too.
-  try { initTranscription(document.querySelector('[data-panel="transcript"]')); } catch (e) { console.error('[app] initTranscription', e); }
+  // Trending and Claude panels are server-fed (WebSocket), so they work hosted too.
+  try { initFeeds(document.querySelector('[data-panel="trending"]'), 'trending'); } catch (e) { console.error('[app] initFeeds trending', e); }
+  try { initFeeds(document.querySelector('[data-panel="claude"]'), 'claude'); }      catch (e) { console.error('[app] initFeeds claude', e); }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
@@ -184,7 +185,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=65');
+    const m = await import('./admin.js?v=69');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -240,7 +241,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.discord)                         update.discord           = snap.discord;
     if (snap.news              !== undefined) update.news              = snap.news;
     if (snap.engine)                          update.engine            = snap.engine;
-    if (snap.swing             !== undefined) update.swing             = snap.swing;
+    if (snap.trending          !== undefined) update.trending          = snap.trending;
+    if (snap.claude_suggestions !== undefined) update.claude_suggestions = snap.claude_suggestions;
     if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);

@@ -23,4 +23,4 @@ pytesseract
 rich
 plyer
 pygetwindow
-pywin32
+pywin32; platform_system=="Windows"

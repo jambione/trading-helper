@@ -145,5 +145,7 @@
   },
   "push_vapid_public_key": "BK0bAv93snexOxFTXQLXOoFJZu3MNgAor4L6bU6RcouygbbW2qHyuH5f_ChJ1h1SBKpoxsw_TdWLdXsFBYD-J3Q",
   "rvol_time_adjusted": true,
-  "claude_research_enabled": true
+  "claude_research_enabled": true,
+  "claude_trader_enabled": true,
+  "claude_trading_enabled": true
 }

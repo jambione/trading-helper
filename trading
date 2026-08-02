@@ -76,18 +76,38 @@ except Exception:
 ' 2>/dev/null || echo "   (dashboard not responding yet)"
 }
 
+# True when a boolean key in config/bot_config.json is enabled. Mirrors the
+# gating start_all.py applies, so a flag flipped off keeps the process down.
+_cfg_flag() {
+    "$PY" -c "
+import json, sys
+try:
+    cfg = json.load(open('config/bot_config.json'))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if cfg.get('$1', False) else 1)
+" 2>/dev/null
+}
+
 cmd_start() {
     # Tunnel starts by default; pass 'local' (or --no-tunnel) to stay local-only.
     local want_tunnel=1
     case "${1:-}" in local|--no-tunnel|notunnel|-n) want_tunnel=0 ;; esac
 
-    local dash_up=0 eng_up=0 disc_up=0
+    local dash_up=0 eng_up=0 disc_up=0 trend_up=0 claude_up=0
     _running "dashboard.py"     && dash_up=1
     _running "signal_engine.py" && eng_up=1
     _running "discord_source.py" && disc_up=1
+    _running "trending_screener.py" && trend_up=1
+    _running "claude_trader.py"     && claude_up=1
+
+    # A disabled producer counts as "up" so it never blocks the early return.
+    _cfg_flag trending_screener_enabled || trend_up=1
+    _cfg_flag claude_trader_enabled     || claude_up=1
 
     # Fully up — nothing to do (except ensure tunnel if requested).
-    if [ "$dash_up" = 1 ] && [ "$eng_up" = 1 ] && [ "$disc_up" = 1 ]; then
+    if [ "$dash_up" = 1 ] && [ "$eng_up" = 1 ] && [ "$disc_up" = 1 ] \
+       && [ "$trend_up" = 1 ] && [ "$claude_up" = 1 ]; then
         echo "Already running. Use './trading restart' to reload code, or './trading status'."
         [ "$want_tunnel" = 1 ] && _start_tunnel
         cmd_status
@@ -144,10 +164,25 @@ cmd_start() {
         echo "$!" >> "$PIDFILE"
     fi
 
+    # Producers for the Trending and Claude panels. They publish
+    # trending_stocks.json / claude_suggestions.json, which dashboard.py merges
+    # into /api/state — without them those panels stay empty.
+    if [ "$trend_up" = 0 ]; then
+        echo "Starting trending screener"
+        nohup "$PY" -u trending_screener.py >"$LOGDIR/trending.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
+    fi
+
+    if [ "$claude_up" = 0 ]; then
+        echo "Starting Claude trader"
+        nohup "$PY" -u claude_trader.py >"$LOGDIR/claude.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
+    fi
+
     [ "$want_tunnel" = 1 ] && _start_tunnel
 
     sleep 2
-    echo "✅ Started. Logs: $LOGDIR/{dashboard,engine,discord}.log"
+    echo "✅ Started. Logs: $LOGDIR/{dashboard,engine,discord,trending,claude}.log"
     _version
     echo "   Open $URL  (hard-refresh: Cmd+Shift+R)"
     _tunnel_running && echo "   Public: $PUBLIC_URL"
@@ -159,27 +194,35 @@ cmd_stop() {
     if [ -f "$PIDFILE" ]; then
         while read -r pid; do [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true; done < "$PIDFILE"
     fi
-    pkill -TERM -f "discord_source.py" 2>/dev/null || true
-    pkill -TERM -f "signal_engine.py"  2>/dev/null || true
-    pkill -TERM -f "dashboard.py"      2>/dev/null || true
+    pkill -TERM -f "discord_source.py"    2>/dev/null || true
+    pkill -TERM -f "signal_engine.py"     2>/dev/null || true
+    pkill -TERM -f "dashboard.py"         2>/dev/null || true
+    pkill -TERM -f "trending_screener.py" 2>/dev/null || true
+    pkill -TERM -f "claude_trader.py"     2>/dev/null || true
     _stop_tunnel
     sleep 2
     # Force-kill anything still alive.
-    pkill -KILL -f "discord_source.py" 2>/dev/null || true
-    pkill -KILL -f "signal_engine.py"  2>/dev/null || true
-    pkill -KILL -f "dashboard.py"      2>/dev/null || true
+    pkill -KILL -f "discord_source.py"    2>/dev/null || true
+    pkill -KILL -f "signal_engine.py"     2>/dev/null || true
+    pkill -KILL -f "dashboard.py"         2>/dev/null || true
+    pkill -KILL -f "trending_screener.py" 2>/dev/null || true
+    pkill -KILL -f "claude_trader.py"     2>/dev/null || true
     rm -f "$PIDFILE"
     echo "✅ Stopped (incl. tunnel)."
 }
 
 cmd_status() {
-    local d e g
-    d=$(pgrep -f "dashboard.py"      | tr '\n' ' ' || true)
-    e=$(pgrep -f "signal_engine.py"  | tr '\n' ' ' || true)
-    g=$(pgrep -f "discord_source.py" | tr '\n' ' ' || true)
+    local d e g t c
+    d=$(pgrep -f "dashboard.py"        | tr '\n' ' ' || true)
+    e=$(pgrep -f "signal_engine.py"    | tr '\n' ' ' || true)
+    g=$(pgrep -f "discord_source.py"   | tr '\n' ' ' || true)
+    t=$(pgrep -f "trending_screener.py" | tr '\n' ' ' || true)
+    c=$(pgrep -f "claude_trader.py"    | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
     echo "discord   : ${g:-not running}"
+    echo "trending  : ${t:-not running}"
+    echo "claude    : ${c:-not running}"
     if _tunnel_running; then
         echo "tunnel    : up → $PUBLIC_URL"
     else

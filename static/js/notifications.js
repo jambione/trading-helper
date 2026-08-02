@@ -10,8 +10,8 @@
  * TradingView on every mention_burst or BUY alert.
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=65';
-import { api } from './api.js?v=65';
+import { subscribe, selectTicker, get } from './store.js?v=69';
+import { api } from './api.js?v=69';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');

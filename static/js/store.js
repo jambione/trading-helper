@@ -11,13 +11,9 @@ const _state = {
   scan_ts:        '',
   tickers:        /** @type {Object[]} */ ([]),
   funnel:         /** @type {Object} */ ({}),
-  swing:          /** @type {Object[]} */ ([]),
-  price_spikes:   /** @type {Object[]} */ ([]),
-  transcriber: {
-    running: false,
-    lines:   /** @type {string[]} */ ([]),
-    count:   0,
-  },
+  trending:           /** @type {Object} */ ({}),
+  claude_suggestions: /** @type {Object} */ ({}),
+  price_spikes:       /** @type {Object[]} */ ([]),
   config:         {},
   selectedTicker: /** @type {string|null} */ (null),
 };
