@@ -1134,6 +1134,7 @@ def call_grok_cli(
     max_turns: int | None = DEFAULT_MAX_TURNS,
     live_search: bool = True,
     cli_bin: str | None = None,
+    phase: str = "research",
 ) -> str:
     """Run the research prompt via Grok Build CLI headless mode.
 
@@ -1141,6 +1142,10 @@ def call_grok_cli(
     Does **not** require ``XAI_API_KEY`` (console API credits). Subscription /
     free-trial limits of the CLI account still apply — this is not unlimited
     free compute, just a different billing/auth path than the developer API.
+
+    Runs with ``--output-format json`` so per-call token usage and cost land
+    in ``claude_reports/token_metrics.jsonl`` (latest also in ``last_usage``),
+    same path as the Claude CLI metrics.
     """
     binary = resolve_grok_cli(cli_bin)
     if not binary:
@@ -1154,6 +1159,7 @@ def call_grok_cli(
             "(or set XAI_API_KEY as a fallback for the CLI)"
         )
 
+    model_id = model or DEFAULT_XAI_MODEL
     # Write prompt to a temp file so long research text is sent verbatim.
     fd, tmp_path = tempfile.mkstemp(prefix="grok_prompt_", suffix=".txt")
     try:
@@ -1163,13 +1169,13 @@ def call_grok_cli(
         cmd = [
             binary,
             "--prompt-file", tmp_path,
-            "--output-format", "plain",
-            "--verbatim",
+            # JSON envelope carries text + usage + total_cost_usd (see metrics).
+            "--output-format", "json",
             "--permission-mode", "bypassPermissions",
             # Stock research must not edit the repo or spawn subagents.
             "--disallowed-tools",
             "Agent,run_terminal_cmd,search_replace,write,Write,Edit,Bash",
-            "-m", model or DEFAULT_XAI_MODEL,
+            "-m", model_id,
         ]
         if max_turns is not None and int(max_turns) > 0:
             cmd.extend(["--max-turns", str(int(max_turns))])
@@ -1180,6 +1186,7 @@ def call_grok_cli(
         env = {**os.environ}
         # Leave XAI_API_KEY if present as CLI fallback; session wins when logged in.
 
+        started = time.time()
         try:
             proc = subprocess.run(
                 cmd,
@@ -1204,7 +1211,59 @@ def call_grok_cli(
             raise RuntimeError(
                 f"Grok CLI returned empty output: {(err or 'no stderr')[:200]}"
             )
-        return out
+
+        # --output-format json → {text, usage, total_cost_usd, num_turns, ...}
+        # Fall back to treating stdout as plain research text if not JSON.
+        envelope: dict[str, Any] | None = None
+        try:
+            maybe = json.loads(out)
+            if isinstance(maybe, dict) and (
+                "text" in maybe or "result" in maybe or "usage" in maybe
+            ):
+                envelope = maybe
+        except json.JSONDecodeError:
+            envelope = None
+
+        if envelope is None:
+            return out
+
+        text = str(envelope.get("text") or envelope.get("result") or "")
+        usage = envelope.get("usage") or {}
+        if not isinstance(usage, dict):
+            usage = {}
+        duration_ms = None
+        try:
+            duration_ms = int(round((time.time() - started) * 1000))
+        except Exception:
+            pass
+        _record_usage({
+            "ts": round(started, 3),
+            "backend": "grok_cli",
+            "phase": phase,
+            "model": model_id,
+            "effort": "",
+            "num_turns": envelope.get("num_turns"),
+            "duration_ms": duration_ms,
+            "duration_api_ms": envelope.get("duration_ms") or envelope.get("duration_api_ms"),
+            "total_cost_usd": envelope.get("total_cost_usd"),
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+            "reasoning_tokens": usage.get("reasoning_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "prompt_chars": len(prompt),
+            "result_chars": len(text),
+            "session_id": envelope.get("sessionId") or envelope.get("session_id"),
+            "request_id": envelope.get("requestId") or envelope.get("request_id"),
+            "stop_reason": envelope.get("stopReason") or envelope.get("stop_reason"),
+        })
+        if not text.strip():
+            raise RuntimeError(
+                "Grok CLI returned empty text"
+                + (f" (stop={envelope.get('stopReason')})" if envelope.get("stopReason") else "")
+            )
+        return text
     finally:
         try:
             os.unlink(tmp_path)
@@ -1389,6 +1448,7 @@ def call_claude(
                         max_turns=2,
                         live_search=False,
                         cli_bin=cli_bin,
+                        phase="repair",
                     )
                 if parse_model_text(trailer):
                     text = text.rstrip() + "\n\n" + trailer.strip() + "\n"
@@ -1442,6 +1502,7 @@ def call_claude(
             max_turns=max_turns,
             live_search=live_search,
             cli_bin=cli_bin,
+            phase="research",
         )
         return _cli_research_then_maybe_trade(text)
 
