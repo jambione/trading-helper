@@ -59,6 +59,37 @@ def test_source_marks_anthropic_and_xai():
     assert x_rows[0]["source_mark"] == "X"
 
 
+def test_merge_suggestion_rows_agreement_first():
+    from claude_suggest import merge_suggestion_rows
+
+    a = [
+        {"symbol": "ONLYA", "rank": 1, "trending_score": 9.0, "reason": "a-only",
+         "source": "anthropic"},
+        {"symbol": "BOTH", "rank": 2, "trending_score": 7.0, "reason": "from-a",
+         "source": "anthropic"},
+    ]
+    x = [
+        {"symbol": "BOTH", "rank": 1, "trending_score": 8.5, "reason": "from-x",
+         "source": "xai"},
+        {"symbol": "ONLYX", "rank": 3, "trending_score": 6.0, "reason": "x-only",
+         "source": "xai"},
+    ]
+    merged = merge_suggestion_rows(a, x)
+    syms = [r["symbol"] for r in merged]
+    # Agreement first, then by max score: BOTH (8.5), ONLYA (9.0)... wait
+    # BOTH max score 8.5, ONLYA 9.0 — agreement ranks before score, so BOTH first.
+    assert syms[0] == "BOTH"
+    assert merged[0]["source_mark"] == "AX"
+    assert merged[0]["agreement"] is True
+    assert merged[0]["trending_score"] == 8.5  # max of 7.0 and 8.5
+    assert "A:" in merged[0]["reason"] and "X:" in merged[0]["reason"]
+    # Single-source marks
+    by = {r["symbol"]: r for r in merged}
+    assert by["ONLYA"]["source_mark"] == "A"
+    assert by["ONLYX"]["source_mark"] == "X"
+    assert by["ONLYA"]["agreement"] is False
+
+
 def test_parse_bare_array_and_fences():
     text = """```json
 [{"symbol":"AAPL","score":8,"reason":"strong"},{"symbol":"MSFT","score":7}]
@@ -169,15 +200,18 @@ def test_claude_panel_shows_source_marks():
     rows = [
         _row(sym="AAA", rank=1, source="anthropic", source_mark="A"),
         _row(sym="BBB", rank=2, source="xai", source_mark="X"),
+        _row(sym="CCC", rank=3, source="both", source_mark="AX", agreement=True),
     ]
     table = _table(_gs(rows))
     src = column_cells(table, "Src")
     # Markup stripped or raw — accept either plain letter or styled fragment.
     assert any("A" in c for c in src)
     assert any("X" in c for c in src)
+    assert any("AX" in c for c in src)
     panel = claude_panel(_gs(rows), {}, limit=10, hotkeys_on=True, cfg=DEFAULTS)
     assert "Anthropic" in str(panel.title)
     assert "xAI" in str(panel.title)
+    assert "both" in str(panel.title).lower() or "AX" in str(panel.title)
 
 
 def test_claude_panel_keys_are_k_through_t():

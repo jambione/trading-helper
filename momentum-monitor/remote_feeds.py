@@ -53,6 +53,18 @@ class _RemoteMixin:
             for r in rows:
                 if not isinstance(r, dict):
                     continue
+                # Merged rows already carry source_mark A / X / AX.
+                if r.get("source_mark") in ("A", "X", "AX", "a", "x", "ax"):
+                    r["source_mark"] = str(r["source_mark"]).upper()
+                    if r["source_mark"] == "AX":
+                        r["source"] = r.get("source") or "both"
+                        r["agreement"] = True
+                    continue
+                if r.get("agreement") or r.get("source") in ("both", "ax"):
+                    r["source"] = "both"
+                    r["source_mark"] = "AX"
+                    r["agreement"] = True
+                    continue
                 raw = r.get("source") or default_source
                 src = normalize_ai_source(raw)
                 if src == "unknown" and default_source:

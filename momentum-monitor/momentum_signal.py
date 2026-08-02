@@ -1935,16 +1935,24 @@ def stocktwits_panel(st: StocktwitsTrending,
 
 
 def _ai_source_cell(row: dict) -> str:
-    """A = Anthropic (Claude), X = xAI (Grok). Falls back from free-form tags."""
-    try:
-        from claude_suggest import ai_source_mark
-        mark = (row.get("source_mark") or ai_source_mark(row.get("source"))).upper()
-    except Exception:  # noqa: BLE001
-        mark = str(row.get("source_mark") or row.get("source") or "?").upper()[:1]
-        if mark in ("C",):  # legacy "claude"
-            mark = "A"
-        if mark in ("G",):
-            mark = "X"
+    """A = Anthropic, X = xAI, AX = both agreed. Falls back from free-form tags."""
+    mark = str(row.get("source_mark") or "").upper().strip()
+    if not mark:
+        try:
+            from claude_suggest import ai_source_mark, normalize_ai_source
+            src = normalize_ai_source(row.get("source"))
+            if src == "both" or row.get("agreement"):
+                mark = "AX"
+            else:
+                mark = ai_source_mark(row.get("source")).upper()
+        except Exception:  # noqa: BLE001
+            mark = "?"
+    if mark in ("C", "CLAUDE", "ANTHROPIC"):
+        mark = "A"
+    if mark in ("G", "GROK"):
+        mark = "X"
+    if mark in ("BOTH", "AX", "A+X", "XA"):
+        return "[bold white on blue] AX [/]"
     if mark == "A":
         return "[bold magenta]A[/bold magenta]"
     if mark == "X":
@@ -2070,7 +2078,8 @@ def claude_panel(gs: ClaudeSuggestions,
             err = err[:67] + "…"
         status_s = f"  ·  [dim]{err}[/dim]"
     title = (
-        f"AI  ·  [magenta]A[/]=Anthropic  [cyan]X[/]=xAI  ·  K-T load TV"
+        f"AI  ·  [magenta]A[/]=Anthropic  [cyan]X[/]=xAI  "
+        f"[white on blue]AX[/]=both  ·  K-T load TV"
         f"{cap}{look_n}{trade_s}{trade_n}"
         f"{model_s}{stamp}{q}{status_s}"
     )
@@ -2479,7 +2488,15 @@ def main():
                 if st is not None:
                     st.ingest(state.get("trending"), t0)
                 if gs is not None:
-                    gs.ingest(state.get("claude_suggestions"), t0)
+                    # Prefer server-merged list (A/X/AX). Fall back to Claude-only
+                    # publish so older dashboards still populate the panel.
+                    ai_payload = state.get("ai_suggestions")
+                    if not (isinstance(ai_payload, dict) and (
+                            ai_payload.get("rows") is not None
+                            or ai_payload.get("error")
+                            or ai_payload.get("last_ok"))):
+                        ai_payload = state.get("claude_suggestions")
+                    gs.ingest(ai_payload, t0)
 
             # Before display_rows() fires on_change -> _st_alert.
             if st is not None:

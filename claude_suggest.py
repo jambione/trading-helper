@@ -326,6 +326,8 @@ def normalize_ai_source(value: str | None) -> str:
     if s in ("x", "xai", "grok", "grok_cli", "cli", "api"):
         # ``cli`` / ``api`` are the historical Grok backends in this module.
         return SOURCE_XAI
+    if s in ("both", "ax", "a+x", "xa", "merged"):
+        return "both"
     if "anthropic" in s or s.startswith("claude"):
         return SOURCE_ANTHROPIC
     if "xai" in s or "grok" in s:
@@ -346,6 +348,139 @@ def source_from_backend(backend: str | None) -> str:
     if b in ("cli", "grok_cli", "api"):
         return SOURCE_XAI
     return normalize_ai_source(b)
+
+
+def _row_score(row: dict[str, Any]) -> float | None:
+    return _f(row.get("score") if row.get("score") is not None
+              else row.get("trending_score"))
+
+
+def _row_rank(row: dict[str, Any]) -> int:
+    try:
+        r = int(row.get("rank") or 0)
+        return r if r > 0 else 99
+    except (TypeError, ValueError):
+        return 99
+
+
+def merge_suggestion_rows(
+    anthropic_rows: list[dict[str, Any]] | None,
+    xai_rows: list[dict[str, Any]] | None,
+    *,
+    max_rows: int | None = None,
+) -> list[dict[str, Any]]:
+    """Union Claude (A) + Grok (X) lists into one ranked desk list.
+
+    Sort key (pre-trade quality, not predicted P&L):
+      1. Agreement first (both sources named the symbol) — mark ``AX``
+      2. Higher max(score_A, score_X)
+      3. Better (lower) min list rank among sources that listed it
+
+    Each output row keeps ``sources`` (list), ``source`` (primary tag),
+    ``source_mark`` (``A`` / ``X`` / ``AX``), and combined ``reason`` when both
+    spoke. Does not place trades.
+    """
+    by_sym: dict[str, dict[str, Any]] = {}
+
+    def _ingest(rows: list[dict[str, Any]] | None, forced: str) -> None:
+        for raw in rows or []:
+            if not isinstance(raw, dict):
+                continue
+            sym = str(raw.get("symbol") or raw.get("ticker") or "").upper().strip()
+            if not sym:
+                continue
+            src = normalize_ai_source(raw.get("source") or forced)
+            if src == "unknown":
+                src = forced
+            slot = by_sym.setdefault(sym, {
+                "symbol": sym,
+                "by_source": {},
+            })
+            # First hit per source wins (lists are best-first already).
+            if src not in slot["by_source"]:
+                slot["by_source"][src] = dict(raw)
+                slot["by_source"][src]["source"] = src
+                slot["by_source"][src]["source_mark"] = SOURCE_MARK.get(src, "?")
+
+    _ingest(anthropic_rows, SOURCE_ANTHROPIC)
+    _ingest(xai_rows, SOURCE_XAI)
+
+    out: list[dict[str, Any]] = []
+    for sym, bag in by_sym.items():
+        parts: dict[str, dict] = bag["by_source"]
+        sources = sorted(parts.keys())  # anthropic before xai alphabetically
+        a = parts.get(SOURCE_ANTHROPIC)
+        x = parts.get(SOURCE_XAI)
+        both = a is not None and x is not None
+
+        # Prefer richer primary row: higher score, else better rank, else A then X.
+        candidates = [r for r in (a, x) if r is not None]
+
+        def _pick_key(r: dict) -> tuple:
+            sc = _row_score(r)
+            return (
+                sc is not None,
+                sc if sc is not None else -1.0,
+                -_row_rank(r),
+            )
+
+        primary = max(candidates, key=_pick_key)
+        merged = dict(primary)
+        merged["symbol"] = sym
+        merged["sources"] = list(sources)
+        if both:
+            merged["source"] = "both"
+            merged["source_mark"] = "AX"
+        else:
+            only = sources[0]
+            merged["source"] = only
+            merged["source_mark"] = SOURCE_MARK.get(only, "?")
+
+        # Scores / ranks for sort and display
+        scores = [s for s in (_row_score(a) if a else None,
+                              _row_score(x) if x else None) if s is not None]
+        ranks = [_row_rank(r) for r in candidates]
+        merged["trending_score"] = max(scores) if scores else _row_score(primary)
+        merged["score"] = merged["trending_score"]
+        merged["rank_best"] = min(ranks) if ranks else _row_rank(primary)
+        if a is not None:
+            merged["score_anthropic"] = _row_score(a)
+            merged["rank_anthropic"] = _row_rank(a)
+        if x is not None:
+            merged["score_xai"] = _row_score(x)
+            merged["rank_xai"] = _row_rank(x)
+
+        # Combined one-line why
+        ra = (str(a.get("reason") or "").strip() if a else "")
+        rx = (str(x.get("reason") or "").strip() if x else "")
+        if ra and rx and ra != rx:
+            merged["reason"] = f"A:{ra[:36]} | X:{rx[:36]}"[:80]
+        elif ra:
+            merged["reason"] = ra[:80]
+        elif rx:
+            merged["reason"] = rx[:80]
+
+        # Agreement flag for filters / future entry gates
+        merged["agreement"] = both
+
+        out.append(merged)
+
+    def _sort_key(r: dict) -> tuple:
+        sc = _row_score(r)
+        return (
+            0 if r.get("agreement") else 1,
+            -(sc if sc is not None else -1.0),
+            int(r.get("rank_best") or 99),
+            r.get("symbol") or "",
+        )
+
+    out.sort(key=_sort_key)
+    # Re-number display rank 1..n after merge order
+    for i, r in enumerate(out, start=1):
+        r["rank"] = i
+    if max_rows is not None and max_rows > 0:
+        out = out[: int(max_rows)]
+    return out
 
 
 def parse_suggestions(payload: Any,
