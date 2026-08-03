@@ -7,9 +7,9 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=76';
-import { api }       from './api.js?v=76';
-import { copyTicker } from './tickers.js?v=76';
+import { subscribe, get } from './store.js?v=77';
+import { api }       from './api.js?v=77';
+import { copyTicker } from './tickers.js?v=77';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -95,15 +95,19 @@ export function init(panelEl, kind) {
       return;
     }
 
+    // LOOK badges (EXT near 52w high / WASH near 52w low) — same rules as the
+    // terminal desk. Mutates a shallow copy so store payloads stay clean.
+    const withLook = applyLookHighlights(rows.map(r => ({ ...r })));
+
     const posKey = _posKey(book);
-    const key = rows.map(r =>
-      `${r.symbol}:${r.source_mark || ''}:${r.price ?? ''}:${r.pct_change ?? ''}:${r.trending_score ?? ''}:${r.vol_session ?? ''}:${r.rvol ?? ''}:${r.position_pct ?? ''}:${r.reason || ''}`,
+    const key = withLook.map(r =>
+      `${r.symbol}:${r.source_mark || ''}:${r.price ?? ''}:${r.pct_change ?? ''}:${r.trending_score ?? ''}:${r.vol_session ?? ''}:${r.rvol ?? ''}:${r.position_pct ?? ''}:${r.reason || ''}:${r.look ? r.look_reason : ''}`,
     ).join('|') + `|pos:${posKey}`;
-    lastRows = rows;
+    lastRows = withLook;
     if (key === lastKey) return;
     lastKey = key;
 
-    _paint(rowsEl, rows, kind, sortCol, sortDir, empty, book);
+    _paint(rowsEl, withLook, kind, sortCol, sortDir, empty, book);
   }
 
   // AI panel prefers merged ai_suggestions (A/X/AX); store mirrors it onto
@@ -277,8 +281,9 @@ function _row(r, kind, book) {
     if (why) thesis += `<div class="feed-why">${_esc(why)}</div>`;
     if (r.invalidation) thesis += `<div class="feed-invalid">✕ ${_esc(r.invalidation)}</div>`;
     const posChip = _posChipHtml(rawSym, book);
+    const look = _lookBadgeHtml(r);
 
-    return `<div class="ticker-row feed-row${posChip ? ' feed-row--ai-pos' : ''}" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
+    return `<div class="ticker-row feed-row${posChip ? ' feed-row--ai-pos' : ''}${r.look ? ' feed-row--look' : ''}" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
          + `<div class="${colsClass}">`
          +   `<div class="cell-ticker">${rank}${sym}${posChip}</div>`
          +   `<div class="cell-src" title="A=Anthropic · X=xAI · AX=both">${mark}</div>`
@@ -288,6 +293,7 @@ function _row(r, kind, book) {
          +   `<div class="cell-vol">${_esc(rvol)}</div>`
          +   `<div class="cell-vol cell-score">${_esc(score)}</div>`
          +   `<div class="cell-vol cell-score">${_esc(size)}</div>`
+         +   `<div class="cell-look">${look}</div>`
          +   `<div class="cell-actions">`
          +     `<button type="button" class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>`
          +   `</div>`
@@ -300,8 +306,9 @@ function _row(r, kind, book) {
   if (r.trending_score != null) {
     last = Number(r.trending_score).toFixed(1);
   }
+  const look = _lookBadgeHtml(r);
 
-  return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
+  return `<div class="ticker-row feed-row${r.look ? ' feed-row--look' : ''}" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
        + `<div class="${colsClass}">`
        +   `<div class="cell-ticker">${rank}${sym}</div>`
        +   `<div class="cell-price">${price}</div>`
@@ -309,11 +316,122 @@ function _row(r, kind, book) {
        +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
        +   `<div class="cell-vol">${_esc(rvol)}</div>`
        +   `<div class="cell-vol cell-score">${_esc(last)}</div>`
+       +   `<div class="cell-look">${look}</div>`
        +   `<div class="cell-actions">`
        +     `<button type="button" class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>`
        +   `</div>`
        + `</div>`
        + `</div>`;
+}
+
+/** Desk LOOK badge — green pill matching the terminal monitor (LOOK EXT / LOOK WASH). */
+function _lookBadgeHtml(r) {
+  if (!r || !r.look) return '';
+  const reason = String(r.look_reason || '').toUpperCase();
+  const label = reason ? `LOOK ${reason}` : 'LOOK';
+  const title = reason === 'EXT'
+    ? 'LOOK EXT — heat + volume + green near 52w high'
+    : reason === 'WASH'
+      ? 'LOOK WASH — heat + volume + red near 52w low'
+      : 'LOOK — focus candidate (desk eyes, not auto-trade)';
+  return `<span class="look-badge" title="${_esc(title)}">${_esc(label)}</span>`;
+}
+
+/**
+ * Mirror stocktwits_trending.apply_look_highlights for the web desk.
+ * Marks look / look_reason / range_pct on each row (mutates in place).
+ */
+export function applyLookHighlights(rows, opts = {}) {
+  const minAbsChg = opts.minAbsChg ?? 3.0;
+  const maxLooks = opts.maxLooks ?? 2;
+  const nearHigh = opts.nearHigh ?? 0.70;
+  const nearLow = opts.nearLow ?? 0.30;
+  const heatTopN = opts.heatTopN ?? 3;
+  const minRvol = opts.minRvol ?? 1.5;
+
+  for (const r of rows) {
+    r.look = false;
+    r.look_reason = '';
+    r.look_priority = 0;
+    r.range_pct = _rangePct(r.price, r.high_52w, r.low_52w);
+  }
+  if (!rows.length) return rows;
+
+  const scores = rows
+    .map(r => (r.trending_score != null ? Number(r.trending_score) : null))
+    .filter(v => v != null && Number.isFinite(v));
+  const vols = rows
+    .map(r => _rowVol(r))
+    .filter(v => v != null);
+  const medScore = scores.length ? _median(scores) : null;
+  const medVol = vols.length ? _median(vols) : null;
+
+  const byScore = rows
+    .filter(r => r.trending_score != null)
+    .slice()
+    .sort((a, b) => Number(b.trending_score) - Number(a.trending_score));
+  const topHeat = new Set(
+    byScore.slice(0, Math.max(1, heatTopN)).map(r => r.symbol),
+  );
+
+  const candidates = [];
+  for (const r of rows) {
+    const sc = r.trending_score != null ? Number(r.trending_score) : null;
+    const chg = r.pct_change != null ? Number(r.pct_change) : null;
+    const vol = _rowVol(r);
+    const rp = r.range_pct;
+
+    const heat = topHeat.has(r.symbol)
+      || (sc != null && medScore != null && sc >= medScore);
+    const move = chg != null && Math.abs(chg) >= minAbsChg;
+    let volOk = vol != null && (
+      (medVol != null && vol >= medVol) || (medVol == null && vol > 0)
+    );
+    const rv = r.rvol != null ? Number(r.rvol) : null;
+    if (volOk && minRvol != null && rv != null && Number.isFinite(rv)) {
+      volOk = rv >= minRvol;
+    }
+    if (!(heat && move && volOk) || rp == null || chg == null) continue;
+
+    let reason = '';
+    if (chg > 0 && rp >= nearHigh) reason = 'EXT';
+    else if (chg < 0 && rp <= nearLow) reason = 'WASH';
+    else continue;
+
+    const pri = (sc || 0) * Math.abs(chg)
+      * Math.log10(1 + Math.max(0, vol || 0));
+    candidates.push({ pri, r, reason });
+  }
+
+  candidates.sort((a, b) => b.pri - a.pri);
+  for (const { pri, r, reason } of candidates.slice(0, Math.max(0, maxLooks))) {
+    r.look = true;
+    r.look_reason = reason;
+    r.look_priority = pri;
+  }
+  return rows;
+}
+
+function _rangePct(price, hi, lo) {
+  const p = price != null ? Number(price) : null;
+  const h = hi != null ? Number(hi) : null;
+  const l = lo != null ? Number(lo) : null;
+  if (p == null || h == null || l == null || !(h > l)) return null;
+  return (p - l) / (h - l);
+}
+
+function _rowVol(r) {
+  const v = r && r.vol_session;
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _median(nums) {
+  if (!nums.length) return null;
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 async function _add(el, symbol) {

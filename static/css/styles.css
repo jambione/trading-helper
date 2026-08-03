@@ -742,8 +742,8 @@ body.mobile .auto-alert-toggle { display: none !important; }
   #ticker-tv-resizer { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
   .watchlist-cols {
-    /* keep actions so Copy stays tappable on phone */
-    grid-template-columns: 1fr 64px 56px 44px 52px;
+    /* Ticker | Price | Chg% | Vol | Flags | actions */
+    grid-template-columns: 1fr 64px 56px 44px 72px 52px;
   }
   .cell-ticker { font-size: 15px; }
   .cell-price  { font-size: 14px; }
@@ -811,7 +811,7 @@ body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending seco
 body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
-body.mobile .watchlist-cols { grid-template-columns: 1fr 64px 56px 44px 52px; }
+body.mobile .watchlist-cols { grid-template-columns: 1fr 64px 56px 44px 72px 52px; }
 body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
@@ -1594,18 +1594,67 @@ body.mobile .icon-btn {
 
 .watchlist-cols {
   display: grid;
-  grid-template-columns: 1fr 70px 58px 48px 66px;
+  /* Ticker | Price | Chg% | Vol | Flags | actions */
+  grid-template-columns: 1fr 70px 58px 48px 88px 66px;
   align-items: center;
 }
 
-/* Feed panels: trailing actions column for Copy (same chrome as Momentum). */
+/* Feed panels: LOOK badge + Copy (same chrome as Momentum). */
 .feed-cols--trending {
-  /* Ticker | Price | Chg% | Vol | RVOL | Score | actions */
-  grid-template-columns: 1fr 58px 54px 48px 48px 44px 52px;
+  /* Ticker | Price | Chg% | Vol | RVOL | Score | Look | actions */
+  grid-template-columns: 1fr 58px 54px 48px 48px 44px 72px 52px;
 }
 .feed-cols--claude {
-  /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | actions */
-  grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px 52px;
+  /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | Look | actions */
+  grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px 72px 52px;
+}
+
+/* LOOK EXT / LOOK WASH — matches terminal desk green pill */
+.look-badge,
+.flag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  vertical-align: middle;
+}
+.look-badge {
+  color: #052e16;
+  background: #4ade80;
+  border: 1px solid #22c55e;
+}
+.flag-badge--first {
+  color: #052e16;
+  background: #4ade80;
+  border: 1px solid #22c55e;
+}
+.flag-badge--new {
+  color: #083344;
+  background: #22d3ee;
+  border: 1px solid #06b6d4;
+}
+.flag-badge--burst {
+  color: #422006;
+  background: #fbbf24;
+  border: 1px solid #f59e0b;
+}
+.cell-look,
+.cell-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  justify-content: flex-start;
+}
+.feed-row--look .cell-ticker {
+  color: #4ade80;
 }
 
 /* AI paper position chip (Grok/Claude in · shares · P&L) */

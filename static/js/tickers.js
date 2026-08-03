@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=76';
-import { api } from './api.js?v=76';
+import { subscribe, selectTicker, get } from './store.js?v=77';
+import { api } from './api.js?v=77';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -344,6 +344,9 @@ function _updateRow(el, row) {
     volEl.className   = `cell-vol${(row.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}`;
   }
 
+  const flagsEl = el.querySelector('[data-flags]');
+  if (flagsEl) flagsEl.innerHTML = _flagsHtml(row);
+
   // Signal proximity bar. Momentum mode shows it on alerted (mention_burst)
   // tickers only; the three_indicator strategy shows it on every engine-tracked
   // ticker so the whole watchlist is watchable while testing.
@@ -538,6 +541,21 @@ function _aiPosBadge(ticker) {
   return `<span class="ai-pos-chip ${cls}" title="${title}">${owner} ${qty}${plTxt ? ' ' + plTxt : ''}</span>`;
 }
 
+function _flagsHtml(row) {
+  const parts = [];
+  if (row.find_it_first) {
+    parts.push('<span class="flag-badge flag-badge--first" title="Find-it-first scanner hit">🥇FIRST</span>');
+  }
+  // NEW: first minute after a mention window opens (fresh attention).
+  if ((row.mention_window ?? 0) === 1 && !row.mention_burst) {
+    parts.push('<span class="flag-badge flag-badge--new" title="New mention this window">NEW</span>');
+  }
+  if (row.mention_burst) {
+    parts.push('<span class="flag-badge flag-badge--burst" title="Mention burst">🔥BURST</span>');
+  }
+  return parts.join('');
+}
+
 function _rowHTML(row) {
   const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
   const chgCls = _chgClass(row.pct_change ?? null);
@@ -558,6 +576,7 @@ function _rowHTML(row) {
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
+    <div class="cell-flags" data-flags>${_flagsHtml(row)}</div>
     <div class="cell-actions">
       <button class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
