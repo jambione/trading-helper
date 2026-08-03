@@ -182,6 +182,8 @@ def parse_entry_decision(text: str) -> dict[str, Any] | None:
 
 
 _WAIT_KINDS = frozenset({"wait_for_zone", "wait_setup", "hard_no"})
+# Keyword hard_no only when full levels are absent. Avoid bare "avoid" —
+# it matches benign phrasing like "avoid chasing; wait for 27-28.5".
 _HARD_NO_MARKERS = (
     "hard_no",
     "hard no",
@@ -189,9 +191,10 @@ _HARD_NO_MARKERS = (
     "thesis break",
     "no trade",
     "do not trade",
-    "avoid",
     "invalidated",
     "stay away",
+    "avoid trading",
+    "avoid this",
 )
 
 
@@ -199,10 +202,11 @@ def normalize_entry_decision(raw: dict[str, Any] | None) -> dict[str, Any] | Non
     """Normalize entry JSON: decision casing + structured WAIT wait_kind.
 
     wait_kind values: wait_for_zone | wait_setup | hard_no | None (BUY).
-    Inference when WAIT and wait_kind missing/invalid:
-    - entry_low>0 and stop_price>0 and target_1>0 → wait_for_zone
-    - hard-no keywords in summary/decision or explicit wait_kind → hard_no
-    - else → wait_setup
+    Inference when WAIT and wait_kind missing/invalid (priority):
+    1. explicit wait_kind when valid
+    2. full levels (entry_low, stop, target_1 > 0) → wait_for_zone
+    3. hard-no keywords in summary → hard_no (only without full levels)
+    4. else → wait_setup
     Levels and other fields are preserved.
     """
     if raw is None:
@@ -221,18 +225,13 @@ def normalize_entry_decision(raw: dict[str, Any] | None) -> dict[str, Any] | Non
         d["wait_kind"] = None
         return d
 
-    # WAIT
+    # WAIT — explicit wait_kind wins.
     explicit = d.get("wait_kind")
     if isinstance(explicit, str):
         wk = explicit.strip().lower().replace(" ", "_")
         if wk in _WAIT_KINDS:
             d["wait_kind"] = wk
             return d
-
-    summary = str(d.get("summary", "") or "").lower()
-    if any(m in summary for m in _HARD_NO_MARKERS):
-        d["wait_kind"] = "hard_no"
-        return d
 
     try:
         entry_low = float(d.get("entry_low") or 0)
@@ -241,10 +240,17 @@ def normalize_entry_decision(raw: dict[str, Any] | None) -> dict[str, Any] | Non
     except (TypeError, ValueError):
         entry_low = stop_price = target_1 = 0.0
 
-    if entry_low > 0 and stop_price > 0 and target_1 > 0:
+    has_full_levels = entry_low > 0 and stop_price > 0 and target_1 > 0
+    if has_full_levels:
         d["wait_kind"] = "wait_for_zone"
-    else:
-        d["wait_kind"] = "wait_setup"
+        return d
+
+    summary = str(d.get("summary", "") or "").lower()
+    if any(m in summary for m in _HARD_NO_MARKERS):
+        d["wait_kind"] = "hard_no"
+        return d
+
+    d["wait_kind"] = "wait_setup"
     return d
 
 

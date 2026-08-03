@@ -185,9 +185,15 @@ def upsert_from_rows(
             continue
 
         prev = state.get(sym) if isinstance(state.get(sym), dict) else {}
+        prev_status = str(prev.get("status") or "").lower().strip()
+        # Never clobber in-flight / completed entries back to watching.
+        if prev_status in ("submitted", "filled"):
+            status = prev_status
+        else:
+            status = "watching"
         rec: dict[str, Any] = {
             "symbol": sym,
-            "status": "watching",
+            "status": status,
             "agreement": bool(row.get("agreement")),
             "score": _score_from_row(row),
             "reason": str(row.get("reason") or prev.get("reason") or ""),
@@ -201,9 +207,6 @@ def upsert_from_rows(
             "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
             "updated_ts": float(now),
         }
-        # Preserve non-default statuses that should not be clobbered by research
-        # only when still actively managed? Spec: create/update with watching.
-        # Always set watching on eligible refresh so re-research re-opens queue.
         state[sym] = rec
 
     save_watch(state)
@@ -298,6 +301,61 @@ def expire_open_watches(now: float) -> dict:
         if key != sym:
             state.pop(sym, None)
     save_watch(state)
+    return state
+
+
+def expire_stale_watches_for_new_day(now: float) -> dict:
+    """Expire watching/armed leftover from a prior ET calendar day.
+
+    Uses max(updated_ts, structure_ts) in America/New_York. Records with no
+    usable timestamp are treated as stale. Terminal statuses are unchanged.
+    Does not latch close-edge state; safe to call every poll_once.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    state = load_watch()
+    if not isinstance(state, dict):
+        return {}
+    t0 = float(now)
+    et = ZoneInfo("America/New_York")
+    today = datetime.fromtimestamp(t0, tz=et).date()
+    changed = False
+    for sym, rec in list(state.items()):
+        if not isinstance(rec, dict):
+            continue
+        key = str(sym or rec.get("symbol") or "").upper().strip()
+        if not key:
+            continue
+        status = str(rec.get("status") or "").lower().strip()
+        if status in _TERMINAL_STATUSES:
+            continue
+        if status and status not in _ARMABLE_STATUSES:
+            continue
+        try:
+            updated_ts = float(rec.get("updated_ts") or 0.0)
+        except (TypeError, ValueError):
+            updated_ts = 0.0
+        try:
+            structure_ts = float(rec.get("structure_ts") or 0.0)
+        except (TypeError, ValueError):
+            structure_ts = 0.0
+        ts = max(updated_ts, structure_ts)
+        if ts > 0:
+            rec_day = datetime.fromtimestamp(ts, tz=et).date()
+            if rec_day >= today:
+                continue
+        # Prior day (or no ts) → expire leftover open watch.
+        rec = dict(rec)
+        rec["symbol"] = key
+        rec["status"] = "expired"
+        rec["updated_ts"] = t0
+        state[key] = rec
+        if key != sym:
+            state.pop(sym, None)
+        changed = True
+    if changed:
+        save_watch(state)
     return state
 
 
@@ -701,6 +759,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
     if not cfg.get("ai_watch_enabled", True):
         return [{"kind": "watch_skip", "reason": "disabled"}]
+
+    # Drop leftover open watches from a prior ET day (first RTH poll after roll).
+    # Independent of open→closed close-edge expiry in the trader loop.
+    try:
+        expire_stale_watches_for_new_day(t0)
+    except Exception:
+        pass
 
     try:
         market_open = bool(gt.market_is_open())

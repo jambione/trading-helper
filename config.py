@@ -183,7 +183,7 @@ DEFAULT_CONFIG = {
     "ai_watch_poll_sec":                20.0,   # watch poll interval (seconds)
     "ai_structure_ttl_sec":           5400.0,   # structure plan TTL (seconds)
     "ai_watch_expire_at_close":         True,   # drop watches at session close
-    "ai_entry_zone_pad_pct":            0.15,   # pad around entry zone (%)
+    "ai_entry_zone_pad_pct":             0.0,   # pad around entry zone (%); 0 = exact zone
     "ai_max_structure_calls_per_hour":    12,   # rate-limit structure LLM calls
     "ai_persist_entry_decisions":       True,   # persist entry decision records
 

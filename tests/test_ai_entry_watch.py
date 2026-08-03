@@ -20,6 +20,7 @@ def test_watch_config_defaults_present():
     assert cfg["ai_watch_enabled"] is True
     assert cfg["ai_watch_require_agreement"] is True
     assert cfg["ai_watch_poll_sec"] == 20.0
+    assert float(DEFAULT_CONFIG["ai_entry_zone_pad_pct"]) == 0.0
 
 
 def test_upsert_requires_agreement_by_default(tmp_path, monkeypatch):
@@ -33,6 +34,45 @@ def test_upsert_requires_agreement_by_default(tmp_path, monkeypatch):
     state = ew.upsert_from_rows(rows, cfg=cfg, now=1_000.0)
     assert "SMCI" in state
     assert "HOOD" not in state
+
+
+def test_upsert_preserves_submitted_status(tmp_path, monkeypatch):
+    """Rebuild/upsert must not clobber submitted (or filled) back to watching."""
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    cfg = {"ai_watch_require_agreement": True, "ai_watch_single_source": False}
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI",
+            "status": "submitted",
+            "structure": {"entry_low": 27.0, "entry_high": 28.0},
+            "structure_ts": 900.0,
+            "reason": "old",
+        },
+    })
+    rows = [
+        {"symbol": "SMCI", "agreement": True, "trending_score": 9.0, "reason": "refresh"},
+    ]
+    state = ew.upsert_from_rows(rows, cfg=cfg, now=1_000.0)
+    assert state["SMCI"]["status"] == "submitted"
+    assert state["SMCI"]["score"] == 9.0
+    assert state["SMCI"]["reason"] == "refresh"
+    # rebuild path too
+    state2 = ew.rebuild_watch_from_book(rows, cfg=cfg, now=1_100.0)
+    assert state2["SMCI"]["status"] == "submitted"
+
+
+def test_upsert_preserves_filled_status(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    cfg = {"ai_watch_require_agreement": False}
+    ew.save_watch({"AAA": {"symbol": "AAA", "status": "filled", "score": 1.0}})
+    state = ew.upsert_from_rows(
+        [{"symbol": "AAA", "agreement": True, "trending_score": 2.0}],
+        cfg=cfg,
+        now=50.0,
+    )
+    assert state["AAA"]["status"] == "filled"
 
 
 def test_drop_missing_invalidates(tmp_path, monkeypatch):
@@ -63,6 +103,44 @@ def test_expire_open_watches(tmp_path, monkeypatch):
     ew.save_watch({"SMCI": {"symbol": "SMCI", "status": "watching"}})
     out = ew.expire_open_watches(now=1.0)
     assert out["SMCI"]["status"] == "expired"
+
+
+def test_expire_stale_watches_for_new_day(tmp_path, monkeypatch):
+    """Open watches stamped on a prior ET day expire; same-day stay open."""
+    import ai_entry_watch as ew
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    et = ZoneInfo("America/New_York")
+    # 2026-08-04 10:00 ET
+    now = datetime(2026, 8, 4, 10, 0, tzinfo=et).timestamp()
+    # prior day ~ 2026-08-03 15:00 ET
+    prev = datetime(2026, 8, 3, 15, 0, tzinfo=et).timestamp()
+    same = datetime(2026, 8, 4, 9, 30, tzinfo=et).timestamp()
+    ew.save_watch({
+        "OLD": {
+            "symbol": "OLD",
+            "status": "watching",
+            "updated_ts": prev,
+            "structure_ts": prev,
+        },
+        "NEW": {
+            "symbol": "NEW",
+            "status": "armed",
+            "updated_ts": same,
+            "structure_ts": same,
+        },
+        "DONE": {
+            "symbol": "DONE",
+            "status": "submitted",
+            "updated_ts": prev,
+        },
+    })
+    out = ew.expire_stale_watches_for_new_day(now)
+    assert out["OLD"]["status"] == "expired"
+    assert out["NEW"]["status"] == "armed"
+    assert out["DONE"]["status"] == "submitted"
 
 
 def test_public_snapshot_shape(tmp_path, monkeypatch):

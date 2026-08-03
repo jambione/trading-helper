@@ -187,6 +187,26 @@ def test_normalize_hard_no():
     assert d["wait_kind"] == "hard_no"
 
 
+def test_normalize_levels_beat_avoid_keyword():
+    """Full levels → wait_for_zone even if summary says 'avoid' (chasing, etc.)."""
+    d = cp.normalize_entry_decision({
+        "decision": "WAIT",
+        "entry_low": 27.0, "entry_high": 28.5,
+        "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        "summary": "avoid chasing here; wait for pullback into 27-28.5",
+    })
+    assert d["wait_kind"] == "wait_for_zone"
+
+
+def test_normalize_hard_no_keyword_without_levels():
+    d = cp.normalize_entry_decision({
+        "decision": "WAIT",
+        "entry_low": 0, "stop_price": 0, "target_1": 0,
+        "summary": "thesis broken, stay away",
+    })
+    assert d["wait_kind"] == "hard_no"
+
+
 def test_qualifies_as_entry_still_rejects_wait():
     d = cp.normalize_entry_decision({
         "decision": "WAIT", "entry_low": 27.0, "entry_high": 28.5,
