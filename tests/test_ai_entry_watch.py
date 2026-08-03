@@ -45,3 +45,88 @@ def test_drop_missing_invalidates(tmp_path, monkeypatch):
     out = ew.drop_missing(state, {"SMCI"}, now=2.0)
     assert out["SMCI"]["status"] == "watching"
     assert out["OLD"]["status"] == "invalidated"
+
+
+def test_ask_in_zone_with_pad():
+    import ai_entry_watch as ew
+    assert ew.ask_in_zone(28.0, 27.0, 28.5, 0.15) is True
+    assert ew.ask_in_zone(30.0, 27.0, 28.5, 0.15) is False
+
+
+def test_spread_ok_mid_pct():
+    import ai_entry_watch as ew
+    # (28.0 - 27.95) / mid * 100 ≈ 0.18%
+    assert ew.spread_ok(27.95, 28.0, 1.0) is True
+    assert ew.spread_ok(27.0, 28.0, 0.5) is False
+    assert ew.spread_ok(None, 28.0, 1.0) is False
+    assert ew.spread_ok(None, 28.0, 0.0) is True  # enforcement off
+
+
+def test_should_arm_wait_for_zone(monkeypatch):
+    import ai_entry_watch as ew
+    rec = {
+        "status": "watching",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 27.0, "entry_high": 28.5,
+            "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        },
+    }
+    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=cfg)
+    assert ok and why == "zone"
+    ok2, why2 = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=cfg)
+    assert not ok2
+    assert why2 == "above_zone"
+
+
+def test_should_arm_rejects_wait_setup_and_hard_no():
+    import ai_entry_watch as ew
+    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    base = {
+        "entry_low": 27.0, "entry_high": 28.5,
+        "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+    }
+    rec_setup = {
+        "status": "watching",
+        "structure": {"decision": "WAIT", "wait_kind": "wait_setup", **base},
+    }
+    rec_hard = {
+        "status": "watching",
+        "structure": {"decision": "WAIT", "wait_kind": "hard_no", **base},
+    }
+    ok, why = ew.should_arm_buy(rec_setup, ask=28.0, bid=27.95, cfg=cfg)
+    assert not ok and why == "wait_setup"
+    ok2, why2 = ew.should_arm_buy(rec_hard, ask=28.0, bid=27.95, cfg=cfg)
+    assert not ok2 and why2 == "hard_no"
+
+
+def test_should_arm_buy_decision_in_zone():
+    import ai_entry_watch as ew
+    rec = {
+        "status": "armed",
+        "structure": {
+            "decision": "BUY",
+            "entry_low": 27.0, "entry_high": 28.5,
+            "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        },
+    }
+    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=cfg)
+    assert ok and why == "zone"
+
+
+def test_should_arm_rejects_wide_spread():
+    import ai_entry_watch as ew
+    rec = {
+        "status": "watching",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 27.0, "entry_high": 28.5,
+            "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        },
+    }
+    cfg = {"ai_max_spread_pct": 0.1, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    # ~1.8% spread
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.5, cfg=cfg)
+    assert not ok and why == "spread"
