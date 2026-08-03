@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=73';
-import { api } from './api.js?v=73';
+import { subscribe, selectTicker, get } from './store.js?v=74';
+import { api } from './api.js?v=74';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -572,19 +572,21 @@ function _renderFunnel(f) {
   const shotTxt = shot ? ` · next ${shot.label} in ${_fmtMins(shot.mins)}` : '';
   const sessLine = `<div class="funnel-session">${sess.label || 'FUNNEL'}${shotTxt}</div>`;
 
-  let body;
+  // Only show the banner when there is a real pick. Empty / waiting states
+  // used to render "No tradeable candidate right now" — that block is removed.
   const top = f.top;
-  if (f.waiting) {
-    body = `<div class="funnel-pick funnel-pick--empty">⏳ Ranking candidates…</div>`;
-  } else if (!top) {
-    body = `<div class="funnel-pick funnel-pick--empty">No tradeable candidate right now</div>`;
-  } else {
-    const cls   = _FUNNEL_STATE_CLS[top.state] || '';
-    const chg   = top.chg_pct != null ? `${top.chg_pct >= 0 ? '+' : ''}${top.chg_pct}%` : '';
-    const rvol  = top.rvol != null ? `${top.rvol}x` : '';
-    const meta  = [top.state, chg, rvol].filter(Boolean).join(' · ');
-    const stale = f.stale ? ' funnel-pick--stale' : '';
-    body = `<div class="funnel-pick${stale}">
+  if (!top) {
+    _suggestEl.classList.add('hidden');
+    _suggestEl.innerHTML = '';
+    return;
+  }
+
+  const cls   = _FUNNEL_STATE_CLS[top.state] || '';
+  const chg   = top.chg_pct != null ? `${top.chg_pct >= 0 ? '+' : ''}${top.chg_pct}%` : '';
+  const rvol  = top.rvol != null ? `${top.rvol}x` : '';
+  const meta  = [top.state, chg, rvol].filter(Boolean).join(' · ');
+  const stale = f.stale ? ' funnel-pick--stale' : '';
+  const body = `<div class="funnel-pick${stale}">
       <div class="funnel-pick-main">
         <span class="funnel-pick-label">${top.suggest ? '▶ Point monitors at' : 'Leading'}</span>
         <span class="funnel-pick-sym">${top.sym}</span>
@@ -595,7 +597,6 @@ function _renderFunnel(f) {
         ? `<button class="btn btn--sm funnel-send" data-funnel-send="${top.sym}">Send to monitors</button>`
         : ''}
     </div>`;
-  }
 
   _suggestEl.innerHTML = sessLine + body;
   _suggestEl.classList.remove('hidden');
