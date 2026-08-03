@@ -3,13 +3,13 @@
  *
  * Both render the same market columns — AI rows carry a thesis line and
  * optional source mark (A/X/AX). Click a row (not the symbol) to add it to
- * the watchlist. Copy buttons mirror Momentum Stocks.
+ * the watchlist. Click the symbol name to copy the ticker.
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=77';
-import { api }       from './api.js?v=77';
-import { copyTicker } from './tickers.js?v=77';
+import { subscribe, get } from './store.js?v=82';
+import { api }       from './api.js?v=82';
+import { copyTicker } from './tickers.js?v=82';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -157,18 +157,12 @@ function _paint(rowsEl, rows, kind, sortCol, sortDir, empty, book) {
   rowsEl.innerHTML = sorted.map(r => _row(r, kind, book)).join('');
   rowsEl.querySelectorAll('[data-feed-symbol]').forEach(el => {
     const sym = el.dataset.feedSymbol;
-    // Row body: click → add to watchlist (symbol name and Copy are excluded).
+    // Row body: click → add to watchlist (symbol name excluded — copies instead).
     el.addEventListener('click', () => _add(el, sym));
     const tickerCell = el.querySelector('.cell-ticker');
     if (tickerCell) {
+      tickerCell.title = `Copy ${sym}`;
       tickerCell.addEventListener('click', e => {
-        e.stopPropagation();
-      });
-      tickerCell.title = '';
-    }
-    const copyBtn = el.querySelector('[data-copy-btn]');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', e => {
         e.stopPropagation();
         copyTicker(e.currentTarget, sym);
       });
@@ -290,13 +284,10 @@ function _row(r, kind, book) {
          +   `<div class="cell-price">${price}</div>`
          +   `<div class="${chgCls}">${chg}</div>`
          +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
-         +   `<div class="cell-vol">${_esc(rvol)}</div>`
-         +   `<div class="cell-vol cell-score">${_esc(score)}</div>`
-         +   `<div class="cell-vol cell-score">${_esc(size)}</div>`
+         +   `<div class="cell-rvol">${_esc(rvol)}</div>`
+         +   `<div class="cell-score">${_esc(score)}</div>`
+         +   `<div class="cell-size">${_esc(size)}</div>`
          +   `<div class="cell-look">${look}</div>`
-         +   `<div class="cell-actions">`
-         +     `<button type="button" class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>`
-         +   `</div>`
          + `</div>`
          + thesis
          + `</div>`;
@@ -314,12 +305,9 @@ function _row(r, kind, book) {
        +   `<div class="cell-price">${price}</div>`
        +   `<div class="${chgCls}">${chg}</div>`
        +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
-       +   `<div class="cell-vol">${_esc(rvol)}</div>`
-       +   `<div class="cell-vol cell-score">${_esc(last)}</div>`
+       +   `<div class="cell-rvol">${_esc(rvol)}</div>`
+       +   `<div class="cell-score">${_esc(last)}</div>`
        +   `<div class="cell-look">${look}</div>`
-       +   `<div class="cell-actions">`
-       +     `<button type="button" class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>`
-       +   `</div>`
        + `</div>`
        + `</div>`;
 }

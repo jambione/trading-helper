@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=77';
-import { api } from './api.js?v=77';
+import { subscribe, selectTicker, get } from './store.js?v=82';
+import { api } from './api.js?v=82';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -217,21 +217,16 @@ function _createRow(row) {
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
-  // Symbol name: no action (no burst, no row select).
+  // Symbol name: click copies ticker (does not select the row).
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
+    tickerCell.title = `Copy ${row.ticker}`;
     tickerCell.addEventListener('click', e => {
-      e.stopPropagation();
-    });
-  }
-  // Copy and delete stopPropagation so they do not select the row.
-  const copyBtn = el.querySelector('[data-copy-btn]');
-  if (copyBtn) {
-    copyBtn.addEventListener('click', e => {
       e.stopPropagation();
       copyTicker(e.currentTarget, row.ticker);
     });
   }
+  // Delete stops propagation so it does not select the row.
   const delBtn = el.querySelector('[data-delete-btn]');
   if (delBtn) {
     delBtn.addEventListener('click', e => {
@@ -250,8 +245,9 @@ async function _removeTicker(ticker) {
   }
 }
 
-/** Copy symbol to clipboard; track in today's list (shared with Trending / AI). */
-export async function copyTicker(btn, ticker) {
+/** Copy symbol to clipboard; track in today's list (shared with Trending / AI).
+ *  `el` is the symbol cell (or any element) — flash feedback on success/failure. */
+export async function copyTicker(el, ticker) {
   try {
     await navigator.clipboard.writeText(ticker);
     // Append to today's copied list (deduplicated, order preserved)
@@ -262,14 +258,16 @@ export async function copyTicker(btn, ticker) {
       localStorage.setItem(_COPY_TICKERS_KEY, JSON.stringify(_copiedTickers));
       _pushToFeed();
     }
-    if (btn) {
-      btn.textContent = '✓';
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    if (el) {
+      el.classList.add('cell-ticker--copied');
+      clearTimeout(el._copiedTimer);
+      el._copiedTimer = setTimeout(() => el.classList.remove('cell-ticker--copied'), 900);
     }
   } catch {
-    if (btn) {
-      btn.textContent = '!';
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    if (el) {
+      el.classList.add('cell-ticker--copy-fail');
+      clearTimeout(el._copiedTimer);
+      el._copiedTimer = setTimeout(() => el.classList.remove('cell-ticker--copy-fail'), 900);
     }
   }
 }
@@ -578,7 +576,6 @@ function _rowHTML(row) {
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-flags" data-flags>${_flagsHtml(row)}</div>
     <div class="cell-actions">
-      <button class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>
       <button class="btn-delete" data-delete-btn title="Remove from watchlist">✕</button>
     </div>
   </div>

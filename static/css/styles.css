@@ -485,8 +485,7 @@ body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
 body.hosted .btn-delete              { display: none; }
 
-/* Copy is a passive read action — always visible (localhost + hosted). */
-body.hosted .btn-copy                { display: inline-flex; }
+
 .jmb-download                        { display: none; }
 body.user-jmb .jmb-download          { display: inline-flex; }
 
@@ -741,8 +740,24 @@ body.mobile .auto-alert-toggle { display: none !important; }
   [data-panel="tradingview"],
   #ticker-tv-resizer { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
+  [data-sort-col="vol"],
+  [data-sort-col="rvol"],
+  [data-sort-col="size"],
+  .cell-vol,
+  .cell-rvol,
+  .cell-size {
+    display: none !important;
+  }
   .watchlist-cols {
-    grid-template-columns: 1.2fr 0.9fr 0.8fr 0.7fr 1fr 0.9fr;
+    grid-template-columns: 1.4fr 1fr 0.9fr 1.2fr 0.6fr;
+    width: 100%;
+  }
+  .feed-cols--trending {
+    grid-template-columns: 1.3fr 1fr 0.9fr 0.8fr minmax(64px, 1fr);
+    width: 100%;
+  }
+  .feed-cols--claude {
+    grid-template-columns: 1.2fr 0.5fr 1fr 0.9fr 0.8fr minmax(64px, 1fr);
     width: 100%;
   }
   .cell-ticker { font-size: 15px; }
@@ -811,8 +826,28 @@ body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending seco
 body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
+/* Drop Vol / RVOL / Size on mobile so ticker + price + chg stay readable */
+body.mobile [data-sort-col="vol"],
+body.mobile [data-sort-col="rvol"],
+body.mobile [data-sort-col="size"],
+body.mobile .cell-vol,
+body.mobile .cell-rvol,
+body.mobile .cell-size {
+  display: none !important;
+}
+/* Ticker | Price | Chg% | Flags | actions */
 body.mobile .watchlist-cols {
-  grid-template-columns: 1.2fr 0.9fr 0.8fr 0.7fr 1fr 0.9fr;
+  grid-template-columns: 1.4fr 1fr 0.9fr 1.2fr 0.6fr;
+  width: 100%;
+}
+/* Ticker | Price | Chg% | Score | Look */
+body.mobile .feed-cols--trending {
+  grid-template-columns: 1.3fr 1fr 0.9fr 0.8fr minmax(64px, 1fr);
+  width: 100%;
+}
+/* Ticker | Src | Price | Chg% | Score | Look */
+body.mobile .feed-cols--claude {
+  grid-template-columns: 1.2fr 0.5fr 1fr 0.9fr 0.8fr minmax(64px, 1fr);
   width: 100%;
 }
 body.mobile .cell-ticker { font-size: 15px; }
@@ -1538,7 +1573,9 @@ body.mobile .icon-btn {
 .feed-rows .cell-price,
 .feed-rows .cell-chg,
 .feed-rows .cell-vol,
-.feed-rows .cell-score {
+.feed-rows .cell-rvol,
+.feed-rows .cell-score,
+.feed-rows .cell-size {
   text-align: right;
 }
 .feed-rows .cell-ticker {
@@ -1559,12 +1596,21 @@ body.mobile .icon-btn {
   flex-shrink: 0;
 }
 
-.feed-rows .cell-score {
+.feed-rows .cell-score,
+.feed-rows .cell-rvol,
+.feed-rows .cell-size {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-bright);
   font-variant-numeric: tabular-nums;
+}
+.feed-rows .cell-rvol {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.feed-rows .cell-size {
+  font-weight: 500;
 }
 
 .feed-why {
@@ -1603,15 +1649,15 @@ body.mobile .icon-btn {
   width: 100%;
 }
 
-/* Feed panels: equal flex fill; LOOK + Copy keep a floor so badges stay readable. */
+/* Feed panels: equal flex fill; LOOK keeps a floor so badges stay readable. */
 .feed-cols--trending {
-  /* Ticker | Price | Chg% | Vol | RVOL | Score | Look | actions */
-  grid-template-columns: 1.1fr 0.9fr 0.8fr 0.7fr 0.7fr 0.7fr minmax(72px, 1fr) minmax(52px, 0.8fr);
+  /* Ticker | Price | Chg% | Vol | RVOL | Score | Look */
+  grid-template-columns: 1.1fr 0.9fr 0.8fr 0.7fr 0.7fr 0.7fr minmax(72px, 1fr);
   width: 100%;
 }
 .feed-cols--claude {
-  /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | Look | actions */
-  grid-template-columns: 1.1fr 0.5fr 0.9fr 0.8fr 0.7fr 0.7fr 0.7fr 0.6fr minmax(72px, 1fr) minmax(52px, 0.8fr);
+  /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | Look */
+  grid-template-columns: 1.1fr 0.5fr 0.9fr 0.8fr 0.7fr 0.7fr 0.7fr 0.6fr minmax(72px, 1fr);
   width: 100%;
 }
 .feed-table-header .feed-cols,
@@ -1663,7 +1709,7 @@ body.mobile .icon-btn {
   min-width: 0;
   justify-content: center;
 }
-.feed-table-header .th:has(+ .th:last-child),
+.feed-table-header .th:last-child,
 .feed-cols .cell-look {
   text-align: center;
   justify-content: center;
@@ -1725,10 +1771,6 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
-.feed-cols .cell-actions {
-  justify-content: flex-end;
-}
-
 .watchlist-table-header {
   padding: 0 16px;
   border-bottom: 1px solid var(--border-hi);
@@ -2043,6 +2085,13 @@ body.mobile .icon-btn {
 .cell-ticker--firing {
   color: #f59e0b;
 }
+/* Flash feedback when clicking the symbol copies the ticker */
+.cell-ticker--copied {
+  color: #4ade80 !important;
+}
+.cell-ticker--copy-fail {
+  color: var(--danger) !important;
+}
 .cell-price {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -2065,7 +2114,9 @@ body.mobile .icon-btn {
 .cell-chg.chg-pos { color: var(--buy); }
 .cell-chg.chg-neg { color: var(--danger); }
 
-.cell-vol {
+.cell-vol,
+.cell-rvol,
+.cell-size {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);
@@ -2083,7 +2134,7 @@ body.mobile .icon-btn {
 }
 
 /* Action buttons */
-.btn-add, .btn-copy, .btn-delete {
+.btn-add, .btn-delete {
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
@@ -2100,22 +2151,13 @@ body.mobile .icon-btn {
   justify-content: center;
   height: 20px;
 }
-.btn-copy {
-  color: var(--text-bright);
-}
 .btn-add:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent-border);
   background: rgba(201, 160, 68, 0.08);
   box-shadow: 0 0 10px rgba(201, 160, 68, 0.20);
 }
-.btn-copy:hover:not(:disabled) {
-  color: var(--text-bright);
-  border-color: var(--accent-border);
-  background: rgba(201, 160, 68, 0.08);
-}
-.btn-add:disabled,
-.btn-copy:disabled {
+.btn-add:disabled {
   opacity: 0.4;
   cursor: default;
 }
