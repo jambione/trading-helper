@@ -326,11 +326,13 @@ def build_ai_suggestions(
     if g_err and not g_rows:
         errs.append(f"X:{g_err}")
     n_ax = sum(1 for r in merged if r.get("agreement"))
-    if errs and not merged:
+    # Desk rule: never attach a hard error banner when the merged table has
+    # rows. One source can fail parse while the other (or prior publish) still
+    # supplies ideas — the stamp/next_run_label carries schedule status.
+    if merged:
+        merged_error = ""
+    elif errs:
         merged_error = " · ".join(errs)
-    elif merged:
-        # Prefer hard errors only; schedule text lives in next_run_label.
-        merged_error = c_err or g_err or ""
     else:
         merged_error = c_err or g_err or ""
     # Prefer Anthropic last_usage (entry path), else Grok, else file latest.

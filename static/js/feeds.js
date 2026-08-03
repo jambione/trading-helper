@@ -63,13 +63,15 @@ export function init(panelEl, kind) {
     const rows = Array.isArray(p.rows) ? p.rows : [];
     const book = _aiBook();
 
-    // The list poll and the quote poll fail independently — surface whichever
-    // is broken, since a stale price is not obvious from the number alone.
-    // Schedule notices ("next research run…") are status, not hard failures:
-    // show them only when the list is empty; otherwise use next_run_label.
-    let err = p.error || p.quotes_error || '';
-    if (_isScheduleNotice(err) && rows.length) {
-      err = p.quotes_error || '';
+    // Hard research errors (e.g. "empty suggestions from model") only matter
+    // when the table has nothing to show. If we already have A/X/AX rows —
+    // including stale prior research — hide the red banner so a failed reparse
+    // on one source does not look like an empty desk.
+    // Quote errors stay suppressed here too when rows exist; prices show "-" when
+    // missing. Schedule text lives in next_run_label / the stamp line.
+    let err = '';
+    if (!rows.length) {
+      err = p.error || p.quotes_error || '';
     }
     if (errEl) {
       errEl.hidden = !err;
