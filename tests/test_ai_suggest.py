@@ -390,8 +390,20 @@ class _StubTrading:
 
 
 class _StubPositions:
+    DEFAULT_MAX_OPEN_RISK_PCT = 5.0
+    DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
+
     def __init__(self):
         self.evaluate_calls: list[str] = []
+        self.events: list[dict] = []
+
+    def log_event(self, kind, **fields):
+        row = {"kind": kind, **fields}
+        self.events.append(row)
+        return row
+
+    def pre_entry_gate(self, symbol, ask, equity, **kw):
+        return True, ""
 
     def evaluate_entry(self, sym, ask, equity, **kw):
         self.evaluate_calls.append(sym)

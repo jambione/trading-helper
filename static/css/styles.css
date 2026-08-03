@@ -237,6 +237,9 @@ body::after  { display: none; }
   justify-content: center;
   min-width: 0;
 }
+.hdr-status-label--on {
+  color: var(--accent, #5eead4);
+}
 .hdr-status-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1603,6 +1606,60 @@ body.mobile .icon-btn {
 .feed-cols--claude {
   /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | actions */
   grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px 52px;
+}
+
+/* AI paper position chip (Grok/Claude in · shares · P&L) */
+.ai-pos-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.18);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.ai-pos-chip--pos {
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+.ai-pos-chip--neg {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.ai-pos-chip--bar {
+  margin-left: 0;
+}
+.feed-row--ai-pos {
+  border-color: rgba(139, 92, 246, 0.25);
+}
+.ai-open-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-hi);
+  background: rgba(139, 92, 246, 0.06);
+  font-size: 11px;
+}
+.ai-open-bar-label {
+  color: var(--text-dim);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  margin-right: 2px;
 }
 .feed-cols .cell-actions {
   justify-content: flex-end;

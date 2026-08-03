@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Server-side AI research desk (Anthropic + optional Grok).
+"""Server-side AI research desk (Anthropic + Grok).
 
-Runs scheduled research prompts, turns qualifying Anthropic ideas into Alpaca
-bracket orders, and enforces stop / scale-out / trailing / time-stop rules
-mechanically. Publishes JSON that dashboard.py merges into /api/state:
+Runs scheduled research prompts for one or both sources, turns qualifying
+ideas from the *single trading owner* into Alpaca paper brackets, and
+enforces stop / scale-out / trailing / time-stop rules mechanically.
+Publishes JSON that dashboard.py merges into /api/state:
 
     claude_suggestions.json   Anthropic ranked ideas (source A)
     grok_suggestions.json     xAI / Grok ranked ideas (source X)
     ai_positions_state.json   open positions, orders, performance
                               (also writes legacy claude_positions_state.json)
 
-The dashboard merges both into ai_suggestions (A / X / AX). Grok is research
-only by default (``grok_trading_enabled`` stays false) — one trading book.
+The dashboard merges both into ai_suggestions (A / X / AX). Exactly one
+source may place orders (``ai_trading_enabled`` / ``claude_trading_enabled``
+vs ``grok_trading_enabled``). Prefer Grok as the trading CLI; Anthropic as
+research-only. If both flags are true, Grok wins and Claude trading is
+forced off for that process.
 
 The momentum monitor is a renderer only — it reads /api/state and originates
 nothing. Only entry evaluation and thesis-break review call a model; open
@@ -232,7 +236,8 @@ def _suggestions_payload(
         "max_price": gs.max_price,
         "next_run_label": gs.next_run_label(now),
         "last_report_path": report,
-        "last_trades": gs.last_trades if src == SOURCE_ANTHROPIC else [],
+        # Surface paper fills for whichever source owns trading.
+        "last_trades": gs.last_trades if gs.trading else [],
         "last_usage": last_usage_out or {},
         "rows": rows,
     }
@@ -248,7 +253,7 @@ def normalize_source(source: str | None, backend: str | None) -> str:
     return SOURCE_ANTHROPIC
 
 
-def _positions_payload(mode: str, now: float) -> dict:
+def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
     import alpaca_trader
 
     error = ""
@@ -270,13 +275,54 @@ def _positions_payload(mode: str, now: float) -> dict:
         performance = {"count": 0}
         error = error or f"performance_summary failed: {e}"
 
+    reconcile = {}
+    try:
+        reconcile = ai_positions.last_reconcile() or {}
+    except Exception:
+        reconcile = {}
+    recent = []
+    try:
+        recent = ai_positions.recent_events(40)
+    except Exception:
+        recent = []
+
+    day_r = 0.0
+    open_r = 0.0
+    try:
+        day_r = ai_positions.realized_r_today(now)
+        # equity from first position detail if available — else 0
+        import ai_trading as gt
+        if gt.is_ready():
+            acct = gt.get_account()
+            eq = float(acct.get("equity") or 0) if acct.get("ok") else 0.0
+            if eq > 0:
+                open_r = ai_positions.open_risk_pct(eq)
+    except Exception:
+        pass
+
+    warnings: list[str] = []
+    if reconcile.get("unmanaged"):
+        warnings.append(
+            "unmanaged_positions:" + ",".join(reconcile["unmanaged"][:8])
+        )
+    if reconcile.get("unconfirmed"):
+        warnings.append(
+            "unconfirmed_entries:" + ",".join(reconcile["unconfirmed"][:8])
+        )
+
     return {
         "updated": now,
         "mode": mode,
+        "book_owner": book_owner,
         "error": error,
+        "warnings": warnings,
         "positions": positions,
         "open_orders": open_orders,
         "performance": performance,
+        "reconcile": reconcile,
+        "recent_events": recent,
+        "realized_r_today": day_r,
+        "open_risk_pct": open_r,
     }
 
 
@@ -287,6 +333,48 @@ def _cfg(cfg: dict, new_key: str, old_key: str, default=None):
     if old_key in cfg and cfg.get(old_key) is not None:
         return cfg.get(old_key)
     return default
+
+
+def resolve_trading_source(cfg: dict) -> str:
+    """Single book owner: ``grok`` | ``claude`` | ``off``.
+
+    Prefer explicit ``ai_trading_source``. Legacy boolean flags still work:
+    if both Claude and Grok trading flags are true, Grok wins.
+    """
+    raw = str(cfg.get("ai_trading_source") or "").strip().lower()
+    if raw in ("grok", "claude", "off", "none", "false", "0"):
+        if raw in ("none", "false", "0"):
+            return "off"
+        return raw
+    grok_on = bool(cfg.get("grok_trading_enabled", False))
+    claude_on = bool(_cfg(cfg, "ai_trading_enabled", "claude_trading_enabled", False))
+    if grok_on and claude_on:
+        return "grok"
+    if grok_on:
+        return "grok"
+    if claude_on:
+        return "claude"
+    return "off"
+
+
+def apply_trading_source(cfg: dict, source: str) -> dict:
+    """Return a config copy with per-source trading flags aligned to ``source``."""
+    out = dict(cfg)
+    src = (source or "off").strip().lower()
+    out["ai_trading_source"] = src if src in ("grok", "claude", "off") else "off"
+    if src == "grok":
+        out["grok_trading_enabled"] = True
+        out["ai_trading_enabled"] = False
+        out["claude_trading_enabled"] = False
+    elif src == "claude":
+        out["grok_trading_enabled"] = False
+        out["ai_trading_enabled"] = True
+        out["claude_trading_enabled"] = True
+    else:
+        out["grok_trading_enabled"] = False
+        out["ai_trading_enabled"] = False
+        out["claude_trading_enabled"] = False
+    return out
 
 
 def _build_suggestions(cfg: dict) -> AiSuggestions:
@@ -334,9 +422,9 @@ def _build_suggestions(cfg: dict) -> AiSuggestions:
 
 
 def _build_grok(cfg: dict) -> AiSuggestions:
-    """xAI / Grok research source — research only (no order placement)."""
+    """xAI / Grok research source (optional paper trading — preferred owner)."""
     trading = bool(cfg.get("grok_trading_enabled", False))
-    # Shared quote/volume knobs; fall back to Anthropic ai_* / claude_* values.
+    # Shared quote/volume/risk knobs; fall back to ai_* / claude_* values.
     return AiSuggestions(
         max_price=cfg.get("grok_max_price",
                           _cfg(cfg, "ai_max_price", "claude_max_price", 100.0)),
@@ -355,6 +443,12 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         live_search=bool(cfg.get("grok_live_search", True)),
         save_reports=bool(cfg.get("grok_save_reports", True)),
         trading=trading,
+        trade_amount=float(_cfg(cfg, "ai_trade_amount", "claude_trade_amount", 1000.0)),
+        max_positions=int(_cfg(cfg, "ai_max_positions", "claude_max_positions", 5)),
+        max_buys_per_poll=int(
+            _cfg(cfg, "ai_max_buys_per_poll", "claude_max_buys_per_poll", 3)),
+        max_sells_per_poll=int(
+            _cfg(cfg, "ai_max_sells_per_poll", "claude_max_sells_per_poll", 5)),
         max_turns=int(cfg.get("grok_max_turns", 4)),
         use_prior_context=bool(cfg.get("grok_use_prior_context", False)),
         backend=cfg.get("grok_backend", "cli"),
@@ -364,6 +458,11 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         research_weekdays_only=bool(
             cfg.get("grok_research_weekdays_only", True)),
         research_catchup_min=int(cfg.get("grok_research_catchup_min", 120)),
+        risk_pct=float(_cfg(cfg, "ai_risk_pct", "claude_risk_pct", 1.0)),
+        trade_style=_cfg(cfg, "ai_trade_style", "claude_trade_style",
+                         "Moderate position"),
+        min_reward_risk=float(
+            _cfg(cfg, "ai_min_reward_risk", "claude_min_reward_risk", 3.0)),
     )
 
 
@@ -382,6 +481,77 @@ def _tick_source(
     _write_json(path, _suggestions_payload(gs, now, path=path, source=source))
 
 
+def _open_bell_due(cfg: dict, now: float) -> bool:
+    """True once per ET day after configured open-bell time (default 09:35)."""
+    if not bool(cfg.get("ai_open_bell_enabled", True)):
+        return False
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(now, tz=et)
+    if dt.weekday() >= 5:
+        return False
+    raw = str(cfg.get("ai_open_bell_time") or "09:35").strip()
+    try:
+        hh, mm = raw.split(":")
+        bell_h, bell_m = int(hh), int(mm)
+    except Exception:
+        bell_h, bell_m = 9, 35
+    if (dt.hour, dt.minute) < (bell_h, bell_m):
+        return False
+    day_key = dt.strftime("%Y-%m-%d")
+    try:
+        prev = json.loads(ai_positions.OPEN_BELL_STATE_PATH.read_text(
+            encoding="utf-8"))
+        if str(prev.get("last_day") or "") == day_key:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _mark_open_bell_done(now: float) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    day_key = datetime.fromtimestamp(now, tz=et).strftime("%Y-%m-%d")
+    try:
+        path = ai_positions.OPEN_BELL_STATE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"last_day": day_key, "ts": now}),
+                        encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
+    """Act on existing ranked ideas after the open — no full research spend."""
+    from ai_suggest import _place_qualifying_entries
+
+    rows = list(book.rows or [])
+    if not rows:
+        ai_positions.log_event("open_bell_skip", reason="no_rows")
+        return
+    ai_positions.log_event(
+        "open_bell_start", n_rows=len(rows), backend=book.backend)
+    _place_qualifying_entries(
+        rows,
+        max_price=book.max_price,
+        cli_bin=book.cli_bin,
+        timeout=min(180.0, float(book.request_timeout)),
+        risk_pct=float(book.risk_pct),
+        trade_style=str(book.trade_style),
+        min_reward_risk=float(book.min_reward_risk),
+        model=book.model,
+        backend=book.backend,
+        max_open_risk_pct=float(cfg.get("ai_max_open_risk_pct", 5.0)),
+        daily_loss_limit_r=float(cfg.get("ai_daily_loss_limit_r", 3.0)),
+        require_agreement=bool(cfg.get("ai_require_agreement", False)),
+    )
+    _mark_open_bell_done(now)
+    ai_positions.log_event("open_bell_done")
+
+
 def main() -> None:
     cfg = load_config()
 
@@ -393,14 +563,20 @@ def main() -> None:
               "are false — nothing to run.", flush=True)
         return
 
+    source = resolve_trading_source(cfg)
+    cfg = apply_trading_source(cfg, source)
+    if source != "off":
+        print(f"[ai] trading_source={source} "
+              f"(legacy dual flags coerced to single owner)", flush=True)
+    else:
+        print("[ai] trading_source=off — research only", flush=True)
+
     gs_a: AiSuggestions | None = None
     gs_x: AiSuggestions | None = None
-    trading_mode = "off"
 
     if claude_on:
         gs_a = _build_suggestions(cfg)
         n = _hydrate_suggestions(gs_a, CLAUDE_SUGGESTIONS_FILE)
-        trading_mode = gs_a.trading_mode
         print(f"[ai] anthropic backend={gs_a.backend} model={gs_a.model} "
               f"trading={gs_a.trading} mode={gs_a.trading_mode}", flush=True)
         print(f"[ai] anthropic research times "
@@ -410,8 +586,8 @@ def main() -> None:
             print(f"[ai] hydrated {n} Anthropic idea(s) from "
                   f"{CLAUDE_SUGGESTIONS_FILE.name}", flush=True)
         if gs_a.trading and gs_a.trading_mode == "off":
-            print("[ai] WARNING: trading requested but no Alpaca session — "
-                  "check signal_engine.env", flush=True)
+            print("[ai] WARNING: Claude trading requested but no Alpaca "
+                  "session — check signal_engine.env", flush=True)
     else:
         print("[ai] Anthropic research off (claude_research_enabled=false)",
               flush=True)
@@ -420,24 +596,34 @@ def main() -> None:
         gs_x = _build_grok(cfg)
         n = _hydrate_suggestions(gs_x, GROK_SUGGESTIONS_FILE)
         print(f"[ai] grok backend={gs_x.backend} model={gs_x.model} "
-              f"trading={gs_x.trading} (research-only recommended)", flush=True)
+              f"trading={gs_x.trading} mode={gs_x.trading_mode}", flush=True)
         print(f"[ai] grok research times "
               f"{gs_x.research_times or '(interval)'} ET — "
               f"next {gs_x.next_run_label() or 'n/a'}", flush=True)
         if n:
             print(f"[ai] hydrated {n} Grok idea(s) from "
                   f"{GROK_SUGGESTIONS_FILE.name}", flush=True)
-        if gs_x.trading:
-            print("[ai] WARNING: grok_trading_enabled=true — dual order "
-                  "sources can fight over the same book. Prefer false.",
-                  flush=True)
+        if gs_x.trading and gs_x.trading_mode == "off":
+            print("[ai] WARNING: Grok trading requested but no Alpaca "
+                  "session — check signal_engine.env", flush=True)
     else:
         print("[ai] Grok research off (grok_research_enabled=false)", flush=True)
 
+    # Single book owner from resolved source.
+    book = None
+    if source == "grok" and gs_x is not None and gs_x.trading:
+        book = gs_x
+    elif source == "claude" and gs_a is not None and gs_a.trading:
+        book = gs_a
+    trading = book is not None
+    trading_mode = book.trading_mode if book is not None else "off"
+    owner = source if trading else "none"
+    print(f"[ai] book_owner={owner} trading={trading} mode={trading_mode}",
+          flush=True)
+
     positions_poll = float(
         _cfg(cfg, "ai_positions_poll_sec", "claude_positions_poll_sec", 5.0))
-    # Only the Anthropic path owns entries / position management.
-    trading = bool(gs_a and gs_a.trading)
+    unconfirmed_ttl = float(cfg.get("ai_entry_unconfirmed_ttl_sec", 900.0))
 
     last_positions_tick = 0.0
     while True:
@@ -446,15 +632,26 @@ def main() -> None:
         _tick_source(gs_a, CLAUDE_SUGGESTIONS_FILE, SOURCE_ANTHROPIC, t0, "A")
         _tick_source(gs_x, GROK_SUGGESTIONS_FILE, SOURCE_XAI, t0, "X")
 
+        if trading and book is not None and _open_bell_due(cfg, t0):
+            try:
+                # Refresh quotes on book rows before acting.
+                book.refresh_quotes(t0)
+                _run_open_bell_entries(book, cfg, t0)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] open_bell failed: {e}", flush=True)
+                ai_positions.log_event("open_bell_error", reason=str(e)[:200])
+                _mark_open_bell_done(t0)  # avoid tight retry loop on hard fail
+
         if trading and (t0 - last_positions_tick) >= positions_poll:
             last_positions_tick = t0
             try:
-                ai_positions.manage_open_positions(t0)
+                ai_positions.manage_open_positions(
+                    t0, unconfirmed_ttl_sec=unconfirmed_ttl)
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] manage_open_positions failed: {e}", flush=True)
 
-        if gs_a is not None:
-            pos = _positions_payload(trading_mode, t0)
+        if trading:
+            pos = _positions_payload(trading_mode, t0, book_owner=owner)
             _write_json(POSITIONS_FILE, pos)
             _write_json(POSITIONS_FILE_LEGACY, pos)  # one-release alias
 

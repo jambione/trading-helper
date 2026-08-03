@@ -150,7 +150,9 @@ DEFAULT_CONFIG = {
     # Legacy claude_trader_enabled / claude_trading_enabled / claude_max_price
     # etc. still work via load_config() aliases for one release.
     "ai_trader_enabled":       False,   # launch ai_trader.py from trading/start_all
-    "ai_trading_enabled":      False,   # place real orders off Anthropic research
+    # Sole book owner: "grok" | "claude" | "off". Overrides dual legacy flags.
+    "ai_trading_source":         "off",
+    "ai_trading_enabled":      False,   # legacy Claude book flag (prefer ai_trading_source)
     "ai_max_price":            100.0,
     "ai_quote_poll":            15.0,
     "ai_volume_poll":           60.0,
@@ -165,6 +167,13 @@ DEFAULT_CONFIG = {
     "ai_min_reward_risk":        3.0,
     "ai_positions_poll_sec":     5.0,
     "ai_prompt_file": "ai_prompt.txt",
+    # Safety / desk quality knobs
+    "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
+    "ai_daily_loss_limit_r":        3.0,    # stop new entries after -NR today
+    "ai_max_open_risk_pct":         5.0,    # sum open stop-risk % equity
+    "ai_open_bell_enabled":        True,    # act on overnight ideas after open
+    "ai_open_bell_time":        "09:35",    # ET
+    "ai_require_agreement":       False,    # only trade AX-agreed names
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -202,7 +211,7 @@ DEFAULT_CONFIG = {
 
     # ── Grok research source (xAI subscription via Grok CLI) ──────────────────
     "grok_research_enabled":   False,   # scheduled Grok research via ai_trader.py
-    "grok_trading_enabled":    False,   # never place orders from Grok alone (v1)
+    "grok_trading_enabled":    False,   # preferred sole paper-trading owner
     "grok_max_price":          100.0,   # display / idea price ceiling ($)
     "grok_backend":            "cli",   # subscription: grok CLI / grok login
     "grok_cli_bin":            "grok",
@@ -305,6 +314,7 @@ SAFE_CONFIG_KEYS = [
     "rs_use_adr_filter",
     "rs_min_adr_pct",
     "ai_trader_enabled",
+    "ai_trading_source",
     "ai_trading_enabled",
     "ai_max_price",
     "ai_quote_poll",
@@ -320,6 +330,12 @@ SAFE_CONFIG_KEYS = [
     "ai_min_reward_risk",
     "ai_positions_poll_sec",
     "ai_prompt_file",
+    "ai_entry_unconfirmed_ttl_sec",
+    "ai_daily_loss_limit_r",
+    "ai_max_open_risk_pct",
+    "ai_open_bell_enabled",
+    "ai_open_bell_time",
+    "ai_require_agreement",
     "claude_trader_enabled",
     "claude_research_enabled",
     "claude_trading_enabled",

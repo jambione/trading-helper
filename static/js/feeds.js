@@ -7,9 +7,9 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe } from './store.js?v=75';
-import { api }       from './api.js?v=75';
-import { copyTicker } from './tickers.js?v=75';
+import { subscribe, get } from './store.js?v=76';
+import { api }       from './api.js?v=76';
+import { copyTicker } from './tickers.js?v=76';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -18,6 +18,9 @@ export function init(panelEl, kind) {
   const countEl = panelEl.querySelector(`[data-${kind}-count]`);
   const stampEl = panelEl.querySelector(`[data-${kind}-stamp]`);
   const errEl   = panelEl.querySelector(`[data-${kind}-error]`);
+  const openEl  = kind === 'claude'
+    ? panelEl.querySelector('[data-ai-open-positions]')
+    : null;
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
     : 'Waiting for trending data…';
@@ -28,6 +31,7 @@ export function init(panelEl, kind) {
   let sortDir   = kind === 'trending' ? -1 : 1;  // -1 = desc, 1 = asc
   let lastRows  = [];
   let lastKey   = '';
+  let lastPayload = {};
   const headerEls = {};
 
   panelEl.querySelectorAll('[data-sort-col]').forEach(h => {
@@ -42,16 +46,22 @@ export function init(panelEl, kind) {
         sortDir = (col === 'ticker' || col === 'src') ? 1 : -1;
       }
       _updateSortHeaders(headerEls, sortCol, sortDir);
-      if (lastRows.length) _paint(rowsEl, lastRows, kind, sortCol, sortDir, empty);
+      if (lastRows.length) {
+        _paint(rowsEl, lastRows, kind, sortCol, sortDir, empty, _aiBook());
+      }
     });
   });
   _updateSortHeaders(headerEls, sortCol, sortDir);
 
-  // AI panel prefers merged ai_suggestions (A/X/AX); store mirrors it onto
-  // claude_suggestions for older snapshots.
-  subscribe(kind === 'claude' ? 'claude_suggestions' : 'trending', payload => {
-    const p    = payload ?? {};
+  function _aiBook() {
+    return get('ai_positions') || {};
+  }
+
+  function _refresh(payload) {
+    const p    = payload ?? lastPayload ?? {};
+    lastPayload = p;
     const rows = Array.isArray(p.rows) ? p.rows : [];
+    const book = _aiBook();
 
     // The list poll and the quote poll fail independently — surface whichever
     // is broken, since a stale price is not obvious from the number alone.
@@ -68,7 +78,8 @@ export function init(panelEl, kind) {
     }
 
     if (countEl) countEl.textContent = rows.length ? `${rows.length} ideas` : '';
-    if (stampEl) stampEl.textContent = _stampLine(p);
+    if (stampEl) stampEl.textContent = _stampLine(p, book);
+    if (kind === 'claude') _paintOpenBar(openEl, book);
 
     if (!rows.length) {
       lastRows = [];
@@ -82,24 +93,62 @@ export function init(panelEl, kind) {
       return;
     }
 
+    const posKey = _posKey(book);
     const key = rows.map(r =>
       `${r.symbol}:${r.source_mark || ''}:${r.price ?? ''}:${r.pct_change ?? ''}:${r.trending_score ?? ''}:${r.vol_session ?? ''}:${r.rvol ?? ''}:${r.position_pct ?? ''}:${r.reason || ''}`,
-    ).join('|');
+    ).join('|') + `|pos:${posKey}`;
     lastRows = rows;
     if (key === lastKey) return;
     lastKey = key;
 
-    _paint(rowsEl, rows, kind, sortCol, sortDir, empty);
+    _paint(rowsEl, rows, kind, sortCol, sortDir, empty, book);
+  }
+
+  // AI panel prefers merged ai_suggestions (A/X/AX); store mirrors it onto
+  // claude_suggestions for older snapshots.
+  subscribe(kind === 'claude' ? 'claude_suggestions' : 'trending', payload => {
+    _refresh(payload ?? {});
   });
+  if (kind === 'claude') {
+    subscribe('ai_positions', () => _refresh(lastPayload));
+  }
 }
 
-function _paint(rowsEl, rows, kind, sortCol, sortDir, empty) {
+function _posKey(book) {
+  const pos = (book && book.positions) || {};
+  return Object.keys(pos).sort().map(s => {
+    const p = pos[s] || {};
+    return `${s}:${p.qty ?? ''}:${p.pl ?? ''}:${p.plpc ?? ''}`;
+  }).join(',');
+}
+
+function _paintOpenBar(el, book) {
+  if (!el) return;
+  const pos = (book && book.positions) || {};
+  const syms = Object.keys(pos);
+  if (!syms.length) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const owner = _ownerLabel(book);
+  el.hidden = false;
+  el.innerHTML = `<span class="ai-open-bar-label">${_esc(owner)} in</span>`
+    + syms.map(sym => {
+      const p = pos[sym] || {};
+      return `<span class="ai-pos-chip ai-pos-chip--bar" title="${_esc(_posTitle(owner, sym, p))}">`
+        + `${_esc(sym)} ${_esc(_fmtQty(p.qty))} ${_esc(_fmtPl(p))}`
+        + `</span>`;
+    }).join('');
+}
+
+function _paint(rowsEl, rows, kind, sortCol, sortDir, empty, book) {
   if (!rows.length) {
     rowsEl.innerHTML = `<span class="tx-placeholder">${empty}</span>`;
     return;
   }
   const sorted = _applySort(rows, sortCol, sortDir);
-  rowsEl.innerHTML = sorted.map(r => _row(r, kind)).join('');
+  rowsEl.innerHTML = sorted.map(r => _row(r, kind, book)).join('');
   rowsEl.querySelectorAll('[data-feed-symbol]').forEach(el => {
     const sym = el.dataset.feedSymbol;
     // Row body: click → add to watchlist (symbol name and Copy are excluded).
@@ -189,8 +238,9 @@ function _updateSortHeaders(headerEls, sortCol, sortDir) {
   });
 }
 
-function _row(r, kind) {
-  const sym = _esc(r.symbol || '');
+function _row(r, kind, book) {
+  const rawSym = String(r.symbol || '').toUpperCase();
+  const sym = _esc(rawSym);
   const colsClass = kind === 'claude' ? 'feed-cols feed-cols--claude' : 'feed-cols feed-cols--trending';
 
   // Same cell classes as Momentum Stocks (tickers.js) so chrome matches.
@@ -224,10 +274,11 @@ function _row(r, kind) {
     const why = r.reason || r.summary || '';
     if (why) thesis += `<div class="feed-why">${_esc(why)}</div>`;
     if (r.invalidation) thesis += `<div class="feed-invalid">✕ ${_esc(r.invalidation)}</div>`;
+    const posChip = _posChipHtml(rawSym, book);
 
-    return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
+    return `<div class="ticker-row feed-row${posChip ? ' feed-row--ai-pos' : ''}" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
          + `<div class="${colsClass}">`
-         +   `<div class="cell-ticker">${rank}${sym}</div>`
+         +   `<div class="cell-ticker">${rank}${sym}${posChip}</div>`
          +   `<div class="cell-src" title="A=Anthropic · X=xAI · AX=both">${mark}</div>`
          +   `<div class="cell-price">${price}</div>`
          +   `<div class="${chgCls}">${chg}</div>`
@@ -294,11 +345,25 @@ function _markFromSource(source) {
   return '';
 }
 
-function _stampLine(p) {
+function _stampLine(p, book) {
   const parts = [];
   const t = _stamp(p.last_ok);
   if (t) parts.push(t);
   if (p.next_run_label) parts.push(`next ${p.next_run_label}`);
+  // Trader status (minimal): owner + mode + open count
+  if (book && (book.book_owner || book.mode)) {
+    const owner = _ownerLabel(book);
+    const mode = book.mode && book.mode !== 'off' ? book.mode : '';
+    const n = book.positions ? Object.keys(book.positions).length : 0;
+    if (mode && mode !== 'off') {
+      parts.push(n ? `${owner} ${mode} · ${n} open` : `${owner} ${mode}`);
+    } else if (p.trading) {
+      parts.push(`${owner} on`);
+    }
+  } else if (p.trading) {
+    parts.push(p.trading_mode && p.trading_mode !== 'off'
+      ? `AI ${p.trading_mode}` : 'AI on');
+  }
   if (p.model) parts.push(String(p.model));
   // Token spend: prefer day rollup, else last single call.
   const day = p.token_day;
@@ -319,6 +384,59 @@ function _stampLine(p) {
     }
   }
   return parts.join(' · ');
+}
+
+function _ownerLabel(book) {
+  const o = String((book && book.book_owner) || '').toLowerCase();
+  if (o === 'grok') return 'Grok';
+  if (o === 'claude') return 'Claude';
+  return 'AI';
+}
+
+function _posChipHtml(sym, book) {
+  const pos = book && book.positions && book.positions[sym];
+  if (!pos) return '';
+  const owner = _ownerLabel(book);
+  const qty = _fmtQty(pos.qty);
+  const pl = _fmtPl(pos);
+  const plCls = _plClass(pos);
+  return `<span class="ai-pos-chip ${plCls}" title="${_esc(_posTitle(owner, sym, pos))}">`
+    + `${_esc(owner)} ${_esc(qty)} ${_esc(pl)}`
+    + `</span>`;
+}
+
+function _posTitle(owner, sym, p) {
+  const qty = _fmtQty(p.qty);
+  const pl = _fmtPl(p);
+  const entry = p.avg_entry != null ? ` · entry $${Number(p.avg_entry).toFixed(2)}` : '';
+  return `${owner} paper · ${sym} ${qty}${entry} · P&L ${pl}`;
+}
+
+function _fmtQty(q) {
+  const n = Math.abs(Number(q) || 0);
+  if (!n) return '0sh';
+  return Number.isInteger(n) ? `${n}sh` : `${n.toFixed(2)}sh`;
+}
+
+function _fmtPl(p) {
+  const pl = Number(p && p.pl);
+  const plpc = Number(p && p.plpc);
+  const parts = [];
+  if (Number.isFinite(pl)) {
+    const sign = pl > 0 ? '+' : '';
+    parts.push(`${sign}$${pl.toFixed(0)}`);
+  }
+  if (Number.isFinite(plpc)) {
+    const sign = plpc > 0 ? '+' : '';
+    parts.push(`${sign}${plpc.toFixed(1)}%`);
+  }
+  return parts.join(' ') || '—';
+}
+
+function _plClass(p) {
+  const pl = Number(p && p.pl);
+  if (!Number.isFinite(pl) || pl === 0) return '';
+  return pl > 0 ? 'ai-pos-chip--pos' : 'ai-pos-chip--neg';
 }
 
 function _stamp(ts) {

@@ -1650,7 +1650,13 @@ def _place_qualifying_entries(
     risk_pct: float,
     trade_style: str,
     min_reward_risk: float,
-) -> None:
+    model: str | None = None,
+    backend: str = "claude_cli",
+    max_open_risk_pct: float | None = None,
+    daily_loss_limit_r: float | None = None,
+    min_score: float = 7.0,
+    require_agreement: bool = False,
+) -> list[dict[str, Any]]:
     """Risk-sized entry checks for ranked ideas that clear the score filter.
 
     Bracket orders aren't valid outside regular trading hours, so this skips
@@ -1658,55 +1664,141 @@ def _place_qualifying_entries(
     not just the order placement — when the market is closed. An entry
     check is its own full research-depth call; running it pre-market only to
     have the order discarded afterward would spend real money for nothing.
+
+    ``backend`` / ``model`` select which CLI runs the per-ticker entry check
+    (same family as the research source that produced ``rows``).
+
+    Returns a list of structured event dicts (also written via ai_positions).
     """
+    events: list[dict[str, Any]] = []
     try:
         import ai_trading as gt
         import ai_positions as cp
-        if not gt.is_ready() or not gt.market_is_open():
-            return
+        if not gt.is_ready():
+            ev = cp.log_event("entry_skip", reason="trader_not_ready")
+            events.append(ev)
+            return events
+        if not gt.market_is_open():
+            ev = cp.log_event("entry_skip", reason="market_closed")
+            events.append(ev)
+            return events
         gt.reset_poll_counters()
+        be = (backend or "claude_cli").strip().lower()
+        if be in ("cli", "grok_cli", "grok"):
+            entry_model = model or DEFAULT_XAI_MODEL
+        else:
+            entry_model = model or DEFAULT_CLAUDE_MODEL
+        open_risk_cap = (
+            float(max_open_risk_pct)
+            if max_open_risk_pct is not None
+            else float(cp.DEFAULT_MAX_OPEN_RISK_PCT)
+        )
+        day_loss_cap = (
+            float(daily_loss_limit_r)
+            if daily_loss_limit_r is not None
+            else float(cp.DEFAULT_DAILY_LOSS_LIMIT_R)
+        )
         for r in rows:
             if gt.buys_left_this_poll() <= 0:
+                events.append(cp.log_event("entry_skip", reason="buy_cap"))
                 break
             sc = r.get("trending_score")
-            if sc is not None and float(sc) < 7.0:
+            try:
+                sc_f = float(sc) if sc is not None else None
+            except (TypeError, ValueError):
+                sc_f = None
+            if sc_f is not None and sc_f < float(min_score):
+                events.append(cp.log_event(
+                    "entry_skip", symbol=str(r.get("symbol") or ""),
+                    reason="low_score", score=sc_f))
+                continue
+            if require_agreement and not r.get("agreement"):
+                events.append(cp.log_event(
+                    "entry_skip", symbol=str(r.get("symbol") or ""),
+                    reason="no_agreement"))
                 continue
             sym = str(r.get("symbol") or "").upper()
-            if not sym or gt.has_open_position(sym):
+            if not sym:
+                continue
+            if gt.has_open_position(sym):
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason="already_held"))
                 continue
             if not gt.can_open_new_position(sym):
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason="max_positions"))
                 continue
             try:
                 ask = gt._latest_ask(sym)
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason=f"quote_error:{e}"))
                 ask = None
             if ask is None or ask <= 0:
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason="no_ask"))
                 continue
             if max_price is not None and ask >= float(max_price):
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason="above_max_price",
+                    ask=ask, max_price=max_price))
                 continue
             acct = gt.get_account()
             equity = float(acct.get("equity") or 0) if acct.get("ok") else 0.0
-            if equity <= 0:
+            ok_gate, gate_reason = cp.pre_entry_gate(
+                sym, ask, equity,
+                risk_pct=risk_pct,
+                max_open_risk_pct=open_risk_cap,
+                daily_loss_limit_r=day_loss_cap,
+                max_price=max_price,
+                score=sc_f,
+                min_score=min_score,
+            )
+            if not ok_gate:
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason=gate_reason))
                 continue
             decision = cp.evaluate_entry(
                 sym, ask, equity,
                 reason=str(r.get("reason") or ""),
                 risk_pct=risk_pct, style=trade_style,
-                model=DEFAULT_CLAUDE_MODEL, cli_bin=cli_bin,
+                model=entry_model, cli_bin=cli_bin,
                 timeout=min(180.0, timeout),
+                backend=be,
             )
             if not cp.qualifies_as_entry(decision, min_reward_risk=min_reward_risk):
+                events.append(cp.log_event(
+                    "entry_skip", symbol=sym, reason="entry_not_qualified",
+                    decision=(decision or {}).get("decision") if decision else None,
+                ))
                 continue
+            # Re-check zone price after the (slow) entry CLI call.
+            try:
+                ask2 = gt._latest_ask(sym) or ask
+            except Exception:
+                ask2 = ask
             result = cp.place_scaled_entry(
-                sym, decision, equity, risk_pct=risk_pct, current_ask=ask)
+                sym, decision, equity, risk_pct=risk_pct, current_ask=ask2)
             if result.get("ok"):
                 gt.record_external_buy(sym, {
                     "reason": str(r.get("reason") or "")[:120],
                     "score": sc, "stop_price": result.get("stop_price"),
                     "target_1": result.get("target_1"),
                 })
-    except Exception:
-        pass
+                events.append({"kind": "entry_ok", "symbol": sym})
+            else:
+                events.append(cp.log_event(
+                    "entry_fail", symbol=sym,
+                    reason=str(result.get("error") or "place_failed")[:200],
+                ))
+    except Exception as e:  # noqa: BLE001
+        try:
+            import ai_positions as cp
+            events.append(cp.log_event(
+                "entry_error", reason=str(e)[:200]))
+        except Exception:
+            events.append({"kind": "entry_error", "reason": str(e)[:200]})
+    return events
 
 
 def call_claude(
@@ -1825,6 +1917,7 @@ def call_claude(
             rows, max_price=max_price, cli_bin=cli_bin, timeout=timeout,
             risk_pct=risk_pct, trade_style=trade_style,
             min_reward_risk=min_reward_risk,
+            model=model, backend=backend,
         )
         return text
 

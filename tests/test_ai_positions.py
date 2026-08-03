@@ -30,6 +30,51 @@ def _use_tmp_state(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "OUTCOMES_PATH", _outcomes_path(tmp_path))
 
 
+
+# ── evaluate_entry CLI routing ────────────────────────────────────────────────
+
+def test_evaluate_entry_routes_to_grok_cli(monkeypatch):
+    """Grok book owner must not call Claude Code for entry checks."""
+    calls = []
+
+    def fake_grok(prompt, **kw):
+        calls.append(("grok", kw.get("phase"), kw.get("model")))
+        return '{"decision": "WAIT"}'
+
+    def fake_claude(prompt, **kw):
+        calls.append(("claude", kw.get("phase"), kw.get("model")))
+        return '{"decision": "WAIT"}'
+
+    monkeypatch.setattr(cp, "call_grok_cli", fake_grok)
+    monkeypatch.setattr(cp, "call_claude_cli", fake_claude)
+    cp.evaluate_entry(
+        "NVDA", 100.0, 50_000.0, reason="test",
+        backend="cli", model="grok-4.5", cli_bin="grok",
+    )
+    assert calls and calls[0][0] == "grok"
+    assert calls[0][1] == "entry"
+
+
+def test_evaluate_entry_routes_to_claude_cli(monkeypatch):
+    calls = []
+
+    def fake_grok(prompt, **kw):
+        calls.append("grok")
+        return '{"decision": "WAIT"}'
+
+    def fake_claude(prompt, **kw):
+        calls.append("claude")
+        return '{"decision": "WAIT"}'
+
+    monkeypatch.setattr(cp, "call_grok_cli", fake_grok)
+    monkeypatch.setattr(cp, "call_claude_cli", fake_claude)
+    cp.evaluate_entry(
+        "NVDA", 100.0, 50_000.0, reason="test",
+        backend="claude_cli", model="sonnet",
+    )
+    assert calls == ["claude"]
+
+
 # ── size_by_risk (alpaca_trader) ─────────────────────────────────────────────
 
 def test_size_by_risk_caps_loss_to_the_stated_percent():
@@ -135,10 +180,14 @@ def test_qualifies_enforces_minimum_reward_risk():
 class _StubBroker:
     """Records every bracket call instead of hitting a real Alpaca client."""
 
-    def __init__(self, market_open=True):
+    def __init__(self, market_open=True, fail_on_call=None):
         self.calls: list[dict] = []
         self._next_id = 1
         self._market_open = market_open
+        # 1-based call index to fail (e.g. 2 = tranche B)
+        self.fail_on_call = fail_on_call
+        self.cancel_calls: list[str] = []
+        self.close_calls: list[str] = []
 
     def market_is_open(self):
         return self._market_open
@@ -151,9 +200,19 @@ class _StubBroker:
         self._next_id += 1
         self.calls.append({"ticker": ticker, "qty": qty,
                            "stop_price": stop_price, "target_price": target_price})
+        if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
+            return {"ok": False, "error": "rejected", "status": "rejected"}
         return {"ok": True, "buy_order_id": oid,
                 "stop_order_id": (None if target_price else f"stop_{oid}"),
                 "status": "accepted"}
+
+    def cancel_open_orders(self, ticker):
+        self.cancel_calls.append(ticker)
+        return {"ok": True, "canceled": 1}
+
+    def close_out(self, ticker, price=0.0, rsi=0.0, hist=0.0):
+        self.close_calls.append(ticker)
+        return {"ok": True, "order_id": "close_1"}
 
 
 def test_place_scaled_entry_splits_into_two_tranches_by_scale_out_pct(
@@ -212,6 +271,93 @@ def test_place_scaled_entry_refuses_price_outside_the_entry_zone(
     assert result["ok"] is False
     assert "entry zone" in result["error"]
     assert stub.calls == []
+
+
+def test_place_scaled_entry_rolls_back_when_tranche_b_fails(
+        tmp_path, monkeypatch):
+    """Half-armed books are forbidden — A success + B fail must cancel/close."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    stub = _StubBroker(fail_on_call=2)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    result = cp.place_scaled_entry(
+        "nvda", _buy_decision(scale_out_pct=40),
+        account_equity=50_000.0, risk_pct=1.0, current_ask=40.5)
+    assert result["ok"] is False
+    assert result.get("rolled_back") is True
+    assert stub.cancel_calls == ["NVDA"]
+    assert stub.close_calls == ["NVDA"]
+    # Must not persist managed state for a rolled-back entry.
+    state_path = _state_path(tmp_path)
+    if state_path.exists():
+        state = json.loads(state_path.read_text() or "{}")
+        assert "NVDA" not in state
+
+
+def test_pre_entry_gate_blocks_daily_loss_limit(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "OUTCOMES_PATH", tmp_path / "outcomes.jsonl")
+    import time
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    now = time.time()
+    # Two losers totaling -3.5R today
+    with (tmp_path / "outcomes.jsonl").open("w") as f:
+        for r in (-2.0, -1.5):
+            f.write(json.dumps({
+                "exit_time": now, "realized_r_multiple": r,
+            }) + "\n")
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.0, 50_000.0, daily_loss_limit_r=3.0, now=now)
+    assert ok is False
+    assert "daily_loss_limit" in reason
+
+
+def test_pre_entry_gate_blocks_open_risk(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    # $50k equity, 1% risk/trade; seed a position already using ~4% open risk
+    # entry 40 stop 38 → $2/sh; 1000 sh → $2000 risk = 4%
+    _state_path(tmp_path).write_text(json.dumps({
+        "AAA": {
+            "entry_price": 40.0, "stop_price": 38.0, "total_qty": 1000,
+            "entry_confirmed": True,
+        }
+    }))
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.0, 50_000.0, risk_pct=1.0, max_open_risk_pct=4.5)
+    assert ok is False
+    assert "open_risk" in reason
+
+
+def test_unconfirmed_entry_expires_after_ttl(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_confirmed=False, entry_time=1_000_000.0,
+    )
+    stub = _StubBrokerManage(position_open=False)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    # 1000 seconds later with 900s TTL
+    events = cp.manage_open_positions(
+        now=1_000_000.0 + 1000.0, unconfirmed_ttl_sec=900.0)
+    kinds = [e["event"] for e in events]
+    assert "entry_unconfirmed_expired" in kinds
+    assert "NVDA" in stub.canceled
+    assert "NVDA" in stub.closed
+    state = json.loads(_state_path(tmp_path).read_text() or "{}")
+    assert "NVDA" not in state
+
+
+def test_resolve_trading_source_prefers_explicit():
+    from ai_trader import resolve_trading_source, apply_trading_source
+    assert resolve_trading_source({"ai_trading_source": "grok"}) == "grok"
+    assert resolve_trading_source({
+        "grok_trading_enabled": True,
+        "ai_trading_enabled": True,
+    }) == "grok"
+    cfg = apply_trading_source({}, "grok")
+    assert cfg["grok_trading_enabled"] is True
+    assert cfg["ai_trading_enabled"] is False
 
 
 # ── mechanical position management (no LLM) ─────────────────────────────────

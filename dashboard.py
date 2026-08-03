@@ -346,6 +346,16 @@ def build_ai_suggestions(
     except Exception:
         token_day = {}
 
+    # Book owner for display: prefer Grok when it is trading, else Claude.
+    g_trading = bool((grok_payload or {}).get("trading"))
+    c_trading = bool((claude_payload or {}).get("trading"))
+    if g_trading:
+        book = grok_payload or {}
+    elif c_trading:
+        book = claude_payload or {}
+    else:
+        book = {}
+
     return {
         "updated": time.time(),
         "last_ok": last_ok,
@@ -357,13 +367,14 @@ def build_ai_suggestions(
             float((claude_payload or {}).get("last_quote_ok") or 0),
             float((grok_payload or {}).get("last_quote_ok") or 0),
         ) or 0.0,
-        "model": (claude_payload or {}).get("model")
-                 or (grok_payload or {}).get("model")
-                 or "",
+        "model": (book.get("model")
+                  or (claude_payload or {}).get("model")
+                  or (grok_payload or {}).get("model")
+                  or ""),
         "backend": "merged",
         "source": "merged",
-        "trading": bool((claude_payload or {}).get("trading")),
-        "trading_mode": (claude_payload or {}).get("trading_mode") or "off",
+        "trading": bool(book.get("trading")),
+        "trading_mode": book.get("trading_mode") or "off",
         "max_price": (claude_payload or {}).get("max_price")
                      if (claude_payload or {}).get("max_price") is not None
                      else (grok_payload or {}).get("max_price"),
@@ -373,7 +384,7 @@ def build_ai_suggestions(
         "last_report_path": (claude_payload or {}).get("last_report_path")
                             or (grok_payload or {}).get("last_report_path")
                             or "",
-        "last_trades": (claude_payload or {}).get("last_trades") or [],
+        "last_trades": book.get("last_trades") or [],
         "last_usage": last_usage if isinstance(last_usage, dict) else {},
         "token_day": token_day,
         "n_anthropic": len(c_rows),

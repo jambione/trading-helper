@@ -2,27 +2,36 @@
 
 ``ai_suggest.py`` finds ideas; ``ai_trading.py`` provides the raw
 paper-trading primitives. This module is the layer between them: for each
-candidate that clears the score filter, Claude runs a per-ticker risk-sized
-entry check (exact entry zone / stop / target / time-stop, sized to a fixed
-% of account risk) — and from there every mandatory exit rule (hard stop,
-scale-out, trailing stop, time stop) is enforced *mechanically*, by real
-broker-side orders and local state, not by asking Claude again. Only the
-qualitative "did the thesis break" check needs a model, and that rides
-inside the existing scheduled research call rather than a separate one —
-see ``ai_suggest.py``'s ``position_reviews`` handling.
+candidate that clears the score filter, the book-owner CLI runs a per-ticker
+risk-sized entry check (exact entry zone / stop / target / time-stop, sized
+to a fixed % of account risk) — and from there every mandatory exit rule
+(hard stop, scale-out, trailing stop, time stop) is enforced *mechanically*,
+by real broker-side orders and local state, not by asking a model again.
+Only the qualitative "did the thesis break" check needs a model, and that
+rides inside the existing scheduled research call rather than a separate
+one — see ``ai_suggest.py``'s ``position_reviews`` handling.
 
 Why mechanical: a hard stop that "fires immediately, never moves lower" is
 only actually true if it is a resting order with the broker. Re-asking an
 LLM on some poll cycle makes the stop only as fast as that cycle, and costs
 a full research-depth call per position per check.
+
+Safety additions:
+- Atomic dual-tranche entry (rollback if leg B fails)
+- Unconfirmed entry TTL + broker reconcile
+- Structured events.jsonl for skips/fails (no silent pass)
+- Portfolio pre-entry gates (daily loss R, open risk %)
 """
 from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent
 
@@ -32,18 +41,35 @@ if str(ROOT) not in sys.path:
 from ai_suggest import (  # noqa: E402
     DEFAULT_CLAUDE_CLI_BIN,
     DEFAULT_CLAUDE_MODEL,
+    DEFAULT_XAI_MODEL,
     _iter_json_blobs,
     call_claude_cli,
+    call_grok_cli,
 )
 
 REPORT_DIR = ROOT / "claude_reports"
 POSITIONS_STATE_PATH = REPORT_DIR / "positions_state.json"
 OUTCOMES_PATH = REPORT_DIR / "outcomes.jsonl"
+EVENTS_PATH = REPORT_DIR / "events.jsonl"
+OPEN_BELL_STATE_PATH = REPORT_DIR / "open_bell_state.json"
+
+ET = ZoneInfo("America/New_York")
 
 # Never more than this much of the account on a single trade's stop distance.
 DEFAULT_RISK_PCT = 1.0
 DEFAULT_STYLE = "Moderate position"
 DEFAULT_MIN_REWARD_RISK = 3.0
+# Cancel unfilled / unconfirmed entries after this many seconds in RTH.
+DEFAULT_UNCONFIRMED_TTL_SEC = 900.0
+# Stop new entries when today's realized R from closed AI trades <= -this.
+DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
+# Cap sum of open risk (entry-stop)*qty as % of equity.
+DEFAULT_MAX_OPEN_RISK_PCT = 5.0
+# Keep a small ring of recent events for /api/state.
+_EVENT_RING_MAX = 80
+_event_lock = threading.Lock()
+_recent_events: list[dict[str, Any]] = []
+_last_reconcile: dict[str, Any] = {}
 
 _ENTRY_PROMPT_TEMPLATE = """\
 You are an elite quantitative trader whose single mandate is to MAXIMIZE PROFIT \
@@ -154,17 +180,35 @@ def evaluate_entry(
     model: str = DEFAULT_CLAUDE_MODEL,
     cli_bin: str | None = None,
     timeout: float = 180.0,
+    backend: str = "claude_cli",
 ) -> dict[str, Any] | None:
-    """Run the per-ticker risk-sized entry check. None on failure or WAIT."""
+    """Run the per-ticker risk-sized entry check. None on failure or WAIT.
+
+    ``backend`` selects which CLI runs the entry call:
+    - ``claude_cli`` / ``claude`` → Claude Code CLI
+    - ``cli`` / ``grok_cli`` / ``grok`` → Grok Build CLI
+    """
     prompt = build_entry_prompt(
         ticker, price, account_equity,
         reason=reason, risk_pct=risk_pct, style=style,
     )
+    be = (backend or "claude_cli").strip().lower()
     try:
-        text = call_claude_cli(
-            prompt, model=model, timeout=timeout, live_search=True,
-            cli_bin=cli_bin or DEFAULT_CLAUDE_CLI_BIN, phase="entry",
-        )
+        if be in ("cli", "grok_cli", "grok"):
+            text = call_grok_cli(
+                prompt,
+                model=model or DEFAULT_XAI_MODEL,
+                timeout=timeout,
+                max_turns=2,
+                live_search=True,
+                cli_bin=cli_bin or "grok",
+                phase="entry",
+            )
+        else:
+            text = call_claude_cli(
+                prompt, model=model, timeout=timeout, live_search=True,
+                cli_bin=cli_bin or DEFAULT_CLAUDE_CLI_BIN, phase="entry",
+            )
     except Exception:
         return None
     decision = parse_entry_decision(text)
@@ -213,6 +257,125 @@ def _save_state(state: dict[str, Any]) -> None:
         pass
 
 
+def log_event(kind: str, **fields: Any) -> dict[str, Any]:
+    """Append a structured desk event (skips, fails, reconcile, entries)."""
+    row: dict[str, Any] = {"ts": time.time(), "kind": str(kind)}
+    for k, v in fields.items():
+        if v is not None:
+            row[k] = v
+    try:
+        EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with EVENTS_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, default=str) + "\n")
+    except Exception:
+        pass
+    with _event_lock:
+        _recent_events.append(row)
+        if len(_recent_events) > _EVENT_RING_MAX:
+            del _recent_events[: len(_recent_events) - _EVENT_RING_MAX]
+    return row
+
+
+def recent_events(limit: int = 40) -> list[dict[str, Any]]:
+    with _event_lock:
+        return list(_recent_events[-max(1, int(limit)):])
+
+
+def last_reconcile() -> dict[str, Any]:
+    return dict(_last_reconcile)
+
+
+def realized_r_today(now: float | None = None) -> float:
+    """Sum of realized R multiples for AI outcomes closed today (ET)."""
+    now = time.time() if now is None else now
+    day = datetime.fromtimestamp(now, tz=ET).date()
+    total = 0.0
+    try:
+        text = OUTCOMES_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0.0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        r = row.get("realized_r_multiple")
+        if r is None:
+            continue
+        exit_ts = float(row.get("exit_time") or row.get("ts") or 0)
+        if not exit_ts:
+            continue
+        if datetime.fromtimestamp(exit_ts, tz=ET).date() != day:
+            continue
+        total += float(r)
+    return total
+
+
+def open_risk_pct(account_equity: float) -> float:
+    """Open risk as % of equity from managed state (entry − stop) × qty."""
+    if account_equity <= 0:
+        return 0.0
+    state = _load_state()
+    risk_usd = 0.0
+    for pos in state.values():
+        if pos.get("closing_reason"):
+            continue
+        entry = float(pos.get("entry_price") or 0)
+        stop = float(pos.get("stop_price") or 0)
+        qty = float(pos.get("total_qty") or 0)
+        if entry > stop > 0 and qty > 0:
+            risk_usd += (entry - stop) * qty
+    return 100.0 * risk_usd / account_equity
+
+
+def pre_entry_gate(
+    symbol: str,
+    ask: float,
+    account_equity: float,
+    *,
+    risk_pct: float = DEFAULT_RISK_PCT,
+    max_open_risk_pct: float = DEFAULT_MAX_OPEN_RISK_PCT,
+    daily_loss_limit_r: float = DEFAULT_DAILY_LOSS_LIMIT_R,
+    max_price: float | None = None,
+    score: float | None = None,
+    min_score: float = 7.0,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Code-only portfolio/risk veto before spending an entry CLI call.
+
+    Returns ``(ok, reason)``. reason is empty when ok.
+    """
+    sym = (symbol or "").upper()
+    if not sym:
+        return False, "invalid_symbol"
+    if ask is None or ask <= 0:
+        return False, "no_ask"
+    if max_price is not None and ask >= float(max_price):
+        return False, f"above_max_price_{max_price}"
+    if score is not None and float(score) < float(min_score):
+        return False, f"score_below_{min_score}"
+    if account_equity <= 0:
+        return False, "no_equity"
+
+    day_r = realized_r_today(now)
+    if day_r <= -abs(float(daily_loss_limit_r)):
+        return False, f"daily_loss_limit_r_{day_r:.2f}"
+
+    open_r = open_risk_pct(account_equity)
+    # Proposed trade risk ~ risk_pct of equity (by design of size_by_risk).
+    if open_r + float(risk_pct) > float(max_open_risk_pct) + 1e-9:
+        return False, f"open_risk_pct_{open_r:.2f}+{risk_pct:g}"
+
+    state = _load_state()
+    if sym in state and not state[sym].get("closing_reason"):
+        return False, "already_managed"
+
+    return True, ""
+
+
 def place_scaled_entry(
     ticker: str,
     decision: dict[str, Any],
@@ -221,25 +384,29 @@ def place_scaled_entry(
     risk_pct: float = DEFAULT_RISK_PCT,
     current_ask: float | None = None,
 ) -> dict[str, Any]:
-    """Execute a qualifying BUY as two independent broker-side tranches.
+    """Execute a qualifying BUY as two broker-side tranches (atomic).
 
     Tranche A (``scale_out_pct``) carries both the stop and the first
     target — it closes itself the moment either level trips, no code
     involved. Tranche B carries the stop only and is meant to ride; once
     tranche A's target fills, ``manage_open_positions`` replaces tranche
     B's stop with breakeven or a trailing stop.
+
+    If tranche A succeeds and B fails, A is cancelled / flattened so the
+    book never sits half-armed.
     """
     import alpaca_trader
 
     # Alpaca rejects bracket orders (and plain market orders) outside regular
     # trading hours — both tranches need one or the other. A pre-market BUY
-    # verdict is discarded rather than attempted and failing partway through
-    # (which would leave tranche A placed without tranche B, or vice versa).
+    # verdict is discarded rather than attempted and failing partway through.
     if not alpaca_trader.market_is_open():
-        return {"ok": False, "error": (
+        err = (
             "market is closed — bracket orders aren't valid outside regular "
             "trading hours; this entry was not queued for the open"
-        )}
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
 
     ticker = ticker.upper()
     entry_low = float(decision.get("entry_low") or 0)
@@ -249,29 +416,66 @@ def place_scaled_entry(
     scale_out_pct = max(0.0, min(100.0, float(decision.get("scale_out_pct") or 40)))
 
     if current_ask is not None and not (entry_low <= current_ask <= max(entry_high, entry_low)):
-        return {"ok": False, "error": (
+        err = (
             f"price ${current_ask:.2f} left the entry zone "
             f"${entry_low:.2f}-${entry_high:.2f} before the order could go in"
-        )}
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
 
     # Size against the price the order will actually fill at, not the zone
-    # Claude judged acceptable — current_ask is already validated to fall
-    # inside that zone above, so it's the accurate risk basis.
+    # bound — current_ask is already validated to fall inside that zone.
     sizing_entry = current_ask or entry_high or entry_low
     total_qty = alpaca_trader.size_by_risk(
         account_equity, risk_pct, sizing_entry, stop_price)
     if total_qty <= 0:
-        return {"ok": False, "error": "risk-sized qty rounded to 0 shares"}
+        err = "risk-sized qty rounded to 0 shares"
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
 
     qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
     qty_b = total_qty - qty_a
 
     result_a = alpaca_trader.buy_bracket_exact(
         ticker, qty_a, stop_price=stop_price, target_price=target_1)
-    result_b = (
-        alpaca_trader.buy_bracket_exact(ticker, qty_b, stop_price=stop_price)
-        if qty_b > 0 else {"ok": True, "buy_order_id": None, "stop_order_id": None}
-    )
+    if not result_a.get("ok"):
+        err = str(result_a.get("note") or result_a.get("error")
+                  or result_a.get("status") or "tranche_a_failed")
+        log_event("entry_fail", symbol=ticker, reason=err, leg="A")
+        return {
+            "ok": False, "error": err, "ticker": ticker,
+            "tranche_a": result_a, "tranche_b": None,
+        }
+
+    if qty_b > 0:
+        result_b = alpaca_trader.buy_bracket_exact(
+            ticker, qty_b, stop_price=stop_price)
+    else:
+        result_b = {"ok": True, "buy_order_id": None, "stop_order_id": None}
+
+    if not result_b.get("ok"):
+        # Atomic rollback: do not leave a one-legged position in managed state.
+        try:
+            alpaca_trader.cancel_open_orders(ticker)
+        except Exception as e:  # noqa: BLE001
+            log_event("entry_rollback_warn", symbol=ticker,
+                      reason=f"cancel_failed:{e}")
+        try:
+            alpaca_trader.close_out(ticker)
+        except Exception as e:  # noqa: BLE001
+            log_event("entry_rollback_warn", symbol=ticker,
+                      reason=f"close_failed:{e}")
+        err = str(result_b.get("note") or result_b.get("error")
+                  or result_b.get("status") or "tranche_b_failed")
+        log_event(
+            "entry_fail", symbol=ticker, reason=err, leg="B",
+            rolled_back=True,
+        )
+        return {
+            "ok": False, "error": f"tranche_b_failed_rolled_back:{err}",
+            "ticker": ticker, "tranche_a": result_a, "tranche_b": result_b,
+            "rolled_back": True,
+        }
 
     state = _load_state()
     state[ticker] = {
@@ -280,6 +484,7 @@ def place_scaled_entry(
         "total_qty": total_qty,
         "entry_price": sizing_entry,
         "tranche_a_order_id": result_a.get("buy_order_id"),
+        "tranche_b_order_id": result_b.get("buy_order_id"),
         "tranche_b_stop_order_id": result_b.get("stop_order_id"),
         "stop_price": stop_price,
         "target_1": target_1,
@@ -298,9 +503,13 @@ def place_scaled_entry(
         "closing_reason": None,
     }
     _save_state(state)
+    log_event(
+        "entry_ok", symbol=ticker, qty_a=qty_a, qty_b=qty_b,
+        stop_price=stop_price, target_1=target_1, entry_price=sizing_entry,
+    )
 
     return {
-        "ok": bool(result_a.get("ok")) and bool(result_b.get("ok")),
+        "ok": True,
         "ticker": ticker,
         "qty_a": qty_a,
         "qty_b": qty_b,
@@ -449,8 +658,51 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
     return outcome
 
 
-def manage_open_positions(now: float | None = None) -> list[dict[str, Any]]:
-    """Desk-tick check, no LLM: closures, tranche-A fills, expired time-stops.
+def reconcile_broker(now: float | None = None) -> dict[str, Any]:
+    """Compare managed state to live Alpaca positions.
+
+    - unmanaged: live positions not in local state (human/engine/other)
+    - stale_unconfirmed: managed but never confirmed and past TTL is handled
+      separately; here we only report confirmed-managed missing from broker
+      as already closed in pass 1 of manage_open_positions
+    """
+    global _last_reconcile
+    import alpaca_trader
+
+    now = time.time() if now is None else now
+    state = _load_state()
+    detail = alpaca_trader.get_positions_detail() or {}
+    managed = {str(k).upper() for k in state.keys()}
+    live = {str(k).upper() for k in detail.keys()}
+    unmanaged = sorted(live - managed)
+    confirmed = {
+        k for k, p in state.items()
+        if p.get("entry_confirmed") and not p.get("closing_reason")
+    }
+    missing_live = sorted(confirmed - live)  # should be rare mid-tick
+    unconfirmed = sorted(
+        k for k, p in state.items() if not p.get("entry_confirmed")
+    )
+    report = {
+        "ts": now,
+        "unmanaged": unmanaged,
+        "unconfirmed": unconfirmed,
+        "missing_live_confirmed": missing_live,
+        "n_managed": len(managed),
+        "n_live": len(live),
+    }
+    if unmanaged:
+        log_event("reconcile_unmanaged", symbols=unmanaged)
+    _last_reconcile = report
+    return report
+
+
+def manage_open_positions(
+    now: float | None = None,
+    *,
+    unconfirmed_ttl_sec: float = DEFAULT_UNCONFIRMED_TTL_SEC,
+) -> list[dict[str, Any]]:
+    """Desk-tick check, no LLM: closures, tranche-A fills, TTL, time-stops.
 
     Cheap enough to run every tick — everything it needs (position detail,
     order status, a breakeven/trailing-stop replacement, a time-boxed close)
@@ -462,6 +714,7 @@ def manage_open_positions(now: float | None = None) -> list[dict[str, Any]]:
     state = _load_state()
     events: list[dict[str, Any]] = []
     changed = False
+    ttl = max(60.0, float(unconfirmed_ttl_sec))
 
     # Pass 1: has anything gone fully flat since the last tick? Catches every
     # closing mechanism at once — hard stop, first target then a later
@@ -476,9 +729,27 @@ def manage_open_positions(now: float | None = None) -> list[dict[str, Any]]:
             changed = True
             continue
         if not pos.get("entry_confirmed"):
-            # Never seen open yet — the entry order likely hasn't filled,
-            # not a closure. (If the entry never fills at all, this position
-            # stays orphaned in state; not handled here.)
+            # Never seen open yet — may still be working. Expire after TTL.
+            age = now - float(pos.get("entry_time") or now)
+            if age > ttl:
+                try:
+                    alpaca_trader.cancel_open_orders(ticker)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    alpaca_trader.close_out(ticker)
+                except Exception:  # noqa: BLE001
+                    pass
+                log_event(
+                    "entry_unconfirmed_expired", symbol=ticker,
+                    age_sec=round(age, 1), ttl_sec=ttl,
+                )
+                events.append({
+                    "ticker": ticker, "event": "entry_unconfirmed_expired",
+                    "age_sec": round(age, 1),
+                })
+                del state[ticker]
+                changed = True
             continue
         exit_price = pos.get("last_seen_price") or pos.get("entry_price")
         reason = pos.get("closing_reason") or _infer_close_reason(pos)
@@ -497,10 +768,15 @@ def manage_open_positions(now: float | None = None) -> list[dict[str, Any]]:
                 pos["tranche_a_filled"] = True
                 if pos.get("qty_b", 0) > 0:
                     trail_pct = pos.get("trail_pct")
+                    # Prefer true breakeven when no trail_pct; otherwise trail.
+                    be_price = pos.get("entry_price")
                     out = alpaca_trader.replace_stop(
                         ticker, pos.get("tranche_b_stop_order_id"),
                         trail_percent=trail_pct,
-                        stop_price=None if trail_pct else pos.get("stop_price"),
+                        stop_price=(
+                            None if trail_pct
+                            else (be_price or pos.get("stop_price"))
+                        ),
                     )
                     pos["tranche_b_stop_order_id"] = out.get("order_id")
                     events.append({"ticker": ticker, "event": "scaled_out",
@@ -524,6 +800,12 @@ def manage_open_positions(now: float | None = None) -> list[dict[str, Any]]:
 
     if changed:
         _save_state(state)
+
+    try:
+        reconcile_broker(now)
+    except Exception as e:  # noqa: BLE001
+        log_event("reconcile_error", reason=str(e)[:160])
+
     return events
 
 

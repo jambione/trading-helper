@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=75';
-import { api } from './api.js?v=75';
+import { subscribe, selectTicker, get } from './store.js?v=76';
+import { api } from './api.js?v=76';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -74,6 +74,8 @@ export function init(panelEl) {
   subscribe('tickers',        rows   => _renderTable(rows));
   subscribe('selectedTicker', ticker => _highlightSelected(ticker));
   subscribe('funnel',         f      => _renderFunnel(f));
+  // AI book open/close should refresh chips on momentum rows.
+  subscribe('ai_positions',   ()     => { if (_lastRows.length) _renderTable(_lastRows); });
 
   _loadCopiedTickers();
 }
@@ -516,6 +518,26 @@ function _funnelBadge(f) {
   return `<span class="funnel-badge ${cls}" title="${title}">${f.score}</span>`;
 }
 
+function _aiPosBadge(ticker) {
+  const book = get('ai_positions') || {};
+  const pos = (book.positions || {})[String(ticker || '').toUpperCase()];
+  if (!pos) return '';
+  const owner = String(book.book_owner || '').toLowerCase() === 'claude' ? 'Claude' : 'Grok';
+  const qtyN = Math.abs(Number(pos.qty) || 0);
+  const qty = Number.isInteger(qtyN) ? `${qtyN}sh` : `${qtyN.toFixed(2)}sh`;
+  const pl = Number(pos.pl);
+  const plpc = Number(pos.plpc);
+  let plTxt = '';
+  if (Number.isFinite(pl)) plTxt += `${pl >= 0 ? '+' : ''}$${pl.toFixed(0)}`;
+  if (Number.isFinite(plpc)) plTxt += `${plTxt ? ' ' : ''}${plpc >= 0 ? '+' : ''}${plpc.toFixed(1)}%`;
+  const cls = Number.isFinite(pl) && pl < 0 ? 'ai-pos-chip--neg'
+    : Number.isFinite(pl) && pl > 0 ? 'ai-pos-chip--pos' : '';
+  const title = `${owner} paper · ${ticker} ${qty}`
+    + (pos.avg_entry != null ? ` · entry $${Number(pos.avg_entry).toFixed(2)}` : '')
+    + (plTxt ? ` · PnL ${plTxt}` : '');
+  return `<span class="ai-pos-chip ${cls}" title="${title}">${owner} ${qty}${plTxt ? ' ' + plTxt : ''}</span>`;
+}
+
 function _rowHTML(row) {
   const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
   const chgCls = _chgClass(row.pct_change ?? null);
@@ -529,6 +551,7 @@ function _rowHTML(row) {
     <div class="cell-ticker">
       ${row.ticker}
       ${mentionTxt ? `<span class="mention-badge${mentionCls}" title="${row.mention_count ?? 0} today">${mentionTxt}</span>` : ''}
+      ${_aiPosBadge(row.ticker)}
       ${_confluenceBadge(row.confluence)}
       ${_funnelBadge(row.funnel)}
     </div>

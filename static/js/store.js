@@ -14,6 +14,8 @@ const _state = {
   trending:           /** @type {Object} */ ({}),
   claude_suggestions: /** @type {Object} */ ({}),
   ai_suggestions: /** @type {Object} */ ({}),
+  /** Shared AI paper book (Grok/Claude owner): positions, mode, book_owner. */
+  ai_positions:       /** @type {Object} */ ({}),
   price_spikes:       /** @type {Object[]} */ ([]),
   config:         {},
   selectedTicker: /** @type {string|null} */ (null),

@@ -5,10 +5,10 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=75';
-import { subscribe, set }                        from './store.js?v=75';
-import { init as initFeeds }                     from './feeds.js?v=75';
-import { init as initTickers }                   from './tickers.js?v=75';
+import { connect, on, api }                      from './api.js?v=76';
+import { subscribe, set }                        from './store.js?v=76';
+import { init as initFeeds }                     from './feeds.js?v=76';
+import { init as initTickers }                   from './tickers.js?v=76';
 import { init as initTradingView }               from './tradingview.js?v=75';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=75';
 import { init as initResizer }                   from './resizer.js?v=75';
@@ -249,6 +249,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (snap.claude_suggestions !== undefined) {
       update.claude_suggestions = snap.claude_suggestions;
     }
+    // Shared AI paper book (Grok/Claude owner).
+    if (snap.ai_positions !== undefined) {
+      update.ai_positions = snap.ai_positions;
+    } else if (snap.claude_positions !== undefined) {
+      update.ai_positions = snap.claude_positions;
+    }
     if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
     if (Object.keys(update).length)      set(update);
     if (snap.version)                    _renderBuildBadge(snap.version);
@@ -263,6 +269,53 @@ document.addEventListener('DOMContentLoaded', async () => {
       dot.title     = connected ? 'Live' : 'Disconnected — reconnecting…';
     });
   });
+
+  // ── AI trader on/off + book owner (header chip) ───────────────
+  let _aiStatus = { pos: {}, cfg: {}, sugg: {} };
+  function _renderAiTraderStatus() {
+    const dot = document.querySelector('[data-ai-trader-dot]');
+    const lbl = document.querySelector('[data-ai-trader-label]');
+    if (!dot && !lbl) return;
+
+    const p = _aiStatus.pos || {};
+    const c = _aiStatus.cfg || {};
+    const s = _aiStatus.sugg || {};
+    const source = String(
+      c.ai_trading_source
+      || (c.grok_trading_enabled ? 'grok'
+        : (c.ai_trading_enabled || c.claude_trading_enabled) ? 'claude'
+        : '')
+    ).toLowerCase();
+    const owner = String(p.book_owner || source || '').toLowerCase();
+    const mode = String(p.mode || s.trading_mode || '').toLowerCase();
+    const flagOn = source === 'grok' || source === 'claude'
+      || s.trading === true
+      || (owner && owner !== 'none' && owner !== 'off');
+    const tradingOn = flagOn && mode !== 'off';
+
+    const nPos = p.positions && typeof p.positions === 'object'
+      ? Object.keys(p.positions).length : 0;
+    const ownerLabel = owner === 'grok' || source === 'grok' ? 'Grok'
+      : owner === 'claude' || source === 'claude' ? 'Claude'
+      : 'AI';
+
+    if (dot) {
+      dot.className = `ws-dot ws-dot--sm${tradingOn ? ' ws-dot--on' : ' ws-dot--off'}`;
+      dot.title = tradingOn
+        ? `AI trader on · ${ownerLabel} · ${mode || 'paper'}${nPos ? ` · ${nPos} open` : ''}`
+        : 'AI trader off';
+    }
+    if (lbl) {
+      lbl.textContent = tradingOn
+        ? (nPos ? `AI ${ownerLabel} · ${nPos}` : `AI ${ownerLabel}`)
+        : 'AI off';
+      lbl.title = (dot && dot.title) || lbl.textContent;
+      lbl.classList.toggle('hdr-status-label--on', tradingOn);
+    }
+  }
+  subscribe('ai_positions', p => { _aiStatus.pos = p || {}; _renderAiTraderStatus(); });
+  subscribe('config', c => { _aiStatus.cfg = c || {}; _renderAiTraderStatus(); });
+  subscribe('ai_suggestions', s => { _aiStatus.sugg = s || {}; _renderAiTraderStatus(); });
 
   // ── Store → Discord OCR source status ───────────────────────
   subscribe('discord', d => {
