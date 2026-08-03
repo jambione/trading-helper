@@ -87,3 +87,4 @@ momentum-monitor/journal/
 # Full Claude research write-ups (panel only shows the ticker trailer JSON).
 claude_reports/
 ai_reports/
+.worktrees/
