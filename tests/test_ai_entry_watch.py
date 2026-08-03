@@ -20,3 +20,28 @@ def test_watch_config_defaults_present():
     assert cfg["ai_watch_enabled"] is True
     assert cfg["ai_watch_require_agreement"] is True
     assert cfg["ai_watch_poll_sec"] == 20.0
+
+
+def test_upsert_requires_agreement_by_default(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    cfg = {"ai_watch_require_agreement": True, "ai_watch_single_source": False}
+    rows = [
+        {"symbol": "SMCI", "agreement": True, "trending_score": 8.2, "reason": "ai"},
+        {"symbol": "HOOD", "agreement": False, "trending_score": 7.5, "reason": "x"},
+    ]
+    state = ew.upsert_from_rows(rows, cfg=cfg, now=1_000.0)
+    assert "SMCI" in state
+    assert "HOOD" not in state
+
+
+def test_drop_missing_invalidates(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    state = {
+        "SMCI": {"symbol": "SMCI", "status": "watching", "updated_ts": 1.0},
+        "OLD": {"symbol": "OLD", "status": "watching", "updated_ts": 1.0},
+    }
+    out = ew.drop_missing(state, {"SMCI"}, now=2.0)
+    assert out["SMCI"]["status"] == "watching"
+    assert out["OLD"]["status"] == "invalidated"
