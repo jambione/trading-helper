@@ -65,6 +65,60 @@ def test_expire_open_watches(tmp_path, monkeypatch):
     assert out["SMCI"]["status"] == "expired"
 
 
+def test_public_snapshot_shape(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    state = {
+        "ZZZ": {
+            "symbol": "ZZZ",
+            "status": "watching",
+            "agreement": True,
+            "score": 7.5,
+            "last_ask": 12.3,
+            "structure": {
+                "wait_kind": "wait_for_zone",
+                "entry_low": 11.0,
+                "entry_high": 13.0,
+            },
+        },
+        "AAA": {
+            "symbol": "AAA",
+            "status": "armed",
+            "agreement": False,
+            "score": 9.1,
+            "last_ask": None,
+            "structure": None,
+        },
+    }
+    ew.save_watch(state)
+    snap = ew.public_snapshot()
+    assert isinstance(snap, list)
+    assert [r["symbol"] for r in snap] == ["AAA", "ZZZ"]
+    keys = {
+        "symbol", "status", "wait_kind", "entry_low", "entry_high",
+        "last_ask", "score", "agreement",
+    }
+    for row in snap:
+        assert set(row.keys()) == keys
+    zzz = snap[1]
+    assert zzz["status"] == "watching"
+    assert zzz["wait_kind"] == "wait_for_zone"
+    assert zzz["entry_low"] == 11.0
+    assert zzz["entry_high"] == 13.0
+    assert zzz["last_ask"] == 12.3
+    assert zzz["score"] == 7.5
+    assert zzz["agreement"] is True
+    aaa = snap[0]
+    assert aaa["status"] == "armed"
+    assert aaa["wait_kind"] is None
+    assert aaa["entry_low"] is None
+    assert aaa["entry_high"] is None
+    assert aaa["last_ask"] is None
+    # Also accepts in-memory state without load
+    assert ew.public_snapshot(state)[0]["symbol"] == "AAA"
+
+
 def test_should_expire_watches_on_close_edge():
     """Pre-market closed must not expire or latch; only open→closed does."""
     import ai_entry_watch as ew

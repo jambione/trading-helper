@@ -310,6 +310,14 @@ def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
             "unconfirmed_entries:" + ",".join(reconcile["unconfirmed"][:8])
         )
 
+    entry_watch: list = []
+    try:
+        import ai_entry_watch as ew
+
+        entry_watch = ew.public_snapshot()
+    except Exception:
+        entry_watch = []
+
     return {
         "updated": now,
         "mode": mode,
@@ -323,6 +331,7 @@ def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
         "recent_events": recent,
         "realized_r_today": day_r,
         "open_risk_pct": open_r,
+        "entry_watch": entry_watch,
     }
 
 

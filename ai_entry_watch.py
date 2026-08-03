@@ -76,6 +76,68 @@ def save_watch(state: dict) -> None:
     tmp.replace(path)
 
 
+def public_snapshot(state: dict | None = None) -> list[dict]:
+    """Operator-facing watch queue rows for positions JSON.
+
+    Each item: symbol, status, wait_kind, entry_low, entry_high, last_ask,
+    score, agreement. Sorted by symbol for stable UI / diffs.
+    """
+    if state is None:
+        state = load_watch()
+    if not isinstance(state, dict):
+        return []
+    rows: list[dict] = []
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        structure = rec.get("structure")
+        if not isinstance(structure, dict):
+            structure = {}
+        wait_kind = structure.get("wait_kind")
+        if wait_kind is not None:
+            wait_kind = str(wait_kind).lower().strip() or None
+        entry_low = structure.get("entry_low")
+        entry_high = structure.get("entry_high")
+        # Prefer nested structure levels; fall back to top-level if present.
+        if entry_low is None:
+            entry_low = rec.get("entry_low")
+        if entry_high is None:
+            entry_high = rec.get("entry_high")
+        try:
+            entry_low_f = float(entry_low) if entry_low is not None else None
+        except (TypeError, ValueError):
+            entry_low_f = None
+        try:
+            entry_high_f = float(entry_high) if entry_high is not None else None
+        except (TypeError, ValueError):
+            entry_high_f = None
+        last_ask = rec.get("last_ask")
+        try:
+            last_ask_f = float(last_ask) if last_ask is not None else None
+        except (TypeError, ValueError):
+            last_ask_f = None
+        score = rec.get("score")
+        try:
+            score_f = float(score) if score is not None else None
+        except (TypeError, ValueError):
+            score_f = None
+        rows.append({
+            "symbol": sym,
+            "status": str(rec.get("status") or "") or None,
+            "wait_kind": wait_kind,
+            "entry_low": entry_low_f,
+            "entry_high": entry_high_f,
+            "last_ask": last_ask_f,
+            "score": score_f,
+            "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
+        })
+    rows.sort(key=lambda r: r["symbol"])
+    return rows
+
+
 def _row_passes_agreement(row: dict, cfg: dict) -> bool:
     """Agreement gate: require both-book agreement unless single-source mode."""
     if not cfg.get("ai_watch_require_agreement", True):
