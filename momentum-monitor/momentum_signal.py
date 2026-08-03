@@ -1697,17 +1697,24 @@ def _cell_flags(row: dict, ctx: dict) -> str:
 # The historical column set, unchanged since before the roadmap. Optional
 # columns are layered on by momentum_columns() rather than edited in here, so
 # this stays a stable reference for the ordering regression tests.
+# ratio=1 → share leftover width equally when the table expand=True fills
+# the terminal. Fixed-width keys (#) stay compact; data columns flex.
 MOMENTUM_COLUMNS = [
-    ("#",        {"justify": "right", "style": "bold"}, _cell_key),
-    # Cap Symbol so ticker sits next to Added/Price (no stretch gap).
-    ("Symbol",   {"max_width": 6, "no_wrap": True},     _cell_symbol),
-    ("Added",    {"justify": "right"},                  _cell_added),
-    ("Price",    {"justify": "right", "no_wrap": True}, _cell_price),
-    ("Chg%",     {"justify": "right"},                  _cell_chg),
-    ("Mentions", {"justify": "right"},                  _cell_mentions),
+    ("#",        {"justify": "right", "style": "bold", "width": 2,
+                  "no_wrap": True},                     _cell_key),
+    ("Symbol",   {"ratio": 1, "no_wrap": True},         _cell_symbol),
+    ("Added",    {"justify": "right", "ratio": 1, "no_wrap": True},
+                                                        _cell_added),
+    ("Price",    {"justify": "right", "ratio": 1, "no_wrap": True},
+                                                        _cell_price),
+    ("Chg%",     {"justify": "right", "ratio": 1, "no_wrap": True},
+                                                        _cell_chg),
+    ("Mentions", {"justify": "right", "ratio": 1, "no_wrap": True},
+                                                        _cell_mentions),
     # Combined CM RSI + %R deep-OS cue (not RSI alone)
-    ("Setup",    {"justify": "right"},                  _cell_setup),
-    ("",         {"no_wrap": True},                     _cell_flags),
+    ("Setup",    {"justify": "right", "ratio": 1, "no_wrap": True},
+                                                        _cell_setup),
+    ("",         {"ratio": 1, "no_wrap": True},         _cell_flags),
 ]
 
 # Optional columns: (config flag, anchor headers, spec). Each is inserted
@@ -1715,10 +1722,22 @@ MOMENTUM_COLUMNS = [
 # correct however many of the other optional columns are switched off.
 OPTIONAL_COLUMNS = [
     ("rvol_column_enabled", ("Chg%",),
-     ("RVOL", {"justify": "right"}, _cell_rvol)),
+     ("RVOL", {"justify": "right", "ratio": 1, "no_wrap": True},
+      _cell_rvol)),
     ("spark_enabled", ("RVOL", "Chg%"),
-     ("Shape", {"justify": "left", "no_wrap": True}, _cell_spark)),
+     ("Shape", {"justify": "left", "ratio": 1, "no_wrap": True},
+      _cell_spark)),
 ]
+
+
+def _desk_table_width() -> int:
+    """Terminal content width for expand=True desk tables (inside a Panel)."""
+    try:
+        w = shutil.get_terminal_size(fallback=(120, 30)).columns
+    except Exception:  # noqa: BLE001
+        w = 120
+    # Panel border (2) + panel padding (2) leave this for the table body.
+    return max(60, int(w) - 4)
 
 
 def momentum_columns(cfg: dict | None = None) -> list:
@@ -1755,8 +1774,8 @@ def momentum_table(feed: Feed, now: float, hz: float,
                    history=None,
                    cfg: dict | None = None) -> Table:
     cols = momentum_columns(cfg) if columns is None else columns
-    # padding (0,1) default; keep tight so Symbol↔Price stay close.
-    t = Table(expand=False, padding=(0, 1), collapse_padding=True)
+    # Fill the terminal; equal ratio on flex columns (see MOMENTUM_COLUMNS).
+    t = Table(expand=True, width=_desk_table_width(), padding=(0, 1))
     for header, opts, _ in cols:
         t.add_column(header, **opts)
     st_rank = st_rank or {}
@@ -1849,26 +1868,27 @@ def stocktwits_panel(st: StocktwitsTrending,
     age_on = bool(cfg.get("price_age_enabled", True))
     rvol_on = bool(cfg.get("stocktwits_rvol_column", True))
     range_w = int(cfg.get("stocktwits_range_width", 11))
-    t = Table(expand=False, padding=(0, 1), collapse_padding=True)
-    t.add_column("Key", justify="right", style="bold")
-    t.add_column("ST#", justify="right", style="bold magenta")
-    # Cap Symbol so it cannot stretch away from Last (wide terminal).
-    t.add_column("Symbol", max_width=6, no_wrap=True)
-    t.add_column("Last", justify="right", no_wrap=True)
-    t.add_column("%Chg", justify="right")
+    t = Table(expand=True, width=_desk_table_width(), padding=(0, 1))
+    t.add_column("Key", justify="right", style="bold", width=3, no_wrap=True)
+    t.add_column("ST#", justify="right", style="bold magenta", width=3,
+                 no_wrap=True)
+    # Equal flex across data columns so the grid fills the terminal evenly.
+    t.add_column("Symbol", ratio=1, no_wrap=True)
+    t.add_column("Last", justify="right", ratio=1, no_wrap=True)
+    t.add_column("%Chg", justify="right", ratio=1, no_wrap=True)
     # Named for its feed on purpose. The free Alpaca plan is IEX-only, a few
     # percent of the consolidated tape, so this is materially smaller than the
     # volume the Stocktwits site shows for the same symbol. Labelled "Volume"
     # it read as the consolidated figure and invited comparison against it.
-    t.add_column("Vol·IEX", justify="right")
+    t.add_column("Vol·IEX", justify="right", ratio=1, no_wrap=True)
     if rvol_on:
-        t.add_column("RVOL", justify="right")
+        t.add_column("RVOL", justify="right", ratio=1, no_wrap=True)
     # One track replaces the 52w Hi / 52w Lo pair: position in the range is
     # what EXT and WASH are actually about, and two absolute prices made the
     # reader do that division. Mkt Cap is gone — it never changed a decision.
-    t.add_column("52w lo→hi", justify="left", no_wrap=True)
-    t.add_column("Score", justify="right")
-    t.add_column("", no_wrap=True)  # LOOK badge
+    t.add_column("52w lo→hi", justify="left", ratio=1, no_wrap=True)
+    t.add_column("Score", justify="right", ratio=1, no_wrap=True)
+    t.add_column("", ratio=1, no_wrap=True)  # LOOK badge
     n_look = 0
     if not rows:
         msg = st.error or "waiting for first poll…"
@@ -1934,7 +1954,7 @@ def stocktwits_panel(st: StocktwitsTrending,
     look_n = f"  ·  {n_look} LOOK" if n_look else ""
     title = f"TRENDING  ·  A-J load TV{cap}{look_n}{stamp}{q}"
     return Panel(t, title=title, title_align="left",
-                 border_style="magenta", padding=(0, 1))
+                 border_style="magenta", padding=(0, 1), expand=True)
 
 
 def _ai_source_cell(row: dict) -> str:
@@ -1984,20 +2004,21 @@ def claude_panel(gs: AiSuggestions,
     age_on = bool(cfg.get("price_age_enabled", True))
     rvol_on = bool(cfg.get("claude_rvol_column", True))
     range_w = int(cfg.get("claude_range_width", 11))
-    t = Table(expand=False, padding=(0, 1), collapse_padding=True)
-    t.add_column("Key", justify="right", style="bold")
-    t.add_column("G#", justify="right", style="bold yellow")
-    t.add_column("Src", justify="center", style="bold")
-    t.add_column("Symbol", max_width=6, no_wrap=True)
-    t.add_column("Last", justify="right", no_wrap=True)
-    t.add_column("%Chg", justify="right")
-    t.add_column("Vol·IEX", justify="right")
+    t = Table(expand=True, width=_desk_table_width(), padding=(0, 1))
+    t.add_column("Key", justify="right", style="bold", width=3, no_wrap=True)
+    t.add_column("G#", justify="right", style="bold yellow", width=3,
+                 no_wrap=True)
+    t.add_column("Src", justify="center", style="bold", width=4, no_wrap=True)
+    t.add_column("Symbol", ratio=1, no_wrap=True)
+    t.add_column("Last", justify="right", ratio=1, no_wrap=True)
+    t.add_column("%Chg", justify="right", ratio=1, no_wrap=True)
+    t.add_column("Vol·IEX", justify="right", ratio=1, no_wrap=True)
     if rvol_on:
-        t.add_column("RVOL", justify="right")
-    t.add_column("52w lo→hi", justify="left", no_wrap=True)
-    t.add_column("Score", justify="right")
-    t.add_column("Why", justify="left", max_width=36, no_wrap=True)
-    t.add_column("", no_wrap=True)  # LOOK badge
+        t.add_column("RVOL", justify="right", ratio=1, no_wrap=True)
+    t.add_column("52w lo→hi", justify="left", ratio=1, no_wrap=True)
+    t.add_column("Score", justify="right", ratio=1, no_wrap=True)
+    t.add_column("Why", justify="left", ratio=2, no_wrap=True)
+    t.add_column("", ratio=1, no_wrap=True)  # LOOK badge
     n_look = 0
     if not rows:
         # No data rows — leave the table blank and put status in the title
@@ -2087,7 +2108,7 @@ def claude_panel(gs: AiSuggestions,
         f"{model_s}{stamp}{q}{status_s}"
     )
     return Panel(t, title=title, title_align="left",
-                 border_style="yellow", padding=(0, 1))
+                 border_style="yellow", padding=(0, 1), expand=True)
 
 
 def header_panel(feed: Feed, now: float, hz: float,

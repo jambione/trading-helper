@@ -742,8 +742,8 @@ body.mobile .auto-alert-toggle { display: none !important; }
   #ticker-tv-resizer { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
   .watchlist-cols {
-    /* Ticker | Price | Chg% | Vol | Flags | actions */
-    grid-template-columns: minmax(64px, 96px) 64px 56px 44px 72px 52px;
+    grid-template-columns: 1.2fr 0.9fr 0.8fr 0.7fr 1fr 0.9fr;
+    width: 100%;
   }
   .cell-ticker { font-size: 15px; }
   .cell-price  { font-size: 14px; }
@@ -811,7 +811,10 @@ body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending seco
 body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
-body.mobile .watchlist-cols { grid-template-columns: minmax(64px, 96px) 64px 56px 44px 72px 52px; }
+body.mobile .watchlist-cols {
+  grid-template-columns: 1.2fr 0.9fr 0.8fr 0.7fr 1fr 0.9fr;
+  width: 100%;
+}
 body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
@@ -1594,19 +1597,26 @@ body.mobile .icon-btn {
 
 .watchlist-cols {
   display: grid;
-  /* Ticker | Price | Chg% | Vol | Flags | actions — fixed ticker so Price sits close */
-  grid-template-columns: minmax(72px, 110px) 70px 58px 48px 88px 66px;
+  /* Equal columns fill panel width (Ticker | Price | Chg% | Vol | Flags | actions) */
+  grid-template-columns: 1.2fr 0.9fr 0.8fr 0.7fr 1.1fr 0.9fr;
   align-items: center;
+  width: 100%;
 }
 
-/* Feed panels: LOOK badge + Copy (same chrome as Momentum). */
+/* Feed panels: equal flex fill; LOOK + Copy keep a floor so badges stay readable. */
 .feed-cols--trending {
   /* Ticker | Price | Chg% | Vol | RVOL | Score | Look | actions */
-  grid-template-columns: minmax(56px, 88px) 58px 54px 48px 48px 44px 72px 52px;
+  grid-template-columns: 1.1fr 0.9fr 0.8fr 0.7fr 0.7fr 0.7fr minmax(72px, 1fr) minmax(52px, 0.8fr);
+  width: 100%;
 }
 .feed-cols--claude {
   /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | Look | actions */
-  grid-template-columns: minmax(56px, 88px) 28px 54px 50px 44px 44px 40px 36px 72px 52px;
+  grid-template-columns: 1.1fr 0.5fr 0.9fr 0.8fr 0.7fr 0.7fr 0.7fr 0.6fr minmax(72px, 1fr) minmax(52px, 0.8fr);
+  width: 100%;
+}
+.feed-table-header .feed-cols,
+.watchlist-table-header .watchlist-cols {
+  width: 100%;
 }
 
 /* LOOK EXT / LOOK WASH — matches terminal desk green pill */
