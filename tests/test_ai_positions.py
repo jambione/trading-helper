@@ -161,6 +161,40 @@ def test_qualifies_rejects_wait():
     assert cp.qualifies_as_entry(None) is False
 
 
+def test_normalize_wait_for_zone_infers_kind():
+    d = cp.normalize_entry_decision({
+        "decision": "WAIT",
+        "entry_low": 27.0, "entry_high": 28.5,
+        "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        "summary": "wait for pullback to 27-28.5",
+    })
+    assert d["wait_kind"] == "wait_for_zone"
+    assert d["entry_low"] == 27.0
+
+
+def test_normalize_wait_setup_without_levels():
+    d = cp.normalize_entry_decision({
+        "decision": "WAIT", "entry_low": 0, "stop_price": 0, "target_1": 0,
+        "summary": "no clean setup",
+    })
+    assert d["wait_kind"] == "wait_setup"
+
+
+def test_normalize_hard_no():
+    d = cp.normalize_entry_decision({
+        "decision": "WAIT", "wait_kind": "hard_no", "summary": "thesis broken",
+    })
+    assert d["wait_kind"] == "hard_no"
+
+
+def test_qualifies_as_entry_still_rejects_wait():
+    d = cp.normalize_entry_decision({
+        "decision": "WAIT", "entry_low": 27.0, "entry_high": 28.5,
+        "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+    })
+    assert cp.qualifies_as_entry(d, min_reward_risk=3.0) is False
+
+
 def test_qualifies_rejects_undefined_risk():
     # Never a trade with undefined risk: stop must be below entry.
     assert cp.qualifies_as_entry(_buy_decision(stop_price=41.0)) is False

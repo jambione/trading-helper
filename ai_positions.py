@@ -128,6 +128,7 @@ starts at the right place.
 JSON schema (required):
 {{
   "decision": "BUY" or "WAIT",
+  "wait_kind": null or "wait_for_zone" or "wait_setup" or "hard_no",
   "entry_low": 0.0,
   "entry_high": 0.0,
   "stop_price": 0.0,
@@ -141,7 +142,15 @@ JSON schema (required):
   "summary": "one blunt sentence: why this setup maximizes upside while capping downside"
 }}
 
-If decision is "WAIT", set every numeric field to 0 and explain why in "summary".
+WAIT rules (structured — do NOT zero levels when you have a zone):
+- decision "BUY": set wait_kind to null; all entry/stop/target numbers must be concrete.
+- decision "WAIT" + pullback/breakout zone you can define: set wait_kind "wait_for_zone"
+  and fill entry_low/entry_high, stop_price, target_1 (and target_2/reward_risk when known).
+  The desk will arm when price enters the zone — levels must stay real numbers.
+- decision "WAIT" + thesis still valid but no clean trigger yet: wait_kind "wait_setup";
+  numeric fields may be 0.
+- decision "WAIT" + no trade / thesis broken / avoid: wait_kind "hard_no"; numbers may be 0.
+- Always explain in "summary".
 """
 
 
@@ -172,6 +181,73 @@ def parse_entry_decision(text: str) -> dict[str, Any] | None:
     return None
 
 
+_WAIT_KINDS = frozenset({"wait_for_zone", "wait_setup", "hard_no"})
+_HARD_NO_MARKERS = (
+    "hard_no",
+    "hard no",
+    "thesis broken",
+    "thesis break",
+    "no trade",
+    "do not trade",
+    "avoid",
+    "invalidated",
+    "stay away",
+)
+
+
+def normalize_entry_decision(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize entry JSON: decision casing + structured WAIT wait_kind.
+
+    wait_kind values: wait_for_zone | wait_setup | hard_no | None (BUY).
+    Inference when WAIT and wait_kind missing/invalid:
+    - entry_low>0 and stop_price>0 and target_1>0 → wait_for_zone
+    - hard-no keywords in summary/decision or explicit wait_kind → hard_no
+    - else → wait_setup
+    Levels and other fields are preserved.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    d = dict(raw)
+    decision = str(d.get("decision", "") or "").strip().upper()
+    if decision not in ("BUY", "WAIT"):
+        # Keep nonstandard decisions as-is but still pass through fields.
+        d["decision"] = decision or d.get("decision")
+        return d
+    d["decision"] = decision
+
+    if decision == "BUY":
+        d["wait_kind"] = None
+        return d
+
+    # WAIT
+    explicit = d.get("wait_kind")
+    if isinstance(explicit, str):
+        wk = explicit.strip().lower().replace(" ", "_")
+        if wk in _WAIT_KINDS:
+            d["wait_kind"] = wk
+            return d
+
+    summary = str(d.get("summary", "") or "").lower()
+    if any(m in summary for m in _HARD_NO_MARKERS):
+        d["wait_kind"] = "hard_no"
+        return d
+
+    try:
+        entry_low = float(d.get("entry_low") or 0)
+        stop_price = float(d.get("stop_price") or 0)
+        target_1 = float(d.get("target_1") or 0)
+    except (TypeError, ValueError):
+        entry_low = stop_price = target_1 = 0.0
+
+    if entry_low > 0 and stop_price > 0 and target_1 > 0:
+        d["wait_kind"] = "wait_for_zone"
+    else:
+        d["wait_kind"] = "wait_setup"
+    return d
+
+
 def evaluate_entry(
     ticker: str,
     price: float,
@@ -185,7 +261,10 @@ def evaluate_entry(
     timeout: float = 180.0,
     backend: str = "claude_cli",
 ) -> dict[str, Any] | None:
-    """Run the per-ticker risk-sized entry check. None on failure or WAIT.
+    """Run the per-ticker risk-sized entry check. None on failure.
+
+    Returns normalized decision (BUY or WAIT with wait_kind). Callers use
+    qualifies_as_entry to gate order placement — WAIT never qualifies.
 
     ``backend`` selects which CLI runs the entry call:
     - ``claude_cli`` / ``claude`` → Claude Code CLI
@@ -215,9 +294,7 @@ def evaluate_entry(
     except Exception:
         return None
     decision = parse_entry_decision(text)
-    if not decision or str(decision.get("decision", "")).upper() != "BUY":
-        return decision
-    return decision
+    return normalize_entry_decision(decision)
 
 
 def qualifies_as_entry(decision: dict[str, Any] | None,
