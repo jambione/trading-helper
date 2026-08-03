@@ -207,15 +207,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     suggBtn.disabled = true;
     suggBtn.textContent = '…';
     try {
-      await api.addSuggestion(msg);
-      suggInput.value    = '';
-      suggBtn.textContent = 'Sent ✓';
+      const res = await api.addSuggestion(msg);
+      suggInput.value = '';
+      if (res?.email_sent) {
+        suggBtn.textContent = 'Emailed ✓';
+      } else if (res?.email_configured === false) {
+        // Saved on server, but SMTP not set up — operator must configure secrets
+        suggBtn.textContent = 'Saved';
+        console.warn('[feedback] saved but email not configured (SMTP)');
+      } else {
+        suggBtn.textContent = 'Saved';
+      }
       // Re-check count so the badge reflects the new submission
       try {
         const { suggestions = [] } = await api.getSuggestions();
         updateFeedbackBadge(suggestions.length);
       } catch { /* non-fatal */ }
-      setTimeout(() => { suggBtn.textContent = 'Send'; suggBtn.disabled = false; }, 2000);
+      setTimeout(() => { suggBtn.textContent = 'Send'; suggBtn.disabled = false; }, 2500);
     } catch {
       suggBtn.textContent = 'Error';
       setTimeout(() => { suggBtn.textContent = 'Send'; suggBtn.disabled = false; }, 2000);

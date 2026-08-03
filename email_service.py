@@ -13,8 +13,8 @@ Required secrets.json fields:
     "smtp_from":  "noreply@jbrasfield.com" // From address (optional, defaults to smtp_user)
   }
 
-The recipient address and display name are hardcoded here since they
-don't change — update NOTIFY_TO / FROM_NAME below if needed.
+Recipient defaults to the operator iCloud inbox; override with
+``notify_to`` / ``notify_bcc`` in secrets.json if needed.
 """
 
 import json
@@ -29,11 +29,15 @@ log = logging.getLogger(__name__)
 
 _SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
 
-# ── Static config ─────────────────────────────────────────────────────────────
+# ── Defaults (overridable via secrets.json / env) ─────────────────────────────
 
-NOTIFY_TO  = "trading@jbrasfield.com"   # always send suggestions here
-NOTIFY_BCC = "jon@jbrasfield.com"       # blind copy for delivery confirmation
+DEFAULT_NOTIFY_TO  = "jambione@icloud.com"
+DEFAULT_NOTIFY_BCC = ""  # optional second inbox
 FROM_NAME  = "Brasfield Momentum"
+
+# Back-compat module attributes (tests / importers)
+NOTIFY_TO  = DEFAULT_NOTIFY_TO
+NOTIFY_BCC = DEFAULT_NOTIFY_BCC
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,54 +53,85 @@ def _secrets() -> dict:
 
 def _cfg(key: str, default: str = "") -> str:
     import os
-    return _secrets().get(key) or os.getenv(key.upper(), default)
+    v = _secrets().get(key)
+    if v is None or v == "":
+        v = os.getenv(key.upper(), default)
+    return str(v) if v is not None else default
+
+
+def _notify_to() -> str:
+    return _cfg("notify_to") or _cfg("smtp_notify_to") or DEFAULT_NOTIFY_TO
+
+
+def _notify_bcc() -> str:
+    return _cfg("notify_bcc") or _cfg("smtp_notify_bcc") or DEFAULT_NOTIFY_BCC
 
 
 def _is_configured() -> bool:
     return bool(_cfg("smtp_host") and _cfg("smtp_user") and _cfg("smtp_pass"))
 
 
+def smtp_status() -> dict:
+    """Safe diagnostics for /api/meta or ops checks (no secrets)."""
+    return {
+        "configured": _is_configured(),
+        "smtp_host": _cfg("smtp_host") or None,
+        "smtp_port": int(_cfg("smtp_port", "587") or "587"),
+        "smtp_user": _cfg("smtp_user") or None,
+        "smtp_from": _cfg("smtp_from") or _cfg("smtp_user") or None,
+        "notify_to": _notify_to(),
+        "notify_bcc": _notify_bcc() or None,
+        "has_password": bool(_cfg("smtp_pass")),
+    }
+
+
 # ── Public ────────────────────────────────────────────────────────────────────
 
-def _send(msg, recipients, host, port, user, password, from_addr, label: str):
-    """Internal helper — sends a pre-built MIME message."""
+def _send(msg, recipients, host, port, user, password, from_addr, label: str) -> bool:
+    """Internal helper — sends a pre-built MIME message. Returns True on success."""
     try:
         if port == 465:
             ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as server:
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=15) as server:
                 server.login(user, password)
                 server.sendmail(from_addr, recipients, msg.as_string())
         else:
-            with smtplib.SMTP(host, port, timeout=10) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.ehlo()
                 server.starttls(context=ssl.create_default_context())
                 server.ehlo()
                 server.login(user, password)
                 server.sendmail(from_addr, recipients, msg.as_string())
-        log.info("[EMAIL] %s sent to %s", label, NOTIFY_TO)
+        log.info("[EMAIL] %s sent to %s", label, ", ".join(recipients))
+        return True
     except Exception as e:
         log.warning("[EMAIL] Failed to send %s: %s", label, e)
+        return False
 
 
-def send_login_email(username: str, success: bool, ip: str = "", ua: str = "", location: str = ""):
+def send_login_email(username: str, success: bool, ip: str = "", ua: str = "", location: str = "") -> bool:
     """
     Send a login-attempt notification email.
     Fires for both successful and failed logins.
-    Silently skips if SMTP is not configured.
+    Returns False (and logs) if SMTP is not configured or send fails.
     Runs synchronously — call from a background thread.
     """
     if not _is_configured():
-        return
+        log.warning("[EMAIL] SMTP not configured — skipping login email "
+                    "(add smtp_host/smtp_user/smtp_pass to config/secrets.json)")
+        return False
 
     from datetime import datetime
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S ET")
 
     host      = _cfg("smtp_host")
-    port      = int(_cfg("smtp_port", "587"))
+    port      = int(_cfg("smtp_port", "587") or "587")
     user      = _cfg("smtp_user")
     password  = _cfg("smtp_pass")
     from_addr = _cfg("smtp_from") or user
+    to_addr   = _notify_to()
+    bcc_addr  = _notify_bcc()
 
     status_word  = "SUCCESS" if success else "FAILED"
     status_emoji = "✅" if success else "❌"
@@ -151,39 +186,57 @@ def send_login_email(username: str, success: bool, ip: str = "", ua: str = "", l
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = f"{FROM_NAME} <{from_addr}>"
-    msg["To"]      = NOTIFY_TO
-    msg["Bcc"]     = NOTIFY_BCC
+    msg["To"]      = to_addr
+    recipients = [to_addr]
+    if bcc_addr and bcc_addr not in recipients:
+        msg["Bcc"] = bcc_addr
+        recipients.append(bcc_addr)
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html,  "html"))
 
-    _send(msg, [NOTIFY_TO, NOTIFY_BCC], host, port, user, password, from_addr, f"login email ({status_word})")
+    return _send(msg, recipients, host, port, user, password, from_addr,
+                 f"login email ({status_word})")
 
 
-def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
+def send_suggestion_email(message: str, ip: str = "", ua: str = "") -> bool:
     """
     Send a 'New Suggestion' notification email.
-    Silently skips if SMTP is not configured in secrets.json.
+
+    Returns True if SMTP accepted the message, False if not configured or
+    the send failed. Always logs clearly either way.
     Runs synchronously — call from a thread to avoid blocking the event loop.
     """
     if not _is_configured():
-        log.debug("[EMAIL] SMTP not configured — skipping suggestion email")
-        return
+        log.warning(
+            "[EMAIL] SMTP not configured — suggestion saved to disk but NOT emailed. "
+            "Add smtp_host, smtp_user, smtp_pass to config/secrets.json on the mini."
+        )
+        return False
 
     host      = _cfg("smtp_host")
-    port      = int(_cfg("smtp_port", "587"))
+    port      = int(_cfg("smtp_port", "587") or "587")
     user      = _cfg("smtp_user")
     password  = _cfg("smtp_pass")
     from_addr = _cfg("smtp_from") or user
+    to_addr   = _notify_to()
+    bcc_addr  = _notify_bcc()
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S ET")
 
     # ── Build message ─────────────────────────────────────────────
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "New Suggestion"
+    msg["Subject"] = f"📬 Dashboard feedback — {now}"
     msg["From"]    = f"{FROM_NAME} <{from_addr}>"
-    msg["To"]      = NOTIFY_TO
-    msg["Bcc"]     = NOTIFY_BCC
+    msg["To"]      = to_addr
+    recipients = [to_addr]
+    if bcc_addr and bcc_addr not in recipients:
+        msg["Bcc"] = bcc_addr
+        recipients.append(bcc_addr)
 
     # Plain-text body
-    plain = f"New suggestion received:\n\n{message}"
+    plain = f"New dashboard feedback received ({now}):\n\n{message}"
     if ip:
         plain += f"\n\nFrom IP: {ip}"
     if ua:
@@ -191,6 +244,7 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
 
     # HTML body
     safe_msg = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe_msg = safe_msg.replace("\n", "<br>")
     html = f"""<!doctype html>
 <html>
 <body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px">
@@ -199,6 +253,7 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
     <h2 style="margin:0 0 16px;color:#1a2e4a;font-size:18px">
       📬 New Suggestion — Brasfield Momentum
     </h2>
+    <p style="margin:0 0 12px;font-size:12px;color:#888">{now}</p>
     <div style="background:#f8fafc;border-left:4px solid #3888ff;padding:12px 16px;
                 border-radius:4px;font-size:15px;color:#222;line-height:1.6">
       {safe_msg}
@@ -211,4 +266,4 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = ""):
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html,  "html"))
 
-    _send(msg, [NOTIFY_TO, NOTIFY_BCC], host, port, user, password, from_addr, "suggestion email")
+    return _send(msg, recipients, host, port, user, password, from_addr, "suggestion email")

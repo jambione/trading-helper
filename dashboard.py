@@ -69,7 +69,7 @@ from session_clock import session_window, next_shot
 import engine_env
 import version
 
-from email_service import send_suggestion_email, send_login_email
+from email_service import send_suggestion_email, send_login_email, smtp_status
 import alpaca_api as _api
 
 sys.path.insert(0, str(Path(__file__).parent / "transcription"))
@@ -2918,6 +2918,8 @@ async def api_add_suggestion(request: Request):
         message = str(body.get("message", "")).strip()
         if not message:
             return JSONResponse({"ok": False, "error": "Empty message"}, status_code=400)
+        if len(message) > 4000:
+            message = message[:4000]
         ip = (
             request.headers.get("CF-Connecting-IP")
             or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
@@ -2927,9 +2929,17 @@ async def api_add_suggestion(request: Request):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: save_suggestion(message, ip, ua))
         log.info(f"[SUGGESTION] from {ip}: {message[:60]}")
-        # Fire email non-blocking — failures are logged but never break the response
-        loop.run_in_executor(None, lambda: send_suggestion_email(message, ip, ua))
-        return JSONResponse({"ok": True})
+        # Wait for email result so the UI can show whether it left the box.
+        # Keep it on a worker thread so SMTP never blocks the event loop.
+        email_sent = await loop.run_in_executor(
+            None, lambda: send_suggestion_email(message, ip, ua))
+        status = smtp_status()
+        return JSONResponse({
+            "ok": True,
+            "email_sent": bool(email_sent),
+            "email_to": status.get("notify_to"),
+            "email_configured": bool(status.get("configured")),
+        })
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
