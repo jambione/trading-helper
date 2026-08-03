@@ -181,6 +181,31 @@ def drop_missing(
     return state
 
 
+def should_expire_watches_on_close(
+    *,
+    market_open: bool,
+    day_key: str,
+    seen_open: bool,
+    expired_day: str,
+) -> tuple[bool, bool, str]:
+    """Edge-detect RTH open → closed for watch expiry.
+
+    Only expires after the market was observed open and then closed, and at
+    most once per ET *day_key*. Pre-market closed samples do not latch
+    ``expired_day`` and do not trigger expiry.
+
+    Returns ``(should_expire, seen_open_next, expired_day_next)``.
+    """
+    day = str(day_key or "")
+    expired = str(expired_day or "")
+    if market_open:
+        return False, True, expired
+    # Market closed: expire only on open→closed edge, once per day.
+    if seen_open and expired != day:
+        return True, False, day
+    return False, bool(seen_open), expired
+
+
 def expire_open_watches(now: float) -> dict:
     """Mark open (watching/armed) watches as expired; save and return state.
 

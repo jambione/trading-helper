@@ -648,7 +648,9 @@ def main() -> None:
 
     last_positions_tick = 0.0
     last_watch_poll = 0.0
-    last_watch_expire_day = ""
+    # Edge-detect RTH open→closed for watch expiry (not pre-market closed).
+    watch_seen_open = False
+    watch_expired_day = ""
     while True:
         t0 = time.time()
 
@@ -684,25 +686,32 @@ def main() -> None:
                 except Exception:
                     pass
 
-        # Expire unfilled watches once per ET day after RTH close.
+        # Expire unfilled watches on open→closed edge (once per ET day).
         if trading:
             try:
                 live_cfg = load_config()
                 if live_cfg.get("ai_watch_expire_at_close", True):
                     import ai_trading as gt
+                    import ai_entry_watch as ew
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+
                     market_open = bool(gt.market_is_open())
-                    if not market_open:
-                        from datetime import datetime
-                        from zoneinfo import ZoneInfo
-                        day_key = datetime.fromtimestamp(
-                            t0, tz=ZoneInfo("America/New_York")
-                        ).strftime("%Y-%m-%d")
-                        if day_key != last_watch_expire_day:
-                            import ai_entry_watch as ew
-                            ew.expire_open_watches(now=t0)
-                            last_watch_expire_day = day_key
-                            ai_positions.log_event(
-                                "watch_expire_at_close", day=day_key)
+                    day_key = datetime.fromtimestamp(
+                        t0, tz=ZoneInfo("America/New_York")
+                    ).strftime("%Y-%m-%d")
+                    do_expire, watch_seen_open, watch_expired_day = (
+                        ew.should_expire_watches_on_close(
+                            market_open=market_open,
+                            day_key=day_key,
+                            seen_open=watch_seen_open,
+                            expired_day=watch_expired_day,
+                        )
+                    )
+                    if do_expire:
+                        ew.expire_open_watches(now=t0)
+                        ai_positions.log_event(
+                            "watch_expire_at_close", day=day_key)
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] watch_expire failed: {e}", flush=True)
                 try:

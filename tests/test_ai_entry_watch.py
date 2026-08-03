@@ -65,6 +65,54 @@ def test_expire_open_watches(tmp_path, monkeypatch):
     assert out["SMCI"]["status"] == "expired"
 
 
+def test_should_expire_watches_on_close_edge():
+    """Pre-market closed must not expire or latch; only open→closed does."""
+    import ai_entry_watch as ew
+
+    day = "2026-08-03"
+    # Pre-market: closed, never saw open → no expire, no latch.
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day, seen_open=False, expired_day="")
+    assert do is False and seen is False and exp == ""
+
+    # Still pre-market closed — still no latch.
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day, seen_open=seen, expired_day=exp)
+    assert do is False and seen is False and exp == ""
+
+    # RTH open → mark seen_open.
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=True, day_key=day, seen_open=seen, expired_day=exp)
+    assert do is False and seen is True and exp == ""
+
+    # Stay open.
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=True, day_key=day, seen_open=seen, expired_day=exp)
+    assert do is False and seen is True
+
+    # Close after open → expire once, latch day.
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day, seen_open=seen, expired_day=exp)
+    assert do is True and seen is False and exp == day
+
+    # Still closed same day → do not re-expire.
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day, seen_open=seen, expired_day=exp)
+    assert do is False and exp == day
+
+    # Next day pre-market: no expire until open→closed again.
+    day2 = "2026-08-04"
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day2, seen_open=False, expired_day=exp)
+    assert do is False
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=True, day_key=day2, seen_open=seen, expired_day=exp)
+    assert do is False and seen is True
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day2, seen_open=seen, expired_day=exp)
+    assert do is True and exp == day2
+
+
 def test_ask_in_zone_with_pad():
     import ai_entry_watch as ew
     assert ew.ask_in_zone(28.0, 27.0, 28.5, 0.15) is True
