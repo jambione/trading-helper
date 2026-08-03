@@ -480,12 +480,10 @@ body.hosted .main-grid               { grid-template-columns: 1fr 1fr 1fr; }
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
-body.hosted .btn-copy                { display: none; }
 body.hosted .btn-delete              { display: none; }
 
-/* Admin (jmb) on remote: transcription + watchlist editing stay localhost-only.
-   Only re-enable copy, which is a passive read action. */
-body.hosted.user-jmb .btn-copy                { display: inline-flex; }
+/* Copy is a passive read action — always visible (localhost + hosted). */
+body.hosted .btn-copy                { display: inline-flex; }
 .jmb-download                        { display: none; }
 body.user-jmb .jmb-download          { display: inline-flex; }
 
@@ -741,7 +739,8 @@ body.mobile .auto-alert-toggle { display: none !important; }
   #ticker-tv-resizer { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
   .watchlist-cols {
-    grid-template-columns: 1fr 76px 64px 52px;
+    /* keep actions so Copy stays tappable on phone */
+    grid-template-columns: 1fr 64px 56px 44px 52px;
   }
   .cell-ticker { font-size: 15px; }
   .cell-price  { font-size: 14px; }
@@ -809,7 +808,7 @@ body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending seco
 body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
-body.mobile .watchlist-cols { grid-template-columns: 1fr 76px 64px 52px; }
+body.mobile .watchlist-cols { grid-template-columns: 1fr 64px 56px 44px 52px; }
 body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
@@ -1465,12 +1464,8 @@ body.mobile .icon-btn {
 .feed-cols {
   display: grid;
   align-items: center;
-  /* Ticker | Price | Chg% | Vol | RVOL | Score */
+  /* Ticker | Price | Chg% | Vol | RVOL | Score  (+ actions via --trending/--claude) */
   grid-template-columns: 1fr 58px 54px 48px 48px 44px;
-}
-/* AI: Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size */
-.feed-cols--claude {
-  grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px;
 }
 .feed-table-header .feed-cols {
   padding: 10px 0;
@@ -1598,6 +1593,19 @@ body.mobile .icon-btn {
   display: grid;
   grid-template-columns: 1fr 70px 58px 48px 66px;
   align-items: center;
+}
+
+/* Feed panels: trailing actions column for Copy (same chrome as Momentum). */
+.feed-cols--trending {
+  /* Ticker | Price | Chg% | Vol | RVOL | Score | actions */
+  grid-template-columns: 1fr 58px 54px 48px 48px 44px 52px;
+}
+.feed-cols--claude {
+  /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | actions */
+  grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px 52px;
+}
+.feed-cols .cell-actions {
+  justify-content: flex-end;
 }
 
 .watchlist-table-header {

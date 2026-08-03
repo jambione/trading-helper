@@ -6,7 +6,7 @@
  *   Live price ticks → /ws snapshot tickers[].price       (Finnhub stream)
  */
 
-import { subscribe } from './store.js?v=72';
+import { subscribe } from './store.js?v=73';
 
 const LWC_SRC = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
 

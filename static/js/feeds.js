@@ -2,12 +2,14 @@
  * feeds.js — Trending (Stocktwits) and AI research panels
  *
  * Both render the same market columns — AI rows carry a thesis line and
- * optional source mark (A/X/AX). Click a row to add it to the watchlist.
+ * optional source mark (A/X/AX). Click a row (not the symbol) to add it to
+ * the watchlist. Copy buttons mirror Momentum Stocks.
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe } from './store.js?v=72';
-import { api }       from './api.js?v=72';
+import { subscribe } from './store.js?v=73';
+import { api }       from './api.js?v=73';
+import { copyTicker } from './tickers.js?v=73';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -99,7 +101,23 @@ function _paint(rowsEl, rows, kind, sortCol, sortDir, empty) {
   const sorted = _applySort(rows, sortCol, sortDir);
   rowsEl.innerHTML = sorted.map(r => _row(r, kind)).join('');
   rowsEl.querySelectorAll('[data-feed-symbol]').forEach(el => {
-    el.addEventListener('click', () => _add(el, el.dataset.feedSymbol));
+    const sym = el.dataset.feedSymbol;
+    // Row body: click → add to watchlist (symbol name and Copy are excluded).
+    el.addEventListener('click', () => _add(el, sym));
+    const tickerCell = el.querySelector('.cell-ticker');
+    if (tickerCell) {
+      tickerCell.addEventListener('click', e => {
+        e.stopPropagation();
+      });
+      tickerCell.title = '';
+    }
+    const copyBtn = el.querySelector('[data-copy-btn]');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        copyTicker(e.currentTarget, sym);
+      });
+    }
   });
 }
 
@@ -207,7 +225,7 @@ function _row(r, kind) {
     if (why) thesis += `<div class="feed-why">${_esc(why)}</div>`;
     if (r.invalidation) thesis += `<div class="feed-invalid">✕ ${_esc(r.invalidation)}</div>`;
 
-    return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click to add ${sym} to the watchlist">`
+    return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
          + `<div class="${colsClass}">`
          +   `<div class="cell-ticker">${rank}${sym}</div>`
          +   `<div class="cell-src" title="A=Anthropic · X=xAI · AX=both">${mark}</div>`
@@ -217,6 +235,9 @@ function _row(r, kind) {
          +   `<div class="cell-vol">${_esc(rvol)}</div>`
          +   `<div class="cell-vol cell-score">${_esc(score)}</div>`
          +   `<div class="cell-vol cell-score">${_esc(size)}</div>`
+         +   `<div class="cell-actions">`
+         +     `<button type="button" class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>`
+         +   `</div>`
          + `</div>`
          + thesis
          + `</div>`;
@@ -227,7 +248,7 @@ function _row(r, kind) {
     last = Number(r.trending_score).toFixed(1);
   }
 
-  return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click to add ${sym} to the watchlist">`
+  return `<div class="ticker-row feed-row" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
        + `<div class="${colsClass}">`
        +   `<div class="cell-ticker">${rank}${sym}</div>`
        +   `<div class="cell-price">${price}</div>`
@@ -235,6 +256,9 @@ function _row(r, kind) {
        +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
        +   `<div class="cell-vol">${_esc(rvol)}</div>`
        +   `<div class="cell-vol cell-score">${_esc(last)}</div>`
+       +   `<div class="cell-actions">`
+       +     `<button type="button" class="btn-copy" data-copy-btn title="Copy ticker to clipboard">Copy</button>`
+       +   `</div>`
        + `</div>`
        + `</div>`;
 }

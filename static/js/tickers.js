@@ -6,8 +6,8 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=72';
-import { api } from './api.js?v=72';
+import { subscribe, selectTicker, get } from './store.js?v=73';
+import { api } from './api.js?v=73';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -215,18 +215,28 @@ function _createRow(row) {
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
-  el.querySelector('.cell-ticker').addEventListener('click', e => {
-    e.stopPropagation();
-    _burstAlert(e.currentTarget, row.ticker);
-  });
-  el.querySelector('[data-copy-btn]').addEventListener('click', e => {
-    e.stopPropagation();
-    _copyTicker(e.currentTarget, row.ticker);
-  });
-  el.querySelector('[data-delete-btn]').addEventListener('click', e => {
-    e.stopPropagation();
-    _removeTicker(row.ticker);
-  });
+  // Symbol name: no action (no burst, no row select).
+  const tickerCell = el.querySelector('.cell-ticker');
+  if (tickerCell) {
+    tickerCell.addEventListener('click', e => {
+      e.stopPropagation();
+    });
+  }
+  // Copy and delete stopPropagation so they do not select the row.
+  const copyBtn = el.querySelector('[data-copy-btn]');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      copyTicker(e.currentTarget, row.ticker);
+    });
+  }
+  const delBtn = el.querySelector('[data-delete-btn]');
+  if (delBtn) {
+    delBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      _removeTicker(row.ticker);
+    });
+  }
   return el;
 }
 
@@ -238,19 +248,8 @@ async function _removeTicker(ticker) {
   }
 }
 
-async function _burstAlert(cellEl, ticker) {
-  cellEl.classList.add('cell-ticker--firing');
-  try {
-    await api.burstAlert(ticker);
-  } catch (err) {
-    console.error('Failed to fire burst alert', err);
-  } finally {
-    setTimeout(() => cellEl.classList.remove('cell-ticker--firing'), 800);
-  }
-}
-
-
-async function _copyTicker(btn, ticker) {
+/** Copy symbol to clipboard; track in today's list (shared with Trending / AI). */
+export async function copyTicker(btn, ticker) {
   try {
     await navigator.clipboard.writeText(ticker);
     // Append to today's copied list (deduplicated, order preserved)
@@ -261,11 +260,15 @@ async function _copyTicker(btn, ticker) {
       localStorage.setItem(_COPY_TICKERS_KEY, JSON.stringify(_copiedTickers));
       _pushToFeed();
     }
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    if (btn) {
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    }
   } catch {
-    btn.textContent = '!';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    if (btn) {
+      btn.textContent = '!';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    }
   }
 }
 
