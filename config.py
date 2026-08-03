@@ -183,7 +183,7 @@ DEFAULT_CONFIG = {
     "claude_cli_bin":          "claude",
     "claude_model":            "sonnet",
     "claude_effort":            "xhigh",  # low|medium|high|xhigh|max
-    "claude_research_times": ["04:00", "11:00", "13:00"],
+    "claude_research_times": ["08:25", "11:00", "13:00"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
     "claude_prompt_file": "ai_prompt.txt",
@@ -221,7 +221,7 @@ DEFAULT_CONFIG = {
     "grok_max_turns":               4,  # A/B: t4 beat t8 on quality/token impact
     "grok_live_search":         True,
     "grok_use_prior_context":  False,
-    "grok_research_times": ["04:00", "11:00", "13:00"],
+    "grok_research_times": ["08:25", "11:00", "13:00"],
     "grok_research_weekdays_only": True,
     "grok_research_catchup_min": 120,
     "grok_prompt_file": "ai_prompt.txt",  # shared research prompt for now

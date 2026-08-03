@@ -348,7 +348,7 @@ def test_defaults_are_three_scheduled_runs_at_full_depth():
     assert DEFAULT_CONFIG["claude_effort"] == "xhigh"
     # 11:00 and 13:00 are both inside RTH (04:00 is pre-market prep only) —
     # two real chances a day to actually open a position, not just one.
-    assert DEFAULT_CONFIG["claude_research_times"] == ["04:00", "11:00", "13:00"]
+    assert DEFAULT_CONFIG["claude_research_times"] == ["08:25", "11:00", "13:00"]
     assert DEFAULT_CONFIG["claude_research_weekdays_only"] is True
 
 

@@ -87,7 +87,7 @@
   "claude_model": "sonnet",
   "claude_effort": "xhigh",
   "claude_research_times": [
-    "04:00",
+    "08:25",
     "11:00",
     "13:00"
   ],
@@ -123,7 +123,7 @@
   "grok_live_search": true,
   "grok_use_prior_context": false,
   "grok_research_times": [
-    "04:00",
+    "08:25",
     "11:00",
     "13:00"
   ],
