@@ -47,6 +47,16 @@ def test_drop_missing_invalidates(tmp_path, monkeypatch):
     assert out["OLD"]["status"] == "invalidated"
 
 
+def test_rebuild_watch_from_book(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    cfg = {"ai_watch_require_agreement": True, "ai_watch_single_source": False}
+    rows = [{"symbol": "SOFI", "agreement": True, "trending_score": 7.8, "reason": "peg"}]
+    state = ew.rebuild_watch_from_book(rows, cfg=cfg, now=100.0)
+    assert "SOFI" in state and state["SOFI"]["status"] == "watching"
+    assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
+
+
 def test_ask_in_zone_with_pad():
     import ai_entry_watch as ew
     assert ew.ask_in_zone(28.0, 27.0, 28.5, 0.15) is True

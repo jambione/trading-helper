@@ -2021,6 +2021,18 @@ def call_claude(
 
         if not rows:
             return text
+        # When ai_watch_enabled, rebuild the entry-watch queue from this book
+        # (WAIT names poll later). Still run _place_qualifying_entries as the
+        # immediate BUY fast path for names that already qualify now.
+        try:
+            cfg = _entry_runtime_cfg()
+            if cfg.get("ai_watch_enabled", True):
+                import time as _time
+                import ai_entry_watch as ew
+                book_rows = tag_agreement_on_rows(list(rows))
+                ew.rebuild_watch_from_book(book_rows, cfg=cfg, now=_time.time())
+        except Exception:
+            pass
         _place_qualifying_entries(
             rows, max_price=max_price, cli_bin=cli_bin, timeout=timeout,
             risk_pct=risk_pct, trade_style=trade_style,

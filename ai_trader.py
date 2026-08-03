@@ -525,8 +525,13 @@ def _mark_open_bell_done(now: float) -> None:
 
 
 def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
-    """Act on existing ranked ideas after the open — no full research spend."""
-    from ai_suggest import _place_qualifying_entries
+    """Act on existing ranked ideas after the open — no full research spend.
+
+    Rebuilds the entry-watch queue from the book (structure + WAIT queue for
+    the poller). Still calls ``_place_qualifying_entries`` once for names that
+    already qualify as BUY (immediate fast path).
+    """
+    from ai_suggest import _place_qualifying_entries, tag_agreement_on_rows
 
     rows = list(book.rows or [])
     if not rows:
@@ -534,6 +539,15 @@ def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
         return
     ai_positions.log_event(
         "open_bell_start", n_rows=len(rows), backend=book.backend)
+    # Structure + queue: watch owns WAIT timing; poller buys later.
+    if cfg.get("ai_watch_enabled", True):
+        try:
+            import ai_entry_watch as ew
+            book_rows = tag_agreement_on_rows(rows)
+            ew.rebuild_watch_from_book(book_rows, cfg=cfg, now=now)
+        except Exception:
+            pass
+    # Immediate BUY fast path for names that already qualify.
     _place_qualifying_entries(
         rows,
         max_price=book.max_price,

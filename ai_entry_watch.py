@@ -181,6 +181,33 @@ def drop_missing(
     return state
 
 
+def rebuild_watch_from_book(
+    rows: list[dict],
+    cfg: dict,
+    now: float,
+) -> dict:
+    """Rebuild entry watch from a research/open-bell book.
+
+    Combines ``upsert_from_rows`` (eligible → watching) + ``drop_missing``
+    (not in active set → invalidated) + ``save_watch``. Active symbols are
+    those that pass the same agreement gate as upsert.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    state = upsert_from_rows(rows if isinstance(rows, list) else [], cfg=cfg, now=now)
+    active: set[str] = set()
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        if not _row_passes_agreement(row, cfg):
+            continue
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym:
+            active.add(sym)
+    state = drop_missing(state, active, now)
+    save_watch(state)
+    return state
+
+
 def ask_in_zone(
     ask: float,
     entry_low: float,
