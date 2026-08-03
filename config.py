@@ -176,6 +176,16 @@ DEFAULT_CONFIG = {
     "ai_require_agreement":       False,    # only trade AX-agreed names
     "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
+    # Entry watch poller (agreement queue + structure TTL / arming)
+    "ai_watch_enabled":                 True,   # enable entry-watch queue
+    "ai_watch_require_agreement":       True,   # only watch AX-agreed names
+    "ai_watch_single_source":          False,   # allow single-source watch when True
+    "ai_watch_poll_sec":                20.0,   # watch poll interval (seconds)
+    "ai_structure_ttl_sec":           5400.0,   # structure plan TTL (seconds)
+    "ai_watch_expire_at_close":         True,   # drop watches at session close
+    "ai_entry_zone_pad_pct":            0.15,   # pad around entry zone (%)
+    "ai_max_structure_calls_per_hour":    12,   # rate-limit structure LLM calls
+    "ai_persist_entry_decisions":       True,   # persist entry decision records
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -340,6 +350,15 @@ SAFE_CONFIG_KEYS = [
     "ai_require_agreement",
     "ai_max_spread_pct",
     "ai_min_dollar_volume",
+    "ai_watch_enabled",
+    "ai_watch_require_agreement",
+    "ai_watch_single_source",
+    "ai_watch_poll_sec",
+    "ai_structure_ttl_sec",
+    "ai_watch_expire_at_close",
+    "ai_entry_zone_pad_pct",
+    "ai_max_structure_calls_per_hour",
+    "ai_persist_entry_decisions",
     "claude_trader_enabled",
     "claude_research_enabled",
     "claude_trading_enabled",
