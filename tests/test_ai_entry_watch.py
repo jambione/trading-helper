@@ -272,3 +272,46 @@ def test_poll_once_wait_setup_does_not_place(tmp_path, monkeypatch):
     # Fresh structure within TTL → no blind restructure / no buy
     assert evals == []
     assert any(e.get("reason") == "wait_setup" for e in events)
+
+
+def test_poll_once_gate_error_fail_closed_no_place(tmp_path, monkeypatch):
+    """has_open_position exceptions must not fall through into place_scaled_entry."""
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    state = {
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "agreement": True,
+            "reason": "test", "score": 8.0, "structure_ts": 1e12,
+            "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 27.0, "entry_high": 29.0,
+                "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                "scale_out_pct": 40,
+            },
+        }
+    }
+    ew.save_watch(state)
+    _patch_trading_ready(monkeypatch, gt)
+
+    def boom(_sym):
+        raise RuntimeError("broker_down")
+
+    monkeypatch.setattr(gt, "has_open_position", boom)
+    placed = []
+
+    def fake_place(sym, decision, equity, **kw):
+        placed.append(sym)
+        return {"ok": True, "stop_price": 25.0, "target_1": 36.0}
+
+    monkeypatch.setattr(cp, "place_scaled_entry", fake_place)
+    events = ew.poll_once(cfg=_poll_cfg(), now=1e12 + 10)
+    assert placed == []
+    assert any(
+        "gate_error:has_open_position" in str(e.get("reason") or "")
+        for e in events
+    )
+    assert ew.load_watch()["SMCI"]["status"] == "watching"

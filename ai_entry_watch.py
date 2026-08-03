@@ -713,31 +713,64 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             state[sym] = rec
             continue
 
-        # Position / buy-cap gates
+        # Position / buy-cap gates (fail closed on errors — never place blind)
         try:
             if gt.has_open_position(sym):
                 events.append(cp.log_event(
                     "watch_skip", symbol=sym, reason="already_held"))
                 state[sym] = rec
                 continue
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym,
+                    reason=f"gate_error:has_open_position:{e}"[:200]))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": "gate_error:has_open_position",
+                })
+            state[sym] = rec
+            continue
         try:
             if not gt.can_open_new_position(sym):
                 events.append(cp.log_event(
                     "watch_skip", symbol=sym, reason="max_positions"))
                 state[sym] = rec
                 continue
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym,
+                    reason=f"gate_error:can_open_new_position:{e}"[:200]))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": "gate_error:can_open_new_position",
+                })
+            state[sym] = rec
+            continue
         try:
             if gt.buys_left_this_poll() <= 0:
                 events.append(cp.log_event(
                     "watch_skip", symbol=sym, reason="buy_cap"))
                 state[sym] = rec
                 continue
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym,
+                    reason=f"gate_error:buys_left_this_poll:{e}"[:200]))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": "gate_error:buys_left_this_poll",
+                })
+            state[sym] = rec
+            continue
 
         structure = rec.get("structure")
         if not isinstance(structure, dict):
