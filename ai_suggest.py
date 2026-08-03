@@ -1859,10 +1859,25 @@ def _place_qualifying_entries(
                 timeout=min(180.0, timeout),
                 backend=be,
             )
+            # Full decision audit (BUY or WAIT) when persistence enabled.
+            if decision is not None and bool(
+                    cfg.get("ai_persist_entry_decisions", True)):
+                try:
+                    events.append(cp.log_entry_decision(
+                        sym, decision, reason="structure"))
+                except Exception:
+                    pass
             if not cp.qualifies_as_entry(decision, min_reward_risk=min_reward_risk):
+                dec = decision if isinstance(decision, dict) else {}
                 events.append(cp.log_event(
                     "entry_skip", symbol=sym, reason="entry_not_qualified",
-                    decision=(decision or {}).get("decision") if decision else None,
+                    decision=dec.get("decision"),
+                    wait_kind=dec.get("wait_kind"),
+                    entry_low=dec.get("entry_low"),
+                    entry_high=dec.get("entry_high"),
+                    stop_price=dec.get("stop_price"),
+                    target_1=dec.get("target_1"),
+                    summary=(str(dec.get("summary") or "")[:300] or None),
                 ))
                 continue
             # Re-check zone price after the (slow) entry CLI call.

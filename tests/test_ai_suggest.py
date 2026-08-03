@@ -406,6 +406,22 @@ class _StubPositions:
         self.events.append(row)
         return row
 
+    def log_entry_decision(self, symbol, decision, *, reason, **extra):
+        d = decision if isinstance(decision, dict) else {}
+        return self.log_event(
+            "entry_decision",
+            symbol=symbol,
+            reason=reason,
+            decision=d.get("decision"),
+            wait_kind=d.get("wait_kind"),
+            entry_low=d.get("entry_low"),
+            entry_high=d.get("entry_high"),
+            stop_price=d.get("stop_price"),
+            target_1=d.get("target_1"),
+            summary=d.get("summary"),
+            **extra,
+        )
+
     def pre_entry_gate(self, symbol, ask, equity, **kw):
         return True, ""
 

@@ -421,6 +421,39 @@ def log_event(kind: str, **fields: Any) -> dict[str, Any]:
     return row
 
 
+def log_entry_decision(
+    symbol: str,
+    decision: dict[str, Any] | None,
+    *,
+    reason: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Persist full entry decision (BUY/WAIT) for desk audit / watch arming.
+
+    Writes kind ``entry_decision`` with decision, wait_kind, levels, and a
+    truncated summary. ``decision`` may be None (logs minimal row).
+    """
+    d = decision if isinstance(decision, dict) else {}
+    summary = str(d.get("summary") or "")
+    if len(summary) > 300:
+        summary = summary[:300]
+    fields: dict[str, Any] = {
+        "symbol": str(symbol or "").upper(),
+        "reason": reason,
+        "decision": d.get("decision"),
+        "wait_kind": d.get("wait_kind"),
+        "entry_low": d.get("entry_low"),
+        "entry_high": d.get("entry_high"),
+        "stop_price": d.get("stop_price"),
+        "target_1": d.get("target_1"),
+        "target_2": d.get("target_2"),
+        "reward_risk": d.get("reward_risk"),
+        "summary": summary or None,
+    }
+    fields.update(extra)
+    return log_event("entry_decision", **fields)
+
+
 def recent_events(limit: int = 40) -> list[dict[str, Any]]:
     with _event_lock:
         return list(_recent_events[-max(1, int(limit)):])

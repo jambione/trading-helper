@@ -195,6 +195,24 @@ def test_qualifies_as_entry_still_rejects_wait():
     assert cp.qualifies_as_entry(d, min_reward_risk=3.0) is False
 
 
+def test_log_entry_decision_writes_levels(tmp_path, monkeypatch):
+    events = tmp_path / "events.jsonl"
+    monkeypatch.setattr(cp, "EVENTS_PATH", events)
+    cp.log_entry_decision(
+        "SMCI",
+        {"decision": "WAIT", "wait_kind": "wait_for_zone",
+         "entry_low": 27.0, "entry_high": 28.5, "stop_price": 25.0,
+         "target_1": 35.0, "summary": "pullback"},
+        reason="structure",
+    )
+    row = json.loads(events.read_text().strip().splitlines()[-1])
+    assert row["kind"] == "entry_decision"
+    assert row["symbol"] == "SMCI"
+    assert row["wait_kind"] == "wait_for_zone"
+    assert row["entry_low"] == 27.0
+    assert "pullback" in row["summary"]
+
+
 def test_qualifies_rejects_undefined_risk():
     # Never a trade with undefined risk: stop must be below entry.
     assert cp.qualifies_as_entry(_buy_decision(stop_price=41.0)) is False
