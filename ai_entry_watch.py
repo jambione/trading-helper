@@ -1,13 +1,15 @@
 """Agreement-based session watch queue for AI paper entries.
 
 Research (slow clock) upserts symbols that clear the agreement gate.
-A later poller (Task 6) arms/buys from stored structure; this module owns
-load/save/upsert/invalidation plus pure zone/spread arming predicates.
+The poller arms/buys from stored structure; this module owns load/save,
+upsert/invalidation, zone/spread arming, rate-limited structure refresh,
+and poll_once paper entry placement.
 """
 from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,13 @@ _EMPTY_RECORD_DEFAULTS: dict[str, Any] = {
 }
 
 _ARMABLE_STATUSES = frozenset({"watching", "armed"})
+_TERMINAL_STATUSES = frozenset({
+    "filled", "submitted", "invalidated", "expired",
+})
+
+# Ring of structure LLM call timestamps (module-level budget window).
+_structure_call_ts: list[float] = []
+_STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 
 
 def load_watch() -> dict[str, dict]:
@@ -334,3 +343,490 @@ def should_arm_buy(
     if a > high_bound:
         return False, "above_zone"
     return False, "below_zone"
+
+
+def _prune_structure_budget(now: float) -> None:
+    cutoff = float(now) - _STRUCTURE_BUDGET_WINDOW_SEC
+    while _structure_call_ts and _structure_call_ts[0] < cutoff:
+        _structure_call_ts.pop(0)
+
+
+def structure_calls_remaining(cfg: dict, now: float | None = None) -> int:
+    """How many structure LLM calls remain in the rolling 1h window."""
+    t = float(now if now is not None else time.time())
+    _prune_structure_budget(t)
+    try:
+        cap = int(cfg.get("ai_max_structure_calls_per_hour", 12) or 0)
+    except (TypeError, ValueError):
+        cap = 12
+    if cap <= 0:
+        return 0
+    return max(0, cap - len(_structure_call_ts))
+
+
+def _record_structure_call(now: float) -> None:
+    _prune_structure_budget(now)
+    _structure_call_ts.append(float(now))
+
+
+def _structure_stale(record: dict, cfg: dict, now: float) -> bool:
+    """True when structure is missing or older than TTL."""
+    structure = record.get("structure")
+    if not isinstance(structure, dict):
+        return True
+    try:
+        ts = float(record.get("structure_ts") or 0.0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if ts <= 0:
+        return True
+    try:
+        ttl = float(cfg.get("ai_structure_ttl_sec", 5400) or 5400)
+    except (TypeError, ValueError):
+        ttl = 5400.0
+    if ttl <= 0:
+        return False
+    return (float(now) - ts) > ttl
+
+
+def _decision_for_place(structure: dict) -> dict[str, Any]:
+    """Build a place_scaled_entry decision from stored structure levels.
+
+    Zone-wait records store decision=WAIT; placement needs BUY + levels.
+    """
+    d = dict(structure)
+    d["decision"] = "BUY"
+    d["wait_kind"] = None
+    return d
+
+
+def ensure_structure(
+    record: dict,
+    cfg: dict,
+    now: float,
+) -> dict:
+    """Resolve / refresh entry structure via ``ai_positions.evaluate_entry``.
+
+    Mutates *record* in place: sets ``structure``, ``structure_ts``, and may
+    set status to ``invalidated`` on ``hard_no``. Returns the (possibly
+    empty) event dict from logging, or a skip event if budget/quote fails.
+    Callers must enforce the structure call budget before invoking.
+    """
+    import ai_positions as cp
+    import ai_trading as gt
+
+    if not isinstance(record, dict):
+        return {"kind": "structure_skip", "reason": "bad_record"}
+
+    sym = str(record.get("symbol") or "").upper().strip()
+    if not sym:
+        return {"kind": "structure_skip", "reason": "no_symbol"}
+
+    ask = record.get("last_ask")
+    if ask is None or float(ask or 0) <= 0:
+        try:
+            ask = gt._latest_ask(sym)
+        except Exception:
+            ask = None
+    try:
+        ask_f = float(ask) if ask is not None else 0.0
+    except (TypeError, ValueError):
+        ask_f = 0.0
+    if ask_f <= 0:
+        return {
+            "kind": "structure_skip",
+            "symbol": sym,
+            "reason": "no_ask",
+        }
+
+    acct = gt.get_account()
+    equity = 0.0
+    if isinstance(acct, dict) and acct.get("ok"):
+        try:
+            equity = float(acct.get("equity") or 0)
+        except (TypeError, ValueError):
+            equity = 0.0
+    if equity <= 0:
+        equity = 100_000.0  # paper default if account unavailable
+
+    try:
+        risk_pct = float(cfg.get("ai_risk_pct", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        risk_pct = 1.0
+
+    reason = str(record.get("reason") or "")
+    backend = str(cfg.get("ai_entry_backend") or cfg.get("ai_backend") or "cli")
+    model = cfg.get("ai_entry_model") or cfg.get("ai_model")
+    cli_bin = cfg.get("ai_cli_bin") or cfg.get("cli_bin")
+
+    _record_structure_call(now)
+    try:
+        decision = cp.evaluate_entry(
+            sym,
+            ask_f,
+            equity,
+            reason=reason,
+            risk_pct=risk_pct,
+            model=str(model) if model else "",
+            cli_bin=str(cli_bin) if cli_bin else None,
+            backend=backend,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "kind": "structure_fail",
+            "symbol": sym,
+            "reason": str(e)[:200],
+        }
+
+    if decision is None:
+        return {
+            "kind": "structure_fail",
+            "symbol": sym,
+            "reason": "evaluate_entry_none",
+        }
+
+    try:
+        normalized = cp.normalize_entry_decision(decision) or decision
+    except Exception:
+        normalized = decision
+    if not isinstance(normalized, dict):
+        return {
+            "kind": "structure_fail",
+            "symbol": sym,
+            "reason": "bad_decision",
+        }
+
+    record["structure"] = normalized
+    record["structure_ts"] = float(now)
+    record["last_ask"] = ask_f
+
+    wait_kind = normalized.get("wait_kind")
+    wait_kind_s = (
+        str(wait_kind).lower().strip() if wait_kind is not None else ""
+    )
+    if wait_kind_s == "hard_no":
+        record["status"] = "invalidated"
+
+    event: dict[str, Any]
+    if bool(cfg.get("ai_persist_entry_decisions", True)):
+        try:
+            event = cp.log_entry_decision(
+                sym, normalized, reason="watch_structure")
+        except Exception:
+            event = {
+                "kind": "entry_decision",
+                "symbol": sym,
+                "decision": normalized.get("decision"),
+                "wait_kind": normalized.get("wait_kind"),
+            }
+    else:
+        event = {
+            "kind": "structure_ok",
+            "symbol": sym,
+            "decision": normalized.get("decision"),
+            "wait_kind": normalized.get("wait_kind"),
+        }
+
+    dec = str(normalized.get("decision") or "").upper()
+    if dec == "BUY":
+        event = dict(event)
+        event.setdefault("kind", "structure_buy")
+    elif wait_kind_s:
+        event = dict(event)
+        if event.get("kind") in (None, "entry_decision"):
+            pass
+        event.setdefault("structure_kind", f"structure_{wait_kind_s}")
+    return event
+
+
+def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
+    """One RTH watch poll: refresh quotes, restructure if needed, arm/buy.
+
+    Paper path only: placements go through ``place_scaled_entry`` and
+    ``record_external_buy``. Returns a list of event dicts.
+    """
+    import ai_positions as cp
+    import ai_trading as gt
+
+    events: list[dict] = []
+    cfg = cfg if isinstance(cfg, dict) else {}
+    t0 = float(now if now is not None else time.time())
+
+    if not cfg.get("ai_watch_enabled", True):
+        return [{"kind": "watch_skip", "reason": "disabled"}]
+
+    try:
+        market_open = bool(gt.market_is_open())
+    except Exception:
+        market_open = False
+    if not market_open:
+        return [{"kind": "watch_skip", "reason": "market_closed"}]
+
+    try:
+        ready = bool(gt.is_ready())
+    except Exception:
+        ready = False
+    if not ready:
+        return [{"kind": "watch_skip", "reason": "trader_not_ready"}]
+
+    state = load_watch()
+    if not state:
+        return events
+
+    try:
+        max_price = cfg.get("ai_max_price")
+        max_price_f = float(max_price) if max_price is not None else None
+    except (TypeError, ValueError):
+        max_price_f = None
+
+    try:
+        risk_pct = float(cfg.get("ai_risk_pct", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        risk_pct = 1.0
+
+    equity_cache: float | None = None
+
+    def _equity() -> float:
+        nonlocal equity_cache
+        if equity_cache is not None:
+            return equity_cache
+        acct = gt.get_account()
+        if isinstance(acct, dict) and acct.get("ok"):
+            try:
+                equity_cache = float(acct.get("equity") or 0)
+            except (TypeError, ValueError):
+                equity_cache = 0.0
+        else:
+            equity_cache = 0.0
+        return float(equity_cache or 0.0)
+
+    for sym_key, rec in list(state.items()):
+        if not isinstance(rec, dict):
+            continue
+        sym = str(rec.get("symbol") or sym_key or "").upper().strip()
+        if not sym:
+            continue
+        rec = dict(rec)
+        rec["symbol"] = sym
+        status = str(rec.get("status") or "").lower().strip()
+        if status in _TERMINAL_STATUSES:
+            continue
+
+        # Quotes
+        try:
+            ask = gt._latest_ask(sym)
+        except Exception:
+            ask = None
+        try:
+            bid = gt._latest_bid(sym)
+        except Exception:
+            bid = None
+        try:
+            ask_f = float(ask) if ask is not None else 0.0
+        except (TypeError, ValueError):
+            ask_f = 0.0
+        if ask_f > 0:
+            rec["last_ask"] = ask_f
+        rec["last_poll_ts"] = t0
+
+        # hard_no on stored structure → invalidate (do not poll/buy)
+        structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+        if structure is not None:
+            wk = structure.get("wait_kind")
+            if wk is not None and str(wk).lower().strip() == "hard_no":
+                rec["status"] = "invalidated"
+                state[sym] = rec
+                try:
+                    events.append(cp.log_event(
+                        "invalidated", symbol=sym, reason="hard_no"))
+                except Exception:
+                    events.append({
+                        "kind": "invalidated",
+                        "symbol": sym,
+                        "reason": "hard_no",
+                    })
+                continue
+
+        # Structure refresh when missing/stale (budgeted)
+        if _structure_stale(rec, cfg, t0):
+            if structure_calls_remaining(cfg, t0) > 0 and ask_f > 0:
+                sev = ensure_structure(rec, cfg, t0)
+                if sev:
+                    events.append(sev)
+                if str(rec.get("status") or "").lower() in _TERMINAL_STATUSES:
+                    state[sym] = rec
+                    continue
+            elif ask_f <= 0:
+                try:
+                    events.append(cp.log_event(
+                        "watch_skip", symbol=sym, reason="no_ask"))
+                except Exception:
+                    events.append({
+                        "kind": "watch_skip",
+                        "symbol": sym,
+                        "reason": "no_ask",
+                    })
+                state[sym] = rec
+                continue
+
+        if ask_f <= 0:
+            state[sym] = rec
+            continue
+
+        if max_price_f is not None and ask_f >= max_price_f:
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason="above_max_price",
+                    ask=ask_f, max_price=max_price_f))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": "above_max_price",
+                })
+            state[sym] = rec
+            continue
+
+        # Arm / buy
+        try:
+            bid_f: float | None
+            if bid is None:
+                bid_f = None
+            else:
+                bid_f = float(bid)
+        except (TypeError, ValueError):
+            bid_f = None
+
+        ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg)
+        if not ok_arm:
+            if why in ("wait_setup", "hard_no", "spread", "above_zone",
+                       "below_zone", "reward_risk", "no_structure"):
+                try:
+                    events.append(cp.log_event(
+                        "watch_skip", symbol=sym, reason=why, ask=ask_f))
+                except Exception:
+                    events.append({
+                        "kind": "watch_skip",
+                        "symbol": sym,
+                        "reason": why,
+                    })
+            state[sym] = rec
+            continue
+
+        # Position / buy-cap gates
+        try:
+            if gt.has_open_position(sym):
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason="already_held"))
+                state[sym] = rec
+                continue
+        except Exception:
+            pass
+        try:
+            if not gt.can_open_new_position(sym):
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason="max_positions"))
+                state[sym] = rec
+                continue
+        except Exception:
+            pass
+        try:
+            if gt.buys_left_this_poll() <= 0:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason="buy_cap"))
+                state[sym] = rec
+                continue
+        except Exception:
+            pass
+
+        structure = rec.get("structure")
+        if not isinstance(structure, dict):
+            state[sym] = rec
+            continue
+
+        equity = _equity()
+        if equity <= 0:
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason="no_equity"))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": "no_equity",
+                })
+            state[sym] = rec
+            continue
+
+        place_decision = _decision_for_place(structure)
+        rec["status"] = "armed"
+        try:
+            result = cp.place_scaled_entry(
+                sym,
+                place_decision,
+                equity,
+                risk_pct=risk_pct,
+                current_ask=ask_f,
+            )
+        except Exception as e:  # noqa: BLE001
+            try:
+                events.append(cp.log_event(
+                    "entry_fail", symbol=sym, reason=str(e)[:200]))
+            except Exception:
+                events.append({
+                    "kind": "entry_fail",
+                    "symbol": sym,
+                    "reason": str(e)[:200],
+                })
+            state[sym] = rec
+            continue
+
+        if isinstance(result, dict) and result.get("ok"):
+            rec["status"] = "submitted"
+            try:
+                gt.record_external_buy(sym, {
+                    "reason": str(rec.get("reason") or "")[:120],
+                    "score": rec.get("score"),
+                    "stop_price": result.get("stop_price"),
+                    "target_1": result.get("target_1"),
+                    "source": "entry_watch",
+                })
+            except Exception:
+                pass
+            try:
+                events.append(cp.log_event(
+                    "entry_ok",
+                    symbol=sym,
+                    stop_price=result.get("stop_price"),
+                    target_1=result.get("target_1"),
+                    ask=ask_f,
+                ))
+            except Exception:
+                events.append({
+                    "kind": "entry_ok",
+                    "symbol": sym,
+                    "ask": ask_f,
+                })
+        else:
+            err = ""
+            if isinstance(result, dict):
+                err = str(result.get("error") or "place_failed")[:200]
+            else:
+                err = "place_failed"
+            try:
+                events.append(cp.log_event(
+                    "entry_fail", symbol=sym, reason=err))
+            except Exception:
+                events.append({
+                    "kind": "entry_fail",
+                    "symbol": sym,
+                    "reason": err,
+                })
+            # Stay armed/watching for retry next poll
+            if str(rec.get("status") or "") == "armed":
+                rec["status"] = "watching"
+
+        state[sym] = rec
+
+    save_watch(state)
+    return events
