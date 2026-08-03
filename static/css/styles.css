@@ -743,7 +743,7 @@ body.mobile .auto-alert-toggle { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
   .watchlist-cols {
     /* Ticker | Price | Chg% | Vol | Flags | actions */
-    grid-template-columns: 1fr 64px 56px 44px 72px 52px;
+    grid-template-columns: minmax(64px, 96px) 64px 56px 44px 72px 52px;
   }
   .cell-ticker { font-size: 15px; }
   .cell-price  { font-size: 14px; }
@@ -811,7 +811,7 @@ body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending seco
 body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
-body.mobile .watchlist-cols { grid-template-columns: 1fr 64px 56px 44px 72px 52px; }
+body.mobile .watchlist-cols { grid-template-columns: minmax(64px, 96px) 64px 56px 44px 72px 52px; }
 body.mobile .cell-ticker { font-size: 15px; }
 body.mobile .cell-price  { font-size: 14px; }
 body.mobile .cell-chg    { font-size: 13px; }
@@ -1594,19 +1594,19 @@ body.mobile .icon-btn {
 
 .watchlist-cols {
   display: grid;
-  /* Ticker | Price | Chg% | Vol | Flags | actions */
-  grid-template-columns: 1fr 70px 58px 48px 88px 66px;
+  /* Ticker | Price | Chg% | Vol | Flags | actions — fixed ticker so Price sits close */
+  grid-template-columns: minmax(72px, 110px) 70px 58px 48px 88px 66px;
   align-items: center;
 }
 
 /* Feed panels: LOOK badge + Copy (same chrome as Momentum). */
 .feed-cols--trending {
   /* Ticker | Price | Chg% | Vol | RVOL | Score | Look | actions */
-  grid-template-columns: 1fr 58px 54px 48px 48px 44px 72px 52px;
+  grid-template-columns: minmax(56px, 88px) 58px 54px 48px 48px 44px 72px 52px;
 }
 .feed-cols--claude {
   /* Ticker | Src | Price | Chg% | Vol | RVOL | Score | Size | Look | actions */
-  grid-template-columns: minmax(64px, 1fr) 28px 54px 50px 44px 44px 40px 36px 72px 52px;
+  grid-template-columns: minmax(56px, 88px) 28px 54px 50px 44px 44px 40px 36px 72px 52px;
 }
 
 /* LOOK EXT / LOOK WASH — matches terminal desk green pill */
