@@ -198,9 +198,138 @@ def cli_logged_in() -> bool:
         return False
 
 
-def claude_cli_ready() -> bool:
-    """Heuristic: Claude binary exists (auth is subscription / keychain / env)."""
-    return claude_cli_available()
+# Substrings Claude Code prints when the subscription session is missing.
+_CLAUDE_NOT_LOGGED_IN_MARKERS = (
+    "not logged in",
+    "please run /login",
+    "please run claude /login",
+    "run /login",
+)
+
+
+def claude_output_looks_logged_out(text: str | None) -> bool:
+    """True when CLI stdout/stderr is an auth failure, not real research text."""
+    s = (text or "").strip().lower()
+    if not s:
+        return False
+    return any(m in s for m in _CLAUDE_NOT_LOGGED_IN_MARKERS)
+
+
+def claude_has_api_key() -> bool:
+    """ANTHROPIC_API_KEY (or CLAUDE_API_KEY) present — server-style auth."""
+    for k in ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"):
+        v = (os.getenv(k) or "").strip()
+        if v:
+            return True
+    return False
+
+
+def claude_auth_status(cli_bin: str | None = None,
+                       *, timeout: float = 15.0) -> dict[str, Any]:
+    """Run ``claude auth status`` and return a normalized dict.
+
+    Keys: ok (bool), logged_in (bool), raw (str), error (str), binary (str|None).
+    Never raises — callers use this for probes and preflight.
+    """
+    binary = resolve_claude_cli(cli_bin)
+    if not binary:
+        return {
+            "ok": False,
+            "logged_in": False,
+            "raw": "",
+            "error": "Claude CLI not found",
+            "binary": None,
+        }
+    if claude_has_api_key():
+        return {
+            "ok": True,
+            "logged_in": True,
+            "raw": "ANTHROPIC_API_KEY set",
+            "error": "",
+            "binary": binary,
+            "auth_method": "api_key",
+        }
+    try:
+        proc = subprocess.run(
+            [binary, "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=max(5.0, float(timeout)),
+            env={**os.environ},
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "logged_in": False,
+            "raw": "",
+            "error": "claude auth status timed out",
+            "binary": binary,
+        }
+    except OSError as e:
+        return {
+            "ok": False,
+            "logged_in": False,
+            "raw": "",
+            "error": f"claude auth status failed: {e}",
+            "binary": binary,
+        }
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    raw = out or err
+    logged_in = False
+    # Prefer JSON envelope from modern Claude Code.
+    try:
+        data = json.loads(out) if out else None
+        if isinstance(data, dict):
+            if "loggedIn" in data:
+                logged_in = bool(data.get("loggedIn"))
+            elif "logged_in" in data:
+                logged_in = bool(data.get("logged_in"))
+            return {
+                "ok": logged_in,
+                "logged_in": logged_in,
+                "raw": raw[:500],
+                "error": "" if logged_in else "Claude CLI not logged in — run: claude /login",
+                "binary": binary,
+                "email": data.get("email") or "",
+                "auth_method": data.get("authMethod") or data.get("auth_method") or "",
+            }
+    except json.JSONDecodeError:
+        pass
+    if claude_output_looks_logged_out(raw):
+        logged_in = False
+    elif proc.returncode == 0 and raw:
+        # Older CLIs: non-empty success without logout markers.
+        low = raw.lower()
+        if "loggedin" in low.replace(" ", "") and "false" in low:
+            logged_in = False
+        else:
+            logged_in = True
+    else:
+        logged_in = False
+    return {
+        "ok": logged_in,
+        "logged_in": logged_in,
+        "raw": raw[:500],
+        "error": "" if logged_in else (
+            "Claude CLI not logged in — run: claude /login "
+            "(on this machine as the trading user)"
+        ),
+        "binary": binary,
+    }
+
+
+def claude_cli_logged_in(cli_bin: str | None = None,
+                         *, timeout: float = 15.0) -> bool:
+    """True when subscription session or ANTHROPIC_API_KEY is available."""
+    return bool(claude_auth_status(cli_bin, timeout=timeout).get("logged_in"))
+
+
+def claude_cli_ready(cli_bin: str | None = None) -> bool:
+    """Binary exists and auth works (login session or API key)."""
+    if not claude_cli_available(cli_bin):
+        return False
+    return claude_cli_logged_in(cli_bin)
 
 
 def prompt_path(cfg_name: str | None = None) -> Path:
@@ -1449,14 +1578,23 @@ def call_claude_cli(
         envelope = None
 
     if envelope is None:
+        if claude_output_looks_logged_out(out) or claude_output_looks_logged_out(err):
+            raise RuntimeError(
+                "Claude CLI not logged in — run: claude /login "
+                "(on the machine running ai_trader)"
+            )
         return out
 
     text = str(envelope.get("result") or "")
+    if claude_output_looks_logged_out(text) or claude_output_looks_logged_out(err):
+        raise RuntimeError(
+            "Claude CLI not logged in — run: claude /login "
+            "(on the machine running ai_trader)"
+        )
     usage = envelope.get("usage") or {}
     _record_usage({
         "ts": round(started, 3),
-        "backend": "claude_cli",
-        "phase": phase,
+        "backend": "claude_cli",        "phase": phase,
         "model": model_id,
         "effort": effort or "",
         "num_turns": envelope.get("num_turns"),
@@ -2404,6 +2542,13 @@ class AiSuggestions:
         if self.backend in ("claude_cli", "claude"):
             if not claude_cli_available(self.cli_bin):
                 self.error = "Claude CLI missing — install Claude Code"
+                self.last_attempt = now
+                return False
+            if not claude_cli_logged_in(self.cli_bin):
+                self.error = (
+                    "Claude CLI not logged in — run: claude /login "
+                    "(or set ANTHROPIC_API_KEY)"
+                )
                 self.last_attempt = now
                 return False
         elif self.backend in ("cli", "grok_cli"):

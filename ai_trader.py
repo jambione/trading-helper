@@ -614,6 +614,27 @@ def main() -> None:
         if n:
             print(f"[ai] hydrated {n} Anthropic idea(s) from "
                   f"{CLAUDE_SUGGESTIONS_FILE.name}", flush=True)
+        if gs_a.backend in ("claude_cli", "claude"):
+            try:
+                from ai_suggest import claude_auth_status
+                auth = claude_auth_status(gs_a.cli_bin)
+                if auth.get("logged_in"):
+                    how = auth.get("auth_method") or "session"
+                    email = auth.get("email") or ""
+                    extra = f" email={email}" if email else ""
+                    print(f"[ai] claude_auth=ok method={how}{extra}",
+                          flush=True)
+                else:
+                    print(
+                        "[ai] WARNING: claude_auth=fail — "
+                        f"{auth.get('error') or 'not logged in'}. "
+                        "Anthropic research will skip until: claude /login "
+                        "(on this machine) or ANTHROPIC_API_KEY is set.",
+                        flush=True,
+                    )
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] WARNING: claude_auth probe failed: {e}",
+                      flush=True)
         if gs_a.trading and gs_a.trading_mode == "off":
             print("[ai] WARNING: Claude trading requested but no Alpaca "
                   "session — check signal_engine.env", flush=True)

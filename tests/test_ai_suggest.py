@@ -536,6 +536,59 @@ def test_cli_resolver_and_default_backend():
     assert isinstance(claude_cli_available(), bool)
 
 
+def test_claude_output_looks_logged_out():
+    from ai_suggest import claude_output_looks_logged_out
+    assert claude_output_looks_logged_out("Not logged in · Please run /login")
+    assert claude_output_looks_logged_out("Please run /login")
+    assert not claude_output_looks_logged_out('{"suggestions":[{"symbol":"SMCI"}]}')
+    assert not claude_output_looks_logged_out("")
+
+
+def test_claude_auth_status_parses_json(monkeypatch):
+    from ai_suggest import claude_auth_status
+    import ai_suggest as m
+
+    monkeypatch.setattr(m, "resolve_claude_cli", lambda bin=None: "/fake/claude")
+    monkeypatch.setattr(m, "claude_has_api_key", lambda: False)
+
+    class _P:
+        returncode = 0
+        stdout = '{"loggedIn": false, "authMethod": "none"}'
+        stderr = ""
+
+    monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: _P())
+    st = claude_auth_status()
+    assert st["logged_in"] is False
+    assert "login" in (st.get("error") or "").lower()
+
+    class _P2:
+        returncode = 0
+        stdout = '{"loggedIn": true, "email": "a@b.com", "authMethod": "claude.ai"}'
+        stderr = ""
+
+    monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: _P2())
+    st2 = claude_auth_status()
+    assert st2["logged_in"] is True
+    assert st2.get("email") == "a@b.com"
+
+
+def test_call_claude_cli_raises_on_not_logged_in(monkeypatch):
+    from ai_suggest import call_claude_cli
+    import ai_suggest as m
+    import pytest
+
+    monkeypatch.setattr(m, "resolve_claude_cli", lambda bin=None: "/fake/claude")
+
+    class _P:
+        returncode = 0
+        stdout = json.dumps({"result": "Not logged in · Please run /login", "usage": {}})
+        stderr = ""
+
+    monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: _P())
+    with pytest.raises(RuntimeError, match="not logged in"):
+        call_claude_cli("test prompt", timeout=30)
+
+
 def test_parse_claude_rich_suggestion_shape():
     from ai_suggest import parse_model_text
     text = '''

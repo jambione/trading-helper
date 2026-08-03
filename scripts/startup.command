@@ -113,6 +113,17 @@ if ! wait_for_backend "$WAIT_SECS"; then
     fi
 fi
 
+# ── Claude CLI preflight (Anthropic research desk) ──────────────────────────
+echo "[1b] Claude CLI auth (needed for Anthropic research)"
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
+if bash "$REPO/scripts/check_claude_cli.sh" 2>&1 | sed 's/^/      /'; then
+    echo "      ✓ Claude CLI ready"
+else
+    echo "      ⚠ Claude CLI not logged in — Anthropic research will be empty."
+    echo "        Fix: open Terminal as this user →  claude /login"
+    echo "        Re-check:  bash $REPO/scripts/check_claude_cli.sh"
+fi
+
 echo "      Verifying signal engine..."
 sleep 2
 ENG_RESP=$(curl -s --max-time 3 "$BACKEND/api/state" 2>/dev/null || true)
