@@ -6,7 +6,7 @@
  * Edit news.json on the server — changes appear within seconds.
  */
 
-import { subscribe } from './store.js?v=74';
+import { subscribe } from './store.js?v=75';
 
 let _containerEl = null;
 
@@ -20,14 +20,10 @@ export function init(containerEl) {
 function _render(items) {
   if (!_containerEl) return;
 
-  if (!items.length) {
-    _containerEl.innerHTML = '';
-    _containerEl.classList.add('hidden');
-    return;
-  }
-
-  _containerEl.classList.remove('hidden');
-  _containerEl.innerHTML = items.map(_itemHTML).join('');
+  // Momentum news strip is disabled in the UI — never unhide.
+  _containerEl.innerHTML = '';
+  _containerEl.classList.add('hidden');
+  void items;
 }
 
 function _itemHTML(item) {

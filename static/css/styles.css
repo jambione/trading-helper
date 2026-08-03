@@ -1851,11 +1851,14 @@ body.mobile .icon-btn {
 }
 
 /* ── News feed ──────────────────────────────────────────────── */
+/* Hidden under Momentum Stocks header (kept in DOM for optional re-enable). */
+.panel-watchlist .news-feed,
 .news-feed {
+  display: none !important;
   border-bottom: 1px solid var(--border);
   padding: 8px 0 4px;
 }
-.news-feed.hidden { display: none; }
+.news-feed.hidden { display: none !important; }
 
 .news-item {
   padding: 9px 14px;
