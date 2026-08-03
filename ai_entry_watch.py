@@ -181,6 +181,39 @@ def drop_missing(
     return state
 
 
+def expire_open_watches(now: float) -> dict:
+    """Mark open (watching/armed) watches as expired; save and return state.
+
+    Terminal statuses (filled, submitted, invalidated, expired) are left
+    unchanged. Used at RTH close when ``ai_watch_expire_at_close`` is set.
+    """
+    state = load_watch()
+    if not isinstance(state, dict):
+        return {}
+    t0 = float(now)
+    for sym, rec in list(state.items()):
+        if not isinstance(rec, dict):
+            continue
+        key = str(sym or rec.get("symbol") or "").upper().strip()
+        if not key:
+            continue
+        status = str(rec.get("status") or "")
+        if status in _TERMINAL_STATUSES:
+            continue
+        # Open queue: watching / armed (and empty default as open).
+        if status and status not in _ARMABLE_STATUSES:
+            continue
+        rec = dict(rec)
+        rec["symbol"] = key
+        rec["status"] = "expired"
+        rec["updated_ts"] = t0
+        state[key] = rec
+        if key != sym:
+            state.pop(sym, None)
+    save_watch(state)
+    return state
+
+
 def rebuild_watch_from_book(
     rows: list[dict],
     cfg: dict,

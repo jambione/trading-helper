@@ -644,8 +644,11 @@ def main() -> None:
     positions_poll = float(
         _cfg(cfg, "ai_positions_poll_sec", "claude_positions_poll_sec", 5.0))
     unconfirmed_ttl = float(cfg.get("ai_entry_unconfirmed_ttl_sec", 900.0))
+    watch_poll_sec = float(cfg.get("ai_watch_poll_sec", 20.0) or 20.0)
 
     last_positions_tick = 0.0
+    last_watch_poll = 0.0
+    last_watch_expire_day = ""
     while True:
         t0 = time.time()
 
@@ -661,6 +664,52 @@ def main() -> None:
                 print(f"[ai] open_bell failed: {e}", flush=True)
                 ai_positions.log_event("open_bell_error", reason=str(e)[:200])
                 _mark_open_bell_done(t0)  # avoid tight retry loop on hard fail
+
+        # Entry-watch poller (RTH): independent interval from positions manage.
+        if trading and (t0 - last_watch_poll) >= watch_poll_sec:
+            last_watch_poll = t0
+            try:
+                live_cfg = load_config()
+                watch_poll_sec = float(
+                    live_cfg.get("ai_watch_poll_sec", watch_poll_sec) or watch_poll_sec
+                )
+                if live_cfg.get("ai_watch_enabled", True):
+                    import ai_entry_watch as ew
+                    ew.poll_once(cfg=live_cfg, now=t0)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] watch_poll failed: {e}", flush=True)
+                try:
+                    ai_positions.log_event(
+                        "watch_poll_error", reason=str(e)[:200])
+                except Exception:
+                    pass
+
+        # Expire unfilled watches once per ET day after RTH close.
+        if trading:
+            try:
+                live_cfg = load_config()
+                if live_cfg.get("ai_watch_expire_at_close", True):
+                    import ai_trading as gt
+                    market_open = bool(gt.market_is_open())
+                    if not market_open:
+                        from datetime import datetime
+                        from zoneinfo import ZoneInfo
+                        day_key = datetime.fromtimestamp(
+                            t0, tz=ZoneInfo("America/New_York")
+                        ).strftime("%Y-%m-%d")
+                        if day_key != last_watch_expire_day:
+                            import ai_entry_watch as ew
+                            ew.expire_open_watches(now=t0)
+                            last_watch_expire_day = day_key
+                            ai_positions.log_event(
+                                "watch_expire_at_close", day=day_key)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] watch_expire failed: {e}", flush=True)
+                try:
+                    ai_positions.log_event(
+                        "watch_expire_error", reason=str(e)[:200])
+                except Exception:
+                    pass
 
         if trading and (t0 - last_positions_tick) >= positions_poll:
             last_positions_tick = t0

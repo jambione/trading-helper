@@ -57,6 +57,14 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
 
 
+def test_expire_open_watches(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew.save_watch({"SMCI": {"symbol": "SMCI", "status": "watching"}})
+    out = ew.expire_open_watches(now=1.0)
+    assert out["SMCI"]["status"] == "expired"
+
+
 def test_ask_in_zone_with_pad():
     import ai_entry_watch as ew
     assert ew.ask_in_zone(28.0, 27.0, 28.5, 0.15) is True
