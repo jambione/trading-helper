@@ -547,6 +547,12 @@ def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
         max_open_risk_pct=float(cfg.get("ai_max_open_risk_pct", 5.0)),
         daily_loss_limit_r=float(cfg.get("ai_daily_loss_limit_r", 3.0)),
         require_agreement=bool(cfg.get("ai_require_agreement", False)),
+        max_spread_pct=float(cfg.get("ai_max_spread_pct", 1.0)),
+        min_dollar_volume=(
+            float(cfg["ai_min_dollar_volume"])
+            if cfg.get("ai_min_dollar_volume") not in (None, "", 0, 0.0)
+            else None
+        ),
     )
     _mark_open_bell_done(now)
     ai_positions.log_event("open_bell_done")

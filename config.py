@@ -174,6 +174,8 @@ DEFAULT_CONFIG = {
     "ai_open_bell_enabled":        True,    # act on overnight ideas after open
     "ai_open_bell_time":        "09:35",    # ET
     "ai_require_agreement":       False,    # only trade AX-agreed names
+    "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
+    "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -336,6 +338,8 @@ SAFE_CONFIG_KEYS = [
     "ai_open_bell_enabled",
     "ai_open_bell_time",
     "ai_require_agreement",
+    "ai_max_spread_pct",
+    "ai_min_dollar_volume",
     "claude_trader_enabled",
     "claude_research_enabled",
     "claude_trading_enabled",

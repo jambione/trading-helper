@@ -382,6 +382,9 @@ class _StubTrading:
     def _latest_ask(self, sym):
         return 40.5
 
+    def _latest_bid(self, sym):
+        return 40.4
+
     def get_account(self):
         return {"ok": True, "equity": 50_000.0}
 
@@ -392,6 +395,7 @@ class _StubTrading:
 class _StubPositions:
     DEFAULT_MAX_OPEN_RISK_PCT = 5.0
     DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
+    DEFAULT_MAX_SPREAD_PCT = 1.0
 
     def __init__(self):
         self.evaluate_calls: list[str] = []
@@ -451,6 +455,43 @@ def test_entry_checks_skipped_when_claude_trading_not_ready(monkeypatch):
     trading, positions = _run_entry_gate(monkeypatch, ready=False,
                                          market_open=True)
     assert positions.evaluate_calls == []
+
+
+def test_require_agreement_skips_non_ax(monkeypatch):
+    trading = _StubTrading(ready=True, market_open=True)
+    positions = _StubPositions()
+    monkeypatch.setitem(sys.modules, "ai_trading", trading)
+    monkeypatch.setitem(sys.modules, "ai_positions", positions)
+    rows = [
+        {"symbol": "ONLYX", "trending_score": 9.0, "agreement": False},
+        {"symbol": "BOTH", "trending_score": 8.0, "agreement": True},
+    ]
+    _place_qualifying_entries(
+        rows, max_price=None, cli_bin=None, timeout=60.0,
+        risk_pct=1.0, trade_style="Moderate position", min_reward_risk=3.0,
+        require_agreement=True, max_spread_pct=0,
+    )
+    assert positions.evaluate_calls == ["BOTH"]
+    skip_reasons = [e.get("reason") for e in positions.events]
+    assert "no_agreement" in skip_reasons
+
+
+def test_tag_agreement_on_rows_from_wire_files(tmp_path, monkeypatch):
+    from ai_suggest import tag_agreement_on_rows
+    import ai_suggest as sug
+    a = tmp_path / "claude_suggestions.json"
+    x = tmp_path / "grok_suggestions.json"
+    a.write_text(json.dumps({"rows": [{"symbol": "AAA"}, {"symbol": "BBB"}]}))
+    x.write_text(json.dumps({"rows": [{"symbol": "AAA"}, {"symbol": "CCC"}]}))
+    monkeypatch.setattr(sug, "CLAUDE_SUGGESTIONS_FILE", a)
+    monkeypatch.setattr(sug, "GROK_SUGGESTIONS_FILE", x)
+    rows = tag_agreement_on_rows([
+        {"symbol": "AAA", "score": 8},
+        {"symbol": "CCC", "score": 7},
+    ])
+    by = {r["symbol"]: r for r in rows}
+    assert by["AAA"]["agreement"] is True
+    assert by["CCC"]["agreement"] is False
 
 
 def test_parse_ranked_prose_fallback():

@@ -298,9 +298,6 @@ def test_pre_entry_gate_blocks_daily_loss_limit(tmp_path, monkeypatch):
     _use_tmp_state(tmp_path, monkeypatch)
     monkeypatch.setattr(cp, "OUTCOMES_PATH", tmp_path / "outcomes.jsonl")
     import time
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    et = ZoneInfo("America/New_York")
     now = time.time()
     # Two losers totaling -3.5R today
     with (tmp_path / "outcomes.jsonl").open("w") as f:
@@ -309,7 +306,8 @@ def test_pre_entry_gate_blocks_daily_loss_limit(tmp_path, monkeypatch):
                 "exit_time": now, "realized_r_multiple": r,
             }) + "\n")
     ok, reason = cp.pre_entry_gate(
-        "NVDA", 40.0, 50_000.0, daily_loss_limit_r=3.0, now=now)
+        "NVDA", 40.0, 50_000.0, daily_loss_limit_r=3.0, now=now,
+        max_spread_pct=0)
     assert ok is False
     assert "daily_loss_limit" in reason
 
@@ -325,9 +323,38 @@ def test_pre_entry_gate_blocks_open_risk(tmp_path, monkeypatch):
         }
     }))
     ok, reason = cp.pre_entry_gate(
-        "NVDA", 40.0, 50_000.0, risk_pct=1.0, max_open_risk_pct=4.5)
+        "NVDA", 40.0, 50_000.0, risk_pct=1.0, max_open_risk_pct=4.5,
+        max_spread_pct=0)
     assert ok is False
     assert "open_risk" in reason
+
+
+def test_pre_entry_gate_blocks_wide_spread(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.4, 50_000.0, bid=40.0, max_spread_pct=0.5,
+        daily_loss_limit_r=99.0, max_open_risk_pct=99.0)
+    assert ok is False
+    assert "spread_pct" in reason
+
+
+def test_pre_entry_gate_allows_tight_spread(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.1, 50_000.0, bid=40.0, max_spread_pct=1.0,
+        daily_loss_limit_r=99.0, max_open_risk_pct=99.0)
+    assert ok is True
+    assert reason == ""
+
+
+def test_pre_entry_gate_blocks_thin_dollar_volume(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.0, 50_000.0, bid=39.95, max_spread_pct=1.0,
+        min_dollar_volume=1_000_000.0, dollar_volume=50_000.0,
+        daily_loss_limit_r=99.0, max_open_risk_pct=99.0)
+    assert ok is False
+    assert "dollar_vol" in reason
 
 
 def test_unconfirmed_entry_expires_after_ttl(tmp_path, monkeypatch):

@@ -1,10 +1,11 @@
 # AI suggestions rename checklist
 
-**Status (2026-08-02):** Phase 1 **done** on `feature/grok-ai-suggestions` —
-modules renamed (`ai_suggest` / `ai_trader` / `ai_positions` / `ai_trading`),
-shared config `ai_*` with legacy `claude_*` aliases, launchers use `ai_trader.py`,
-thin shims keep old import paths for one release. Per-source wire files
+**Status (2026-08-03):** Phase 1 modules done. Phase 2 runtime paths:
+`ai_reports/` preferred (legacy `claude_reports/` fallback),
+`logs/ai_trader.log`, `init_for_ai` (+ `init_for_claude` alias),
+`./trading status` shows `ai_trader`. Per-source wire files
 (`claude_suggestions.json`, `grok_suggestions.json`) kept on purpose.
+Historical report filenames under either report dir are left as archive.
 
 **When (original):** After Grok is a live research source…
 

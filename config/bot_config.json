@@ -261,5 +261,7 @@
   "ai_max_open_risk_pct": 5.0,
   "ai_open_bell_enabled": true,
   "ai_open_bell_time": "09:35",
-  "ai_require_agreement": false
+  "ai_require_agreement": false,
+  "ai_max_spread_pct": 1.0,
+  "ai_min_dollar_volume": 0.0
 }

@@ -57,7 +57,13 @@ DEFAULT_XAI_MODEL = "grok-4.5"
 DEFAULT_PROMPT_FILE = "ai_prompt.txt"
 # Full research + agent tools is slow; default well above chat-only timeouts.
 DEFAULT_TIMEOUT = 600.0
-REPORT_DIR = ROOT / "claude_reports"
+from ai_paths import (  # noqa: E402
+    CLAUDE_SUGGESTIONS_FILE,
+    GROK_SUGGESTIONS_FILE,
+    resolve_report_dir,
+)
+
+REPORT_DIR = resolve_report_dir()
 TOKEN_METRICS_PATH = REPORT_DIR / "token_metrics.jsonl"
 SCHEDULE_STATE_PATH = REPORT_DIR / "schedule_state.json"
 
@@ -1641,6 +1647,64 @@ def _prior_context_snippet(max_chars: int = 1200) -> str:
     return "\n\n" + "\n".join(lines) + "\n"
 
 
+def _symbols_from_suggestions_file(path: Path) -> set[str]:
+    """Symbols currently published in a source wire file."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    rows = data.get("rows") or data.get("suggestions") or data.get("items") or []
+    if not isinstance(rows, list):
+        return set()
+    out: set[str] = set()
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or r.get("ticker") or "").upper()
+        if sym:
+            out.add(sym)
+    return out
+
+
+def tag_agreement_on_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark rows with agreement=True when the other research source also lists them.
+
+    Single-source research parses only its own JSON; open-bell / merged desk
+    rows already carry agreement from ``merge_suggestion_rows``. This fills
+    the gap for post-research entry so ``ai_require_agreement`` works.
+    """
+    if not rows:
+        return rows
+    a_syms = _symbols_from_suggestions_file(CLAUDE_SUGGESTIONS_FILE)
+    x_syms = _symbols_from_suggestions_file(GROK_SUGGESTIONS_FILE)
+    # Also treat co-presence inside *this* batch as partial agreement signal
+    # when only one wire file is stale — if both sources appear in row metadata.
+    for r in rows:
+        sym = str(r.get("symbol") or "").upper()
+        if not sym:
+            continue
+        if r.get("agreement") is True or r.get("source_mark") == "AX":
+            r["agreement"] = True
+            continue
+        both_wire = sym in a_syms and sym in x_syms
+        src = str(r.get("source") or "").lower()
+        if both_wire or src in ("both", "ax"):
+            r["agreement"] = True
+            r.setdefault("source_mark", "AX")
+        else:
+            r.setdefault("agreement", False)
+    return rows
+
+
+def _entry_runtime_cfg() -> dict[str, Any]:
+    """Load bot_config knobs used when entry kwargs are left at defaults."""
+    try:
+        from config import load_config
+        return load_config() or {}
+    except Exception:
+        return {}
+
+
 def _place_qualifying_entries(
     rows: list[dict[str, Any]],
     *,
@@ -1655,7 +1719,9 @@ def _place_qualifying_entries(
     max_open_risk_pct: float | None = None,
     daily_loss_limit_r: float | None = None,
     min_score: float = 7.0,
-    require_agreement: bool = False,
+    require_agreement: bool | None = None,
+    max_spread_pct: float | None = None,
+    min_dollar_volume: float | None = None,
 ) -> list[dict[str, Any]]:
     """Risk-sized entry checks for ranked ideas that clear the score filter.
 
@@ -1674,6 +1740,28 @@ def _place_qualifying_entries(
     try:
         import ai_trading as gt
         import ai_positions as cp
+        cfg = _entry_runtime_cfg()
+        if require_agreement is None:
+            require_agreement = bool(cfg.get("ai_require_agreement", False))
+        if max_spread_pct is None:
+            max_spread_pct = float(
+                cfg.get("ai_max_spread_pct", cp.DEFAULT_MAX_SPREAD_PCT))
+        if min_dollar_volume is None:
+            raw_mdv = cfg.get("ai_min_dollar_volume")
+            min_dollar_volume = (
+                float(raw_mdv) if raw_mdv is not None else None)
+        open_risk_cap = (
+            float(max_open_risk_pct)
+            if max_open_risk_pct is not None
+            else float(cfg.get("ai_max_open_risk_pct",
+                               cp.DEFAULT_MAX_OPEN_RISK_PCT))
+        )
+        day_loss_cap = (
+            float(daily_loss_limit_r)
+            if daily_loss_limit_r is not None
+            else float(cfg.get("ai_daily_loss_limit_r",
+                               cp.DEFAULT_DAILY_LOSS_LIMIT_R))
+        )
         if not gt.is_ready():
             ev = cp.log_event("entry_skip", reason="trader_not_ready")
             events.append(ev)
@@ -1688,21 +1776,12 @@ def _place_qualifying_entries(
             entry_model = model or DEFAULT_XAI_MODEL
         else:
             entry_model = model or DEFAULT_CLAUDE_MODEL
-        open_risk_cap = (
-            float(max_open_risk_pct)
-            if max_open_risk_pct is not None
-            else float(cp.DEFAULT_MAX_OPEN_RISK_PCT)
-        )
-        day_loss_cap = (
-            float(daily_loss_limit_r)
-            if daily_loss_limit_r is not None
-            else float(cp.DEFAULT_DAILY_LOSS_LIMIT_R)
-        )
-        for r in rows:
+        work_rows = tag_agreement_on_rows(list(rows))
+        for r in work_rows:
             if gt.buys_left_this_poll() <= 0:
                 events.append(cp.log_event("entry_skip", reason="buy_cap"))
                 break
-            sc = r.get("trending_score")
+            sc = r.get("trending_score", r.get("score"))
             try:
                 sc_f = float(sc) if sc is not None else None
             except (TypeError, ValueError):
@@ -1738,11 +1817,21 @@ def _place_qualifying_entries(
                 events.append(cp.log_event(
                     "entry_skip", symbol=sym, reason="no_ask"))
                 continue
+            bid = None
+            try:
+                bid = gt._latest_bid(sym)
+            except Exception:
+                bid = None
             if max_price is not None and ask >= float(max_price):
                 events.append(cp.log_event(
                     "entry_skip", symbol=sym, reason="above_max_price",
                     ask=ask, max_price=max_price))
                 continue
+            dvol = r.get("dollar_volume") or r.get("dollar_vol") or r.get("adv")
+            try:
+                dvol_f = float(dvol) if dvol is not None else None
+            except (TypeError, ValueError):
+                dvol_f = None
             acct = gt.get_account()
             equity = float(acct.get("equity") or 0) if acct.get("ok") else 0.0
             ok_gate, gate_reason = cp.pre_entry_gate(
@@ -1753,6 +1842,10 @@ def _place_qualifying_entries(
                 max_price=max_price,
                 score=sc_f,
                 min_score=min_score,
+                bid=bid,
+                max_spread_pct=max_spread_pct,
+                min_dollar_volume=min_dollar_volume,
+                dollar_volume=dvol_f,
             )
             if not ok_gate:
                 events.append(cp.log_event(
@@ -2180,7 +2273,8 @@ class AiSuggestions:
         if self.trading:
             try:
                 import ai_trading as gt
-                self.trading_mode = gt.init_for_claude(
+                init_fn = getattr(gt, "init_for_ai", None) or gt.init_for_claude
+                self.trading_mode = init_fn(
                     trade_amount=self.trade_amount,
                     max_positions=self.max_positions,
                     max_buys_per_poll=self.max_buys_per_poll,

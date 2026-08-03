@@ -692,6 +692,63 @@ def get_open_orders(limit: int = 50) -> list[dict]:
         return []
 
 
+def get_filled_orders(limit: int = 200, *, days: int | None = 30) -> list[dict]:
+    """Closed/filled orders as plain dicts for fill-truth reporting.
+
+    Returns rows with symbol, side, qty, filled_qty, filled_avg_price,
+    status, type, submitted_at, filled_at, id, client_order_id.
+    Empty list when trader is off or the API call fails.
+    """
+    if not is_active() or _client is None:
+        return []
+    try:
+        from datetime import timedelta
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
+        after = None
+        if days is not None and days > 0:
+            after = datetime.now(timezone.utc) - timedelta(days=int(days))
+        kwargs: dict = {
+            "status": QueryOrderStatus.CLOSED,
+            "limit": max(1, min(int(limit), 500)),
+            "nested": True,
+        }
+        if after is not None:
+            kwargs["after"] = after
+        raw = _client.get_orders(filter=GetOrdersRequest(**kwargs)) or []
+        out: list[dict] = []
+        for o in raw:
+            try:
+                status = str(getattr(o, "status", "") or "").split(".")[-1].lower()
+                filled_qty = _f(o, "filled_qty")
+                if filled_qty <= 0 and status not in ("filled", "partially_filled"):
+                    continue
+                fap = getattr(o, "filled_avg_price", None)
+                out.append({
+                    "id": str(getattr(o, "id", "") or ""),
+                    "client_order_id": str(
+                        getattr(o, "client_order_id", "") or ""),
+                    "symbol": str(getattr(o, "symbol", "") or "").upper(),
+                    "side": str(getattr(o, "side", "") or "").split(".")[-1].lower(),
+                    "qty": _f(o, "qty"),
+                    "filled_qty": filled_qty,
+                    "filled_avg_price": float(fap) if fap is not None else None,
+                    "type": str(getattr(o, "type", "") or "").split(".")[-1].lower(),
+                    "status": status,
+                    "submitted_at": str(getattr(o, "submitted_at", "") or ""),
+                    "filled_at": str(getattr(o, "filled_at", "") or ""),
+                    "order_class": str(
+                        getattr(o, "order_class", "") or "").split(".")[-1].lower(),
+                })
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        log.warning("[TRADER] get_filled_orders failed: %s", e)
+        return []
+
+
 def _f(obj, attr) -> float:
     try:
         v = getattr(obj, attr, 0)

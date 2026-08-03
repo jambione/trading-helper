@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from ai_paths import resolve_report_dir  # noqa: E402
 from ai_suggest import (  # noqa: E402
     DEFAULT_CLAUDE_CLI_BIN,
     DEFAULT_CLAUDE_MODEL,
@@ -47,7 +48,7 @@ from ai_suggest import (  # noqa: E402
     call_grok_cli,
 )
 
-REPORT_DIR = ROOT / "claude_reports"
+REPORT_DIR = resolve_report_dir()
 POSITIONS_STATE_PATH = REPORT_DIR / "positions_state.json"
 OUTCOMES_PATH = REPORT_DIR / "outcomes.jsonl"
 EVENTS_PATH = REPORT_DIR / "events.jsonl"
@@ -65,6 +66,8 @@ DEFAULT_UNCONFIRMED_TTL_SEC = 900.0
 DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
 # Cap sum of open risk (entry-stop)*qty as % of equity.
 DEFAULT_MAX_OPEN_RISK_PCT = 5.0
+# Max bid/ask spread % of mid (0 = disabled).
+DEFAULT_MAX_SPREAD_PCT = 1.0
 # Keep a small ring of recent events for /api/state.
 _EVENT_RING_MAX = 80
 _event_lock = threading.Lock()
@@ -241,18 +244,83 @@ def qualifies_as_entry(decision: dict[str, Any] | None,
 
 # ── Local state: which positions this module is managing ────────────────────
 
+def _normalize_positions_state(raw: Any) -> dict[str, Any]:
+    """Accept only {SYMBOL: {fields...}} maps; ignore wire wrappers."""
+    if not isinstance(raw, dict):
+        return {}
+    # Wire file may wrap as {"positions": {...}}
+    if "positions" in raw and isinstance(raw["positions"], dict):
+        raw = raw["positions"]
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        if not isinstance(k, str) or not k or not k[0].isalpha():
+            continue
+        if isinstance(v, dict):
+            out[k.upper()] = v
+    return out
+
+
 def _load_state() -> dict[str, Any]:
+    """Load managed positions; prefer POSITIONS_STATE_PATH (monkeypatchable)."""
+    from ai_paths import REPORT_DIR_LEGACY, REPORT_DIR_PRIMARY, find_report_file
+
+    def _try(path: Path | None) -> dict[str, Any] | None:
+        if path is None or not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        return _normalize_positions_state(raw)
+
+    # Primary path always wins when present (incl. empty book).
+    if POSITIONS_STATE_PATH.exists():
+        got = _try(POSITIONS_STATE_PATH)
+        if got is not None:
+            return got
+        return {}
+
+    # When tests redirect POSITIONS_STATE_PATH outside report dirs, do not
+    # leak live book state into an empty fixture.
     try:
-        return json.loads(POSITIONS_STATE_PATH.read_text(encoding="utf-8"))
+        parent = POSITIONS_STATE_PATH.parent.resolve()
+        allowed = {
+            REPORT_DIR_PRIMARY.resolve(),
+            REPORT_DIR_LEGACY.resolve(),
+            ROOT.resolve(),
+        }
+        if parent not in allowed:
+            return {}
     except Exception:
         return {}
 
+    for path in (
+        find_report_file("positions_state.json"),
+        ROOT / "ai_positions_state.json",
+        ROOT / "claude_positions_state.json",
+    ):
+        got = _try(path)
+        if got is not None:
+            return got
+    return {}
+
 
 def _save_state(state: dict[str, Any]) -> None:
+    """Persist managed book to POSITIONS_STATE_PATH (tests may redirect)."""
     try:
         POSITIONS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        POSITIONS_STATE_PATH.write_text(json.dumps(state, indent=2),
-                                        encoding="utf-8")
+        text = json.dumps(state, indent=2)
+        POSITIONS_STATE_PATH.write_text(text, encoding="utf-8")
+        # Mirror root wire file only when writing the live report dir (not tests).
+        try:
+            live = resolve_report_dir() / "positions_state.json"
+            if POSITIONS_STATE_PATH.resolve() == live.resolve():
+                (ROOT / "ai_positions_state.json").write_text(
+                    text, encoding="utf-8")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -343,10 +411,18 @@ def pre_entry_gate(
     score: float | None = None,
     min_score: float = 7.0,
     now: float | None = None,
+    bid: float | None = None,
+    max_spread_pct: float | None = DEFAULT_MAX_SPREAD_PCT,
+    min_dollar_volume: float | None = None,
+    dollar_volume: float | None = None,
 ) -> tuple[bool, str]:
     """Code-only portfolio/risk veto before spending an entry CLI call.
 
     Returns ``(ok, reason)``. reason is empty when ok.
+
+    Liquidity/spread: when ``max_spread_pct`` > 0 and both bid and ask are
+    known, reject names wider than that % of mid. When ``min_dollar_volume``
+    is set and ``dollar_volume`` is known, reject thin names.
     """
     sym = (symbol or "").upper()
     if not sym:
@@ -359,6 +435,28 @@ def pre_entry_gate(
         return False, f"score_below_{min_score}"
     if account_equity <= 0:
         return False, "no_equity"
+
+    msp = float(max_spread_pct) if max_spread_pct is not None else 0.0
+    if msp > 0 and bid is not None and bid > 0:
+        mid = (float(bid) + float(ask)) / 2.0
+        if mid <= 0:
+            return False, "bad_mid"
+        if float(ask) < float(bid):
+            return False, "crossed_quote"
+        spr = 100.0 * (float(ask) - float(bid)) / mid
+        if spr > msp + 1e-12:
+            return False, f"spread_pct_{spr:.2f}>{msp:g}"
+
+    if (
+        min_dollar_volume is not None
+        and float(min_dollar_volume) > 0
+        and dollar_volume is not None
+    ):
+        if float(dollar_volume) < float(min_dollar_volume):
+            return False, (
+                f"dollar_vol_{float(dollar_volume):.0f}"
+                f"<{float(min_dollar_volume):.0f}"
+            )
 
     day_r = realized_r_today(now)
     if day_r <= -abs(float(daily_loss_limit_r)):

@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,5}$")
 
-# Module state — set by init_for_claude()
+# Module state — set by init_for_ai()
 _ready = False
 _mode = "off"  # always "paper" when ready, else "off"
 _trade_amount = 1000.0
@@ -38,7 +38,9 @@ _sells_this_poll = 0
 _trade_log: list[dict[str, Any]] = []
 _lock = threading.Lock()
 
-TRADE_LOG_PATH = ROOT / "claude_reports" / "trades.jsonl"
+from ai_paths import resolve_report_dir  # noqa: E402
+
+TRADE_LOG_PATH = resolve_report_dir() / "trades.jsonl"
 
 
 def _load_env() -> None:
@@ -56,7 +58,7 @@ def _load_env() -> None:
             os.environ[k] = v
 
 
-def init_for_claude(
+def init_for_ai(
     *,
     trade_amount: float = 1000.0,
     max_positions: int = 5,
@@ -65,12 +67,16 @@ def init_for_claude(
     min_score_to_buy: float = 7.0,
     extended_hours: bool = True,
 ) -> str:
-    """Init Alpaca in PAPER only. Returns 'paper' or 'off'."""
+    """Init Alpaca in PAPER only for the AI desk. Returns 'paper' or 'off'."""
     global _ready, _mode, _trade_amount, _max_positions
     global _max_buys_per_poll, _max_sells_per_poll, _min_score_to_buy
-    global _buys_this_poll, _sells_this_poll
+    global _buys_this_poll, _sells_this_poll, TRADE_LOG_PATH
 
     _load_env()
+    try:
+        TRADE_LOG_PATH = resolve_report_dir() / "trades.jsonl"
+    except Exception:
+        pass
     _trade_amount = max(1.0, float(trade_amount))
     _max_positions = max(1, int(max_positions))
     _max_buys_per_poll = max(0, int(max_buys_per_poll))
@@ -88,7 +94,7 @@ def init_for_claude(
 
     import alpaca_trader
 
-    # HARD RULE: Claude never places live orders through this path.
+    # HARD RULE: AI desk path never places live orders through this module.
     alpaca_trader.init(
         mode="paper",
         api_key=api,
@@ -102,7 +108,7 @@ def init_for_claude(
     )
     _ready = alpaca_trader.is_active()
     _mode = "paper" if _ready else "off"
-    # On every Claude session start, collapse stacked open orders so the book
+    # On every session start, collapse stacked open orders so the book
     # never carries multiple buys for the same name from prior polls.
     if _ready:
         try:
@@ -110,6 +116,11 @@ def init_for_claude(
         except Exception:
             pass
     return _mode
+
+
+def init_for_claude(**kwargs) -> str:
+    """Back-compat alias — use ``init_for_ai``."""
+    return init_for_ai(**kwargs)
 
 
 def reset_poll_counters() -> None:
