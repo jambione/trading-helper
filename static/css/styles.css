@@ -1661,7 +1661,12 @@ body.mobile .icon-btn {
   align-items: center;
   gap: 3px;
   min-width: 0;
-  justify-content: flex-start;
+  justify-content: center;
+}
+.feed-table-header .th:has(+ .th:last-child),
+.feed-cols .cell-look {
+  text-align: center;
+  justify-content: center;
 }
 .feed-row--look .cell-ticker {
   color: #4ade80;

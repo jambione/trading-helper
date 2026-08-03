@@ -1888,7 +1888,7 @@ def stocktwits_panel(st: StocktwitsTrending,
     # reader do that division. Mkt Cap is gone — it never changed a decision.
     t.add_column("52w lo→hi", justify="left", ratio=1, no_wrap=True)
     t.add_column("Score", justify="right", ratio=1, no_wrap=True)
-    t.add_column("", ratio=1, no_wrap=True)  # LOOK badge
+    t.add_column("", justify="center", ratio=1, no_wrap=True)  # LOOK badge
     n_look = 0
     if not rows:
         msg = st.error or "waiting for first poll…"
@@ -2018,7 +2018,7 @@ def claude_panel(gs: AiSuggestions,
     t.add_column("52w lo→hi", justify="left", ratio=1, no_wrap=True)
     t.add_column("Score", justify="right", ratio=1, no_wrap=True)
     t.add_column("Why", justify="left", ratio=2, no_wrap=True)
-    t.add_column("", ratio=1, no_wrap=True)  # LOOK badge
+    t.add_column("", justify="center", ratio=1, no_wrap=True)  # LOOK badge
     n_look = 0
     if not rows:
         # No data rows — leave the table blank and put status in the title
