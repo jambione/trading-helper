@@ -342,16 +342,9 @@ def book_table_rows(
         phase = str(r.get("phase") or "")
         phase_rank = {"open": 0, "ready": 1, "submitted": 2, "watching": 3}.get(
             phase, 9)
-        try:
-            pl = abs(float(r.get("pl") or 0.0))
-        except (TypeError, ValueError):
-            pl = 0.0
-        try:
-            sc = float(r.get("score") or 0.0)
-        except (TypeError, ValueError):
-            sc = 0.0
-        # Open: larger |P&L| first; others: higher score first.
-        return (phase_rank, -pl if phase == "open" else -sc, r.get("symbol") or "")
+        # Stable order within phase (symbol) — score/P&L sorting caused UI jitter
+        # as quotes ticked every couple of seconds.
+        return (phase_rank, r.get("symbol") or "")
 
     rows.sort(key=_sort_key)
     return rows

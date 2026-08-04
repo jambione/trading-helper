@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=93';
-import { api }       from './api.js?v=93';
-import { copyTicker } from './tickers.js?v=93';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=93';
+import { subscribe, get } from './store.js?v=94';
+import { api }       from './api.js?v=94';
+import { copyTicker } from './tickers.js?v=94';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=94';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -147,15 +147,6 @@ function _posKey(book) {
   }).join(',');
 }
 
-function _bookKey(book) {
-  const rows = _bookRows(book);
-  const upd = book && book.updated != null ? String(book.updated) : '';
-  return upd + '|' + rows.map(r =>
-    `${r.symbol}:${r.phase || ''}:${r.source || ''}:${r.price ?? ''}:`
-    + `${r.qty ?? ''}:${r.pl ?? ''}:${r.entry_low ?? ''}:${r.entry_high ?? ''}`,
-  ).join('|');
-}
-
 function _ageSec(ts) {
   if (ts == null || ts === '') return null;
   const n = Number(ts);
@@ -219,15 +210,34 @@ function _bookRows(book) {
   return Object.values(by);
 }
 
-let _bookTableKey = '';
+/** Stable display order — phase groups, then symbol (no score shuffle). */
+function _sortBookRows(rows) {
+  const rank = { open: 0, ready: 1, submitted: 2, filled: 2, watching: 3 };
+  return [...rows].sort((a, b) => {
+    const pa = rank[String(a.phase || 'watching')] ?? 9;
+    const pb = rank[String(b.phase || 'watching')] ?? 9;
+    if (pa !== pb) return pa - pb;
+    return String(a.symbol || '').localeCompare(String(b.symbol || ''));
+  });
+}
+
+/** Membership / status / zone only — not quotes (those patch in place). */
+function _bookStructKey(rows) {
+  return rows.map(r =>
+    `${r.symbol}\0${r.phase || ''}\0${r.source || ''}\0${r.wait_kind || ''}\0`
+    + `${r.entry_low ?? ''}\0${r.entry_high ?? ''}`,
+  ).join('|');
+}
+
+let _bookStructKeyCached = '';
 
 /**
- * Full AI Watch table: research + momentum + trending watches; open rows
- * show qty + live P&L (no chip strip).
+ * AI Watch table: patch quote/P&L in place; full rebuild only when
+ * membership / phase / zone changes (avoids list jitter on ~2s publishes).
  */
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
   if (!rowsEl) return;
-  const rows = _bookRows(book);
+  const rows = _sortBookRows(_bookRows(book));
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;
   const countTxt = rows.length
@@ -249,9 +259,12 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
     : rows.filter(r => _bookSourceLabel(r.source) === 'ST').length;
   // Live if wire updated within ~3 poll cycles; stale means recheck stalled.
   const live = ageSec != null && ageSec < Math.max(45, pollSec * 3);
+  // Bucket age so the stamp does not rewrite every second (less chrome flicker).
+  const ageBucket = ageSec == null ? null
+    : (ageSec < 5 ? '<5s' : ageSec < 15 ? '<15s' : `${Math.round(ageSec / 10) * 10}s`);
   const stampTxt = [
     live ? '● live' : '○ stale',
-    ageSec != null ? `${ageSec}s ago` : null,
+    ageBucket != null ? ageBucket : null,
     `recheck ~${Math.round(pollSec)}s`,
     nMom ? `${nMom} Mom` : null,
     nSt ? `${nSt} ST` : null,
@@ -263,23 +276,37 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
     stampEl.classList.toggle('feed-stamp--live', live);
     stampEl.classList.toggle('feed-stamp--stale', !live);
     stampEl.title = live
-      ? `AI Watch wire updated ${ageSec}s ago · desk heat re-seeded and rechecked about every ${Math.round(pollSec)}s · structure/zone poller runs on the same cadence`
-      : `AI Watch wire is stale (${ageSec != null ? ageSec + 's' : '?'} ago) — trader may be blocked on research CLI`;
+      ? `AI Watch wire updated ${ageSec}s ago · desk heat re-seeded ~2s · trade recheck ~${Math.round(pollSec)}s`
+      : `AI Watch wire is stale (${ageSec != null ? ageSec + 's' : '?'} ago) — book thread may be down`;
   }
-
-  const key = _bookKey(book);
-  if (key === _bookTableKey && rowsEl.querySelector('[data-book-symbol]')) return;
-  _bookTableKey = key;
 
   if (sectionEl) sectionEl.hidden = false;
 
   if (!rows.length) {
-    rowsEl.innerHTML = '<span class="tx-placeholder">No watches or open AI positions…</span>';
+    if (!rowsEl.querySelector('.tx-placeholder')) {
+      rowsEl.innerHTML = '<span class="tx-placeholder">No watches or open AI positions…</span>';
+      _bookStructKeyCached = '';
+    }
     return;
   }
 
+  const structKey = _bookStructKey(rows);
+  const existing = rowsEl.querySelectorAll('[data-book-symbol]');
+  const canPatch = structKey === _bookStructKeyCached
+    && existing.length === rows.length
+    && rows.every((r, i) => {
+      const el = existing[i];
+      return el && String(el.dataset.bookSymbol || '').toUpperCase() === r.symbol;
+    });
+
+  if (canPatch) {
+    rows.forEach((r, i) => _updateBookRow(existing[i], r, owner));
+    return;
+  }
+
+  // Full rebuild only on membership / phase / zone change.
+  _bookStructKeyCached = structKey;
   rowsEl.innerHTML = rows.map(r => _bookRowHtml(r, owner)).join('');
-  // Wire click → add to Momentum watchlist / copy ticker (same as feed rows).
   rowsEl.querySelectorAll('[data-book-symbol]').forEach(el => {
     const sym = String(el.dataset.bookSymbol || '').toUpperCase();
     if (!sym) return;
@@ -293,6 +320,44 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
       });
     }
   });
+}
+
+function _updateBookRow(el, r, owner) {
+  if (!el || !r) return;
+  const phase = String((r && r.phase) || 'watching').toLowerCase();
+  const isOpen = phase === 'open' || r.is_position;
+  const statusLabel = isOpen ? 'OPEN'
+    : phase === 'ready' ? 'READY'
+    : phase === 'submitted' ? 'SENT'
+    : (r.wait_kind || r.status || 'WATCH');
+  const statusEl = el.querySelector('.ai-book-status');
+  if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
+  if (statusEl) {
+    statusEl.className = isOpen ? 'ai-book-status ai-book-status--open'
+      : phase === 'ready' ? 'ai-book-status ai-book-status--ready'
+      : phase === 'submitted' ? 'ai-book-status ai-book-status--sent'
+      : 'ai-book-status';
+  }
+  const px = r.price != null && Number.isFinite(Number(r.price))
+    ? `$${Number(r.price).toFixed(2)}`
+    : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
+      ? `$${Number(r.last_ask).toFixed(2)}` : '—');
+  const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
+  const score = r.score != null && Number.isFinite(Number(r.score))
+    ? Number(r.score).toFixed(1) : '—';
+  const qty = isOpen ? _fmtQty(r.qty) : '—';
+  const pl = isOpen ? _fmtPl(r) : '—';
+  _setText(el.querySelector('.cell-price'), px);
+  _setText(el.querySelector('.cell-zone'), zone);
+  _setText(el.querySelector('.cell-score'), score);
+  _setText(el.querySelector('.cell-qty'), qty);
+  const plEl = el.querySelector('.cell-pl');
+  if (plEl) {
+    if (plEl.textContent !== pl) plEl.textContent = pl;
+    plEl.className = `cell-pl ${isOpen ? _plClass(r) : ''}`.trim();
+  }
+  el.classList.toggle('feed-row--ai-open', isOpen);
+  el.classList.toggle('feed-row--ai-ready', phase === 'ready');
 }
 
 function _bookRowHtml(r, owner) {
