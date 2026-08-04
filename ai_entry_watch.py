@@ -345,7 +345,7 @@ def book_table_rows(
     for r in by_sym.values():
         sym = str(r.get("symbol") or "").upper()
         phase = str(r.get("phase") or "")
-        if phase in ("open", "submitted") or r.get("is_position"):
+        if phase in ("open", "submitted", "filled") or r.get("is_position"):
             filtered.append(r)
         elif not live or sym in live:
             filtered.append(r)

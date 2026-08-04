@@ -94,14 +94,22 @@ def test_drop_missing_invalidates(tmp_path, monkeypatch):
 def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(
+        ew, "desk_candidate_rows",
+        lambda cfg=None: [],
+    )
+    monkeypatch.setattr(
+        ew, "research_candidate_rows",
+        lambda: [{"symbol": "SOFI", "source": "xai", "score": 7.8, "reason": "peg",
+                  "agreement": True}],
+    )
     cfg = {
         "ai_watch_require_agreement": True,
         "ai_watch_single_source": False,
         "ai_watch_seed_momentum": False,
         "ai_watch_seed_trending": False,
     }
-    rows = [{"symbol": "SOFI", "agreement": True, "trending_score": 7.8, "reason": "peg"}]
-    state = ew.rebuild_watch_from_book(rows, cfg=cfg, now=100.0)
+    state = ew.rebuild_watch_from_book([], cfg=cfg, now=100.0)
     assert "SOFI" in state and state["SOFI"]["status"] == "watching"
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
 
@@ -223,6 +231,10 @@ def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(
+        ew, "live_panel_universe",
+        lambda cfg=None: {"SMCI", "ACHR", "SOFI"},
+    )
     ew.save_watch({
         "SMCI": {
             "symbol": "SMCI",
@@ -280,7 +292,7 @@ def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
 
 
 def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
-    """Desk momentum names stay on the watch queue across rebuild."""
+    """Desk momentum + research names both land on the mirrored book."""
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
@@ -295,14 +307,23 @@ def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
             "source": "momentum",
         }],
     )
+    monkeypatch.setattr(
+        ew, "research_candidate_rows",
+        lambda: [{
+            "symbol": "SOFI",
+            "score": 8.0,
+            "trending_score": 8.0,
+            "reason": "ai",
+            "agreement": True,
+            "source": "xai",
+        }],
+    )
     cfg = {
         "ai_watch_require_agreement": False,
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": False,
     }
-    # Research only has SOFI; momentum ACHR must still be active (not invalidated).
-    rows = [{"symbol": "SOFI", "agreement": True, "trending_score": 8.0, "reason": "ai"}]
-    state = ew.rebuild_watch_from_book(rows, cfg=cfg, now=200.0)
+    state = ew.rebuild_watch_from_book([], cfg=cfg, now=200.0)
     assert "SOFI" in state
     assert "ACHR" in state
     assert state["ACHR"]["source"] == "momentum"
