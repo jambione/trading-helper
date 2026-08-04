@@ -8,7 +8,7 @@
  * Creates a new widget instance each time the symbol changes.
  */
 
-import { subscribe, get } from './store.js?v=82';
+import { subscribe, get } from './store.js?v=84';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
