@@ -36,11 +36,34 @@ from pathlib import Path
 from urllib.request import Request as _UReq, urlopen
 
 from rich.align import Align
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
+from rich.measure import Measurement, measure_renderables
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+
+class _VStack:
+    """Vertical stack of renderables.
+
+    Rich ≥13 ``Group`` is not iterable; some Live/refresh paths still trip on
+    that. This tiny renderable only yields children and never needs ``*Group``.
+    """
+
+    __slots__ = ("_items",)
+
+    def __init__(self, items: list[RenderableType]):
+        self._items = [i for i in items if i is not None]
+
+    def __rich_console__(self, console, options):
+        for item in self._items:
+            yield from console.render(item, options)
+
+    def __rich_measure__(self, console, options) -> Measurement:
+        if not self._items:
+            return Measurement(0, options.max_width)
+        return measure_renderables(console, options, self._items)
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
@@ -2825,7 +2848,17 @@ def main():
                 ))
             panels.append(footer_panel(
                 alerter, hotkeys, hotkey_slots, st_on=st_on, claude_on=claude_on))
-            live.update(Group(*panels))
+            # Prefer _VStack: Rich 15 Group is not iterable and Live can raise
+            # TypeError: 'Group' object is not iterable on some refresh paths.
+            try:
+                live.update(_VStack(panels), refresh=True)
+            except TypeError:
+                try:
+                    live.update(Group(*panels), refresh=True)
+                except Exception as e:                      # noqa: BLE001
+                    console.print(f"[red]live.update failed: {e}[/red]")
+            except Exception as e:                          # noqa: BLE001
+                console.print(f"[red]live.update failed: {e}[/red]")
             journal.maybe_flush(t0)
             time.sleep(max(0.0, interval - (time.time() - t0)))
 
