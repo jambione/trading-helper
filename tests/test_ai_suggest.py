@@ -419,6 +419,7 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
         trending_path=tr_path,
         signal_state_path=sig_path,
         peer_path=peer_path,
+        include_rival=False,
     )
     assert "DESK SNAPSHOT" in snap
     assert "hints only" in snap
@@ -442,6 +443,7 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
         trending_path=tr_path,
         signal_state_path=sig_path,
         peer_path=peer_path,
+        include_rival=False,
     )
     assert "Claude (A)" in snap_x
 
@@ -451,8 +453,33 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
         trending_path=tmp_path / "missing_tr.json",
         signal_state_path=tmp_path / "missing_sig.json",
         peer_path=tmp_path / "missing_peer.json",
+        include_rival=False,
     )
     assert empty == ""
+
+
+def test_rival_duel_snippet_shows_peer_board(tmp_path, monkeypatch):
+    """Each model sees the other AI's published board for competition."""
+    peer = tmp_path / "peer.json"
+    peer.write_text(json.dumps({
+        "rows": [
+            {"symbol": "CMG", "score": 9.1, "reason": "pullback zone",
+             "summary": "session long into EPS"},
+            {"symbol": "SOFI", "score": 8.0, "reason": "flow"},
+        ],
+    }), encoding="utf-8")
+    # No duel state file — still must show rival board lines.
+    import ai_duel as duel
+    monkeypatch.setattr(duel, "DUEL_STATE_PATH", tmp_path / "missing_duel.json")
+    snip = cs.build_rival_duel_snippet(
+        backend="claude_cli",
+        peer_path=peer,
+        max_price=100.0,
+    )
+    assert "RIVAL AI COMPETITION" in snip
+    assert "CMG" in snip and "SOFI" in snip
+    assert "Grok (X)" in snip
+    assert "DIFFERENT symbol" in snip or "different" in snip.lower()
 
 
 def test_momentum_and_trending_candidate_rows(tmp_path):

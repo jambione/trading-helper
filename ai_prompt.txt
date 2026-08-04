@@ -12,6 +12,10 @@ COMPETITION MANDATE (non-negotiable):
 - Put your BEST idea first in suggestions[0]. That row is your duel champion.
 - Prefer names that can actually be traded soon: liquid, under $100, clear
   entry zone / stop / invalidation, catalyst live THIS SESSION not "someday."
+- You WILL see the other AI's latest board and duel champion (RIVAL AI COMPETITION
+  block). Use it: either beat their idea with a stronger session setup, or pick a
+  different name with better near-term R:R. Do not ignore their pick. Do not copy
+  it unless you re-validated it and it is clearly #1.
 
 Horizon (replace old 6–18 month thinking):
 - Primary: move and risk over the next ~3–4 hours (until next research slot).

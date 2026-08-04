@@ -598,6 +598,17 @@ def _tick_source(
 ) -> None:
     if gs is None:
         return
+    # After duel score, only the winner spends the chance-3 research slot.
+    try:
+        import ai_duel as duel
+        from config import load_config
+        if not duel.research_allowed_for_source(load_config(), source, now=now):
+            gs.refresh_quotes(now)
+            gs.refresh_volume(now)
+            _write_json(path, _suggestions_payload(gs, now, path=path, source=source))
+            return
+    except Exception:
+        pass
     if not gs.refresh(now):
         gs.refresh_quotes(now)
         gs.refresh_volume(now)
@@ -814,7 +825,7 @@ def _run_sod_liquidate(cfg: dict, now: float) -> dict:
         )
     except Exception:
         pass
-    # Fresh session: empty watch queue; reseed from panels after publish.
+    # Fresh session: empty watch queue; reseed duel champions + panels after.
     if cfg.get("ai_watch_enabled", True):
         try:
             import ai_entry_watch as ew
@@ -827,6 +838,16 @@ def _run_sod_liquidate(cfg: dict, now: float) -> dict:
         ai_positions._save_state({})
     except Exception:
         pass
+    # Re-apply today's A/X duel champions so SOD wipe does not blank the book
+    # until the next research run.
+    try:
+        import ai_duel as duel
+        n = duel.reseed_champions_to_watch(now=now)
+        if n:
+            print(f"[ai] SOD liquidate — reseeded {n} duel champion(s)",
+                  flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] SOD duel reseed failed: {e}", flush=True)
     # Only latch the day when flatten succeeded so a failed call retries
     # and trading stays blocked (trading_hours_active requires SOD done).
     if result.get("ok"):

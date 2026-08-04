@@ -983,6 +983,19 @@ def manage_open_positions(
         exit_price = pos.get("last_seen_price") or pos.get("entry_price")
         reason = pos.get("closing_reason") or _infer_close_reason(pos)
         _record_outcome(ticker, pos, exit_price, reason, now)
+        # Freeze duel R immediately so trial score survives state cleanup.
+        try:
+            import ai_duel as duel
+            duel.note_close(
+                ticker,
+                exit_price=exit_price,
+                entry_price=pos.get("entry_price"),
+                stop_price=pos.get("stop_price"),
+                source=pos.get("duel_source"),
+                now=now,
+            )
+        except Exception:
+            pass
         events.append({"ticker": ticker, "event": "closed",
                        "close_reason": reason})
         del state[ticker]

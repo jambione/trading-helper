@@ -76,6 +76,8 @@ _SYSTEM = (
     "You are a competitive quantitative equity trader on a dual-AI paper desk. "
     "Beat the rival model: best LONG for the next ~3–4 hour session window, "
     "optimized for realized R (not multi-month stories). "
+    "When a RIVAL AI COMPETITION block is present, read their champion and board; "
+    "pick a better session trade (prefer a different symbol unless you clearly beat them). "
     "Follow the user's full research process under a strict token budget: "
     "few targeted searches, compact notes, no essays. "
     "Prefer live tool results over memory; re-validate prior-run names with fresh data. "
@@ -2091,9 +2093,12 @@ def _peer_board_lines(
             continue
         score = r.get("trending_score", r.get("score"))
         reason = str(r.get("reason") or "").strip()[:40]
+        summary = str(r.get("summary") or "").strip()[:80]
         bit = f"{sym} score={_fmt_score(score)}"
         if reason:
-            bit += f" {reason}"
+            bit += f" · {reason}"
+        if summary and summary != reason:
+            bit += f" · {summary}"
         out.append(bit)
         if len(out) >= max(1, int(limit)):
             break
@@ -2106,6 +2111,111 @@ def _peer_suggestions_path(backend: str | None) -> tuple[Path, str]:
     if src == SOURCE_XAI:
         return CLAUDE_SUGGESTIONS_FILE, "Claude (A)"
     return GROK_SUGGESTIONS_FILE, "Grok (X)"
+
+
+def build_rival_duel_snippet(
+    *,
+    backend: str | None = None,
+    max_price: float | None = 100.0,
+    peer_path: Path | None = None,
+    peer_n: int = 8,
+    max_chars: int = 1800,
+) -> str:
+    """Rival AI board + duel champion for competitive research.
+
+    Injected so each model can see the other side's top ideas and must either
+    beat them on session realized-R potential or deliberately pass.
+    """
+    p_path, p_label = _peer_suggestions_path(backend)
+    if peer_path is not None:
+        p_path = peer_path
+    cap = float(max_price) if max_price is not None and float(max_price) > 0 else None
+    lines: list[str] = []
+
+    # Live duel state (today's registered champions / scores).
+    try:
+        import ai_duel as duel
+        snap = duel.public_snapshot(None)
+        if snap.get("enabled"):
+            my_src = source_from_backend(backend)
+            rival_key = "anthropic" if my_src == SOURCE_XAI else "xai"
+            champs = snap.get("champions") or {}
+            rival = champs.get(rival_key) if isinstance(champs, dict) else None
+            if isinstance(rival, dict) and rival.get("symbol"):
+                r_bits = [
+                    f"CHAMPION {rival.get('symbol')}",
+                    f"mark={rival.get('source_mark') or '?'}",
+                    f"status={rival.get('status') or 'watching'}",
+                ]
+                if rival.get("score") is not None:
+                    r_bits.append(f"score={_fmt_score(rival.get('score'))}")
+                if rival.get("reason"):
+                    r_bits.append(str(rival.get("reason"))[:50])
+                if rival.get("realized_r") is not None:
+                    try:
+                        r_bits.append(f"realized_R={float(rival['realized_r']):+.2f}")
+                    except (TypeError, ValueError):
+                        pass
+                lines.append("Rival duel champion (beat this on session R): " + " · ".join(r_bits))
+            sc = snap.get("score") or {}
+            if isinstance(sc, dict) and sc:
+                bits = []
+                for k, label in (("anthropic", "A"), ("xai", "X")):
+                    row = sc.get(k) if isinstance(sc.get(k), dict) else None
+                    if not row:
+                        continue
+                    try:
+                        rr = row.get("realized_r")
+                        bits.append(
+                            f"{label}:{row.get('symbol') or '—'} "
+                            f"R={float(rr):+.2f}" if rr is not None
+                            else f"{label}:{row.get('symbol') or '—'}"
+                        )
+                    except (TypeError, ValueError):
+                        bits.append(f"{label}:{row.get('symbol') or '—'}")
+                if bits:
+                    lines.append(
+                        f"Duel scoreboard phase={snap.get('phase')} "
+                        f"winner={snap.get('winner') or 'none'}: "
+                        + " | ".join(bits)
+                    )
+            lines.append(
+                f"Duel clock: trial_end={snap.get('trial_end')} "
+                f"chance3={snap.get('chance3_start')} ET"
+            )
+    except Exception:
+        pass
+
+    peer = _peer_board_lines(p_path, max_price=cap, limit=peer_n)
+    if peer:
+        lines.append(
+            f"Rival full board — {p_label} (latest research publish, best-first):\n  "
+            + "\n  ".join(peer)
+        )
+    else:
+        lines.append(
+            f"Rival board — {p_label}: (no published rows yet this session)"
+        )
+
+    if len(lines) <= 1 and "no published" in lines[-1]:
+        # Nothing useful beyond empty peer.
+        if not any("CHAMPION" in x or "scoreboard" in x for x in lines):
+            return ""
+
+    body = (
+        "\n\nRIVAL AI COMPETITION (you can see the other model — use it):\n"
+        "- Your suggestions[0] is your duel champion vs theirs.\n"
+        "- Prefer a DIFFERENT symbol than their champion unless you have a "
+        "clearly stronger session R:R / catalyst for the same name.\n"
+        "- If their idea is weak, say so implicitly by picking a better one "
+        "with higher score and tighter invalidation.\n"
+        "- Re-validate their names with live search; do not copy blindly.\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+    if len(body) > max_chars:
+        body = body[: max_chars - 20].rstrip() + "\n…(truncated)\n"
+    return body
 
 
 def build_desk_snapshot_snippet(
@@ -2122,6 +2232,7 @@ def build_desk_snapshot_snippet(
     peer_n: int = DEFAULT_DESK_SNAPSHOT_PEER_N,
     max_chars: int = DEFAULT_DESK_SNAPSHOT_MAX_CHARS,
     min_rs: float = 80.0,
+    include_rival: bool = True,
 ) -> str:
     """Compact desk-native context for research prompts.
 
@@ -2154,27 +2265,40 @@ def build_desk_snapshot_snippet(
     if heat:
         sections.append("Trending heat (Stocktwits):\n  " + " | ".join(heat))
 
+    # Peer board stays in desk snapshot as a short list; full competitive
+    # block is appended via build_rival_duel_snippet (more detail + rules).
     p_path, p_label = _peer_suggestions_path(backend)
     if peer_path is not None:
         p_path = peer_path
     peer = _peer_board_lines(p_path, max_price=cap, limit=peer_n)
     if peer:
         sections.append(
-            f"Other AI source — {p_label} "
-            f"(agree / challenge / replace):\n  " + " | ".join(peer)
+            f"Other AI source — {p_label} top names (see RIVAL block for full "
+            f"competition rules):\n  " + " | ".join(peer)
         )
 
-    if not sections:
-        return ""
+    body = ""
+    if sections:
+        body = (
+            "\n\nDESK SNAPSHOT (hints only — not a buy list; re-validate with live "
+            f"web/X this run; prefer names {cap_note}):\n"
+            + "\n".join(sections)
+            + "\n"
+        )
 
-    body = (
-        "\n\nDESK SNAPSHOT (hints only — not a buy list; re-validate with live "
-        f"web/X this run; prefer names {cap_note}):\n"
-        + "\n".join(sections)
-        + "\n"
-    )
-    if len(body) > max_chars:
-        body = body[: max_chars - 20].rstrip() + "\n…(truncated)\n"
+    if include_rival:
+        body += build_rival_duel_snippet(
+            backend=backend,
+            max_price=max_price,
+            peer_path=peer_path,
+            peer_n=max(peer_n, 8),
+        )
+
+    if not body:
+        return ""
+    if len(body) > max_chars + 2000:
+        # Desk + rival can be larger; hard cap combined inject.
+        body = body[: max_chars + 1980].rstrip() + "\n…(truncated)\n"
     return body
 
 

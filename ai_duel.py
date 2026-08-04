@@ -120,9 +120,9 @@ def past_chance3_start(cfg: dict | None, now: float | None = None) -> bool:
     return (h, m) >= (th, tm)
 
 
-def _top_row(rows: list[dict]) -> dict | None:
-    best = None
-    best_sc = None
+def _ranked_rows(rows: list[dict]) -> list[dict]:
+    """Rows sorted by score desc (stable within ties by symbol)."""
+    scored: list[tuple[float, str, dict]] = []
     for r in rows or []:
         if not isinstance(r, dict):
             continue
@@ -134,10 +134,96 @@ def _top_row(rows: list[dict]) -> dict | None:
             sc_f = float(sc) if sc is not None else 0.0
         except (TypeError, ValueError):
             sc_f = 0.0
-        if best is None or sc_f > (best_sc or -1e9):
-            best = r
-            best_sc = sc_f
-    return best
+        scored.append((sc_f, sym, r))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return [r for _, _, r in scored]
+
+
+def _top_row(rows: list[dict]) -> dict | None:
+    ranked = _ranked_rows(rows)
+    return ranked[0] if ranked else None
+
+
+def _symbols_claimed_by_others(champs: dict, src: str) -> set[str]:
+    """Symbols already registered as champions by a different source."""
+    out: set[str] = set()
+    for other, rec in (champs or {}).items():
+        if _norm_source(other) == src:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        sym = str(rec.get("symbol") or "").upper().strip()
+        if sym:
+            out.add(sym)
+    return out
+
+
+def _upsert_watch_champion(
+    *,
+    sym: str,
+    src: str,
+    rec: dict[str, Any],
+    top: dict,
+    day: str,
+    now: float,
+) -> None:
+    import ai_entry_watch as ew
+
+    st = ew.load_watch()
+    if not isinstance(st, dict):
+        st = {}
+    prev = st.get(sym) if isinstance(st.get(sym), dict) else {}
+    prev_status = str(prev.get("status") or "").lower()
+    status = prev_status if prev_status in ("submitted", "filled") else "watching"
+    st[sym] = {
+        **prev,
+        "symbol": sym,
+        "status": status or "watching",
+        "agreement": bool(top.get("agreement")) if top else bool(prev.get("agreement")),
+        "score": rec.get("score"),
+        "reason": rec.get("reason") or prev.get("reason") or "",
+        "source": src,
+        "duel": True,
+        "duel_source": src,
+        "duel_chance": rec.get("chance"),
+        "duel_day": day,
+        "source_mark": rec.get("source_mark") or ("A" if src == SOURCE_A else "X"),
+        "structure": prev.get("structure"),
+        "structure_ts": prev.get("structure_ts", 0.0),
+        "last_poll_ts": prev.get("last_poll_ts", 0.0),
+        "last_ask": prev.get("last_ask"),
+        "updated_ts": now,
+    }
+    ew.save_watch(st)
+
+
+def reseed_champions_to_watch(*, now: float | None = None) -> int:
+    """Re-apply today's duel champions onto the watch file (after SOD wipe)."""
+    t0 = float(now if now is not None else time.time())
+    state = load_state(t0)
+    n = 0
+    for src, rec in (state.get("champions") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        src_n = _norm_source(src)
+        sym = str(rec.get("symbol") or "").upper().strip()
+        if not src_n or not sym:
+            continue
+        if str(rec.get("status") or "") in ("closed",):
+            continue
+        try:
+            _upsert_watch_champion(
+                sym=sym,
+                src=src_n,
+                rec=rec,
+                top={"agreement": rec.get("agreement"), "reason": rec.get("reason")},
+                day=str(state.get("day") or ""),
+                now=t0,
+            )
+            n += 1
+        except Exception:
+            pass
+    return n
 
 
 def register_champion_from_rows(
@@ -148,7 +234,10 @@ def register_champion_from_rows(
     now: float | None = None,
     chance: int | None = None,
 ) -> dict[str, Any] | None:
-    """Take top-scoring row for *source* and register as today's duel champion."""
+    """Take top-scoring free row for *source* and register as duel champion.
+
+    Will not claim a symbol already taken by the other model (A/X must differ).
+    """
     if not duel_enabled(cfg):
         return None
     src = _norm_source(source)
@@ -175,11 +264,28 @@ def register_champion_from_rows(
             return None
         ch = int(chance or 1)
 
-    top = _top_row(list(rows or []))
-    if not top:
-        return None
-    sym = str(top.get("symbol") or "").upper().strip()
-    if not sym:
+    champs = dict(state.get("champions") or {})
+    taken = _symbols_claimed_by_others(champs, src)
+    top = None
+    sym = ""
+    for cand in _ranked_rows(list(rows or [])):
+        s = str(cand.get("symbol") or "").upper().strip()
+        if not s or s in taken:
+            continue
+        top = cand
+        sym = s
+        break
+    if not top or not sym:
+        try:
+            import ai_positions as cp
+            cp.log_event(
+                "duel_champion_skip",
+                source=src,
+                reason="no_free_symbol",
+                taken=sorted(taken),
+            )
+        except Exception:
+            pass
         return None
 
     rec = {
@@ -195,46 +301,38 @@ def register_champion_from_rows(
         "exit_price": None,
         "realized_r": None,
         "realized_pl": None,
+        "filled": False,
         "registered_ts": t0,
     }
-    champs = dict(state.get("champions") or {})
-    # Chance 3 replaces only that source's record after trial.
+    # Drop prior watch row if this source is switching champions.
+    prev_rec = champs.get(src) if isinstance(champs.get(src), dict) else {}
+    prev_sym = str(prev_rec.get("symbol") or "").upper().strip()
     champs[src] = rec
     state["champions"] = champs
     if ch == 3:
         state["phase"] = "chance3"
     save_state(state)
 
-    # Put on AI Watch with duel metadata.
     try:
-        import ai_entry_watch as ew
-
-        st = ew.load_watch()
-        if not isinstance(st, dict):
-            st = {}
-        prev = st.get(sym) if isinstance(st.get(sym), dict) else {}
-        prev_status = str(prev.get("status") or "").lower()
-        status = prev_status if prev_status in ("submitted", "filled") else "watching"
-        st[sym] = {
-            **prev,
-            "symbol": sym,
-            "status": status or "watching",
-            "agreement": bool(top.get("agreement")),
-            "score": rec["score"],
-            "reason": rec["reason"],
-            "source": src,
-            "duel": True,
-            "duel_source": src,
-            "duel_chance": ch,
-            "duel_day": state.get("day"),
-            "source_mark": rec["source_mark"],
-            "structure": prev.get("structure"),
-            "structure_ts": prev.get("structure_ts", 0.0),
-            "last_poll_ts": prev.get("last_poll_ts", 0.0),
-            "last_ask": prev.get("last_ask"),
-            "updated_ts": t0,
-        }
-        ew.save_watch(st)
+        if prev_sym and prev_sym != sym:
+            import ai_entry_watch as ew
+            st = ew.load_watch()
+            old = st.get(prev_sym) if isinstance(st, dict) else None
+            if isinstance(old, dict) and (
+                old.get("duel_source") == src or old.get("source") == src
+            ):
+                # Only drop if still a pure duel watch (not submitted).
+                if str(old.get("status") or "") in ("watching", "armed", ""):
+                    st.pop(prev_sym, None)
+                    ew.save_watch(st)
+        _upsert_watch_champion(
+            sym=sym,
+            src=src,
+            rec=rec,
+            top=top,
+            day=str(state.get("day") or ""),
+            now=t0,
+        )
     except Exception:
         pass
 
@@ -271,11 +369,19 @@ def note_entry(
     champs = dict(state.get("champions") or {})
     rec = champs.get(src)
     if not isinstance(rec, dict):
+        # Also match by symbol if source tag missing on the position.
+        for k, v in list(champs.items()):
+            if isinstance(v, dict) and str(v.get("symbol") or "").upper() == sym:
+                src = _norm_source(k) or src
+                rec = v
+                break
+    if not isinstance(rec, dict):
         return
     if str(rec.get("symbol") or "").upper() != sym:
         return
     rec = dict(rec)
     rec["status"] = "open"
+    rec["filled"] = True
     if entry_price is not None:
         rec["entry_price"] = float(entry_price)
     if stop_price is not None:
@@ -284,6 +390,109 @@ def note_entry(
     champs[src] = rec
     state["champions"] = champs
     save_state(state)
+
+
+def note_close(
+    symbol: str,
+    *,
+    exit_price: float | None,
+    entry_price: float | None = None,
+    stop_price: float | None = None,
+    source: str | None = None,
+    realized_pl: float | None = None,
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    """Freeze realized R when a duel leg closes early (stop/target/time/thesis).
+
+    Idempotent: does not overwrite a closed record that already has realized_r.
+    """
+    t0 = float(now if now is not None else time.time())
+    state = load_state(t0)
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    champs = dict(state.get("champions") or {})
+    src = _norm_source(source)
+    rec = None
+    if src and isinstance(champs.get(src), dict):
+        rec = champs.get(src)
+        if str(rec.get("symbol") or "").upper() != sym:
+            rec = None
+    if rec is None:
+        for k, v in champs.items():
+            if isinstance(v, dict) and str(v.get("symbol") or "").upper() == sym:
+                src = _norm_source(k)
+                rec = v
+                break
+    if not isinstance(rec, dict) or not src:
+        return None
+    if rec.get("status") == "closed" and rec.get("realized_r") is not None:
+        return rec
+
+    entry = entry_price if entry_price is not None else rec.get("entry_price")
+    stop = stop_price if stop_price is not None else rec.get("stop_price")
+    exit_px = exit_price if exit_price is not None else rec.get("exit_price")
+    r = _compute_r(entry, stop, exit_px)
+    if r is None:
+        r = 0.0
+    rec = dict(rec)
+    rec.update({
+        "status": "closed",
+        "filled": bool(rec.get("filled") or entry is not None),
+        "entry_price": entry,
+        "stop_price": stop,
+        "exit_price": exit_px,
+        "realized_r": r,
+        "realized_pl": realized_pl,
+        "closed_ts": t0,
+        "close_ok": True,
+    })
+    champs[src] = rec
+    state["champions"] = champs
+    save_state(state)
+    try:
+        import ai_positions as cp
+        cp.log_event(
+            "duel_leg_closed",
+            symbol=sym,
+            source=src,
+            realized_r=r,
+            exit_price=exit_px,
+        )
+    except Exception:
+        pass
+    return rec
+
+
+def research_allowed_for_source(
+    cfg: dict | None,
+    source: str | None,
+    *,
+    now: float | None = None,
+) -> bool:
+    """Whether this model may run a scheduled research CLI call.
+
+    Both run during the dual trial. After trial score, only the winner may
+    run the chance-3 slot (loser saves the third research spend).
+    """
+    if not duel_enabled(cfg):
+        return True
+    t0 = float(now if now is not None else time.time())
+    # Before chance-3 window: both always research (08:30 / 11:30).
+    if not past_chance3_start(cfg, t0):
+        return True
+    state = load_state(t0)
+    phase = str(state.get("phase") or "trial")
+    # Trial somehow past C3 clock without score yet — still allow both.
+    if phase == "trial":
+        return True
+    if phase == "done":
+        return False
+    winner = _norm_source(state.get("winner"))
+    if not winner:
+        return False
+    src = _norm_source(source)
+    return bool(src and src == winner)
 
 
 def champion_symbols(state: dict | None = None) -> set[str]:
@@ -421,7 +630,30 @@ def run_trial_liquidate_and_score(
         rec = dict(champs.get(src) or {})
         sym = str(rec.get("symbol") or "").upper().strip()
         if not sym:
-            score[src] = {"realized_r": 0.0, "symbol": None, "note": "no_champion"}
+            score[src] = {
+                "realized_r": 0.0, "symbol": None, "note": "no_champion",
+                "eligible": False,
+            }
+            continue
+
+        # Prefer R frozen at early mechanical exit.
+        if (
+            rec.get("status") == "closed"
+            and rec.get("realized_r") is not None
+            and not (detail.get(sym) if isinstance(detail, dict) else None)
+        ):
+            r = float(rec.get("realized_r") or 0.0)
+            score[src] = {
+                "symbol": sym,
+                "realized_r": r,
+                "realized_pl": rec.get("realized_pl"),
+                "entry_price": rec.get("entry_price"),
+                "stop_price": rec.get("stop_price"),
+                "exit_price": rec.get("exit_price"),
+                "eligible": bool(rec.get("filled")),
+                "note": "early_close",
+            }
+            champs[src] = rec
             continue
 
         live = detail.get(sym) if isinstance(detail, dict) else None
@@ -431,9 +663,6 @@ def run_trial_liquidate_and_score(
         if mpos and isinstance(mpos, dict):
             entry = entry if entry is not None else mpos.get("entry_price")
             stop = stop if stop is not None else mpos.get("stop_price")
-            if mpos.get("last_seen_price") is not None and live is None:
-                # already flat; use last seen
-                pass
 
         exit_px = None
         if live and isinstance(live, dict):
@@ -443,13 +672,11 @@ def run_trial_liquidate_and_score(
         elif mpos and isinstance(mpos, dict):
             exit_px = mpos.get("last_seen_price") or mpos.get("entry_price")
 
-        # Close if still open
         closed_ok = True
         if live:
             try:
                 out = alpaca_trader.close_out(sym)
                 closed_ok = bool(out.get("ok"))
-                # refresh exit approx
                 if exit_px is None:
                     exit_px = live.get("current")
             except Exception as e:  # noqa: BLE001
@@ -457,7 +684,6 @@ def run_trial_liquidate_and_score(
                 print(f"[ai] duel close {sym} failed: {e}", flush=True)
 
         r = _compute_r(entry, stop, exit_px)
-        # Never filled / no risk basis → 0 R for fair "no trade"
         if r is None:
             r = 0.0
         pl = None
@@ -471,8 +697,10 @@ def run_trial_liquidate_and_score(
         except (TypeError, ValueError):
             pl = None
 
+        filled = bool(rec.get("filled") or live or entry is not None)
         rec.update({
             "status": "closed",
+            "filled": filled,
             "entry_price": entry,
             "stop_price": stop,
             "exit_price": exit_px,
@@ -489,15 +717,25 @@ def run_trial_liquidate_and_score(
             "entry_price": entry,
             "stop_price": stop,
             "exit_price": exit_px,
+            "eligible": filled,
         }
 
-    # Winner = higher realized R; strict ties → no winner (skip chance 3)
+    # Winner = higher realized R among sides that actually filled.
+    # No-fill is ineligible (does not beat a stop-out via fake "0 R").
+    # Strict ties / no eligible side → no winner (skip chance 3).
+    elig_a = bool((score.get(SOURCE_A) or {}).get("eligible"))
+    elig_x = bool((score.get(SOURCE_X) or {}).get("eligible"))
     r_a = float((score.get(SOURCE_A) or {}).get("realized_r") or 0.0)
     r_x = float((score.get(SOURCE_X) or {}).get("realized_r") or 0.0)
     winner = None
-    if r_a > r_x:
+    if elig_a and elig_x:
+        if r_a > r_x:
+            winner = SOURCE_A
+        elif r_x > r_a:
+            winner = SOURCE_X
+    elif elig_a and not elig_x:
         winner = SOURCE_A
-    elif r_x > r_a:
+    elif elig_x and not elig_a:
         winner = SOURCE_X
 
     state["champions"] = champs
