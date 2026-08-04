@@ -32,12 +32,17 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
 
 # ── Version ───────────────────────────────────────────────────────────────────
-VERSION = "1.2.0"
+VERSION = "1.3.0"
+
+try:
+    import agent_bus as _agent_bus
+except ImportError:  # pragma: no cover
+    _agent_bus = None  # type: ignore
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_WINDOWS = sys.platform == "win32"
@@ -518,13 +523,56 @@ class AgentHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _bus_deps(self):
+        if _agent_bus is None:
+            return None
+        return _agent_bus.BusDeps(
+            enqueue=_enqueue,
+            publish_focus=lambda sym, src: _agent_bus.publish_focus_file(
+                sym, source=src or "agent"),
+            agent_version=VERSION,
+        )
+
+    def _dispatch_bus(self, data: dict) -> None:
+        deps = self._bus_deps()
+        if deps is None:
+            self._json(500, {"ok": False, "error": "agent_bus not available"})
+            return
+        result = _agent_bus.dispatch(deps, data)
+        payload = result.as_dict(agent_version=VERSION)
+        if result.symbol:
+            payload.setdefault("ticker", result.symbol)
+        self._json(result.http_status, payload)
+
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        if path == "/v1/actions":
+            actions = _agent_bus.list_actions() if _agent_bus else []
+            self._json(200, {
+                "ok": True, "bus": "v1", "version": VERSION, "actions": actions,
+            })
+            return
+        if path == "/v1/action":
+            qs = parse_qs(parsed.query)
+            data = {
+                "action": (qs.get("action") or [""])[0],
+                "symbol": (qs.get("symbol") or qs.get("ticker") or [""])[0],
+                "source": (qs.get("source") or ["manual"])[0],
+            }
+            self._dispatch_bus(data)
+            return
         if path == "/health":
+            actions = (
+                [a["action"] for a in _agent_bus.list_actions()]
+                if _agent_bus else []
+            )
             self._json(200, {
                 "ok":               True,
                 "agent":            "wb-tv-agent",
                 "version":          VERSION,
+                "bus":              "v1",
+                "actions":          actions,
                 "platform":         sys.platform,
                 "dashboard_url":    DASHBOARD_URL,
                 "polling":          True,
@@ -532,11 +580,11 @@ class AgentHandler(BaseHTTPRequestHandler):
                 "webull_installed": False,
                 "activated_count":  len(_activated),
             })
-        else:
-            self._json(404, {"error": "not found"})
+            return
+        self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        path = urlparse(self.path).path
+        path = urlparse(self.path).path.rstrip("/") or "/"
 
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b""
@@ -545,19 +593,40 @@ class AgentHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._json(400, {"error": "invalid JSON"})
             return
+        if not isinstance(data, dict):
+            self._json(400, {"error": "JSON object required"})
+            return
 
-        ticker = data.get("ticker", "").strip().upper()
+        if path in ("/v1/action", "/action"):
+            self._dispatch_bus(data)
+            return
 
-        if path in ("/add-wb", "/add-tv"):
+        if path in ("/add", "/add-wb", "/add-tv"):
+            ticker = str(data.get("ticker") or data.get("symbol") or "").strip().upper()
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
-            mode = "wb" if path == "/add-wb" else "tv"
-            _enqueue(ticker, mode)
-            self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
+            if path == "/add-wb":
+                action, mode = "add_wb", "wb"
+            elif path == "/add-tv":
+                action, mode = "add_tv", "tv"
+            else:
+                mode = str(data.get("mode", "both")).strip().lower()
+                if mode not in ("wb", "tv", "both"):
+                    mode = "both"
+                action = (
+                    _agent_bus.legacy_add_to_action(mode)
+                    if _agent_bus else "add"
+                )
+            self._dispatch_bus({
+                "action": action,
+                "symbol": ticker,
+                "source": data.get("source") or "legacy_post",
+                "mode": mode,
+            })
+            return
 
-        else:
-            self._json(404, {"error": "not found"})
+        self._json(404, {"error": "not found"})
 
     def _json(self, code: int, payload: dict):
         body = json.dumps(payload).encode()
@@ -601,9 +670,9 @@ if __name__ == "__main__":
     # Start HTTP server (for manual calls from dashboard Auto-Add toggle)
     server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
-    print("   GET  /health  → status")
-    print("   POST /add-wb  retired (use /add-tv)")
-    print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Ctrl+{BRAVE_TV_TAB}, Alt+W)")
+    print("   GET  /health /v1/actions")
+    print("   POST /v1/action  {\"action\":\"load_tv\",\"symbol\":\"NVDA\"}")
+    print(f"   POST /add-tv    legacy TV load (Ctrl+{BRAVE_TV_TAB})")
     print("   Press Ctrl+C to stop.\n")
     try:
         server.serve_forever()

@@ -6,14 +6,14 @@
  */
 
 import { connect, on, api }                      from './api.js?v=82';
-import { subscribe, set }                        from './store.js?v=82';
+import { subscribe, set }                        from './store.js?v=83';
 import { init as initFeeds }                     from './feeds.js?v=82';
 import { init as initTickers }                   from './tickers.js?v=82';
 import { init as initTradingView }               from './tradingview.js?v=82';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=82';
 import { init as initResizer }                   from './resizer.js?v=82';
 import * as controls                             from './controls.js?v=82';
-import * as notifications                        from './notifications.js?v=82';
+import * as notifications                        from './notifications.js?v=83';
 import { isAuthenticated, logout, getQueryUser } from './auth.js?v=82';
 import { init as initNews }                      from './news.js?v=82';
 import { init as initLeaderboard }               from './leaderboard.js?v=82';

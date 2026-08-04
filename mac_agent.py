@@ -48,7 +48,13 @@ from urllib.request import Request as _UReq, urlopen
 from urllib.error import URLError
 
 # ── Version ───────────────────────────────────────────────────────────────────
-VERSION = "1.2.0"
+VERSION = "1.3.0"
+
+# Command bus (POST /v1/action) — see docs/AGENT_COMMAND_BUS.md / agent_bus.py
+try:
+    import agent_bus as _agent_bus
+except ImportError:  # pragma: no cover
+    _agent_bus = None  # type: ignore
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 _IS_MAC = sys.platform == "darwin"
@@ -87,9 +93,20 @@ POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds betwee
 TV_CHART_URL   = os.environ.get(
     "TV_CHART_URL", "https://www.tradingview.com/chart/x04Gfcu8/?symbol={sym}"
 )
-# AUTO_ADD=1 → hands-free: auto-add to WB+TV on every burst/BUY (old behavior,
-# steals focus). Default off → run minimized; click a toast to add that ticker.
+# AUTO_ADD=1 → hands-free auto for burst + buy_zone (legacy). Prefer EVENT_*.
 AUTO_ADD       = os.environ.get("AUTO_ADD", "0") == "1"
+
+# Per-event routing: off | toast | auto  (see agent_events.py / docs)
+try:
+    import agent_events as _agent_events
+    _EVENT_MODES = _agent_events.load_event_modes(auto_add=AUTO_ADD)
+except ImportError:  # pragma: no cover
+    _agent_events = None  # type: ignore
+    _EVENT_MODES = {
+        "burst": "auto" if AUTO_ADD else "toast",
+        "buy_zone": "auto" if AUTO_ADD else "toast",
+        "ax": "toast",
+    }
 
 # ── Token — managed automatically, do not edit ────────────────────────────────
 _token      = ""
@@ -687,54 +704,176 @@ def _fetch_state() -> dict | None:
         return None
 
 
+def _event_mode(event: str) -> str:
+    return _EVENT_MODES.get(event, "toast")
+
+
+def _fire_desk_event(
+    event: str,
+    symbol: str,
+    *,
+    title: str,
+    body: str,
+    subtitle: str = "",
+    meta: dict | None = None,
+) -> None:
+    """Toast and/or queue bus action per EVENT_* mode."""
+    mode = _event_mode(event)
+    if _agent_events:
+        toast = _agent_events.should_toast(mode)
+        auto = _agent_events.should_auto(mode)
+        action = _agent_events.bus_action_for(event)
+    else:
+        toast, auto, action = (mode != "off"), (mode == "auto"), "load_tv"
+
+    if mode == "off":
+        return
+
+    print(f"  📣 {event}  {symbol}  mode={mode}  action={action}")
+    if toast:
+        _notify_mac(title, body, subtitle=subtitle, ticker=symbol)
+
+    if auto:
+        # Prefer bus (focus / load_tv + journal meta); fall back to enqueue.
+        if _agent_bus is not None:
+            deps = _agent_bus.BusDeps(
+                enqueue=_enqueue,
+                publish_focus=lambda sym, src: _agent_bus.publish_focus_file(
+                    sym, source=src or event),
+                agent_version=VERSION,
+            )
+            payload = (
+                _agent_events.build_event_payload(
+                    event, symbol, source=event, meta=meta)
+                if _agent_events
+                else {"action": action, "symbol": symbol, "source": event}
+            )
+            result = _agent_bus.dispatch(deps, payload)
+            print(f"     bus → {result.result} ({result.action})")
+            # Lightweight journal of auto fires
+            if result.ok and _agent_bus is not None:
+                try:
+                    _agent_bus.append_journal(
+                        action=event,
+                        symbol=symbol,
+                        source="agent_auto",
+                        meta={"mode": mode, "bus_action": action, **(meta or {})},
+                    )
+                except Exception:
+                    pass
+        else:
+            _enqueue(symbol, "tv")
+
+
 def _alert_listener():
     """
     Polls the dashboard every POLL_INTERVAL seconds.
-    Fires the WB+TV workflow when:
-      - mention_burst rises from False → True  (rapid mention spike)
-      - status transitions to 'BUY'
+
+    Event → bus routing (see agent_events / EVENT_* env):
+      - mention_burst rising edge
+      - signal_proximity status → buy_zone
+      - AI suggestion newly marked AX (agreement)
     """
+    modes = ", ".join(f"{k}={v}" for k, v in sorted(_EVENT_MODES.items()))
     print(f"👂 Alert listener started — polling {DASHBOARD_URL} every {POLL_INTERVAL}s")
+    print(f"   event modes: {modes}")
     if not DASHBOARD_USER:
         print("  ⚠️  DASHBOARD_USER not set — requests may be rejected if auth is required")
+
+    prev_ax: set[str] = set()
+    ax_primed = False
 
     while True:
         state = _fetch_state()
         if state:
             for row in state.get("tickers", []):
                 sym    = row.get("ticker", "")
-                burst  = row.get("mention_burst", False)
+                if not sym:
+                    continue
+                burst  = bool(row.get("mention_burst", False))
                 sp     = row.get("signal_proximity") or {}
-                status = sp.get("status", "")
+                status = sp.get("status", "") or ""
 
                 prev_burst  = _prev_bursts.get(sym)
                 prev_status = _prev_statuses.get(sym)
 
+                # Rising edge only after we have a previous observation
                 if burst and prev_burst is False:
                     count = row.get("mention_window", 0)
-                    print(f"  🔥 Burst detected: {sym}  (mention_window={count})")
-                    _notify_mac(
-                        f"🔥 {sym}  burst",
-                        f"{count}x mentions — click to add to TV + WB",
-                        subtitle=f"${row['price']:.2f}" if row.get("price") is not None else "",
-                        ticker=sym,
+                    px = row.get("price")
+                    _fire_desk_event(
+                        "burst",
+                        sym,
+                        title=f"🔥 {sym}  burst",
+                        body=f"{count}x mentions — click to load TV",
+                        subtitle=f"${px:.2f}" if px is not None else "",
+                        meta={"mention_window": count, "price": px},
                     )
-                    if AUTO_ADD:
-                        _enqueue(sym)
 
-                if status == "buy_zone" and prev_status is not None and prev_status != "buy_zone":
-                    print(f"  📈 BUY signal: {sym}")
-                    price = f"${row['price']:.2f} — " if row.get("price") is not None else ""
-                    _notify_mac(
-                        f"📈 BUY  {sym}",
-                        f"{price}signal aligning — click to add to TV + WB",
-                        ticker=sym,
+                if (
+                    status == "buy_zone"
+                    and prev_status is not None
+                    and prev_status != "buy_zone"
+                ):
+                    px = row.get("price")
+                    price_bit = f"${px:.2f} — " if px is not None else ""
+                    _fire_desk_event(
+                        "buy_zone",
+                        sym,
+                        title=f"📈 BUY zone  {sym}",
+                        body=f"{price_bit}click to focus + load TV",
+                        subtitle="",
+                        meta={
+                            "price": px,
+                            "proximity_pct": sp.get("proximity_pct"),
+                            "cm_rsi": sp.get("cm_rsi"),
+                            "pctr": sp.get("pctr"),
+                        },
                     )
-                    if AUTO_ADD:
-                        _enqueue(sym)
 
                 _prev_bursts[sym]   = burst
                 _prev_statuses[sym] = status
+
+            # AI AX agreement — from merged ai_suggestions in /api/state
+            ai = state.get("ai_suggestions") or {}
+            rows = ai.get("rows") if isinstance(ai, dict) else None
+            if _agent_events and rows is not None:
+                cur_ax = _agent_events.ax_symbols(rows)
+                by_sym = _agent_events.ax_rows_by_symbol(rows)
+            else:
+                cur_ax = set()
+                by_sym = {}
+                if isinstance(rows, list):
+                    for r in rows:
+                        if not isinstance(r, dict):
+                            continue
+                        if r.get("agreement") or str(r.get("source_mark") or "").upper() == "AX":
+                            s = str(r.get("symbol") or "").upper()
+                            if s:
+                                cur_ax.add(s)
+                                by_sym[s] = r
+
+            if not ax_primed:
+                prev_ax = set(cur_ax)
+                ax_primed = True
+            else:
+                for sym in sorted(cur_ax - prev_ax):
+                    r = by_sym.get(sym) or {}
+                    score = r.get("trending_score", r.get("score"))
+                    reason = str(r.get("reason") or "")[:40]
+                    _fire_desk_event(
+                        "ax",
+                        sym,
+                        title=f"✦ AX agree  {sym}",
+                        body=(
+                            f"A+X both list this"
+                            + (f" · {reason}" if reason else "")
+                            + " — click to focus"
+                        ),
+                        subtitle=f"score {score}" if score is not None else "",
+                        meta={"score": score, "reason": reason},
+                    )
+                prev_ax = set(cur_ax)
 
         time.sleep(POLL_INTERVAL)
 
@@ -767,10 +906,57 @@ class AgentHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _bus_deps(self):
+        if _agent_bus is None:
+            return None
+        return _agent_bus.BusDeps(
+            enqueue=_enqueue,
+            publish_focus=lambda sym, src: _agent_bus.publish_focus_file(
+                sym, source=src or "agent"),
+            agent_version=VERSION,
+        )
+
+    def _dispatch_bus(self, data: dict) -> None:
+        deps = self._bus_deps()
+        if deps is None:
+            self._json(500, {"ok": False, "error": "agent_bus not available"})
+            return
+        result = _agent_bus.dispatch(deps, data)
+        payload = result.as_dict(agent_version=VERSION)
+        # Keep legacy clients happy
+        if result.symbol:
+            payload.setdefault("ticker", result.symbol)
+        self._json(result.http_status, payload)
+
     def do_GET(self):
         parsed = urlparse(self.path)
-        if parsed.path == "/add":
-            # Manual add: curl http://localhost:8889/add?ticker=NVDA&mode=both
+        path = parsed.path.rstrip("/") or "/"
+
+        if path == "/v1/actions":
+            actions = _agent_bus.list_actions() if _agent_bus else []
+            self._json(200, {
+                "ok": True, "bus": "v1", "version": VERSION,
+                "actions": actions,
+            })
+            return
+
+        if path == "/v1/action":
+            # Allow GET ?action=&symbol= for Shortcuts / curl one-liners
+            qs = parse_qs(parsed.query)
+            data = {
+                "action": (qs.get("action") or qs.get("cmd") or [""])[0],
+                "symbol": (qs.get("symbol") or qs.get("ticker") or [""])[0],
+                "source": (qs.get("source") or ["manual"])[0],
+                "mode": (qs.get("mode") or ["tv"])[0],
+            }
+            reason = (qs.get("reason") or [""])[0]
+            if reason:
+                data["reason"] = reason
+            self._dispatch_bus(data)
+            return
+
+        if path == "/add":
+            # Legacy toast / curl — routed through the bus
             qs     = parse_qs(parsed.query)
             ticker = (qs.get("ticker", [""])[0]).strip().upper()
             mode   = (qs.get("mode",   ["both"])[0]).strip().lower()
@@ -779,14 +965,27 @@ class AgentHandler(BaseHTTPRequestHandler):
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
-            _enqueue(ticker, mode)
-            self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
+            action = (
+                _agent_bus.legacy_add_to_action(mode)
+                if _agent_bus else "add"
+            )
+            self._dispatch_bus({
+                "action": action, "symbol": ticker,
+                "source": "legacy_get", "mode": mode,
+            })
             return
-        if parsed.path == "/health":
+
+        if path == "/health":
+            actions = (
+                [a["action"] for a in _agent_bus.list_actions()]
+                if _agent_bus else []
+            )
             self._json(200, {
                 "ok":               True,
                 "agent":            "mac-tv-agent",
                 "version":          VERSION,
+                "bus":              "v1",
+                "actions":          actions,
                 "platform":         sys.platform,
                 "dashboard_url":    DASHBOARD_URL,
                 "polling":          True,
@@ -795,11 +994,12 @@ class AgentHandler(BaseHTTPRequestHandler):
                 "pyautogui_ok":     _PAG_OK,
                 "activated_count":  len(_activated),
             })
-        else:
-            self._json(404, {"error": "not found"})
+            return
+
+        self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        path   = urlparse(self.path).path
+        path   = urlparse(self.path).path.rstrip("/") or "/"
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length) if length else b""
         try:
@@ -807,25 +1007,43 @@ class AgentHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._json(400, {"error": "invalid JSON"})
             return
+        if not isinstance(data, dict):
+            self._json(400, {"error": "JSON object required"})
+            return
 
-        ticker = data.get("ticker", "").strip().upper()
+        if path in ("/v1/action", "/action"):
+            self._dispatch_bus(data)
+            return
 
         if path in ("/add", "/add-wb", "/add-tv"):
+            ticker = str(data.get("ticker") or data.get("symbol") or "").strip().upper()
             if not ticker:
                 self._json(400, {"error": "missing ticker"})
                 return
             if path == "/add-wb":
-                mode = "wb"
+                action, mode = "add_wb", "wb"
             elif path == "/add-tv":
-                mode = "tv"
+                action, mode = "add_tv", "tv"
             else:
-                mode = data.get("mode", "both").strip().lower()
+                mode = str(data.get("mode", "both")).strip().lower()
                 if mode not in ("wb", "tv", "both"):
                     mode = "both"
-            _enqueue(ticker, mode)
-            self._json(202, {"ok": True, "ticker": ticker, "queued": True, "mode": mode})
-        else:
-            self._json(404, {"error": "not found"})
+                action = (
+                    _agent_bus.legacy_add_to_action(mode)
+                    if _agent_bus else "add"
+                )
+            payload = {
+                "action": action,
+                "symbol": ticker,
+                "source": data.get("source") or "legacy_post",
+                "mode": mode,
+            }
+            if data.get("reason"):
+                payload["reason"] = data["reason"]
+            self._dispatch_bus(payload)
+            return
+
+        self._json(404, {"error": "not found"})
 
     def _json(self, code: int, payload: dict):
         body = json.dumps(payload).encode()
@@ -869,7 +1087,8 @@ if __name__ == "__main__":
     print(f"  User       : {DASHBOARD_USER or 'NOT SET — set DASHBOARD_USER in .env'}")
     print(f"  Password   : {'set ✓' if DASHBOARD_PASS else 'NOT SET — set DASHBOARD_PASS in .env'}")
     print(f"  Poll every : {POLL_INTERVAL}s")
-    print(f"  Add mode   : {'AUTO_ADD (hands-free, steals focus)' if AUTO_ADD else 'toast-click (run minimized)'}")
+    print(f"  AUTO_ADD   : {AUTO_ADD} (legacy; prefer EVENT_BURST / EVENT_BUY_ZONE / EVENT_AX)")
+    print(f"  Events     : {', '.join(f'{k}={v}' for k, v in sorted(_EVENT_MODES.items()))}")
     print(f"  TV tab     : Cmd+{BRAVE_TV_TAB}")
     print(f"  pyautogui  : {'✓' if _PAG_OK else '✗ not installed — run: pip install pyautogui'}")
     print("  Webull     : retired (Alpaca only)")
@@ -888,10 +1107,13 @@ if __name__ == "__main__":
 
     server = HTTPServer(("0.0.0.0", PORT), AgentHandler)
     print(f"✅ HTTP server ready on http://localhost:{PORT}")
-    print("   GET  /health  → status")
-    print("   GET  /add?ticker=NVDA&mode=both  → WB+TV (used by toast click)")
-    print("   POST /add-wb  retired (use /add-tv)")
-    print(f"   POST /add-tv  {{\"ticker\": \"NVDA\"}}  → TradingView (Brave, Cmd+{BRAVE_TV_TAB}, Option+W)")
+    print("   GET  /health              → status + action catalog")
+    print("   GET  /v1/actions          → verb list")
+    print("   POST /v1/action           → command bus (preferred)")
+    print('        {"action":"load_tv","symbol":"NVDA","source":"manual"}')
+    print("   verbs: load_tv | add_tv | add | focus | journal | ping")
+    print("   GET  /add?ticker=NVDA     → legacy (toast) → bus")
+    print(f"   POST /add-tv             → legacy TV load (Cmd+{BRAVE_TV_TAB})")
     print("   Press Ctrl+C to stop.\n")
     try:
         server.serve_forever()

@@ -1,17 +1,18 @@
 /**
- * notifications.js — BUY signal alerts
+ * notifications.js — desk event → local agent bus
  *
- * Alerts the user via in-page toasts, browser Notification API, and audio beep.
- * Also auto-selects the ticker in TradingView on first BUY transition.
- * Clicking a toast adds the ticker to TradingView via the local agent.
+ * Events:
+ *   burst     — mention_burst rising edge
+ *   buy_zone  — signal_proximity status → buy_zone
+ *   ax        — AI suggestion newly marked AX (A+X agreement)
  *
- * Auto-Add: when the #auto-add-checkbox toggle is enabled (user=jmb only),
- * fires a POST to the local macOS agent (port 8889) to add the ticker to
- * TradingView on every mention_burst or BUY alert.
+ * Each event can be: off | toast | auto (localStorage + Auto-Add toggle).
+ * Toast click and auto both hit POST http://127.0.0.1:8889/v1/action
+ * (action=load_tv|focus depending on event).
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=82';
-import { api } from './api.js?v=82';
+import { subscribe, selectTicker, get } from './store.js?v=83';
+import { api } from './api.js?v=83';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
@@ -36,15 +37,15 @@ function _getContainer() {
  * Show an in-page toast.
  * @param {string} title
  * @param {string} sub
- * @param {'buy'|'burst'|'sell'|'info'} type
+ * @param {'buy'|'burst'|'sell'|'info'|'ax'} type
  * @param {number} duration  - auto-dismiss ms
  * @param {Function|null} onClickFn  - called when the toast is clicked
  */
 export function showToast(title, sub = '', type = 'info', duration = 6000, onClickFn = null) {
   const container = _getContainer();
-  const icons = { buy: '▲', burst: '🔥', sell: '▼', info: 'ℹ' };
+  const icons = { buy: '▲', burst: '🔥', sell: '▼', info: 'ℹ', ax: '✦' };
   const el = document.createElement('div');
-  el.className = `toast toast--${type}`;
+  el.className = `toast toast--${type === 'ax' ? 'info' : type}`;
   el.style.position = 'relative';
   el.innerHTML = `
     <span class="toast-icon">${icons[type] ?? 'ℹ'}</span>
@@ -79,24 +80,62 @@ export function showToast(title, sub = '', type = 'info', duration = 6000, onCli
 
 const _prevStatuses = {};   // ticker → last known status
 const _prevBursts   = {};   // ticker → last known mention_burst bool
+const _prevAx       = new Set();  // symbols currently AX
+let _axPrimed       = false;
 const _seenSpikes   = new Set();  // dedupe price-spike toasts within session
 let _spikesPrimed   = false;
 
-// ── Auto-Add toggle state ──────────────────────────────────────
+// ── Event mode config ──────────────────────────────────────────
+// Per-event: off | toast | auto
+// Auto-Add checkbox forces auto for burst + buy_zone (legacy).
 const _AUTO_ADD_KEY = 'ss:auto-add';
-let _autoAddEl = null;   // checkbox input element
+const _EVENT_KEYS = {
+  burst:    'ss:event-burst',
+  buy_zone: 'ss:event-buy-zone',
+  ax:       'ss:event-ax',
+};
+const _EVENT_ACTIONS = {
+  burst:    'load_tv',
+  buy_zone: 'focus',
+  ax:       'focus',
+};
 
-// ── Auto-Alert toggle state ────────────────────────────────────
+let _autoAddEl = null;
+
 const _AUTO_ALERT_KEY = 'ss:auto-alert';
 let _autoAlertEl = null;
 
-/** Read persisted toggle state and wire up change handler. */
+function _readEventMode(event) {
+  const key = _EVENT_KEYS[event];
+  const raw = key ? localStorage.getItem(key) : null;
+  if (raw === 'off' || raw === 'toast' || raw === 'auto') return raw;
+  // Defaults
+  if (event === 'ax') return 'toast';
+  return 'toast';
+}
+
+/** Effective mode after applying Auto-Add override. */
+function _eventMode(event) {
+  const base = _readEventMode(event);
+  if (_autoAddEnabled() && (event === 'burst' || event === 'buy_zone')) {
+    return 'auto';
+  }
+  return base;
+}
+
+function _shouldToast(mode) {
+  return mode === 'toast' || mode === 'auto';
+}
+
+function _shouldAuto(mode) {
+  return mode === 'auto';
+}
+
 function _initAutoAdd() {
   const label = document.getElementById('auto-add-checkbox')?.closest('.auto-add-toggle');
   _autoAddEl  = document.getElementById('auto-add-checkbox');
   if (!_autoAddEl) return;
 
-  // Restore persisted state
   const saved = localStorage.getItem(_AUTO_ADD_KEY) === 'true';
   _autoAddEl.checked = saved;
   if (label) label.classList.toggle('is-on', saved);
@@ -108,12 +147,10 @@ function _initAutoAdd() {
   });
 }
 
-/** Returns true when the Auto-Add toggle is switched on. */
 function _autoAddEnabled() {
   return _autoAddEl?.checked === true;
 }
 
-/** Wire up the Auto-Alert toggle (create TradingView alert on burst). */
 function _initAutoAlert() {
   const label = document.getElementById('auto-alert-checkbox')?.closest('.auto-alert-toggle');
   _autoAlertEl = document.getElementById('auto-alert-checkbox');
@@ -128,12 +165,10 @@ function _initAutoAlert() {
   });
 }
 
-/** Returns true when the Auto-Alert toggle is switched on. */
 function _autoAlertEnabled() {
   return _autoAlertEl?.checked === true;
 }
 
-/** Call the dashboard's create-tv-alert endpoint for a ticker. */
 async function _agentAlert(ticker) {
   try {
     await api.createTVAlert(ticker);
@@ -143,22 +178,72 @@ async function _agentAlert(ticker) {
 }
 
 /**
- * Fire-and-forget call to the local Windows agent for both TradingView.
- * Port 8889, same as the existing _addToWBAndTV helper in tickers.js.
- * Silently skips if the agent is not running.
+ * POST /v1/action on the local desk agent. Falls back to legacy /add.
  */
-async function _agentAdd(ticker) {
+async function _agentAction(action, symbol, source, meta = {}) {
+  const body = {
+    action: action || 'load_tv',
+    symbol,
+    source: source || 'dashboard',
+    meta,
+  };
   try {
-    const resp = await fetch('http://127.0.0.1:8889/add', {
+    let resp = await fetch('http://127.0.0.1:8889/v1/action', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ ticker, mode: 'both' }),
+      body:    JSON.stringify(body),
       signal:  AbortSignal.timeout(5000),
     });
-    if (!resp.ok) console.warn(`[notifications] agent /add returned`, resp.status);
+    if (resp.status === 404) {
+      resp = await fetch('http://127.0.0.1:8889/add', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          ticker: symbol,
+          mode: 'tv',
+          source,
+        }),
+        signal:  AbortSignal.timeout(5000),
+      });
+    }
+    if (!resp.ok) console.warn(`[notifications] agent action returned`, resp.status);
   } catch {
     // Agent not running — skip silently
   }
+}
+
+/** Convenience: fire the configured bus action for an event. */
+function _agentForEvent(event, symbol, meta = {}) {
+  const action = _EVENT_ACTIONS[event] || 'load_tv';
+  return _agentAction(action, symbol, event, { event, ...meta });
+}
+
+/**
+ * Apply toast + optional auto for one desk event.
+ */
+function _handleEvent(event, {
+  symbol,
+  title,
+  sub = '',
+  toastType = 'info',
+  duration = 6000,
+  meta = {},
+  select = false,
+  beepType = null,
+}) {
+  const mode = _eventMode(event);
+  if (mode === 'off') return;
+
+  const fire = () => _agentForEvent(event, symbol, meta);
+
+  if (_shouldToast(mode)) {
+    if (beepType) _beep(beepType);
+    showToast(title, sub, toastType, duration, fire);
+  }
+  if (_shouldAuto(mode)) {
+    fire();
+  }
+  if (select) selectTicker(symbol);
 }
 
 function _spikeKey(r) {
@@ -187,22 +272,76 @@ function _checkPriceSpikes(rows) {
     if (r.scanner_tier) parts.push(r.scanner_tier);
     const sub = parts.length ? parts.join('  ·  ') : (r.alert_type || 'tap to view');
 
-    _beep('burst');
-    showToast(
-      `⚡ ${r.ticker}  Price Spike`,
+    // Spikes use burst routing (same urgency band)
+    _handleEvent('burst', {
+      symbol: r.ticker,
+      title: `⚡ ${r.ticker}  Price Spike`,
       sub,
-      'burst',
-      8000,
-      () => _agentAdd(r.ticker),
-    );
-    if (_autoAddEnabled()) _agentAdd(r.ticker);
-    selectTicker(r.ticker);
+      toastType: 'burst',
+      duration: 8000,
+      meta: { kind: 'price_spike', tier: r.scanner_tier },
+      select: true,
+      beepType: 'burst',
+    });
   }
+}
+
+function _isAxRow(r) {
+  if (!r) return false;
+  if (r.agreement === true) return true;
+  const mark = String(r.source_mark || '').toUpperCase();
+  if (mark === 'AX') return true;
+  const src = String(r.source || '').toLowerCase();
+  return src === 'both' || src === 'ax';
+}
+
+function _checkAiSuggestions(payload) {
+  const rows = (payload && payload.rows) || [];
+  const cur = new Set();
+  const bySym = {};
+  for (const r of rows) {
+    if (!_isAxRow(r)) continue;
+    const sym = String(r.symbol || r.ticker || '').toUpperCase();
+    if (!sym) continue;
+    cur.add(sym);
+    bySym[sym] = r;
+  }
+
+  if (!_axPrimed) {
+    cur.forEach(s => _prevAx.add(s));
+    _axPrimed = true;
+    return;
+  }
+
+  for (const sym of cur) {
+    if (_prevAx.has(sym)) continue;
+    const r = bySym[sym] || {};
+    const score = r.trending_score ?? r.score;
+    const reason = String(r.reason || '').slice(0, 40);
+    const bits = ['A+X agree'];
+    if (score != null) bits.push(`score ${score}`);
+    if (reason) bits.push(reason);
+
+    _handleEvent('ax', {
+      symbol: sym,
+      title: `✦ AX  ${sym}`,
+      sub: bits.join('  ·  ') + '  ·  tap to focus',
+      toastType: 'ax',
+      duration: 8000,
+      meta: { score, reason },
+      select: true,
+      beepType: 'ax',
+    });
+  }
+
+  _prevAx.clear();
+  cur.forEach(s => _prevAx.add(s));
 }
 
 export function init() {
   subscribe('tickers', _check);
   subscribe('price_spikes', _checkPriceSpikes);
+  subscribe('ai_suggestions', _checkAiSuggestions);
   const _onReady = () => { _initAutoAdd(); _initAutoAlert(); };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _onReady);
@@ -222,6 +361,23 @@ export async function requestPermission() {
 }
 
 export function isEnabled() { return _enabled; }
+
+// Expose for config UI / console debugging
+export function getEventModes() {
+  return {
+    burst: _eventMode('burst'),
+    buy_zone: _eventMode('buy_zone'),
+    ax: _eventMode('ax'),
+    autoAdd: _autoAddEnabled(),
+  };
+}
+
+export function setEventMode(event, mode) {
+  const key = _EVENT_KEYS[event];
+  if (!key) return;
+  if (!['off', 'toast', 'auto'].includes(mode)) return;
+  localStorage.setItem(key, mode);
+}
 
 // ── Web Push subscription ─────────────────────────────────────
 
@@ -265,38 +421,44 @@ function _check(rows) {
     const prevStatus = _prevStatuses[row.ticker];
     const prevBurst  = _prevBursts[row.ticker];
 
-    // BUY signal alert — only on genuine transition to buy_zone
+    // BUY zone — genuine transition only
     if (sigStatus === 'buy_zone' && prevStatus !== undefined && prevStatus !== 'buy_zone') {
-      _beep('buy');
       _notify(row, 'buy');
-      showToast(
-        `BUY  ${row.ticker}`,
-        [
+      _handleEvent('buy_zone', {
+        symbol: row.ticker,
+        title: `BUY zone  ${row.ticker}`,
+        sub: [
           row.price != null ? `$${row.price.toFixed(2)}`    : '',
           sp.cm_rsi != null ? `RSI ${sp.cm_rsi.toFixed(0)}` : '',
           sp.pctr   != null ? `%R ${sp.pctr.toFixed(0)}`    : '',
+          'tap to focus',
         ].filter(Boolean).join('  ·  '),
-        'buy',
-        6000,
-        () => _agentAdd(row.ticker),
-      );
-      if (!currentSelected) selectTicker(row.ticker);
-      if (_autoAddEnabled()) _agentAdd(row.ticker);
+        toastType: 'buy',
+        duration: 6000,
+        meta: {
+          price: row.price,
+          proximity_pct: sp.proximity_pct,
+          cm_rsi: sp.cm_rsi,
+          pctr: sp.pctr,
+        },
+        select: !currentSelected,
+        beepType: 'buy',
+      });
     }
 
-    // Mention burst alert — on first detection and on rising edge
+    // Mention burst — rising edge (prevBurst !== true covers first + false→true)
     if (row.mention_burst && prevBurst !== true) {
-      _beep('burst');
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       _notifyBurst(row);
-      showToast(
-        `🔥 ${row.ticker}  ${row.mention_window ?? ''}x mentions`,
-        row.price != null ? `$${row.price.toFixed(2)}  ·  tap to add` : 'tap to add',
-        'burst',
-        8000,
-        () => _agentAdd(row.ticker),
-      );
-      if (_autoAddEnabled())  _agentAdd(row.ticker);
+      _handleEvent('burst', {
+        symbol: row.ticker,
+        title: `🔥 ${row.ticker}  ${row.mention_window ?? ''}x mentions`,
+        sub: row.price != null ? `$${row.price.toFixed(2)}  ·  tap to load` : 'tap to load',
+        toastType: 'burst',
+        duration: 8000,
+        meta: { mention_window: row.mention_window, price: row.price },
+        beepType: 'burst',
+      });
       if (_autoAlertEnabled()) _agentAlert(row.ticker);
     }
 
@@ -309,7 +471,7 @@ function _notify(row, type = 'buy') {
   if (!_enabled) return;
   try {
     const sp = row.signal_proximity || {};
-    const n = new Notification(`BUY  ${row.ticker}`, {
+    const n = new Notification(`BUY zone  ${row.ticker}`, {
       body: [
         row.price  != null ? `$${row.price.toFixed(2)}`      : '',
         sp.pctr    != null ? `%R ${sp.pctr.toFixed(0)}`      : '',
@@ -318,7 +480,11 @@ function _notify(row, type = 'buy') {
       tag:               `buy-${row.ticker}`,
       requireInteraction: false,
     });
-    n.onclick = () => { window.focus(); selectTicker(row.ticker); };
+    n.onclick = () => {
+      window.focus();
+      selectTicker(row.ticker);
+      _agentForEvent('buy_zone', row.ticker, {});
+    };
   } catch (e) {
     console.warn('[notifications] notify failed', e);
   }
@@ -335,7 +501,11 @@ function _notifyBurst(row) {
       tag:               `burst-${row.ticker}`,
       requireInteraction: false,
     });
-    n.onclick = () => { window.focus(); selectTicker(row.ticker); };
+    n.onclick = () => {
+      window.focus();
+      selectTicker(row.ticker);
+      _agentForEvent('burst', row.ticker, { mention_window: count });
+    };
   } catch (e) {
     console.warn('[notifications] burst notify failed', e);
   }
@@ -352,23 +522,27 @@ function _beep(type = 'buy') {
     osc.addEventListener('ended', () => ctx.close());
 
     if (type === 'burst') {
-      // Three rapid high pulses — urgent but distinct from BUY
       const t = ctx.currentTime;
       osc.frequency.setValueAtTime(880, t);
       gain.gain.setValueAtTime(0.0,  t);
-      // Pulse 1
       gain.gain.linearRampToValueAtTime(0.3, t + 0.04);
       gain.gain.linearRampToValueAtTime(0.0, t + 0.10);
-      // Pulse 2
       gain.gain.linearRampToValueAtTime(0.3, t + 0.16);
       gain.gain.linearRampToValueAtTime(0.0, t + 0.22);
-      // Pulse 3
       gain.gain.linearRampToValueAtTime(0.3, t + 0.28);
       gain.gain.linearRampToValueAtTime(0.0, t + 0.38);
       osc.start(t);
       osc.stop(t + 0.38);
+    } else if (type === 'ax') {
+      // Soft two-tone chord-ish: 520 → 780 (distinct from buy)
+      const t = ctx.currentTime;
+      osc.frequency.setValueAtTime(520, t);
+      osc.frequency.setValueAtTime(780, t + 0.15);
+      gain.gain.setValueAtTime(0.22, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.start(t);
+      osc.stop(t + 0.4);
     } else {
-      // Two-tone rising: 660 Hz → 990 Hz  (BUY signal)
       osc.frequency.setValueAtTime(660, ctx.currentTime);
       osc.frequency.setValueAtTime(990, ctx.currentTime + 0.12);
       gain.gain.setValueAtTime(0.25,    ctx.currentTime);

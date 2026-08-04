@@ -16,10 +16,13 @@ POLL_INTERVAL=1.5
 # Which browser tab has TradingView open (Ctrl+1 = tab 1, Ctrl+2 = tab 2, etc.)
 BRAVE_TV_TAB=1
 
-# Add behavior on alerts:
-#   0 (default) = toast-only. Burst/BUY just pops a toast; click it to add the
-#                 ticker to TradingView. Nothing steals window focus,
-#                 so you can run everything minimized.
-#   1           = hands-free. Auto-adds to WB+TV on every burst/BUY (the old
-#                 behavior) — this pulls those apps to the foreground.
+# Legacy: AUTO_ADD=1 forces burst + buy_zone to auto (steals focus).
+# Prefer per-event modes below.
 AUTO_ADD=0
+
+# Event → desk agent (off | toast | auto)
+#   toast = native banner only; click loads TV via agent bus
+#   auto  = banner + immediately POST /v1/action (focus/load_tv)
+EVENT_BURST=toast
+EVENT_BUY_ZONE=toast
+EVENT_AX=toast
