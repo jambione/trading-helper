@@ -293,7 +293,7 @@ function _duelSummary(book) {
   const sc = d.score || {};
   const rA = sc.anthropic && sc.anthropic.realized_r;
   const rX = sc.xai && sc.xai.realized_r;
-  if (phase === 'trial') return `duel trial · cut ${d.trial_end || '12:45'}`;
+  if (phase === 'trial') return `duel trial · cut ${d.trial_end || '14:15'}`;
   if (phase === 'scored' || phase === 'chance3') {
     const rs = [
       Number.isFinite(Number(rA)) ? `A ${Number(rA) >= 0 ? '+' : ''}${Number(rA).toFixed(2)}R` : 'A —',

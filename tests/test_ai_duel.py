@@ -52,8 +52,8 @@ def test_score_higher_r_wins(duel_path, monkeypatch):
     now_am = datetime(2026, 8, 3, 10, 0, tzinfo=et).timestamp()
     cfg = {
         "ai_duel_enabled": True,
-        "ai_duel_trial_end_time": "12:45",
-        "ai_duel_chance3_time": "13:00",
+        "ai_duel_trial_end_time": "14:15",
+        "ai_duel_chance3_time": "14:30",
     }
     duel.register_champion_from_rows(
         [{"symbol": "AAA", "score": 9}], source="anthropic", cfg=cfg, now=now_am)
@@ -85,7 +85,7 @@ def test_score_higher_r_wins(duel_path, monkeypatch):
         },
     )
 
-    now_pm = datetime(2026, 8, 3, 12, 50, tzinfo=et).timestamp()
+    now_pm = datetime(2026, 8, 3, 14, 20, tzinfo=et).timestamp()
     out = duel.run_trial_liquidate_and_score(cfg, now_pm)
     assert out["ok"] is True
     assert out["winner"] == "anthropic"
@@ -96,9 +96,9 @@ def test_score_higher_r_wins(duel_path, monkeypatch):
     assert st["phase"] == "scored"
     # After score, only winner may enter
     assert duel.allow_entry_for_source(cfg, "anthropic", "ZZZ", now=now_pm) is False
-    # Chance 3 not open until 13:00
+    # Chance 3 not open until 14:30
     assert duel.allow_entry_for_source(cfg, "anthropic", "AAA", now=now_pm) is False
-    now_c3 = datetime(2026, 8, 3, 13, 5, tzinfo=et).timestamp()
+    now_c3 = datetime(2026, 8, 3, 14, 35, tzinfo=et).timestamp()
     assert duel.allow_entry_for_source(cfg, "xai", "BBB", now=now_c3) is False
     # Winner can register chance-3 champion
     c3 = duel.register_champion_from_rows(
@@ -117,7 +117,7 @@ def test_tie_r_no_winner(duel_path, monkeypatch):
 
     et = ZoneInfo("America/New_York")
     now_am = datetime(2026, 8, 3, 10, 0, tzinfo=et).timestamp()
-    cfg = {"ai_duel_enabled": True, "ai_duel_trial_end_time": "12:45"}
+    cfg = {"ai_duel_enabled": True, "ai_duel_trial_end_time": "14:15"}
     duel.register_champion_from_rows(
         [{"symbol": "AAA", "score": 9}], source="anthropic", cfg=cfg, now=now_am)
     duel.register_champion_from_rows(
@@ -125,7 +125,7 @@ def test_tie_r_no_winner(duel_path, monkeypatch):
     monkeypatch.setattr("alpaca_trader.get_positions_detail", lambda: {})
     monkeypatch.setattr("alpaca_trader.close_out", lambda *a, **k: {"ok": True})
     monkeypatch.setattr("ai_positions._load_state", lambda: {})
-    now_pm = datetime(2026, 8, 3, 12, 50, tzinfo=et).timestamp()
+    now_pm = datetime(2026, 8, 3, 14, 20, tzinfo=et).timestamp()
     out = duel.run_trial_liquidate_and_score(cfg, now_pm)
     assert out["winner"] is None
     assert duel.load_state(now_pm)["phase"] == "done"

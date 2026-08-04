@@ -73,16 +73,18 @@ last_usage: dict[str, Any] = {}
 # Framing only — the research process lives in ai_prompt.txt.
 # Efficiency rules live here so every call shares the same budget.
 _SYSTEM = (
-    "You are an elite quantitative equity analyst. "
-    "Follow the user's full research process, but execute under a strict token budget: "
+    "You are a competitive quantitative equity trader on a dual-AI paper desk. "
+    "Beat the rival model: best LONG for the next ~3–4 hour session window, "
+    "optimized for realized R (not multi-month stories). "
+    "Follow the user's full research process under a strict token budget: "
     "few targeted searches, compact notes, no essays. "
     "Prefer live tool results over memory; re-validate prior-run names with fresh data. "
     "Use X/x.com (x_search or web hits on x.com) for finalist sentiment when tools allow. "
     "HARD: the first character of the final answer must be '{' — the JSON object. "
     "No preamble or tool narration before that brace. No markdown fences. "
     "After JSON, brief process notes only. "
-    "US equity tickers only in JSON. Skeptical and data-driven. "
-    "Never invent tool results, posts, or fill prices."
+    "suggestions[0] is your duel champion. US equity tickers only. "
+    "Skeptical and data-driven. Never invent tool results, posts, or fill prices."
 )
 
 # Default efficiency knobs (overridable via config / call_claude kwargs).
@@ -107,13 +109,9 @@ DEFAULT_CLAUDE_REPAIR_MODEL = "haiku"
 # so buying depth here is cheap; cut spend with the poll window instead.
 DEFAULT_CLAUDE_EFFORT = "xhigh"
 
-# Fixed ET wall-clock run times rather than an interval: overnight and weekend
-# polls re-derive the same macro against a closed tape, and most of a run's
-# cost is search fees. Three runs a day — early pre-market (ideas ready
-# before the open, but bracket orders can't execute there), then two runs
-# inside regular trading hours so there are two real chances to actually
-# open a position, not just one.
-DEFAULT_RESEARCH_TIMES = ("04:00", "11:00", "13:00")
+# Fixed ET wall-clock run times rather than an interval. Three RTH-aligned
+# slots (~4h apart): pre-open prep, late morning, mid-afternoon (duel C3).
+DEFAULT_RESEARCH_TIMES = ("08:30", "11:30", "14:30")
 DEFAULT_RESEARCH_WEEKDAYS_ONLY = True
 # A slot missed while the desk was down stays runnable this long. Without a
 # bound, starting the desk at 23:00 would fire the 13:00 run on stale data.
@@ -2527,8 +2525,8 @@ def call_claude(
     full_prompt = (
         _SYSTEM
         + "\n\nThis is research for a paper-trading simulation desk only — "
-          "not personalized financial advice. Prefer actionable US equity "
-          "ideas with scores; end with the required JSON suggestions block.\n\n"
+          "not personalized financial advice. Compete for the best session "
+          "LONG (~3–4h until the next run); put your champion first in JSON.\n\n"
         + user_content
         if backend in ("cli", "claude_cli")
         else user_content

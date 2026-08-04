@@ -87,9 +87,9 @@
   "claude_model": "sonnet",
   "claude_effort": "xhigh",
   "claude_research_times": [
-    "08:25",
-    "11:00",
-    "13:00"
+    "08:30",
+    "11:30",
+    "14:30"
   ],
   "claude_research_weekdays_only": true,
   "claude_research_catchup_min": 120,
@@ -126,9 +126,9 @@
   "grok_use_prior_context": false,
   "grok_use_desk_snapshot": true,
   "grok_research_times": [
-    "08:25",
-    "11:00",
-    "13:00"
+    "08:30",
+    "11:30",
+    "14:30"
   ],
   "grok_research_weekdays_only": true,
   "grok_research_catchup_min": 120,
@@ -184,8 +184,8 @@
   "ai_eod_liquidate_time": "15:50",
   "ai_sod_liquidate_enabled": true,
   "ai_duel_enabled": true,
-  "ai_duel_trial_end_time": "12:45",
-  "ai_duel_chance3_time": "13:00",
+  "ai_duel_trial_end_time": "14:15",
+  "ai_duel_chance3_time": "14:30",
   "ai_watch_start_time": "09:00",
   "use_float_filter": false,
   "max_float_million": 50,

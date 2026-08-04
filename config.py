@@ -180,8 +180,8 @@ DEFAULT_CONFIG = {
     "ai_sod_liquidate_enabled":    True,
     # Daily A vs X duel: dual trial → R score → winner-only chance 3.
     "ai_duel_enabled":             True,
-    "ai_duel_trial_end_time":   "12:45",   # ET — liquidate both, score realized R
-    "ai_duel_chance3_time":     "13:00",   # ET — winner may trade alone
+    "ai_duel_trial_end_time":   "14:15",   # ET — liquidate both, score R before C3 research
+    "ai_duel_chance3_time":     "14:30",   # ET — winner-only third research / trade
     "ai_require_agreement":       False,    # only trade AX-agreed names
     "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
@@ -221,7 +221,7 @@ DEFAULT_CONFIG = {
     "claude_cli_bin":          "claude",
     "claude_model":            "sonnet",
     "claude_effort":            "xhigh",  # low|medium|high|xhigh|max
-    "claude_research_times": ["08:25", "11:00", "13:00"],
+    "claude_research_times": ["08:30", "11:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
     "claude_prompt_file": "ai_prompt.txt",
@@ -265,7 +265,7 @@ DEFAULT_CONFIG = {
     "grok_search_tools":       "web_x",
     "grok_use_prior_context":  False,
     "grok_use_desk_snapshot":  True,
-    "grok_research_times": ["08:25", "11:00", "13:00"],
+    "grok_research_times": ["08:30", "11:30", "14:30"],
     "grok_research_weekdays_only": True,
     "grok_research_catchup_min": 120,
     "grok_prompt_file": "ai_prompt.txt",  # shared research prompt for now

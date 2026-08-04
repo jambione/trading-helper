@@ -100,12 +100,12 @@ def duel_enabled(cfg: dict | None) -> bool:
 
 def trial_end_hm(cfg: dict | None) -> tuple[int, int]:
     cfg = cfg if isinstance(cfg, dict) else {}
-    return _parse_hhmm(str(cfg.get("ai_duel_trial_end_time") or "12:45"), (12, 45))
+    return _parse_hhmm(str(cfg.get("ai_duel_trial_end_time") or "14:15"), (14, 15))
 
 
 def chance3_hm(cfg: dict | None) -> tuple[int, int]:
     cfg = cfg if isinstance(cfg, dict) else {}
-    return _parse_hhmm(str(cfg.get("ai_duel_chance3_time") or "13:00"), (13, 0))
+    return _parse_hhmm(str(cfg.get("ai_duel_chance3_time") or "14:30"), (14, 30))
 
 
 def past_trial_end(cfg: dict | None, now: float | None = None) -> bool:
