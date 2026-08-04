@@ -803,7 +803,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         min_pct = 50.0
     try:
         # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 1.0) or 1.0)
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 3.0) or 3.0)
     except (TypeError, ValueError):
         min_rvol = 1.0
 

@@ -281,5 +281,5 @@
   "ai_watch_zone_width_pct": 1.0,
   "ai_watch_synth_stop_pct": 2.0,
   "ai_watch_synth_rr": 3.0,
-  "ai_watch_min_rvol": 1.0
+  "ai_watch_min_rvol": 3.0
 }
