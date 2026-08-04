@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=98';
-import { api }       from './api.js?v=98';
-import { copyTicker } from './tickers.js?v=98';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=98';
+import { subscribe, get } from './store.js?v=99';
+import { api }       from './api.js?v=99';
+import { copyTicker } from './tickers.js?v=99';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=99';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -94,7 +94,10 @@ export function init(panelEl, kind) {
     const countTxt = rows.length ? `${rows.length} ideas` : '';
     if (countEl && countEl.textContent !== countTxt) countEl.textContent = countTxt;
     const stampTxt = _stampLine(p, book);
-    if (stampEl && stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
+    if (stampEl) {
+      if (stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
+      if (p._stamp_title) stampEl.title = p._stamp_title;
+    }
     if (kind === 'claude') {
       _paintBookTable(bookSection, bookRowsEl, bookCountEl, bookStampEl, book);
     }
@@ -262,22 +265,23 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
   // Bucket age so the stamp does not rewrite every second (less chrome flicker).
   const ageBucket = ageSec == null ? null
     : (ageSec < 5 ? '<5s' : ageSec < 15 ? '<15s' : `${Math.round(ageSec / 10) * 10}s`);
-  const stampTxt = [
-    live ? '● live' : '○ stale',
-    ageBucket != null ? ageBucket : null,
-    `recheck ~${Math.round(pollSec)}s`,
-    nMom ? `${nMom} Mom` : null,
-    nSt ? `${nSt} ST` : null,
-    owner,
-    mode || null,
-  ].filter(Boolean).join(' · ');
+  // Keep stamp short so the panel header stays one line; detail lives in title.
+  const stampTxt = live ? '● live' : '○ stale';
   if (stampEl) {
     if (stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
     stampEl.classList.toggle('feed-stamp--live', live);
     stampEl.classList.toggle('feed-stamp--stale', !live);
+    const detail = [
+      ageBucket != null ? `updated ${ageBucket}` : null,
+      `recheck ~${Math.round(pollSec)}s`,
+      nMom ? `${nMom} Mom` : null,
+      nSt ? `${nSt} ST` : null,
+      owner,
+      mode || null,
+    ].filter(Boolean).join(' · ');
     stampEl.title = live
-      ? `AI Watch wire updated ${ageSec}s ago · desk heat re-seeded ~2s · trade recheck ~${Math.round(pollSec)}s`
-      : `AI Watch wire is stale (${ageSec != null ? ageSec + 's' : '?'} ago) — book thread may be down`;
+      ? detail
+      : `Stale (${ageSec != null ? ageSec + 's' : '?'}) — book thread may be down · ${detail}`;
   }
 
   if (sectionEl) sectionEl.hidden = false;
@@ -875,41 +879,30 @@ function _markFromSource(source) {
 }
 
 function _stampLine(p, book) {
+  // Compact header stamp (one line). Full detail goes on title tooltip.
   const parts = [];
-  const t = _stamp(p.last_ok);
-  if (t) parts.push(t);
   if (p.next_run_label) parts.push(`next ${p.next_run_label}`);
-  // Open-count only — no "Grok paper" / owner·mode in the panel header stamp.
-  // Trader owner lives on the top status chip and per-row position chips.
-  if (book) {
-    const bookRows = _bookRows(book);
-    if (bookRows.length) {
-      const nOpen = bookRows.filter(r => r && r.phase === 'open').length;
-      parts.push(nOpen
-        ? `${bookRows.length} book (${nOpen} open)`
-        : `${bookRows.length} book`);
-    }
-  }
-  if (p.model) parts.push(String(p.model));
-  // Token spend: prefer day rollup, else last single call.
+  const t = _stamp(p.last_ok);
+  if (t && parts.length < 2) parts.push(t);
+  // Build rich tooltip for hover.
+  const tip = [];
+  if (t) tip.push(`updated ${t}`);
+  if (p.next_run_label) tip.push(`next ${p.next_run_label}`);
+  if (p.model) tip.push(String(p.model));
   const day = p.token_day;
   if (day && day.count > 0 && day.total_cost_usd != null) {
     const cost = Number(day.total_cost_usd);
-    const label = Number.isFinite(cost)
-      ? `$${cost.toFixed(cost >= 1 ? 2 : 3)} today (${day.count})`
-      : `${day.count} calls today`;
-    parts.push(label);
+    if (Number.isFinite(cost)) tip.push(`$${cost.toFixed(cost >= 1 ? 2 : 3)} today (${day.count})`);
   } else {
     const u = p.last_usage;
     if (u && u.total_cost_usd != null) {
       const cost = Number(u.total_cost_usd);
-      if (Number.isFinite(cost)) {
-        const phase = u.phase ? String(u.phase) : 'call';
-        parts.push(`last ${phase} $${cost.toFixed(cost >= 1 ? 2 : 3)}`);
-      }
+      if (Number.isFinite(cost)) tip.push(`last $${cost.toFixed(cost >= 1 ? 2 : 3)}`);
     }
   }
-  return parts.join(' · ');
+  // Stash tip on the payload so callers can set element.title if needed.
+  p._stamp_title = tip.join(' · ');
+  return parts.join(' · ') || (p.model ? String(p.model) : '');
 }
 
 function _ownerLabel(book) {

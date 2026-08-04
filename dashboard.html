@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=98" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=99" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -311,9 +311,8 @@
             <section data-panel="ai-watch" class="panel panel-ai-watch" aria-label="AI Watch trading book" data-ai-book-section>
                 <div class="panel-header panel-header--ai-watch">
                     <div class="panel-header-left">
-                        <span class="ai-watch-badge" title="Live paper trading book — not a research feed">BOOK</span>
-                        <span class="panel-title">AI Watch</span>
-                        <span class="panel-subtitle" title="Mom=flagged only (FIRST/NEW/BURST) · ST=score&gt;10 · no research">Mom flags · ST&gt;10</span>
+                        <span class="ai-watch-badge" title="Live paper trading book — Mom flags only (FIRST/NEW/BURST) · Trending score &gt;10 · no research">BOOK</span>
+                        <span class="panel-title" title="Mom flags only · ST score &gt;10 · no research">AI Watch</span>
                         <span data-ai-book-count class="ticker-count"></span>
                     </div>
                     <div class="panel-header-right">
@@ -734,7 +733,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=98"></script>
+        <script type="module" src="/static/js/app.js?v=99"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

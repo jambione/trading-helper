@@ -956,6 +956,8 @@ body.mobile .icon-btn {
   min-height: 44px;
   gap: 8px;
   background: var(--nav2);
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 .panel-title {
   font-family: var(--font-display);
@@ -964,9 +966,61 @@ body.mobile .icon-btn {
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text-bright);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.panel-header-left  { display: flex; align-items: center; gap: 10px; }
-.panel-header-right { display: flex; align-items: center; gap: 6px; }
+.panel-header-left  {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.panel-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+/* AI Research + AI Watch: force a single-line header row */
+.panel-claude > .panel-header,
+.panel-ai-watch > .panel-header {
+  height: 44px;
+  max-height: 44px;
+  padding: 0 12px;
+  gap: 6px;
+}
+.panel-claude .panel-header-left,
+.panel-ai-watch .panel-header-left {
+  flex: 0 0 auto;
+  max-width: 55%;
+}
+.panel-claude .panel-header-right,
+.panel-ai-watch .panel-header-right {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.panel-claude .feed-stamp,
+.panel-ai-watch .feed-stamp {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  text-align: right;
+}
+.panel-claude .ticker-count,
+.panel-ai-watch .ticker-count {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
 /* New symbol joined this panel's list — cyan, 5s, same family as .flag-badge--new.
    Restarted from JS when another symbol arrives while still glowing. */
