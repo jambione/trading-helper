@@ -64,8 +64,17 @@ sys.path.insert(0, str(Path(__file__).parent / "transcription"))
 from ticker_extract import is_valid_ticker  # noqa: E402
 
 ROOT          = Path(__file__).parent
-OCR_BINARY    = ROOT / "discord_ocr"
+# Optional Swift binary fallback (native Python capture is preferred — same process
+# that already holds Screen Recording on macOS 15+/26).
+_OCR_APP_BIN  = ROOT / "DiscordOCR.app" / "Contents" / "MacOS" / "discord_ocr"
+_OCR_FLAT     = ROOT / "discord_ocr"
+OCR_BINARY    = _OCR_APP_BIN if _OCR_APP_BIN.exists() else _OCR_FLAT
 OCR_SCRIPT    = ROOT / "discord_ocr.swift"
+
+try:
+    import discord_ocr_native as _native_ocr
+except Exception:  # pragma: no cover
+    _native_ocr = None  # type: ignore
 CONFIG_FILE   = ROOT / "config" / "bot_config.json"
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:8888")
 
@@ -706,20 +715,21 @@ def _scanner_card_signature(card: dict) -> str:
 # ── OCR + delivery ────────────────────────────────────────────────────────────
 
 def _ocr_command(cfg: dict) -> list[str]:
+    """Build the Swift-binary command (fallback only). Empty list = use native."""
     owner = str(cfg.get("discord_window_owner") or "Discord")
     title = str(cfg.get("discord_window_title") or "").strip()
+    if _native_ocr is not None and _native_ocr.available():
+        return []  # signal: native path
     if OCR_BINARY.exists():
-        # Warn when the source file is newer than the compiled binary.
         if OCR_SCRIPT.exists() and OCR_SCRIPT.stat().st_mtime > OCR_BINARY.stat().st_mtime:
             print("[discord] WARNING: discord_ocr.swift is newer than the compiled binary — "
                   "rebuild with:  bash scripts/build_ocr.sh", flush=True)
         cmd = [str(OCR_BINARY)]
     elif OCR_SCRIPT.exists():
-        # Fallback: run via the swift interpreter (slower startup).
         cmd = ["swift", str(OCR_SCRIPT)]
     else:
-        print("[discord] ERROR: discord_ocr not found. Build it:", flush=True)
-        print("  bash scripts/build_ocr.sh", flush=True)
+        print("[discord] ERROR: native OCR unavailable and discord_ocr not found.", flush=True)
+        print("  Install PyObjC Quartz, or:  bash scripts/build_ocr.sh", flush=True)
         raise SystemExit(1)
     cmd += ["--owner", owner]
     if title:
@@ -727,13 +737,46 @@ def _ocr_command(cfg: dict) -> list[str]:
     return cmd
 
 
-def _run_ocr(cmd: list[str]) -> tuple[list[str], bool]:
-    """Run the OCR binary once. Returns (lines, ok); ok=False means a process-level
-    failure (window not found, binary crashed, timeout) — distinct from a successful
-    capture that returned zero lines (quiet Discord channel)."""
+def _run_ocr_native(cfg: dict) -> tuple[list[str], bool]:
+    """In-process capture + Vision OCR (preferred — uses Python's Screen Recording)."""
+    assert _native_ocr is not None
+    owner = str(cfg.get("discord_window_owner") or "Discord")
+    title = str(cfg.get("discord_window_title") or "").strip()
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    except subprocess.TimeoutExpired:
+        lines = _native_ocr.capture_and_ocr(owner=owner, title=title, accurate=False)
+        return lines, True
+    except Exception as e:
+        print(f"[discord] OCR failed (native): {e}", flush=True)
+        return [], False
+
+
+def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool]:
+    """Swift binary fallback. Own process group so hung children can be killed."""
+    try:
+        out = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=18,
+            start_new_session=True,
+        )
+    except subprocess.TimeoutExpired as e:
+        if getattr(e, "pid", None):
+            try:
+                os.killpg(e.pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    os.kill(e.pid, 9)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+        try:
+            subprocess.run(
+                ["pkill", "-9", "-f", str(OCR_BINARY)],
+                capture_output=True,
+                timeout=2,
+            )
+        except Exception:
+            pass
         print("[discord] OCR timed out", flush=True)
         return [], False
     if out.returncode != 0:
@@ -747,6 +790,17 @@ def _run_ocr(cmd: list[str]) -> tuple[list[str], bool]:
         print(f"[discord] OCR failed (rc={out.returncode}): {detail}", flush=True)
         return [], False
     return [ln for ln in out.stdout.splitlines() if ln.strip()], True
+
+
+def _run_ocr(cmd: list[str], cfg: dict | None = None) -> tuple[list[str], bool]:
+    """Run one OCR pass. Prefers native Python capture; falls back to Swift binary.
+
+    Returns (lines, ok). ok=False = process-level failure (no window, permission,
+    crash) — distinct from a successful capture with zero text lines.
+    """
+    if not cmd:
+        return _run_ocr_native(cfg or _load_config())
+    return _run_ocr_binary(cmd)
 
 
 def _post_ingest(alerts: list[dict], sentiment: list) -> None:
@@ -798,7 +852,7 @@ def check() -> int:
     scriptable.  Run:  python discord_source.py --check"""
     cfg          = _load_config()
     cmd          = _ocr_command(cfg)
-    lines, ok    = _run_ocr(cmd)
+    lines, ok    = _run_ocr(cmd, cfg)
     if not ok:
         print("[discord] VERDICT: ✗ OCR process failed — see error above.")
         return 1
@@ -840,7 +894,11 @@ def main() -> None:
     cmd      = _ocr_command(cfg)
 
     print(f"[discord] OCR source started — polling every {poll_sec:g}s", flush=True)
-    print(f"[discord] command: {' '.join(cmd)}", flush=True)
+    if cmd:
+        print(f"[discord] backend: swift binary — {' '.join(cmd)}", flush=True)
+    else:
+        owner = str(cfg.get("discord_window_owner") or "Discord")
+        print(f"[discord] backend: native Python capture+Vision (owner={owner!r})", flush=True)
     print(f"[discord] posting alerts → {DASHBOARD_URL}/api/discord/ingest", flush=True)
 
     # sig → first-seen timestamp; entries expire after _SESSION_TTL seconds.
@@ -861,7 +919,7 @@ def main() -> None:
         for s in expired:
             del seen[s]
 
-        lines, ok = _run_ocr(cmd)
+        lines, ok = _run_ocr(cmd, cfg)
 
         if not ok:
             # Exponential backoff so we don't spam logs when Discord is closed.
