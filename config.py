@@ -199,10 +199,13 @@ DEFAULT_CONFIG = {
     "claude_prompt_file": "ai_prompt.txt",
     "claude_request_timeout":   600.0,
     "claude_live_search":        True,
-    "claude_search_tools":      "web",
+    # web_x = web_search + x_search on xAI API; Claude CLI uses WebSearch/WebFetch.
+    "claude_search_tools":      "web_x",
     "claude_max_turns":             8,
     "claude_max_output_tokens": 10000,
     "claude_use_prior_context":  True,
+    # RS leaders + Stocktwits heat + peer AI board (compact research inject).
+    "claude_use_desk_snapshot":  True,
     "claude_save_reports":       True,
     # Legacy aliases (mirrored in load_config from ai_* when missing)
     "claude_trader_enabled":     False,
@@ -230,7 +233,10 @@ DEFAULT_CONFIG = {
     "grok_model":              "grok-4.5",
     "grok_max_turns":               4,  # A/B: t4 beat t8 on quality/token impact
     "grok_live_search":         True,
+    # Same modes as claude_search_tools; used when grok_backend=api.
+    "grok_search_tools":       "web_x",
     "grok_use_prior_context":  False,
+    "grok_use_desk_snapshot":  True,
     "grok_research_times": ["08:25", "11:00", "13:00"],
     "grok_research_weekdays_only": True,
     "grok_research_catchup_min": 120,
@@ -376,6 +382,7 @@ SAFE_CONFIG_KEYS = [
     "claude_max_turns",
     "claude_max_output_tokens",
     "claude_use_prior_context",
+    "claude_use_desk_snapshot",
     "claude_save_reports",
     "claude_max_price",
     "claude_quote_poll",
@@ -397,7 +404,9 @@ SAFE_CONFIG_KEYS = [
     "grok_model",
     "grok_max_turns",
     "grok_live_search",
+    "grok_search_tools",
     "grok_use_prior_context",
+    "grok_use_desk_snapshot",
     "grok_research_times",
     "grok_research_weekdays_only",
     "grok_research_catchup_min",

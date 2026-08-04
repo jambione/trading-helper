@@ -90,7 +90,11 @@ Provider-only helpers stay named for the provider (`call_claude_cli`, `call_grok
 
 ### Claude-only (keep)
 
-`claude_backend`, `claude_cli_bin`, `claude_model`, `claude_effort`, `claude_max_turns`, `claude_search_tools`, `claude_live_search`, `claude_use_prior_context`, `claude_save_reports`, `claude_request_timeout`, `claude_prompt_file` (or point at `ai_prompt.txt`).
+`claude_backend`, `claude_cli_bin`, `claude_model`, `claude_effort`, `claude_max_turns`, `claude_search_tools` (`web` | `web_x` | `none`), `claude_live_search`, `claude_use_prior_context`, `claude_save_reports`, `claude_request_timeout`, `claude_prompt_file` (or point at `ai_prompt.txt`).
+
+Grok mirror: `grok_search_tools` (same modes; attaches `x_search` when `grok_backend=api`).
+
+Desk snapshot inject (RS leaders + Stocktwits heat + peer AI board): `claude_use_desk_snapshot` / `grok_use_desk_snapshot` (default true; shared override `ai_use_desk_snapshot`).
 
 ### Desk display (`momentum_config.json`)
 

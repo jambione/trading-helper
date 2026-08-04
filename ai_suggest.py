@@ -76,17 +76,21 @@ _SYSTEM = (
     "You are an elite quantitative equity analyst. "
     "Follow the user's full research process, but execute under a strict token budget: "
     "few targeted searches, compact notes, no essays. "
+    "Prefer live tool results over memory; re-validate prior-run names with fresh data. "
+    "Use X/x.com (x_search or web hits on x.com) for finalist sentiment when tools allow. "
     "HARD: the first character of the final answer must be '{' — the JSON object. "
     "No preamble or tool narration before that brace. No markdown fences. "
     "After JSON, brief process notes only. "
     "US equity tickers only in JSON. Skeptical and data-driven. "
-    "Never invent tool results or fill prices."
+    "Never invent tool results, posts, or fill prices."
 )
 
 # Default efficiency knobs (overridable via config / call_claude kwargs).
 DEFAULT_MAX_TURNS = 8          # caps server-side tool loop (search rounds)
 DEFAULT_MAX_OUTPUT_TOKENS = 10000  # includes reasoning on some models — leave headroom
-DEFAULT_SEARCH_TOOLS = "web"   # "web" | "web_x" | "none"
+# "web_x" attaches web_search + x_search on the xAI HTTP API path.
+# Claude CLI still uses WebSearch/WebFetch only (prompt asks for x.com via web).
+DEFAULT_SEARCH_TOOLS = "web_x"   # "web" | "web_x" | "none"
 # Backend:
 #   claude_cli — Claude Code CLI (claude -p), Anthropic/subscription auth
 #   cli / grok_cli — Grok Build CLI (grok.com login)
@@ -1776,13 +1780,253 @@ def _prior_context_snippet(max_chars: int = 1200) -> str:
         # fall back to a short tail
         tail = text[-max_chars:].strip()
         return f"\n\nPRIOR RUN (context only — re-validate with fresh data):\n{tail}\n"
-    lines = ["PRIOR RUN top ideas (re-validate; replace if thesis broken):"]
+    lines = [
+        "PRIOR RUN top ideas (context only — re-validate with FRESH web/X "
+        "search this run; drop if thesis broken or data stale):"
+    ]
     for r in rows[:7]:
         lines.append(
             f"- {r.get('symbol')} score={r.get('trending_score')} "
             f"{r.get('reason') or ''}"
         )
     return "\n\n" + "\n".join(lines) + "\n"
+
+
+# Desk-native snapshot files (hints for research — not a buy list).
+RS_RATINGS_FILE = ROOT / "rs_ratings.json"
+TRENDING_STOCKS_FILE = ROOT / "trending_stocks.json"
+DEFAULT_DESK_SNAPSHOT_RS_N = 12
+DEFAULT_DESK_SNAPSHOT_TREND_N = 12
+DEFAULT_DESK_SNAPSHOT_PEER_N = 7
+DEFAULT_DESK_SNAPSHOT_MAX_CHARS = 1800
+
+
+def _fmt_px(price: Any) -> str:
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return "?"
+    if p >= 1000:
+        return f"{p:.0f}"
+    if p >= 100:
+        return f"{p:.1f}"
+    return f"{p:.2f}"
+
+
+def _fmt_pct(val: Any) -> str:
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return "?"
+    # Accept either fraction (0.05) or percent (5.0).
+    if abs(v) <= 1.5:
+        v *= 100.0
+    return f"{v:+.1f}%"
+
+
+def _fmt_score(val: Any) -> str:
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return "?"
+    if abs(v - round(v)) < 1e-6:
+        return str(int(round(v)))
+    return f"{v:.1f}"
+
+
+def _under_price_cap(price: Any, max_price: float | None) -> bool:
+    if max_price is None or float(max_price) <= 0:
+        return True
+    try:
+        return float(price) < float(max_price)
+    except (TypeError, ValueError):
+        return False
+
+
+def _load_json_file(path: Path) -> Any:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _rs_leader_lines(
+    path: Path = RS_RATINGS_FILE,
+    *,
+    max_price: float | None = 100.0,
+    limit: int = DEFAULT_DESK_SNAPSHOT_RS_N,
+    min_rs: float = 80.0,
+) -> tuple[list[str], str]:
+    """Compact RS board lines + as_of label."""
+    data = _load_json_file(path)
+    if not isinstance(data, dict):
+        return [], ""
+    rows = data.get("rows") or []
+    if not isinstance(rows, list):
+        return [], ""
+    as_of = str(data.get("as_of") or data.get("updated") or "")
+    scored: list[tuple[float, str]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+        if not sym or not _TICKER_RE.match(sym):
+            continue
+        if not _under_price_cap(r.get("price"), max_price):
+            continue
+        try:
+            rs = float(r.get("rs_rating") if r.get("rs_rating") is not None
+                       else r.get("rs_percentile", 0) * 100.0)
+        except (TypeError, ValueError):
+            continue
+        if rs < float(min_rs):
+            continue
+        px = _fmt_px(r.get("price"))
+        r1 = _fmt_pct(r.get("ret_1m"))
+        r3 = _fmt_pct(r.get("ret_3m"))
+        scored.append((rs, f"{sym} rs={_fmt_score(rs)} px={px} 1m={r1} 3m={r3}"))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [line for _, line in scored[: max(1, int(limit))]], as_of
+
+
+def _trending_heat_lines(
+    path: Path = TRENDING_STOCKS_FILE,
+    *,
+    max_price: float | None = 100.0,
+    limit: int = DEFAULT_DESK_SNAPSHOT_TREND_N,
+) -> list[str]:
+    data = _load_json_file(path)
+    if not isinstance(data, dict):
+        return []
+    rows = data.get("rows") or []
+    if not isinstance(rows, list):
+        return []
+    out: list[str] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        if r.get("is_crypto") is True:
+            continue
+        if r.get("is_equity") is False:
+            continue
+        sym = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+        if not sym or not _TICKER_RE.match(sym):
+            continue
+        if not _under_price_cap(r.get("price"), max_price):
+            continue
+        score = r.get("trending_score", r.get("score"))
+        chg = _fmt_pct(r.get("pct_change"))
+        rvol = r.get("rvol")
+        rvol_s = _fmt_score(rvol) if rvol is not None else "?"
+        out.append(
+            f"{sym} score={_fmt_score(score)} chg={chg} rvol={rvol_s} "
+            f"px={_fmt_px(r.get('price'))}"
+        )
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def _peer_board_lines(
+    path: Path,
+    *,
+    max_price: float | None = 100.0,
+    limit: int = DEFAULT_DESK_SNAPSHOT_PEER_N,
+) -> list[str]:
+    data = _load_json_file(path)
+    if not isinstance(data, dict):
+        return []
+    rows = data.get("rows") or data.get("suggestions") or data.get("items") or []
+    if not isinstance(rows, list):
+        return []
+    out: list[str] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+        if not sym or not _TICKER_RE.match(sym):
+            continue
+        px = r.get("price")
+        if px is not None and not _under_price_cap(px, max_price):
+            continue
+        score = r.get("trending_score", r.get("score"))
+        reason = str(r.get("reason") or "").strip()[:40]
+        bit = f"{sym} score={_fmt_score(score)}"
+        if reason:
+            bit += f" {reason}"
+        out.append(bit)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def _peer_suggestions_path(backend: str | None) -> tuple[Path, str]:
+    """Other research wire for this backend + short label."""
+    src = source_from_backend(backend)
+    if src == SOURCE_XAI:
+        return CLAUDE_SUGGESTIONS_FILE, "Claude (A)"
+    return GROK_SUGGESTIONS_FILE, "Grok (X)"
+
+
+def build_desk_snapshot_snippet(
+    *,
+    max_price: float | None = 100.0,
+    backend: str | None = None,
+    rs_path: Path = RS_RATINGS_FILE,
+    trending_path: Path = TRENDING_STOCKS_FILE,
+    peer_path: Path | None = None,
+    rs_n: int = DEFAULT_DESK_SNAPSHOT_RS_N,
+    trend_n: int = DEFAULT_DESK_SNAPSHOT_TREND_N,
+    peer_n: int = DEFAULT_DESK_SNAPSHOT_PEER_N,
+    max_chars: int = DEFAULT_DESK_SNAPSHOT_MAX_CHARS,
+    min_rs: float = 80.0,
+) -> str:
+    """Compact desk-native context for research prompts.
+
+    Includes RS leaders, Stocktwits heat, and the peer AI board when files
+    exist. Empty string when nothing usable is available. Labeled as hints
+    only — the model must still re-validate with live search.
+    """
+    sections: list[str] = []
+    cap = float(max_price) if max_price is not None and float(max_price) > 0 else None
+    cap_note = f"under ${cap:g}" if cap is not None else "no price cap"
+
+    rs_lines, as_of = _rs_leader_lines(
+        rs_path, max_price=cap, limit=rs_n, min_rs=min_rs)
+    if rs_lines:
+        head = "RS leaders"
+        if as_of:
+            head += f" (as_of {as_of})"
+        sections.append(head + ":\n  " + " | ".join(rs_lines))
+
+    heat = _trending_heat_lines(trending_path, max_price=cap, limit=trend_n)
+    if heat:
+        sections.append("Trending heat (Stocktwits):\n  " + " | ".join(heat))
+
+    p_path, p_label = _peer_suggestions_path(backend)
+    if peer_path is not None:
+        p_path = peer_path
+    peer = _peer_board_lines(p_path, max_price=cap, limit=peer_n)
+    if peer:
+        sections.append(
+            f"Other AI source — {p_label} "
+            f"(agree / challenge / replace):\n  " + " | ".join(peer)
+        )
+
+    if not sections:
+        return ""
+
+    body = (
+        "\n\nDESK SNAPSHOT (hints only — not a buy list; re-validate with live "
+        f"web/X this run; prefer names {cap_note}):\n"
+        + "\n".join(sections)
+        + "\n"
+    )
+    if len(body) > max_chars:
+        body = body[: max_chars - 20].rstrip() + "\n…(truncated)\n"
+    return body
 
 
 def _symbols_from_suggestions_file(path: Path) -> set[str]:
@@ -2060,6 +2304,7 @@ def call_claude(
     max_output_tokens: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
     search_tools: str = DEFAULT_SEARCH_TOOLS,
     use_prior_context: bool = True,
+    use_desk_snapshot: bool = True,
     backend: str = DEFAULT_BACKEND,
     cli_bin: str | None = None,
     max_price: float | None = None,
@@ -2091,6 +2336,11 @@ def call_claude(
     user_content = prompt
     if use_prior_context:
         user_content = prompt.rstrip() + _prior_context_snippet()
+    if use_desk_snapshot:
+        user_content = user_content.rstrip() + build_desk_snapshot_snippet(
+            max_price=max_price,
+            backend=backend,
+        )
     if trading and backend in ("cli", "claude_cli"):
         # Rides this call's existing web-search budget rather than a
         # separate per-position invocation — see claude_positions.py.
@@ -2380,6 +2630,7 @@ class AiSuggestions:
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         search_tools: str = DEFAULT_SEARCH_TOOLS,
         use_prior_context: bool = True,
+        use_desk_snapshot: bool = True,
         backend: str = DEFAULT_BACKEND,
         cli_bin: str | None = None,
         effort: str = DEFAULT_CLAUDE_EFFORT,
@@ -2422,6 +2673,7 @@ class AiSuggestions:
         )
         self.search_tools = str(search_tools or DEFAULT_SEARCH_TOOLS)
         self.use_prior_context = bool(use_prior_context)
+        self.use_desk_snapshot = bool(use_desk_snapshot)
         self.backend = (backend or DEFAULT_BACKEND).strip().lower()
         self.cli_bin = cli_bin
         self.effort = (effort or DEFAULT_CLAUDE_EFFORT).strip().lower()
@@ -2595,6 +2847,7 @@ class AiSuggestions:
                     max_output_tokens=self.max_output_tokens,
                     search_tools=self.search_tools,
                     use_prior_context=self.use_prior_context,
+                    use_desk_snapshot=self.use_desk_snapshot,
                     backend=self.backend,
                     cli_bin=self.cli_bin,
                     max_price=self.max_price,

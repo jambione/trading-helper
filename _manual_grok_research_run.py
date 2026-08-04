@@ -77,7 +77,12 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         save_reports=bool(cfg.get("grok_save_reports", True)),
         trading=False,  # research-only — never place orders from this path
         max_turns=int(cfg.get("grok_max_turns", 4)),
+        search_tools=cfg.get("grok_search_tools",
+                             cfg.get("claude_search_tools", "web_x")),
         use_prior_context=bool(cfg.get("grok_use_prior_context", False)),
+        use_desk_snapshot=bool(cfg.get(
+            "grok_use_desk_snapshot",
+            cfg.get("ai_use_desk_snapshot", True))),
         backend=cfg.get("grok_backend", "cli"),
         cli_bin=cfg.get("grok_cli_bin", "grok"),
         research_times=[],  # force immediate (manual)

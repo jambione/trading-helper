@@ -340,6 +340,104 @@ def test_refresh_off_schedule_reports_the_next_run_and_does_not_poll():
     assert gs.next_run_label(_et(2026, 8, 9, 3)) == "Mon 04:00"
 
 
+def test_research_tools_web_x_and_off():
+    """API path attaches x_search only when search_tools requests it."""
+    web_only = cs._research_tools(True, "web")
+    assert web_only == [{"type": "web_search"}]
+
+    both = cs._research_tools(True, "web_x")
+    assert {"type": "web_search"} in both
+    assert {"type": "x_search"} in both
+    assert len(both) == 2
+
+    assert cs._research_tools(True, "both") == both
+    assert cs._research_tools(True, "none") == []
+    assert cs._research_tools(False, "web_x") == []
+    # Module default prefers web + X for up-to-date social context.
+    assert cs.DEFAULT_SEARCH_TOOLS == "web_x"
+    assert cs._research_tools(True, "") == both
+
+
+def test_prompt_requires_freshness_and_x_guidance():
+    text = cs.load_prompt("ai_prompt.txt")
+    low = text.lower()
+    assert "freshness" in low
+    assert "x.com" in low or "x_search" in low
+    assert "48 hour" in low or "48h" in low or "last 48" in low
+    assert "do not re-list" in low or "re-validat" in low
+
+
+def test_desk_snapshot_rs_trending_and_peer(tmp_path):
+    """Snapshot is compact, price-capped, and peer-board aware."""
+    rs_path = tmp_path / "rs.json"
+    tr_path = tmp_path / "tr.json"
+    peer_path = tmp_path / "peer.json"
+    rs_path.write_text(json.dumps({
+        "as_of": "2026-08-01",
+        "rows": [
+            {"ticker": "HPE", "rs_rating": 98, "price": 48.2,
+             "ret_1m": 0.03, "ret_3m": 0.7},
+            {"ticker": "AAPL", "rs_rating": 99, "price": 200.0,
+             "ret_1m": 0.01, "ret_3m": 0.1},  # over cap
+            {"ticker": "VTRS", "rs_rating": 94, "price": 17.5,
+             "ret_1m": -0.02, "ret_3m": 0.2},
+            {"ticker": "LOW", "rs_rating": 50, "price": 10.0,
+             "ret_1m": 0.0, "ret_3m": 0.0},  # below min_rs
+        ],
+    }), encoding="utf-8")
+    tr_path.write_text(json.dumps({
+        "rows": [
+            {"symbol": "SOFI", "trending_score": 8.2, "price": 16.0,
+             "pct_change": 0.02, "rvol": 1.5, "is_equity": True},
+            {"symbol": "BRK.A", "trending_score": 9.0, "price": 500000,
+             "pct_change": 0.0, "is_equity": True},  # over cap
+            {"symbol": "BTC", "trending_score": 9.0, "price": 1.0,
+             "is_crypto": True},
+        ],
+    }), encoding="utf-8")
+    peer_path.write_text(json.dumps({
+        "rows": [
+            {"symbol": "SMCI", "trending_score": 7.6, "reason": "AI servers"},
+            {"symbol": "HOOD", "score": 7.0, "reason": "crypto cycle"},
+        ],
+    }), encoding="utf-8")
+
+    snap = cs.build_desk_snapshot_snippet(
+        max_price=100.0,
+        backend="claude_cli",
+        rs_path=rs_path,
+        trending_path=tr_path,
+        peer_path=peer_path,
+    )
+    assert "DESK SNAPSHOT" in snap
+    assert "hints only" in snap
+    assert "HPE" in snap and "VTRS" in snap
+    assert "AAPL" not in snap  # price cap
+    assert "SOFI" in snap
+    assert "BRK.A" not in snap
+    assert "SMCI" in snap and "HOOD" in snap
+    assert "Grok (X)" in snap  # peer of Claude
+    assert len(snap) <= cs.DEFAULT_DESK_SNAPSHOT_MAX_CHARS + 5
+
+    # Grok backend should label Claude as peer.
+    snap_x = cs.build_desk_snapshot_snippet(
+        max_price=100.0,
+        backend="cli",
+        rs_path=rs_path,
+        trending_path=tr_path,
+        peer_path=peer_path,
+    )
+    assert "Claude (A)" in snap_x
+
+    empty = cs.build_desk_snapshot_snippet(
+        max_price=100.0,
+        rs_path=tmp_path / "missing_rs.json",
+        trending_path=tmp_path / "missing_tr.json",
+        peer_path=tmp_path / "missing_peer.json",
+    )
+    assert empty == ""
+
+
 def test_defaults_are_three_scheduled_runs_at_full_depth():
     """Cost is dominated by search fees, not thinking tokens, so effort buys
     cheap depth — spend is cut by running three times a day instead."""
@@ -444,10 +542,18 @@ def _run_entry_gate(monkeypatch, *, ready=True, market_open=True):
     # Legacy module names still imported in some paths
     monkeypatch.setitem(sys.modules, "claude_trading", trading)
     monkeypatch.setitem(sys.modules, "claude_positions", positions)
+    # Isolate from live bot_config (e.g. ai_require_agreement=true).
+    monkeypatch.setattr(cs, "_entry_runtime_cfg", lambda: {
+        "ai_require_agreement": False,
+        "ai_max_spread_pct": 1.0,
+        "ai_max_open_risk_pct": 6.0,
+        "ai_daily_loss_limit_r": 3.0,
+    })
     rows = [{"symbol": "NVDA", "trending_score": 9.0, "reason": "test"}]
     _place_qualifying_entries(
         rows, max_price=None, cli_bin=None, timeout=60.0,
         risk_pct=1.0, trade_style="Moderate position", min_reward_risk=3.0,
+        require_agreement=False,
     )
     return trading, positions
 

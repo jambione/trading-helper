@@ -412,8 +412,11 @@ def _build_suggestions(cfg: dict) -> AiSuggestions:
             _cfg(cfg, "ai_max_sells_per_poll", "claude_max_sells_per_poll", 5)),
         max_turns=int(cfg.get("claude_max_turns", 8)),
         max_output_tokens=int(cfg.get("claude_max_output_tokens", 10000)),
-        search_tools=cfg.get("claude_search_tools", "web"),
+        search_tools=cfg.get("claude_search_tools", "web_x"),
         use_prior_context=bool(cfg.get("claude_use_prior_context", True)),
+        use_desk_snapshot=bool(cfg.get(
+            "claude_use_desk_snapshot",
+            cfg.get("ai_use_desk_snapshot", True))),
         backend=cfg.get("claude_backend", "claude_cli"),
         cli_bin=cfg.get("claude_cli_bin", "claude"),
         effort=cfg.get("claude_effort", "xhigh"),
@@ -459,7 +462,12 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         max_sells_per_poll=int(
             _cfg(cfg, "ai_max_sells_per_poll", "claude_max_sells_per_poll", 5)),
         max_turns=int(cfg.get("grok_max_turns", 4)),
+        search_tools=cfg.get("grok_search_tools",
+                             cfg.get("claude_search_tools", "web_x")),
         use_prior_context=bool(cfg.get("grok_use_prior_context", False)),
+        use_desk_snapshot=bool(cfg.get(
+            "grok_use_desk_snapshot",
+            cfg.get("ai_use_desk_snapshot", True))),
         backend=cfg.get("grok_backend", "cli"),
         cli_bin=cfg.get("grok_cli_bin", "grok"),
         research_times=cfg.get("grok_research_times",
