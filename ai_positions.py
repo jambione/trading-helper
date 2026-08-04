@@ -597,6 +597,7 @@ def place_scaled_entry(
     *,
     risk_pct: float = DEFAULT_RISK_PCT,
     current_ask: float | None = None,
+    duel_source: str | None = None,
 ) -> dict[str, Any]:
     """Execute a qualifying BUY as two broker-side tranches (atomic).
 
@@ -692,6 +693,7 @@ def place_scaled_entry(
         }
 
     state = _load_state()
+    src = duel_source or decision.get("duel_source") or decision.get("source")
     state[ticker] = {
         "qty_a": qty_a,
         "qty_b": qty_b,
@@ -715,12 +717,25 @@ def place_scaled_entry(
         "entry_confirmed": False,
         "last_seen_price": None,
         "closing_reason": None,
+        "duel_source": src,
     }
     _save_state(state)
     log_event(
         "entry_ok", symbol=ticker, qty_a=qty_a, qty_b=qty_b,
         stop_price=stop_price, target_1=target_1, entry_price=sizing_entry,
+        duel_source=src,
     )
+    try:
+        import ai_duel as duel
+
+        duel.note_entry(
+            ticker,
+            source=str(src) if src else None,
+            entry_price=sizing_entry,
+            stop_price=stop_price,
+        )
+    except Exception:
+        pass
 
     return {
         "ok": True,

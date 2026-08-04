@@ -1147,15 +1147,21 @@ def sync_watch_from_source_panels(
         }
 
     # Keep in-flight paper entries even if they left the panels (still managing).
+    # Also keep daily A/X duel champions (research) — desk-only sync would drop them.
     for sym, rec in old.items():
         if not isinstance(rec, dict):
             continue
         key = str(sym or rec.get("symbol") or "").upper().strip()
         if not key or key in new_state:
             continue
-        if str(rec.get("status") or "").lower().strip() in ("submitted", "filled"):
-            new_state[key] = dict(rec)
-            new_state[key]["symbol"] = key
+        status = str(rec.get("status") or "").lower().strip()
+        is_duel = bool(rec.get("duel") or rec.get("duel_source"))
+        if status in ("submitted", "filled") or is_duel:
+            if status in ("invalidated", "expired") and not is_duel:
+                continue
+            kept = dict(rec)
+            kept["symbol"] = key
+            new_state[key] = kept
 
     save_watch(new_state)
     return new_state
@@ -2009,7 +2015,22 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             state[sym] = rec
             continue
 
+        # Duel day: only registered A/X champions (winner-only after trial).
+        try:
+            import ai_duel as duel
+            if duel.duel_enabled(cfg):
+                src_w = rec.get("duel_source") or rec.get("source")
+                if not duel.allow_entry_for_source(cfg, src_w, sym, now=t0):
+                    state[sym] = rec
+                    continue
+        except Exception:
+            pass
+
         place_decision = _decision_for_place(structure)
+        if isinstance(place_decision, dict):
+            place_decision = dict(place_decision)
+            place_decision["source"] = rec.get("duel_source") or rec.get("source")
+            place_decision["duel_source"] = place_decision.get("source")
         rec["status"] = "armed"
         try:
             result = cp.place_scaled_entry(
@@ -2018,6 +2039,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 equity,
                 risk_pct=risk_pct,
                 current_ask=ask_f,
+                duel_source=str(
+                    rec.get("duel_source") or rec.get("source") or ""
+                ) or None,
             )
         except Exception as e:  # noqa: BLE001
             try:

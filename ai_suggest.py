@@ -2314,6 +2314,23 @@ def _place_qualifying_entries(
             if gt.buys_left_this_poll() <= 0:
                 events.append(cp.log_event("entry_skip", reason="buy_cap"))
                 break
+            # Duel day: only A/X champions (and winner-only after trial score).
+            try:
+                import ai_duel as duel
+                if duel.duel_enabled(cfg):
+                    sym_d = str(r.get("symbol") or "").upper().strip()
+                    src_d = r.get("source") or (
+                        "xai" if be in ("cli", "grok_cli", "grok") else "anthropic"
+                    )
+                    if not duel.allow_entry_for_source(
+                        cfg, str(src_d), sym_d
+                    ):
+                        events.append(cp.log_event(
+                            "entry_skip", symbol=sym_d,
+                            reason="duel_not_allowed"))
+                        continue
+            except Exception:
+                pass
             sc = r.get("trending_score", r.get("score"))
             try:
                 sc_f = float(sc) if sc is not None else None
@@ -2418,8 +2435,17 @@ def _place_qualifying_entries(
                 ask2 = gt._latest_ask(sym) or ask
             except Exception:
                 ask2 = ask
+            src_place = r.get("source") or (
+                "xai" if be in ("cli", "grok_cli", "grok") else "anthropic"
+            )
+            if isinstance(decision, dict):
+                decision = dict(decision)
+                decision["source"] = src_place
+                decision["duel_source"] = src_place
             result = cp.place_scaled_entry(
-                sym, decision, equity, risk_pct=risk_pct, current_ask=ask2)
+                sym, decision, equity, risk_pct=risk_pct, current_ask=ask2,
+                duel_source=str(src_place),
+            )
             if result.get("ok"):
                 gt.record_external_buy(sym, {
                     "reason": str(r.get("reason") or "")[:120],
@@ -2570,6 +2596,22 @@ def call_claude(
                 import ai_entry_watch as ew
                 book_rows = tag_agreement_on_rows(list(rows))
                 ew.rebuild_watch_from_book(book_rows, cfg=cfg, now=_time.time())
+            # Daily A vs X duel: register this source's top suggestion as champion.
+            try:
+                import ai_duel as duel
+                src = (
+                    "xai" if str(backend or "").lower() in (
+                        "cli", "grok_cli", "grok")
+                    or str(model or "").lower().startswith("grok")
+                    else "anthropic"
+                )
+                for r in rows:
+                    if isinstance(r, dict) and not r.get("source"):
+                        r["source"] = src
+                duel.register_champion_from_rows(
+                    list(rows), source=src, cfg=cfg, now=_time.time())
+            except Exception:
+                pass
         except Exception:
             pass
         _place_qualifying_entries(

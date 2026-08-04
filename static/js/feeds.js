@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=102';
-import { api }       from './api.js?v=102';
-import { copyTicker } from './tickers.js?v=102';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=102';
+import { subscribe, get } from './store.js?v=103';
+import { api }       from './api.js?v=103';
+import { copyTicker } from './tickers.js?v=103';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=103';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -284,6 +284,27 @@ function _sortBookRows(rows) {
   });
 }
 
+/** Optional duel line in day-P&L strip title / equity area. */
+function _duelSummary(book) {
+  const d = book && book.duel;
+  if (!d || !d.enabled) return '';
+  const phase = d.phase || 'trial';
+  const w = d.winner === 'anthropic' ? 'A' : d.winner === 'xai' ? 'X' : null;
+  const sc = d.score || {};
+  const rA = sc.anthropic && sc.anthropic.realized_r;
+  const rX = sc.xai && sc.xai.realized_r;
+  if (phase === 'trial') return `duel trial · cut ${d.trial_end || '12:45'}`;
+  if (phase === 'scored' || phase === 'chance3') {
+    const rs = [
+      Number.isFinite(Number(rA)) ? `A ${Number(rA) >= 0 ? '+' : ''}${Number(rA).toFixed(2)}R` : 'A —',
+      Number.isFinite(Number(rX)) ? `X ${Number(rX) >= 0 ? '+' : ''}${Number(rX).toFixed(2)}R` : 'X —',
+    ].join(' · ');
+    return w ? `duel ${rs} · ${w} wins C3` : `duel ${rs} · tie`;
+  }
+  if (phase === 'done') return 'duel done';
+  return `duel ${phase}`;
+}
+
 /** Account day P&L strip at top of AI Watch (equity − last_equity). */
 function _paintBookDayPl(dayPlEl, book) {
   if (!dayPlEl) return;
@@ -330,11 +351,20 @@ function _paintBookDayPl(dayPlEl, book) {
     : '';
   if (eqEl && eqEl.textContent !== eqTxt) eqEl.textContent = eqTxt;
 
+  const duelLine = _duelSummary(book);
+  if (eqEl && duelLine && !eqTxt) {
+    if (eqEl.textContent !== duelLine) eqEl.textContent = duelLine;
+  } else if (eqEl && duelLine && eqTxt) {
+    const combined = `${eqTxt} · ${duelLine}`;
+    if (eqEl.textContent !== combined) eqEl.textContent = combined;
+  }
+
   const title = [
     'Alpaca account day P&L (equity − last close equity)',
     hasPl ? `today ${valTxt}` : null,
     hasPct ? pctTxt : null,
     eqTxt || null,
+    duelLine || null,
     book && book.mode ? String(book.mode) : null,
   ].filter(Boolean).join(' · ');
   if (dayPlEl.title !== title) dayPlEl.title = title;

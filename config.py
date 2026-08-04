@@ -178,6 +178,10 @@ DEFAULT_CONFIG = {
     "ai_eod_liquidate_time":    "15:50",    # ET — flatten before the 16:00 close
     # At RTH open: flatten everything once before any new paper entries.
     "ai_sod_liquidate_enabled":    True,
+    # Daily A vs X duel: dual trial → R score → winner-only chance 3.
+    "ai_duel_enabled":             True,
+    "ai_duel_trial_end_time":   "12:45",   # ET — liquidate both, score realized R
+    "ai_duel_chance3_time":     "13:00",   # ET — winner may trade alone
     "ai_require_agreement":       False,    # only trade AX-agreed names
     "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
@@ -380,6 +384,9 @@ SAFE_CONFIG_KEYS = [
     "ai_eod_liquidate_enabled",
     "ai_eod_liquidate_time",
     "ai_sod_liquidate_enabled",
+    "ai_duel_enabled",
+    "ai_duel_trial_end_time",
+    "ai_duel_chance3_time",
     "ai_require_agreement",
     "ai_max_spread_pct",
     "ai_min_dollar_volume",

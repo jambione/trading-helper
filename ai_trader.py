@@ -428,7 +428,17 @@ def _positions_payload(
             "day_pl_pct": day_pl_pct,
             "equity": (account or {}).get("equity") if isinstance(account, dict) else None,
         },
+        "duel": _duel_public(),
     }
+
+
+def _duel_public() -> dict:
+    try:
+        import ai_duel as duel
+        from config import load_config
+        return duel.public_snapshot(load_config())
+    except Exception:
+        return {}
 
 
 def _cfg(cfg: dict, new_key: str, old_key: str, default=None):
@@ -1078,6 +1088,15 @@ def main() -> None:
                         _publish_book(time.time())
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] sod_liquidate failed: {e}", flush=True)
+
+                # A vs X duel: force-flat both champions, score realized R, pick winner.
+                try:
+                    import ai_duel as duel
+                    if duel.trial_liquidate_due(live_cfg, t0):
+                        duel.run_trial_liquidate_and_score(live_cfg, t0)
+                        _publish_book(time.time())
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] duel trial liquidate failed: {e}", flush=True)
 
                 # Fast path: seed/prune/publish so UI never goes stale.
                 _publish_book(t0)
