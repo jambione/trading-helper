@@ -293,11 +293,20 @@ function _duelSummary(book) {
   const sc = d.score || {};
   const rA = sc.anthropic && sc.anthropic.realized_r;
   const rX = sc.xai && sc.xai.realized_r;
-  if (phase === 'trial') return `duel trial · cut ${d.trial_end || '14:15'}`;
+  const lead = d.close_before_research_min != null ? d.close_before_research_min : 10;
+  const tot = d.totals || {};
+  const tA = tot.anthropic;
+  const tX = tot.xai;
+  if (phase === 'trial') {
+    const cuts = Array.isArray(d.window_cuts) ? d.window_cuts.join(',') : (d.trial_end || '');
+    return `duel · flat ${lead}m pre-research · cuts ${cuts}`;
+  }
   if (phase === 'scored' || phase === 'chance3') {
     const rs = [
-      Number.isFinite(Number(rA)) ? `A ${Number(rA) >= 0 ? '+' : ''}${Number(rA).toFixed(2)}R` : 'A —',
-      Number.isFinite(Number(rX)) ? `X ${Number(rX) >= 0 ? '+' : ''}${Number(rX).toFixed(2)}R` : 'X —',
+      Number.isFinite(Number(tA)) ? `A Σ${Number(tA) >= 0 ? '+' : ''}${Number(tA).toFixed(2)}R` :
+        (Number.isFinite(Number(rA)) ? `A ${Number(rA) >= 0 ? '+' : ''}${Number(rA).toFixed(2)}R` : 'A —'),
+      Number.isFinite(Number(tX)) ? `X Σ${Number(tX) >= 0 ? '+' : ''}${Number(tX).toFixed(2)}R` :
+        (Number.isFinite(Number(rX)) ? `X ${Number(rX) >= 0 ? '+' : ''}${Number(rX).toFixed(2)}R` : 'X —'),
     ].join(' · ');
     return w ? `duel ${rs} · ${w} wins C3` : `duel ${rs} · tie`;
   }

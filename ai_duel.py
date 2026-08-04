@@ -64,8 +64,11 @@ def _empty_state(day: str) -> dict[str, Any]:
         "phase": "trial",  # trial | scored | chance3 | done
         "champions": {},  # source -> record
         "winner": None,
-        "trial_liquidated": False,
-        "score": {},
+        "trial_liquidated": False,  # True after final dual window cut
+        "score": {},  # last window score
+        "windows_scored": [],  # cut keys e.g. "11:20"
+        "window_history": [],  # per-window score cards
+        "totals": {SOURCE_A: 0.0, SOURCE_X: 0.0},  # sum realized R
         "updated": time.time(),
     }
 
@@ -98,17 +101,83 @@ def duel_enabled(cfg: dict | None) -> bool:
     return bool(cfg.get("ai_duel_enabled", True))
 
 
-def trial_end_hm(cfg: dict | None) -> tuple[int, int]:
+def close_before_research_min(cfg: dict | None) -> int:
+    """Minutes before the next research slot when the duel window force-flats."""
     cfg = cfg if isinstance(cfg, dict) else {}
-    return _parse_hhmm(str(cfg.get("ai_duel_trial_end_time") or "14:15"), (14, 15))
+    try:
+        return max(1, int(cfg.get("ai_duel_close_before_research_min", 10) or 10))
+    except (TypeError, ValueError):
+        return 10
+
+
+def research_times_hm(cfg: dict | None) -> list[tuple[int, int]]:
+    """Scheduled research slots (ET) — shared Claude/Grok list."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    raw = (
+        cfg.get("claude_research_times")
+        or cfg.get("grok_research_times")
+        or cfg.get("ai_research_times")
+        or ["08:30", "11:30", "14:30"]
+    )
+    try:
+        from ai_suggest import parse_research_times
+        times = parse_research_times(raw)
+        if times:
+            return times
+    except Exception:
+        pass
+    return [(8, 30), (11, 30), (14, 30)]
 
 
 def chance3_hm(cfg: dict | None) -> tuple[int, int]:
+    """Last research slot = winner-only chance 3 (default 14:30)."""
     cfg = cfg if isinstance(cfg, dict) else {}
+    times = research_times_hm(cfg)
+    if times:
+        return times[-1]
     return _parse_hhmm(str(cfg.get("ai_duel_chance3_time") or "14:30"), (14, 30))
 
 
+def trial_end_hm(cfg: dict | None) -> tuple[int, int]:
+    """Final dual-window cut = N minutes before last research (C3)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    # Explicit override still works for ops.
+    if cfg.get("ai_duel_trial_end_time"):
+        return _parse_hhmm(str(cfg.get("ai_duel_trial_end_time")), (14, 20))
+    ch, cm = chance3_hm(cfg)
+    total = ch * 60 + cm - close_before_research_min(cfg)
+    if total < 0:
+        total = 0
+    return divmod(total, 60)
+
+
+def window_cuts(cfg: dict | None) -> list[tuple[str, tuple[int, int], bool]]:
+    """Competition close times: (cut_key, (h,m), is_final_dual).
+
+    For research [08:30, 11:30, 14:30] and lead 10m:
+      • 11:20 — end window after 08:30 suggestion (mid dual)
+      • 14:20 — end window after 11:30 suggestion (final dual → pick C3 winner)
+    """
+    times = research_times_hm(cfg)
+    lead = close_before_research_min(cfg)
+    if len(times) < 2:
+        th, tm = trial_end_hm(cfg)
+        return [(f"{th:02d}:{tm:02d}", (th, tm), True)]
+    cuts: list[tuple[str, tuple[int, int], bool]] = []
+    for i in range(1, len(times)):
+        hh, mm = times[i]
+        total = hh * 60 + mm - lead
+        if total < 0:
+            total = 0
+        ch, cm = divmod(int(total), 60)
+        key = f"{ch:02d}:{cm:02d}"
+        is_final = i == len(times) - 1
+        cuts.append((key, (ch, cm), is_final))
+    return cuts
+
+
 def past_trial_end(cfg: dict | None, now: float | None = None) -> bool:
+    """True once the final dual window cut time has been reached."""
     h, m = _et_hm(now)
     th, tm = trial_end_hm(cfg)
     return (h, m) >= (th, tm)
@@ -118,6 +187,26 @@ def past_chance3_start(cfg: dict | None, now: float | None = None) -> bool:
     h, m = _et_hm(now)
     th, tm = chance3_hm(cfg)
     return (h, m) >= (th, tm)
+
+
+def pending_window_cut(
+    cfg: dict | None,
+    now: float | None = None,
+) -> tuple[str, tuple[int, int], bool] | None:
+    """Next unscored window cut that is at/after its clock time, else None."""
+    t0 = float(now if now is not None else time.time())
+    state = load_state(t0)
+    if str(state.get("phase") or "trial") != "trial":
+        return None
+    scored = {str(x) for x in (state.get("windows_scored") or [])}
+    h, m = _et_hm(t0)
+    now_mins = h * 60 + m
+    for key, (ch, cm), is_final in window_cuts(cfg):
+        if key in scored:
+            continue
+        if now_mins >= ch * 60 + cm:
+            return key, (ch, cm), is_final
+    return None
 
 
 def _ranked_rows(rows: list[dict]) -> list[dict]:
@@ -258,11 +347,12 @@ def register_champion_from_rows(
     elif phase == "done":
         return None
     else:
-        # Trial: do not overwrite a champion that already traded / closed.
+        # Trial: keep open/submitted legs; allow a NEW champion after a window
+        # force-flat (status closed) so the next research→research leg can run.
         prev = (state.get("champions") or {}).get(src) or {}
-        if prev.get("status") in ("open", "closed", "submitted"):
+        if prev.get("status") in ("open", "submitted"):
             return None
-        ch = int(chance or 1)
+        ch = int(chance or max(1, len(state.get("windows_scored") or []) + 1))
 
     champs = dict(state.get("champions") or {})
     taken = _symbols_claimed_by_others(champs, src)
@@ -527,8 +617,8 @@ def allow_entry_for_source(
         return False
 
     if phase == "trial":
-        if past_trial_end(cfg, t0):
-            return False  # waiting for liquidate/score
+        if past_trial_end(cfg, t0) or pending_window_cut(cfg, t0):
+            return False  # in cut window / awaiting liquidate
         if not src:
             # Unknown source: only allow if symbol is a registered champion.
             return bool(sym and sym in champion_symbols(state))
@@ -589,42 +679,30 @@ def _compute_r(entry: float | None, stop: float | None, exit_px: float | None) -
     return (x - e) / risk
 
 
-def run_trial_liquidate_and_score(
-    cfg: dict | None,
-    now: float | None = None,
-) -> dict[str, Any]:
-    """Force-flat both duel champions, score realized R, pick winner for chance 3."""
-    if not duel_enabled(cfg):
-        return {"ok": False, "reason": "disabled"}
-    t0 = float(now if now is not None else time.time())
-    state = load_state(t0)
-    if state.get("trial_liquidated") or str(state.get("phase")) not in ("trial",):
-        if state.get("trial_liquidated"):
-            return {"ok": True, "reason": "already_done", "winner": state.get("winner")}
-        return {"ok": False, "reason": "bad_phase", "phase": state.get("phase")}
-    if not past_trial_end(cfg, t0):
-        return {"ok": False, "reason": "before_trial_end"}
-
+def _score_current_champions(
+    state: dict[str, Any],
+    *,
+    now: float,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, float], dict[str, bool]]:
+    """Liquidate open duel legs and return (champs, score, r_by_src, elig_by_src)."""
     import alpaca_trader
 
-    print("[ai] DUEL trial end — liquidate A/X champions and score R", flush=True)
     detail = {}
     try:
         detail = alpaca_trader.get_positions_detail() or {}
     except Exception:
         detail = {}
-
-    # Managed state for stops/entries
     managed = {}
     try:
         import ai_positions as cp
-
         managed = cp._load_state() if hasattr(cp, "_load_state") else {}
     except Exception:
         managed = {}
 
     champs = dict(state.get("champions") or {})
     score: dict[str, Any] = {}
+    r_by: dict[str, float] = {SOURCE_A: 0.0, SOURCE_X: 0.0}
+    elig_by: dict[str, bool] = {SOURCE_A: False, SOURCE_X: False}
 
     for src in (SOURCE_A, SOURCE_X):
         rec = dict(champs.get(src) or {})
@@ -636,13 +714,13 @@ def run_trial_liquidate_and_score(
             }
             continue
 
-        # Prefer R frozen at early mechanical exit.
         if (
             rec.get("status") == "closed"
             and rec.get("realized_r") is not None
             and not (detail.get(sym) if isinstance(detail, dict) else None)
         ):
             r = float(rec.get("realized_r") or 0.0)
+            filled = bool(rec.get("filled"))
             score[src] = {
                 "symbol": sym,
                 "realized_r": r,
@@ -650,10 +728,12 @@ def run_trial_liquidate_and_score(
                 "entry_price": rec.get("entry_price"),
                 "stop_price": rec.get("stop_price"),
                 "exit_price": rec.get("exit_price"),
-                "eligible": bool(rec.get("filled")),
+                "eligible": filled,
                 "note": "early_close",
             }
             champs[src] = rec
+            r_by[src] = r if filled else 0.0
+            elig_by[src] = filled
             continue
 
         live = detail.get(sym) if isinstance(detail, dict) else None
@@ -706,7 +786,7 @@ def run_trial_liquidate_and_score(
             "exit_price": exit_px,
             "realized_r": r,
             "realized_pl": pl,
-            "closed_ts": t0,
+            "closed_ts": now,
             "close_ok": closed_ok,
         })
         champs[src] = rec
@@ -719,73 +799,171 @@ def run_trial_liquidate_and_score(
             "exit_price": exit_px,
             "eligible": filled,
         }
+        r_by[src] = r if filled else 0.0
+        elig_by[src] = filled
 
-    # Winner = higher realized R among sides that actually filled.
-    # No-fill is ineligible (does not beat a stop-out via fake "0 R").
-    # Strict ties / no eligible side → no winner (skip chance 3).
-    elig_a = bool((score.get(SOURCE_A) or {}).get("eligible"))
-    elig_x = bool((score.get(SOURCE_X) or {}).get("eligible"))
-    r_a = float((score.get(SOURCE_A) or {}).get("realized_r") or 0.0)
-    r_x = float((score.get(SOURCE_X) or {}).get("realized_r") or 0.0)
-    winner = None
-    if elig_a and elig_x:
-        if r_a > r_x:
-            winner = SOURCE_A
-        elif r_x > r_a:
-            winner = SOURCE_X
-    elif elig_a and not elig_x:
-        winner = SOURCE_A
-    elif elig_x and not elig_a:
-        winner = SOURCE_X
+    return champs, score, r_by, elig_by
+
+
+def run_window_liquidate_and_score(
+    cfg: dict | None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Force-flat duel legs at a research-boundary cut; accumulate R; maybe pick C3 winner.
+
+    Window rule: trade after suggestion, close ~N minutes before the *next*
+    research slot (default 10). Mid cuts keep dual trial open; final cut
+    (before last research) selects the chance-3 winner by **sum of window R**.
+    """
+    if not duel_enabled(cfg):
+        return {"ok": False, "reason": "disabled"}
+    t0 = float(now if now is not None else time.time())
+    state = load_state(t0)
+    if str(state.get("phase") or "trial") != "trial":
+        if state.get("trial_liquidated"):
+            return {"ok": True, "reason": "already_done", "winner": state.get("winner")}
+        return {"ok": False, "reason": "bad_phase", "phase": state.get("phase")}
+
+    pending = pending_window_cut(cfg, t0)
+    if not pending:
+        return {"ok": False, "reason": "no_pending_cut"}
+    cut_key, (ch, cm), is_final = pending
+
+    print(
+        f"[ai] DUEL window cut {cut_key} — liquidate A/X "
+        f"({'FINAL → pick C3 winner' if is_final else 'mid'})",
+        flush=True,
+    )
+    champs, score, r_by, elig_by = _score_current_champions(state, now=t0)
+
+    totals = dict(state.get("totals") or {})
+    for src in (SOURCE_A, SOURCE_X):
+        try:
+            totals[src] = float(totals.get(src) or 0.0) + float(r_by.get(src) or 0.0)
+        except (TypeError, ValueError):
+            totals[src] = float(r_by.get(src) or 0.0)
+
+    history = list(state.get("window_history") or [])
+    history.append({
+        "cut": cut_key,
+        "ts": t0,
+        "score": score,
+        "final": is_final,
+    })
+    scored_keys = list(state.get("windows_scored") or [])
+    if cut_key not in scored_keys:
+        scored_keys.append(cut_key)
 
     state["champions"] = champs
     state["score"] = score
-    state["winner"] = winner
-    state["trial_liquidated"] = True
-    state["phase"] = "scored" if winner else "done"
-    state["scored_ts"] = t0
+    state["totals"] = totals
+    state["window_history"] = history
+    state["windows_scored"] = scored_keys
+    state["last_cut"] = cut_key
+
+    winner = None
+    if is_final:
+        # Overall winner = higher cumulative R among sides that filled at least once.
+        filled_any = {
+            SOURCE_A: any(
+                bool((w.get("score") or {}).get(SOURCE_A, {}).get("eligible"))
+                for w in history if isinstance(w, dict)
+            ),
+            SOURCE_X: any(
+                bool((w.get("score") or {}).get(SOURCE_X, {}).get("eligible"))
+                for w in history if isinstance(w, dict)
+            ),
+        }
+        # Prefer explicit elig this window OR any prior
+        elig_a = bool(elig_by.get(SOURCE_A) or filled_any[SOURCE_A])
+        elig_x = bool(elig_by.get(SOURCE_X) or filled_any[SOURCE_X])
+        # Recompute filled_any more carefully from history
+        elig_a = False
+        elig_x = False
+        for w in history:
+            sc = (w or {}).get("score") or {}
+            if (sc.get(SOURCE_A) or {}).get("eligible"):
+                elig_a = True
+            if (sc.get(SOURCE_X) or {}).get("eligible"):
+                elig_x = True
+        ta = float(totals.get(SOURCE_A) or 0.0)
+        tx = float(totals.get(SOURCE_X) or 0.0)
+        if elig_a and elig_x:
+            if ta > tx:
+                winner = SOURCE_A
+            elif tx > ta:
+                winner = SOURCE_X
+        elif elig_a and not elig_x:
+            winner = SOURCE_A
+        elif elig_x and not elig_a:
+            winner = SOURCE_X
+        state["winner"] = winner
+        state["trial_liquidated"] = True
+        state["phase"] = "scored" if winner else "done"
+        state["scored_ts"] = t0
+    else:
+        # Mid window: keep dual trial; champions closed so next research can re-seed.
+        state["phase"] = "trial"
+        state["trial_liquidated"] = False
+
     save_state(state)
 
+    r_a = float(r_by.get(SOURCE_A) or 0.0)
+    r_x = float(r_by.get(SOURCE_X) or 0.0)
     try:
         import ai_positions as cp
-
         cp.log_event(
-            "duel_trial_scored",
+            "duel_window_scored",
+            cut=cut_key,
+            final=is_final,
             winner=winner,
             r_anthropic=r_a,
             r_xai=r_x,
+            totals=totals,
             score=score,
         )
     except Exception:
         pass
 
     print(
-        f"[ai] DUEL score A_R={r_a:+.3f} X_R={r_x:+.3f} winner={winner or 'tie/none'}",
+        f"[ai] DUEL window {cut_key} A_R={r_a:+.3f} X_R={r_x:+.3f} "
+        f"totals A={float(totals.get(SOURCE_A) or 0):+.3f} "
+        f"X={float(totals.get(SOURCE_X) or 0):+.3f} "
+        f"winner={winner or ('(mid)' if not is_final else 'tie/none')}",
         flush=True,
     )
     return {
         "ok": True,
+        "cut": cut_key,
+        "final": is_final,
         "winner": winner,
         "score": score,
+        "totals": totals,
         "r_anthropic": r_a,
         "r_xai": r_x,
     }
 
 
+def run_trial_liquidate_and_score(
+    cfg: dict | None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Back-compat alias for the research-boundary window cut."""
+    return run_window_liquidate_and_score(cfg, now=now)
+
+
 def trial_liquidate_due(cfg: dict | None, now: float | None = None) -> bool:
+    """True when a research-boundary competition cut is pending."""
     if not duel_enabled(cfg):
         return False
-    t0 = float(now if now is not None else time.time())
-    if not past_trial_end(cfg, t0):
-        return False
-    state = load_state(t0)
-    return not bool(state.get("trial_liquidated")) and str(state.get("phase") or "") == "trial"
+    return pending_window_cut(cfg, now) is not None
 
 
 def public_snapshot(cfg: dict | None = None, now: float | None = None) -> dict[str, Any]:
     """Small dict for dashboard wire / debugging."""
     t0 = float(now if now is not None else time.time())
     st = load_state(t0)
+    cuts = [k for k, _, _ in window_cuts(cfg)]
     return {
         "enabled": duel_enabled(cfg),
         "day": st.get("day"),
@@ -793,7 +971,15 @@ def public_snapshot(cfg: dict | None = None, now: float | None = None) -> dict[s
         "winner": st.get("winner"),
         "trial_liquidated": st.get("trial_liquidated"),
         "score": st.get("score") or {},
+        "totals": st.get("totals") or {},
+        "windows_scored": st.get("windows_scored") or [],
+        "window_cuts": cuts,
+        "close_before_research_min": close_before_research_min(cfg),
         "champions": st.get("champions") or {},
         "trial_end": "%02d:%02d" % trial_end_hm(cfg),
         "chance3_start": "%02d:%02d" % chance3_hm(cfg),
+        "horizon": (
+            f"trade after suggestion; force-flat "
+            f"{close_before_research_min(cfg)}m before next research"
+        ),
     }

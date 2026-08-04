@@ -180,8 +180,11 @@ DEFAULT_CONFIG = {
     "ai_sod_liquidate_enabled":    True,
     # Daily A vs X duel: dual trial → R score → winner-only chance 3.
     "ai_duel_enabled":             True,
-    "ai_duel_trial_end_time":   "14:15",   # ET — liquidate both, score R before C3 research
-    "ai_duel_chance3_time":     "14:30",   # ET — winner-only third research / trade
+    # Force-flat dual legs this many minutes before the next research slot.
+    "ai_duel_close_before_research_min": 10,
+    # Optional override for final dual cut; empty → derive from research times − lead.
+    "ai_duel_trial_end_time":       "",
+    "ai_duel_chance3_time":     "14:30",   # usually = last research slot
     "ai_require_agreement":       False,    # only trade AX-agreed names
     "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
@@ -385,6 +388,7 @@ SAFE_CONFIG_KEYS = [
     "ai_eod_liquidate_time",
     "ai_sod_liquidate_enabled",
     "ai_duel_enabled",
+    "ai_duel_close_before_research_min",
     "ai_duel_trial_end_time",
     "ai_duel_chance3_time",
     "ai_require_agreement",
