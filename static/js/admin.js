@@ -7,7 +7,7 @@
  *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=96';
+import { api } from './api.js?v=97';
 
 let _backdrop = null;
 let _activeTab = 'feedback';

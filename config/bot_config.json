@@ -271,5 +271,8 @@
   "ai_watch_seed_momentum": true,
   "ai_watch_seed_momentum_n": 12,
   "ai_watch_seed_trending": true,
-  "ai_watch_seed_trending_n": 8
+  "ai_watch_seed_trending_n": 20,
+  "ai_watch_include_research": false,
+  "ai_watch_trending_min_score": 10.0,
+  "ai_watch_momentum_require_flag": true
 }

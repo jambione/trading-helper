@@ -96,18 +96,14 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     monkeypatch.setattr(
         ew, "desk_candidate_rows",
-        lambda cfg=None: [],
-    )
-    monkeypatch.setattr(
-        ew, "research_candidate_rows",
-        lambda: [{"symbol": "SOFI", "source": "xai", "score": 7.8, "reason": "peg",
-                  "agreement": True}],
+        lambda cfg=None: [{"symbol": "SOFI", "source": "trending", "score": 12.0,
+                           "reason": "heat", "agreement": True}],
     )
     cfg = {
         "ai_watch_require_agreement": True,
         "ai_watch_single_source": False,
-        "ai_watch_seed_momentum": False,
-        "ai_watch_seed_trending": False,
+        "ai_watch_seed_momentum": True,
+        "ai_watch_seed_trending": True,
     }
     state = ew.rebuild_watch_from_book([], cfg=cfg, now=100.0)
     assert "SOFI" in state and state["SOFI"]["status"] == "watching"
@@ -145,61 +141,58 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
              "reason": "heat"},
         ],
     )
-    monkeypatch.setattr(
-        ew, "research_candidate_rows",
-        lambda: [
-            {"symbol": "RESEARCH", "source": "xai", "agreement": True, "score": 9,
-             "reason": "thesis"},
-        ],
-    )
     state = ew.sync_watch_from_source_panels(
         {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True},
         now=100.0,
     )
     assert "GONE" not in state and "OLD_AI" not in state
+    assert "RESEARCH" not in state  # research never on book
     assert state["KEEP"]["status"] == "watching"
     assert state["KEEP"]["structure"]["entry_low"] == 1.0  # structure preserved
     assert state["STAY_TR"]["source"] == "trending"
-    assert state["RESEARCH"]["source"] == "xai"
     assert state["FILLED"]["status"] == "filled"  # in-flight kept
     book = ew.book_table_rows(state=state)
     syms = {r["symbol"] for r in book}
-    assert syms == {"KEEP", "STAY_TR", "RESEARCH", "FILLED"}
+    assert syms == {"KEEP", "STAY_TR", "FILLED"}
 
 
-def test_desk_candidates_include_watchlist_and_trending(tmp_path, monkeypatch):
-    """Momentum watchlist + trending heat both produce tradeable seed rows."""
+def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
+    """Trending needs score>10; momentum needs FIRST/NEW/BURST; no research."""
     import ai_entry_watch as ew
 
-    wl = tmp_path / "transcription"
-    wl.mkdir()
-    (wl / "wb_watchlist.json").write_text(
-        json.dumps([{"ticker": "ACHR", "added": "2026-08-04T10:00:00"}]),
-        encoding="utf-8",
-    )
     (tmp_path / "trending_stocks.json").write_text(json.dumps({
         "rows": [
-            {"symbol": "SOFI", "trending_score": 8.0, "price": 18.0, "is_equity": True},
-            {"symbol": "BTC", "trending_score": 9.0, "price": 1.0, "is_crypto": True},
+            {"symbol": "HOT", "trending_score": 12.5, "price": 18.0, "is_equity": True},
+            {"symbol": "LOW", "trending_score": 8.0, "price": 10.0, "is_equity": True},
+            {"symbol": "BTC", "trending_score": 99.0, "price": 1.0, "is_crypto": True},
         ],
     }), encoding="utf-8")
-    (tmp_path / "signal_state.json").write_text(json.dumps({
-        "tickers": {
-            "GEVO": {"price": 2.0, "is_hot": True, "proximity_pct": 40},
-        },
-    }), encoding="utf-8")
     monkeypatch.setattr(ew, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        ew, "_momentum_flagged_from_dashboard",
+        lambda max_price=None: [
+            (10.0, {
+                "symbol": "FLAG",
+                "score": 10.0,
+                "trending_score": 10.0,
+                "reason": "momentum FIRST",
+                "agreement": True,
+                "source": "momentum",
+            }),
+        ],
+    )
     rows = ew.desk_candidate_rows({
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": True,
         "ai_watch_seed_momentum_n": 12,
-        "ai_watch_seed_trending_n": 8,
+        "ai_watch_seed_trending_n": 20,
+        "ai_watch_trending_min_score": 10.0,
         "ai_max_price": 100.0,
     })
     by = {r["symbol"]: r for r in rows}
-    assert by["GEVO"]["source"] == "momentum"
-    assert by["ACHR"]["source"] == "momentum"
-    assert by["SOFI"]["source"] == "trending"
+    assert by["HOT"]["source"] == "trending"
+    assert by["FLAG"]["source"] == "momentum"
+    assert "LOW" not in by  # score 8 <= 10
     assert "BTC" not in by
 
 
@@ -292,7 +285,7 @@ def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
 
 
 def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
-    """Desk momentum + research names both land on the mirrored book."""
+    """Flagged momentum lands on the book; research does not."""
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
@@ -300,22 +293,11 @@ def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
         ew, "desk_candidate_rows",
         lambda cfg=None: [{
             "symbol": "ACHR",
-            "score": 7.2,
-            "trending_score": 7.2,
-            "reason": "momentum HOT",
+            "score": 9.5,
+            "trending_score": 9.5,
+            "reason": "momentum FIRST",
             "agreement": True,
             "source": "momentum",
-        }],
-    )
-    monkeypatch.setattr(
-        ew, "research_candidate_rows",
-        lambda: [{
-            "symbol": "SOFI",
-            "score": 8.0,
-            "trending_score": 8.0,
-            "reason": "ai",
-            "agreement": True,
-            "source": "xai",
         }],
     )
     cfg = {
@@ -324,7 +306,7 @@ def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
         "ai_watch_seed_trending": False,
     }
     state = ew.rebuild_watch_from_book([], cfg=cfg, now=200.0)
-    assert "SOFI" in state
+    assert "SOFI" not in state  # research excluded
     assert "ACHR" in state
     assert state["ACHR"]["source"] == "momentum"
     assert state["ACHR"]["status"] == "watching"

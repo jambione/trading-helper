@@ -643,40 +643,76 @@ def _merge_source(prev_src: str, new_src: str) -> str:
     return new_src or prev_src
 
 
-def _momentum_scored_from_signal(max_price: Any) -> list[tuple[float, dict]]:
-    """Engine proximity map → scored momentum candidate rows."""
-    path = ROOT / "signal_state.json"
-    if not path.exists():
-        return []
+def _momentum_has_flag(row: dict) -> bool:
+    """True when Momentum Stocks would show FIRST / NEW / BURST.
+
+    Mirrors ``static/js/tickers.js`` ``_flagsHtml``:
+      FIRST  — find_it_first
+      NEW    — mention_window == 1 and not mention_burst
+      BURST  — mention_burst
+    """
+    if not isinstance(row, dict):
+        return False
+    if row.get("find_it_first"):
+        return True
+    if row.get("mention_burst"):
+        return True
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        mw = int(row.get("mention_window") or 0)
+    except (TypeError, ValueError):
+        mw = 0
+    if mw == 1 and not row.get("mention_burst"):
+        return True
+    return False
+
+
+def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]:
+    """Momentum panel rows that currently show a flag (FIRST / NEW / BURST)."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+            "http://127.0.0.1:8888/api/state", timeout=2.0
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return []
-    if not isinstance(raw, dict):
+    if not isinstance(data, dict):
         return []
-    tickers = raw.get("tickers") or raw.get("active") or {}
-    if not isinstance(tickers, dict):
+    tickers = data.get("tickers") or []
+    if not isinstance(tickers, list):
         return []
     scored: list[tuple[float, dict]] = []
-    for sym, meta in tickers.items():
-        s = str(sym or "").upper().strip()
+    for r in tickers:
+        if not isinstance(r, dict):
+            continue
+        if not _momentum_has_flag(r):
+            continue
+        s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
         if not s or not s[0].isalpha():
             continue
-        if not isinstance(meta, dict):
-            meta = {}
-        if not _price_under_cap(meta.get("price"), max_price):
+        if not _price_under_cap(r.get("price"), max_price):
             continue
-        hot = bool(meta.get("is_hot"))
+        # Rank: BURST > FIRST > NEW
+        rank = 9.0
+        flags: list[str] = []
+        if r.get("mention_burst"):
+            rank = 10.0
+            flags.append("BURST")
+        if r.get("find_it_first"):
+            rank = max(rank, 9.5)
+            flags.append("FIRST")
         try:
-            prox = float(meta.get("proximity_pct") or 0.0)
+            mw = int(r.get("mention_window") or 0)
         except (TypeError, ValueError):
-            prox = 0.0
-        score = 6.5 + min(2.0, (1.0 if hot else 0.0) + prox / 50.0)
-        reason = "momentum HOT" if hot else "momentum desk"
-        scored.append((score, {
+            mw = 0
+        if mw == 1 and not r.get("mention_burst"):
+            rank = max(rank, 9.0)
+            flags.append("NEW")
+        reason = "momentum " + "+".join(flags) if flags else "momentum flag"
+        scored.append((rank, {
             "symbol": s,
-            "trending_score": round(score, 2),
-            "score": round(score, 2),
+            "trending_score": round(rank, 2),
+            "score": round(rank, 2),
             "reason": reason[:40],
             "agreement": True,
             "source": "momentum",
@@ -685,58 +721,15 @@ def _momentum_scored_from_signal(max_price: Any) -> list[tuple[float, dict]]:
     return scored
 
 
-def _momentum_from_watchlist(max_price: Any) -> list[tuple[float, dict]]:
-    """Dashboard Momentum Stocks file (``transcription/wb_watchlist.json``)."""
-    path = ROOT / "transcription" / "wb_watchlist.json"
-    if not path.exists():
-        return []
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    if not isinstance(raw, list):
-        return []
-    scored: list[tuple[float, dict]] = []
-    # Newer entries first (file order is roughly recency after purge).
-    for i, item in enumerate(raw):
-        if isinstance(item, str):
-            s = item.strip().upper()
-        elif isinstance(item, dict):
-            s = str(item.get("ticker") or item.get("symbol") or "").upper().strip()
-        else:
-            continue
-        if not s or not s[0].isalpha() or len(s) > 5:
-            continue
-        # Mild recency bias: earlier list index → slightly higher score.
-        score = 7.0 + max(0.0, 1.0 - i * 0.05)
-        scored.append((score, {
-            "symbol": s,
-            "trending_score": round(score, 2),
-            "score": round(score, 2),
-            "reason": "momentum watchlist",
-            "agreement": True,
-            "source": "momentum",
-        }))
-    scored.sort(key=lambda t: t[0], reverse=True)
-    return scored
-
-
 def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
-    """Momentum + trending names as tradeable watch candidates.
+    """Restrictive momentum + trending candidates for AI Watch.
 
-    These are candidates only — the structure poller still must define zone /
-    stop / target before arming a buy. Controlled by:
-      ai_watch_seed_momentum (default True)
-      ai_watch_seed_trending (default True)
+    Rules (operator):
+      • No AI Research names (handled by sync — research seed off).
+      • Trending: raw Stocktwits score **strictly above** min (default 10).
+      • Momentum: only names with a FIRST / NEW / BURST flag on the desk.
 
-    Momentum universe (union, scored):
-      1) signal_engine ``signal_state.json`` actives (proximity / HOT)
-      2) dashboard Momentum Stocks ``transcription/wb_watchlist.json``
-
-    Trending universe: ``trending_stocks.json`` (Stocktwits heat).
-
-    Reads wire files directly (no heavy ``ai_suggest`` import) so the poller
-    stays lightweight and test-safe.
+    Structure poller still defines zone/stop before arming a buy.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     rows: list[dict] = []
@@ -747,15 +740,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         try:
             n = int(cfg.get("ai_watch_seed_momentum_n", 12) or 12)
             n = max(1, n)
-            # Prefer engine actives; fill remaining slots from desk watchlist.
-            scored = _momentum_scored_from_signal(max_price)
-            if len(scored) < n:
-                have = {r["symbol"] for _, r in scored}
-                for sc, r in _momentum_from_watchlist(max_price):
-                    if r["symbol"] in have:
-                        continue
-                    scored.append((sc, r))
-            scored.sort(key=lambda t: t[0], reverse=True)
+            scored = _momentum_flagged_from_dashboard(max_price)
             for _, r in scored[:n]:
                 if r["symbol"] in seen:
                     continue
@@ -769,8 +754,12 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
             path = ROOT / "trending_stocks.json"
             raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
             tr_rows = raw.get("rows") or []
+            try:
+                min_score = float(cfg.get("ai_watch_trending_min_score", 10.0) or 10.0)
+            except (TypeError, ValueError):
+                min_score = 10.0
             if isinstance(tr_rows, list):
-                n = int(cfg.get("ai_watch_seed_trending_n", 8) or 8)
+                n = int(cfg.get("ai_watch_seed_trending_n", 20) or 20)
                 for r in tr_rows:
                     if not isinstance(r, dict):
                         continue
@@ -787,14 +776,15 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         score = float(r.get("trending_score", r.get("score") or 0) or 0)
                     except (TypeError, ValueError):
                         score = 0.0
-                    if score > 10:
-                        score = 6.0 + min(2.5, score / 20.0)
+                    # Restrictive: only raw heat strictly above threshold (default 10).
+                    if score <= min_score:
+                        continue
                     seen.add(s)
                     rows.append({
                         "symbol": s,
                         "trending_score": round(score, 2),
                         "score": round(score, 2),
-                        "reason": "trending heat",
+                        "reason": f"trending score {score:.1f}",
                         "agreement": True,
                         "source": "trending",
                     })
@@ -862,7 +852,7 @@ def research_universe_symbols() -> set[str]:
 
 
 def live_panel_universe(cfg: dict | None = None) -> set[str]:
-    """Union of symbols currently on Momentum, Trending, or Research panels."""
+    """Symbols allowed on AI Watch (flagged momentum + high trending only)."""
     cfg = cfg if isinstance(cfg, dict) else {}
     live: set[str] = set()
     for r in desk_candidate_rows(cfg):
@@ -870,7 +860,6 @@ def live_panel_universe(cfg: dict | None = None) -> set[str]:
             s = str(r.get("symbol") or "").upper().strip()
             if s:
                 live.add(s)
-    live |= research_universe_symbols()
     return live
 
 
@@ -878,12 +867,15 @@ def sync_watch_from_source_panels(
     cfg: dict | None = None,
     now: float | None = None,
 ) -> dict:
-    """Rebuild AI Watch as a pure mirror of the three source panels.
+    """Rebuild AI Watch from restrictive Momentum + Trending only.
 
-    Only symbols currently on Momentum, Trending, or AI Research are kept as
-    watching rows. Structure / in-flight submitted-filled state is preserved
-    when the symbol remains. Everything else is dropped from the book file
-    (not left as invalidated zombies that can reappear).
+    Operator rules:
+      • **No AI Research** names on the watch book.
+      • Trending only if score > ``ai_watch_trending_min_score`` (default 10).
+      • Momentum only if the desk row has FIRST / NEW / BURST.
+
+    Structure / in-flight submitted-filled state is preserved when the symbol
+    remains. Everything else is dropped from the book file.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
@@ -891,7 +883,7 @@ def sync_watch_from_source_panels(
     if not isinstance(old, dict):
         old = {}
 
-    # Desk heat first, research last so research source wins on overlap.
+    # Momentum (flagged) + trending (score>min) only — research excluded.
     merged: dict[str, dict] = {}
     for r in desk_candidate_rows(cfg):
         if not isinstance(r, dict):
@@ -899,12 +891,8 @@ def sync_watch_from_source_panels(
         sym = str(r.get("symbol") or "").upper().strip()
         if not sym:
             continue
-        merged[sym] = r
-    for r in research_candidate_rows():
-        if not isinstance(r, dict):
-            continue
-        sym = str(r.get("symbol") or "").upper().strip()
-        if not sym:
+        src = str(r.get("source") or "").lower()
+        if src not in ("momentum", "mom", "trending", "st", "stocktwits"):
             continue
         merged[sym] = r
 
