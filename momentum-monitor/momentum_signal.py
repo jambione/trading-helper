@@ -278,9 +278,12 @@ DEFAULTS = {
     "positions_poll": 5.0,        # seconds between position/order refreshes
     # Adaptive limit + risk bracket + ratchet (OFF by default — paper wall).
     # Spec: docs/superpowers/specs/2026-08-04-entry-pricing-auto-limit-design.md
-    "auto_limit_enabled": False,
-    "auto_limit_live": False,          # must be true to auto-fire in live
+    "auto_limit_enabled": True,        # buy_zone auto path (paper unless live flags)
+    "auto_limit_live": True,           # allow when TRADER_MODE=live
     "auto_limit_signals": ["buy_zone"],
+    "auto_limit_rth_only": True,       # no auto before/after window
+    "auto_limit_start_et": "09:30",    # first auto entries at the open
+    "auto_limit_end_et": "15:55",      # no new entries into the close
     "auto_limit_cooldown_sec": 900.0,
     "auto_limit_max_per_session": 3,
     "auto_limit_max_price": None,      # optional hard cap; else no max
@@ -2372,8 +2375,14 @@ def main():
         console.print(f"[dim]positions panel: alpaca mode={pos_mode}[/dim]")
     if auto_limit_on:
         live_note = "live-ok" if cfg.get("auto_limit_live") else "paper-only"
+        win = (
+            f"{cfg.get('auto_limit_start_et', '09:30')}-"
+            f"{cfg.get('auto_limit_end_et', '15:55')} ET"
+            if cfg.get("auto_limit_rth_only", True) else "any-time"
+        )
         console.print(
-            f"[dim]auto-limit: ON ({live_note})  buy_zone → policy limit  "
+            f"[dim]auto-limit: ON ({live_note})  buy_zone → policy bracket  "
+            f"window={win}  "
             f"cooldown={cfg.get('auto_limit_cooldown_sec', 900)}s  "
             f"cap={cfg.get('auto_limit_max_per_session', 3)}/session[/dim]"
         )

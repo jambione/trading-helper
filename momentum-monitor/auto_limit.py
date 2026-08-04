@@ -32,6 +32,42 @@ def is_buy_zone_status(status: str | None) -> bool:
     return s in ("buy_zone", "buy")
 
 
+def _parse_hhmm(s: str, default_mins: int) -> int:
+    try:
+        parts = str(s).strip().split(":")
+        h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return h * 60 + m
+    except (TypeError, ValueError, IndexError):
+        pass
+    return default_mins
+
+
+def rth_entry_window(
+    now: float | None = None,
+    *,
+    start_et: str = "09:30",
+    end_et: str = "15:55",
+    weekdays_only: bool = True,
+) -> tuple[bool, str]:
+    """True when ET clock is in the auto-entry window (default 09:30–15:55)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(time.time() if now is None else now, et)
+    if weekdays_only and dt.weekday() >= 5:
+        return False, "weekend"
+    mins = dt.hour * 60 + dt.minute
+    start = _parse_hhmm(start_et, 9 * 60 + 30)
+    end = _parse_hhmm(end_et, 15 * 60 + 55)
+    if mins < start:
+        return False, f"before_{start_et}"
+    if mins >= end:
+        return False, f"after_{end_et}"
+    return True, "ok"
+
+
 def rising_buy_zone(sym: str, status: str | None, prev: dict[str, str]) -> bool:
     """True when status newly enters buy_zone (not first unknown observation)."""
     cur = (status or "").strip().lower()
@@ -56,11 +92,19 @@ def gate_auto_limit(
     session_fires: int,
     now: float,
     session_halted: bool = False,
+    rth_only: bool = True,
+    rth_start_et: str = "09:30",
+    rth_end_et: str = "15:55",
 ) -> tuple[bool, str]:
     if not enabled:
         return False, "disabled"
     if session_halted:
         return False, "daily_halt"
+    if rth_only:
+        ok_rth, why_rth = rth_entry_window(
+            now, start_et=rth_start_et, end_et=rth_end_et)
+        if not ok_rth:
+            return False, why_rth
     mode = (trader_mode or "off").strip().lower()
     if mode == "off":
         return False, "trader_off"
@@ -219,6 +263,9 @@ def process_rows(
                 state.session_halted
                 and bool(cfg.get("daily_loss_halt_auto", True))
             ),
+            rth_only=bool(cfg.get("auto_limit_rth_only", True)),
+            rth_start_et=str(cfg.get("auto_limit_start_et", "09:30")),
+            rth_end_et=str(cfg.get("auto_limit_end_et", "15:55")),
         )
         if not ok:
             events.append({

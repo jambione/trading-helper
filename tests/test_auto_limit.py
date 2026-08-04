@@ -24,26 +24,41 @@ def test_rising_buy_zone_not_on_first_sight():
 
 
 def test_gate_defaults_block():
+    # Use a weekday 10:00 ET timestamp so RTH window is open
+    # 2024-06-03 14:00 UTC = 10:00 ET (EDT)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime(2024, 6, 3, 10, 0, tzinfo=ZoneInfo("America/New_York")).timestamp()
+
     ok, why = gate_auto_limit(
         enabled=False, live_ok=False, trader_mode="paper",
         has_position=False, cooldown_sec=900, max_per_session=3,
-        last_fire=None, session_fires=0, now=1000.0,
+        last_fire=None, session_fires=0, now=now, rth_only=False,
     )
     assert not ok and why == "disabled"
 
     ok, why = gate_auto_limit(
         enabled=True, live_ok=False, trader_mode="live",
         has_position=False, cooldown_sec=900, max_per_session=3,
-        last_fire=None, session_fires=0, now=1000.0,
+        last_fire=None, session_fires=0, now=now, rth_only=False,
     )
     assert not ok and why == "live_blocked"
 
     ok, why = gate_auto_limit(
         enabled=True, live_ok=False, trader_mode="paper",
         has_position=False, cooldown_sec=900, max_per_session=3,
-        last_fire=None, session_fires=0, now=1000.0,
+        last_fire=None, session_fires=0, now=now, rth_only=True,
+        rth_start_et="09:30", rth_end_et="15:55",
     )
     assert ok
+
+    pre = datetime(2024, 6, 3, 9, 0, tzinfo=ZoneInfo("America/New_York")).timestamp()
+    ok, why = gate_auto_limit(
+        enabled=True, live_ok=True, trader_mode="paper",
+        has_position=False, cooldown_sec=900, max_per_session=3,
+        last_fire=None, session_fires=0, now=pre, rth_only=True,
+    )
+    assert not ok and "before" in why
 
 
 def test_process_rows_fires_once_on_edge():
@@ -62,6 +77,7 @@ def test_process_rows_fires_once_on_edge():
         "auto_limit_max_per_session": 3,
         "auto_limit_require_constructive": True,
         "auto_limit_min_proximity_pct": 67,
+        "auto_limit_rth_only": False,
     }
     rows = [{
         "ticker": "XYZ",
@@ -75,6 +91,7 @@ def test_process_rows_fires_once_on_edge():
         },
         "rvol": 2.0,
     }]
+    # fixed timestamp with RTH disabled via config
     ev = process_rows(
         rows, state, cfg=cfg, trader_mode="paper",
         position_symbols=set(), buy_fn=buy_fn, now=1_700_000_000.0,
@@ -100,6 +117,7 @@ def test_process_rows_respects_position():
         "auto_limit_enabled": True,
         "auto_limit_live": False,
         "auto_limit_require_constructive": False,
+        "auto_limit_rth_only": False,
     }
     rows = [{"ticker": "ABC", "signal_proximity": {"status": "buy_zone"}}]
     process_rows(
@@ -161,6 +179,7 @@ def test_process_rows_skips_non_constructive():
         "auto_limit_live": False,
         "auto_limit_require_constructive": True,
         "auto_limit_min_proximity_pct": 67,
+        "auto_limit_rth_only": False,
     }
     rows = [{
         "ticker": "ZZZ",

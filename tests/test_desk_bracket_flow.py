@@ -91,6 +91,7 @@ def test_process_rows_fires_bracket_fn_only_when_constructive():
         "auto_limit_live": False,
         "auto_limit_require_constructive": True,
         "auto_limit_min_proximity_pct": 67,
+        "auto_limit_rth_only": False,
     }
     # Bad: sell_signal
     bad = _good_row(sell_signal=True)
