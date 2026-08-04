@@ -753,12 +753,11 @@ def main() -> None:
             live_cfg = load_config()
             if live_cfg.get("ai_watch_enabled", True):
                 import ai_entry_watch as ew
-                seeds = ew.desk_candidate_rows(live_cfg)
-                if seeds:
-                    ew.upsert_from_rows(seeds, cfg=live_cfg, now=now)
-                ew.prune_desk_watches(live_cfg, now=now)
+                # Full rebuild from live Momentum + Trending + Research only
+                # (no accumulated orphans from prior sessions/research runs).
+                ew.sync_watch_from_source_panels(live_cfg, now=now)
         except Exception as e:  # noqa: BLE001
-            print(f"[ai] desk seed/prune failed: {e}", flush=True)
+            print(f"[ai] watch sync failed: {e}", flush=True)
         try:
             with book_lock:
                 wps = float(book_state["watch_poll_sec"] or 20.0)

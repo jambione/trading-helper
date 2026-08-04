@@ -336,7 +336,20 @@ def book_table_rows(
             "mkt_val": p.get("mkt_val"),
         }
 
-    rows = list(by_sym.values())
+    # Display filter: only panel-live names, plus true open/submitted positions.
+    try:
+        live = live_panel_universe()
+    except Exception:
+        live = set()
+    filtered: list[dict] = []
+    for r in by_sym.values():
+        sym = str(r.get("symbol") or "").upper()
+        phase = str(r.get("phase") or "")
+        if phase in ("open", "submitted") or r.get("is_position"):
+            filtered.append(r)
+        elif not live or sym in live:
+            filtered.append(r)
+    rows = filtered
 
     def _sort_key(r: dict) -> tuple:
         phase = str(r.get("phase") or "")
@@ -793,13 +806,15 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     return rows
 
 
-def research_universe_symbols() -> set[str]:
-    """Symbols currently on AI Research boards (Grok + Anthropic wires)."""
-    out: set[str] = set()
-    for path in (
-        ROOT / "grok_suggestions.json",
-        ROOT / "claude_suggestions.json",
-        ROOT / "suggestions.json",
+def research_candidate_rows() -> list[dict]:
+    """Current AI Research board rows (Grok + Anthropic), as watch candidates."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    # Grok last so it wins on overlap when both boards list the same name.
+    for path, default_src in (
+        (ROOT / "claude_suggestions.json", "anthropic"),
+        (ROOT / "suggestions.json", "anthropic"),
+        (ROOT / "grok_suggestions.json", "xai"),
     ):
         if not path.exists():
             continue
@@ -809,6 +824,13 @@ def research_universe_symbols() -> set[str]:
             continue
         if not isinstance(raw, dict):
             continue
+        file_src = str(raw.get("source") or default_src).lower().strip()
+        if file_src in ("xai", "grok"):
+            src_label = "xai"
+        elif file_src in ("anthropic", "claude"):
+            src_label = "anthropic"
+        else:
+            src_label = default_src
         rows = raw.get("rows") or raw.get("suggestions") or raw.get("items") or []
         if not isinstance(rows, list):
             continue
@@ -816,89 +838,127 @@ def research_universe_symbols() -> set[str]:
             if not isinstance(r, dict):
                 continue
             s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
-            if s and s[0].isalpha():
-                out.add(s)
+            if not s or not s[0].isalpha() or s in seen:
+                continue
+            seen.add(s)
+            out.append({
+                "symbol": s,
+                "trending_score": _score_from_row(r),
+                "score": _score_from_row(r),
+                "reason": str(r.get("reason") or r.get("summary") or "research")[:80],
+                "agreement": True,
+                "source": src_label,
+            })
     return out
 
 
-def live_panel_universe(cfg: dict | None = None) -> set[str]:
-    """Union of symbols currently visible on Momentum, Trending, or Research.
+def research_universe_symbols() -> set[str]:
+    """Symbols currently on AI Research boards (Grok + Anthropic wires)."""
+    return {
+        str(r.get("symbol") or "").upper()
+        for r in research_candidate_rows()
+        if r.get("symbol")
+    }
 
-    AI Watch may only keep non-open rows that still appear on at least one of
-    these source panels.
-    """
+
+def live_panel_universe(cfg: dict | None = None) -> set[str]:
+    """Union of symbols currently on Momentum, Trending, or Research panels."""
     cfg = cfg if isinstance(cfg, dict) else {}
     live: set[str] = set()
-    # Momentum + trending seeds (same sources as desk_candidate_rows).
+    for r in desk_candidate_rows(cfg):
+        if isinstance(r, dict):
+            s = str(r.get("symbol") or "").upper().strip()
+            if s:
+                live.add(s)
+    live |= research_universe_symbols()
+    return live
+
+
+def sync_watch_from_source_panels(
+    cfg: dict | None = None,
+    now: float | None = None,
+) -> dict:
+    """Rebuild AI Watch as a pure mirror of the three source panels.
+
+    Only symbols currently on Momentum, Trending, or AI Research are kept as
+    watching rows. Structure / in-flight submitted-filled state is preserved
+    when the symbol remains. Everything else is dropped from the book file
+    (not left as invalidated zombies that can reappear).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    t0 = float(now if now is not None else time.time())
+    old = load_watch()
+    if not isinstance(old, dict):
+        old = {}
+
+    # Desk heat first, research last so research source wins on overlap.
+    merged: dict[str, dict] = {}
     for r in desk_candidate_rows(cfg):
         if not isinstance(r, dict):
             continue
-        s = str(r.get("symbol") or "").upper().strip()
-        if s:
-            live.add(s)
-    live |= research_universe_symbols()
-    return live
+        sym = str(r.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        merged[sym] = r
+    for r in research_candidate_rows():
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        merged[sym] = r
+
+    # Empty sources at startup: keep prior state to avoid wipe race.
+    if not merged and old:
+        return old
+
+    new_state: dict[str, Any] = {}
+    for sym, row in merged.items():
+        prev = old.get(sym) if isinstance(old.get(sym), dict) else {}
+        prev_status = str(prev.get("status") or "").lower().strip()
+        if prev_status in ("submitted", "filled"):
+            status = prev_status
+        else:
+            status = "watching"
+        new_state[sym] = {
+            "symbol": sym,
+            "status": status,
+            "agreement": True,
+            "score": _score_from_row(row),
+            "reason": str(row.get("reason") or prev.get("reason") or "")[:80],
+            "source": str(row.get("source") or prev.get("source") or "research"),
+            "structure": prev.get("structure", _EMPTY_RECORD_DEFAULTS["structure"]),
+            "structure_ts": float(
+                prev.get("structure_ts", _EMPTY_RECORD_DEFAULTS["structure_ts"]) or 0.0
+            ),
+            "last_poll_ts": float(
+                prev.get("last_poll_ts", _EMPTY_RECORD_DEFAULTS["last_poll_ts"]) or 0.0
+            ),
+            "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
+            "updated_ts": t0,
+        }
+
+    # Keep in-flight paper entries even if they left the panels (still managing).
+    for sym, rec in old.items():
+        if not isinstance(rec, dict):
+            continue
+        key = str(sym or rec.get("symbol") or "").upper().strip()
+        if not key or key in new_state:
+            continue
+        if str(rec.get("status") or "").lower().strip() in ("submitted", "filled"):
+            new_state[key] = dict(rec)
+            new_state[key]["symbol"] = key
+
+    save_watch(new_state)
+    return new_state
 
 
 def prune_desk_watches(
     cfg: dict | None = None,
     now: float | None = None,
 ) -> dict:
-    """Drop watches that no longer appear on Momentum, Trending, or Research.
-
-    Rule: every open AI Watch row (except SENT/OPEN in-flight) must still be
-    on at least one of the other three panels. Old orphan names are invalidated.
-
-    Submitted/filled rows stay so paper trades are not wiped mid-flight.
-    """
-    cfg = cfg if isinstance(cfg, dict) else {}
-    t0 = float(now if now is not None else time.time())
-    state = load_watch()
-    if not isinstance(state, dict) or not state:
-        return state or {}
-
-    live = live_panel_universe(cfg)
-    # Safety: if every source is empty (startup race), do not wipe the book.
-    if not live:
-        return state
-
-    dropped: list[str] = []
-    for key, rec in list(state.items()):
-        if not isinstance(rec, dict):
-            continue
-        sym = str(rec.get("symbol") or key or "").upper().strip()
-        if not sym:
-            continue
-        status = str(rec.get("status") or "").lower().strip()
-        if status in ("submitted", "filled"):
-            continue
-        if status in ("invalidated", "expired"):
-            continue
-        if sym in live:
-            continue
-        src = str(rec.get("source") or "").lower().strip() or "?"
-        rec = dict(rec)
-        rec["symbol"] = sym
-        rec["status"] = "invalidated"
-        rec["updated_ts"] = t0
-        rec["closing_reason"] = "not_on_source_panel"
-        state[sym] = rec
-        if key != sym:
-            state.pop(key, None)
-        dropped.append(f"{sym}:{src}")
-
-    if dropped:
-        save_watch(state)
-        try:
-            from ai_positions import log_event
-            log_event(
-                "desk_watch_pruned",
-                n=len(dropped),
-                symbols=",".join(dropped[:20]),
-            )
-        except Exception:
-            pass
-    return state
+    """Compatibility wrapper — full sync is the source of truth now."""
+    return sync_watch_from_source_panels(cfg=cfg, now=now)
 
 
 def rebuild_watch_from_book(
@@ -906,32 +966,16 @@ def rebuild_watch_from_book(
     cfg: dict,
     now: float,
 ) -> dict:
-    """Rebuild entry watch from a research/open-bell book.
+    """After research/open-bell: re-mirror Momentum + Trending + Research.
 
-    Combines ``upsert_from_rows`` (eligible → watching) + ``drop_missing``
-    (not in active set → invalidated) + ``save_watch``. Active symbols are
-    those that pass the same agreement gate as upsert, plus optional desk
-    momentum/trending seeds so day-trade heat is not dropped on rebuild.
+    ``rows`` is accepted for API compatibility; the live board files and desk
+    heat are the source of truth (see ``sync_watch_from_source_panels``).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
-    book = list(rows) if isinstance(rows, list) else []
-    # Desk seeds after research rows so research wins on symbol collision
-    # in upsert (later row overwrites — put seeds first, research last).
-    seeds = desk_candidate_rows(cfg)
-    merged = list(seeds) + book
-    state = upsert_from_rows(merged, cfg=cfg, now=now)
-    active: set[str] = set()
-    for row in merged:
-        if not isinstance(row, dict):
-            continue
-        if not _row_passes_agreement(row, cfg):
-            continue
-        sym = str(row.get("symbol") or "").upper().strip()
-        if sym:
-            active.add(sym)
-    state = drop_missing(state, active, now)
-    save_watch(state)
-    return state
+    # Optional: ensure latest research rows hit the wire before sync
+    # (caller already wrote suggestions files).
+    _ = rows
+    return sync_watch_from_source_panels(cfg=cfg, now=now)
 
 
 def ask_in_zone(
@@ -1329,15 +1373,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     if not ready:
         return [{"kind": "watch_skip", "reason": "trader_not_ready"}]
 
-    # Continuously seed Momentum + Trending into the watch queue so they are
-    # first-class trade sources between research runs. Upsert only (no
-    # drop_missing) — structure LLM remains rate-limited below.
-    try:
-        seeds = desk_candidate_rows(cfg)
-        if seeds:
-            upsert_from_rows(seeds, cfg=cfg, now=t0)
-    except Exception:
-        pass
+    # Do not re-seed here — book thread runs sync_watch_from_source_panels
+    # so this poll only evaluates symbols currently mirrored from the panels.
 
     state = load_watch()
     if not state:

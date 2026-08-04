@@ -106,8 +106,8 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
 
 
-def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
-    """Any watch not on Momentum/Trending/Research leaves the book."""
+def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
+    """AI Watch is rebuilt from live panels — orphans are deleted, not kept."""
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
@@ -115,18 +115,11 @@ def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
     ew.save_watch({
         "KEEP": {
             "symbol": "KEEP", "status": "watching", "source": "momentum", "score": 7,
+            "structure": {"entry_low": 1.0, "entry_high": 2.0},
+            "structure_ts": 50.0,
         },
         "GONE": {
             "symbol": "GONE", "status": "watching", "source": "momentum", "score": 7,
-        },
-        "STAY_TR": {
-            "symbol": "STAY_TR", "status": "watching", "source": "trending", "score": 8,
-        },
-        "DROP_TR": {
-            "symbol": "DROP_TR", "status": "watching", "source": "trending", "score": 8,
-        },
-        "RESEARCH": {
-            "symbol": "RESEARCH", "status": "watching", "source": "xai", "score": 9,
         },
         "OLD_AI": {
             "symbol": "OLD_AI", "status": "watching", "source": "anthropic", "score": 6,
@@ -138,29 +131,32 @@ def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ew, "desk_candidate_rows",
         lambda cfg=None: [
-            {"symbol": "KEEP", "source": "momentum", "agreement": True, "score": 7},
-            {"symbol": "STAY_TR", "source": "trending", "agreement": True, "score": 8},
+            {"symbol": "KEEP", "source": "momentum", "agreement": True, "score": 7.5,
+             "reason": "mom"},
+            {"symbol": "STAY_TR", "source": "trending", "agreement": True, "score": 8,
+             "reason": "heat"},
         ],
     )
     monkeypatch.setattr(
-        ew, "research_universe_symbols",
-        lambda: {"RESEARCH"},
+        ew, "research_candidate_rows",
+        lambda: [
+            {"symbol": "RESEARCH", "source": "xai", "agreement": True, "score": 9,
+             "reason": "thesis"},
+        ],
     )
-    state = ew.prune_desk_watches(
+    state = ew.sync_watch_from_source_panels(
         {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True},
         now=100.0,
     )
+    assert "GONE" not in state and "OLD_AI" not in state
     assert state["KEEP"]["status"] == "watching"
-    assert state["STAY_TR"]["status"] == "watching"
-    assert state["RESEARCH"]["status"] == "watching"
-    assert state["FILLED"]["status"] == "filled"
-    assert state["GONE"]["status"] == "invalidated"
-    assert state["DROP_TR"]["status"] == "invalidated"
-    assert state["OLD_AI"]["status"] == "invalidated"  # left research board
+    assert state["KEEP"]["structure"]["entry_low"] == 1.0  # structure preserved
+    assert state["STAY_TR"]["source"] == "trending"
+    assert state["RESEARCH"]["source"] == "xai"
+    assert state["FILLED"]["status"] == "filled"  # in-flight kept
     book = ew.book_table_rows(state=state)
     syms = {r["symbol"] for r in book}
-    assert "GONE" not in syms and "DROP_TR" not in syms and "OLD_AI" not in syms
-    assert "KEEP" in syms and "RESEARCH" in syms
+    assert syms == {"KEEP", "STAY_TR", "RESEARCH", "FILLED"}
 
 
 def test_desk_candidates_include_watchlist_and_trending(tmp_path, monkeypatch):
