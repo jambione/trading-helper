@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=91';
-import { api }       from './api.js?v=91';
-import { copyTicker } from './tickers.js?v=91';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=91';
+import { subscribe, get } from './store.js?v=92';
+import { api }       from './api.js?v=92';
+import { copyTicker } from './tickers.js?v=92';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=92';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -155,20 +155,24 @@ function _bookKey(book) {
   ).join('|');
 }
 
-/** Prefer server entry_book; fall back to merging entry_watch + positions. */
+/** Prefer server entry_book; always merge open positions; fall back to entry_watch. */
 function _bookRows(book) {
-  if (book && Array.isArray(book.entry_book) && book.entry_book.length) {
-    return book.entry_book;
-  }
   const pos = (book && book.positions) || {};
-  const watches = (book && Array.isArray(book.entry_watch)) ? book.entry_watch : [];
   const by = {};
-  for (const w of watches) {
+
+  // Prefer unified book when the server sent rows (Mom/ST/research + phases).
+  const primary = (book && Array.isArray(book.entry_book) && book.entry_book.length)
+    ? book.entry_book
+    : ((book && Array.isArray(book.entry_watch)) ? book.entry_watch : []);
+
+  for (const w of primary) {
     if (!w || !w.symbol) continue;
     const sym = String(w.symbol).toUpperCase();
+    const phase = w.phase
+      || (w.ready ? 'ready' : (w.status || 'watching'));
     by[sym] = {
       symbol: sym,
-      phase: w.ready ? 'ready' : (w.status || 'watching'),
+      phase,
       source: w.source || 'research',
       score: w.score,
       reason: w.reason,
@@ -176,15 +180,16 @@ function _bookRows(book) {
       entry_low: w.entry_low,
       entry_high: w.entry_high,
       last_ask: w.last_ask,
-      price: w.last_ask,
-      qty: null,
-      pl: null,
-      plpc: null,
-      avg_entry: null,
-      is_position: false,
-      ready: !!w.ready,
+      price: w.price != null ? w.price : w.last_ask,
+      qty: w.qty != null ? w.qty : null,
+      pl: w.pl != null ? w.pl : null,
+      plpc: w.plpc != null ? w.plpc : null,
+      avg_entry: w.avg_entry != null ? w.avg_entry : null,
+      is_position: !!w.is_position || phase === 'open',
+      ready: !!w.ready || phase === 'ready',
     };
   }
+  // Live positions always win (P&L / qty).
   for (const [symRaw, p] of Object.entries(pos)) {
     const sym = String(symRaw || '').toUpperCase();
     if (!sym || !p) continue;

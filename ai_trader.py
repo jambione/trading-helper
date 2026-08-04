@@ -697,23 +697,38 @@ def main() -> None:
     # Edge-detect RTH open→closed for watch expiry (not pre-market closed).
     watch_seen_open = False
     watch_expired_day = ""
+
+    def _publish_book(now: float) -> None:
+        """Seed desk heat + write dashboard wire so AI Watch stays live.
+
+        Must run *before* long research CLI calls — those can block the loop
+        for minutes and otherwise freeze entry_book (Mom/ST disappear in UI).
+        """
+        if not trading:
+            return
+        try:
+            live_cfg = load_config()
+            if live_cfg.get("ai_watch_enabled", True):
+                import ai_entry_watch as ew
+                seeds = ew.desk_candidate_rows(live_cfg)
+                if seeds:
+                    ew.upsert_from_rows(seeds, cfg=live_cfg, now=now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] desk seed failed: {e}", flush=True)
+        try:
+            pos = _positions_payload(trading_mode, now, book_owner=owner)
+            _write_json(POSITIONS_FILE, pos)
+            _write_json(POSITIONS_FILE_LEGACY, pos)  # one-release alias
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] positions publish failed: {e}", flush=True)
+
+    # Immediate publish so the dashboard has Mom/ST on process start.
+    _publish_book(time.time())
+
     while True:
         t0 = time.time()
 
-        _tick_source(gs_a, CLAUDE_SUGGESTIONS_FILE, SOURCE_ANTHROPIC, t0, "A")
-        _tick_source(gs_x, GROK_SUGGESTIONS_FILE, SOURCE_XAI, t0, "X")
-
-        if trading and book is not None and _open_bell_due(cfg, t0):
-            try:
-                # Refresh quotes on book rows before acting.
-                book.refresh_quotes(t0)
-                _run_open_bell_entries(book, cfg, t0)
-            except Exception as e:  # noqa: BLE001
-                print(f"[ai] open_bell failed: {e}", flush=True)
-                ai_positions.log_event("open_bell_error", reason=str(e)[:200])
-                _mark_open_bell_done(t0)  # avoid tight retry loop on hard fail
-
-        # Entry-watch poller (RTH): independent interval from positions manage.
+        # ── Book / watch first (fast, must not wait on research) ──────────
         if trading and (t0 - last_watch_poll) >= watch_poll_sec:
             last_watch_poll = t0
             try:
@@ -732,7 +747,6 @@ def main() -> None:
                 except Exception:
                     pass
 
-        # Expire unfilled watches on open→closed edge (once per ET day).
         if trading:
             try:
                 live_cfg = load_config()
@@ -774,10 +788,24 @@ def main() -> None:
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] manage_open_positions failed: {e}", flush=True)
 
-        if trading:
-            pos = _positions_payload(trading_mode, t0, book_owner=owner)
-            _write_json(POSITIONS_FILE, pos)
-            _write_json(POSITIONS_FILE_LEGACY, pos)  # one-release alias
+        # Publish Mom/ST/research book to dashboard before any blocking CLI.
+        _publish_book(t0)
+
+        # ── Research (may block for minutes on grok/claude CLI) ───────────
+        _tick_source(gs_a, CLAUDE_SUGGESTIONS_FILE, SOURCE_ANTHROPIC, t0, "A")
+        _tick_source(gs_x, GROK_SUGGESTIONS_FILE, SOURCE_XAI, t0, "X")
+
+        if trading and book is not None and _open_bell_due(cfg, t0):
+            try:
+                # Refresh quotes on book rows before acting.
+                book.refresh_quotes(t0)
+                _run_open_bell_entries(book, cfg, t0)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] open_bell failed: {e}", flush=True)
+                ai_positions.log_event("open_bell_error", reason=str(e)[:200])
+                _mark_open_bell_done(t0)  # avoid tight retry loop on hard fail
+            # Research/open-bell may have changed the queue — republish.
+            _publish_book(time.time())
 
         time.sleep(LOOP_SLEEP)
 
