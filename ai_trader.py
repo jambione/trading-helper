@@ -27,6 +27,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -733,18 +734,19 @@ def main() -> None:
     unconfirmed_ttl = float(cfg.get("ai_entry_unconfirmed_ttl_sec", 900.0))
     watch_poll_sec = float(cfg.get("ai_watch_poll_sec", 20.0) or 20.0)
 
-    last_positions_tick = 0.0
-    last_watch_poll = 0.0
-    # Edge-detect RTH open→closed for watch expiry (not pre-market closed).
-    watch_seen_open = False
-    watch_expired_day = ""
+    # Shared mutables for the book thread (main thread only reads research).
+    book_state = {
+        "watch_poll_sec": watch_poll_sec,
+        "positions_poll": positions_poll,
+        "watch_seen_open": False,
+        "watch_expired_day": "",
+        "last_watch_poll": 0.0,
+        "last_positions_tick": 0.0,
+    }
+    book_lock = threading.Lock()
 
     def _publish_book(now: float) -> None:
-        """Seed desk heat, drop fallen Mom/ST, write dashboard wire.
-
-        Must run *before* long research CLI calls — those can block the loop
-        for minutes and otherwise freeze entry_book (Mom/ST disappear in UI).
-        """
+        """Seed desk heat, drop fallen Mom/ST, write dashboard wire."""
         if not trading:
             return
         try:
@@ -754,104 +756,140 @@ def main() -> None:
                 seeds = ew.desk_candidate_rows(live_cfg)
                 if seeds:
                     ew.upsert_from_rows(seeds, cfg=live_cfg, now=now)
-                # Remove Mom/ST names that left momentum / trending universes.
                 ew.prune_desk_watches(live_cfg, now=now)
         except Exception as e:  # noqa: BLE001
             print(f"[ai] desk seed/prune failed: {e}", flush=True)
         try:
+            with book_lock:
+                wps = float(book_state["watch_poll_sec"] or 20.0)
             pos = _positions_payload(
                 trading_mode, now, book_owner=owner,
-                watch_poll_sec=watch_poll_sec,
+                watch_poll_sec=wps,
             )
             _write_json(POSITIONS_FILE, pos)
-            _write_json(POSITIONS_FILE_LEGACY, pos)  # one-release alias
+            _write_json(POSITIONS_FILE_LEGACY, pos)
         except Exception as e:  # noqa: BLE001
             print(f"[ai] positions publish failed: {e}", flush=True)
 
-    # Immediate publish so the dashboard has Mom/ST on process start.
-    _publish_book(time.time())
+    def _book_maintenance_loop() -> None:
+        """Keep AI Watch live even while the main thread is blocked on research.
 
+        Research CLI can run for many minutes; without this thread the dashboard
+        wire freezes and the UI shows ○ stale.
+        """
+        if not trading:
+            return
+        print("[ai] book maintenance thread started "
+              f"(publish ~{positions_poll}s, watch poll ~{watch_poll_sec}s)",
+              flush=True)
+        while True:
+            t0 = time.time()
+            try:
+                live_cfg = load_config()
+                wps = float(
+                    live_cfg.get("ai_watch_poll_sec", book_state["watch_poll_sec"])
+                    or book_state["watch_poll_sec"]
+                    or 20.0
+                )
+                pps = float(
+                    live_cfg.get(
+                        "ai_positions_poll_sec",
+                        book_state["positions_poll"],
+                    )
+                    or book_state["positions_poll"]
+                    or 5.0
+                )
+                with book_lock:
+                    book_state["watch_poll_sec"] = wps
+                    book_state["positions_poll"] = pps
+
+                if live_cfg.get("ai_watch_enabled", True):
+                    if (t0 - book_state["last_watch_poll"]) >= wps:
+                        book_state["last_watch_poll"] = t0
+                        try:
+                            import ai_entry_watch as ew
+                            ew.poll_once(cfg=live_cfg, now=t0)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[ai] watch_poll failed: {e}", flush=True)
+                            try:
+                                ai_positions.log_event(
+                                    "watch_poll_error", reason=str(e)[:200])
+                            except Exception:
+                                pass
+
+                if live_cfg.get("ai_watch_expire_at_close", True):
+                    try:
+                        import ai_trading as gt
+                        import ai_entry_watch as ew
+                        from datetime import datetime
+                        from zoneinfo import ZoneInfo
+
+                        market_open = bool(gt.market_is_open())
+                        day_key = datetime.fromtimestamp(
+                            t0, tz=ZoneInfo("America/New_York")
+                        ).strftime("%Y-%m-%d")
+                        do_expire, seen, exp_day = (
+                            ew.should_expire_watches_on_close(
+                                market_open=market_open,
+                                day_key=day_key,
+                                seen_open=bool(book_state["watch_seen_open"]),
+                                expired_day=str(
+                                    book_state["watch_expired_day"] or ""),
+                            )
+                        )
+                        book_state["watch_seen_open"] = seen
+                        book_state["watch_expired_day"] = exp_day
+                        if do_expire:
+                            ew.expire_open_watches(now=t0)
+                            ai_positions.log_event(
+                                "watch_expire_at_close", day=day_key)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[ai] watch_expire failed: {e}", flush=True)
+
+                if (t0 - book_state["last_positions_tick"]) >= pps:
+                    book_state["last_positions_tick"] = t0
+                    try:
+                        ai_positions.manage_open_positions(
+                            t0, unconfirmed_ttl_sec=unconfirmed_ttl)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[ai] manage_open_positions failed: {e}",
+                              flush=True)
+
+                _publish_book(t0)
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] book thread error: {e}", flush=True)
+            time.sleep(min(2.0, max(1.0, float(book_state["positions_poll"] or 5.0) / 2)))
+
+    if trading:
+        # Immediate publish + background book loop (independent of research).
+        _publish_book(time.time())
+        threading.Thread(
+            target=_book_maintenance_loop,
+            name="ai-book-maintenance",
+            daemon=True,
+        ).start()
+    else:
+        print("[ai] book maintenance off (no trading owner)", flush=True)
+
+    # Main thread: research + open-bell only (may block on CLI for minutes).
     while True:
         t0 = time.time()
 
-        # ── Book / watch first (fast, must not wait on research) ──────────
-        if trading and (t0 - last_watch_poll) >= watch_poll_sec:
-            last_watch_poll = t0
-            try:
-                live_cfg = load_config()
-                watch_poll_sec = float(
-                    live_cfg.get("ai_watch_poll_sec", watch_poll_sec) or watch_poll_sec
-                )
-                if live_cfg.get("ai_watch_enabled", True):
-                    import ai_entry_watch as ew
-                    ew.poll_once(cfg=live_cfg, now=t0)
-            except Exception as e:  # noqa: BLE001
-                print(f"[ai] watch_poll failed: {e}", flush=True)
-                try:
-                    ai_positions.log_event(
-                        "watch_poll_error", reason=str(e)[:200])
-                except Exception:
-                    pass
-
-        if trading:
-            try:
-                live_cfg = load_config()
-                if live_cfg.get("ai_watch_expire_at_close", True):
-                    import ai_trading as gt
-                    import ai_entry_watch as ew
-                    from datetime import datetime
-                    from zoneinfo import ZoneInfo
-
-                    market_open = bool(gt.market_is_open())
-                    day_key = datetime.fromtimestamp(
-                        t0, tz=ZoneInfo("America/New_York")
-                    ).strftime("%Y-%m-%d")
-                    do_expire, watch_seen_open, watch_expired_day = (
-                        ew.should_expire_watches_on_close(
-                            market_open=market_open,
-                            day_key=day_key,
-                            seen_open=watch_seen_open,
-                            expired_day=watch_expired_day,
-                        )
-                    )
-                    if do_expire:
-                        ew.expire_open_watches(now=t0)
-                        ai_positions.log_event(
-                            "watch_expire_at_close", day=day_key)
-            except Exception as e:  # noqa: BLE001
-                print(f"[ai] watch_expire failed: {e}", flush=True)
-                try:
-                    ai_positions.log_event(
-                        "watch_expire_error", reason=str(e)[:200])
-                except Exception:
-                    pass
-
-        if trading and (t0 - last_positions_tick) >= positions_poll:
-            last_positions_tick = t0
-            try:
-                ai_positions.manage_open_positions(
-                    t0, unconfirmed_ttl_sec=unconfirmed_ttl)
-            except Exception as e:  # noqa: BLE001
-                print(f"[ai] manage_open_positions failed: {e}", flush=True)
-
-        # Publish Mom/ST/research book to dashboard before any blocking CLI.
-        _publish_book(t0)
-
-        # ── Research (may block for minutes on grok/claude CLI) ───────────
         _tick_source(gs_a, CLAUDE_SUGGESTIONS_FILE, SOURCE_ANTHROPIC, t0, "A")
         _tick_source(gs_x, GROK_SUGGESTIONS_FILE, SOURCE_XAI, t0, "X")
 
         if trading and book is not None and _open_bell_due(cfg, t0):
             try:
-                # Refresh quotes on book rows before acting.
                 book.refresh_quotes(t0)
                 _run_open_bell_entries(book, cfg, t0)
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] open_bell failed: {e}", flush=True)
                 ai_positions.log_event("open_bell_error", reason=str(e)[:200])
-                _mark_open_bell_done(t0)  # avoid tight retry loop on hard fail
-            # Research/open-bell may have changed the queue — republish.
-            _publish_book(time.time())
+                _mark_open_bell_done(t0)
+            try:
+                _publish_book(time.time())
+            except Exception:
+                pass
 
         time.sleep(LOOP_SLEEP)
 
