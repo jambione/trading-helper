@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=95';
-import { api }       from './api.js?v=95';
-import { copyTicker } from './tickers.js?v=95';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=95';
+import { subscribe, get } from './store.js?v=96';
+import { api }       from './api.js?v=96';
+import { copyTicker } from './tickers.js?v=96';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=96';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -119,10 +119,10 @@ export function init(panelEl, kind) {
     const withLook = applyLookHighlights(rows.map(r => ({ ...r })));
 
     // Membership + structure only — quote ticks patch cells without this short-circuit.
-    const bookKey = _bookKey(book);
+    // Do not key off live book quotes (that would thrash the research tables).
     const structKey = withLook.map(r =>
       `${r.symbol}:${r.source_mark || ''}:${r.rank ?? ''}:${r.reason || ''}:${r.invalidation || ''}:${r.look ? r.look_reason : ''}`,
-    ).join('|') + `|book:${bookKey}|${sortCol}:${sortDir}`;
+    ).join('|') + `|${sortCol}:${sortDir}`;
     lastRows = withLook;
     lastKey = structKey;
 
