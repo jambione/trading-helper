@@ -253,7 +253,13 @@ def normalize_source(source: str | None, backend: str | None) -> str:
     return SOURCE_ANTHROPIC
 
 
-def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
+def _positions_payload(
+    mode: str,
+    now: float,
+    *,
+    book_owner: str = "",
+    watch_poll_sec: float | None = None,
+) -> dict:
     import alpaca_trader
 
     error = ""
@@ -324,6 +330,30 @@ def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
         entry_watch = []
         entry_book = []
 
+    n_mom = sum(
+        1 for r in entry_book
+        if str(r.get("source") or "").lower() in ("momentum", "mom")
+    )
+    n_st = sum(
+        1 for r in entry_book
+        if str(r.get("source") or "").lower() in ("trending", "st", "stocktwits")
+    )
+    n_res = sum(
+        1 for r in entry_book
+        if str(r.get("source") or "").lower() not in (
+            "momentum", "mom", "trending", "st", "stocktwits", "position",
+        )
+    )
+    n_open = sum(1 for r in entry_book if r.get("phase") == "open" or r.get("is_position"))
+    n_ready = sum(1 for r in entry_book if r.get("phase") == "ready" or r.get("ready"))
+
+    poll_sec = watch_poll_sec
+    if poll_sec is None:
+        try:
+            poll_sec = float(load_config().get("ai_watch_poll_sec", 20.0) or 20.0)
+        except Exception:
+            poll_sec = 20.0
+
     return {
         "updated": now,
         "mode": mode,
@@ -340,6 +370,17 @@ def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
         "entry_watch": entry_watch,
         # Unified Watch section: watches + open positions with P&L.
         "entry_book": entry_book,
+        # Operator-facing liveness for the AI Watch column stamp.
+        "watch_meta": {
+            "updated": now,
+            "poll_sec": float(poll_sec or 20.0),
+            "n_book": len(entry_book),
+            "n_momentum": n_mom,
+            "n_trending": n_st,
+            "n_research": n_res,
+            "n_open": n_open,
+            "n_ready": n_ready,
+        },
     }
 
 
@@ -699,7 +740,7 @@ def main() -> None:
     watch_expired_day = ""
 
     def _publish_book(now: float) -> None:
-        """Seed desk heat + write dashboard wire so AI Watch stays live.
+        """Seed desk heat, drop fallen Mom/ST, write dashboard wire.
 
         Must run *before* long research CLI calls — those can block the loop
         for minutes and otherwise freeze entry_book (Mom/ST disappear in UI).
@@ -713,10 +754,15 @@ def main() -> None:
                 seeds = ew.desk_candidate_rows(live_cfg)
                 if seeds:
                     ew.upsert_from_rows(seeds, cfg=live_cfg, now=now)
+                # Remove Mom/ST names that left momentum / trending universes.
+                ew.prune_desk_watches(live_cfg, now=now)
         except Exception as e:  # noqa: BLE001
-            print(f"[ai] desk seed failed: {e}", flush=True)
+            print(f"[ai] desk seed/prune failed: {e}", flush=True)
         try:
-            pos = _positions_payload(trading_mode, now, book_owner=owner)
+            pos = _positions_payload(
+                trading_mode, now, book_owner=owner,
+                watch_poll_sec=watch_poll_sec,
+            )
             _write_json(POSITIONS_FILE, pos)
             _write_json(POSITIONS_FILE_LEGACY, pos)  # one-release alias
         except Exception as e:  # noqa: BLE001

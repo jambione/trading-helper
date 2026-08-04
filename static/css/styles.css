@@ -1860,6 +1860,15 @@ body.mobile .icon-btn {
 }
 .panel-ai-watch .feed-stamp {
   color: #a78bfa;
+  font-size: 10.5px;
+  max-width: 100%;
+  text-align: right;
+}
+.panel-ai-watch .feed-stamp--live {
+  color: #86efac;
+}
+.panel-ai-watch .feed-stamp--stale {
+  color: #fbbf24;
 }
 .ai-watch-badge {
   display: inline-flex;

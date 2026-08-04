@@ -106,6 +106,55 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
 
 
+def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
+    """Momentum/trending rows leave the book when they fall off desk heat."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew.save_watch({
+        "KEEP": {
+            "symbol": "KEEP", "status": "watching", "source": "momentum", "score": 7,
+        },
+        "GONE": {
+            "symbol": "GONE", "status": "watching", "source": "momentum", "score": 7,
+        },
+        "STAY_TR": {
+            "symbol": "STAY_TR", "status": "watching", "source": "trending", "score": 8,
+        },
+        "DROP_TR": {
+            "symbol": "DROP_TR", "status": "watching", "source": "trending", "score": 8,
+        },
+        "RESEARCH": {
+            "symbol": "RESEARCH", "status": "watching", "source": "xai", "score": 9,
+        },
+        "FILLED": {
+            "symbol": "FILLED", "status": "filled", "source": "momentum", "score": 7,
+        },
+    })
+    monkeypatch.setattr(
+        ew, "desk_candidate_rows",
+        lambda cfg=None: [
+            {"symbol": "KEEP", "source": "momentum", "agreement": True, "score": 7},
+            {"symbol": "STAY_TR", "source": "trending", "agreement": True, "score": 8},
+        ],
+    )
+    state = ew.prune_desk_watches(
+        {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True},
+        now=100.0,
+    )
+    assert state["KEEP"]["status"] == "watching"
+    assert state["STAY_TR"]["status"] == "watching"
+    assert state["RESEARCH"]["status"] == "watching"  # research never pruned here
+    assert state["FILLED"]["status"] == "filled"
+    assert state["GONE"]["status"] == "invalidated"
+    assert state["DROP_TR"]["status"] == "invalidated"
+    # Public book hides invalidated
+    book = ew.book_table_rows(state=state)
+    syms = {r["symbol"] for r in book}
+    assert "GONE" not in syms and "DROP_TR" not in syms
+    assert "KEEP" in syms and "RESEARCH" in syms
+
+
 def test_desk_candidates_include_watchlist_and_trending(tmp_path, monkeypatch):
     """Momentum watchlist + trending heat both produce tradeable seed rows."""
     import ai_entry_watch as ew

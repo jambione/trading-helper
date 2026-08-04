@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=92';
-import { api }       from './api.js?v=92';
-import { copyTicker } from './tickers.js?v=92';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=92';
+import { subscribe, get } from './store.js?v=93';
+import { api }       from './api.js?v=93';
+import { copyTicker } from './tickers.js?v=93';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=93';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -149,10 +149,20 @@ function _posKey(book) {
 
 function _bookKey(book) {
   const rows = _bookRows(book);
-  return rows.map(r =>
+  const upd = book && book.updated != null ? String(book.updated) : '';
+  return upd + '|' + rows.map(r =>
     `${r.symbol}:${r.phase || ''}:${r.source || ''}:${r.price ?? ''}:`
     + `${r.qty ?? ''}:${r.pl ?? ''}:${r.entry_low ?? ''}:${r.entry_high ?? ''}`,
   ).join('|');
+}
+
+function _ageSec(ts) {
+  if (ts == null || ts === '') return null;
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // Support unix seconds or ms.
+  const sec = n > 1e12 ? n / 1000 : n;
+  return Math.max(0, Math.round(Date.now() / 1000 - sec));
 }
 
 /** Prefer server entry_book; always merge open positions; fall back to entry_watch. */
@@ -228,8 +238,34 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
   if (countEl && countEl.textContent !== countTxt) countEl.textContent = countTxt;
   const owner = _ownerLabel(book);
   const mode = String((book && book.mode) || '').toLowerCase();
-  const stampTxt = [owner, mode || null].filter(Boolean).join(' · ');
-  if (stampEl && stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
+  const meta = (book && book.watch_meta) || {};
+  const ageSec = _ageSec(book && book.updated);
+  const pollSec = meta.poll_sec != null ? Number(meta.poll_sec) : 20;
+  const nMom = meta.n_momentum != null
+    ? Number(meta.n_momentum)
+    : rows.filter(r => _bookSourceLabel(r.source) === 'Mom').length;
+  const nSt = meta.n_trending != null
+    ? Number(meta.n_trending)
+    : rows.filter(r => _bookSourceLabel(r.source) === 'ST').length;
+  // Live if wire updated within ~3 poll cycles; stale means recheck stalled.
+  const live = ageSec != null && ageSec < Math.max(45, pollSec * 3);
+  const stampTxt = [
+    live ? '● live' : '○ stale',
+    ageSec != null ? `${ageSec}s ago` : null,
+    `recheck ~${Math.round(pollSec)}s`,
+    nMom ? `${nMom} Mom` : null,
+    nSt ? `${nSt} ST` : null,
+    owner,
+    mode || null,
+  ].filter(Boolean).join(' · ');
+  if (stampEl) {
+    if (stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
+    stampEl.classList.toggle('feed-stamp--live', live);
+    stampEl.classList.toggle('feed-stamp--stale', !live);
+    stampEl.title = live
+      ? `AI Watch wire updated ${ageSec}s ago · desk heat re-seeded and rechecked about every ${Math.round(pollSec)}s · structure/zone poller runs on the same cadence`
+      : `AI Watch wire is stale (${ageSec != null ? ageSec + 's' : '?'} ago) — trader may be blocked on research CLI`;
+  }
 
   const key = _bookKey(book);
   if (key === _bookTableKey && rowsEl.querySelector('[data-book-symbol]')) return;
