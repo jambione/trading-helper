@@ -1795,10 +1795,12 @@ def _prior_context_snippet(max_chars: int = 1200) -> str:
 # Desk-native snapshot files (hints for research — not a buy list).
 RS_RATINGS_FILE = ROOT / "rs_ratings.json"
 TRENDING_STOCKS_FILE = ROOT / "trending_stocks.json"
+SIGNAL_STATE_FILE = ROOT / "signal_state.json"
 DEFAULT_DESK_SNAPSHOT_RS_N = 12
 DEFAULT_DESK_SNAPSHOT_TREND_N = 12
+DEFAULT_DESK_SNAPSHOT_MOMENTUM_N = 12
 DEFAULT_DESK_SNAPSHOT_PEER_N = 7
-DEFAULT_DESK_SNAPSHOT_MAX_CHARS = 1800
+DEFAULT_DESK_SNAPSHOT_MAX_CHARS = 2200
 
 
 def _fmt_px(price: Any) -> str:
@@ -1929,6 +1931,144 @@ def _trending_heat_lines(
     return out
 
 
+def _momentum_desk_lines(
+    path: Path = SIGNAL_STATE_FILE,
+    *,
+    max_price: float | None = 100.0,
+    limit: int = DEFAULT_DESK_SNAPSHOT_MOMENTUM_N,
+) -> list[str]:
+    """Active signal-engine / momentum-monitor names for research prompts."""
+    data = _load_json_file(path)
+    if not isinstance(data, dict):
+        return []
+    tickers = data.get("tickers") or data.get("active") or {}
+    if not isinstance(tickers, dict):
+        return []
+    scored: list[tuple[float, str]] = []
+    for sym, meta in tickers.items():
+        s = str(sym or "").upper().strip()
+        if not s or not _TICKER_RE.match(s):
+            continue
+        if not isinstance(meta, dict):
+            meta = {}
+        px = meta.get("price")
+        if px is not None and not _under_price_cap(px, max_price):
+            continue
+        # Prefer hot / high-proximity names at the top of the snapshot.
+        hot = 1.0 if meta.get("is_hot") else 0.0
+        try:
+            prox = float(meta.get("proximity_pct") or 0.0)
+        except (TypeError, ValueError):
+            prox = 0.0
+        rank = hot * 1000.0 + prox
+        status = str(meta.get("status") or "").strip()
+        bit = f"{s} px={_fmt_px(px)}"
+        if hot:
+            bit += " HOT"
+        if status:
+            bit += f" {status}"
+        if prox:
+            bit += f" prox={prox:g}%"
+        scored.append((rank, bit))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [line for _, line in scored[: max(1, int(limit))]]
+
+
+def momentum_desk_candidate_rows(
+    *,
+    path: Path = SIGNAL_STATE_FILE,
+    max_n: int = 12,
+    max_price: float | None = 100.0,
+) -> list[dict]:
+    """Synthetic book rows from the live momentum / signal-engine table."""
+    data = _load_json_file(path)
+    if not isinstance(data, dict):
+        return []
+    tickers = data.get("tickers") or data.get("active") or {}
+    if not isinstance(tickers, dict):
+        return []
+    scored: list[tuple[float, dict]] = []
+    for sym, meta in tickers.items():
+        s = str(sym or "").upper().strip()
+        if not s or not _TICKER_RE.match(s):
+            continue
+        if not isinstance(meta, dict):
+            meta = {}
+        px = meta.get("price")
+        if px is not None and not _under_price_cap(px, max_price):
+            continue
+        hot = bool(meta.get("is_hot"))
+        try:
+            prox = float(meta.get("proximity_pct") or 0.0)
+        except (TypeError, ValueError):
+            prox = 0.0
+        # Map desk heat into a 6.5–8.5 research-ish score band for ranking only.
+        score = 6.5 + min(2.0, (1.0 if hot else 0.0) + prox / 50.0)
+        reason = "momentum desk"
+        if hot:
+            reason = "momentum HOT"
+        elif meta.get("status"):
+            reason = f"momentum {meta.get('status')}"
+        scored.append((score, {
+            "symbol": s,
+            "trending_score": round(score, 2),
+            "score": round(score, 2),
+            "reason": reason[:40],
+            "agreement": True,
+            "source": "momentum",
+            "price": px,
+        }))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [row for _, row in scored[: max(1, int(max_n))]]
+
+
+def trending_desk_candidate_rows(
+    *,
+    path: Path = TRENDING_STOCKS_FILE,
+    max_n: int = 8,
+    max_price: float | None = 100.0,
+) -> list[dict]:
+    """Synthetic book rows from Stocktwits heat (under price cap)."""
+    data = _load_json_file(path)
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("rows") or []
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        if r.get("is_crypto") is True:
+            continue
+        if r.get("is_equity") is False:
+            continue
+        sym = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+        if not sym or not _TICKER_RE.match(sym):
+            continue
+        if not _under_price_cap(r.get("price"), max_price):
+            continue
+        try:
+            score = float(r.get("trending_score", r.get("score") or 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        # Normalize ST heat scores into a 6–8.5 band when they look like raw heat.
+        if score > 10:
+            score = 6.0 + min(2.5, score / 20.0)
+        out.append({
+            "symbol": sym,
+            "trending_score": round(score, 2),
+            "score": round(score, 2),
+            "reason": "trending heat",
+            "agreement": True,
+            "source": "trending",
+            "price": r.get("price"),
+        })
+        if len(out) >= max(1, int(max_n)):
+            break
+    return out
+
+
 def _peer_board_lines(
     path: Path,
     *,
@@ -1976,22 +2116,33 @@ def build_desk_snapshot_snippet(
     backend: str | None = None,
     rs_path: Path = RS_RATINGS_FILE,
     trending_path: Path = TRENDING_STOCKS_FILE,
+    signal_state_path: Path = SIGNAL_STATE_FILE,
     peer_path: Path | None = None,
     rs_n: int = DEFAULT_DESK_SNAPSHOT_RS_N,
     trend_n: int = DEFAULT_DESK_SNAPSHOT_TREND_N,
+    momentum_n: int = DEFAULT_DESK_SNAPSHOT_MOMENTUM_N,
     peer_n: int = DEFAULT_DESK_SNAPSHOT_PEER_N,
     max_chars: int = DEFAULT_DESK_SNAPSHOT_MAX_CHARS,
     min_rs: float = 80.0,
 ) -> str:
     """Compact desk-native context for research prompts.
 
-    Includes RS leaders, Stocktwits heat, and the peer AI board when files
-    exist. Empty string when nothing usable is available. Labeled as hints
-    only — the model must still re-validate with live search.
+    Includes momentum/signal-engine actives, RS leaders, Stocktwits heat, and
+    the peer AI board when files exist. Empty string when nothing usable is
+    available. Labeled as hints only — the model must still re-validate with
+    live search.
     """
     sections: list[str] = []
     cap = float(max_price) if max_price is not None and float(max_price) > 0 else None
     cap_note = f"under ${cap:g}" if cap is not None else "no price cap"
+
+    mom = _momentum_desk_lines(
+        signal_state_path, max_price=cap, limit=momentum_n)
+    if mom:
+        sections.append(
+            "Momentum / signal-engine actives (intraday desk heat — prioritize "
+            "when thesis + RR work):\n  " + " | ".join(mom)
+        )
 
     rs_lines, as_of = _rs_leader_lines(
         rs_path, max_price=cap, limit=rs_n, min_rs=min_rs)

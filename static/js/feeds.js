@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=86';
-import { api }       from './api.js?v=86';
-import { copyTicker } from './tickers.js?v=86';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=86';
+import { subscribe, get } from './store.js?v=87';
+import { api }       from './api.js?v=87';
+import { copyTicker } from './tickers.js?v=87';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=87';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -21,6 +21,9 @@ export function init(panelEl, kind) {
   const errEl   = panelEl.querySelector(`[data-${kind}-error]`);
   const openEl  = kind === 'claude'
     ? panelEl.querySelector('[data-ai-open-positions]')
+    : null;
+  const watchEl = kind === 'claude'
+    ? panelEl.querySelector('[data-ai-entry-watch]')
     : null;
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
@@ -85,7 +88,10 @@ export function init(panelEl, kind) {
     if (countEl && countEl.textContent !== countTxt) countEl.textContent = countTxt;
     const stampTxt = _stampLine(p, book);
     if (stampEl && stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
-    if (kind === 'claude') _paintOpenBar(openEl, book);
+    if (kind === 'claude') {
+      _paintOpenBar(openEl, book);
+      _paintWatchBar(watchEl, book);
+    }
 
     // New symbol → cyan pulse on Trending / AI Research header (5s; skip first paint).
     noteSymbols(panelEl, rows.map(r => r.symbol));
@@ -108,9 +114,10 @@ export function init(panelEl, kind) {
 
     // Membership + structure only — quote ticks patch cells without this short-circuit.
     const posKey = _posKey(book);
+    const watchKey = _watchKey(book);
     const structKey = withLook.map(r =>
       `${r.symbol}:${r.source_mark || ''}:${r.rank ?? ''}:${r.reason || ''}:${r.invalidation || ''}:${r.look ? r.look_reason : ''}`,
-    ).join('|') + `|pos:${posKey}|${sortCol}:${sortDir}`;
+    ).join('|') + `|pos:${posKey}|w:${watchKey}|${sortCol}:${sortDir}`;
     lastRows = withLook;
     lastKey = structKey;
 
@@ -135,7 +142,15 @@ function _posKey(book) {
   }).join(',');
 }
 
+function _watchKey(book) {
+  const w = (book && Array.isArray(book.entry_watch)) ? book.entry_watch : [];
+  return w.map(r =>
+    `${r.symbol}:${r.status || ''}:${r.ready ? 1 : 0}:${r.last_ask ?? ''}:${r.entry_low ?? ''}:${r.entry_high ?? ''}`,
+  ).join(',');
+}
+
 let _openBarKey = '';
+let _watchBarKey = '';
 
 function _paintOpenBar(el, book) {
   if (!el) return;
@@ -159,6 +174,72 @@ function _paintOpenBar(el, book) {
         + `${_esc(sym)} ${_esc(_fmtQty(p.qty))} ${_esc(_fmtPl(p))}`
         + `</span>`;
     }).join('');
+}
+
+/**
+ * Entry-watch queue: names the AI paper book is waiting on or ready to buy.
+ * Ready chips are emphasized; zone + ask shown when known.
+ */
+function _paintWatchBar(el, book) {
+  if (!el) return;
+  const watches = (book && Array.isArray(book.entry_watch)) ? book.entry_watch : [];
+  // Prefer ready names first (server already sorts that way); cap for bar width.
+  const list = watches.slice(0, 14);
+  if (!list.length) {
+    el.hidden = true;
+    if (el.innerHTML) el.innerHTML = '';
+    _watchBarKey = '';
+    return;
+  }
+  const nReady = list.filter(w => w && w.ready).length;
+  const key = _watchKey(book) + `|r${nReady}`;
+  if (key === _watchBarKey && !el.hidden) return;
+  _watchBarKey = key;
+  el.hidden = false;
+  const label = nReady
+    ? `Watch · ${nReady} ready`
+    : `Watch · ${list.length}`;
+  el.innerHTML = `<span class="ai-open-bar-label ai-watch-bar-label">${_esc(label)}</span>`
+    + list.map(w => {
+      const sym = String((w && w.symbol) || '').toUpperCase();
+      if (!sym) return '';
+      const ready = !!(w && w.ready);
+      const ask = w.last_ask != null && Number.isFinite(Number(w.last_ask))
+        ? `$${Number(w.last_ask).toFixed(2)}` : '';
+      const zone = _fmtZone(w.entry_low, w.entry_high);
+      const src = String((w && w.source) || '');
+      const wait = String((w && w.wait_kind) || (w && w.status) || '');
+      const title = [
+        ready ? 'READY to arm/buy' : 'Waiting',
+        zone ? `zone ${zone}` : null,
+        ask ? `ask ${ask}` : null,
+        wait || null,
+        src ? `src ${src}` : null,
+        w.reason || null,
+      ].filter(Boolean).join(' · ');
+      const cls = ready
+        ? 'ai-watch-chip ai-watch-chip--ready'
+        : 'ai-watch-chip';
+      const meta = ready
+        ? (ask || 'ready')
+        : (zone ? `→${zone}` : (wait || 'setup'));
+      return `<span class="${cls}" title="${_esc(title)}" data-feed-symbol="${_esc(sym)}">`
+        + `<b>${_esc(sym)}</b> ${_esc(meta)}`
+        + `</span>`;
+    }).join('');
+}
+
+function _fmtZone(lo, hi) {
+  const a = lo != null && Number.isFinite(Number(lo)) ? Number(lo) : null;
+  const b = hi != null && Number.isFinite(Number(hi)) ? Number(hi) : null;
+  if (a == null && b == null) return '';
+  if (a != null && b != null) {
+    const fa = a >= 100 ? a.toFixed(1) : a.toFixed(2);
+    const fb = b >= 100 ? b.toFixed(1) : b.toFixed(2);
+    return `${fa}–${fb}`;
+  }
+  const v = a != null ? a : b;
+  return v >= 100 ? v.toFixed(1) : v.toFixed(2);
 }
 
 /**
@@ -610,6 +691,11 @@ function _stampLine(p, book) {
   if (book && book.positions) {
     const n = Object.keys(book.positions).length;
     if (n > 0) parts.push(`${n} open`);
+  }
+  if (book && Array.isArray(book.entry_watch) && book.entry_watch.length) {
+    const nW = book.entry_watch.length;
+    const nR = book.entry_watch.filter(w => w && w.ready).length;
+    parts.push(nR ? `${nW} watch (${nR} ready)` : `${nW} watch`);
   }
   if (p.model) parts.push(String(p.model));
   // Token spend: prefer day rollup, else last single call.

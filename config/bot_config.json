@@ -267,5 +267,9 @@
   "ai_require_agreement": false,
   "ai_max_spread_pct": 1.0,
   "ai_min_dollar_volume": 0.0,
-  "ai_watch_require_agreement": false
+  "ai_watch_require_agreement": false,
+  "ai_watch_seed_momentum": true,
+  "ai_watch_seed_momentum_n": 12,
+  "ai_watch_seed_trending": true,
+  "ai_watch_seed_trending_n": 8
 }

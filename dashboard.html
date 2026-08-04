@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=86" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=87" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -288,8 +288,9 @@
                         <span data-claude-stamp class="feed-stamp"></span>
                     </div>
                 </div>
-                <!-- Compact open book from Grok/Claude paper trader -->
+                <!-- Compact open book + entry-watch queue from Grok/Claude paper trader -->
                 <div data-ai-open-positions class="ai-open-bar" hidden></div>
+                <div data-ai-entry-watch class="ai-open-bar ai-watch-bar" hidden></div>
                 <div class="feed-table-header">
                     <div class="feed-cols feed-cols--claude">
                         <div class="th" data-sort-col="ticker">Ticker</div>
@@ -706,7 +707,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=86"></script>
+        <script type="module" src="/static/js/app.js?v=87"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

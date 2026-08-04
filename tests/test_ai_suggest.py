@@ -372,6 +372,7 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
     rs_path = tmp_path / "rs.json"
     tr_path = tmp_path / "tr.json"
     peer_path = tmp_path / "peer.json"
+    sig_path = tmp_path / "signal_state.json"
     rs_path.write_text(json.dumps({
         "as_of": "2026-08-01",
         "rows": [
@@ -401,16 +402,30 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
             {"symbol": "HOOD", "score": 7.0, "reason": "crypto cycle"},
         ],
     }), encoding="utf-8")
+    sig_path.write_text(json.dumps({
+        "tickers": {
+            "ACHR": {"price": 8.5, "is_hot": True, "proximity_pct": 40,
+                     "status": "watching"},
+            "NVDA": {"price": 120.0, "is_hot": True},  # over cap
+            "GEVO": {"price": 2.1, "is_hot": False, "proximity_pct": 10,
+                     "status": "watching"},
+        },
+    }), encoding="utf-8")
 
     snap = cs.build_desk_snapshot_snippet(
         max_price=100.0,
         backend="claude_cli",
         rs_path=rs_path,
         trending_path=tr_path,
+        signal_state_path=sig_path,
         peer_path=peer_path,
     )
     assert "DESK SNAPSHOT" in snap
     assert "hints only" in snap
+    assert "Momentum" in snap
+    assert "ACHR" in snap and "HOT" in snap
+    assert "GEVO" in snap
+    assert "NVDA" not in snap  # price cap on momentum
     assert "HPE" in snap and "VTRS" in snap
     assert "AAPL" not in snap  # price cap
     assert "SOFI" in snap
@@ -425,6 +440,7 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
         backend="cli",
         rs_path=rs_path,
         trending_path=tr_path,
+        signal_state_path=sig_path,
         peer_path=peer_path,
     )
     assert "Claude (A)" in snap_x
@@ -433,9 +449,34 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
         max_price=100.0,
         rs_path=tmp_path / "missing_rs.json",
         trending_path=tmp_path / "missing_tr.json",
+        signal_state_path=tmp_path / "missing_sig.json",
         peer_path=tmp_path / "missing_peer.json",
     )
     assert empty == ""
+
+
+def test_momentum_and_trending_candidate_rows(tmp_path):
+    sig = tmp_path / "signal_state.json"
+    tr = tmp_path / "tr.json"
+    sig.write_text(json.dumps({
+        "tickers": {
+            "ACHR": {"price": 9.0, "is_hot": True, "proximity_pct": 50},
+            "BIG": {"price": 250.0, "is_hot": True},
+        },
+    }), encoding="utf-8")
+    tr.write_text(json.dumps({
+        "rows": [
+            {"symbol": "SOFI", "trending_score": 8.0, "price": 18.0, "is_equity": True},
+            {"symbol": "BTC", "trending_score": 9.0, "price": 1.0, "is_crypto": True},
+        ],
+    }), encoding="utf-8")
+    mom = cs.momentum_desk_candidate_rows(path=sig, max_n=10, max_price=100.0)
+    assert any(r["symbol"] == "ACHR" for r in mom)
+    assert all(r["symbol"] != "BIG" for r in mom)
+    assert mom[0]["source"] == "momentum"
+    heat = cs.trending_desk_candidate_rows(path=tr, max_n=10, max_price=100.0)
+    assert any(r["symbol"] == "SOFI" for r in heat)
+    assert all(r["symbol"] != "BTC" for r in heat)
 
 
 def test_defaults_are_three_scheduled_runs_at_full_depth():

@@ -18,7 +18,10 @@ def test_watch_config_defaults_present():
         assert key in DEFAULT_CONFIG
     cfg = load_config()
     assert cfg["ai_watch_enabled"] is True
-    assert cfg["ai_watch_require_agreement"] is True
+    # Live bot_config may flip agreement; defaults document the knobs.
+    assert "ai_watch_require_agreement" in DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["ai_watch_seed_momentum"] is True
+    assert DEFAULT_CONFIG["ai_watch_seed_trending"] is True
     assert cfg["ai_watch_poll_sec"] == 20.0
     assert float(DEFAULT_CONFIG["ai_entry_zone_pad_pct"]) == 0.0
 
@@ -90,11 +93,46 @@ def test_drop_missing_invalidates(tmp_path, monkeypatch):
 def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     import ai_entry_watch as ew
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
-    cfg = {"ai_watch_require_agreement": True, "ai_watch_single_source": False}
+    cfg = {
+        "ai_watch_require_agreement": True,
+        "ai_watch_single_source": False,
+        "ai_watch_seed_momentum": False,
+        "ai_watch_seed_trending": False,
+    }
     rows = [{"symbol": "SOFI", "agreement": True, "trending_score": 7.8, "reason": "peg"}]
     state = ew.rebuild_watch_from_book(rows, cfg=cfg, now=100.0)
     assert "SOFI" in state and state["SOFI"]["status"] == "watching"
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
+
+
+def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
+    """Desk momentum names stay on the watch queue across rebuild."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(
+        ew, "desk_candidate_rows",
+        lambda cfg=None: [{
+            "symbol": "ACHR",
+            "score": 7.2,
+            "trending_score": 7.2,
+            "reason": "momentum HOT",
+            "agreement": True,
+            "source": "momentum",
+        }],
+    )
+    cfg = {
+        "ai_watch_require_agreement": False,
+        "ai_watch_seed_momentum": True,
+        "ai_watch_seed_trending": False,
+    }
+    # Research only has SOFI; momentum ACHR must still be active (not invalidated).
+    rows = [{"symbol": "SOFI", "agreement": True, "trending_score": 8.0, "reason": "ai"}]
+    state = ew.rebuild_watch_from_book(rows, cfg=cfg, now=200.0)
+    assert "SOFI" in state
+    assert "ACHR" in state
+    assert state["ACHR"]["source"] == "momentum"
+    assert state["ACHR"]["status"] == "watching"
 
 
 def test_expire_open_watches(tmp_path, monkeypatch):
@@ -172,10 +210,11 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
     ew.save_watch(state)
     snap = ew.public_snapshot()
     assert isinstance(snap, list)
+    # Ready first (armed / in-zone), then higher score — AAA (armed, 9.1) then ZZZ.
     assert [r["symbol"] for r in snap] == ["AAA", "ZZZ"]
     keys = {
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
-        "last_ask", "score", "agreement",
+        "last_ask", "score", "agreement", "reason", "source", "ready", "in_zone",
     }
     for row in snap:
         assert set(row.keys()) == keys
@@ -187,8 +226,11 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
     assert zzz["last_ask"] == 12.3
     assert zzz["score"] == 7.5
     assert zzz["agreement"] is True
+    assert zzz["ready"] is True  # ask inside zone
+    assert zzz["in_zone"] is True
     aaa = snap[0]
     assert aaa["status"] == "armed"
+    assert aaa["ready"] is True
     assert aaa["wait_kind"] is None
     assert aaa["entry_low"] is None
     assert aaa["entry_high"] is None

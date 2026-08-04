@@ -80,18 +80,28 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
     """Operator-facing watch queue rows for positions JSON.
 
     Each item: symbol, status, wait_kind, entry_low, entry_high, last_ask,
-    score, agreement. Sorted by symbol for stable UI / diffs.
+    score, agreement, reason, source, ready. Open queue only (watching/armed);
+    terminal statuses are omitted. Ready = armed, or watching with ask in zone.
+    Sorted: ready first, then score desc, then symbol.
     """
     if state is None:
         state = load_watch()
     if not isinstance(state, dict):
         return []
+    # Exact zone (pad=0) for UI "ready" — matches default ai_entry_zone_pad_pct.
+    # Avoid load_config here (snapshot is hot-path and must stay import-light).
+    pad_pct = 0.0
     rows: list[dict] = []
     for key, rec in state.items():
         if not isinstance(rec, dict):
             continue
         sym = str(rec.get("symbol") or key or "").upper().strip()
         if not sym:
+            continue
+        status = str(rec.get("status") or "").lower().strip() or "watching"
+        if status in _TERMINAL_STATUSES:
+            continue
+        if status and status not in _ARMABLE_STATUSES:
             continue
         structure = rec.get("structure")
         if not isinstance(structure, dict):
@@ -124,17 +134,37 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             score_f = float(score) if score is not None else None
         except (TypeError, ValueError):
             score_f = None
+        in_zone = False
+        if (
+            last_ask_f is not None
+            and entry_low_f is not None
+            and entry_high_f is not None
+            and entry_low_f > 0
+            and entry_high_f > 0
+        ):
+            in_zone = ask_in_zone(
+                last_ask_f, entry_low_f, entry_high_f, pad_pct)
+        ready = status == "armed" or (status == "watching" and in_zone)
         rows.append({
             "symbol": sym,
-            "status": str(rec.get("status") or "") or None,
+            "status": status or None,
             "wait_kind": wait_kind,
             "entry_low": entry_low_f,
             "entry_high": entry_high_f,
             "last_ask": last_ask_f,
             "score": score_f,
             "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
+            "reason": str(rec.get("reason") or "")[:80] or None,
+            "source": str(rec.get("source") or "research")[:24] or "research",
+            "ready": bool(ready),
+            "in_zone": bool(in_zone),
         })
-    rows.sort(key=lambda r: r["symbol"])
+    # Ready first, then higher score, then symbol for stable UI.
+    rows.sort(key=lambda r: (
+        0 if r.get("ready") else 1,
+        -(r.get("score") or 0.0),
+        r["symbol"],
+    ))
     return rows
 
 
@@ -191,12 +221,14 @@ def upsert_from_rows(
             status = prev_status
         else:
             status = "watching"
+        src = str(row.get("source") or prev.get("source") or "research").strip()
         rec: dict[str, Any] = {
             "symbol": sym,
             "status": status,
             "agreement": bool(row.get("agreement")),
             "score": _score_from_row(row),
             "reason": str(row.get("reason") or prev.get("reason") or ""),
+            "source": src or "research",
             "structure": prev.get("structure", _EMPTY_RECORD_DEFAULTS["structure"]),
             "structure_ts": float(
                 prev.get("structure_ts", _EMPTY_RECORD_DEFAULTS["structure_ts"]) or 0.0
@@ -359,6 +391,117 @@ def expire_stale_watches_for_new_day(now: float) -> dict:
     return state
 
 
+def _price_under_cap(px: Any, max_price: Any) -> bool:
+    if max_price is None:
+        return True
+    try:
+        cap = float(max_price)
+        if cap <= 0:
+            return True
+        p = float(px)
+    except (TypeError, ValueError):
+        return True  # unknown price: keep candidate
+    return p < cap
+
+
+def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
+    """Momentum / trending names as synthetic research rows for the watch queue.
+
+    These are candidates only — the structure poller still must define zone /
+    stop / target before arming a buy. Controlled by:
+      ai_watch_seed_momentum (default True)
+      ai_watch_seed_trending (default True)
+
+    Reads wire files directly (no heavy ``ai_suggest`` import) so the poller
+    stays lightweight and test-safe.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    rows: list[dict] = []
+    seen: set[str] = set()
+    max_price = cfg.get("ai_max_price", cfg.get("claude_max_price"))
+
+    if cfg.get("ai_watch_seed_momentum", True):
+        try:
+            path = ROOT / "signal_state.json"
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            tickers = raw.get("tickers") or raw.get("active") or {}
+            if isinstance(tickers, dict):
+                scored: list[tuple[float, dict]] = []
+                for sym, meta in tickers.items():
+                    s = str(sym or "").upper().strip()
+                    if not s or not s[0].isalpha():
+                        continue
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    if not _price_under_cap(meta.get("price"), max_price):
+                        continue
+                    hot = bool(meta.get("is_hot"))
+                    try:
+                        prox = float(meta.get("proximity_pct") or 0.0)
+                    except (TypeError, ValueError):
+                        prox = 0.0
+                    score = 6.5 + min(2.0, (1.0 if hot else 0.0) + prox / 50.0)
+                    reason = "momentum HOT" if hot else "momentum desk"
+                    scored.append((score, {
+                        "symbol": s,
+                        "trending_score": round(score, 2),
+                        "score": round(score, 2),
+                        "reason": reason[:40],
+                        "agreement": True,
+                        "source": "momentum",
+                    }))
+                scored.sort(key=lambda t: t[0], reverse=True)
+                n = int(cfg.get("ai_watch_seed_momentum_n", 12) or 12)
+                for _, r in scored[: max(1, n)]:
+                    if r["symbol"] in seen:
+                        continue
+                    seen.add(r["symbol"])
+                    rows.append(r)
+        except Exception:
+            pass
+
+    if cfg.get("ai_watch_seed_trending", True):
+        try:
+            path = ROOT / "trending_stocks.json"
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            tr_rows = raw.get("rows") or []
+            if isinstance(tr_rows, list):
+                n = int(cfg.get("ai_watch_seed_trending_n", 8) or 8)
+                for r in tr_rows:
+                    if not isinstance(r, dict):
+                        continue
+                    if r.get("is_crypto") is True:
+                        continue
+                    if r.get("is_equity") is False:
+                        continue
+                    s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+                    if not s or not s[0].isalpha() or s in seen:
+                        continue
+                    if not _price_under_cap(r.get("price"), max_price):
+                        continue
+                    try:
+                        score = float(r.get("trending_score", r.get("score") or 0) or 0)
+                    except (TypeError, ValueError):
+                        score = 0.0
+                    if score > 10:
+                        score = 6.0 + min(2.5, score / 20.0)
+                    seen.add(s)
+                    rows.append({
+                        "symbol": s,
+                        "trending_score": round(score, 2),
+                        "score": round(score, 2),
+                        "reason": "trending heat",
+                        "agreement": True,
+                        "source": "trending",
+                    })
+                    if len([x for x in rows if x.get("source") == "trending"]) >= max(1, n):
+                        break
+        except Exception:
+            pass
+
+    return rows
+
+
 def rebuild_watch_from_book(
     rows: list[dict],
     cfg: dict,
@@ -368,12 +511,18 @@ def rebuild_watch_from_book(
 
     Combines ``upsert_from_rows`` (eligible → watching) + ``drop_missing``
     (not in active set → invalidated) + ``save_watch``. Active symbols are
-    those that pass the same agreement gate as upsert.
+    those that pass the same agreement gate as upsert, plus optional desk
+    momentum/trending seeds so day-trade heat is not dropped on rebuild.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
-    state = upsert_from_rows(rows if isinstance(rows, list) else [], cfg=cfg, now=now)
+    book = list(rows) if isinstance(rows, list) else []
+    # Desk seeds after research rows so research wins on symbol collision
+    # in upsert (later row overwrites — put seeds first, research last).
+    seeds = desk_candidate_rows(cfg)
+    merged = list(seeds) + book
+    state = upsert_from_rows(merged, cfg=cfg, now=now)
     active: set[str] = set()
-    for row in rows if isinstance(rows, list) else []:
+    for row in merged:
         if not isinstance(row, dict):
             continue
         if not _row_passes_agreement(row, cfg):
@@ -780,6 +929,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         ready = False
     if not ready:
         return [{"kind": "watch_skip", "reason": "trader_not_ready"}]
+
+    # Desk momentum/trending seeds run on research + open-bell rebuild only
+    # (not every poll) so we do not mass-queue structure LLM calls mid-session.
 
     state = load_watch()
     if not state:

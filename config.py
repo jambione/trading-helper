@@ -178,7 +178,7 @@ DEFAULT_CONFIG = {
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
     # Entry watch poller (agreement queue + structure TTL / arming)
     "ai_watch_enabled":                 True,   # enable entry-watch queue
-    "ai_watch_require_agreement":       True,   # only watch AX-agreed names
+    "ai_watch_require_agreement":      False,   # only watch AX-agreed names
     "ai_watch_single_source":          False,   # allow single-source watch when True
     "ai_watch_poll_sec":                20.0,   # watch poll interval (seconds)
     "ai_structure_ttl_sec":           5400.0,   # structure plan TTL (seconds)
@@ -186,6 +186,11 @@ DEFAULT_CONFIG = {
     "ai_entry_zone_pad_pct":             0.0,   # pad around entry zone (%); 0 = exact zone
     "ai_max_structure_calls_per_hour":    12,   # rate-limit structure LLM calls
     "ai_persist_entry_decisions":       True,   # persist entry decision records
+    # Seed entry-watch from live desk heat (structure poller still defines levels).
+    "ai_watch_seed_momentum":           True,
+    "ai_watch_seed_momentum_n":           12,
+    "ai_watch_seed_trending":           True,
+    "ai_watch_seed_trending_n":            8,
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -362,6 +367,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_poll_sec",
     "ai_structure_ttl_sec",
     "ai_watch_expire_at_close",
+    "ai_watch_seed_momentum",
+    "ai_watch_seed_momentum_n",
+    "ai_watch_seed_trending",
+    "ai_watch_seed_trending_n",
     "ai_entry_zone_pad_pct",
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",

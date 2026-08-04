@@ -1802,6 +1802,34 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
+.ai-watch-bar {
+  background: rgba(34, 211, 238, 0.05);
+  border-bottom-color: var(--border-hi);
+}
+.ai-watch-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  background: rgba(34, 211, 238, 0.08);
+  color: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.ai-watch-chip b {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.ai-watch-chip--ready {
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(52, 211, 153, 0.14);
+  color: #d1fae5;
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.12);
+}
 .watchlist-table-header {
   padding: 0 16px;
   border-bottom: 1px solid var(--border-hi);
