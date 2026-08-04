@@ -786,8 +786,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
 
     Rules (operator):
       • No AI Research names (handled by sync — research seed off).
-      • Trending: raw Stocktwits score **strictly above** min (default 10),
-        **or** |day pct_change| above min (default 50).
+      • Trending: score **> min** (default 10), **or** |day chg %| > min (50),
+        **or** relative volume **> min** (default 1.0 = 100% of avg).
       • Momentum: FIRST / NEW / BURST flag on the desk,
         **or** |day pct_change| above min (default 50).
 
@@ -801,6 +801,11 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
     except (TypeError, ValueError):
         min_pct = 50.0
+    try:
+        # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        min_rvol = 1.0
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:
@@ -851,11 +856,27 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         score = 0.0
                     pct = _pct_change_value(r.get("pct_change"))
                     big_move = pct is not None and abs(pct) > float(min_pct)
-                    # Score path OR big day-move path.
-                    if score <= min_score and not big_move:
+                    rvol = None
+                    for key in ("rvol", "rvol_raw"):
+                        if r.get(key) is not None:
+                            try:
+                                rvol = float(r.get(key))
+                                break
+                            except (TypeError, ValueError):
+                                pass
+                    # rvol is a ratio (1.0 = 100% of avg). Also accept percent-like values.
+                    if rvol is not None and rvol > 10.0:
+                        # e.g. 150 meaning 150% → 1.5x
+                        rvol = rvol / 100.0
+                    high_rvol = rvol is not None and rvol > float(min_rvol)
+                    # Score path OR big day-move OR elevated relative volume.
+                    if score <= min_score and not big_move and not high_rvol:
                         continue
                     seen.add(s)
-                    if big_move and score <= min_score:
+                    if high_rvol and score <= min_score and not big_move:
+                        reason = f"trending rvol {rvol:.2f}x"
+                        use_score = float(rvol) * 10.0  # rank key only
+                    elif big_move and score <= min_score:
                         reason = f"trending chg {pct:+.0f}%"
                         use_score = abs(float(pct))
                     else:
