@@ -771,11 +771,29 @@ def main() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[ai] positions publish failed: {e}", flush=True)
 
+    watch_poll_busy = {"on": False}
+
+    def _run_watch_poll(cfg_snap: dict, t0: float) -> None:
+        """Structure/arm/buy recheck — may call CLI; must not block publish."""
+        try:
+            import ai_entry_watch as ew
+            ew.poll_once(cfg=cfg_snap, now=t0)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] watch_poll failed: {e}", flush=True)
+            try:
+                ai_positions.log_event(
+                    "watch_poll_error", reason=str(e)[:200])
+            except Exception:
+                pass
+        finally:
+            watch_poll_busy["on"] = False
+
     def _book_maintenance_loop() -> None:
         """Keep AI Watch live even while the main thread is blocked on research.
 
-        Research CLI can run for many minutes; without this thread the dashboard
-        wire freezes and the UI shows ○ stale.
+        Research CLI and structure evaluation can run for minutes. This loop
+        always publishes the wire on a short cadence; heavy poll_once work
+        runs on a *nested* daemon so publish never freezes.
         """
         if not trading:
             return
@@ -803,19 +821,17 @@ def main() -> None:
                     book_state["watch_poll_sec"] = wps
                     book_state["positions_poll"] = pps
 
-                if live_cfg.get("ai_watch_enabled", True):
-                    if (t0 - book_state["last_watch_poll"]) >= wps:
-                        book_state["last_watch_poll"] = t0
-                        try:
-                            import ai_entry_watch as ew
-                            ew.poll_once(cfg=live_cfg, now=t0)
-                        except Exception as e:  # noqa: BLE001
-                            print(f"[ai] watch_poll failed: {e}", flush=True)
-                            try:
-                                ai_positions.log_event(
-                                    "watch_poll_error", reason=str(e)[:200])
-                            except Exception:
-                                pass
+                # Fast path first: seed/prune/publish so UI never goes stale.
+                _publish_book(t0)
+
+                if (t0 - book_state["last_positions_tick"]) >= pps:
+                    book_state["last_positions_tick"] = t0
+                    try:
+                        ai_positions.manage_open_positions(
+                            t0, unconfirmed_ttl_sec=unconfirmed_ttl)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[ai] manage_open_positions failed: {e}",
+                              flush=True)
 
                 if live_cfg.get("ai_watch_expire_at_close", True):
                     try:
@@ -846,19 +862,23 @@ def main() -> None:
                     except Exception as e:  # noqa: BLE001
                         print(f"[ai] watch_expire failed: {e}", flush=True)
 
-                if (t0 - book_state["last_positions_tick"]) >= pps:
-                    book_state["last_positions_tick"] = t0
-                    try:
-                        ai_positions.manage_open_positions(
-                            t0, unconfirmed_ttl_sec=unconfirmed_ttl)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[ai] manage_open_positions failed: {e}",
-                              flush=True)
-
-                _publish_book(t0)
+                # Heavy recheck: fire-and-forget so structure CLI cannot stall publish.
+                if live_cfg.get("ai_watch_enabled", True):
+                    if (
+                        (t0 - book_state["last_watch_poll"]) >= wps
+                        and not watch_poll_busy["on"]
+                    ):
+                        book_state["last_watch_poll"] = t0
+                        watch_poll_busy["on"] = True
+                        threading.Thread(
+                            target=_run_watch_poll,
+                            args=(dict(live_cfg), t0),
+                            name="ai-watch-poll",
+                            daemon=True,
+                        ).start()
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] book thread error: {e}", flush=True)
-            time.sleep(min(2.0, max(1.0, float(book_state["positions_poll"] or 5.0) / 2)))
+            time.sleep(2.0)
 
     if trading:
         # Immediate publish + background book loop (independent of research).
