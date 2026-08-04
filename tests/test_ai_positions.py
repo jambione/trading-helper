@@ -594,9 +594,10 @@ def test_past_eod_liquidate_time():
         {"ai_eod_liquidate_enabled": False}, after) is False
 
 
-def test_watch_session_and_trading_hours():
+def test_watch_session_and_trading_hours(tmp_path, monkeypatch):
     """Watch from 09:00 ET; paper entries only when market_open and before EOD."""
     import ai_entry_watch as ew
+    import ai_positions as cp
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -606,6 +607,7 @@ def test_watch_session_and_trading_hours():
         "ai_watch_start_time": "09:00",
         "ai_eod_liquidate_enabled": True,
         "ai_eod_liquidate_time": "15:50",
+        "ai_sod_liquidate_enabled": True,
     }
     pre = datetime(2026, 8, 3, 8, 59, tzinfo=et).timestamp()
     start = datetime(2026, 8, 3, 9, 0, tzinfo=et).timestamp()
@@ -619,8 +621,38 @@ def test_watch_session_and_trading_hours():
 
     # Pre-open: can watch from 9:00 but not trade.
     assert ew.trading_hours_active(cfg, start, market_open=False) is False
+    # RTH but SOD not done yet → no entries.
+    monkeypatch.setattr(cp, "SOD_LIQUIDATE_STATE_PATH", tmp_path / "sod.json")
+    assert ew.sod_liquidate_done(cfg, rth) is False
+    assert ew.trading_hours_active(cfg, rth, market_open=True) is False
+    # After SOD latch, trading allowed.
+    (tmp_path / "sod.json").write_text(
+        json.dumps({"last_day": "2026-08-03"}), encoding="utf-8")
+    assert ew.sod_liquidate_done(cfg, rth) is True
     assert ew.trading_hours_active(cfg, rth, market_open=True) is True
     assert ew.trading_hours_active(cfg, eod, market_open=True) is False
+
+
+def test_sod_liquidate_due_once_per_day(tmp_path, monkeypatch):
+    """SOD arms only at first RTH open and only once per ET day."""
+    import ai_trader as at
+    import ai_positions as cp
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    path = tmp_path / "sod.json"
+    monkeypatch.setattr(cp, "SOD_LIQUIDATE_STATE_PATH", path)
+    et = ZoneInfo("America/New_York")
+    rth = datetime(2026, 8, 3, 9, 35, tzinfo=et).timestamp()
+    cfg = {
+        "ai_sod_liquidate_enabled": True,
+        "ai_eod_liquidate_enabled": True,
+        "ai_eod_liquidate_time": "15:50",
+    }
+    assert at._sod_liquidate_due(cfg, rth, market_open=False) is False
+    assert at._sod_liquidate_due(cfg, rth, market_open=True) is True
+    at._mark_sod_liquidate_done(rth, {"ok": True})
+    assert at._sod_liquidate_due(cfg, rth + 60, market_open=True) is False
 
 
 def test_clear_watch_book_empties_state(tmp_path, monkeypatch):

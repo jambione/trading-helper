@@ -728,6 +728,105 @@ def _run_eod_liquidate(cfg: dict, now: float) -> dict:
     return result if isinstance(result, dict) else {}
 
 
+def _sod_liquidate_due(cfg: dict, now: float, *, market_open: bool) -> bool:
+    """True once per ET weekday at first RTH open (before any new entries)."""
+    if not bool(cfg.get("ai_sod_liquidate_enabled", True)):
+        return False
+    if not market_open:
+        return False
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(now, tz=et)
+    if dt.weekday() >= 5:
+        return False
+    # Don't run SOD flatten in the EOD window.
+    if _eod_liquidate_due(cfg, now) or (
+        bool(cfg.get("ai_eod_liquidate_enabled", True))
+        and (dt.hour, dt.minute) >= _parse_hhmm(
+            str(cfg.get("ai_eod_liquidate_time") or "15:50"), (15, 50))
+    ):
+        return False
+    day_key = dt.strftime("%Y-%m-%d")
+    try:
+        prev = json.loads(ai_positions.SOD_LIQUIDATE_STATE_PATH.read_text(
+            encoding="utf-8"))
+        if str(prev.get("last_day") or "") == day_key:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _mark_sod_liquidate_done(now: float, result: dict | None = None) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    day_key = datetime.fromtimestamp(now, tz=et).strftime("%Y-%m-%d")
+    try:
+        path = ai_positions.SOD_LIQUIDATE_STATE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "last_day": day_key,
+            "ts": now,
+            "result": result if isinstance(result, dict) else {},
+        }
+        path.write_text(json.dumps(payload, indent=2, default=str),
+                        encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _run_sod_liquidate(cfg: dict, now: float) -> dict:
+    """Start-of-day flatten: wipe broker book before any new paper entries."""
+    import alpaca_trader
+
+    print("[ai] SOD liquidate — flatten overnight book before new trades",
+          flush=True)
+    try:
+        result = alpaca_trader.liquidate_all()
+    except Exception as e:  # noqa: BLE001
+        result = {
+            "ok": False, "canceled": 0, "closed": 0,
+            "symbols": [], "errors": [str(e)],
+        }
+        print(f"[ai] SOD liquidate failed: {e}", flush=True)
+    try:
+        ai_positions.log_event(
+            "sod_liquidate",
+            ok=bool(result.get("ok")),
+            canceled=result.get("canceled"),
+            closed=result.get("closed"),
+            symbols=result.get("symbols") or [],
+            errors=(result.get("errors") or [])[:8],
+        )
+    except Exception:
+        pass
+    # Fresh session: empty watch queue; reseed from panels after publish.
+    if cfg.get("ai_watch_enabled", True):
+        try:
+            import ai_entry_watch as ew
+            ew.clear_watch_book(now=now)
+            print("[ai] SOD liquidate — AI Watch cleared for reseed", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] SOD clear watch failed: {e}", flush=True)
+    # Drop local managed state so we do not inherit overnight book metadata.
+    try:
+        ai_positions._save_state({})
+    except Exception:
+        pass
+    # Only latch the day when flatten succeeded so a failed call retries
+    # and trading stays blocked (trading_hours_active requires SOD done).
+    if result.get("ok"):
+        _mark_sod_liquidate_done(now, result)
+    else:
+        print("[ai] SOD liquidate not latched (will retry) — no new entries yet",
+              flush=True)
+    return result if isinstance(result, dict) else {}
+
+
 def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
     """Act on existing ranked ideas after the open — no full research spend.
 
@@ -736,6 +835,13 @@ def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
     already qualify as BUY (immediate fast path).
     """
     from ai_suggest import _place_qualifying_entries, tag_agreement_on_rows
+    import ai_entry_watch as ew
+
+    # Never open-bell buy before morning flatten has finished for the day.
+    if not ew.sod_liquidate_done(cfg, now):
+        ai_positions.log_event("open_bell_skip", reason="awaiting_sod_liquidate")
+        print("[ai] open_bell deferred — SOD liquidate not done yet", flush=True)
+        return
 
     rows = list(book.rows or [])
     if not rows:
@@ -960,7 +1066,20 @@ def main() -> None:
                     book_state["watch_poll_sec"] = wps
                     book_state["positions_poll"] = pps
 
-                # Fast path first: seed/prune/publish so UI never goes stale.
+                # Start of RTH: liquidate everything once before any new entries.
+                try:
+                    import ai_trading as gt
+                    mkt_open = bool(gt.market_is_open())
+                except Exception:
+                    mkt_open = False
+                try:
+                    if _sod_liquidate_due(live_cfg, t0, market_open=mkt_open):
+                        _run_sod_liquidate(live_cfg, t0)
+                        _publish_book(time.time())
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] sod_liquidate failed: {e}", flush=True)
+
+                # Fast path: seed/prune/publish so UI never goes stale.
                 _publish_book(t0)
 
                 if (t0 - book_state["last_positions_tick"]) >= pps:

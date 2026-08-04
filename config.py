@@ -176,6 +176,8 @@ DEFAULT_CONFIG = {
     # Cancel all open orders + close all positions once per day at this ET time.
     "ai_eod_liquidate_enabled":    True,
     "ai_eod_liquidate_time":    "15:50",    # ET — flatten before the 16:00 close
+    # At RTH open: flatten everything once before any new paper entries.
+    "ai_sod_liquidate_enabled":    True,
     "ai_require_agreement":       False,    # only trade AX-agreed names
     "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
@@ -377,6 +379,7 @@ SAFE_CONFIG_KEYS = [
     "ai_open_bell_time",
     "ai_eod_liquidate_enabled",
     "ai_eod_liquidate_time",
+    "ai_sod_liquidate_enabled",
     "ai_require_agreement",
     "ai_max_spread_pct",
     "ai_min_dollar_volume",

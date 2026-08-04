@@ -572,13 +572,34 @@ def watch_session_active(cfg: dict | None, now: float | None = None) -> bool:
     return (dt.hour, dt.minute) >= (start_h, start_m)
 
 
+def sod_liquidate_done(cfg: dict | None, now: float | None = None) -> bool:
+    """True once start-of-day flatten has run for this ET weekday (or SOD off).
+
+    When ``ai_sod_liquidate_enabled`` is true, no new paper entries until the
+    book loop has liquidated overnight leftovers at RTH open.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_sod_liquidate_enabled", True)):
+        return True
+    dt = _et_now(now)
+    if dt.weekday() >= 5:
+        return True  # no RTH session
+    day_key = dt.strftime("%Y-%m-%d")
+    try:
+        from ai_positions import SOD_LIQUIDATE_STATE_PATH
+        prev = json.loads(SOD_LIQUIDATE_STATE_PATH.read_text(encoding="utf-8"))
+        return str(prev.get("last_day") or "") == day_key
+    except Exception:
+        return False
+
+
 def trading_hours_active(
     cfg: dict | None,
     now: float | None = None,
     *,
     market_open: bool | None = None,
 ) -> bool:
-    """True when new paper entries are allowed: RTH open and before EOD flatten.
+    """True when new paper entries are allowed: RTH open, SOD flat done, pre-EOD.
 
     ``market_open`` is Alpaca's regular session clock when provided; if omitted
     the caller should pass it (this helper does not call the broker).
@@ -593,6 +614,9 @@ def trading_hours_active(
         return False
     # Still respect watch start so we never trade before the book is live.
     if not watch_session_active(cfg, now):
+        return False
+    # No new entries until morning liquidate has wiped overnight positions.
+    if not sod_liquidate_done(cfg, now):
         return False
     return True
 

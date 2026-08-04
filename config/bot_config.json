@@ -182,6 +182,7 @@
   ],
   "ai_eod_liquidate_enabled": true,
   "ai_eod_liquidate_time": "15:50",
+  "ai_sod_liquidate_enabled": true,
   "ai_watch_start_time": "09:00",
   "use_float_filter": false,
   "max_float_million": 50,
