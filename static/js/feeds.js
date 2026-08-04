@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=100';
-import { api }       from './api.js?v=100';
-import { copyTicker } from './tickers.js?v=100';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=100';
+import { subscribe, get } from './store.js?v=101';
+import { api }       from './api.js?v=101';
+import { copyTicker } from './tickers.js?v=101';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=101';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -31,6 +31,9 @@ export function init(panelEl, kind) {
     : null;
   const bookStampEl = kind === 'claude'
     ? document.querySelector('[data-ai-book-stamp]')
+    : null;
+  const bookDayPlEl = kind === 'claude'
+    ? document.querySelector('[data-ai-book-day-pl]')
     : null;
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
@@ -99,7 +102,9 @@ export function init(panelEl, kind) {
       if (p._stamp_title) stampEl.title = p._stamp_title;
     }
     if (kind === 'claude') {
-      _paintBookTable(bookSection, bookRowsEl, bookCountEl, bookStampEl, book);
+      _paintBookTable(
+        bookSection, bookRowsEl, bookCountEl, bookStampEl, book, bookDayPlEl,
+      );
     }
 
     // New symbol → cyan pulse on Trending / AI Research header (5s; skip first paint).
@@ -245,12 +250,68 @@ function _sortBookRows(rows) {
   });
 }
 
+/** Account day P&L strip at top of AI Watch (equity − last_equity). */
+function _paintBookDayPl(dayPlEl, book) {
+  if (!dayPlEl) return;
+  const acct = (book && book.account && typeof book.account === 'object')
+    ? book.account
+    : {};
+  const meta = (book && book.watch_meta) || {};
+  let dayPl = book && book.day_pl != null ? book.day_pl : acct.day_pl;
+  if (dayPl == null) dayPl = meta.day_pl;
+  let dayPct = book && book.day_pl_pct != null ? book.day_pl_pct : acct.day_pl_pct;
+  if (dayPct == null) dayPct = meta.day_pl_pct;
+  const equity = acct.equity != null ? acct.equity : meta.equity;
+
+  const valEl = dayPlEl.querySelector('[data-ai-book-day-pl-value]');
+  const pctEl = dayPlEl.querySelector('[data-ai-book-day-pl-pct]');
+  const eqEl = dayPlEl.querySelector('[data-ai-book-day-pl-eq]');
+
+  const n = Number(dayPl);
+  const hasPl = Number.isFinite(n);
+  const sign = hasPl && n > 0 ? '+' : '';
+  const valTxt = hasPl
+    ? `${sign}$${Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2)}`
+    : '—';
+  if (valEl && valEl.textContent !== valTxt) valEl.textContent = valTxt;
+  if (valEl) {
+    valEl.classList.toggle('chg-pos', hasPl && n > 0);
+    valEl.classList.toggle('chg-neg', hasPl && n < 0);
+  }
+
+  const pctN = Number(dayPct);
+  const hasPct = Number.isFinite(pctN);
+  const pctTxt = hasPct
+    ? `${pctN > 0 ? '+' : ''}${pctN.toFixed(2)}%`
+    : '';
+  if (pctEl && pctEl.textContent !== pctTxt) pctEl.textContent = pctTxt;
+  if (pctEl) {
+    pctEl.classList.toggle('chg-pos', hasPct && pctN > 0);
+    pctEl.classList.toggle('chg-neg', hasPct && pctN < 0);
+  }
+
+  const eqN = Number(equity);
+  const eqTxt = Number.isFinite(eqN) && eqN > 0
+    ? `eq $${eqN >= 1000 ? Math.round(eqN).toLocaleString() : eqN.toFixed(2)}`
+    : '';
+  if (eqEl && eqEl.textContent !== eqTxt) eqEl.textContent = eqTxt;
+
+  const title = [
+    'Alpaca account day P&L (equity − last close equity)',
+    hasPl ? `today ${valTxt}` : null,
+    hasPct ? pctTxt : null,
+    eqTxt || null,
+    book && book.mode ? String(book.mode) : null,
+  ].filter(Boolean).join(' · ');
+  if (dayPlEl.title !== title) dayPlEl.title = title;
+}
+
 /**
  * AI Watch table — surgical DOM like Momentum/Research.
  * Never wipe the whole list on membership churn (that flashed open rows away).
  * Quotes / P&L patch in place; add/remove/reorder only the rows that changed.
  */
-function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
+function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
@@ -261,6 +322,7 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
       : (nReady ? `${rows.length} · ${nReady} ready` : `${rows.length}`))
     : '';
   if (countEl && countEl.textContent !== countTxt) countEl.textContent = countTxt;
+  _paintBookDayPl(dayPlEl, book);
   const owner = _ownerLabel(book);
   const mode = String((book && book.mode) || '').toLowerCase();
   const meta = (book && book.watch_meta) || {};

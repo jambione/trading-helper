@@ -85,6 +85,8 @@ POSITIONS_FILE_LEGACY = ROOT / "claude_positions_state.json"
 # Sticky open positions across a failed Alpaca poll so the dashboard book
 # does not flash empty when get_positions_detail() returns None once.
 _last_good_positions: dict = {}
+# Sticky account day P&L snapshot (equity / day_pl) for the same reason.
+_last_good_account: dict = {}
 
 LOOP_SLEEP = 5.0
 
@@ -269,6 +271,7 @@ def _positions_payload(
     error = ""
     positions: dict = {}
     open_orders: list = []
+    account: dict = {}
     if alpaca_trader.is_active():
         detail = alpaca_trader.get_positions_detail()
         if detail is None:
@@ -281,10 +284,22 @@ def _positions_payload(
             _last_good_positions.clear()
             _last_good_positions.update(positions)
         open_orders = alpaca_trader.get_open_orders()
+        try:
+            day_snap = alpaca_trader.get_account_day_pl()
+            if isinstance(day_snap, dict):
+                account = day_snap
+            elif _last_good_account:
+                account = dict(_last_good_account)
+        except Exception:
+            account = dict(_last_good_account) if _last_good_account else {}
+        if account:
+            _last_good_account.clear()
+            _last_good_account.update(account)
     else:
         error = "trader inactive — no Alpaca session"
         # Trader off is authoritative flat — do not sticky phantom positions.
         _last_good_positions.clear()
+        _last_good_account.clear()
 
     try:
         performance = ai_positions.performance_summary()
@@ -365,6 +380,20 @@ def _positions_payload(
         except Exception:
             poll_sec = 20.0
 
+    # Prefer broker day P&L; fall back to open unrealized + AI realized when
+    # account snapshot is missing so the header still has a number.
+    day_pl = account.get("day_pl") if isinstance(account, dict) else None
+    day_pl_pct = account.get("day_pl_pct") if isinstance(account, dict) else None
+    if day_pl is None and isinstance(positions, dict) and positions:
+        try:
+            day_pl = sum(
+                float(p.get("pl") or 0)
+                for p in positions.values()
+                if isinstance(p, dict)
+            )
+        except (TypeError, ValueError):
+            day_pl = None
+
     return {
         "updated": now,
         "mode": mode,
@@ -373,6 +402,10 @@ def _positions_payload(
         "warnings": warnings,
         "positions": positions,
         "open_orders": open_orders,
+        # Full Alpaca account day P&L (equity − last_equity) for AI Watch header.
+        "account": account if isinstance(account, dict) else {},
+        "day_pl": day_pl,
+        "day_pl_pct": day_pl_pct,
         "performance": performance,
         "reconcile": reconcile,
         "recent_events": recent,
@@ -391,6 +424,9 @@ def _positions_payload(
             "n_research": n_res,
             "n_open": n_open,
             "n_ready": n_ready,
+            "day_pl": day_pl,
+            "day_pl_pct": day_pl_pct,
+            "equity": (account or {}).get("equity") if isinstance(account, dict) else None,
         },
     }
 

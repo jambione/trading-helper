@@ -6,9 +6,9 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=100';
-import { api } from './api.js?v=100';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=100';
+import { subscribe, selectTicker, get } from './store.js?v=101';
+import { api } from './api.js?v=101';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=101';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>

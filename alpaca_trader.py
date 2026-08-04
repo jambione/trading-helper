@@ -828,6 +828,34 @@ def get_equity() -> float | None:
         return None
 
 
+def get_account_day_pl() -> dict | None:
+    """Account snapshot for day P&L (Alpaca equity vs last_equity).
+
+    Returns ``{equity, last_equity, day_pl, day_pl_pct}`` or None when the
+    trader is off / the call fails. ``day_pl`` is today's change in account
+    value (open + closed) in dollars; ``day_pl_pct`` is percent of last_equity.
+    """
+    if not is_active() or _client is None:
+        return None
+    try:
+        acct = _client.get_account()
+        equity = float(getattr(acct, "equity", 0) or 0)
+        last_eq = float(getattr(acct, "last_equity", 0) or 0)
+        day_pl = equity - last_eq if last_eq > 0 or equity > 0 else 0.0
+        day_pl_pct = (day_pl / last_eq * 100.0) if last_eq > 0 else None
+        return {
+            "equity": equity,
+            "last_equity": last_eq,
+            "day_pl": day_pl,
+            "day_pl_pct": day_pl_pct,
+            "cash": float(getattr(acct, "cash", 0) or 0),
+            "buying_power": float(getattr(acct, "buying_power", 0) or 0),
+        }
+    except Exception as e:
+        log.warning("[TRADER] get_account_day_pl failed: %s", e)
+        return None
+
+
 def buy_limit_bracket(
     ticker: str,
     qty: float,

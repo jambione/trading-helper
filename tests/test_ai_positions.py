@@ -464,6 +464,7 @@ def test_positions_payload_sticky_on_alpaca_fail(monkeypatch):
     import ai_trader as at
 
     at._last_good_positions.clear()
+    at._last_good_account.clear()
     good = {
         "CMG": {
             "qty": 10.0, "avg_entry": 34.0, "current": 34.1,
@@ -474,6 +475,7 @@ def test_positions_payload_sticky_on_alpaca_fail(monkeypatch):
     monkeypatch.setattr(alpaca_trader, "is_active", lambda: True)
     monkeypatch.setattr(alpaca_trader, "get_positions_detail", lambda: None)
     monkeypatch.setattr(alpaca_trader, "get_open_orders", lambda: [])
+    monkeypatch.setattr(alpaca_trader, "get_account_day_pl", lambda: None)
 
     payload = at._positions_payload(
         "paper", 1.0, book_owner="grok", watch_poll_sec=20.0)
@@ -482,11 +484,43 @@ def test_positions_payload_sticky_on_alpaca_fail(monkeypatch):
 
     # Successful empty book clears sticky (flat is authoritative).
     monkeypatch.setattr(alpaca_trader, "get_positions_detail", lambda: {})
+    monkeypatch.setattr(
+        alpaca_trader, "get_account_day_pl",
+        lambda: {
+            "equity": 100_000.0, "last_equity": 99_950.0,
+            "day_pl": 50.0, "day_pl_pct": 0.05,
+            "cash": 50_000.0, "buying_power": 100_000.0,
+        },
+    )
     payload2 = at._positions_payload(
         "paper", 2.0, book_owner="grok", watch_poll_sec=20.0)
     assert payload2["error"] == ""
     assert payload2["positions"] == {}
     assert at._last_good_positions == {}
+    assert payload2["day_pl"] == 50.0
+    assert payload2["account"]["equity"] == 100_000.0
+
+
+def test_get_account_day_pl_maps_equity_delta(monkeypatch):
+    """day_pl = equity − last_equity (Alpaca account day change)."""
+
+    class _Acct:
+        equity = 10_050.0
+        last_equity = 10_000.0
+        cash = 5_000.0
+        buying_power = 20_000.0
+
+    class _Client:
+        def get_account(self):
+            return _Acct()
+
+    monkeypatch.setattr(alpaca_trader, "is_active", lambda: True)
+    monkeypatch.setattr(alpaca_trader, "_client", _Client())
+    snap = alpaca_trader.get_account_day_pl()
+    assert snap is not None
+    assert snap["day_pl"] == pytest.approx(50.0)
+    assert snap["day_pl_pct"] == pytest.approx(0.5)
+    assert snap["equity"] == 10_050.0
 
 
 # ── mechanical position management (no LLM) ─────────────────────────────────
