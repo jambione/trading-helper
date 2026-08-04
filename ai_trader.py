@@ -716,13 +716,14 @@ def _run_eod_liquidate(cfg: dict, now: float) -> dict:
         )
     except Exception:
         pass
-    # Drop remaining watches so the book does not re-arm into the close.
+    # Wipe AI Watch entirely — expire alone leaves names that reseed from Mom/ST.
     if cfg.get("ai_watch_enabled", True):
         try:
             import ai_entry_watch as ew
-            ew.expire_open_watches(now=now)
+            ew.clear_watch_book(now=now)
+            print("[ai] EOD liquidate — AI Watch cleared", flush=True)
         except Exception as e:  # noqa: BLE001
-            print(f"[ai] EOD expire watches failed: {e}", flush=True)
+            print(f"[ai] EOD clear watch failed: {e}", flush=True)
     _mark_eod_liquidate_done(now, result)
     return result if isinstance(result, dict) else {}
 
@@ -889,9 +890,14 @@ def main() -> None:
             live_cfg = load_config()
             if live_cfg.get("ai_watch_enabled", True):
                 import ai_entry_watch as ew
-                # Full rebuild from live Momentum + Trending + Research only
-                # (no accumulated orphans from prior sessions/research runs).
-                ew.sync_watch_from_source_panels(live_cfg, now=now)
+                # After EOD liquidate (15:50 ET default) leave the book empty —
+                # reseeding from Mom/ST would refill AI Watch immediately.
+                if ew.past_eod_liquidate_time(live_cfg, now):
+                    pass
+                else:
+                    # Full rebuild from live Momentum + Trending only
+                    # (no accumulated orphans from prior sessions/research runs).
+                    ew.sync_watch_from_source_panels(live_cfg, now=now)
         except Exception as e:  # noqa: BLE001
             print(f"[ai] watch sync failed: {e}", flush=True)
         try:

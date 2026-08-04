@@ -594,6 +594,20 @@ def test_past_eod_liquidate_time():
         {"ai_eod_liquidate_enabled": False}, after) is False
 
 
+def test_clear_watch_book_empties_state(tmp_path, monkeypatch):
+    """EOD clear must wipe entry_watch_state so AI Watch UI goes empty."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew.save_watch({
+        "CMG": {"symbol": "CMG", "status": "watching", "score": 8},
+        "AAA": {"symbol": "AAA", "status": "submitted", "score": 7},
+    })
+    out = ew.clear_watch_book(now=1.0)
+    assert out == {}
+    assert ew.load_watch() == {}
+
+
 def test_save_state_does_not_clobber_dashboard_wire(tmp_path, monkeypatch):
     """Managed book must not overwrite ai_positions_state.json (live/stale flash)."""
     import ai_positions as cp

@@ -546,6 +546,24 @@ def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
     return (dt.hour, dt.minute) >= (bell_h, bell_m)
 
 
+def clear_watch_book(*, now: float | None = None) -> dict:
+    """Wipe the AI Watch queue file entirely (EOD liquidate).
+
+    Unlike ``expire_open_watches`` (soft status flip), this removes every
+    symbol so the dashboard book goes empty. Callers must also skip
+    ``sync_watch_from_source_panels`` until the next session or the book
+    will immediately reseed from Mom/ST.
+    """
+    t0 = float(now if now is not None else time.time())
+    try:
+        save_watch({})
+    except Exception:
+        pass
+    # Touch for operators/logs; empty dict is the public state.
+    _ = t0
+    return {}
+
+
 def expire_open_watches(now: float) -> dict:
     """Mark open (watching/armed) watches as expired; save and return state.
 
