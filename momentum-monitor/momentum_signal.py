@@ -2584,9 +2584,11 @@ def main():
                         book = dbook.rollover_if_needed(book, t0)
                         # Manage open: ratchet stops / detect closes
                         try:
-                            live = _pos_cache.get("positions") or {}
+                            # NOTE: never name this `live` — that shadows the
+                            # Rich Live context manager used for the desk UI.
+                            open_pos = _pos_cache.get("positions") or {}
                             live_norm = {}
-                            for k, v in live.items():
+                            for k, v in open_pos.items():
                                 if isinstance(v, dict):
                                     live_norm[str(k).upper()] = {
                                         "current": v.get("current") or v.get("avg_entry"),
