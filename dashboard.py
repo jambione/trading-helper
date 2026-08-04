@@ -397,14 +397,42 @@ def build_ai_suggestions(
 
 
 _ai_positions_cache: dict = {"mtime": -1.0, "payload": {}}
+_ai_positions_legacy_cache: dict = {"mtime": -1.0, "payload": {}}
+# Last valid dashboard wire — ignore clobber from managed-book shape.
+_ai_positions_last_good: dict = {}
+
+
+def _is_ai_positions_wire(payload: dict | None) -> bool:
+    """True if payload looks like ai_trader book wire, not managed {SYM: …}."""
+    if not isinstance(payload, dict) or not payload:
+        return False
+    # Full wire always has a timestamp or nested positions map.
+    if payload.get("updated") is not None:
+        return True
+    if "entry_book" in payload or "book_owner" in payload or "watch_meta" in payload:
+        return True
+    if isinstance(payload.get("positions"), dict):
+        return True
+    return False
+
 
 def load_ai_positions() -> dict:
-    """Shared trading book — prefer ai_positions_state.json, else legacy path."""
+    """Shared trading book — prefer ai_positions_state.json, else legacy path.
+
+    Reject bare managed-position maps (symbol keys only) so a bad write cannot
+    push empty/stale into the WebSocket and flash AI Watch live↔stale.
+    """
+    global _ai_positions_last_good
     payload = _load_json_payload(AI_POSITIONS_FILE, _ai_positions_cache, "AI")
-    if payload:
+    if not _is_ai_positions_wire(payload):
+        payload = _load_json_payload(
+            CLAUDE_POSITIONS_FILE, _ai_positions_legacy_cache, "AI")
+    if _is_ai_positions_wire(payload):
+        _ai_positions_last_good = payload
         return payload
-    return _load_json_payload(
-        CLAUDE_POSITIONS_FILE, _ai_positions_cache, "AI")
+    if _is_ai_positions_wire(_ai_positions_last_good):
+        return _ai_positions_last_good
+    return payload if isinstance(payload, dict) else {}
 
 
 # Back-compat name used by older clients / docs

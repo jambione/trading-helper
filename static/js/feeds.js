@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=101';
-import { api }       from './api.js?v=101';
-import { copyTicker } from './tickers.js?v=101';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=101';
+import { subscribe, get } from './store.js?v=102';
+import { api }       from './api.js?v=102';
+import { copyTicker } from './tickers.js?v=102';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=102';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -68,8 +68,9 @@ export function init(panelEl, kind) {
   });
   _updateSortHeaders(headerEls, sortCol, sortDir);
 
+  /** Prefer last good wire when store briefly has a clobber/empty book. */
   function _aiBook() {
-    return get('ai_positions') || {};
+    return _stableAiBook(get('ai_positions') || {});
   }
 
   function _refresh(payload) {
@@ -166,6 +167,37 @@ function _ageSec(ts) {
 
 /** Last successful open positions — hold through transient empty wires. */
 let _stickyOpenPos = /** @type {Record<string, Object>} */ ({});
+/** Last full ai_trader wire (has ``updated``) — ignore clobber / empty frames. */
+let _stickyAiBook = /** @type {Object|null} */ (null);
+
+/**
+ * Dashboard wire must include ``updated`` (or nested positions). Bare managed
+ * maps / {} would flip the stamp live↔stale and clear day P&L + "1 open".
+ */
+function _stableAiBook(book) {
+  const b = book && typeof book === 'object' ? book : {};
+  const hasWire = b.updated != null
+    || Array.isArray(b.entry_book)
+    || (b.positions && typeof b.positions === 'object'
+      && !Array.isArray(b.positions)
+      && Object.keys(b).some(k =>
+        k === 'positions' || k === 'mode' || k === 'book_owner' || k === 'day_pl'));
+  // Reject symbol-keyed managed maps: only ticker keys, no wire envelope.
+  const keys = Object.keys(b);
+  const looksManagedOnly = keys.length > 0
+    && b.updated == null
+    && !b.positions
+    && !b.entry_book
+    && keys.every(k => /^[A-Z][A-Z0-9.]*$/i.test(k));
+  if (hasWire && !looksManagedOnly) {
+    _stickyAiBook = b;
+    return b;
+  }
+  if (_stickyAiBook && _stickyAiBook.updated != null) {
+    return _stickyAiBook;
+  }
+  return b;
+}
 
 /**
  * Prefer server entry_book; always merge open positions; fall back to entry_watch.
@@ -181,10 +213,12 @@ function _bookRows(book) {
     _stickyOpenPos = { ...pos };
   } else if (Object.keys(_stickyOpenPos).length) {
     const err = String((book && book.error) || '');
-    // Keep last open book only on known broker query failures, not flat books.
-    if (/alpaca|position|query failed|inactive/i.test(err)) {
+    const wireOk = book && book.updated != null;
+    // Keep last open book on broker failures OR non-wire clobber frames.
+    if (!wireOk || /alpaca|position|query failed|inactive/i.test(err)) {
       pos = _stickyOpenPos;
     } else {
+      // Authoritative flat book from a real wire publish.
       _stickyOpenPos = {};
     }
   }

@@ -523,6 +523,47 @@ def test_get_account_day_pl_maps_equity_delta(monkeypatch):
     assert snap["equity"] == 10_050.0
 
 
+def test_save_state_does_not_clobber_dashboard_wire(tmp_path, monkeypatch):
+    """Managed book must not overwrite ai_positions_state.json (live/stale flash)."""
+    import ai_positions as cp
+
+    report = tmp_path / "claude_reports"
+    report.mkdir()
+    wire = tmp_path / "ai_positions_state.json"
+    wire.write_text(
+        json.dumps({
+            "updated": 1.0,
+            "mode": "paper",
+            "positions": {"CMG": {"qty": 1}},
+            "entry_book": [],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cp, "POSITIONS_STATE_PATH", report / "positions_state.json")
+    monkeypatch.setattr(cp, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        cp, "resolve_report_dir", lambda: report,
+    )
+
+    cp._save_state({"CMG": {"qty": 1, "entry_price": 34.0}})
+
+    assert (report / "positions_state.json").exists()
+    after = json.loads(wire.read_text(encoding="utf-8"))
+    assert after.get("updated") == 1.0
+    assert "positions" in after
+    assert "CMG" not in after or "updated" in after
+
+
+def test_is_ai_positions_wire_rejects_managed_map():
+    import dashboard as d
+
+    assert d._is_ai_positions_wire({
+        "updated": 1.0, "positions": {"CMG": {"qty": 1}},
+    })
+    assert not d._is_ai_positions_wire({"CMG": {"qty": 1, "entry_price": 34.0}})
+    assert not d._is_ai_positions_wire({})
+
+
 # ── mechanical position management (no LLM) ─────────────────────────────────
 
 class _StubBrokerManage:

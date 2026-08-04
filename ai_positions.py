@@ -391,19 +391,17 @@ def _load_state() -> dict[str, Any]:
 
 
 def _save_state(state: dict[str, Any]) -> None:
-    """Persist managed book to POSITIONS_STATE_PATH (tests may redirect)."""
+    """Persist managed book to POSITIONS_STATE_PATH (tests may redirect).
+
+    Never write the dashboard wire file ``ai_positions_state.json`` here —
+    that path is owned by ``ai_trader._positions_payload`` (updated, entry_book,
+    day_pl, …). Mirroring managed {SYM: fields} onto the wire clobbered the
+    book every manage cycle and made the AI Watch stamp flip live/stale.
+    """
     try:
         POSITIONS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(state, indent=2)
         POSITIONS_STATE_PATH.write_text(text, encoding="utf-8")
-        # Mirror root wire file only when writing the live report dir (not tests).
-        try:
-            live = resolve_report_dir() / "positions_state.json"
-            if POSITIONS_STATE_PATH.resolve() == live.resolve():
-                (ROOT / "ai_positions_state.json").write_text(
-                    text, encoding="utf-8")
-        except Exception:
-            pass
     except Exception:
         pass
 

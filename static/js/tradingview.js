@@ -7,7 +7,7 @@
  * Loads tv.js on first need (not in <head>) so the desk can paint sooner.
  */
 
-import { subscribe, get } from './store.js?v=101';
+import { subscribe, get } from './store.js?v=102';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
