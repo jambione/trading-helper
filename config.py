@@ -195,6 +195,7 @@ DEFAULT_CONFIG = {
     "ai_watch_include_research":      False,  # never put AI Research on the book
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
     "ai_watch_momentum_require_flag":  True,  # FIRST / NEW / BURST only
+    "ai_watch_min_pct_change":         50.0,  # |day chg %| above this also qualifies
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -378,6 +379,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_include_research",
     "ai_watch_trending_min_score",
     "ai_watch_momentum_require_flag",
+    "ai_watch_min_pct_change",
     "ai_entry_zone_pad_pct",
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",

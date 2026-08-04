@@ -157,13 +157,14 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
 
 
 def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
-    """Trending needs score>10; momentum needs FIRST/NEW/BURST; no research."""
+    """Trending score>10 or |chg|>50; momentum flag or |chg|>50; no research."""
     import ai_entry_watch as ew
 
     (tmp_path / "trending_stocks.json").write_text(json.dumps({
         "rows": [
             {"symbol": "HOT", "trending_score": 12.5, "price": 18.0, "is_equity": True},
             {"symbol": "LOW", "trending_score": 8.0, "price": 10.0, "is_equity": True},
+            {"symbol": "MOVER", "trending_score": 3.0, "pct_change": 80.0, "price": 5.0, "is_equity": True},
             {"symbol": "BTC", "trending_score": 99.0, "price": 1.0, "is_crypto": True},
         ],
     }), encoding="utf-8")
@@ -181,18 +182,34 @@ def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
             }),
         ],
     )
+    monkeypatch.setattr(
+        ew, "_big_mover_from_dashboard",
+        lambda max_price=None, min_pct=50.0: [
+            (161.0, {
+                "symbol": "AMIX",
+                "score": 161.0,
+                "trending_score": 161.0,
+                "reason": "momentum chg +161%",
+                "agreement": True,
+                "source": "momentum",
+            }),
+        ],
+    )
     rows = ew.desk_candidate_rows({
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": True,
         "ai_watch_seed_momentum_n": 12,
         "ai_watch_seed_trending_n": 20,
         "ai_watch_trending_min_score": 10.0,
+        "ai_watch_min_pct_change": 50.0,
         "ai_max_price": 100.0,
     })
     by = {r["symbol"]: r for r in rows}
     assert by["HOT"]["source"] == "trending"
     assert by["FLAG"]["source"] == "momentum"
-    assert "LOW" not in by  # score 8 <= 10
+    assert by["MOVER"]["source"] == "trending"  # score low but chg 80%
+    assert by["AMIX"]["source"] == "momentum"   # big day move
+    assert "LOW" not in by  # score 8, no big chg
     assert "BTC" not in by
 
 

@@ -721,13 +721,75 @@ def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]
     return scored
 
 
+def _pct_change_value(raw: Any) -> float | None:
+    """Normalize pct_change to percent units (12.5 == +12.5%).
+
+    Accepts either percent (12.5) or fraction (0.125). Values with |x| <= 1.5
+    and non-integer-ish fractions are treated as fractions.
+    """
+    try:
+        p = float(raw)
+    except (TypeError, ValueError):
+        return None
+    # Heuristic: |p| <= 2 and looks fractional → convert to percent.
+    if abs(p) <= 2.0 and abs(p) != 0:
+        # 0.5 → 50%, 1.5 → 150%; keep 1.0 as 100% only if clearly a fraction
+        # Desk/trending already use percent (e.g. 12.5, 161.47).
+        pass
+    return p
+
+
+def _big_mover_from_dashboard(
+    max_price: Any,
+    min_pct: float,
+) -> list[tuple[float, dict]]:
+    """Momentum desk names with |day change %| above *min_pct*."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+            "http://127.0.0.1:8888/api/state", timeout=2.0
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    tickers = data.get("tickers") or []
+    if not isinstance(tickers, list):
+        return []
+    scored: list[tuple[float, dict]] = []
+    for r in tickers:
+        if not isinstance(r, dict):
+            continue
+        pct = _pct_change_value(r.get("pct_change"))
+        if pct is None or abs(pct) <= float(min_pct):
+            continue
+        s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+        if not s or not s[0].isalpha():
+            continue
+        if not _price_under_cap(r.get("price"), max_price):
+            continue
+        scored.append((abs(pct), {
+            "symbol": s,
+            "trending_score": round(abs(pct), 2),
+            "score": round(abs(pct), 2),
+            "reason": f"momentum chg {pct:+.0f}%",
+            "agreement": True,
+            "source": "momentum",
+        }))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return scored
+
+
 def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     """Restrictive momentum + trending candidates for AI Watch.
 
     Rules (operator):
       • No AI Research names (handled by sync — research seed off).
-      • Trending: raw Stocktwits score **strictly above** min (default 10).
-      • Momentum: only names with a FIRST / NEW / BURST flag on the desk.
+      • Trending: raw Stocktwits score **strictly above** min (default 10),
+        **or** |day pct_change| above min (default 50).
+      • Momentum: FIRST / NEW / BURST flag on the desk,
+        **or** |day pct_change| above min (default 50).
 
     Structure poller still defines zone/stop before arming a buy.
     """
@@ -735,12 +797,23 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     rows: list[dict] = []
     seen: set[str] = set()
     max_price = cfg.get("ai_max_price", cfg.get("claude_max_price"))
+    try:
+        min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
+    except (TypeError, ValueError):
+        min_pct = 50.0
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:
             n = int(cfg.get("ai_watch_seed_momentum_n", 12) or 12)
             n = max(1, n)
             scored = _momentum_flagged_from_dashboard(max_price)
+            # Also include huge day movers on the momentum desk (no flag required).
+            have = {r["symbol"] for _, r in scored}
+            for sc, r in _big_mover_from_dashboard(max_price, min_pct):
+                if r["symbol"] in have:
+                    continue
+                scored.append((sc, r))
+            scored.sort(key=lambda t: t[0], reverse=True)
             for _, r in scored[:n]:
                 if r["symbol"] in seen:
                     continue
@@ -776,15 +849,23 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         score = float(r.get("trending_score", r.get("score") or 0) or 0)
                     except (TypeError, ValueError):
                         score = 0.0
-                    # Restrictive: only raw heat strictly above threshold (default 10).
-                    if score <= min_score:
+                    pct = _pct_change_value(r.get("pct_change"))
+                    big_move = pct is not None and abs(pct) > float(min_pct)
+                    # Score path OR big day-move path.
+                    if score <= min_score and not big_move:
                         continue
                     seen.add(s)
+                    if big_move and score <= min_score:
+                        reason = f"trending chg {pct:+.0f}%"
+                        use_score = abs(float(pct))
+                    else:
+                        reason = f"trending score {score:.1f}"
+                        use_score = score
                     rows.append({
                         "symbol": s,
-                        "trending_score": round(score, 2),
-                        "score": round(score, 2),
-                        "reason": f"trending score {score:.1f}",
+                        "trending_score": round(use_score, 2),
+                        "score": round(use_score, 2),
+                        "reason": reason,
                         "agreement": True,
                         "source": "trending",
                     })
