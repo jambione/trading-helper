@@ -311,12 +311,18 @@ def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
         )
 
     entry_watch: list = []
+    entry_book: list = []
     try:
         import ai_entry_watch as ew
 
         entry_watch = ew.public_snapshot()
+        entry_book = ew.book_table_rows(
+            positions=positions if isinstance(positions, dict) else {},
+            watch_rows=entry_watch,
+        )
     except Exception:
         entry_watch = []
+        entry_book = []
 
     return {
         "updated": now,
@@ -332,6 +338,8 @@ def _positions_payload(mode: str, now: float, *, book_owner: str = "") -> dict:
         "realized_r_today": day_r,
         "open_risk_pct": open_r,
         "entry_watch": entry_watch,
+        # Unified Watch section: watches + open positions with P&L.
+        "entry_book": entry_book,
     }
 
 

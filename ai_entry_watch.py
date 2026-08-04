@@ -168,6 +168,195 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
     return rows
 
 
+def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict:
+    """Normalize one watch-state record for the book table."""
+    structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else {}
+    wait_kind = structure.get("wait_kind")
+    if wait_kind is not None:
+        wait_kind = str(wait_kind).lower().strip() or None
+    entry_low = structure.get("entry_low", rec.get("entry_low"))
+    entry_high = structure.get("entry_high", rec.get("entry_high"))
+    try:
+        entry_low_f = float(entry_low) if entry_low is not None else None
+    except (TypeError, ValueError):
+        entry_low_f = None
+    try:
+        entry_high_f = float(entry_high) if entry_high is not None else None
+    except (TypeError, ValueError):
+        entry_high_f = None
+    last_ask = rec.get("last_ask")
+    try:
+        last_ask_f = float(last_ask) if last_ask is not None else None
+    except (TypeError, ValueError):
+        last_ask_f = None
+    try:
+        score_f = float(rec["score"]) if rec.get("score") is not None else None
+    except (TypeError, ValueError, KeyError):
+        score_f = None
+    status = str(rec.get("status") or "watching").lower().strip() or "watching"
+    in_zone = False
+    if (
+        last_ask_f is not None
+        and entry_low_f is not None
+        and entry_high_f is not None
+        and entry_low_f > 0
+        and entry_high_f > 0
+    ):
+        in_zone = ask_in_zone(last_ask_f, entry_low_f, entry_high_f, pad_pct)
+    ready = status == "armed" or (status == "watching" and in_zone)
+    if status == "armed" or ready:
+        phase = "ready"
+    elif status == "submitted":
+        phase = "submitted"
+    elif status == "filled":
+        phase = "filled"  # upgraded to open if broker position present
+    else:
+        phase = "watching"
+    src = str(rec.get("source") or "research").strip() or "research"
+    return {
+        "symbol": sym,
+        "phase": phase,
+        "status": status,
+        "ready": bool(ready),
+        "in_zone": bool(in_zone),
+        "source": src,
+        "score": score_f,
+        "reason": str(rec.get("reason") or "")[:80] or None,
+        "wait_kind": wait_kind,
+        "entry_low": entry_low_f,
+        "entry_high": entry_high_f,
+        "last_ask": last_ask_f,
+        "price": last_ask_f,
+        "qty": None,
+        "avg_entry": None,
+        "pl": None,
+        "plpc": None,
+        "mkt_val": None,
+        "is_position": False,
+    }
+
+
+def book_table_rows(
+    *,
+    positions: dict | None = None,
+    watch_rows: list | None = None,
+    state: dict | None = None,
+) -> list[dict]:
+    """Unified AI book rows for the dashboard Watch section.
+
+    Sources include research plus desk heat (``momentum`` / ``trending``)
+    when those were seeded into the watch queue. Open broker positions
+    appear as ``phase=open`` with live P&L (watch metadata preserved when
+    the symbol was on the queue). Sort: open → ready → submitted → watching.
+    """
+    pos_map = positions if isinstance(positions, dict) else {}
+    by_sym: dict[str, dict] = {}
+
+    # Prefer full watch state so submitted/filled stay visible until position
+    # shows (or until expired/invalidated). Fall back to public_snapshot list.
+    raw_state = state if isinstance(state, dict) else load_watch()
+    if isinstance(raw_state, dict) and raw_state:
+        for key, rec in raw_state.items():
+            if not isinstance(rec, dict):
+                continue
+            sym = str(rec.get("symbol") or key or "").upper().strip()
+            if not sym:
+                continue
+            status = str(rec.get("status") or "").lower().strip()
+            if status in ("invalidated", "expired"):
+                continue
+            by_sym[sym] = _watch_row_from_record(sym, rec)
+    elif isinstance(watch_rows, list):
+        for w in watch_rows:
+            if not isinstance(w, dict):
+                continue
+            sym = str(w.get("symbol") or "").upper().strip()
+            if not sym:
+                continue
+            ready = bool(w.get("ready"))
+            status = str(w.get("status") or "watching").lower().strip()
+            if status == "armed" or ready:
+                phase = "ready"
+            elif status == "submitted":
+                phase = "submitted"
+            else:
+                phase = "watching"
+            by_sym[sym] = {
+                "symbol": sym,
+                "phase": phase,
+                "status": status,
+                "ready": ready,
+                "in_zone": bool(w.get("in_zone")),
+                "source": w.get("source") or "research",
+                "score": w.get("score"),
+                "reason": w.get("reason"),
+                "wait_kind": w.get("wait_kind"),
+                "entry_low": w.get("entry_low"),
+                "entry_high": w.get("entry_high"),
+                "last_ask": w.get("last_ask"),
+                "price": w.get("last_ask"),
+                "qty": None,
+                "avg_entry": None,
+                "pl": None,
+                "plpc": None,
+                "mkt_val": None,
+                "is_position": False,
+            }
+
+    for sym_raw, p in pos_map.items():
+        sym = str(sym_raw or "").upper().strip()
+        if not sym or not isinstance(p, dict):
+            continue
+        prev = by_sym.get(sym) or {
+            "symbol": sym,
+            "source": "position",
+            "score": None,
+            "reason": None,
+            "wait_kind": None,
+            "entry_low": None,
+            "entry_high": None,
+            "last_ask": None,
+        }
+        current = p.get("current")
+        if current is None:
+            current = p.get("current_price")
+        by_sym[sym] = {
+            **prev,
+            "phase": "open",
+            "status": "open",
+            "ready": False,
+            "in_zone": False,
+            "is_position": True,
+            "price": current if current is not None else prev.get("price"),
+            "last_ask": current if current is not None else prev.get("last_ask"),
+            "qty": p.get("qty"),
+            "avg_entry": p.get("avg_entry"),
+            "pl": p.get("pl"),
+            "plpc": p.get("plpc"),
+            "mkt_val": p.get("mkt_val"),
+        }
+
+    rows = list(by_sym.values())
+
+    def _sort_key(r: dict) -> tuple:
+        phase = str(r.get("phase") or "")
+        phase_rank = {"open": 0, "ready": 1, "submitted": 2, "watching": 3}.get(
+            phase, 9)
+        try:
+            pl = abs(float(r.get("pl") or 0.0))
+        except (TypeError, ValueError):
+            pl = 0.0
+        try:
+            sc = float(r.get("score") or 0.0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        # Open: larger |P&L| first; others: higher score first.
+        return (phase_rank, -pl if phase == "open" else -sc, r.get("symbol") or "")
+
+    rows.sort(key=_sort_key)
+    return rows
+
+
 def _row_passes_agreement(row: dict, cfg: dict) -> bool:
     """Agreement gate: require both-book agreement unless single-source mode."""
     if not cfg.get("ai_watch_require_agreement", True):

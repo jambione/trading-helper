@@ -1802,33 +1802,103 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
-.ai-watch-bar {
-  background: rgba(34, 211, 238, 0.05);
-  border-bottom-color: var(--border-hi);
+/* AI Watch section (full table — not chip strip) inside AI Research panel */
+.ai-book-section {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-hi);
+  background: rgba(34, 211, 238, 0.03);
+  max-height: 38%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
-.ai-watch-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(34, 211, 238, 0.22);
-  background: rgba(34, 211, 238, 0.08);
-  color: var(--text);
+.ai-book-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 4px;
+  flex-shrink: 0;
+}
+.ai-book-section-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+.ai-book-table-header {
+  flex-shrink: 0;
+}
+.ai-book-rows {
+  overflow-y: auto;
+  min-height: 48px;
+  max-height: 100%;
+  flex: 1 1 auto;
+}
+.feed-cols--ai-book {
+  /* Ticker | Status | Src | Price | Zone | Score | Qty | P&L */
+  grid-template-columns: 1fr 0.85fr 0.55fr 0.85fr 1.1fr 0.55fr 0.55fr 0.9fr;
+  width: 100%;
+}
+.feed-row--ai-book {
+  cursor: pointer;
+}
+.feed-row--ai-open {
+  border-color: rgba(139, 92, 246, 0.28);
+  background: rgba(139, 92, 246, 0.06);
+}
+.feed-row--ai-ready {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(52, 211, 153, 0.05);
+}
+.ai-book-status {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  align-self: center;
+}
+.ai-book-status--open {
+  color: #c4b5fd;
+}
+.ai-book-status--ready {
+  color: #6ee7b7;
+}
+.ai-book-status--sent {
+  color: var(--warming);
+}
+.cell-zone {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  max-width: 100%;
+  color: var(--text-dim);
+  align-self: center;
 }
-.ai-watch-chip b {
+.cell-qty {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+}
+.cell-pl {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  align-self: center;
+}
+.ai-research-divider {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-research-divider-label {
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.02em;
-}
-.ai-watch-chip--ready {
-  border-color: rgba(52, 211, 153, 0.55);
-  background: rgba(52, 211, 153, 0.14);
-  color: #d1fae5;
-  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.12);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .watchlist-table-header {
   padding: 0 16px;

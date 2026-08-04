@@ -11,8 +11,8 @@
  * (action=load_tv|focus depending on event).
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=87';
-import { api } from './api.js?v=87';
+import { subscribe, selectTicker, get } from './store.js?v=88';
+import { api } from './api.js?v=88';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');

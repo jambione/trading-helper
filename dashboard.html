@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=87" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=88" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -288,9 +288,32 @@
                         <span data-claude-stamp class="feed-stamp"></span>
                     </div>
                 </div>
-                <!-- Compact open book + entry-watch queue from Grok/Claude paper trader -->
-                <div data-ai-open-positions class="ai-open-bar" hidden></div>
-                <div data-ai-entry-watch class="ai-open-bar ai-watch-bar" hidden></div>
+                <!-- AI Watch / open book (watches → positions with P&L) -->
+                <div class="ai-book-section" data-ai-book-section>
+                    <div class="ai-book-section-header">
+                        <span class="ai-book-section-title">AI Watch</span>
+                        <span data-ai-book-count class="ticker-count"></span>
+                        <span data-ai-book-stamp class="feed-stamp"></span>
+                    </div>
+                    <div class="feed-table-header ai-book-table-header">
+                        <div class="feed-cols feed-cols--ai-book">
+                            <div class="th">Ticker</div>
+                            <div class="th">Status</div>
+                            <div class="th">Src</div>
+                            <div class="th">Price</div>
+                            <div class="th">Zone</div>
+                            <div class="th">Score</div>
+                            <div class="th">Qty</div>
+                            <div class="th">P&amp;L</div>
+                        </div>
+                    </div>
+                    <div data-ai-book-rows class="feed-rows ai-book-rows">
+                        <span class="tx-placeholder">No watches or open AI positions…</span>
+                    </div>
+                </div>
+                <div class="ai-research-divider">
+                    <span class="ai-research-divider-label">Research ideas</span>
+                </div>
                 <div class="feed-table-header">
                     <div class="feed-cols feed-cols--claude">
                         <div class="th" data-sort-col="ticker">Ticker</div>
@@ -707,7 +730,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=87"></script>
+        <script type="module" src="/static/js/app.js?v=88"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

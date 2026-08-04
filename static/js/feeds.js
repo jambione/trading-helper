@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=87';
-import { api }       from './api.js?v=87';
-import { copyTicker } from './tickers.js?v=87';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=87';
+import { subscribe, get } from './store.js?v=88';
+import { api }       from './api.js?v=88';
+import { copyTicker } from './tickers.js?v=88';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=88';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -19,11 +19,17 @@ export function init(panelEl, kind) {
   const countEl = panelEl.querySelector(`[data-${kind}-count]`);
   const stampEl = panelEl.querySelector(`[data-${kind}-stamp]`);
   const errEl   = panelEl.querySelector(`[data-${kind}-error]`);
-  const openEl  = kind === 'claude'
-    ? panelEl.querySelector('[data-ai-open-positions]')
+  const bookSection = kind === 'claude'
+    ? panelEl.querySelector('[data-ai-book-section]')
     : null;
-  const watchEl = kind === 'claude'
-    ? panelEl.querySelector('[data-ai-entry-watch]')
+  const bookRowsEl = kind === 'claude'
+    ? panelEl.querySelector('[data-ai-book-rows]')
+    : null;
+  const bookCountEl = kind === 'claude'
+    ? panelEl.querySelector('[data-ai-book-count]')
+    : null;
+  const bookStampEl = kind === 'claude'
+    ? panelEl.querySelector('[data-ai-book-stamp]')
     : null;
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
@@ -89,8 +95,7 @@ export function init(panelEl, kind) {
     const stampTxt = _stampLine(p, book);
     if (stampEl && stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
     if (kind === 'claude') {
-      _paintOpenBar(openEl, book);
-      _paintWatchBar(watchEl, book);
+      _paintBookTable(bookSection, bookRowsEl, bookCountEl, bookStampEl, book);
     }
 
     // New symbol → cyan pulse on Trending / AI Research header (5s; skip first paint).
@@ -113,11 +118,10 @@ export function init(panelEl, kind) {
     const withLook = applyLookHighlights(rows.map(r => ({ ...r })));
 
     // Membership + structure only — quote ticks patch cells without this short-circuit.
-    const posKey = _posKey(book);
-    const watchKey = _watchKey(book);
+    const bookKey = _bookKey(book);
     const structKey = withLook.map(r =>
       `${r.symbol}:${r.source_mark || ''}:${r.rank ?? ''}:${r.reason || ''}:${r.invalidation || ''}:${r.look ? r.look_reason : ''}`,
-    ).join('|') + `|pos:${posKey}|w:${watchKey}|${sortCol}:${sortDir}`;
+    ).join('|') + `|book:${bookKey}|${sortCol}:${sortDir}`;
     lastRows = withLook;
     lastKey = structKey;
 
@@ -142,91 +146,159 @@ function _posKey(book) {
   }).join(',');
 }
 
-function _watchKey(book) {
-  const w = (book && Array.isArray(book.entry_watch)) ? book.entry_watch : [];
-  return w.map(r =>
-    `${r.symbol}:${r.status || ''}:${r.ready ? 1 : 0}:${r.last_ask ?? ''}:${r.entry_low ?? ''}:${r.entry_high ?? ''}`,
-  ).join(',');
+function _bookKey(book) {
+  const rows = _bookRows(book);
+  return rows.map(r =>
+    `${r.symbol}:${r.phase || ''}:${r.source || ''}:${r.price ?? ''}:`
+    + `${r.qty ?? ''}:${r.pl ?? ''}:${r.entry_low ?? ''}:${r.entry_high ?? ''}`,
+  ).join('|');
 }
 
-let _openBarKey = '';
-let _watchBarKey = '';
-
-function _paintOpenBar(el, book) {
-  if (!el) return;
-  const pos = (book && book.positions) || {};
-  const syms = Object.keys(pos);
-  if (!syms.length) {
-    el.hidden = true;
-    if (el.innerHTML) el.innerHTML = '';
-    _openBarKey = '';
-    return;
+/** Prefer server entry_book; fall back to merging entry_watch + positions. */
+function _bookRows(book) {
+  if (book && Array.isArray(book.entry_book) && book.entry_book.length) {
+    return book.entry_book;
   }
-  const owner = _ownerLabel(book);
-  const key = _posKey(book) + '|' + owner;
-  if (key === _openBarKey && !el.hidden) return;
-  _openBarKey = key;
-  el.hidden = false;
-  el.innerHTML = `<span class="ai-open-bar-label">${_esc(owner)} in</span>`
-    + syms.map(sym => {
-      const p = pos[sym] || {};
-      return `<span class="ai-pos-chip ai-pos-chip--bar" title="${_esc(_posTitle(owner, sym, p))}">`
-        + `${_esc(sym)} ${_esc(_fmtQty(p.qty))} ${_esc(_fmtPl(p))}`
-        + `</span>`;
-    }).join('');
+  const pos = (book && book.positions) || {};
+  const watches = (book && Array.isArray(book.entry_watch)) ? book.entry_watch : [];
+  const by = {};
+  for (const w of watches) {
+    if (!w || !w.symbol) continue;
+    const sym = String(w.symbol).toUpperCase();
+    by[sym] = {
+      symbol: sym,
+      phase: w.ready ? 'ready' : (w.status || 'watching'),
+      source: w.source || 'research',
+      score: w.score,
+      reason: w.reason,
+      wait_kind: w.wait_kind,
+      entry_low: w.entry_low,
+      entry_high: w.entry_high,
+      last_ask: w.last_ask,
+      price: w.last_ask,
+      qty: null,
+      pl: null,
+      plpc: null,
+      avg_entry: null,
+      is_position: false,
+      ready: !!w.ready,
+    };
+  }
+  for (const [symRaw, p] of Object.entries(pos)) {
+    const sym = String(symRaw || '').toUpperCase();
+    if (!sym || !p) continue;
+    const prev = by[sym] || { symbol: sym, source: 'position' };
+    by[sym] = {
+      ...prev,
+      phase: 'open',
+      is_position: true,
+      price: p.current ?? p.current_price ?? prev.price,
+      last_ask: p.current ?? prev.last_ask,
+      qty: p.qty,
+      avg_entry: p.avg_entry,
+      pl: p.pl,
+      plpc: p.plpc,
+    };
+  }
+  return Object.values(by);
 }
+
+let _bookTableKey = '';
 
 /**
- * Entry-watch queue: names the AI paper book is waiting on or ready to buy.
- * Ready chips are emphasized; zone + ask shown when known.
+ * Full AI Watch table: research + momentum + trending watches; open rows
+ * show qty + live P&L (no chip strip).
  */
-function _paintWatchBar(el, book) {
-  if (!el) return;
-  const watches = (book && Array.isArray(book.entry_watch)) ? book.entry_watch : [];
-  // Prefer ready names first (server already sorts that way); cap for bar width.
-  const list = watches.slice(0, 14);
-  if (!list.length) {
-    el.hidden = true;
-    if (el.innerHTML) el.innerHTML = '';
-    _watchBarKey = '';
+function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
+  if (!rowsEl) return;
+  const rows = _bookRows(book);
+  const nOpen = rows.filter(r => r && r.phase === 'open').length;
+  const nReady = rows.filter(r => r && r.phase === 'ready').length;
+  const countTxt = rows.length
+    ? (nOpen
+      ? `${rows.length} · ${nOpen} open`
+      : (nReady ? `${rows.length} · ${nReady} ready` : `${rows.length}`))
+    : '';
+  if (countEl && countEl.textContent !== countTxt) countEl.textContent = countTxt;
+  const owner = _ownerLabel(book);
+  const mode = String((book && book.mode) || '').toLowerCase();
+  const stampTxt = [owner, mode || null].filter(Boolean).join(' · ');
+  if (stampEl && stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
+
+  const key = _bookKey(book);
+  if (key === _bookTableKey && rowsEl.querySelector('[data-book-symbol]')) return;
+  _bookTableKey = key;
+
+  if (sectionEl) sectionEl.hidden = false;
+
+  if (!rows.length) {
+    rowsEl.innerHTML = '<span class="tx-placeholder">No watches or open AI positions…</span>';
     return;
   }
-  const nReady = list.filter(w => w && w.ready).length;
-  const key = _watchKey(book) + `|r${nReady}`;
-  if (key === _watchBarKey && !el.hidden) return;
-  _watchBarKey = key;
-  el.hidden = false;
-  const label = nReady
-    ? `Watch · ${nReady} ready`
-    : `Watch · ${list.length}`;
-  el.innerHTML = `<span class="ai-open-bar-label ai-watch-bar-label">${_esc(label)}</span>`
-    + list.map(w => {
-      const sym = String((w && w.symbol) || '').toUpperCase();
-      if (!sym) return '';
-      const ready = !!(w && w.ready);
-      const ask = w.last_ask != null && Number.isFinite(Number(w.last_ask))
-        ? `$${Number(w.last_ask).toFixed(2)}` : '';
-      const zone = _fmtZone(w.entry_low, w.entry_high);
-      const src = String((w && w.source) || '');
-      const wait = String((w && w.wait_kind) || (w && w.status) || '');
-      const title = [
-        ready ? 'READY to arm/buy' : 'Waiting',
-        zone ? `zone ${zone}` : null,
-        ask ? `ask ${ask}` : null,
-        wait || null,
-        src ? `src ${src}` : null,
-        w.reason || null,
-      ].filter(Boolean).join(' · ');
-      const cls = ready
-        ? 'ai-watch-chip ai-watch-chip--ready'
-        : 'ai-watch-chip';
-      const meta = ready
-        ? (ask || 'ready')
-        : (zone ? `→${zone}` : (wait || 'setup'));
-      return `<span class="${cls}" title="${_esc(title)}" data-feed-symbol="${_esc(sym)}">`
-        + `<b>${_esc(sym)}</b> ${_esc(meta)}`
-        + `</span>`;
-    }).join('');
+
+  rowsEl.innerHTML = rows.map(r => _bookRowHtml(r, owner)).join('');
+}
+
+function _bookRowHtml(r, owner) {
+  const sym = String((r && r.symbol) || '').toUpperCase();
+  if (!sym) return '';
+  const phase = String((r && r.phase) || 'watching').toLowerCase();
+  const isOpen = phase === 'open' || r.is_position;
+  const statusLabel = isOpen ? 'OPEN'
+    : phase === 'ready' ? 'READY'
+    : phase === 'submitted' ? 'SENT'
+    : (r.wait_kind || r.status || 'WATCH');
+  const statusCls = isOpen ? 'ai-book-status ai-book-status--open'
+    : phase === 'ready' ? 'ai-book-status ai-book-status--ready'
+    : phase === 'submitted' ? 'ai-book-status ai-book-status--sent'
+    : 'ai-book-status';
+  const src = _bookSourceLabel(r.source);
+  const px = r.price != null && Number.isFinite(Number(r.price))
+    ? `$${Number(r.price).toFixed(2)}`
+    : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
+      ? `$${Number(r.last_ask).toFixed(2)}` : '—');
+  const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
+  const score = r.score != null && Number.isFinite(Number(r.score))
+    ? Number(r.score).toFixed(1) : '—';
+  const qty = isOpen ? _fmtQty(r.qty) : '—';
+  const pl = isOpen ? _fmtPl(r) : '—';
+  const plCls = isOpen ? _plClass(r) : '';
+  const rowCls = isOpen
+    ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-open'
+    : (phase === 'ready'
+      ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
+      : 'ticker-row feed-row feed-row--ai-book');
+  const title = [
+    isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
+    src ? `src ${src}` : null,
+    zone !== '—' ? `zone ${zone}` : null,
+    r.reason || null,
+    isOpen && r.avg_entry != null ? `entry $${Number(r.avg_entry).toFixed(2)}` : null,
+  ].filter(Boolean).join(' · ');
+
+  return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}" title="${_esc(title)}">`
+    + `<div class="feed-cols feed-cols--ai-book">`
+    + `<div class="cell-ticker">${_esc(sym)}</div>`
+    + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
+    + `<div class="cell-src">${_esc(src)}</div>`
+    + `<div class="cell-price">${_esc(px)}</div>`
+    + `<div class="cell-zone">${_esc(zone)}</div>`
+    + `<div class="cell-score">${_esc(score)}</div>`
+    + `<div class="cell-qty">${_esc(qty)}</div>`
+    + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
+    + `</div></div>`;
+}
+
+function _bookSourceLabel(source) {
+  const s = String(source || '').toLowerCase();
+  if (s === 'momentum' || s === 'mom') return 'Mom';
+  if (s === 'trending' || s === 'stocktwits' || s === 'st') return 'ST';
+  if (s === 'xai' || s === 'grok') return 'X';
+  if (s === 'anthropic' || s === 'claude') return 'A';
+  if (s === 'research') return 'AI';
+  if (s === 'position') return 'Pos';
+  if (!s) return '—';
+  return s.slice(0, 4);
 }
 
 function _fmtZone(lo, hi) {
@@ -688,14 +760,14 @@ function _stampLine(p, book) {
   if (p.next_run_label) parts.push(`next ${p.next_run_label}`);
   // Open-count only — no "Grok paper" / owner·mode in the panel header stamp.
   // Trader owner lives on the top status chip and per-row position chips.
-  if (book && book.positions) {
-    const n = Object.keys(book.positions).length;
-    if (n > 0) parts.push(`${n} open`);
-  }
-  if (book && Array.isArray(book.entry_watch) && book.entry_watch.length) {
-    const nW = book.entry_watch.length;
-    const nR = book.entry_watch.filter(w => w && w.ready).length;
-    parts.push(nR ? `${nW} watch (${nR} ready)` : `${nW} watch`);
+  if (book) {
+    const bookRows = _bookRows(book);
+    if (bookRows.length) {
+      const nOpen = bookRows.filter(r => r && r.phase === 'open').length;
+      parts.push(nOpen
+        ? `${bookRows.length} book (${nOpen} open)`
+        : `${bookRows.length} book`);
+    }
   }
   if (p.model) parts.push(String(p.model));
   // Token spend: prefer day rollup, else last single call.

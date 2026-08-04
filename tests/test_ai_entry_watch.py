@@ -105,6 +105,67 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
 
 
+def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
+    """Open positions show P&L; momentum/trending sources preserved on watches."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI",
+            "status": "watching",
+            "source": "research",
+            "score": 8.2,
+            "last_ask": 29.0,
+            "structure": {"entry_low": 27.0, "entry_high": 28.0, "wait_kind": "wait_for_zone"},
+        },
+        "ACHR": {
+            "symbol": "ACHR",
+            "status": "watching",
+            "source": "momentum",
+            "score": 7.1,
+            "reason": "momentum HOT",
+            "last_ask": 8.5,
+            "structure": None,
+        },
+        "SOFI": {
+            "symbol": "SOFI",
+            "status": "watching",
+            "source": "trending",
+            "score": 7.8,
+            "last_ask": 18.0,
+            "structure": None,
+        },
+        "DEAD": {
+            "symbol": "DEAD",
+            "status": "expired",
+            "source": "momentum",
+        },
+    })
+    positions = {
+        "SMCI": {
+            "qty": 35.0,
+            "avg_entry": 28.0,
+            "current": 29.5,
+            "pl": 52.5,
+            "plpc": 5.36,
+            "mkt_val": 1032.5,
+        },
+    }
+    rows = ew.book_table_rows(positions=positions)
+    by = {r["symbol"]: r for r in rows}
+    assert "DEAD" not in by
+    assert by["SMCI"]["phase"] == "open"
+    assert by["SMCI"]["is_position"] is True
+    assert by["SMCI"]["pl"] == 52.5
+    assert by["SMCI"]["qty"] == 35.0
+    assert by["ACHR"]["source"] == "momentum"
+    assert by["ACHR"]["phase"] == "watching"
+    assert by["SOFI"]["source"] == "trending"
+    # Open first
+    assert rows[0]["symbol"] == "SMCI"
+
+
 def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
     """Desk momentum names stay on the watch queue across rebuild."""
     import ai_entry_watch as ew
