@@ -2307,14 +2307,14 @@ def positions_panel(positions: dict | None,
     if error:
         content = Text.from_markup(f"[dim]{error}[/dim]")
     elif orders_table is not None:
-        content = Group(
+        content = _VStack([
             body,
             Text(""),
             Text.from_markup(
                 "[bold]OPEN ORDERS[/bold]  [dim](not filled yet)[/dim]"
             ),
             orders_table,
-        )
+        ])
     else:
         content = body
 
@@ -2848,15 +2848,10 @@ def main():
                 ))
             panels.append(footer_panel(
                 alerter, hotkeys, hotkey_slots, st_on=st_on, claude_on=claude_on))
-            # Prefer _VStack: Rich 15 Group is not iterable and Live can raise
-            # TypeError: 'Group' object is not iterable on some refresh paths.
+            # Rich 15: Group is not iterable; nested Group inside panels broke
+            # Live refresh. Always stack with _VStack (no Group).
             try:
                 live.update(_VStack(panels), refresh=True)
-            except TypeError:
-                try:
-                    live.update(Group(*panels), refresh=True)
-                except Exception as e:                      # noqa: BLE001
-                    console.print(f"[red]live.update failed: {e}[/red]")
             except Exception as e:                          # noqa: BLE001
                 console.print(f"[red]live.update failed: {e}[/red]")
             journal.maybe_flush(t0)
