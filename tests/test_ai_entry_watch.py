@@ -107,10 +107,11 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
 
 
 def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
-    """Momentum/trending rows leave the book when they fall off desk heat."""
+    """Any watch not on Momentum/Trending/Research leaves the book."""
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
     ew.save_watch({
         "KEEP": {
             "symbol": "KEEP", "status": "watching", "source": "momentum", "score": 7,
@@ -127,6 +128,9 @@ def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
         "RESEARCH": {
             "symbol": "RESEARCH", "status": "watching", "source": "xai", "score": 9,
         },
+        "OLD_AI": {
+            "symbol": "OLD_AI", "status": "watching", "source": "anthropic", "score": 6,
+        },
         "FILLED": {
             "symbol": "FILLED", "status": "filled", "source": "momentum", "score": 7,
         },
@@ -138,20 +142,24 @@ def test_prune_desk_watches_drops_left_universe(tmp_path, monkeypatch):
             {"symbol": "STAY_TR", "source": "trending", "agreement": True, "score": 8},
         ],
     )
+    monkeypatch.setattr(
+        ew, "research_universe_symbols",
+        lambda: {"RESEARCH"},
+    )
     state = ew.prune_desk_watches(
         {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True},
         now=100.0,
     )
     assert state["KEEP"]["status"] == "watching"
     assert state["STAY_TR"]["status"] == "watching"
-    assert state["RESEARCH"]["status"] == "watching"  # research never pruned here
+    assert state["RESEARCH"]["status"] == "watching"
     assert state["FILLED"]["status"] == "filled"
     assert state["GONE"]["status"] == "invalidated"
     assert state["DROP_TR"]["status"] == "invalidated"
-    # Public book hides invalidated
+    assert state["OLD_AI"]["status"] == "invalidated"  # left research board
     book = ew.book_table_rows(state=state)
     syms = {r["symbol"] for r in book}
-    assert "GONE" not in syms and "DROP_TR" not in syms
+    assert "GONE" not in syms and "DROP_TR" not in syms and "OLD_AI" not in syms
     assert "KEEP" in syms and "RESEARCH" in syms
 
 

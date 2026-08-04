@@ -793,18 +793,63 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     return rows
 
 
+def research_universe_symbols() -> set[str]:
+    """Symbols currently on AI Research boards (Grok + Anthropic wires)."""
+    out: set[str] = set()
+    for path in (
+        ROOT / "grok_suggestions.json",
+        ROOT / "claude_suggestions.json",
+        ROOT / "suggestions.json",
+    ):
+        if not path.exists():
+            continue
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        rows = raw.get("rows") or raw.get("suggestions") or raw.get("items") or []
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+            if s and s[0].isalpha():
+                out.add(s)
+    return out
+
+
+def live_panel_universe(cfg: dict | None = None) -> set[str]:
+    """Union of symbols currently visible on Momentum, Trending, or Research.
+
+    AI Watch may only keep non-open rows that still appear on at least one of
+    these source panels.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    live: set[str] = set()
+    # Momentum + trending seeds (same sources as desk_candidate_rows).
+    for r in desk_candidate_rows(cfg):
+        if not isinstance(r, dict):
+            continue
+        s = str(r.get("symbol") or "").upper().strip()
+        if s:
+            live.add(s)
+    live |= research_universe_symbols()
+    return live
+
+
 def prune_desk_watches(
     cfg: dict | None = None,
     now: float | None = None,
 ) -> dict:
-    """Drop momentum/trending watches that left their desk universes.
+    """Drop watches that no longer appear on Momentum, Trending, or Research.
 
-    Research-owned rows (xai/anthropic/research/…) are never pruned here —
-    those leave only on research rebuild / thesis drop. Submitted/filled
-    rows are kept so in-flight trades are not wiped when heat cools.
+    Rule: every open AI Watch row (except SENT/OPEN in-flight) must still be
+    on at least one of the other three panels. Old orphan names are invalidated.
 
-    Marks missing desk rows ``invalidated`` (same as ``drop_missing``).
-    Returns the full saved state.
+    Submitted/filled rows stay so paper trades are not wiped mid-flight.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
@@ -812,27 +857,10 @@ def prune_desk_watches(
     if not isinstance(state, dict) or not state:
         return state or {}
 
-    seeds = desk_candidate_rows(cfg)
-    live_mom: set[str] = set()
-    live_tr: set[str] = set()
-    for r in seeds:
-        if not isinstance(r, dict):
-            continue
-        sym = str(r.get("symbol") or "").upper().strip()
-        if not sym:
-            continue
-        src = str(r.get("source") or "").lower().strip()
-        if src in ("momentum", "mom"):
-            live_mom.add(sym)
-        elif src in ("trending", "st", "stocktwits"):
-            live_tr.add(sym)
-
-    # If a desk seed path is disabled or empty, do not wipe that whole side
-    # (avoids mass-invalidate when signal_state is briefly empty).
-    seed_mom = bool(cfg.get("ai_watch_seed_momentum", True))
-    seed_tr = bool(cfg.get("ai_watch_seed_trending", True))
-    prune_mom = seed_mom and bool(live_mom)
-    prune_tr = seed_tr and bool(live_tr)
+    live = live_panel_universe(cfg)
+    # Safety: if every source is empty (startup race), do not wipe the book.
+    if not live:
+        return state
 
     dropped: list[str] = []
     for key, rec in list(state.items()):
@@ -846,19 +874,14 @@ def prune_desk_watches(
             continue
         if status in ("invalidated", "expired"):
             continue
-        src = str(rec.get("source") or "").lower().strip()
-        leave = False
-        if src in ("momentum", "mom") and prune_mom and sym not in live_mom:
-            leave = True
-        elif src in ("trending", "st", "stocktwits") and prune_tr and sym not in live_tr:
-            leave = True
-        if not leave:
+        if sym in live:
             continue
+        src = str(rec.get("source") or "").lower().strip() or "?"
         rec = dict(rec)
         rec["symbol"] = sym
         rec["status"] = "invalidated"
         rec["updated_ts"] = t0
-        rec["closing_reason"] = "left_desk_universe"
+        rec["closing_reason"] = "not_on_source_panel"
         state[sym] = rec
         if key != sym:
             state.pop(key, None)

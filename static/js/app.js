@@ -5,24 +5,24 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=94';
-import { subscribe, set }                        from './store.js?v=94';
-import { init as initFeeds }                     from './feeds.js?v=94';
-import { init as initTickers }                   from './tickers.js?v=94';
-import { init as initTradingView }               from './tradingview.js?v=94';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=94';
-import { init as initResizer }                   from './resizer.js?v=94';
-import * as controls                             from './controls.js?v=94';
-import * as notifications                        from './notifications.js?v=94';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=94';
-import { init as initNews }                      from './news.js?v=94';
-import { init as initLeaderboard }               from './leaderboard.js?v=94';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=94';
-import { init as initEngine }                    from './engine.js?v=94';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=94';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=94';
+import { connect, on, api }                      from './api.js?v=95';
+import { subscribe, set }                        from './store.js?v=95';
+import { init as initFeeds }                     from './feeds.js?v=95';
+import { init as initTickers }                   from './tickers.js?v=95';
+import { init as initTradingView }               from './tradingview.js?v=95';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=95';
+import { init as initResizer }                   from './resizer.js?v=95';
+import * as controls                             from './controls.js?v=95';
+import * as notifications                        from './notifications.js?v=95';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=95';
+import { init as initNews }                      from './news.js?v=95';
+import { init as initLeaderboard }               from './leaderboard.js?v=95';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=95';
+import { init as initEngine }                    from './engine.js?v=95';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=95';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=95';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=94';
+import { init as initMobilePager }                from './mobilePager.js?v=95';
 
 // Build badge — shows which code the dashboard and the signal engine are each
 // running, so a stale or mismatched process is obvious at a glance. Amber when
@@ -185,7 +185,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=94');
+    const m = await import('./admin.js?v=95');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

@@ -1885,24 +1885,49 @@ body.mobile .icon-btn {
   box-shadow: 0 0 12px rgba(167, 139, 250, 0.45);
   flex-shrink: 0;
 }
-.panel-ai-watch .ai-book-table-header,
-.panel-ai-watch .feed-table-header {
+/* Shared horizontal inset so header grid matches row grid. */
+.panel-ai-watch .ai-book-table-header.feed-table-header {
+  padding: 0 10px;
   background: rgba(76, 29, 149, 0.28);
   border-bottom-color: rgba(167, 139, 250, 0.22);
 }
+.panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
+  padding: 10px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
 .panel-ai-watch .ai-book-table-header .th {
   color: #c4b5fd;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-.panel-ai-watch .ai-book-rows,
-.panel-ai-watch .feed-rows {
+.panel-ai-watch .ai-book-table-header .th:nth-child(1) { text-align: left; }   /* Ticker */
+.panel-ai-watch .ai-book-table-header .th:nth-child(2),
+.panel-ai-watch .ai-book-table-header .th:nth-child(3) { text-align: center; } /* Status, Src */
+
+.panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  padding: 8px 10px; /* same 10px sides as header */
 }
 .panel-ai-watch .feed-row--ai-book {
   background: rgba(30, 20, 50, 0.45);
   border: 1px solid rgba(139, 92, 246, 0.14);
+  margin-bottom: 3px;
+  padding: 0;
+}
+.panel-ai-watch .feed-row--ai-book .feed-cols--ai-book {
+  padding: 8px 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 .panel-ai-watch .feed-row--ai-book:hover {
   border-color: rgba(167, 139, 250, 0.4);
@@ -1921,11 +1946,39 @@ body.mobile .icon-btn {
 .panel-ai-watch .tx-placeholder {
   color: #8b7ab8;
 }
+/* Fixed track so header cells align with body cells */
 .feed-cols--ai-book {
+  display: grid;
+  align-items: center;
+  column-gap: 6px;
   /* Ticker | Status | Src | Price | Zone | Score | Qty | P&L */
-  grid-template-columns: 1fr 0.85fr 0.55fr 0.85fr 1.1fr 0.55fr 0.55fr 0.9fr;
+  grid-template-columns:
+    minmax(48px, 1.05fr)
+    minmax(48px, 0.7fr)
+    minmax(28px, 0.4fr)
+    minmax(52px, 0.75fr)
+    minmax(64px, 1fr)
+    minmax(36px, 0.45fr)
+    minmax(32px, 0.45fr)
+    minmax(52px, 0.75fr);
   width: 100%;
+  box-sizing: border-box;
 }
+.panel-ai-watch .feed-cols--ai-book > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-ai-watch .feed-cols--ai-book .cell-ticker { text-align: left; }
+.panel-ai-watch .feed-cols--ai-book .ai-book-status,
+.panel-ai-watch .feed-cols--ai-book .cell-src { text-align: center; }
+.panel-ai-watch .feed-cols--ai-book .cell-price,
+.panel-ai-watch .feed-cols--ai-book .cell-zone,
+.panel-ai-watch .feed-cols--ai-book .cell-score,
+.panel-ai-watch .feed-cols--ai-book .cell-qty,
+.panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
+
 .feed-row--ai-book {
   cursor: pointer;
 }
