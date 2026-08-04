@@ -4,7 +4,7 @@
    All selectors preserved — drop-in replacement.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+/* Fonts loaded via <link> in dashboard.html (not @import) so CSS is not blocked. */
 
 /* ── Design tokens ──────────────────────────────────────────── */
 :root {
@@ -960,6 +960,37 @@ body.mobile .icon-btn {
 }
 .panel-header-left  { display: flex; align-items: center; gap: 10px; }
 .panel-header-right { display: flex; align-items: center; gap: 6px; }
+
+/* New symbol joined this panel's list — cyan, 5s, same family as .flag-badge--new.
+   Restarted from JS when another symbol arrives while still glowing. */
+.panel-header--new-entry {
+  background: rgba(34, 211, 238, 0.14);
+  border-bottom-color: rgba(34, 211, 238, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.12);
+  animation: panel-header-new-entry 5s ease-out forwards;
+}
+.panel-header--new-entry .panel-title {
+  color: #a5f3fc;
+}
+@keyframes panel-header-new-entry {
+  0% {
+    background: rgba(34, 211, 238, 0.22);
+    border-bottom-color: rgba(34, 211, 238, 0.7);
+  }
+  12% {
+    background: rgba(34, 211, 238, 0.16);
+    border-bottom-color: rgba(34, 211, 238, 0.55);
+  }
+  70% {
+    background: rgba(34, 211, 238, 0.10);
+    border-bottom-color: rgba(34, 211, 238, 0.35);
+  }
+  100% {
+    background: var(--nav2);
+    border-bottom-color: var(--border-hi);
+    box-shadow: none;
+  }
+}
 
 /* ── Transcript panel ───────────────────────────────────────── */
 .panel-transcript { /* glass — inherits from .panel */ }

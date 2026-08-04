@@ -6,9 +6,10 @@
  * between the header and the main panel grid.
  */
 
-import { subscribe } from './store.js?v=84';
+import { subscribe } from './store.js?v=86';
 
 let _barEl = null;
+let _lastKey = '';
 
 export function init(barEl) {
   _barEl = barEl;
@@ -24,6 +25,12 @@ function _render(rows) {
     .filter(r => (r.mention_count ?? 0) > 0)
     .sort((a, b) => (b.mention_count ?? 0) - (a.mention_count ?? 0))
     .slice(0, 5);
+
+  const key = top.length
+    ? top.map(r => `${r.ticker}:${r.mention_count}:${r.mention_burst ? 1 : 0}`).join('|')
+    : '∅';
+  if (key === _lastKey) return;
+  _lastKey = key;
 
   if (!top.length) {
     _barEl.innerHTML =

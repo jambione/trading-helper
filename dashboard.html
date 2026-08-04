@@ -22,8 +22,15 @@
         <meta name="apple-mobile-web-app-title" content="Trading" />
         <meta name="theme-color" content="#090f1d" />
 
-        <link rel="stylesheet" href="/static/css/styles.css?v=84" />
-        <script src="https://s3.tradingview.com/tv.js"></script>
+        <!-- Fonts non-blocking (display=swap); no CSS @import so styles paint fast -->
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="/static/css/styles.css?v=86" />
+        <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
         <!-- Apply hosted/mobile/admin classes instantly (before paint) to prevent layout flash -->
@@ -699,7 +706,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=84"></script>
+        <script type="module" src="/static/js/app.js?v=86"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

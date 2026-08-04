@@ -6,17 +6,20 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=84';
-import { api } from './api.js?v=84';
+import { subscribe, selectTicker, get } from './store.js?v=86';
+import { api } from './api.js?v=86';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=86';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
 let _suggestEl  = null;   // <div data-funnel-suggest> — funnel banner
+let _panelEl    = null;   // panel section (for header flash)
 let _prevPrices = {};     // ticker → last price (for flash detection)
 let _sortCol    = 'price';
 let _sortDir    = 1;      // 1 = ascending, -1 = descending
 let _headerEls  = {};     // col key → th element
 let _lastRows   = [];     // last received rows (for re-render on sort change)
+const _noteSymbols = createSymbolMembershipWatcher();
 
 // ── Copied-ticker feed tracking ────────────────────────────────
 const _COPY_DATE_KEY    = 'ss:copied-date';
@@ -50,6 +53,7 @@ export function clearCopiedTickers() {
 }
 
 export function init(panelEl) {
+  _panelEl   = panelEl;
   _rowsEl    = panelEl.querySelector('[data-ticker-rows]');
   _countEl   = panelEl.querySelector('[data-ticker-count]');
   _suggestEl = panelEl.querySelector('[data-funnel-suggest]');
@@ -132,8 +136,12 @@ function _renderTable(rows) {
 
   // Update count badge
   if (_countEl) {
-    _countEl.textContent = rows.length ? `${rows.length} idea${rows.length !== 1 ? 's' : ''}` : '';
+    const ct = rows.length ? `${rows.length} idea${rows.length !== 1 ? 's' : ''}` : '';
+    if (_countEl.textContent !== ct) _countEl.textContent = ct;
   }
+
+  // New symbol → cyan pulse on Momentum Stocks header (5s; skip first paint).
+  _noteSymbols(_panelEl, (rows || []).map(r => r.ticker));
 
   if (!rows.length) {
     _rowsEl.innerHTML = '';
@@ -272,12 +280,19 @@ export async function copyTicker(el, ticker) {
   }
 }
 
+/** Set text only when it changes — avoids layout thrash on 4Hz ticks. */
+function _setText(el, text) {
+  if (el && el.textContent !== text) el.textContent = text;
+}
+
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
   const confluent = (row.confluence?.count ?? 0) >= 2;
-  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`
-              + `${row.mention_burst ? ' row-burst' : ''}`
-              + `${confluent ? ' row-confluent' : ''}`;
+  // classList toggles (not className=) so burst-pulse CSS is not restarted every tick.
+  el.classList.add('ticker-row');
+  el.classList.toggle('row-mentioned', !!row.mentioned);
+  el.classList.toggle('row-burst', !!row.mention_burst);
+  el.classList.toggle('row-confluent', confluent);
 
   // Update mention badge
   const tickerCell = el.querySelector('.cell-ticker');
@@ -290,9 +305,10 @@ function _updateRow(el, row) {
         badge.className = 'mention-badge';
         tickerCell.appendChild(badge);
       }
-      badge.textContent = String(w);
-      badge.title       = `${row.mention_count ?? 0} today`;
-      badge.className   = `mention-badge${row.mention_burst ? ' mentions-burst' : ' mentions-active'}`;
+      _setText(badge, String(w));
+      badge.title = `${row.mention_count ?? 0} today`;
+      badge.classList.toggle('mentions-burst', !!row.mention_burst);
+      badge.classList.toggle('mentions-active', !row.mention_burst);
     } else if (badge) {
       badge.remove();
     }
@@ -306,8 +322,8 @@ function _updateRow(el, row) {
         cbadge.className = 'confluence-badge';
         tickerCell.appendChild(cbadge);
       }
-      cbadge.textContent = `⚡${row.confluence.count}`;
-      cbadge.title       = `Confluence: ${names}`;
+      _setText(cbadge, `⚡${row.confluence.count}`);
+      cbadge.title = `Confluence: ${names}`;
     } else if (cbadge) {
       cbadge.remove();
     }
@@ -317,33 +333,44 @@ function _updateRow(el, row) {
     const fhtml  = _funnelBadge(row.funnel);
     let   fbadge = tickerCell.querySelector('.funnel-badge');
     if (fhtml) {
-      const tmp = document.createElement('span');
-      tmp.innerHTML = fhtml;
-      const nb = tmp.firstElementChild;
-      if (fbadge) fbadge.replaceWith(nb);
-      else        tickerCell.appendChild(nb);
+      if (!fbadge || fbadge.dataset.fkey !== fhtml) {
+        const tmp = document.createElement('span');
+        tmp.innerHTML = fhtml;
+        const nb = tmp.firstElementChild;
+        if (nb) nb.dataset.fkey = fhtml;
+        if (fbadge) fbadge.replaceWith(nb);
+        else if (nb) tickerCell.appendChild(nb);
+      }
     } else if (fbadge) {
       fbadge.remove();
     }
   }
 
-  const priceEl = el.querySelector('[data-price]');
-  if (priceEl) priceEl.textContent = row.price != null ? `$${row.price.toFixed(2)}` : '—';
+  const priceTxt = row.price != null ? `$${row.price.toFixed(2)}` : '—';
+  _setText(el.querySelector('[data-price]'), priceTxt);
 
   const chgEl = el.querySelector('[data-chg]');
   if (chgEl) {
-    chgEl.textContent = _fmtChg(row.pct_change ?? null);
-    chgEl.className   = `cell-chg ${_chgClass(row.pct_change ?? null)}`;
+    _setText(chgEl, _fmtChg(row.pct_change ?? null));
+    const mod = _chgClass(row.pct_change ?? null);
+    chgEl.classList.toggle('chg-pos', mod === 'chg-pos');
+    chgEl.classList.toggle('chg-neg', mod === 'chg-neg');
   }
 
   const volEl = el.querySelector('[data-vol]');
   if (volEl) {
-    volEl.textContent = _fmtVol(row.day_vol);
-    volEl.className   = `cell-vol${(row.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}`;
+    _setText(volEl, _fmtVol(row.day_vol));
+    volEl.classList.toggle('vol-high', (row.rvol ?? 0) >= 1.5);
   }
 
   const flagsEl = el.querySelector('[data-flags]');
-  if (flagsEl) flagsEl.innerHTML = _flagsHtml(row);
+  if (flagsEl) {
+    const fh = _flagsHtml(row);
+    if (flagsEl.dataset.flagsKey !== fh) {
+      flagsEl.innerHTML = fh;
+      flagsEl.dataset.flagsKey = fh;
+    }
+  }
 
   // Signal proximity bar. Momentum mode shows it on alerted (mention_burst)
   // tickers only; the three_indicator strategy shows it on every engine-tracked
@@ -366,13 +393,21 @@ function _updateRow(el, row) {
       const pct = sp.proximity_pct ?? 0;
       const fillEl = barEl.querySelector('[data-signal-fill]');
       if (fillEl) {
-        fillEl.style.width = `${Math.min(pct, 100)}%`;
-        fillEl.className   = `signal-bar-fill ${_signalFillClass(sp)}`;
+        const w = `${Math.min(pct, 100)}%`;
+        if (fillEl.style.width !== w) fillEl.style.width = w;
+        const fillCls = `signal-bar-fill ${_signalFillClass(sp)}`;
+        if (fillEl.className !== fillCls) fillEl.className = fillCls;
       }
       const labelEl = barEl.querySelector('[data-signal-label]');
-      if (labelEl) labelEl.textContent = _signalStatusLabel(sp);
+      _setText(labelEl, _signalStatusLabel(sp));
       const condsEl = barEl.querySelector('.signal-conds');
-      if (condsEl) condsEl.innerHTML = _signalPills(sp);
+      if (condsEl) {
+        const pills = _signalPills(sp);
+        if (condsEl.dataset.pillsKey !== pills) {
+          condsEl.innerHTML = pills;
+          condsEl.dataset.pillsKey = pills;
+        }
+      }
     }
   } else if (barEl) {
     // Ticker no longer has a burst alert — remove bar

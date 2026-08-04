@@ -3,6 +3,9 @@
  *
  * Single responsibility: hold and broadcast application state.
  * No business logic. Modules subscribe to specific slices.
+ *
+ * Object/array equality uses a one-shot JSON cache per key so 4Hz WebSocket
+ * pushes do not double-stringify large ticker lists on every message.
  */
 
 const _state = {
@@ -22,41 +25,8 @@ const _state = {
 };
 
 const _subs = /** @type {Map<string, Function[]>} */ (new Map());
-
-function _eq(a, b) {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (a == null || b == null) return false;
-
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    if (!a.length) return true;
-    const a0 = a[0], b0 = b[0];
-    if (typeof a0 === 'object' && typeof b0 === 'object') {
-      const key = ('ticker' in (a0 || {}) && 'ticker' in (b0 || {})) ? 'ticker' : null;
-      if (key) {
-        for (let i = 0; i < a.length; i++) {
-          if ((a[i] && a[i][key]) !== (b[i] && b[i][key])) return false;
-        }
-        return JSON.stringify(a) === JSON.stringify(b);
-      }
-    }
-    return JSON.stringify(a) === JSON.stringify(b);
-  }
-
-  if (typeof a === 'object' && typeof b === 'object') {
-    const ak = Object.keys(a);
-    const bk = Object.keys(b);
-    if (ak.length !== bk.length) return false;
-    for (const k of ak) {
-      if (!(k in b)) return false;
-      if (a[k] !== b[k]) return false;
-    }
-    return true;
-  }
-
-  return false;
-}
+/** @type {Map<string, string>} last JSON for object/array slices */
+const _ser  = new Map();
 
 /**
  * Subscribe to a state key. `fn` is called with the new value on each change.
@@ -74,12 +44,27 @@ export function get(key) {
 
 /**
  * Merge updates into state and notify subscribers for changed keys.
- * Uses JSON serialization for deep equality (small payloads, runs at 1 Hz).
  */
 export function set(updates) {
   const changed = [];
   for (const [k, v] of Object.entries(updates)) {
-    if (!_eq(_state[k], v)) {
+    if (v !== null && typeof v === 'object') {
+      let s;
+      try {
+        s = JSON.stringify(v);
+      } catch {
+        _state[k] = v;
+        _ser.delete(k);
+        changed.push(k);
+        continue;
+      }
+      if (_ser.get(k) === s) continue;
+      _ser.set(k, s);
+      _state[k] = v;
+      changed.push(k);
+    } else {
+      if (Object.is(_state[k], v)) continue;
+      _ser.delete(k);
       _state[k] = v;
       changed.push(k);
     }

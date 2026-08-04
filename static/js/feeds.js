@@ -7,9 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=84';
-import { api }       from './api.js?v=84';
-import { copyTicker } from './tickers.js?v=84';
+import { subscribe, get } from './store.js?v=86';
+import { api }       from './api.js?v=86';
+import { copyTicker } from './tickers.js?v=86';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=86';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -24,6 +25,7 @@ export function init(panelEl, kind) {
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
     : 'Waiting for trending data…';
+  const noteSymbols = createSymbolMembershipWatcher();
 
   // Default sort matches server ranking: trending by score desc, AI by
   // server order (rank) until the user picks a column.
@@ -75,13 +77,18 @@ export function init(panelEl, kind) {
     }
     if (errEl) {
       errEl.hidden = !err;
-      errEl.textContent = err;
+      if (errEl.textContent !== err) errEl.textContent = err;
       errEl.classList.toggle('feed-error--info', _isScheduleNotice(err));
     }
 
-    if (countEl) countEl.textContent = rows.length ? `${rows.length} ideas` : '';
-    if (stampEl) stampEl.textContent = _stampLine(p, book);
+    const countTxt = rows.length ? `${rows.length} ideas` : '';
+    if (countEl && countEl.textContent !== countTxt) countEl.textContent = countTxt;
+    const stampTxt = _stampLine(p, book);
+    if (stampEl && stampEl.textContent !== stampTxt) stampEl.textContent = stampTxt;
     if (kind === 'claude') _paintOpenBar(openEl, book);
+
+    // New symbol → cyan pulse on Trending / AI Research header (5s; skip first paint).
+    noteSymbols(panelEl, rows.map(r => r.symbol));
 
     if (!rows.length) {
       lastRows = [];
@@ -99,13 +106,13 @@ export function init(panelEl, kind) {
     // terminal desk. Mutates a shallow copy so store payloads stay clean.
     const withLook = applyLookHighlights(rows.map(r => ({ ...r })));
 
+    // Membership + structure only — quote ticks patch cells without this short-circuit.
     const posKey = _posKey(book);
-    const key = withLook.map(r =>
-      `${r.symbol}:${r.source_mark || ''}:${r.price ?? ''}:${r.pct_change ?? ''}:${r.trending_score ?? ''}:${r.vol_session ?? ''}:${r.rvol ?? ''}:${r.position_pct ?? ''}:${r.reason || ''}:${r.look ? r.look_reason : ''}`,
-    ).join('|') + `|pos:${posKey}`;
+    const structKey = withLook.map(r =>
+      `${r.symbol}:${r.source_mark || ''}:${r.rank ?? ''}:${r.reason || ''}:${r.invalidation || ''}:${r.look ? r.look_reason : ''}`,
+    ).join('|') + `|pos:${posKey}|${sortCol}:${sortDir}`;
     lastRows = withLook;
-    if (key === lastKey) return;
-    lastKey = key;
+    lastKey = structKey;
 
     _paint(rowsEl, withLook, kind, sortCol, sortDir, empty, book);
   }
@@ -128,16 +135,22 @@ function _posKey(book) {
   }).join(',');
 }
 
+let _openBarKey = '';
+
 function _paintOpenBar(el, book) {
   if (!el) return;
   const pos = (book && book.positions) || {};
   const syms = Object.keys(pos);
   if (!syms.length) {
     el.hidden = true;
-    el.innerHTML = '';
+    if (el.innerHTML) el.innerHTML = '';
+    _openBarKey = '';
     return;
   }
   const owner = _ownerLabel(book);
+  const key = _posKey(book) + '|' + owner;
+  if (key === _openBarKey && !el.hidden) return;
+  _openBarKey = key;
   el.hidden = false;
   el.innerHTML = `<span class="ai-open-bar-label">${_esc(owner)} in</span>`
     + syms.map(sym => {
@@ -148,26 +161,160 @@ function _paintOpenBar(el, book) {
     }).join('');
 }
 
+/**
+ * Surgical paint — reuse row nodes by symbol (like Momentum Stocks).
+ * Quote ticks patch cells; structural changes rebuild that row only.
+ */
 function _paint(rowsEl, rows, kind, sortCol, sortDir, empty, book) {
   if (!rows.length) {
     rowsEl.innerHTML = `<span class="tx-placeholder">${empty}</span>`;
     return;
   }
+
+  // Drop placeholder if present
+  const ph = rowsEl.querySelector('.tx-placeholder');
+  if (ph) ph.remove();
+
   const sorted = _applySort(rows, sortCol, sortDir);
-  rowsEl.innerHTML = sorted.map(r => _row(r, kind, book)).join('');
+  const existing = /** @type {Map<string, HTMLElement>} */ (new Map());
   rowsEl.querySelectorAll('[data-feed-symbol]').forEach(el => {
-    const sym = el.dataset.feedSymbol;
-    // Row body: click → add to watchlist (symbol name excluded — copies instead).
-    el.addEventListener('click', () => _add(el, sym));
+    existing.set(String(el.dataset.feedSymbol || '').toUpperCase(), el);
+  });
+
+  const ordered = [];
+  for (const r of sorted) {
+    const sym = String(r.symbol || '').toUpperCase();
+    if (!sym) continue;
+    let el = existing.get(sym);
+    const struct = _rowStructKey(r, kind);
+    if (el && el.dataset.structKey === struct) {
+      _updateFeedRow(el, r, kind, book);
+    } else if (el) {
+      const next = _createFeedRow(r, kind, book);
+      el.replaceWith(next);
+      el = next;
+      existing.set(sym, el);
+    } else {
+      el = _createFeedRow(r, kind, book);
+      rowsEl.appendChild(el);
+      existing.set(sym, el);
+    }
+    el.dataset.structKey = struct;
+    ordered.push(el);
+  }
+
+  const keep = new Set(ordered.map(el => String(el.dataset.feedSymbol || '').toUpperCase()));
+  existing.forEach((el, sym) => {
+    if (!keep.has(sym)) el.remove();
+  });
+
+  // Reorder only when needed
+  const children = [...rowsEl.querySelectorAll('[data-feed-symbol]')];
+  const needsReorder = ordered.length !== children.length
+    || ordered.some((el, i) => children[i] !== el);
+  if (needsReorder) {
+    ordered.forEach(el => rowsEl.appendChild(el));
+  }
+}
+
+function _rowStructKey(r, kind) {
+  return [
+    r.symbol,
+    kind,
+    r.source_mark || r.source || '',
+    r.rank ?? '',
+    r.reason || r.summary || '',
+    r.invalidation || '',
+    r.look ? r.look_reason : '',
+  ].join('\0');
+}
+
+function _createFeedRow(r, kind, book) {
+  const wrap = document.createElement('div');
+  wrap.innerHTML = _row(r, kind, book).trim();
+  const el = /** @type {HTMLElement} */ (wrap.firstElementChild);
+  const sym = String(r.symbol || '').toUpperCase();
+  el.addEventListener('click', () => _add(el, sym));
+  const tickerCell = el.querySelector('.cell-ticker');
+  if (tickerCell) {
+    tickerCell.title = `Copy ${sym}`;
+    tickerCell.addEventListener('click', e => {
+      e.stopPropagation();
+      copyTicker(e.currentTarget, sym);
+    });
+  }
+  return el;
+}
+
+function _setText(el, text) {
+  if (el && el.textContent !== text) el.textContent = text;
+}
+
+function _updateFeedRow(el, r, kind, book) {
+  const price = r.price != null ? `$${Number(r.price).toFixed(2)}` : '—';
+  let chg = '—';
+  let chgMod = '';
+  if (r.pct_change != null) {
+    const n = Number(r.pct_change);
+    chg = `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+    chgMod = n > 0 ? 'chg-pos' : n < 0 ? 'chg-neg' : '';
+  }
+  const vol  = r.vol_session != null ? _fmtVol(r.vol_session) : '—';
+  const rvol = r.rvol != null ? `${Number(r.rvol).toFixed(2)}×` : '—';
+  const score = r.trending_score != null ? Number(r.trending_score).toFixed(1) : '—';
+
+  _setText(el.querySelector('.cell-price'), price);
+
+  const chgEl = el.querySelector('.cell-chg');
+  if (chgEl) {
+    _setText(chgEl, chg);
+    chgEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
+    chgEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
+  }
+
+  const volEl = el.querySelector('.cell-vol');
+  if (volEl) {
+    _setText(volEl, vol);
+    volEl.classList.toggle('vol-high', (r.rvol ?? 0) >= 1.5);
+  }
+
+  _setText(el.querySelector('.cell-rvol'), rvol);
+  _setText(el.querySelector('.cell-score'), score);
+
+  if (kind === 'claude') {
+    const size = r.position_pct != null ? `${Number(r.position_pct).toFixed(0)}%` : '—';
+    _setText(el.querySelector('.cell-size'), size);
+    const mark = r.source_mark || _markFromSource(r.source) || 'A';
+    _setText(el.querySelector('.cell-src'), mark);
+
+    // Position chip — replace only when markup changes
     const tickerCell = el.querySelector('.cell-ticker');
     if (tickerCell) {
-      tickerCell.title = `Copy ${sym}`;
-      tickerCell.addEventListener('click', e => {
-        e.stopPropagation();
-        copyTicker(e.currentTarget, sym);
-      });
+      const want = _posChipHtml(String(r.symbol || '').toUpperCase(), book);
+      const cur = tickerCell.querySelector('.ai-pos-chip');
+      if (want) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = want;
+        const nb = tmp.firstElementChild;
+        if (cur) {
+          if (cur.outerHTML !== nb.outerHTML) cur.replaceWith(nb);
+        } else {
+          tickerCell.appendChild(nb);
+        }
+        el.classList.add('feed-row--ai-pos');
+      } else {
+        if (cur) cur.remove();
+        el.classList.remove('feed-row--ai-pos');
+      }
     }
-  });
+  }
+
+  el.classList.toggle('feed-row--look', !!r.look);
+  const lookEl = el.querySelector('.cell-look');
+  if (lookEl) {
+    const html = _lookBadgeHtml(r);
+    if (lookEl.innerHTML !== html) lookEl.innerHTML = html;
+  }
 }
 
 function _applySort(rows, sortCol, sortDir) {
@@ -281,12 +428,12 @@ function _row(r, kind, book) {
          + `<div class="${colsClass}">`
          +   `<div class="cell-ticker">${rank}${sym}${posChip}</div>`
          +   `<div class="cell-src" title="A=Anthropic · X=xAI · AX=both">${mark}</div>`
-         +   `<div class="cell-price">${price}</div>`
-         +   `<div class="${chgCls}">${chg}</div>`
-         +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
-         +   `<div class="cell-rvol">${_esc(rvol)}</div>`
-         +   `<div class="cell-score">${_esc(score)}</div>`
-         +   `<div class="cell-size">${_esc(size)}</div>`
+         +   `<div class="cell-price" data-price>${price}</div>`
+         +   `<div class="${chgCls}" data-chg>${chg}</div>`
+         +   `<div class="${volCls.trim()}" data-vol>${_esc(vol)}</div>`
+         +   `<div class="cell-rvol" data-rvol>${_esc(rvol)}</div>`
+         +   `<div class="cell-score" data-score>${_esc(score)}</div>`
+         +   `<div class="cell-size" data-size>${_esc(size)}</div>`
          +   `<div class="cell-look">${look}</div>`
          + `</div>`
          + thesis
@@ -302,11 +449,11 @@ function _row(r, kind, book) {
   return `<div class="ticker-row feed-row${r.look ? ' feed-row--look' : ''}" data-feed-symbol="${sym}" title="Click row to add ${sym} to the watchlist">`
        + `<div class="${colsClass}">`
        +   `<div class="cell-ticker">${rank}${sym}</div>`
-       +   `<div class="cell-price">${price}</div>`
-       +   `<div class="${chgCls}">${chg}</div>`
-       +   `<div class="${volCls.trim()}">${_esc(vol)}</div>`
-       +   `<div class="cell-rvol">${_esc(rvol)}</div>`
-       +   `<div class="cell-score">${_esc(last)}</div>`
+       +   `<div class="cell-price" data-price>${price}</div>`
+       +   `<div class="${chgCls}" data-chg>${chg}</div>`
+       +   `<div class="${volCls.trim()}" data-vol>${_esc(vol)}</div>`
+       +   `<div class="cell-rvol" data-rvol>${_esc(rvol)}</div>`
+       +   `<div class="cell-score" data-score>${_esc(last)}</div>`
        +   `<div class="cell-look">${look}</div>`
        + `</div>`
        + `</div>`;
@@ -458,19 +605,11 @@ function _stampLine(p, book) {
   const t = _stamp(p.last_ok);
   if (t) parts.push(t);
   if (p.next_run_label) parts.push(`next ${p.next_run_label}`);
-  // Trader status (minimal): owner + mode + open count
-  if (book && (book.book_owner || book.mode)) {
-    const owner = _ownerLabel(book);
-    const mode = book.mode && book.mode !== 'off' ? book.mode : '';
-    const n = book.positions ? Object.keys(book.positions).length : 0;
-    if (mode && mode !== 'off') {
-      parts.push(n ? `${owner} ${mode} · ${n} open` : `${owner} ${mode}`);
-    } else if (p.trading) {
-      parts.push(`${owner} on`);
-    }
-  } else if (p.trading) {
-    parts.push(p.trading_mode && p.trading_mode !== 'off'
-      ? `AI ${p.trading_mode}` : 'AI on');
+  // Open-count only — no "Grok paper" / owner·mode in the panel header stamp.
+  // Trader owner lives on the top status chip and per-row position chips.
+  if (book && book.positions) {
+    const n = Object.keys(book.positions).length;
+    if (n > 0) parts.push(`${n} open`);
   }
   if (p.model) parts.push(String(p.model));
   // Token spend: prefer day rollup, else last single call.

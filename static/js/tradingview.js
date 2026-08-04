@@ -4,17 +4,18 @@
  * Single responsibility: load and reload the TradingView chart
  * when a ticker is selected from the table.
  *
- * Uses the official TradingView Widget JS (loaded in the HTML head).
- * Creates a new widget instance each time the symbol changes.
+ * Loads tv.js on first need (not in <head>) so the desk can paint sooner.
  */
 
-import { subscribe, get } from './store.js?v=84';
+import { subscribe, get } from './store.js?v=86';
 
 let _panel       = null;   // outer panel element
 let _placeholder = null;   // empty-state element
 let _widgetWrap  = null;   // widget host element
 let _symbolEl    = null;   // badge showing current symbol
 let _current     = null;   // last loaded symbol
+/** @type {Promise<void> | null} */
+let _tvScript    = null;
 
 export function init(panelEl) {
   _panel       = panelEl;
@@ -28,11 +29,35 @@ export function init(panelEl) {
       _loadChart(ticker);
     }
   });
+
+  // Restore chart if a ticker was already selected before this module inited
+  const existing = get('selectedTicker');
+  if (existing && existing !== _current) {
+    _current = existing;
+    _loadChart(existing);
+  }
 }
 
 // ── Chart loading ──────────────────────────────────────────────
 
-function _loadChart(symbol) {
+function _ensureTvScript() {
+  if (window.TradingView) return Promise.resolve();
+  if (_tvScript) return _tvScript;
+  _tvScript = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://s3.tradingview.com/tv.js';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      _tvScript = null;
+      reject(new Error('tv.js failed to load'));
+    };
+    document.head.appendChild(s);
+  });
+  return _tvScript;
+}
+
+async function _loadChart(symbol) {
   if (_symbolEl) {
     _symbolEl.textContent   = symbol;
     _symbolEl.style.display = '';
@@ -40,29 +65,24 @@ function _loadChart(symbol) {
   if (_placeholder) _placeholder.classList.add('hidden');
   if (_widgetWrap)  _widgetWrap.classList.remove('hidden');
 
-  // Clear previous widget
   const containerId = 'tv_chart_container';
   const container = document.getElementById(containerId);
   if (container) container.innerHTML = '';
 
-  if (window.TradingView) {
-    _createWidget(containerId, symbol);
-  } else {
-    // tv.js not yet loaded — poll until ready (up to 10s)
-    let waited = 0;
-    const poll = setInterval(() => {
-      waited += 100;
-      if (window.TradingView) {
-        clearInterval(poll);
-        _createWidget(containerId, symbol);
-      } else if (waited >= 10000) {
-        clearInterval(poll);
-        console.error('[tv] tv.js failed to load after 10s — check network');
-        if (container) container.innerHTML =
-          '<div style="color:#ff6b6b;padding:20px;font-size:13px;">Chart failed to load.<br>Check your internet connection.</div>';
-      }
-    }, 100);
+  try {
+    await _ensureTvScript();
+  } catch (err) {
+    console.error('[tv]', err);
+    if (container) {
+      container.innerHTML =
+        '<div style="color:#ff6b6b;padding:20px;font-size:13px;">Chart failed to load.<br>Check your internet connection.</div>';
+    }
+    return;
   }
+
+  // Another ticker may have been selected while the script was loading
+  if (_current !== symbol) return;
+  _createWidget(containerId, symbol);
 }
 
 function _createWidget(containerId, symbol) {
