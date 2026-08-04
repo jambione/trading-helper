@@ -410,13 +410,36 @@ def upsert_from_rows(
             status = prev_status
         else:
             status = "watching"
-        src = str(row.get("source") or prev.get("source") or "research").strip()
+        src = _merge_source(
+            str(prev.get("source") or ""),
+            str(row.get("source") or ""),
+        )
+        # Desk seeds refresh score/reason only when they own the row or are new;
+        # research ownership keeps its thesis text.
+        keep_research = (
+            str(prev.get("source") or "").lower() in _RESEARCH_SOURCES
+            and str(row.get("source") or "").lower() in _DESK_SOURCES
+        )
+        reason = (
+            str(prev.get("reason") or "")
+            if keep_research
+            else str(row.get("reason") or prev.get("reason") or "")
+        )
+        score = (
+            float(prev.get("score") or 0) if keep_research and prev.get("score") is not None
+            else _score_from_row(row)
+        )
+        if keep_research and prev.get("score") is not None:
+            try:
+                score = float(prev.get("score"))
+            except (TypeError, ValueError):
+                score = _score_from_row(row)
         rec: dict[str, Any] = {
             "symbol": sym,
             "status": status,
-            "agreement": bool(row.get("agreement")),
-            "score": _score_from_row(row),
-            "reason": str(row.get("reason") or prev.get("reason") or ""),
+            "agreement": bool(row.get("agreement") if "agreement" in row else prev.get("agreement")),
+            "score": score,
+            "reason": reason,
             "source": src or "research",
             "structure": prev.get("structure", _EMPTY_RECORD_DEFAULTS["structure"]),
             "structure_ts": float(
@@ -593,13 +616,118 @@ def _price_under_cap(px: Any, max_price: Any) -> bool:
     return p < cap
 
 
+_RESEARCH_SOURCES = frozenset({
+    "research", "xai", "anthropic", "grok", "claude", "a", "x", "ax", "ai",
+})
+_DESK_SOURCES = frozenset({"momentum", "trending", "mom", "st", "stocktwits"})
+
+
+def _merge_source(prev_src: str, new_src: str) -> str:
+    """Research beats desk heat; otherwise prefer the non-empty new source."""
+    p = str(prev_src or "").strip().lower()
+    n = str(new_src or "").strip().lower()
+    if not n:
+        return prev_src or "research"
+    if not p:
+        return new_src or "research"
+    if p in _RESEARCH_SOURCES and n in _DESK_SOURCES:
+        return prev_src  # keep AI thesis ownership
+    if n in _RESEARCH_SOURCES:
+        return new_src
+    return new_src or prev_src
+
+
+def _momentum_scored_from_signal(max_price: Any) -> list[tuple[float, dict]]:
+    """Engine proximity map → scored momentum candidate rows."""
+    path = ROOT / "signal_state.json"
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(raw, dict):
+        return []
+    tickers = raw.get("tickers") or raw.get("active") or {}
+    if not isinstance(tickers, dict):
+        return []
+    scored: list[tuple[float, dict]] = []
+    for sym, meta in tickers.items():
+        s = str(sym or "").upper().strip()
+        if not s or not s[0].isalpha():
+            continue
+        if not isinstance(meta, dict):
+            meta = {}
+        if not _price_under_cap(meta.get("price"), max_price):
+            continue
+        hot = bool(meta.get("is_hot"))
+        try:
+            prox = float(meta.get("proximity_pct") or 0.0)
+        except (TypeError, ValueError):
+            prox = 0.0
+        score = 6.5 + min(2.0, (1.0 if hot else 0.0) + prox / 50.0)
+        reason = "momentum HOT" if hot else "momentum desk"
+        scored.append((score, {
+            "symbol": s,
+            "trending_score": round(score, 2),
+            "score": round(score, 2),
+            "reason": reason[:40],
+            "agreement": True,
+            "source": "momentum",
+        }))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return scored
+
+
+def _momentum_from_watchlist(max_price: Any) -> list[tuple[float, dict]]:
+    """Dashboard Momentum Stocks file (``transcription/wb_watchlist.json``)."""
+    path = ROOT / "transcription" / "wb_watchlist.json"
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    scored: list[tuple[float, dict]] = []
+    # Newer entries first (file order is roughly recency after purge).
+    for i, item in enumerate(raw):
+        if isinstance(item, str):
+            s = item.strip().upper()
+        elif isinstance(item, dict):
+            s = str(item.get("ticker") or item.get("symbol") or "").upper().strip()
+        else:
+            continue
+        if not s or not s[0].isalpha() or len(s) > 5:
+            continue
+        # Mild recency bias: earlier list index → slightly higher score.
+        score = 7.0 + max(0.0, 1.0 - i * 0.05)
+        scored.append((score, {
+            "symbol": s,
+            "trending_score": round(score, 2),
+            "score": round(score, 2),
+            "reason": "momentum watchlist",
+            "agreement": True,
+            "source": "momentum",
+        }))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return scored
+
+
 def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
-    """Momentum / trending names as synthetic research rows for the watch queue.
+    """Momentum + trending names as tradeable watch candidates.
 
     These are candidates only — the structure poller still must define zone /
     stop / target before arming a buy. Controlled by:
       ai_watch_seed_momentum (default True)
       ai_watch_seed_trending (default True)
+
+    Momentum universe (union, scored):
+      1) signal_engine ``signal_state.json`` actives (proximity / HOT)
+      2) dashboard Momentum Stocks ``transcription/wb_watchlist.json``
+
+    Trending universe: ``trending_stocks.json`` (Stocktwits heat).
 
     Reads wire files directly (no heavy ``ai_suggest`` import) so the poller
     stays lightweight and test-safe.
@@ -611,41 +739,22 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:
-            path = ROOT / "signal_state.json"
-            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            tickers = raw.get("tickers") or raw.get("active") or {}
-            if isinstance(tickers, dict):
-                scored: list[tuple[float, dict]] = []
-                for sym, meta in tickers.items():
-                    s = str(sym or "").upper().strip()
-                    if not s or not s[0].isalpha():
+            n = int(cfg.get("ai_watch_seed_momentum_n", 12) or 12)
+            n = max(1, n)
+            # Prefer engine actives; fill remaining slots from desk watchlist.
+            scored = _momentum_scored_from_signal(max_price)
+            if len(scored) < n:
+                have = {r["symbol"] for _, r in scored}
+                for sc, r in _momentum_from_watchlist(max_price):
+                    if r["symbol"] in have:
                         continue
-                    if not isinstance(meta, dict):
-                        meta = {}
-                    if not _price_under_cap(meta.get("price"), max_price):
-                        continue
-                    hot = bool(meta.get("is_hot"))
-                    try:
-                        prox = float(meta.get("proximity_pct") or 0.0)
-                    except (TypeError, ValueError):
-                        prox = 0.0
-                    score = 6.5 + min(2.0, (1.0 if hot else 0.0) + prox / 50.0)
-                    reason = "momentum HOT" if hot else "momentum desk"
-                    scored.append((score, {
-                        "symbol": s,
-                        "trending_score": round(score, 2),
-                        "score": round(score, 2),
-                        "reason": reason[:40],
-                        "agreement": True,
-                        "source": "momentum",
-                    }))
-                scored.sort(key=lambda t: t[0], reverse=True)
-                n = int(cfg.get("ai_watch_seed_momentum_n", 12) or 12)
-                for _, r in scored[: max(1, n)]:
-                    if r["symbol"] in seen:
-                        continue
-                    seen.add(r["symbol"])
-                    rows.append(r)
+                    scored.append((sc, r))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            for _, r in scored[:n]:
+                if r["symbol"] in seen:
+                    continue
+                seen.add(r["symbol"])
+                rows.append(r)
         except Exception:
             pass
 
@@ -1119,8 +1228,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     if not ready:
         return [{"kind": "watch_skip", "reason": "trader_not_ready"}]
 
-    # Desk momentum/trending seeds run on research + open-bell rebuild only
-    # (not every poll) so we do not mass-queue structure LLM calls mid-session.
+    # Continuously seed Momentum + Trending into the watch queue so they are
+    # first-class trade sources between research runs. Upsert only (no
+    # drop_missing) — structure LLM remains rate-limited below.
+    try:
+        seeds = desk_candidate_rows(cfg)
+        if seeds:
+            upsert_from_rows(seeds, cfg=cfg, now=t0)
+    except Exception:
+        pass
 
     state = load_watch()
     if not state:

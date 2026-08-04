@@ -1,4 +1,5 @@
 # tests/test_ai_entry_watch.py
+import json
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config import DEFAULT_CONFIG, load_config
@@ -103,6 +104,65 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
     state = ew.rebuild_watch_from_book(rows, cfg=cfg, now=100.0)
     assert "SOFI" in state and state["SOFI"]["status"] == "watching"
     assert ew.load_watch()["SOFI"]["symbol"] == "SOFI"
+
+
+def test_desk_candidates_include_watchlist_and_trending(tmp_path, monkeypatch):
+    """Momentum watchlist + trending heat both produce tradeable seed rows."""
+    import ai_entry_watch as ew
+
+    wl = tmp_path / "transcription"
+    wl.mkdir()
+    (wl / "wb_watchlist.json").write_text(
+        json.dumps([{"ticker": "ACHR", "added": "2026-08-04T10:00:00"}]),
+        encoding="utf-8",
+    )
+    (tmp_path / "trending_stocks.json").write_text(json.dumps({
+        "rows": [
+            {"symbol": "SOFI", "trending_score": 8.0, "price": 18.0, "is_equity": True},
+            {"symbol": "BTC", "trending_score": 9.0, "price": 1.0, "is_crypto": True},
+        ],
+    }), encoding="utf-8")
+    (tmp_path / "signal_state.json").write_text(json.dumps({
+        "tickers": {
+            "GEVO": {"price": 2.0, "is_hot": True, "proximity_pct": 40},
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    rows = ew.desk_candidate_rows({
+        "ai_watch_seed_momentum": True,
+        "ai_watch_seed_trending": True,
+        "ai_watch_seed_momentum_n": 12,
+        "ai_watch_seed_trending_n": 8,
+        "ai_max_price": 100.0,
+    })
+    by = {r["symbol"]: r for r in rows}
+    assert by["GEVO"]["source"] == "momentum"
+    assert by["ACHR"]["source"] == "momentum"
+    assert by["SOFI"]["source"] == "trending"
+    assert "BTC" not in by
+
+
+def test_upsert_desk_does_not_steal_research_source(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI",
+            "status": "watching",
+            "source": "xai",
+            "score": 8.5,
+            "reason": "research thesis",
+        },
+    })
+    state = ew.upsert_from_rows(
+        [{"symbol": "SMCI", "source": "momentum", "score": 7.0, "reason": "mom",
+          "agreement": True}],
+        cfg={"ai_watch_require_agreement": False},
+        now=1.0,
+    )
+    assert state["SMCI"]["source"] == "xai"
+    assert state["SMCI"]["reason"] == "research thesis"
 
 
 def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
@@ -443,6 +503,9 @@ def _poll_cfg(**overrides):
         "ai_max_structure_calls_per_hour": 12,
         "ai_max_price": 100.0,
         "ai_risk_pct": 1.0,
+        # Isolate poll unit tests from live desk heat files.
+        "ai_watch_seed_momentum": False,
+        "ai_watch_seed_trending": False,
     }
     cfg.update(overrides)
     return cfg
