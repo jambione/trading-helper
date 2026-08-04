@@ -2689,8 +2689,6 @@ def call_claude(
                     text = text.rstrip() + "\n\n" + trailer.strip() + "\n"
             except Exception:
                 pass
-        if not trading:
-            return text
         try:
             rows = parse_model_text(text)
         except Exception:
@@ -2707,21 +2705,12 @@ def call_claude(
         except Exception:
             pass
 
-        if not rows:
-            return text
-        # When ai_watch_enabled, rebuild the entry-watch queue from this book
-        # (WAIT names poll later). Still run _place_qualifying_entries as the
-        # immediate BUY fast path for names that already qualify now.
-        try:
-            cfg = _entry_runtime_cfg()
-            if cfg.get("ai_watch_enabled", True):
-                import time as _time
-                import ai_entry_watch as ew
-                book_rows = tag_agreement_on_rows(list(rows))
-                ew.rebuild_watch_from_book(book_rows, cfg=cfg, now=_time.time())
-            # Daily A vs X duel: register this source's top suggestion as champion.
+        if rows:
+            # Duel champions must register for *both* research sources even when
+            # only one owns the paper book (research-only side still competes).
             try:
-                import ai_duel as duel
+                cfg = _entry_runtime_cfg()
+                import time as _time
                 src = (
                     "xai" if str(backend or "").lower() in (
                         "cli", "grok_cli", "grok")
@@ -2731,12 +2720,40 @@ def call_claude(
                 for r in rows:
                     if isinstance(r, dict) and not r.get("source"):
                         r["source"] = src
-                duel.register_champion_from_rows(
-                    list(rows), source=src, cfg=cfg, now=_time.time())
-            except Exception:
-                pass
-        except Exception:
-            pass
+                try:
+                    import ai_duel as duel
+                    if duel.duel_enabled(cfg):
+                        rec = duel.register_champion_from_rows(
+                            list(rows), source=src, cfg=cfg, now=_time.time())
+                        if rec:
+                            print(
+                                f"[ai] duel champion {rec.get('source_mark')} "
+                                f"{rec.get('symbol')} chance={rec.get('chance')} "
+                                f"src={src}",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"[ai] duel champion skip src={src} "
+                                f"(blocked phase / no free symbol / disabled path)",
+                                flush=True,
+                            )
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] duel champion register failed: {e}", flush=True)
+
+                # Watch rebuild only for the trading owner.
+                if trading and cfg.get("ai_watch_enabled", True):
+                    import ai_entry_watch as ew
+                    book_rows = tag_agreement_on_rows(list(rows))
+                    ew.rebuild_watch_from_book(
+                        book_rows, cfg=cfg, now=_time.time())
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] post-research book/duel hook failed: {e}", flush=True)
+
+        if not trading:
+            return text
+        if not rows:
+            return text
         _place_qualifying_entries(
             rows, max_price=max_price, cli_bin=cli_bin, timeout=timeout,
             risk_pct=risk_pct, trade_style=trade_style,
@@ -2814,6 +2831,46 @@ def call_claude(
         text = ensure_json_trailer(
             text, model=model, key=key, timeout=min(90.0, timeout)
         )
+
+    # Duel champions + thesis reviews (independent of paper-trade phase).
+    try:
+        rows_api = parse_model_text(text)
+    except Exception:
+        rows_api = []
+    if rows_api:
+        try:
+            import ai_positions as cp
+            payload = _best_suggestions_payload(text)
+            reviews = payload.get("position_reviews") if isinstance(payload, dict) else None
+            if reviews:
+                cp.apply_position_reviews(reviews)
+        except Exception:
+            pass
+        try:
+            cfg_api = _entry_runtime_cfg()
+            import time as _time
+            import ai_duel as duel
+            if duel.duel_enabled(cfg_api):
+                src_api = (
+                    "xai" if str(backend or "").lower() in (
+                        "cli", "grok_cli", "grok", "api")
+                    or str(model or "").lower().startswith("grok")
+                    else "anthropic"
+                )
+                for r in rows_api:
+                    if isinstance(r, dict) and not r.get("source"):
+                        r["source"] = src_api
+                rec = duel.register_champion_from_rows(
+                    list(rows_api), source=src_api, cfg=cfg_api, now=_time.time())
+                if rec:
+                    print(
+                        f"[ai] duel champion {rec.get('source_mark')} "
+                        f"{rec.get('symbol')} chance={rec.get('chance')} "
+                        f"src={src_api} (api)",
+                        flush=True,
+                    )
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] duel champion register failed (api): {e}", flush=True)
 
     # ── Phase 2: paper trades (optional, short, no web search) ───────────
     if not trading:

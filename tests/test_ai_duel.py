@@ -14,6 +14,12 @@ import ai_duel as duel  # noqa: E402
 def duel_path(tmp_path, monkeypatch):
     path = tmp_path / "duel_state.json"
     monkeypatch.setattr(duel, "DUEL_STATE_PATH", path)
+    # Do not append duel_* noise into production events.jsonl.
+    monkeypatch.setattr(
+        "ai_positions.log_event",
+        lambda *a, **k: {"ok": True},
+        raising=False,
+    )
     return path
 
 
@@ -181,3 +187,36 @@ def test_compute_r():
     assert duel._compute_r(10, 9, 11) == pytest.approx(1.0)
     assert duel._compute_r(10, 9, 9.5) == pytest.approx(-0.5)
     assert duel._compute_r(10, 10, 11) is None
+
+
+def test_register_blocked_while_leg_open(duel_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr("ai_entry_watch.load_watch", lambda: {})
+    monkeypatch.setattr("ai_entry_watch.save_watch", lambda st: None)
+    et = ZoneInfo("America/New_York")
+    now = datetime(2026, 8, 3, 10, 0, tzinfo=et).timestamp()
+    duel.register_champion_from_rows(
+        [{"symbol": "AAA", "score": 9}], source="anthropic", cfg=CFG, now=now)
+    duel.note_entry("AAA", source="anthropic", entry_price=10.0, stop_price=9.0, now=now)
+    again = duel.register_champion_from_rows(
+        [{"symbol": "BBB", "score": 9.5}], source="anthropic", cfg=CFG, now=now + 60)
+    assert again is None
+    st = duel.load_state(now)
+    assert st["champions"]["anthropic"]["symbol"] == "AAA"
+
+
+def test_save_state_writes_file(duel_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    now = datetime(2026, 8, 3, 10, 0, tzinfo=et).timestamp()
+    st = duel.load_state(now)
+    st["phase"] = "trial"
+    st["totals"] = {"anthropic": 1.5, "xai": -0.25}
+    duel.save_state(st)
+    assert duel_path.exists()
+    raw = json.loads(duel_path.read_text(encoding="utf-8"))
+    assert raw["totals"]["anthropic"] == pytest.approx(1.5)

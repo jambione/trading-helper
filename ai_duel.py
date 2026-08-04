@@ -92,8 +92,8 @@ def save_state(state: dict[str, Any]) -> None:
         tmp = DUEL_STATE_PATH.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
         tmp.replace(DUEL_STATE_PATH)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] duel save_state failed path={DUEL_STATE_PATH}: {e}", flush=True)
 
 
 def duel_enabled(cfg: dict | None) -> bool:
@@ -193,7 +193,11 @@ def pending_window_cut(
     cfg: dict | None,
     now: float | None = None,
 ) -> tuple[str, tuple[int, int], bool] | None:
-    """Next unscored window cut that is at/after its clock time, else None."""
+    """Next unscored window cut that is at/after its clock time, else None.
+
+    After the regular session (16:05 ET) we still allow catch-up so a late
+    restart can close the day once; callers process one cut per tick.
+    """
     t0 = float(now if now is not None else time.time())
     state = load_state(t0)
     if str(state.get("phase") or "trial") != "trial":
@@ -376,6 +380,11 @@ def register_champion_from_rows(
             )
         except Exception:
             pass
+        print(
+            f"[ai] duel champion skip src={src} reason=no_free_symbol "
+            f"taken={sorted(taken)}",
+            flush=True,
+        )
         return None
 
     rec = {
@@ -423,8 +432,8 @@ def register_champion_from_rows(
             day=str(state.get("day") or ""),
             now=t0,
         )
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] duel watch upsert failed {sym}/{src}: {e}", flush=True)
 
     try:
         import ai_positions as cp
@@ -438,6 +447,11 @@ def register_champion_from_rows(
         )
     except Exception:
         pass
+    print(
+        f"[ai] duel champion registered {rec['source_mark']} {sym} "
+        f"chance={ch} phase={state.get('phase')} path={DUEL_STATE_PATH}",
+        flush=True,
+    )
     return rec
 
 

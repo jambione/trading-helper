@@ -153,6 +153,57 @@ def _hydrate_suggestions(gs: AiSuggestions, path: Path) -> int:
     return len(gs.rows)
 
 
+def _seed_duel_from_book(
+    gs: AiSuggestions | None,
+    source: str,
+    cfg: dict,
+    *,
+    now: float | None = None,
+) -> None:
+    """Register duel champion from hydrated/published rows if missing.
+
+    Research-only sources used to skip the trade hook entirely, so A never
+    latched a champion. On restart we re-seed from the last idea JSON so the
+    dual trial can resume without waiting for the next research slot.
+    """
+    if gs is None or not getattr(gs, "rows", None):
+        return
+    try:
+        import ai_duel as duel
+        if not duel.duel_enabled(cfg):
+            return
+        t0 = float(now if now is not None else time.time())
+        st = duel.load_state(t0)
+        # Do not invent late champions after the dual window is over when the
+        # day never latched a state file (stale books after the close).
+        if duel.past_trial_end(cfg, t0) and not (st.get("champions") or {}):
+            return
+        src = duel._norm_source(source)  # noqa: SLF001
+        if not src:
+            return
+        prev = (st.get("champions") or {}).get(src) or {}
+        # Keep an open/submitted/watching leg; only fill a missing or closed slot.
+        if isinstance(prev, dict) and prev.get("status") in (
+            "open", "submitted", "watching",
+        ):
+            if prev.get("symbol"):
+                return
+        rows = list(gs.rows or [])
+        for r in rows:
+            if isinstance(r, dict) and not r.get("source"):
+                r["source"] = src
+        rec = duel.register_champion_from_rows(
+            rows, source=src, cfg=cfg, now=t0)
+        if rec:
+            print(
+                f"[ai] duel seed from book {rec.get('source_mark')} "
+                f"{rec.get('symbol')} src={src}",
+                flush=True,
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] duel seed from book failed ({source}): {e}", flush=True)
+
+
 def _suggestions_payload(
     gs: AiSuggestions,
     now: float,
@@ -527,7 +578,7 @@ def _build_suggestions(cfg: dict) -> AiSuggestions:
         cli_bin=cfg.get("claude_cli_bin", "claude"),
         effort=cfg.get("claude_effort", "xhigh"),
         research_times=cfg.get("claude_research_times",
-                               ["04:00", "11:00", "13:00"]),
+                               ["08:30", "11:30", "14:30"]),
         research_weekdays_only=bool(
             cfg.get("claude_research_weekdays_only", True)),
         research_catchup_min=int(cfg.get("claude_research_catchup_min", 120)),
@@ -577,7 +628,7 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         backend=cfg.get("grok_backend", "cli"),
         cli_bin=cfg.get("grok_cli_bin", "grok"),
         research_times=cfg.get("grok_research_times",
-                               ["04:00", "11:00", "13:00"]),
+                               ["08:30", "11:30", "14:30"]),
         research_weekdays_only=bool(
             cfg.get("grok_research_weekdays_only", True)),
         research_catchup_min=int(cfg.get("grok_research_catchup_min", 120)),
@@ -990,6 +1041,15 @@ def main() -> None:
                   "session — check signal_engine.env", flush=True)
     else:
         print("[ai] Grok research off (grok_research_enabled=false)", flush=True)
+
+    # Recover A/X duel champions from last research books (research-only side
+    # never went through the old trading-only register hook).
+    try:
+        live_cfg = load_config()
+        _seed_duel_from_book(gs_a, SOURCE_ANTHROPIC, live_cfg)
+        _seed_duel_from_book(gs_x, SOURCE_XAI, live_cfg)
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] duel startup seed failed: {e}", flush=True)
 
     # Single book owner from resolved source.
     book = None
