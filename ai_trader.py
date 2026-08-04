@@ -890,11 +890,9 @@ def main() -> None:
             live_cfg = load_config()
             if live_cfg.get("ai_watch_enabled", True):
                 import ai_entry_watch as ew
-                # After EOD liquidate (15:50 ET default) leave the book empty —
-                # reseeding from Mom/ST would refill AI Watch immediately.
-                if ew.past_eod_liquidate_time(live_cfg, now):
-                    pass
-                else:
+                # Watch window: 09:00 ET → EOD liquidate. Outside that range
+                # do not reseed (keeps pre-open empty; post-EOD stays cleared).
+                if ew.watch_session_active(live_cfg, now):
                     # Full rebuild from live Momentum + Trending only
                     # (no accumulated orphans from prior sessions/research runs).
                     ew.sync_watch_from_source_panels(live_cfg, now=now)

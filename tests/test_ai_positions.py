@@ -594,6 +594,35 @@ def test_past_eod_liquidate_time():
         {"ai_eod_liquidate_enabled": False}, after) is False
 
 
+def test_watch_session_and_trading_hours():
+    """Watch from 09:00 ET; paper entries only when market_open and before EOD."""
+    import ai_entry_watch as ew
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    cfg = {
+        "ai_watch_enabled": True,
+        "ai_watch_start_time": "09:00",
+        "ai_eod_liquidate_enabled": True,
+        "ai_eod_liquidate_time": "15:50",
+    }
+    pre = datetime(2026, 8, 3, 8, 59, tzinfo=et).timestamp()
+    start = datetime(2026, 8, 3, 9, 0, tzinfo=et).timestamp()
+    rth = datetime(2026, 8, 3, 10, 0, tzinfo=et).timestamp()
+    eod = datetime(2026, 8, 3, 15, 50, tzinfo=et).timestamp()
+
+    assert ew.watch_session_active(cfg, pre) is False
+    assert ew.watch_session_active(cfg, start) is True
+    assert ew.watch_session_active(cfg, rth) is True
+    assert ew.watch_session_active(cfg, eod) is False
+
+    # Pre-open: can watch from 9:00 but not trade.
+    assert ew.trading_hours_active(cfg, start, market_open=False) is False
+    assert ew.trading_hours_active(cfg, rth, market_open=True) is True
+    assert ew.trading_hours_active(cfg, eod, market_open=True) is False
+
+
 def test_clear_watch_book_empties_state(tmp_path, monkeypatch):
     """EOD clear must wipe entry_watch_state so AI Watch UI goes empty."""
     import ai_entry_watch as ew

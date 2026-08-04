@@ -181,6 +181,8 @@ DEFAULT_CONFIG = {
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
     # Entry watch poller (agreement queue + structure TTL / arming)
     "ai_watch_enabled":                 True,   # enable entry-watch queue
+    # Weekdays: seed/sync AI Watch from this ET time until EOD liquidate.
+    "ai_watch_start_time":           "09:00",   # ET — watching begins
     "ai_watch_require_agreement":      False,   # only watch AX-agreed names
     "ai_watch_single_source":          False,   # allow single-source watch when True
     "ai_watch_poll_sec":                20.0,   # watch poll interval (seconds)
@@ -379,6 +381,7 @@ SAFE_CONFIG_KEYS = [
     "ai_max_spread_pct",
     "ai_min_dollar_volume",
     "ai_watch_enabled",
+    "ai_watch_start_time",
     "ai_watch_require_agreement",
     "ai_watch_single_source",
     "ai_watch_poll_sec",

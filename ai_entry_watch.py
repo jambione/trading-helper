@@ -521,6 +521,22 @@ def should_expire_watches_on_close(
     return False, bool(seen_open), expired
 
 
+def _parse_hhmm(raw: str, default: tuple[int, int]) -> tuple[int, int]:
+    try:
+        hh, mm = str(raw or "").strip().split(":")
+        return int(hh), int(mm)
+    except Exception:
+        return default
+
+
+def _et_now(now: float | None = None):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    t0 = float(now if now is not None else time.time())
+    return datetime.fromtimestamp(t0, tz=ZoneInfo("America/New_York"))
+
+
 def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
     """True on weekdays at/after ``ai_eod_liquidate_time`` ET (default 15:50).
 
@@ -529,21 +545,56 @@ def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_eod_liquidate_enabled", True)):
         return False
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    t0 = float(now if now is not None else time.time())
-    et = ZoneInfo("America/New_York")
-    dt = datetime.fromtimestamp(t0, tz=et)
+    dt = _et_now(now)
     if dt.weekday() >= 5:
         return False
-    raw = str(cfg.get("ai_eod_liquidate_time") or "15:50").strip()
-    try:
-        hh, mm = raw.split(":")
-        bell_h, bell_m = int(hh), int(mm)
-    except Exception:
-        bell_h, bell_m = 15, 50
+    bell_h, bell_m = _parse_hhmm(
+        str(cfg.get("ai_eod_liquidate_time") or "15:50"), (15, 50))
     return (dt.hour, dt.minute) >= (bell_h, bell_m)
+
+
+def watch_session_active(cfg: dict | None, now: float | None = None) -> bool:
+    """True on weekdays from ``ai_watch_start_time`` (default 09:00 ET) until EOD.
+
+    AI Watch may seed/sync and refresh structure in this window. Paper *entries*
+    still require regular-session market hours (see ``trading_hours_active``).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not cfg.get("ai_watch_enabled", True):
+        return False
+    dt = _et_now(now)
+    if dt.weekday() >= 5:
+        return False
+    if past_eod_liquidate_time(cfg, now):
+        return False
+    start_h, start_m = _parse_hhmm(
+        str(cfg.get("ai_watch_start_time") or "09:00"), (9, 0))
+    return (dt.hour, dt.minute) >= (start_h, start_m)
+
+
+def trading_hours_active(
+    cfg: dict | None,
+    now: float | None = None,
+    *,
+    market_open: bool | None = None,
+) -> bool:
+    """True when new paper entries are allowed: RTH open and before EOD flatten.
+
+    ``market_open`` is Alpaca's regular session clock when provided; if omitted
+    the caller should pass it (this helper does not call the broker).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if market_open is False:
+        return False
+    if market_open is None:
+        # Unknown — do not invent open; require explicit True for buys.
+        return False
+    if past_eod_liquidate_time(cfg, now):
+        return False
+    # Still respect watch start so we never trade before the book is live.
+    if not watch_session_active(cfg, now):
+        return False
+    return True
 
 
 def clear_watch_book(*, now: float | None = None) -> dict:
@@ -1648,19 +1699,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         pass
 
+    # Watching window: 09:00 ET → EOD liquidate (default 15:50). Structure /
+    # quotes refresh here; buys only when trading_hours_active (RTH).
+    if not watch_session_active(cfg, t0):
+        if past_eod_liquidate_time(cfg, t0):
+            return [{"kind": "watch_skip", "reason": "eod_liquidate_window"}]
+        return [{"kind": "watch_skip", "reason": "before_watch_start"}]
+
     try:
         market_open = bool(gt.market_is_open())
     except Exception:
         market_open = False
-    if not market_open:
-        return [{"kind": "watch_skip", "reason": "market_closed"}]
-
-    # No new paper entries at/after EOD liquidate time (default 15:50 ET).
-    try:
-        if past_eod_liquidate_time(cfg, t0):
-            return [{"kind": "watch_skip", "reason": "eod_liquidate_window"}]
-    except Exception:
-        pass
+    allow_buys = trading_hours_active(cfg, t0, market_open=market_open)
 
     try:
         ready = bool(gt.is_ready())
@@ -1927,6 +1977,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     "symbol": sym,
                     "reason": "no_equity",
                 })
+            state[sym] = rec
+            continue
+
+        if not allow_buys:
+            # Structure/zone ready, but no paper entry until RTH (market hours).
             state[sym] = rec
             continue
 
