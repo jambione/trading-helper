@@ -1,6 +1,6 @@
 /**
  * mobilePager.js — mobile-only horizontal pager across Momentum, Trending,
- * AI Watch, and AI Research panels.
+ * AI Research, and AI Watch panels.
  *
  * The actual swiping is native CSS scroll-snap on .main-grid (see styles.css).
  * This module only wires the tab bar to it: tap a tab to scroll to that panel,

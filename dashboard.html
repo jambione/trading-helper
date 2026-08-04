@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=89" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=90" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -195,8 +195,8 @@
         <div class="mobile-pager-tabs" data-pager-tabs>
             <button type="button" class="mobile-pager-tab is-active" data-pager-target="tickers">Momentum</button>
             <button type="button" class="mobile-pager-tab" data-pager-target="trending">Trending</button>
-            <button type="button" class="mobile-pager-tab" data-pager-target="ai-watch">Watch</button>
             <button type="button" class="mobile-pager-tab" data-pager-target="claude">Research</button>
+            <button type="button" class="mobile-pager-tab" data-pager-target="ai-watch">Watch</button>
         </div>
 
         <main class="main-grid">
@@ -277,35 +277,6 @@
                 </div>
             </section>
 
-            <!-- ── AI Watch book (watches → open positions with P&L) ─ -->
-            <section data-panel="ai-watch" class="panel panel-ai-watch" aria-label="AI Watch" data-ai-book-section>
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">AI Watch</span>
-                        <span class="panel-subtitle" title="Mom=momentum · ST=trending · X/A=research">Mom · ST · X/A</span>
-                        <span data-ai-book-count class="ticker-count"></span>
-                    </div>
-                    <div class="panel-header-right">
-                        <span data-ai-book-stamp class="feed-stamp"></span>
-                    </div>
-                </div>
-                <div class="feed-table-header ai-book-table-header">
-                    <div class="feed-cols feed-cols--ai-book">
-                        <div class="th">Ticker</div>
-                        <div class="th">Status</div>
-                        <div class="th">Src</div>
-                        <div class="th">Price</div>
-                        <div class="th">Zone</div>
-                        <div class="th">Score</div>
-                        <div class="th">Qty</div>
-                        <div class="th">P&amp;L</div>
-                    </div>
-                </div>
-                <div data-ai-book-rows class="feed-rows ai-book-rows">
-                    <span class="tx-placeholder">No watches or open AI positions…</span>
-                </div>
-            </section>
-
             <!-- ── AI research ideas (Anthropic A / xAI X / both AX) ─ -->
             <section data-panel="claude" class="panel panel-claude" aria-label="AI research">
                 <div class="panel-header">
@@ -334,6 +305,35 @@
                 <div data-claude-error class="feed-error" hidden></div>
                 <div data-claude-rows class="feed-rows">
                     <span class="tx-placeholder">Waiting for AI research…</span>
+                </div>
+            </section>
+
+            <!-- ── AI Watch book (watches → open positions with P&L) ─ -->
+            <section data-panel="ai-watch" class="panel panel-ai-watch" aria-label="AI Watch" data-ai-book-section>
+                <div class="panel-header">
+                    <div class="panel-header-left">
+                        <span class="panel-title">AI Watch</span>
+                        <span class="panel-subtitle" title="Mom=momentum · ST=trending · X/A=research">Mom · ST · X/A</span>
+                        <span data-ai-book-count class="ticker-count"></span>
+                    </div>
+                    <div class="panel-header-right">
+                        <span data-ai-book-stamp class="feed-stamp"></span>
+                    </div>
+                </div>
+                <div class="feed-table-header ai-book-table-header">
+                    <div class="feed-cols feed-cols--ai-book">
+                        <div class="th">Ticker</div>
+                        <div class="th">Status</div>
+                        <div class="th">Src</div>
+                        <div class="th">Price</div>
+                        <div class="th">Zone</div>
+                        <div class="th">Score</div>
+                        <div class="th">Qty</div>
+                        <div class="th">P&amp;L</div>
+                    </div>
+                </div>
+                <div data-ai-book-rows class="feed-rows ai-book-rows">
+                    <span class="tx-placeholder">No watches or open AI positions…</span>
                 </div>
             </section>
         </main>
@@ -734,7 +734,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=89"></script>
+        <script type="module" src="/static/js/app.js?v=90"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
