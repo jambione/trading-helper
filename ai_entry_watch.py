@@ -521,6 +521,31 @@ def should_expire_watches_on_close(
     return False, bool(seen_open), expired
 
 
+def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
+    """True on weekdays at/after ``ai_eod_liquidate_time`` ET (default 15:50).
+
+    Used to block new paper entries once the EOD flatten window is open.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_eod_liquidate_enabled", True)):
+        return False
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    t0 = float(now if now is not None else time.time())
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(t0, tz=et)
+    if dt.weekday() >= 5:
+        return False
+    raw = str(cfg.get("ai_eod_liquidate_time") or "15:50").strip()
+    try:
+        hh, mm = raw.split(":")
+        bell_h, bell_m = int(hh), int(mm)
+    except Exception:
+        bell_h, bell_m = 15, 50
+    return (dt.hour, dt.minute) >= (bell_h, bell_m)
+
+
 def expire_open_watches(now: float) -> dict:
     """Mark open (watching/armed) watches as expired; save and return state.
 
@@ -1611,6 +1636,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         market_open = False
     if not market_open:
         return [{"kind": "watch_skip", "reason": "market_closed"}]
+
+    # No new paper entries at/after EOD liquidate time (default 15:50 ET).
+    try:
+        if past_eod_liquidate_time(cfg, t0):
+            return [{"kind": "watch_skip", "reason": "eod_liquidate_window"}]
+    except Exception:
+        pass
 
     try:
         ready = bool(gt.is_ready())

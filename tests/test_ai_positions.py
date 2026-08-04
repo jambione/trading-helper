@@ -523,6 +523,77 @@ def test_get_account_day_pl_maps_equity_delta(monkeypatch):
     assert snap["equity"] == 10_050.0
 
 
+def test_eod_liquidate_due_once_per_day(tmp_path, monkeypatch):
+    """EOD liquidate arms at 15:50 ET and only once per calendar day."""
+    import ai_trader as at
+    import ai_positions as cp
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    path = tmp_path / "eod.json"
+    monkeypatch.setattr(cp, "EOD_LIQUIDATE_STATE_PATH", path)
+    et = ZoneInfo("America/New_York")
+    # Monday 15:49 → not due
+    mon_early = datetime(2026, 8, 3, 15, 49, tzinfo=et).timestamp()
+    assert at._eod_liquidate_due(
+        {"ai_eod_liquidate_enabled": True, "ai_eod_liquidate_time": "15:50"},
+        mon_early,
+    ) is False
+    # Monday 15:50 → due
+    mon = datetime(2026, 8, 3, 15, 50, tzinfo=et).timestamp()
+    assert at._eod_liquidate_due(
+        {"ai_eod_liquidate_enabled": True, "ai_eod_liquidate_time": "15:50"},
+        mon,
+    ) is True
+    at._mark_eod_liquidate_done(mon, {"ok": True, "closed": 1})
+    assert at._eod_liquidate_due(
+        {"ai_eod_liquidate_enabled": True, "ai_eod_liquidate_time": "15:50"},
+        mon + 60,
+    ) is False
+
+
+def test_liquidate_all_cancels_and_closes(monkeypatch):
+    """liquidate_all cancels open orders then close_out each position."""
+    calls = {"cancel": 0, "close": []}
+
+    monkeypatch.setattr(alpaca_trader, "is_active", lambda: True)
+    monkeypatch.setattr(
+        alpaca_trader, "cancel_open_orders",
+        lambda ticker=None: calls.__setitem__("cancel", calls["cancel"] + 1)
+        or {"ok": True, "canceled": 2, "errors": []},
+    )
+    monkeypatch.setattr(
+        alpaca_trader, "get_positions_detail",
+        lambda: {"CMG": {"qty": 10}, "AAA": {"qty": 5}},
+    )
+
+    def _close(sym, **kw):
+        calls["close"].append(sym)
+        return {"ok": True, "order_id": "x", "status": "accepted"}
+
+    monkeypatch.setattr(alpaca_trader, "close_out", _close)
+    out = alpaca_trader.liquidate_all()
+    assert out["canceled"] == 2
+    assert out["closed"] == 2
+    assert set(out["symbols"]) == {"AAA", "CMG"}
+    assert calls["cancel"] == 1
+
+
+def test_past_eod_liquidate_time():
+    import ai_entry_watch as ew
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    cfg = {"ai_eod_liquidate_enabled": True, "ai_eod_liquidate_time": "15:50"}
+    before = datetime(2026, 8, 3, 15, 49, tzinfo=et).timestamp()
+    after = datetime(2026, 8, 3, 15, 50, tzinfo=et).timestamp()
+    assert ew.past_eod_liquidate_time(cfg, before) is False
+    assert ew.past_eod_liquidate_time(cfg, after) is True
+    assert ew.past_eod_liquidate_time(
+        {"ai_eod_liquidate_enabled": False}, after) is False
+
+
 def test_save_state_does_not_clobber_dashboard_wire(tmp_path, monkeypatch):
     """Managed book must not overwrite ai_positions_state.json (live/stale flash)."""
     import ai_positions as cp

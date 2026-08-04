@@ -553,6 +553,53 @@ def dedupe_open_orders(keep: str = "newest") -> dict:
     return {"ok": True, "canceled": canceled, "kept": kept, "by_symbol": by_symbol}
 
 
+def liquidate_all() -> dict:
+    """EOD flatten: cancel every open order, then close every open position.
+
+    Returns
+    ``{ok, canceled, closed, symbols, errors}`` where ``closed`` is the count
+    of successful ``close_out`` calls and ``symbols`` lists those tickers.
+    """
+    if not is_active():
+        return {
+            "ok": False, "canceled": 0, "closed": 0,
+            "symbols": [], "errors": ["trader off"],
+        }
+    cancel = cancel_open_orders(None)
+    canceled = int(cancel.get("canceled") or 0)
+    errors: list[str] = list(cancel.get("errors") or [])
+    symbols: list[str] = []
+    detail = get_positions_detail()
+    if detail is None:
+        errors.append("get_positions_detail failed")
+        detail = {}
+    for sym in sorted(str(s).upper() for s in detail.keys() if s):
+        try:
+            res = close_out(sym)
+            if res.get("ok"):
+                symbols.append(sym)
+            else:
+                errors.append(
+                    f"{sym}:{res.get('note') or res.get('status') or 'close_failed'}"
+                )
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{sym}:{e}")
+            log.warning("[TRADER] liquidate_all %s failed: %s", sym, e)
+    ok = not errors or bool(symbols) or canceled > 0 or not detail
+    print(
+        f"  [TRADER] liquidate_all: canceled={canceled} closed={len(symbols)} "
+        f"symbols={symbols or '-'} errors={len(errors)}",
+        flush=True,
+    )
+    return {
+        "ok": ok,
+        "canceled": canceled,
+        "closed": len(symbols),
+        "symbols": symbols,
+        "errors": errors,
+    }
+
+
 def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0.0) -> dict:
     """
     Desk EXIT: cancel any OPEN orders for the symbol, then close 100% of the position.

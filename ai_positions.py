@@ -53,6 +53,7 @@ POSITIONS_STATE_PATH = REPORT_DIR / "positions_state.json"
 OUTCOMES_PATH = REPORT_DIR / "outcomes.jsonl"
 EVENTS_PATH = REPORT_DIR / "events.jsonl"
 OPEN_BELL_STATE_PATH = REPORT_DIR / "open_bell_state.json"
+EOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "eod_liquidate_state.json"
 
 ET = ZoneInfo("America/New_York")
 

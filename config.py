@@ -173,6 +173,9 @@ DEFAULT_CONFIG = {
     "ai_max_open_risk_pct":         5.0,    # sum open stop-risk % equity
     "ai_open_bell_enabled":        True,    # act on overnight ideas after open
     "ai_open_bell_time":        "09:35",    # ET
+    # Cancel all open orders + close all positions once per day at this ET time.
+    "ai_eod_liquidate_enabled":    True,
+    "ai_eod_liquidate_time":    "15:50",    # ET — flatten before the 16:00 close
     "ai_require_agreement":       False,    # only trade AX-agreed names
     "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
@@ -370,6 +373,8 @@ SAFE_CONFIG_KEYS = [
     "ai_max_open_risk_pct",
     "ai_open_bell_enabled",
     "ai_open_bell_time",
+    "ai_eod_liquidate_enabled",
+    "ai_eod_liquidate_time",
     "ai_require_agreement",
     "ai_max_spread_pct",
     "ai_min_dollar_volume",

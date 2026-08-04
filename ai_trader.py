@@ -637,6 +637,96 @@ def _mark_open_bell_done(now: float) -> None:
         pass
 
 
+def _parse_hhmm(raw: str, default: tuple[int, int] = (15, 50)) -> tuple[int, int]:
+    try:
+        hh, mm = str(raw or "").strip().split(":")
+        return int(hh), int(mm)
+    except Exception:
+        return default
+
+
+def _eod_liquidate_due(cfg: dict, now: float) -> bool:
+    """True once per ET weekday at/after configured EOD liquidate time."""
+    if not bool(cfg.get("ai_eod_liquidate_enabled", True)):
+        return False
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(now, tz=et)
+    if dt.weekday() >= 5:
+        return False
+    bell_h, bell_m = _parse_hhmm(
+        str(cfg.get("ai_eod_liquidate_time") or "15:50"), (15, 50))
+    if (dt.hour, dt.minute) < (bell_h, bell_m):
+        return False
+    day_key = dt.strftime("%Y-%m-%d")
+    try:
+        prev = json.loads(ai_positions.EOD_LIQUIDATE_STATE_PATH.read_text(
+            encoding="utf-8"))
+        if str(prev.get("last_day") or "") == day_key:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _mark_eod_liquidate_done(now: float, result: dict | None = None) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    day_key = datetime.fromtimestamp(now, tz=et).strftime("%Y-%m-%d")
+    try:
+        path = ai_positions.EOD_LIQUIDATE_STATE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "last_day": day_key,
+            "ts": now,
+            "result": result if isinstance(result, dict) else {},
+        }
+        path.write_text(json.dumps(payload, indent=2, default=str),
+                        encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _run_eod_liquidate(cfg: dict, now: float) -> dict:
+    """Cancel all open orders and close all positions (once per day)."""
+    import alpaca_trader
+
+    print("[ai] EOD liquidate — cancel open orders + close all positions",
+          flush=True)
+    try:
+        result = alpaca_trader.liquidate_all()
+    except Exception as e:  # noqa: BLE001
+        result = {
+            "ok": False, "canceled": 0, "closed": 0,
+            "symbols": [], "errors": [str(e)],
+        }
+        print(f"[ai] EOD liquidate failed: {e}", flush=True)
+    try:
+        ai_positions.log_event(
+            "eod_liquidate",
+            ok=bool(result.get("ok")),
+            canceled=result.get("canceled"),
+            closed=result.get("closed"),
+            symbols=result.get("symbols") or [],
+            errors=(result.get("errors") or [])[:8],
+        )
+    except Exception:
+        pass
+    # Drop remaining watches so the book does not re-arm into the close.
+    if cfg.get("ai_watch_enabled", True):
+        try:
+            import ai_entry_watch as ew
+            ew.expire_open_watches(now=now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] EOD expire watches failed: {e}", flush=True)
+    _mark_eod_liquidate_done(now, result)
+    return result if isinstance(result, dict) else {}
+
+
 def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
     """Act on existing ranked ideas after the open — no full research spend.
 
@@ -877,6 +967,14 @@ def main() -> None:
                     except Exception as e:  # noqa: BLE001
                         print(f"[ai] manage_open_positions failed: {e}",
                               flush=True)
+
+                # 15:50 ET (configurable): cancel open orders + flatten positions.
+                try:
+                    if _eod_liquidate_due(live_cfg, t0):
+                        _run_eod_liquidate(live_cfg, t0)
+                        _publish_book(time.time())
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] eod_liquidate failed: {e}", flush=True)
 
                 if live_cfg.get("ai_watch_expire_at_close", True):
                     try:

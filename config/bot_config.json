@@ -177,9 +177,11 @@
     30
   ],
   "eod_liquidate_at": [
-    16,
-    0
+    15,
+    50
   ],
+  "ai_eod_liquidate_enabled": true,
+  "ai_eod_liquidate_time": "15:50",
   "use_float_filter": false,
   "max_float_million": 50,
   "micro_float_threshold": 10,
