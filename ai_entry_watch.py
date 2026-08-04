@@ -1124,6 +1124,162 @@ def _structure_levels(structure: dict) -> tuple[float, float, float, float, floa
     return entry_low, entry_high, stop, target, rr
 
 
+def build_offset_zone_structure(
+    price: float,
+    cfg: dict | None = None,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Pullback entry zone from live price — no model required.
+
+    Upper limit (``entry_high``) = price × (1 − offset%), i.e. a *negative*
+    offset from the current print. Lower band and stop/target are derived so
+    ``wait_for_zone`` + mechanical sizing still work.
+
+    Defaults (overridable in bot_config):
+      ai_watch_zone_offset_pct  — % below last to set buy-zone *upper* (1.5)
+      ai_watch_zone_width_pct   — zone depth below that upper (1.0)
+      ai_watch_synth_stop_pct   — stop distance below entry_low (2.0)
+      ai_watch_synth_rr         — reward:risk to target_1 (3.0)
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0:
+        return {
+            "decision": "WAIT",
+            "wait_kind": "hard_no",
+            "entry_low": 0.0,
+            "entry_high": 0.0,
+            "stop_price": 0.0,
+            "target_1": 0.0,
+            "reward_risk": 0.0,
+            "synthetic": True,
+            "summary": "synth zone: invalid price",
+        }
+
+    def _pct(key: str, default: float) -> float:
+        try:
+            return max(0.0, float(cfg.get(key, default) or default))
+        except (TypeError, ValueError):
+            return default
+
+    offset = _pct("ai_watch_zone_offset_pct", 1.5) / 100.0
+    width = _pct("ai_watch_zone_width_pct", 1.0) / 100.0
+    stop_pct = _pct("ai_watch_synth_stop_pct", 2.0) / 100.0
+    try:
+        rr = float(cfg.get("ai_watch_synth_rr", 3.0) or 3.0)
+    except (TypeError, ValueError):
+        rr = 3.0
+    rr = max(1.0, rr)
+
+    # Upper buy limit sits *below* the print so we wait for a dip.
+    entry_high = px * (1.0 - offset)
+    entry_low = entry_high * (1.0 - width)
+    if entry_low <= 0 or entry_high <= 0 or entry_low >= entry_high:
+        entry_high = px * 0.99
+        entry_low = px * 0.98
+    mid = (entry_low + entry_high) / 2.0
+    stop = entry_low * (1.0 - stop_pct)
+    if stop <= 0 or stop >= mid:
+        stop = mid * 0.98
+    risk = mid - stop
+    target = mid + rr * risk
+
+    def _r(x: float) -> float:
+        # Tighter rounding for cheap names.
+        if x >= 100:
+            return round(x, 2)
+        if x >= 1:
+            return round(x, 3)
+        return round(x, 4)
+
+    off_pct = offset * 100.0
+    return {
+        "decision": "WAIT",
+        "wait_kind": "wait_for_zone",
+        "entry_low": _r(entry_low),
+        "entry_high": _r(entry_high),
+        "stop_price": _r(stop),
+        "target_1": _r(target),
+        "reward_risk": round(rr, 2),
+        "scale_out_pct": 40,
+        "synthetic": True,
+        "anchor_price": _r(px),
+        "summary": (
+            f"synth pullback: upper {_r(entry_high)} "
+            f"({off_pct:.1f}% under {_r(px)})"
+            + (f" · {reason}" if reason else "")
+        ),
+    }
+
+
+def _structure_usable(structure: Any) -> bool:
+    """True when structure has a real armable zone (not hard_no / empty)."""
+    if not isinstance(structure, dict):
+        return False
+    wk = str(structure.get("wait_kind") or "").lower().strip()
+    if wk == "hard_no":
+        return False
+    levels = _structure_levels(structure)
+    return levels is not None
+
+
+def _desk_source(rec: dict) -> bool:
+    src = str(rec.get("source") or "").lower().strip()
+    return src in ("momentum", "mom", "trending", "st", "stocktwits")
+
+
+def ensure_offset_zone_if_needed(
+    rec: dict,
+    ask: float,
+    cfg: dict,
+    now: float,
+) -> dict | None:
+    """Attach a synthetic pullback zone for mom/ST when model zone is missing.
+
+    Freezes the zone at first apply (anchor = live ask) so we wait for a dip
+    rather than chasing. Returns an event dict when a zone is created/replaced.
+    """
+    if not isinstance(rec, dict) or not _desk_source(rec):
+        return None
+    if not bool(cfg.get("ai_watch_synth_zone_enabled", True)):
+        return None
+    try:
+        ask_f = float(ask)
+    except (TypeError, ValueError):
+        return None
+    if ask_f <= 0:
+        return None
+
+    structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+    # Keep a good existing zone; only fill gaps / replace hard_no / empty levels.
+    if _structure_usable(structure) and not structure.get("synthetic"):
+        return None
+    if _structure_usable(structure) and structure.get("synthetic"):
+        # Already have a frozen synth zone — leave it (wait for pullback).
+        return None
+
+    reason = str(rec.get("reason") or rec.get("source") or "")
+    synth = build_offset_zone_structure(ask_f, cfg, reason=reason)
+    rec["structure"] = synth
+    rec["structure_ts"] = float(now)
+    if str(rec.get("status") or "").lower() in ("invalidated", "expired"):
+        rec["status"] = "watching"
+    return {
+        "kind": "synth_zone",
+        "symbol": str(rec.get("symbol") or "").upper(),
+        "entry_low": synth.get("entry_low"),
+        "entry_high": synth.get("entry_high"),
+        "stop_price": synth.get("stop_price"),
+        "target_1": synth.get("target_1"),
+        "anchor": synth.get("anchor_price"),
+        "reason": "offset_from_last",
+    }
+
+
 def should_arm_buy(
     record: dict,
     *,
@@ -1505,27 +1661,63 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             rec["last_ask"] = ask_f
         rec["last_poll_ts"] = t0
 
-        # hard_no on stored structure → invalidate (do not poll/buy)
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+
+        # Mom/ST: prefer a mechanical pullback zone when model has no usable zone
+        # (missing levels / hard_no). Do this before invalidate so we can still trade.
+        if ask_f > 0 and _desk_source(rec) and not _structure_usable(structure):
+            sev = ensure_offset_zone_if_needed(rec, ask_f, cfg, t0)
+            if sev:
+                events.append(sev)
+                try:
+                    cp.log_event(
+                        "synth_zone",
+                        symbol=sym,
+                        entry_low=sev.get("entry_low"),
+                        entry_high=sev.get("entry_high"),
+                        anchor=sev.get("anchor"),
+                    )
+                except Exception:
+                    pass
+            structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+
+        # hard_no only kills non-desk (or desk when synth disabled / failed)
         if structure is not None:
             wk = structure.get("wait_kind")
             if wk is not None and str(wk).lower().strip() == "hard_no":
-                rec["status"] = "invalidated"
-                state[sym] = rec
-                try:
-                    events.append(cp.log_event(
-                        "invalidated", symbol=sym, reason="hard_no"))
-                except Exception:
-                    events.append({
-                        "kind": "invalidated",
-                        "symbol": sym,
-                        "reason": "hard_no",
-                    })
-                continue
+                if _desk_source(rec) and ask_f > 0:
+                    sev = ensure_offset_zone_if_needed(rec, ask_f, cfg, t0)
+                    if sev:
+                        events.append(sev)
+                        structure = rec.get("structure")
+                if (
+                    isinstance(structure, dict)
+                    and str(structure.get("wait_kind") or "").lower().strip()
+                    == "hard_no"
+                ):
+                    rec["status"] = "invalidated"
+                    state[sym] = rec
+                    try:
+                        events.append(cp.log_event(
+                            "invalidated", symbol=sym, reason="hard_no"))
+                    except Exception:
+                        events.append({
+                            "kind": "invalidated",
+                            "symbol": sym,
+                            "reason": "hard_no",
+                        })
+                    continue
 
-        # Structure refresh when missing/stale (budgeted)
-        if _structure_stale(rec, cfg, t0):
-            if structure_calls_remaining(cfg, t0) > 0 and ask_f > 0:
+        # Optional LLM structure only when still no usable zone and budget allows.
+        # Desk names already got a synth zone above — skip model to avoid hard_no loop.
+        if _structure_stale(rec, cfg, t0) and not _structure_usable(
+            rec.get("structure")
+        ):
+            if (
+                not _desk_source(rec)
+                and structure_calls_remaining(cfg, t0) > 0
+                and ask_f > 0
+            ):
                 sev = ensure_structure(rec, cfg, t0)
                 if sev:
                     events.append(sev)

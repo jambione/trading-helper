@@ -196,6 +196,12 @@ DEFAULT_CONFIG = {
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
     "ai_watch_momentum_require_flag":  True,  # FIRST / NEW / BURST only
     "ai_watch_min_pct_change":         50.0,  # |day chg %| above this also qualifies
+    # Synthetic pullback zone when model has no levels (Mom/ST).
+    "ai_watch_synth_zone_enabled":     True,
+    "ai_watch_zone_offset_pct":        1.5,  # entry_high = last * (1 - offset/100)
+    "ai_watch_zone_width_pct":         1.0,  # zone depth below entry_high
+    "ai_watch_synth_stop_pct":         2.0,  # stop under entry_low
+    "ai_watch_synth_rr":               3.0,  # target at this R multiple
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -380,6 +386,11 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_trending_min_score",
     "ai_watch_momentum_require_flag",
     "ai_watch_min_pct_change",
+    "ai_watch_synth_zone_enabled",
+    "ai_watch_zone_offset_pct",
+    "ai_watch_zone_width_pct",
+    "ai_watch_synth_stop_pct",
+    "ai_watch_synth_rr",
     "ai_entry_zone_pad_pct",
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",
