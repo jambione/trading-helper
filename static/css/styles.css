@@ -479,7 +479,7 @@ body.hosted [data-clear-transcript-btn] { display: none; }
 body.hosted .status-audio-section       { display: none; }
 body.hosted [data-tab-btn="audio"]      { display: none; }
 body.hosted [data-settings-btn]         { display: none; }
-body.hosted .main-grid               { grid-template-columns: 1fr 1fr 1fr; }
+body.hosted .main-grid               { grid-template-columns: 1fr 1fr 1fr 1fr; }
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
@@ -768,10 +768,8 @@ body.mobile .auto-alert-toggle { display: none !important; }
 body.mobile [data-panel="tradingview"] { display: none !important; }
 body.mobile #ticker-tv-resizer         { display: none !important; }
 
-/* ── Mobile: swipeable pager (Momentum ⇄ Trending ⇄ AI) ─────────
-   The grid becomes a horizontal scroll-snap strip: Momentum is slide 1
-   (leftmost, shown first), Trending slide 2, AI research slide 3. The tab bar
-   mirrors and drives the scroll position (mobilePager.js). */
+/* ── Mobile: swipeable pager (Momentum ⇄ Trending ⇄ Watch ⇄ Research)
+   Scroll-snap strip; tabs drive scroll position (mobilePager.js). */
 .mobile-pager-tabs { display: none; }
 body.mobile .mobile-pager-tabs {
   display: flex;
@@ -812,6 +810,7 @@ body.mobile .main-grid::-webkit-scrollbar { display: none; }
 
 body.mobile .main-grid > [data-panel="tickers"],
 body.mobile .main-grid > [data-panel="trending"],
+body.mobile .main-grid > [data-panel="ai-watch"],
 body.mobile .main-grid > [data-panel="claude"] {
   display: flex !important;
   flex: 0 0 100%;
@@ -821,9 +820,10 @@ body.mobile .main-grid > [data-panel="claude"] {
   scroll-snap-align: start;
   scroll-snap-stop: always;
 }
-body.mobile .main-grid > [data-panel="tickers"]  { order: 1; }  /* Momentum first */
-body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending second */
-body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* AI research third */
+body.mobile .main-grid > [data-panel="tickers"]  { order: 1; }  /* Momentum */
+body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending */
+body.mobile .main-grid > [data-panel="ai-watch"] { order: 3; }  /* AI Watch */
+body.mobile .main-grid > [data-panel="claude"]   { order: 4; }  /* Research */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
 /* Drop Vol / RVOL / Size on mobile so ticker + price + chg stay readable */
@@ -876,12 +876,19 @@ body.mobile .icon-btn {
 .main-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  /* Momentum | Trending | AI Watch | AI Research */
+  grid-template-columns: 1fr 1fr 1.05fr 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
   gap: 10px;
   min-height: 0;
   padding: 10px;
+}
+
+@media (max-width: 1400px) {
+  .main-grid {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
 }
 
 .panel-resizer {
@@ -1802,38 +1809,23 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
-/* AI Watch section (full table — not chip strip) inside AI Research panel */
-.ai-book-section {
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-hi);
-  background: rgba(34, 211, 238, 0.03);
-  max-height: 38%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+/* AI Watch column (own main-grid panel) */
+.panel-ai-watch {
+  /* glass — inherits from .panel */
 }
-.ai-book-section-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px 4px;
-  flex-shrink: 0;
-}
-.ai-book-section-title {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-bright);
+.panel-ai-watch .panel-subtitle {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 .ai-book-table-header {
   flex-shrink: 0;
 }
 .ai-book-rows {
+  flex: 1;
   overflow-y: auto;
-  min-height: 48px;
-  max-height: 100%;
-  flex: 1 1 auto;
+  min-height: 0;
 }
 .feed-cols--ai-book {
   /* Ticker | Status | Src | Price | Zone | Score | Qty | P&L */
@@ -1885,21 +1877,7 @@ body.mobile .icon-btn {
   font-weight: 600;
   align-self: center;
 }
-.ai-research-divider {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px 2px;
-  border-bottom: 1px solid var(--border);
-}
-.ai-research-divider-label {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
+
 .watchlist-table-header {
   padding: 0 16px;
   border-bottom: 1px solid var(--border-hi);

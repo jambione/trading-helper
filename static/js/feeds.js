@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=88';
-import { api }       from './api.js?v=88';
-import { copyTicker } from './tickers.js?v=88';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=88';
+import { subscribe, get } from './store.js?v=89';
+import { api }       from './api.js?v=89';
+import { copyTicker } from './tickers.js?v=89';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=89';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -19,17 +19,18 @@ export function init(panelEl, kind) {
   const countEl = panelEl.querySelector(`[data-${kind}-count]`);
   const stampEl = panelEl.querySelector(`[data-${kind}-stamp]`);
   const errEl   = panelEl.querySelector(`[data-${kind}-error]`);
+  // AI Watch is its own main-grid column (not nested under Research).
   const bookSection = kind === 'claude'
-    ? panelEl.querySelector('[data-ai-book-section]')
+    ? document.querySelector('[data-ai-book-section]')
     : null;
   const bookRowsEl = kind === 'claude'
-    ? panelEl.querySelector('[data-ai-book-rows]')
+    ? document.querySelector('[data-ai-book-rows]')
     : null;
   const bookCountEl = kind === 'claude'
-    ? panelEl.querySelector('[data-ai-book-count]')
+    ? document.querySelector('[data-ai-book-count]')
     : null;
   const bookStampEl = kind === 'claude'
-    ? panelEl.querySelector('[data-ai-book-stamp]')
+    ? document.querySelector('[data-ai-book-stamp]')
     : null;
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
@@ -237,6 +238,20 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
   }
 
   rowsEl.innerHTML = rows.map(r => _bookRowHtml(r, owner)).join('');
+  // Wire click → add to Momentum watchlist / copy ticker (same as feed rows).
+  rowsEl.querySelectorAll('[data-book-symbol]').forEach(el => {
+    const sym = String(el.dataset.bookSymbol || '').toUpperCase();
+    if (!sym) return;
+    el.addEventListener('click', () => _add(el, sym));
+    const tickerCell = el.querySelector('.cell-ticker');
+    if (tickerCell) {
+      tickerCell.title = `Copy ${sym}`;
+      tickerCell.addEventListener('click', e => {
+        e.stopPropagation();
+        copyTicker(e.currentTarget, sym);
+      });
+    }
+  });
 }
 
 function _bookRowHtml(r, owner) {
