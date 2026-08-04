@@ -1809,23 +1809,108 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
-/* AI Watch column (own main-grid panel) */
+/* AI Watch column — trading book, distinct from research panels ─────────
+   Momentum / Trending / Research share the neutral glass look.
+   AI Watch is the live paper book: violet frame, tinted body, BOOK badge. */
 .panel-ai-watch {
-  /* glass — inherits from .panel */
+  border-color: rgba(167, 139, 250, 0.45);
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.18),
+    0 4px 28px rgba(88, 28, 135, 0.28),
+    0 0 40px rgba(139, 92, 246, 0.08);
+  background:
+    linear-gradient(180deg, rgba(76, 29, 149, 0.22) 0%, rgba(20, 18, 32, 0.96) 42%, var(--surface) 100%);
+}
+.panel-ai-watch::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 rgba(196, 181, 253, 0.12);
+  z-index: 0;
+}
+.panel-ai-watch > * {
+  position: relative;
+  z-index: 1;
+}
+.panel-header--ai-watch {
+  background: linear-gradient(90deg, rgba(91, 33, 182, 0.55) 0%, rgba(32, 30, 48, 0.95) 70%);
+  border-bottom: 1px solid rgba(167, 139, 250, 0.35);
+}
+.panel-ai-watch .panel-title {
+  color: #ede9fe;
+  letter-spacing: 0.14em;
 }
 .panel-ai-watch .panel-subtitle {
-  color: var(--text-dim);
+  color: #c4b5fd;
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-left: 2px;
 }
-.ai-book-table-header {
+.panel-ai-watch .ticker-count {
+  color: #ddd6fe;
+  background: rgba(139, 92, 246, 0.25);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+.panel-ai-watch .feed-stamp {
+  color: #a78bfa;
+}
+.ai-watch-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.35;
+  color: #1e1033;
+  background: linear-gradient(135deg, #c4b5fd 0%, #a78bfa 100%);
+  border: 1px solid rgba(237, 233, 254, 0.5);
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.45);
   flex-shrink: 0;
 }
-.ai-book-rows {
+.panel-ai-watch .ai-book-table-header,
+.panel-ai-watch .feed-table-header {
+  background: rgba(76, 29, 149, 0.28);
+  border-bottom-color: rgba(167, 139, 250, 0.22);
+}
+.panel-ai-watch .ai-book-table-header .th {
+  color: #c4b5fd;
+}
+.panel-ai-watch .ai-book-rows,
+.panel-ai-watch .feed-rows {
+  background: transparent;
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+.panel-ai-watch .feed-row--ai-book {
+  background: rgba(30, 20, 50, 0.45);
+  border: 1px solid rgba(139, 92, 246, 0.14);
+}
+.panel-ai-watch .feed-row--ai-book:hover {
+  border-color: rgba(167, 139, 250, 0.4);
+  background: rgba(76, 29, 149, 0.28);
+}
+.panel-ai-watch .feed-row--ai-open {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(109, 40, 217, 0.22);
+  box-shadow: inset 3px 0 0 #a78bfa;
+}
+.panel-ai-watch .feed-row--ai-ready {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(6, 78, 59, 0.28);
+  box-shadow: inset 3px 0 0 #34d399;
+}
+.panel-ai-watch .tx-placeholder {
+  color: #8b7ab8;
 }
 .feed-cols--ai-book {
   /* Ticker | Status | Src | Price | Zone | Score | Qty | P&L */
