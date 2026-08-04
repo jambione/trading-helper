@@ -276,6 +276,33 @@ DEFAULTS = {
     # The Claude desk's book is reported separately by the server.
     "positions_panel_enabled": True,
     "positions_poll": 5.0,        # seconds between position/order refreshes
+    # Adaptive limit + risk bracket + ratchet (OFF by default — paper wall).
+    # Spec: docs/superpowers/specs/2026-08-04-entry-pricing-auto-limit-design.md
+    "auto_limit_enabled": False,
+    "auto_limit_live": False,          # must be true to auto-fire in live
+    "auto_limit_signals": ["buy_zone"],
+    "auto_limit_cooldown_sec": 900.0,
+    "auto_limit_max_per_session": 3,
+    "auto_limit_max_price": None,      # optional hard cap; else no max
+    # Constructive tape gate (CM RSI / %R / MACD via signal_proximity)
+    "auto_limit_require_constructive": True,
+    "auto_limit_min_proximity_pct": 67.0,   # yellow+ buy completion
+    "auto_limit_block_sell_signal": True,
+    "auto_limit_block_pctr_falling": True,  # both %R lines falling → skip
+    "auto_limit_require_buy_signal": False,  # optional stricter
+    "entry_pad_max_pct": 0.15,
+    "entry_max_spread_pct": 1.0,
+    "buy_order_style": "auto",         # auto | limit_ask | market | policy
+    # Tight stop + small size → compound BP
+    "risk_pct": 0.35,                  # % of equity risked per trade
+    "stop_pct": 0.40,                  # % below entry for initial stop
+    "reward_r": 2.0,                   # TP distance in R
+    "be_at_r": 1.0,                    # move stop to breakeven at +1R
+    "lock_at_r": 2.0,                  # lock +1R at +2R unrealized
+    "trail_pct": 0.0,                  # >0 swaps to broker trail after lock
+    "max_notional": None,              # optional $ cap on entry notional
+    "daily_loss_r": 2.0,               # halt auto when session R <= -this
+    "daily_loss_halt_auto": True,
     "claude_rvol_column": True,
     "claude_avg_days": 10,
     "claude_rvol_time_adjusted": True,
@@ -2333,16 +2360,29 @@ def main():
     feed = Feed(cfg)
     alerter = Alerter(cfg)
 
-    # Paper/live account for the POSITIONS panel and the desk's own B/S keys.
-    # This is the manual book only — the Claude desk runs on the server and
-    # reports its positions through /api/state.
+    # Paper/live account for the POSITIONS panel and optional buy_zone auto-limit.
+    # Claude desk book is separate (server). Auto-limit defaults OFF / paper-only.
     pos_mode = "off"
-    if positions_on:
+    auto_limit_on = bool(cfg.get("auto_limit_enabled", False))
+    if positions_on or auto_limit_on:
         try:
             pos_mode = desk.init_trader(cfg) or "off"
         except Exception:
             pos_mode = "off"
         console.print(f"[dim]positions panel: alpaca mode={pos_mode}[/dim]")
+    if auto_limit_on:
+        live_note = "live-ok" if cfg.get("auto_limit_live") else "paper-only"
+        console.print(
+            f"[dim]auto-limit: ON ({live_note})  buy_zone → policy limit  "
+            f"cooldown={cfg.get('auto_limit_cooldown_sec', 900)}s  "
+            f"cap={cfg.get('auto_limit_max_per_session', 3)}/session[/dim]"
+        )
+    try:
+        from auto_limit import AutoLimitState, process_rows as auto_limit_process
+        _auto_limit_state = AutoLimitState()
+    except Exception:                                      # noqa: BLE001
+        auto_limit_process = None
+        _auto_limit_state = None
     chart_symbol = ChartSymbol(cfg)
     chart_watcher = None
     if (cfg.get("buy_circle_enabled", True)
@@ -2496,6 +2536,138 @@ def main():
                     journal.record(kind, sym, row, t0,
                                    st_rank=st_rank_for(sym),
                                    rvol=row_rvol(row))
+                # buy_zone → risk-sized policy limit + OCO bracket (default off)
+                if (
+                    auto_limit_on
+                    and auto_limit_process is not None
+                    and _auto_limit_state is not None
+                    and pos_mode not in ("", "off")
+                ):
+                    try:
+                        import desk_book as dbook
+                    except Exception:                      # noqa: BLE001
+                        dbook = None
+                    book = dbook.load_book() if dbook else None
+                    if book is not None and dbook is not None:
+                        book = dbook.rollover_if_needed(book, t0)
+                        # Manage open: ratchet stops / detect closes
+                        try:
+                            live = _pos_cache.get("positions") or {}
+                            live_norm = {}
+                            for k, v in live.items():
+                                if isinstance(v, dict):
+                                    live_norm[str(k).upper()] = {
+                                        "current": v.get("current") or v.get("avg_entry"),
+                                        "avg_entry": v.get("avg_entry"),
+                                        "pl": v.get("pl"),
+                                        "qty": v.get("qty"),
+                                    }
+                            book, ratchet_ev = dbook.manage_open(
+                                book,
+                                live_positions=live_norm,
+                                cfg=cfg,
+                                replace_stop_fn=desk.replace_protective_stop,
+                                trail_fn=(
+                                    desk.place_trail
+                                    if float(cfg.get("trail_pct") or 0) > 0
+                                    else None
+                                ),
+                                now=t0,
+                            )
+                            for rev in ratchet_ev:
+                                console.print(
+                                    f"[cyan]{rev.get('kind')} {rev.get('symbol')} "
+                                    f"{rev.get('phase') or ''} "
+                                    f"{rev.get('message') or rev.get('stop') or ''}"
+                                    f"[/cyan]"
+                                )
+                                if rev.get("kind") == "desk_close":
+                                    journal.record(
+                                        "desk_close",
+                                        str(rev.get("symbol") or ""),
+                                        {}, t0,
+                                        extra={
+                                            "session_r": rev.get("session_r"),
+                                            "halted": rev.get("halted"),
+                                        },
+                                    )
+                            dbook.save_book(book)
+                        except Exception as e:             # noqa: BLE001
+                            console.print(f"[red]desk_book manage: {e}[/red]")
+
+                    held = {
+                        str(k).upper()
+                        for k in (_pos_cache.get("positions") or {})
+                    }
+                    # Also treat book-tracked symbols as held (resting entry)
+                    if book and isinstance(book.get("positions"), dict):
+                        held |= {str(k).upper() for k in book["positions"]}
+
+                    def _bracket_buy(sym: str, row: dict):
+                        return desk.desk_buy_bracket(sym, row=row, cfg=cfg)
+
+                    cfg_run = dict(cfg)
+                    if book and dbook is not None:
+                        if dbook.is_halted(
+                            book, float(cfg.get("daily_loss_r", 2.0))
+                        ):
+                            cfg_run["_session_halted"] = True
+                            cfg_run["_halt_reason"] = book.get("halt_reason") or "daily_halt"
+                            _auto_limit_state.session_halted = True
+
+                    try:
+                        al_events = auto_limit_process(
+                            feed.rows,
+                            _auto_limit_state,
+                            cfg=cfg_run,
+                            trader_mode=pos_mode,
+                            position_symbols=held,
+                            buy_fn=_bracket_buy,
+                            now=t0,
+                        )
+                    except Exception as e:                 # noqa: BLE001
+                        al_events = [{
+                            "kind": "auto_limit_error",
+                            "symbol": "",
+                            "message": str(e)[:120],
+                        }]
+                    for ev in al_events:
+                        sym = str(ev.get("symbol") or "")
+                        kind = str(ev.get("kind") or "auto_limit")
+                        msg = str(ev.get("message") or ev.get("reason") or "")
+                        if kind == "auto_limit":
+                            try:
+                                hotkeys._set(msg)  # type: ignore[attr-defined]
+                            except Exception:
+                                console.print(f"[green]{msg}[/green]")
+                            try:
+                                alerter.fire("buy", sym, msg[:80])
+                            except Exception:
+                                pass
+                            plan = ev.get("plan")
+                            if plan and book is not None and dbook is not None:
+                                book = dbook.register_open(
+                                    book, symbol=sym, plan=plan,
+                                    buy_order_id=plan.get("buy_order_id"),
+                                    now=t0,
+                                )
+                                dbook.save_book(book)
+                            row_j = next(
+                                (r for r in feed.rows
+                                 if str(r.get("ticker") or "").upper() == sym),
+                                {},
+                            )
+                            journal.record(
+                                "auto_limit", sym, row_j, t0,
+                                rvol=row_rvol(row_j) if row_j else None,
+                                extra={"message": msg},
+                            )
+                        elif kind == "auto_limit_error":
+                            console.print(f"[red]auto-limit {sym}: {msg}[/red]")
+                            journal.record(
+                                kind, sym or "?", {}, t0,
+                                extra={"reason": msg},
+                            )
             stale = (t0 - feed.last_ok) > STALE_AFTER if feed.last_ok else \
                     (state is None)
             stamps.append(t0)

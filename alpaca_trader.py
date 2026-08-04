@@ -253,6 +253,72 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
         return {"ok": False, "order_id": None, "status": "error"}
 
 
+def buy_limit_at_price(
+    ticker: str,
+    limit_px: float,
+    dollar_amount: Optional[float] = None,
+    *,
+    rsi: float = 0.0,
+    hist: float = 0.0,
+    note: str = "limit",
+) -> dict:
+    """Fixed-dollar BUY as whole-share DAY limit at an explicit price.
+
+    Used by entry_pricing policy and by buy_limit_at_ask (ask+pad).
+    """
+    amount = float(dollar_amount if dollar_amount is not None else _trade_amount)
+    mode_tag = f"[{_mode.upper()}]"
+    try:
+        limit_px = round(float(limit_px), 2)
+    except (TypeError, ValueError):
+        return {"ok": False, "order_id": None, "status": "bad_limit", "note": "bad limit"}
+
+    if not is_active():
+        _log_action("BUY_LOGGED", ticker, limit_px, rsi, hist,
+                    note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": None, "note": None}
+
+    if limit_px <= 0:
+        _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="bad limit")
+        return {"ok": False, "order_id": None, "status": "bad_limit", "note": "bad limit"}
+
+    qty = int(amount // limit_px)
+    if qty < 1:
+        n = f"limit ${limit_px:.2f} > ${amount:.0f} budget"
+        _log_action("BUY_SKIPPED", ticker, limit_px, rsi, hist, note=n)
+        return {"ok": False, "order_id": None, "status": "under_budget", "note": n}
+
+    print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
+          f"{qty} sh @ limit ${limit_px:.2f}  (~${qty * limit_px:.0f} of ${amount:.0f})"
+          f"  [{note}]")
+
+    try:
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        order = _client.submit_order(
+            LimitOrderRequest(
+                symbol=ticker,
+                qty=qty,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+                limit_price=limit_px,
+                extended_hours=_extended_hours,
+            )
+        )
+        order_id = str(order.id)
+        status = str(order.status)
+        print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
+        _log_action("BUY", ticker, limit_px, rsi, hist,
+                    order_id=order_id, order_status=status, qty=qty, note=note)
+        return {"ok": True, "order_id": order_id, "status": status,
+                "note": None, "qty": qty, "limit_px": limit_px}
+    except Exception as e:
+        print(f"  [TRADER] ❌  BUY order failed: {e}")
+        _log_action("BUY_ERROR", ticker, limit_px, rsi, hist, error=str(e))
+        return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
+
+
 def buy_limit_at_ask(ticker: str, ask: float, dollar_amount: Optional[float] = None,
                      pad_pct: float = 0.0, rsi: float = 0.0, hist: float = 0.0) -> dict:
     """
@@ -261,62 +327,13 @@ def buy_limit_at_ask(ticker: str, ask: float, dollar_amount: Optional[float] = N
     Marketable in regular hours; also valid in extended hours (limit + DAY, no
     brackets). Alpaca limit orders require whole shares, so the actual spend is
     <= dollar_amount. Never overspends: qty is floored against the limit price.
-
-    ask           : current ask price (must be > 0)
-    dollar_amount : budget for this buy (defaults to the module TRADE_AMOUNT)
-    pad_pct       : percent to lift the limit above the ask (better fill odds)
-
-    Returns {"ok": bool, "order_id": str|None, "status": str|None, "note": str|None}.
     """
-    amount   = float(dollar_amount if dollar_amount is not None else _trade_amount)
-    mode_tag = f"[{_mode.upper()}]"
-
-    if not is_active():
-        _log_action("BUY_LOGGED", ticker, ask, rsi, hist,
-                    note="TRADER_MODE=off — no order placed")
-        return {"ok": False, "order_id": None, "status": None, "note": None}
-
     if not ask or ask <= 0:
         _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="no ask")
         return {"ok": False, "order_id": None, "status": "no_ask", "note": "no ask"}
-
-    limit_px = round(ask * (1 + max(0.0, pad_pct) / 100.0), 2)
-    qty      = int(amount // limit_px)      # whole shares affordable at the limit
-    if qty < 1:
-        note = f"ask ${ask:.2f} > ${amount:.0f} budget"
-        _log_action("BUY_SKIPPED", ticker, ask, rsi, hist, note=note)
-        return {"ok": False, "order_id": None, "status": "under_budget", "note": note}
-
-    print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
-          f"{qty} sh @ limit ${limit_px:.2f}  (~${qty * limit_px:.0f} of ${amount:.0f})")
-
-    try:
-        from alpaca.trading.requests import LimitOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce
-
-        order = _client.submit_order(
-            LimitOrderRequest(
-                symbol         = ticker,
-                qty            = qty,
-                side           = OrderSide.BUY,
-                time_in_force  = TimeInForce.DAY,
-                limit_price    = limit_px,
-                extended_hours = _extended_hours,
-            )
-        )
-        order_id = str(order.id)
-        status   = str(order.status)
-        print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
-        _log_action("BUY", ticker, limit_px, rsi, hist,
-                    order_id=order_id, order_status=status, qty=qty,
-                    note="limit_ask")
-        return {"ok": True, "order_id": order_id, "status": status,
-                "note": None, "qty": qty, "limit_px": limit_px}
-
-    except Exception as e:
-        print(f"  [TRADER] ❌  BUY order failed: {e}")
-        _log_action("BUY_ERROR", ticker, limit_px, rsi, hist, error=str(e))
-        return {"ok": False, "order_id": None, "status": "error", "note": str(e)}
+    limit_px = round(float(ask) * (1 + max(0.0, float(pad_pct)) / 100.0), 2)
+    return buy_limit_at_price(
+        ticker, limit_px, dollar_amount, rsi=rsi, hist=hist, note="limit_ask")
 
 
 def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] = None,
@@ -670,6 +687,7 @@ def get_open_orders(limit: int = 50) -> list[dict]:
         for o in raw or []:
             try:
                 row = {
+                    "id":     str(getattr(o, "id", "") or ""),
                     "symbol": str(getattr(o, "symbol", "") or "").upper(),
                     "side":   str(getattr(o, "side", "") or "").split(".")[-1].lower(),
                     "qty":    _f(o, "qty"),
@@ -677,6 +695,7 @@ def get_open_orders(limit: int = 50) -> list[dict]:
                     "type":   str(getattr(o, "type", "") or "").split(".")[-1].lower(),
                     "status": str(getattr(o, "status", "") or "").split(".")[-1].lower(),
                     "limit":  _f(o, "limit_price") or None,
+                    "stop":   _f(o, "stop_price") or None,
                 }
                 key = (row["symbol"], row["side"], row["qty"], row["limit"],
                        row["status"])
@@ -795,6 +814,98 @@ def size_by_risk(equity: float, risk_pct: float, entry: float, stop: float) -> i
     risk_dollars = equity * (max(0.0, risk_pct) / 100.0)
     per_share_risk = entry - stop
     return max(0, int(risk_dollars // per_share_risk))
+
+
+def get_equity() -> float | None:
+    """Account equity as float, or None if trader off / error."""
+    if not is_active() or _client is None:
+        return None
+    try:
+        acct = _client.get_account()
+        return float(getattr(acct, "equity", 0) or 0) or None
+    except Exception as e:
+        log.warning("[TRADER] get_equity failed: %s", e)
+        return None
+
+
+def buy_limit_bracket(
+    ticker: str,
+    qty: float,
+    limit_price: float,
+    stop_price: float,
+    target_price: float,
+) -> dict:
+    """DAY limit BUY with OTOCO bracket (TP limit + stop-limit SL).
+
+    RTH-oriented. Extended hours + full brackets are restricted on Alpaca;
+    when extended_hours is on we still submit and let the API reject if needed.
+    """
+    ticker = ticker.upper()
+    qty = float(qty)
+    if (
+        not is_active()
+        or qty < 1
+        or limit_price is None
+        or stop_price is None
+        or target_price is None
+        or float(limit_price) <= 0
+        or float(stop_price) <= 0
+        or float(target_price) <= float(limit_price)
+        or float(stop_price) >= float(limit_price)
+    ):
+        return {
+            "ok": False, "buy_order_id": None, "status": "bad_params",
+            "note": "need qty>=1, stop < limit < target",
+        }
+
+    try:
+        from alpaca.trading.requests import (
+            LimitOrderRequest, TakeProfitRequest, StopLossRequest,
+        )
+        from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+        lim = round(float(limit_price), 2)
+        sl = round(float(stop_price), 2)
+        tp = round(float(target_price), 2)
+        sl_limit = round(sl * 0.999, 2)
+        order = _client.submit_order(
+            LimitOrderRequest(
+                symbol=ticker,
+                qty=int(qty),
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+                limit_price=lim,
+                order_class=OrderClass.BRACKET,
+                take_profit=TakeProfitRequest(limit_price=tp),
+                stop_loss=StopLossRequest(stop_price=sl, limit_price=sl_limit),
+                extended_hours=_extended_hours,
+            )
+        )
+        print(
+            f"  [TRADER] 📐 limit+bracket  {ticker}  qty={int(qty)}  "
+            f"LMT=${lim:.2f}  TP=${tp:.2f}  SL=${sl:.2f}"
+        )
+        _log_action(
+            "BUY", ticker, lim, 0.0, 0.0,
+            order_id=str(order.id), order_status=str(order.status),
+            note=f"limit_bracket tp={tp} sl={sl} qty={int(qty)}",
+        )
+        return {
+            "ok": True,
+            "buy_order_id": str(order.id),
+            "status": str(order.status),
+            "qty": int(qty),
+            "limit_px": lim,
+            "stop_px": sl,
+            "target_px": tp,
+            "note": None,
+        }
+    except Exception as e:
+        print(f"  [TRADER] ❌  limit+bracket failed: {e}")
+        _log_action("BUY_ERROR", ticker, float(limit_price), 0.0, 0.0, error=str(e))
+        return {
+            "ok": False, "buy_order_id": None, "status": "error", "note": str(e),
+        }
 
 
 def buy_bracket_exact(ticker: str, qty: float, stop_price: float,

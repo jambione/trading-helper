@@ -80,6 +80,10 @@ flow_monitor/flow_log.csv
 config/trade_bridge.json
 active_symbol.json
 
+# Momentum desk session book (open plans / session R) + journal
+momentum-monitor/desk_book.json
+# Alpaca order log (runtime)
+alpaca_trade_log.json
 # Momentum desk session journal — runtime state, one JSONL per session date.
 # May contain a full record of trading activity; does not belong in git.
 momentum-monitor/journal/

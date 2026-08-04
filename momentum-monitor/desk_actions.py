@@ -132,7 +132,7 @@ def init_trader(cfg: dict | None = None) -> str:
 
     _buy_style = str(cfg.get("buy_order_style")
                      or os.getenv("BUY_ORDER_STYLE", "auto")).strip().lower()
-    if _buy_style not in ("auto", "limit_ask", "market"):
+    if _buy_style not in ("auto", "limit_ask", "market", "policy"):
         # Unknown (incl. the retired fractional "notional_market") → safe default
         _buy_style = "auto"
     pad = cfg.get("limit_pad_pct")
@@ -286,13 +286,14 @@ def _latest_bid(symbol: str) -> Optional[float]:
     return _mid(bid, ask) or _last_trade(symbol)
 
 
-def desk_buy(symbol: str) -> str:
+def desk_buy(symbol: str, row: dict | None = None) -> str:
     """Buy the focused symbol for $trade_amount. WHOLE shares only — never fractional.
 
     "auto" (default): MARKET order when the market is open (reliable fill, no
         resting order to block a later sell); LIMIT at ask*(1+pad%) off-hours.
-    "limit_ask": always a whole-share limit at ask*(1+pad%) — patient entry.
+    "limit_ask": always a whole-share limit at ask*(1+pad%).
     "market": always a whole-share market order — RTH only.
+    "policy": adaptive limit via entry_pricing (passive/fair/join).
     """
     import alpaca_trader
     if not alpaca_trader.is_active():
@@ -303,6 +304,8 @@ def desk_buy(symbol: str) -> str:
     style = _buy_style
     if style == "auto":
         style = "market" if alpaca_trader.market_is_open() else "limit_ask"
+    if style == "policy":
+        return desk_buy_policy(sym, row=row)
 
     ask = _latest_ask(sym)
     if not ask or ask <= 0:
@@ -324,6 +327,205 @@ def desk_buy(symbol: str) -> str:
     if status == "under_budget":
         return f"BUY {sym} skipped — {out.get('note')}"
     return f"BUY {sym} failed status={status}"
+
+
+def desk_buy_policy(
+    symbol: str,
+    row: dict | None = None,
+    *,
+    max_spread_pct: float = 1.0,
+    pad_max_pct: float = 0.15,
+    rvol_hot: float = 3.0,
+    max_price: float | None = None,
+) -> str:
+    """Adaptive limit buy (no bracket). Prefer desk_buy_bracket for auto path."""
+    import alpaca_trader
+    if not alpaca_trader.is_active():
+        return f"BUY blocked — trader mode={_trader_mode}"
+
+    sym = symbol.upper().strip()
+    dec = _price_decision(
+        sym, row=row, max_spread_pct=max_spread_pct,
+        pad_max_pct=pad_max_pct, rvol_hot=rvol_hot, max_price=max_price,
+    )
+    if not dec.ok or not dec.limit_px:
+        return f"BUY {sym} policy skip — {dec.reason}"
+
+    out = alpaca_trader.buy_limit_at_price(
+        sym, dec.limit_px, _trade_amount,
+        note=f"policy:{dec.style}",
+    )
+    if out.get("ok"):
+        return (
+            f"BUY {sym} {out.get('qty')}sh @ ${out.get('limit_px'):.2f} "
+            f"[{dec.style} urg={dec.urgency:.2f}] id={out.get('order_id')}"
+        )
+    status = out.get("status")
+    if status == "under_budget":
+        return f"BUY {sym} skipped — {out.get('note')}"
+    return f"BUY {sym} failed status={status} {out.get('note') or ''}".strip()
+
+
+def _price_decision(
+    symbol: str,
+    row: dict | None = None,
+    *,
+    max_spread_pct: float = 1.0,
+    pad_max_pct: float = 0.15,
+    rvol_hot: float = 3.0,
+    max_price: float | None = None,
+):
+    try:
+        import entry_pricing as ep
+    except ImportError:
+        sys.path.insert(0, str(ROOT))
+        import entry_pricing as ep
+
+    row = row or {}
+    rvol = row.get("rvol")
+    if rvol is None and isinstance(row.get("funnel"), dict):
+        rvol = row["funnel"].get("rvol")
+    sp = row.get("signal_proximity") or {}
+    return ep.decide(
+        bid=_latest_bid(symbol),
+        ask=_latest_ask(symbol),
+        last=_latest_price(symbol),
+        rvol=rvol,
+        proximity_pct=sp.get("proximity_pct") if isinstance(sp, dict) else None,
+        max_spread_pct=max_spread_pct,
+        pad_pct=_limit_pad_pct,
+        pad_max_pct=pad_max_pct,
+        rvol_hot=rvol_hot,
+        max_price=max_price,
+    )
+
+
+def desk_buy_bracket(
+    symbol: str,
+    row: dict | None = None,
+    *,
+    cfg: dict | None = None,
+) -> tuple[str, dict | None]:
+    """Policy entry + risk-sized OCO bracket (TP top, SL bottom).
+
+    Returns (status_message, plan_dict_or_None). plan_dict is for desk_book.
+    """
+    import alpaca_trader
+    if not alpaca_trader.is_active():
+        return f"BUY blocked — trader mode={_trader_mode}", None
+
+    cfg = cfg or {}
+    sym = symbol.upper().strip()
+    pol = (row or {}).get("_policy") or {}
+    max_spread = float(pol.get("max_spread_pct", cfg.get("entry_max_spread_pct", 1.0)))
+    pad_max = float(pol.get("pad_max_pct", cfg.get("entry_pad_max_pct", 0.15)))
+    rvol_hot = float(pol.get("rvol_hot", cfg.get("rvol_hot", 3.0)))
+    max_price = pol.get("max_price", cfg.get("auto_limit_max_price"))
+    if max_price is not None:
+        try:
+            max_price = float(max_price)
+        except (TypeError, ValueError):
+            max_price = None
+
+    dec = _price_decision(
+        sym, row=row, max_spread_pct=max_spread,
+        pad_max_pct=pad_max, rvol_hot=rvol_hot, max_price=max_price,
+    )
+    if not dec.ok or not dec.limit_px:
+        return f"BUY {sym} policy skip — {dec.reason}", None
+
+    equity = alpaca_trader.get_equity()
+    if not equity or equity <= 0:
+        equity = float(cfg.get("fallback_equity", 100_000))
+
+    try:
+        import desk_risk as dsk
+    except ImportError:
+        sys.path.insert(0, str(ROOT))
+        import desk_risk as dsk
+
+    plan = dsk.plan_long(
+        float(dec.limit_px),
+        equity=equity,
+        risk_pct=float(cfg.get("risk_pct", 0.35)),
+        stop_pct=float(cfg.get("stop_pct", 0.40)),
+        reward_r=float(cfg.get("reward_r", 2.0)),
+        max_notional=(
+            float(cfg["max_notional"])
+            if cfg.get("max_notional") is not None else None
+        ),
+    )
+    if plan is None:
+        return f"BUY {sym} size skip — risk/stop yields 0 shares", None
+
+    out = alpaca_trader.buy_limit_bracket(
+        sym, plan.qty, plan.entry, plan.stop, plan.target,
+    )
+    if not out.get("ok"):
+        # Fallback: plain policy limit if bracket rejected (e.g. ext hours)
+        plain = alpaca_trader.buy_limit_at_price(
+            sym, plan.entry,
+            dollar_amount=plan.notional,
+            note=f"policy_fallback:{dec.style}",
+        )
+        if plain.get("ok"):
+            # Adjust qty to what was actually placed
+            plan_d = plan.as_dict()
+            plan_d["qty"] = plain.get("qty") or plan.qty
+            plan_d["pricing"] = dec.as_dict()
+            plan_d["bracket"] = False
+            msg = (
+                f"BUY {sym} {plan_d['qty']}sh LMT@${plan.entry:.2f} "
+                f"[{dec.style}] NO BRACKET — set stops manually "
+                f"id={plain.get('order_id')}"
+            )
+            return msg, plan_d
+        return (
+            f"BUY {sym} bracket failed: {out.get('note') or out.get('status')}",
+            None,
+        )
+
+    plan_d = plan.as_dict()
+    plan_d["pricing"] = dec.as_dict()
+    plan_d["bracket"] = True
+    plan_d["buy_order_id"] = out.get("buy_order_id")
+    msg = (
+        f"BUY {sym} {plan.qty}sh LMT@${plan.entry:.2f} "
+        f"SL@${plan.stop:.2f} TP@${plan.target:.2f} "
+        f"risk=${plan.risk_dollars:.2f} [{dec.style}] "
+        f"id={out.get('buy_order_id')}"
+    )
+    return msg, plan_d
+
+
+def replace_protective_stop(symbol: str, stop_price: float) -> dict:
+    """Cancel resting sell-stops for symbol and place a new stop at stop_price."""
+    import alpaca_trader
+    if not alpaca_trader.is_active():
+        return {"ok": False, "status": "off"}
+    sym = symbol.upper().strip()
+    old_id = None
+    try:
+        for o in alpaca_trader.get_open_orders() or []:
+            if str(o.get("symbol") or "").upper() != sym:
+                continue
+            if str(o.get("side") or "").lower() != "sell":
+                continue
+            typ = str(o.get("type") or "").lower()
+            if "stop" in typ or o.get("limit") is None:
+                # prefer stop-like; get_open_orders may not expose type clearly
+                old_id = o.get("id") or o.get("order_id")
+                if old_id:
+                    break
+    except Exception:
+        old_id = None
+    return alpaca_trader.replace_stop(
+        sym, str(old_id) if old_id else None, stop_price=float(stop_price))
+
+
+def place_trail(symbol: str, trail_percent: float) -> dict:
+    import alpaca_trader
+    return alpaca_trader.place_trailing_stop(symbol.upper().strip(), trail_percent)
 
 
 def desk_sell(symbol: str) -> str:
