@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=99';
-import { api }       from './api.js?v=99';
-import { copyTicker } from './tickers.js?v=99';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=99';
+import { subscribe, get } from './store.js?v=100';
+import { api }       from './api.js?v=100';
+import { copyTicker } from './tickers.js?v=100';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=100';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -159,9 +159,30 @@ function _ageSec(ts) {
   return Math.max(0, Math.round(Date.now() / 1000 - sec));
 }
 
-/** Prefer server entry_book; always merge open positions; fall back to entry_watch. */
+/** Last successful open positions — hold through transient empty wires. */
+let _stickyOpenPos = /** @type {Record<string, Object>} */ ({});
+
+/**
+ * Prefer server entry_book; always merge open positions; fall back to entry_watch.
+ * Sticky last-good positions when the wire drops them under a query error so the
+ * OPEN row does not blink out for one poll cycle.
+ */
 function _bookRows(book) {
-  const pos = (book && book.positions) || {};
+  let pos = (book && book.positions && typeof book.positions === 'object')
+    ? book.positions
+    : {};
+  const posKeys = Object.keys(pos);
+  if (posKeys.length) {
+    _stickyOpenPos = { ...pos };
+  } else if (Object.keys(_stickyOpenPos).length) {
+    const err = String((book && book.error) || '');
+    // Keep last open book only on known broker query failures, not flat books.
+    if (/alpaca|position|query failed|inactive/i.test(err)) {
+      pos = _stickyOpenPos;
+    } else {
+      _stickyOpenPos = {};
+    }
+  }
   const by = {};
 
   // Prefer unified book when the server sent rows (Mom/ST/research + phases).
@@ -224,19 +245,10 @@ function _sortBookRows(rows) {
   });
 }
 
-/** Membership / status / zone only — not quotes (those patch in place). */
-function _bookStructKey(rows) {
-  return rows.map(r =>
-    `${r.symbol}\0${r.phase || ''}\0${r.source || ''}\0${r.wait_kind || ''}\0`
-    + `${r.entry_low ?? ''}\0${r.entry_high ?? ''}`,
-  ).join('|');
-}
-
-let _bookStructKeyCached = '';
-
 /**
- * AI Watch table: patch quote/P&L in place; full rebuild only when
- * membership / phase / zone changes (avoids list jitter on ~2s publishes).
+ * AI Watch table — surgical DOM like Momentum/Research.
+ * Never wipe the whole list on membership churn (that flashed open rows away).
+ * Quotes / P&L patch in place; add/remove/reorder only the rows that changed.
  */
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
   if (!rowsEl) return;
@@ -287,43 +299,65 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book) {
   if (sectionEl) sectionEl.hidden = false;
 
   if (!rows.length) {
+    // Hold open rows through a one-tick empty wire (broker blip / race).
+    if (rowsEl.querySelector('.feed-row--ai-open')) return;
     if (!rowsEl.querySelector('.tx-placeholder')) {
       rowsEl.innerHTML = '<span class="tx-placeholder">No watches or open AI positions…</span>';
-      _bookStructKeyCached = '';
     }
     return;
   }
 
-  const structKey = _bookStructKey(rows);
-  const existing = rowsEl.querySelectorAll('[data-book-symbol]');
-  const canPatch = structKey === _bookStructKeyCached
-    && existing.length === rows.length
-    && rows.every((r, i) => {
-      const el = existing[i];
-      return el && String(el.dataset.bookSymbol || '').toUpperCase() === r.symbol;
-    });
+  const ph = rowsEl.querySelector('.tx-placeholder');
+  if (ph) ph.remove();
 
-  if (canPatch) {
-    rows.forEach((r, i) => _updateBookRow(existing[i], r, owner));
-    return;
-  }
-
-  // Full rebuild only on membership / phase / zone change.
-  _bookStructKeyCached = structKey;
-  rowsEl.innerHTML = rows.map(r => _bookRowHtml(r, owner)).join('');
+  const existing = /** @type {Map<string, HTMLElement>} */ (new Map());
   rowsEl.querySelectorAll('[data-book-symbol]').forEach(el => {
-    const sym = String(el.dataset.bookSymbol || '').toUpperCase();
-    if (!sym) return;
-    el.addEventListener('click', () => _add(el, sym));
-    const tickerCell = el.querySelector('.cell-ticker');
-    if (tickerCell) {
-      tickerCell.title = `Copy ${sym}`;
-      tickerCell.addEventListener('click', e => {
-        e.stopPropagation();
-        copyTicker(e.currentTarget, sym);
-      });
-    }
+    existing.set(String(el.dataset.bookSymbol || '').toUpperCase(), el);
   });
+
+  const ordered = [];
+  for (const r of rows) {
+    const sym = String(r.symbol || '').toUpperCase();
+    if (!sym) continue;
+    let el = existing.get(sym);
+    if (el) {
+      _updateBookRow(el, r, owner);
+    } else {
+      el = _createBookRow(r, owner);
+      existing.set(sym, el);
+    }
+    ordered.push(el);
+  }
+
+  const keep = new Set(ordered.map(el =>
+    String(el.dataset.bookSymbol || '').toUpperCase()));
+  existing.forEach((el, sym) => {
+    if (!keep.has(sym)) el.remove();
+  });
+
+  const children = [...rowsEl.querySelectorAll('[data-book-symbol]')];
+  const needsReorder = ordered.length !== children.length
+    || ordered.some((el, i) => children[i] !== el);
+  if (needsReorder) {
+    ordered.forEach(el => rowsEl.appendChild(el));
+  }
+}
+
+function _createBookRow(r, owner) {
+  const wrap = document.createElement('div');
+  wrap.innerHTML = _bookRowHtml(r, owner).trim();
+  const el = /** @type {HTMLElement} */ (wrap.firstElementChild);
+  const sym = String((r && r.symbol) || '').toUpperCase();
+  el.addEventListener('click', () => _add(el, sym));
+  const tickerCell = el.querySelector('.cell-ticker');
+  if (tickerCell) {
+    tickerCell.title = `Copy ${sym}`;
+    tickerCell.addEventListener('click', e => {
+      e.stopPropagation();
+      copyTicker(e.currentTarget, sym);
+    });
+  }
+  return el;
 }
 
 function _updateBookRow(el, r, owner) {
@@ -342,6 +376,7 @@ function _updateBookRow(el, r, owner) {
       : phase === 'submitted' ? 'ai-book-status ai-book-status--sent'
       : 'ai-book-status';
   }
+  const src = _bookSourceLabel(r.source);
   const px = r.price != null && Number.isFinite(Number(r.price))
     ? `$${Number(r.price).toFixed(2)}`
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -351,6 +386,7 @@ function _updateBookRow(el, r, owner) {
     ? Number(r.score).toFixed(1) : '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
+  _setText(el.querySelector('.cell-src'), src);
   _setText(el.querySelector('.cell-price'), px);
   _setText(el.querySelector('.cell-zone'), zone);
   _setText(el.querySelector('.cell-score'), score);
@@ -362,6 +398,14 @@ function _updateBookRow(el, r, owner) {
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
   el.classList.toggle('feed-row--ai-ready', phase === 'ready');
+  const title = [
+    isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
+    src ? `src ${src}` : null,
+    zone !== '—' ? `zone ${zone}` : null,
+    r.reason || null,
+    isOpen && r.avg_entry != null ? `entry $${Number(r.avg_entry).toFixed(2)}` : null,
+  ].filter(Boolean).join(' · ');
+  if (el.title !== title) el.title = title;
 }
 
 function _bookRowHtml(r, owner) {

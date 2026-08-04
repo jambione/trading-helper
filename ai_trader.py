@@ -82,6 +82,9 @@ SUGGESTIONS_FILE = CLAUDE_SUGGESTIONS_FILE
 # Shared trading book — prefer new name; keep legacy path in sync one release.
 POSITIONS_FILE = ROOT / "ai_positions_state.json"
 POSITIONS_FILE_LEGACY = ROOT / "claude_positions_state.json"
+# Sticky open positions across a failed Alpaca poll so the dashboard book
+# does not flash empty when get_positions_detail() returns None once.
+_last_good_positions: dict = {}
 
 LOOP_SLEEP = 5.0
 
@@ -269,12 +272,19 @@ def _positions_payload(
     if alpaca_trader.is_active():
         detail = alpaca_trader.get_positions_detail()
         if detail is None:
+            # Keep last good book so the AI Watch OPEN row does not blink out
+            # on a single failed broker poll (dashboard still shows error).
             error = "Alpaca position query failed"
+            positions = dict(_last_good_positions)
         else:
-            positions = detail
+            positions = detail if isinstance(detail, dict) else {}
+            _last_good_positions.clear()
+            _last_good_positions.update(positions)
         open_orders = alpaca_trader.get_open_orders()
     else:
         error = "trader inactive — no Alpaca session"
+        # Trader off is authoritative flat — do not sticky phantom positions.
+        _last_good_positions.clear()
 
     try:
         performance = ai_positions.performance_summary()

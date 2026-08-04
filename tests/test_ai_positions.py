@@ -459,6 +459,36 @@ def test_resolve_trading_source_prefers_explicit():
     assert cfg["ai_trading_enabled"] is False
 
 
+def test_positions_payload_sticky_on_alpaca_fail(monkeypatch):
+    """Failed broker poll must not publish empty positions (UI flash)."""
+    import ai_trader as at
+
+    at._last_good_positions.clear()
+    good = {
+        "CMG": {
+            "qty": 10.0, "avg_entry": 34.0, "current": 34.1,
+            "pl": 1.0, "plpc": 0.3, "mkt_val": 341.0,
+        },
+    }
+    at._last_good_positions.update(good)
+    monkeypatch.setattr(alpaca_trader, "is_active", lambda: True)
+    monkeypatch.setattr(alpaca_trader, "get_positions_detail", lambda: None)
+    monkeypatch.setattr(alpaca_trader, "get_open_orders", lambda: [])
+
+    payload = at._positions_payload(
+        "paper", 1.0, book_owner="grok", watch_poll_sec=20.0)
+    assert "Alpaca" in (payload.get("error") or "")
+    assert payload["positions"]["CMG"]["qty"] == 10.0
+
+    # Successful empty book clears sticky (flat is authoritative).
+    monkeypatch.setattr(alpaca_trader, "get_positions_detail", lambda: {})
+    payload2 = at._positions_payload(
+        "paper", 2.0, book_owner="grok", watch_poll_sec=20.0)
+    assert payload2["error"] == ""
+    assert payload2["positions"] == {}
+    assert at._last_good_positions == {}
+
+
 # ── mechanical position management (no LLM) ─────────────────────────────────
 
 class _StubBrokerManage:
