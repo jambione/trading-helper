@@ -324,5 +324,18 @@
     "order_status": "OrderStatus.ACCEPTED",
     "qty": 66,
     "note": "limit_ask"
+  },
+  {
+    "action": "BUY",
+    "ticker": "GLXY",
+    "price": 21.33,
+    "rsi": 0.0,
+    "macd_hist": 0.0,
+    "trader_mode": "paper",
+    "trade_amount": 1000.0,
+    "time": "2026-08-05T19:38:10Z",
+    "order_id": "820e50c3-fa8c-4169-9fea-eafb2a7e53b7",
+    "order_status": "OrderStatus.PENDING_NEW",
+    "note": "bracket_exact tp=21.33 sl=18.41"
   }
 ]

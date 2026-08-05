@@ -176,6 +176,22 @@ DEFAULT_CONFIG = {
     # a tight stop implies a huge notional, and nothing checked buying power.
     "ai_max_position_pct":        25.0,     # max % of equity in one name
     "ai_reentry_cooldown_sec":    900.0,    # no re-arm this soon after an exit
+    # ── Entry order shape ───────────────────────────────────────────────────
+    # "limit" (default) or "market". A market entry fills at whatever the ask
+    # is at execution, which breaks the premise of the zone: size_by_risk sizes
+    # off current_ask and the stop is derived from it, so a fill above the
+    # quote makes real risk exceed ai_watch_synth_stop_pct and notional exceed
+    # ai_max_position_pct. These are thin IEX books on high-RVOL names, where
+    # that slippage is largest.
+    "ai_entry_order_style":    "limit",
+    # Marketable pad above the ask, then hard-capped at the zone top — so a
+    # fill can never land outside the entry zone.
+    "ai_entry_limit_pad_pct":     0.15,
+    # An unfilled entry limit is cancelled after this long: if price left the
+    # zone the setup is gone, and re-evaluating beats leaving a stale order
+    # resting while the zone re-anchors away from it. Distinct from
+    # ai_entry_unconfirmed_ttl_sec, which covers a *filled* but unconfirmed fill.
+    "ai_entry_limit_ttl_sec":     30.0,
     "ai_stop_use_market":         True,
     "ai_stop_limit_slip_pct":      1.0,     # only used when the above is False
     "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
@@ -575,6 +591,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stream_skip_margin_pct",
     "ai_max_position_pct",
     "ai_reentry_cooldown_sec",
+    "ai_entry_order_style",
+    "ai_entry_limit_pad_pct",
+    "ai_entry_limit_ttl_sec",
     "ai_stop_use_market",
     "ai_stop_limit_slip_pct",
     "ai_entry_zone_pad_pct",

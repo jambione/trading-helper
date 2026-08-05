@@ -599,6 +599,67 @@ def pre_entry_gate(
     return True, ""
 
 
+def _entry_cfg() -> dict[str, Any]:
+    """Live config for entry shaping. Local to this module on purpose.
+
+    ai_suggest has a same-named helper, but importing it here would pull the
+    research stack into the order path for what is a plain config read — and
+    ai_positions is imported by ai_entry_watch on every poll.
+    """
+    try:
+        from config import load_config
+        return load_config() or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _entry_cfg() -> dict:
+    """Live config for entry-order shape. Empty dict on any failure."""
+    try:
+        from config import load_config
+        return load_config() or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _entry_limit_price(
+    current_ask: float | None,
+    entry_high: float,
+    entry_low: float,
+) -> float | None:
+    """Marketable limit for the entry, capped at the zone top. None = market.
+
+    A market entry fills at whatever the ask is at execution, which quietly
+    breaks the sizing contract: size_by_risk sizes off current_ask and the stop
+    is derived from that same ask, so a fill above the quote makes real risk
+    exceed ai_watch_synth_stop_pct and notional exceed ai_max_position_pct.
+    These are thin IEX books on high-RVOL names, where that gap is largest.
+
+    Pad makes it marketable so it still fills in a normal book; the zone cap
+    makes "we only ever fill inside the entry zone" structurally true rather
+    than best-effort.
+    """
+    cfg = _entry_cfg()
+    if str(cfg.get("ai_entry_order_style", "limit")).lower().strip() != "limit":
+        return None
+    try:
+        ask = float(current_ask or 0)
+    except (TypeError, ValueError):
+        ask = 0.0
+    if ask <= 0:
+        return None            # no quote to anchor on — fall back to market
+    try:
+        pad = max(0.0, float(cfg.get("ai_entry_limit_pad_pct", 0.15) or 0.0)) / 100.0
+    except (TypeError, ValueError):
+        pad = 0.0015
+    top = max(float(entry_high or 0), float(entry_low or 0))
+    px = ask * (1.0 + pad)
+    if top > 0:
+        px = min(px, top)
+    px = round(px, 2)
+    return px if px > 0 else None
+
+
 def place_scaled_entry(
     ticker: str,
     decision: dict[str, Any],
@@ -719,7 +780,13 @@ def place_scaled_entry(
         qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
         qty_b = total_qty - qty_a
 
+    entry_limit = _entry_limit_price(current_ask, entry_high, entry_low)
+
     def _place_a():
+        if entry_limit is not None:
+            return alpaca_trader.buy_limit_bracket(
+                ticker, qty_a, limit_price=entry_limit,
+                stop_price=stop_price, target_price=target_1)
         return alpaca_trader.buy_bracket_exact(
             ticker, qty_a, stop_price=stop_price, target_price=target_1)
 
@@ -744,8 +811,15 @@ def place_scaled_entry(
             }
 
     if qty_b > 0:
-        result_b = alpaca_trader.buy_bracket_exact(
-            ticker, qty_b, stop_price=stop_price)
+        if entry_limit is not None:
+            # No target on the runner leg — it rides until manage_open_positions
+            # replaces its stop with breakeven/trailing after A scales out.
+            result_b = alpaca_trader.buy_limit_bracket(
+                ticker, qty_b, limit_price=entry_limit,
+                stop_price=stop_price, target_price=None)
+        else:
+            result_b = alpaca_trader.buy_bracket_exact(
+                ticker, qty_b, stop_price=stop_price)
     else:
         result_b = {"ok": True, "buy_order_id": None, "stop_order_id": None}
 
@@ -780,6 +854,7 @@ def place_scaled_entry(
         "qty_b": qty_b,
         "total_qty": total_qty,
         "entry_price": sizing_entry,
+        "entry_limit_price": entry_limit,
         "tranche_a_order_id": result_a.get("buy_order_id"),
         # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
         # must key off this; the parent fills at entry.
@@ -1121,7 +1196,19 @@ def manage_open_positions(
         if not pos.get("entry_confirmed"):
             # Never seen open yet — may still be working. Expire after TTL.
             age = now - float(pos.get("entry_time") or now)
-            if age > ttl:
+            # A resting entry LIMIT gets a much shorter leash than a filled but
+            # unconfirmed position: if price left the zone the setup is gone,
+            # and leaving the order to rest for 15 minutes lets it fill long
+            # after the zone has re-anchored away from it. Re-evaluating from
+            # current state next poll is strictly better than a stale fill.
+            eff_ttl = ttl
+            if pos.get("entry_limit_price"):
+                try:
+                    eff_ttl = min(ttl, float(
+                        _entry_cfg().get("ai_entry_limit_ttl_sec", 30.0) or ttl))
+                except (TypeError, ValueError):
+                    pass
+            if age > eff_ttl:
                 try:
                     alpaca_trader.cancel_open_orders(ticker)
                 except Exception:  # noqa: BLE001
@@ -1132,7 +1219,8 @@ def manage_open_positions(
                     pass
                 log_event(
                     "entry_unconfirmed_expired", symbol=ticker,
-                    age_sec=round(age, 1), ttl_sec=ttl,
+                    age_sec=round(age, 1), ttl_sec=eff_ttl,
+                    entry_limit=pos.get("entry_limit_price"),
                 )
                 events.append({
                     "ticker": ticker, "event": "entry_unconfirmed_expired",

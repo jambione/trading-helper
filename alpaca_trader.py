@@ -927,28 +927,37 @@ def buy_limit_bracket(
     limit_price: float,
     stop_price: float,
     target_price: float,
+    *,
+    stop_market: bool | None = None,
 ) -> dict:
-    """DAY limit BUY with OTOCO bracket (TP limit + stop-limit SL).
+    """DAY limit BUY with OTOCO bracket (TP limit + SL).
 
     RTH-oriented. Extended hours + full brackets are restricted on Alpaca;
     when extended_hours is on we still submit and let the API reject if needed.
+
+    ``stop_market``: None keeps the legacy stop-LIMIT protective leg (the
+    monitor desk relies on it); True submits a stop-MARKET, which cannot miss
+    on a gap. The AI desk passes this explicitly.
     """
     ticker = ticker.upper()
     qty = float(qty)
+    # target_price is optional: without it this places a limit buy plus a
+    # standalone GTC stop (the ride-along tranche), same shape as
+    # buy_bracket_exact. With it, a full OTOCO bracket.
     if (
         not is_active()
         or qty < 1
         or limit_price is None
         or stop_price is None
-        or target_price is None
         or float(limit_price) <= 0
         or float(stop_price) <= 0
-        or float(target_price) <= float(limit_price)
         or float(stop_price) >= float(limit_price)
+        or (target_price is not None and float(target_price) > 0
+            and float(target_price) <= float(limit_price))
     ):
         return {
             "ok": False, "buy_order_id": None, "status": "bad_params",
-            "note": "need qty>=1, stop < limit < target",
+            "note": "need qty>=1, stop < limit (< target when given)",
         }
 
     try:
@@ -959,8 +968,51 @@ def buy_limit_bracket(
 
         lim = round(float(limit_price), 2)
         sl = round(float(stop_price), 2)
-        tp = round(float(target_price), 2)
-        sl_limit = round(sl * 0.999, 2)
+        tp = round(float(target_price), 2) if target_price else 0.0
+        # Stop shape is OPT-IN here, unlike buy_bracket_exact. This function is
+        # shared with the monitor desk (desk_actions.desk_buy_bracket), which can
+        # run live — flipping its protective leg to stop-market as a side effect
+        # of an AI-desk change would be a silent behaviour change on a different
+        # trading system. Callers that want stop-market ask for it.
+        stop_kwargs: dict = {"stop_price": sl}
+        # None means LEGACY here (stop-limit) — not "read the AI desk's config".
+        # The monitor desk calls this without the kwarg and must not change.
+        use_mkt = bool(stop_market)
+        if not use_mkt:
+            slip = max(0.0, _stop_limit_slip_pct()) / 100.0
+            stop_kwargs["limit_price"] = round(sl * (1.0 - slip), 2)
+        if target_price is None or float(target_price) <= 0:
+            # No target — limit buy plus a standalone GTC stop, mirroring
+            # buy_bracket_exact. Alpaca's BRACKET class demands both legs, so
+            # inventing a take-profit here would put a real order on the book
+            # at a price nobody chose.
+            from alpaca.trading.requests import StopOrderRequest
+            buy_order = _client.submit_order(
+                LimitOrderRequest(
+                    symbol=ticker, qty=int(qty), side=OrderSide.BUY,
+                    time_in_force=TimeInForce.DAY, limit_price=lim,
+                    extended_hours=_extended_hours,
+                )
+            )
+            stop_order = _client.submit_order(
+                StopOrderRequest(
+                    symbol=ticker, qty=int(qty), side=OrderSide.SELL,
+                    time_in_force=TimeInForce.GTC, stop_price=sl,
+                )
+            )
+            print(f"  [TRADER] 📐 limit+stop  {ticker}  qty={int(qty)}  "
+                  f"LMT=${lim:.2f}  SL=${sl:.2f}")
+            _log_action("BUY", ticker, lim, 0.0, 0.0,
+                        order_id=str(buy_order.id),
+                        order_status=str(buy_order.status),
+                        note=f"limit_plus_stop sl={sl} stop_order={stop_order.id}")
+            return {
+                "ok": True, "buy_order_id": str(buy_order.id),
+                "target_order_id": None, "stop_order_id": str(stop_order.id),
+                "status": str(buy_order.status), "qty": int(qty),
+                "limit_px": lim, "stop_px": sl, "target_px": None, "note": None,
+            }
+
         order = _client.submit_order(
             LimitOrderRequest(
                 symbol=ticker,
@@ -970,7 +1022,7 @@ def buy_limit_bracket(
                 limit_price=lim,
                 order_class=OrderClass.BRACKET,
                 take_profit=TakeProfitRequest(limit_price=tp),
-                stop_loss=StopLossRequest(stop_price=sl, limit_price=sl_limit),
+                stop_loss=StopLossRequest(**stop_kwargs),
                 extended_hours=_extended_hours,
             )
         )
@@ -983,9 +1035,18 @@ def buy_limit_bracket(
             order_id=str(order.id), order_status=str(order.status),
             note=f"limit_bracket tp={tp} sl={sl} qty={int(qty)}",
         )
+        tp_id = sl_id = None
+        for leg in (getattr(order, "legs", None) or []):
+            lt = str(getattr(leg, "type", "") or "").lower()
+            if "limit" in lt and tp_id is None:
+                tp_id = str(leg.id)
+            elif "stop" in lt and sl_id is None:
+                sl_id = str(leg.id)
         return {
             "ok": True,
             "buy_order_id": str(order.id),
+            "target_order_id": tp_id,
+            "stop_order_id": sl_id,
             "status": str(order.status),
             "qty": int(qty),
             "limit_px": lim,

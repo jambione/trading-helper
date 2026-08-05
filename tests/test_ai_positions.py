@@ -260,12 +260,22 @@ class _StubBroker:
         self.fail_on_call = fail_on_call
         self.cancel_calls: list[str] = []
         self.close_calls: list[str] = []
+        self.limit_calls: list[dict] = []
 
     def market_is_open(self):
         return self._market_open
 
     def size_by_risk(self, equity, risk_pct, entry, stop):
         return alpaca_trader.size_by_risk(equity, risk_pct, entry, stop)
+
+    def buy_limit_bracket(self, ticker, qty, limit_price, stop_price,
+                          target_price=None):
+        self.limit_calls.append({
+            "ticker": ticker, "qty": qty, "limit_price": limit_price,
+            "stop_price": stop_price, "target_price": target_price,
+        })
+        # Mirror buy_bracket_exact's bookkeeping so tranche logic is identical.
+        return self.buy_bracket_exact(ticker, qty, stop_price, target_price)
 
     def buy_bracket_exact(self, ticker, qty, stop_price, target_price=None):
         oid = f"order_{self._next_id}"
@@ -1038,3 +1048,95 @@ def test_parent_buy_fill_does_not_count_as_a_scale_out(tmp_path, monkeypatch):
     assert stub.replace_calls == [], "runner's stop must not move at entry"
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["tranche_a_filled"] is False
+
+
+# ── entry order shape: marketable limit capped at the zone top ───────────────
+
+def _lim_cfg(monkeypatch, **over):
+    cfg = {"ai_entry_order_style": "limit", "ai_entry_limit_pad_pct": 0.15,
+           "ai_entry_limit_ttl_sec": 30.0}
+    cfg.update(over)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    return cfg
+
+
+def test_entry_limit_is_marketable_but_capped_at_the_zone_top(monkeypatch):
+    """A market entry fills at whatever the ask is at execution. size_by_risk
+    sizes off current_ask and the stop is derived from it, so a fill above the
+    quote makes real risk exceed the configured 5% and notional exceed the 20%
+    cap. Capping at the zone top makes "we only fill inside the zone" true by
+    construction rather than by hope.
+    """
+    _lim_cfg(monkeypatch)
+
+    # Pad keeps it marketable when there is room under the zone top.
+    px = cp._entry_limit_price(current_ask=19.00, entry_high=19.44, entry_low=18.66)
+    assert px == 19.03                      # 19.00 * 1.0015
+
+    # Ask sitting at the top: the cap binds, we never bid above the zone.
+    px = cp._entry_limit_price(current_ask=19.44, entry_high=19.44, entry_low=18.66)
+    assert px == 19.44
+
+    # Zone bounds passed in either order still cap correctly.
+    px = cp._entry_limit_price(current_ask=19.44, entry_high=18.66, entry_low=19.44)
+    assert px == 19.44
+
+
+def test_market_style_and_missing_quote_fall_back_to_market(monkeypatch):
+    _lim_cfg(monkeypatch, ai_entry_order_style="market")
+    assert cp._entry_limit_price(19.0, 19.44, 18.66) is None
+
+    _lim_cfg(monkeypatch)
+    # No quote to anchor a limit on — a market order is the honest fallback.
+    assert cp._entry_limit_price(None, 19.44, 18.66) is None
+    assert cp._entry_limit_price(0.0, 19.44, 18.66) is None
+
+
+def test_place_scaled_entry_uses_a_limit_and_never_bids_above_the_zone(
+        tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    _lim_cfg(monkeypatch)
+    stub = _StubBroker(market_open=True)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    decision = _buy_decision(synthetic=True)      # entry_low 40.0, high 41.0
+    out = cp.place_scaled_entry("nvda", decision, account_equity=50_000.0,
+                                risk_pct=1.0, current_ask=41.0)
+    assert out["ok"] is True
+    assert stub.limit_calls, "expected a LIMIT entry, not a market order"
+    lim = stub.limit_calls[0]["limit_price"]
+    assert lim == 41.0, "pad must be capped at the zone top"
+    assert lim <= max(decision["entry_high"], decision["entry_low"])
+
+
+def test_unfilled_entry_limit_is_cancelled_after_the_short_ttl(
+        tmp_path, monkeypatch):
+    """A resting entry limit gets a much shorter leash than a filled-but-
+    unconfirmed position: if price left the zone the setup is gone, and a
+    15-minute rest lets it fill long after the zone re-anchored away."""
+    _lim_cfg(monkeypatch, ai_entry_limit_ttl_sec=30.0)
+    _seed_state(tmp_path, monkeypatch, entry_confirmed=False,
+                entry_limit_price=41.0, entry_time=1_000_000.0)
+    stub = _StubBrokerManage(position_open=False)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    # 45s later: past the 30s limit TTL but far inside the 900s unconfirmed TTL.
+    events = cp.manage_open_positions(now=1_000_045.0)
+    assert any(e["event"] == "entry_unconfirmed_expired" for e in events)
+    assert stub.canceled == ["NVDA"]
+    assert json.loads(_state_path(tmp_path).read_text()) == {}
+
+
+def test_a_filled_but_unconfirmed_position_keeps_the_long_ttl(
+        tmp_path, monkeypatch):
+    """No resting limit -> this is a fill we simply have not seen yet, which
+    must not be cancelled after 30 seconds."""
+    _lim_cfg(monkeypatch, ai_entry_limit_ttl_sec=30.0)
+    _seed_state(tmp_path, monkeypatch, entry_confirmed=False,
+                entry_limit_price=None, entry_time=1_000_000.0)
+    stub = _StubBrokerManage(position_open=False)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_045.0)
+    assert not any(e["event"] == "entry_unconfirmed_expired" for e in events)
+    assert "NVDA" in json.loads(_state_path(tmp_path).read_text())
