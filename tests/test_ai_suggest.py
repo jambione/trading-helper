@@ -336,8 +336,8 @@ def test_refresh_off_schedule_reports_the_next_run_and_does_not_poll():
     assert gs.refresh(now=_et(2026, 8, 9, 3)) is False   # Sunday 03:00 ET
     assert gs.last_attempt == 0.0
     assert "next research run" in gs.error
-    # Sunday 03:00 → next weekday slot is Monday 04:00.
-    assert gs.next_run_label(_et(2026, 8, 9, 3)) == "Mon 04:00"
+    # Sunday 03:00 → next weekday slot is Monday 08:30.
+    assert gs.next_run_label(_et(2026, 8, 9, 3)) == "Mon 08:30"
 
 
 def test_research_tools_web_x_and_off():
@@ -512,9 +512,9 @@ def test_defaults_are_three_scheduled_runs_at_full_depth():
     from config import DEFAULT_CONFIG
 
     assert DEFAULT_CONFIG["claude_effort"] == "xhigh"
-    # 11:00 and 13:00 are both inside RTH (04:00 is pre-market prep only) —
-    # two real chances a day to actually open a position, not just one.
-    assert DEFAULT_CONFIG["claude_research_times"] == ["08:25", "11:00", "13:00"]
+    # 11:30 and 14:30 are both inside RTH (08:30 is pre-open prep) — two real
+    # chances a day to actually open a position, not just one.
+    assert DEFAULT_CONFIG["claude_research_times"] == ["08:30", "11:30", "14:30"]
     assert DEFAULT_CONFIG["claude_research_weekdays_only"] is True
 
 
@@ -611,11 +611,15 @@ def _run_entry_gate(monkeypatch, *, ready=True, market_open=True):
     monkeypatch.setitem(sys.modules, "claude_trading", trading)
     monkeypatch.setitem(sys.modules, "claude_positions", positions)
     # Isolate from live bot_config (e.g. ai_require_agreement=true).
+    # ai_duel_enabled must be explicit: ai_duel.duel_enabled() defaults to True
+    # on a missing key, so a partial cfg silently gates every entry behind the
+    # duel champion check and skips with "duel_not_allowed".
     monkeypatch.setattr(cs, "_entry_runtime_cfg", lambda: {
         "ai_require_agreement": False,
         "ai_max_spread_pct": 1.0,
         "ai_max_open_risk_pct": 6.0,
         "ai_daily_loss_limit_r": 3.0,
+        "ai_duel_enabled": False,
     })
     rows = [{"symbol": "NVDA", "trending_score": 9.0, "reason": "test"}]
     _place_qualifying_entries(

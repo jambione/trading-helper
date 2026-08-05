@@ -24,6 +24,18 @@ os.environ.setdefault(
     "BENCHMARK_DIR", tempfile.mkdtemp(prefix="benchmarks_test_"),
 )
 
+# Third instance of the same problem: ai_positions / ai_suggest / ai_entry_watch
+# bind six paths off ai_paths.resolve_report_dir() at import — events.jsonl,
+# outcomes.jsonl, positions/open-bell/SOD/EOD state, token_metrics.jsonl,
+# schedule_state.json — and only three were monkeypatched per-test. So a plain
+# `pytest` run appended fixture events (SMCI/NVDA, broker_down, $40-$41 zones)
+# straight into the live claude_reports/events.jsonl, during trading hours.
+# That file is the desk's audit trail and the input to any fill/skip analysis,
+# so a polluted run quietly corrupts whatever it is later used to measure.
+os.environ.setdefault(
+    "AI_REPORT_DIR", tempfile.mkdtemp(prefix="ai_reports_test_"),
+)
+
 
 def column_cells(table, header):
     """Cells of the rich table column with this header — by NAME, not index.

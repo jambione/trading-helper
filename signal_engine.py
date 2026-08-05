@@ -160,7 +160,21 @@ DASHBOARD_URL  = os.getenv("DASHBOARD_URL",  "https://trading.jbrasfield.com")
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
 
-POLL_INTERVAL          = int(os.getenv("POLL_INTERVAL",          "1"))   # main loop cadence (seconds)
+def _env_int(name: str, default: str) -> int:
+    """int() an env var that another component may have set as a float.
+
+    POLL_INTERVAL is a shared name: the monitor writes it as float seconds
+    (.env has 2.0), this engine wants an int. A bare int("2.0") raises, and
+    at module scope that kills the engine at import — so coerce via float.
+    """
+    raw = os.getenv(name, default)
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return int(float(default))
+
+
+POLL_INTERVAL          = _env_int("POLL_INTERVAL",               "1")    # main loop cadence (seconds)
 DASHBOARD_POLL_INTERVAL = int(os.getenv("DASHBOARD_POLL_INTERVAL", "5"))  # how often to hit /api/state
 
 BAR_REFRESH    = int(os.getenv("BAR_REFRESH",    "60"))  # seconds between Alpaca bar re-fetches
