@@ -265,7 +265,12 @@ DEFAULT_CONFIG = {
     # zone top (1/0.95-1) and only a 5% break from the high-water mark ever
     # fills. above_zone was 51% of all skips. 2% fills on a routine pullback.
     "ai_watch_zone_offset_pct":        2.0,  # entry_high = last * (1 - offset/100)
-    "ai_watch_zone_width_pct":         2.0,  # zone depth below entry_high
+    # 4.0, not 2.0: the zone re-anchors to `offset` below every new high, so
+    # price must fall that far from the RUNNING high-water mark and any upward
+    # tick resets it. At 2/2 that put price in the zone on 24 bars across 50
+    # symbol-days (~0.04 arms/sym/day). Widening the band keeps the entry
+    # STARTING at -2% and just keeps buying deeper: 271 in-zone bars, 27 arms.
+    "ai_watch_zone_width_pct":         4.0,  # zone depth below entry_high
     # Measured off the *fill*, not entry_low — see _decision_for_place.
     "ai_watch_synth_stop_pct":         5.0,  # stop under the fill price
     "ai_watch_synth_rr":               1.5,  # target at this R multiple
