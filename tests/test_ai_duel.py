@@ -31,6 +31,14 @@ CFG = {
 }
 
 
+def test_duel_enabled_defaults_false_when_key_missing():
+    """Missing key must not silently re-enable champion-only gates."""
+    assert duel.duel_enabled({}) is False
+    assert duel.duel_enabled(None) is False
+    assert duel.duel_enabled({"ai_duel_enabled": False}) is False
+    assert duel.duel_enabled({"ai_duel_enabled": True}) is True
+
+
 def test_window_cuts_ten_min_before_research():
     cuts = duel.window_cuts(CFG)
     keys = [k for k, _, _ in cuts]

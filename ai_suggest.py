@@ -77,8 +77,8 @@ _SYSTEM = (
     "Win condition: max realized R on a trade that starts after this suggestion "
     "and ends before the next research run (desk flats ~10m prior). "
     "Not multi-month stories. "
-    "When a RIVAL AI COMPETITION block is present, read their champion and board; "
-    "pick a better window trade (prefer a different symbol unless you clearly beat them). "
+    "If a RIVAL AI COMPETITION block is present (duel mode only), use it; otherwise "
+    "ignore competition framing. "
     "Follow the user's full research process under a strict token budget: "
     "few targeted searches, compact notes, no essays. "
     "Prefer live tool results over memory; re-validate prior-run names with fresh data. "
@@ -86,7 +86,7 @@ _SYSTEM = (
     "HARD: the first character of the final answer must be '{' — the JSON object. "
     "No preamble or tool narration before that brace. No markdown fences. "
     "After JSON, brief process notes only. "
-    "suggestions[0] is your duel champion. US equity tickers only. "
+    "suggestions[0] is your single best session idea (champion). US equity tickers only. "
     "Skeptical and data-driven. Never invent tool results, posts, or fill prices."
 )
 
@@ -113,7 +113,7 @@ DEFAULT_CLAUDE_REPAIR_MODEL = "haiku"
 DEFAULT_CLAUDE_EFFORT = "xhigh"
 
 # Fixed ET wall-clock run times rather than an interval. Three RTH-aligned
-# slots (~4h apart): pre-open prep, late morning, mid-afternoon (duel C3).
+# slots (~4h apart): pre-open prep, late morning, mid-afternoon.
 DEFAULT_RESEARCH_TIMES = ("08:30", "11:30", "14:30")
 DEFAULT_RESEARCH_WEEKDAYS_ONLY = True
 # A slot missed while the desk was down stays runnable this long. Without a
@@ -2124,9 +2124,19 @@ def build_rival_duel_snippet(
 ) -> str:
     """Rival AI board + duel champion for competitive research.
 
-    Injected so each model can see the other side's top ideas and must either
-    beat them on session realized-R potential or deliberately pass.
+    Injected only when ``ai_duel_enabled`` is true so each model can see the
+    other side's top ideas and either beat them on session realized-R or pass.
+    When duel is off, returns empty (peer heat still appears in desk snapshot).
     """
+    try:
+        import ai_duel as duel
+        from config import load_config
+        if not duel.duel_enabled(load_config()):
+            return ""
+    except Exception:
+        # Fail closed: no competition inject if config/duel unavailable.
+        return ""
+
     p_path, p_label = _peer_suggestions_path(backend)
     if peer_path is not None:
         p_path = peer_path
@@ -2266,16 +2276,16 @@ def build_desk_snapshot_snippet(
     if heat:
         sections.append("Trending heat (Stocktwits):\n  " + " | ".join(heat))
 
-    # Peer board stays in desk snapshot as a short list; full competitive
-    # block is appended via build_rival_duel_snippet (more detail + rules).
+    # Peer board stays in desk snapshot as a short list. Full competitive
+    # RIVAL block is appended only when duel mode is on (see build_rival_duel_snippet).
     p_path, p_label = _peer_suggestions_path(backend)
     if peer_path is not None:
         p_path = peer_path
     peer = _peer_board_lines(p_path, max_price=cap, limit=peer_n)
     if peer:
         sections.append(
-            f"Other AI source — {p_label} top names (see RIVAL block for full "
-            f"competition rules):\n  " + " | ".join(peer)
+            f"Other AI source — {p_label} top names (context only; re-validate):\n  "
+            + " | ".join(peer)
         )
 
     body = ""

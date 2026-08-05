@@ -459,7 +459,7 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
 
 
 def test_rival_duel_snippet_shows_peer_board(tmp_path, monkeypatch):
-    """Each model sees the other AI's published board for competition."""
+    """When duel is on, each model sees the other AI's published board."""
     peer = tmp_path / "peer.json"
     peer.write_text(json.dumps({
         "rows": [
@@ -468,9 +468,10 @@ def test_rival_duel_snippet_shows_peer_board(tmp_path, monkeypatch):
             {"symbol": "SOFI", "score": 8.0, "reason": "flow"},
         ],
     }), encoding="utf-8")
-    # No duel state file — still must show rival board lines.
+    # No duel state file — still must show rival board lines while duel is on.
     import ai_duel as duel
     monkeypatch.setattr(duel, "DUEL_STATE_PATH", tmp_path / "missing_duel.json")
+    monkeypatch.setattr(duel, "duel_enabled", lambda cfg=None: True)
     snip = cs.build_rival_duel_snippet(
         backend="claude_cli",
         peer_path=peer,
@@ -480,6 +481,22 @@ def test_rival_duel_snippet_shows_peer_board(tmp_path, monkeypatch):
     assert "CMG" in snip and "SOFI" in snip
     assert "Grok (X)" in snip
     assert "DIFFERENT symbol" in snip or "different" in snip.lower()
+
+
+def test_rival_duel_snippet_empty_when_duel_disabled(tmp_path, monkeypatch):
+    """Duel off: no competition inject (peer heat lives in desk snapshot only)."""
+    peer = tmp_path / "peer.json"
+    peer.write_text(json.dumps({
+        "rows": [{"symbol": "CMG", "score": 9.1, "reason": "pullback"}],
+    }), encoding="utf-8")
+    import ai_duel as duel
+    monkeypatch.setattr(duel, "duel_enabled", lambda cfg=None: False)
+    snip = cs.build_rival_duel_snippet(
+        backend="claude_cli",
+        peer_path=peer,
+        max_price=100.0,
+    )
+    assert snip == ""
 
 
 def test_momentum_and_trending_candidate_rows(tmp_path):
@@ -611,9 +628,7 @@ def _run_entry_gate(monkeypatch, *, ready=True, market_open=True):
     monkeypatch.setitem(sys.modules, "claude_trading", trading)
     monkeypatch.setitem(sys.modules, "claude_positions", positions)
     # Isolate from live bot_config (e.g. ai_require_agreement=true).
-    # ai_duel_enabled must be explicit: ai_duel.duel_enabled() defaults to True
-    # on a missing key, so a partial cfg silently gates every entry behind the
-    # duel champion check and skips with "duel_not_allowed".
+    # duel_enabled() defaults False when the key is missing; keep explicit.
     monkeypatch.setattr(cs, "_entry_runtime_cfg", lambda: {
         "ai_require_agreement": False,
         "ai_max_spread_pct": 1.0,

@@ -97,8 +97,13 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 def duel_enabled(cfg: dict | None) -> bool:
+    """Whether A vs X duel mechanics are on.
+
+    Default is **False** (safe off) when the key is missing — matches
+    ``DEFAULT_CONFIG`` / ``bot_config.json``. Opt in with ``ai_duel_enabled: true``.
+    """
     cfg = cfg if isinstance(cfg, dict) else {}
-    return bool(cfg.get("ai_duel_enabled", True))
+    return bool(cfg.get("ai_duel_enabled", False))
 
 
 def close_before_research_min(cfg: dict | None) -> int:
