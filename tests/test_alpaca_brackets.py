@@ -51,3 +51,59 @@ def test_buy_notional_without_brackets():
     assert out["ok"]
     req = fake.submit_order.call_args[0][0]
     assert float(req.notional) == 250.0
+
+
+def test_bracket_stop_is_stop_market_by_default(monkeypatch):
+    """A stop-LIMIT with ~0.1% of room can miss entirely on a gap, leaving the
+    position naked long with no working stop — on exactly the high-RVOL names
+    the watch book selects for."""
+    import alpaca_trader as at
+
+    captured = {}
+
+    class _Order:
+        id = "o1"
+        status = "accepted"
+        legs = []
+
+    class _Client:
+        def submit_order(self, req):
+            captured["req"] = req
+            return _Order()
+
+    monkeypatch.setattr(at, "_client", _Client())
+    monkeypatch.setattr(at, "is_active", lambda: True)
+    monkeypatch.setattr(at, "_stop_use_market", lambda: True)
+    monkeypatch.setattr(at, "_log_action", lambda *a, **k: None)
+
+    out = at.buy_bracket_exact("NVDA", 10, stop_price=38.0, target_price=46.0)
+    assert out["ok"] is True
+    sl = captured["req"].stop_loss
+    assert float(sl.stop_price) == 38.0
+    assert getattr(sl, "limit_price", None) is None, "must be a stop-MARKET"
+
+
+def test_bracket_stop_limit_form_uses_configured_slippage(monkeypatch):
+    import alpaca_trader as at
+
+    captured = {}
+
+    class _Order:
+        id = "o1"
+        status = "accepted"
+        legs = []
+
+    class _Client:
+        def submit_order(self, req):
+            captured["req"] = req
+            return _Order()
+
+    monkeypatch.setattr(at, "_client", _Client())
+    monkeypatch.setattr(at, "is_active", lambda: True)
+    monkeypatch.setattr(at, "_stop_use_market", lambda: False)
+    monkeypatch.setattr(at, "_stop_limit_slip_pct", lambda: 1.0)
+    monkeypatch.setattr(at, "_log_action", lambda *a, **k: None)
+
+    at.buy_bracket_exact("NVDA", 10, stop_price=38.0, target_price=46.0)
+    sl = captured["req"].stop_loss
+    assert float(sl.limit_price) == 37.62      # 38.00 * (1 - 1%)

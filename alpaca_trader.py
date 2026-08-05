@@ -143,6 +143,24 @@ def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
         )
 
 
+def _stop_use_market() -> bool:
+    """True when protective stops are stop-MARKET (no limit_price)."""
+    try:
+        from config import load_config
+        return bool(load_config().get("ai_stop_use_market", True))
+    except Exception:
+        return True
+
+
+def _stop_limit_slip_pct() -> float:
+    """Room below the trigger for the stop-LIMIT form, in percent."""
+    try:
+        from config import load_config
+        return float(load_config().get("ai_stop_limit_slip_pct", 1.0) or 0.0)
+    except Exception:
+        return 1.0
+
+
 def is_active() -> bool:
     """True if the trader is initialised and will place orders."""
     return _mode != "off" and _client is not None
@@ -1013,7 +1031,17 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
         from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
         sl = round(float(stop_price), 2)
-        sl_limit = round(sl * 0.999, 2)
+
+        # Stop-MARKET by default. Passing limit_price makes it a stop-LIMIT,
+        # and the old sl * 0.999 gave about a cent of room on an $8 stock: on a
+        # gap through the trigger the limit never fills and the position is left
+        # naked long with no working stop — on exactly the high-RVOL names this
+        # book selects for. Set ai_stop_use_market=False (and widen
+        # ai_stop_limit_slip_pct) only for names where slippage beats that risk.
+        stop_kwargs: dict = {"stop_price": sl}
+        if not _stop_use_market():
+            slip = max(0.0, _stop_limit_slip_pct()) / 100.0
+            stop_kwargs["limit_price"] = round(sl * (1.0 - slip), 2)
 
         if target_price is not None and float(target_price) > 0:
             tp = round(float(target_price), 2)
@@ -1023,7 +1051,7 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
                     side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
                     order_class=OrderClass.BRACKET,
                     take_profit=TakeProfitRequest(limit_price=tp),
-                    stop_loss=StopLossRequest(stop_price=sl, limit_price=sl_limit),
+                    stop_loss=StopLossRequest(**stop_kwargs),
                 )
             )
             print(f"  [TRADER] 📐 bracket(exact)  {ticker}  qty={qty}  "
@@ -1031,8 +1059,21 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
             _log_action("BUY", ticker, tp, 0.0, 0.0,
                         order_id=str(order.id), order_status=str(order.status),
                         note=f"bracket_exact tp={tp} sl={sl}")
+            # Return the child legs separately. The parent id fills at *entry*,
+            # so anything keying "did the target hit?" off it is true seconds
+            # after the buy — which mislabelled every close as trailed_out,
+            # disabled the time stop, and moved a runner's stop to breakeven
+            # immediately. Legs may not be materialised yet on the response.
+            tp_id = sl_id = None
+            for leg in (getattr(order, "legs", None) or []):
+                lt = str(getattr(leg, "type", "") or "").lower()
+                if "limit" in lt and tp_id is None:
+                    tp_id = str(leg.id)
+                elif "stop" in lt and sl_id is None:
+                    sl_id = str(leg.id)
             return {"ok": True, "buy_order_id": str(order.id),
-                    "stop_order_id": None, "status": str(order.status)}
+                    "target_order_id": tp_id,
+                    "stop_order_id": sl_id, "status": str(order.status)}
 
         # No target — plain buy, then a standalone stop sell for the same qty.
         buy_order = _client.submit_order(
