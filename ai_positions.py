@@ -638,6 +638,13 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
 
+    # Clear leftover STOP/limit sells (failed prior attempts, orphaned legs)
+    # so Alpaca does not reject the new BUY as a wash trade.
+    try:
+        alpaca_trader.cancel_open_orders(ticker)
+    except Exception as e:  # noqa: BLE001
+        log_event("entry_pre_cancel_warn", symbol=ticker, reason=str(e)[:200])
+
     # Size against the price the order will actually fill at, not the zone
     # bound — current_ask is already validated to fall inside that zone.
     sizing_entry = current_ask or entry_high or entry_low

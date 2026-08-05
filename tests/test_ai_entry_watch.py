@@ -573,9 +573,9 @@ def test_should_arm_in_zone_despite_wide_spread():
     # ~1.8% spread but ask is inside the entry zone → arm.
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.5, cfg=cfg)
     assert ok and why == "zone"
-    # Outside the zone, a wide spread is still reported.
+    # Outside the zone is reported as above/below (not spread).
     ok2, why2 = ew.should_arm_buy(rec, ask=32.0, bid=27.5, cfg=cfg)
-    assert not ok2 and why2 == "spread"
+    assert not ok2 and why2 == "above_zone"
 
 
 def _poll_cfg(**overrides):

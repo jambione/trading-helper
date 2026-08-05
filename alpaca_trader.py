@@ -1058,8 +1058,10 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
     except Exception as e:
         print(f"  [TRADER] ❌  bracket(exact) failed: {e}")
         _log_action("BUY_ERROR", ticker, 0.0, 0.0, 0.0, error=str(e))
-        return {"ok": False, "buy_order_id": None, "stop_order_id": None,
-                "status": "error"}
+        return {
+            "ok": False, "buy_order_id": None, "stop_order_id": None,
+            "status": "error", "note": str(e), "error": str(e),
+        }
 
 
 def replace_stop(ticker: str, old_stop_order_id: Optional[str],

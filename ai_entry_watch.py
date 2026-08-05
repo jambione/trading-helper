@@ -1495,19 +1495,9 @@ def should_arm_buy(
     except (TypeError, ValueError):
         return False, "below_zone"
 
-    # Zone membership is the primary arm signal (matches UI READY). Check it
-    # before spread so a wide IEX quote cannot block a price already in zone.
+    # Zone membership is the primary arm signal (matches UI READY).
     if ask_in_zone(a, entry_low, entry_high, pad):
         return True, "zone"
-
-    try:
-        max_spread = float(cfg.get("ai_max_spread_pct", 1.0) or 0.0)
-    except (TypeError, ValueError):
-        max_spread = 1.0
-    # Spread only as a soft pre-filter when still outside the zone (near-touch
-    # paths). Missing bid does not fail — see spread_ok.
-    if not spread_ok(bid, ask, max_spread):
-        return False, "spread"
 
     frac = max(0.0, pad) / 100.0
     high_bound = max(entry_low, entry_high) * (1.0 + frac)
