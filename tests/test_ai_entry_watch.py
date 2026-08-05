@@ -416,9 +416,11 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
     keys = {
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
         "last_ask", "score", "agreement", "reason", "source", "ready", "in_zone",
+        "block_code", "blocker", "block_reason",
     }
     for row in snap:
         assert set(row.keys()) == keys
+        assert "blocker" in row
     zzz = snap[1]
     assert zzz["status"] == "watching"
     assert zzz["wait_kind"] == "wait_for_zone"
@@ -773,6 +775,40 @@ def test_poll_once_gate_error_fail_closed_no_place(tmp_path, monkeypatch):
         for e in events
     )
     assert ew.load_watch()["SMCI"]["status"] == "watching"
+
+
+def test_format_blocker_and_derive():
+    import ai_entry_watch as ew
+    assert ew.format_blocker("above_zone") == "above zone"
+    assert ew.format_blocker("recheck_below_zone") == "left zone"
+    assert "wash" in (ew.format_blocker("x", detail="potential wash trade detected") or "").lower()
+    rec = {
+        "status": "watching",
+        "last_ask": 30.0,
+        "structure": {
+            "wait_kind": "wait_for_zone",
+            "entry_low": 20.0, "entry_high": 21.0,
+            "stop_price": 19.0, "target_1": 25.0, "reward_risk": 3.0,
+        },
+    }
+    code, label = ew.derive_blocker(rec)
+    assert code == "above_zone"
+    assert label == "above zone"
+    ew.set_block_reason(rec, "wash trade", detail="potential wash trade")
+    code2, label2 = ew.derive_blocker(rec)
+    assert "wash" in (label2 or "").lower()
+    rec_in = {
+        "status": "watching",
+        "last_ask": 20.5,
+        "structure": {
+            "wait_kind": "wait_for_zone",
+            "entry_low": 20.0, "entry_high": 21.0,
+            "stop_price": 19.0, "target_1": 25.0, "reward_risk": 3.0,
+        },
+    }
+    c3, l3 = ew.derive_blocker(rec_in)
+    assert c3 == "in_zone"
+    assert l3 == "in zone"
 
 
 def test_synth_offset_zone_from_price():

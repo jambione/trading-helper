@@ -251,6 +251,9 @@ function _bookRows(book) {
       avg_entry: w.avg_entry != null ? w.avg_entry : null,
       is_position: !!w.is_position || phase === 'open',
       ready: !!w.ready || phase === 'ready',
+      block_code: w.block_code || null,
+      blocker: w.blocker || w.block_reason || null,
+      block_reason: w.block_reason || w.blocker || null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -495,22 +498,42 @@ function _createBookRow(r, owner) {
   return el;
 }
 
+/** Status column shows *why we are not long* (blocker), not READY/WATCH. */
+function _bookBlockerLabel(r) {
+  if (!r) return '—';
+  const phase = String(r.phase || '').toLowerCase();
+  if (phase === 'open' || r.is_position) return 'open';
+  if (phase === 'submitted') return 'sent';
+  const b = String(r.blocker || r.block_reason || '').trim();
+  if (b) return b;
+  const code = String(r.block_code || '').trim();
+  if (code) return code.replace(/_/g, ' ');
+  if (r.ready || phase === 'ready') return 'in zone';
+  return 'watching';
+}
+
+function _bookBlockerClass(r) {
+  const phase = String((r && r.phase) || '').toLowerCase();
+  if (phase === 'open' || (r && r.is_position)) return 'ai-book-status ai-book-status--open';
+  if (phase === 'submitted') return 'ai-book-status ai-book-status--sent';
+  const b = String((r && (r.blocker || r.block_reason || r.block_code)) || '').toLowerCase();
+  if (b === 'in zone' || b === 'in_zone' || b === 'placing' || b === 'placing…') {
+    return 'ai-book-status ai-book-status--ready';
+  }
+  if (b && b !== 'watching' && b !== '—') {
+    return 'ai-book-status ai-book-status--blocked';
+  }
+  return 'ai-book-status';
+}
+
 function _updateBookRow(el, r, owner) {
   if (!el || !r) return;
   const phase = String((r && r.phase) || 'watching').toLowerCase();
   const isOpen = phase === 'open' || r.is_position;
-  const statusLabel = isOpen ? 'OPEN'
-    : phase === 'ready' ? 'READY'
-    : phase === 'submitted' ? 'SENT'
-    : (r.wait_kind || r.status || 'WATCH');
+  const statusLabel = _bookBlockerLabel(r);
   const statusEl = el.querySelector('.ai-book-status');
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
-  if (statusEl) {
-    statusEl.className = isOpen ? 'ai-book-status ai-book-status--open'
-      : phase === 'ready' ? 'ai-book-status ai-book-status--ready'
-      : phase === 'submitted' ? 'ai-book-status ai-book-status--sent'
-      : 'ai-book-status';
-  }
+  if (statusEl) statusEl.className = _bookBlockerClass(r);
   const src = _bookSourceLabel(r.source);
   const px = r.price != null && Number.isFinite(Number(r.price))
     ? `$${Number(r.price).toFixed(2)}`
@@ -532,12 +555,13 @@ function _updateBookRow(el, r, owner) {
     plEl.className = `cell-pl ${isOpen ? _plClass(r) : ''}`.trim();
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
-  el.classList.toggle('feed-row--ai-ready', phase === 'ready');
+  el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'in zone');
   const title = [
     isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
     src ? `src ${src}` : null,
     zone !== '—' ? `zone ${zone}` : null,
     r.reason || null,
+    r.block_code && r.block_code !== statusLabel ? `code ${r.block_code}` : null,
     isOpen && r.avg_entry != null ? `entry $${Number(r.avg_entry).toFixed(2)}` : null,
   ].filter(Boolean).join(' · ');
   if (el.title !== title) el.title = title;
@@ -548,14 +572,8 @@ function _bookRowHtml(r, owner) {
   if (!sym) return '';
   const phase = String((r && r.phase) || 'watching').toLowerCase();
   const isOpen = phase === 'open' || r.is_position;
-  const statusLabel = isOpen ? 'OPEN'
-    : phase === 'ready' ? 'READY'
-    : phase === 'submitted' ? 'SENT'
-    : (r.wait_kind || r.status || 'WATCH');
-  const statusCls = isOpen ? 'ai-book-status ai-book-status--open'
-    : phase === 'ready' ? 'ai-book-status ai-book-status--ready'
-    : phase === 'submitted' ? 'ai-book-status ai-book-status--sent'
-    : 'ai-book-status';
+  const statusLabel = _bookBlockerLabel(r);
+  const statusCls = _bookBlockerClass(r);
   const src = _bookSourceLabel(r.source);
   const px = r.price != null && Number.isFinite(Number(r.price))
     ? `$${Number(r.price).toFixed(2)}`
@@ -569,7 +587,7 @@ function _bookRowHtml(r, owner) {
   const plCls = isOpen ? _plClass(r) : '';
   const rowCls = isOpen
     ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-open'
-    : (phase === 'ready'
+    : ((phase === 'ready' || statusLabel === 'in zone')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
   const title = [
@@ -577,6 +595,7 @@ function _bookRowHtml(r, owner) {
     src ? `src ${src}` : null,
     zone !== '—' ? `zone ${zone}` : null,
     r.reason || null,
+    r.block_code && r.block_code !== statusLabel ? `code ${r.block_code}` : null,
     isOpen && r.avg_entry != null ? `entry $${Number(r.avg_entry).toFixed(2)}` : null,
   ].filter(Boolean).join(' · ');
 

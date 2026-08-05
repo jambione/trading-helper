@@ -2089,19 +2089,31 @@ body.mobile .icon-btn {
 .ai-book-status {
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  text-transform: none;
   color: var(--text-dim);
   align-self: center;
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ai-book-status--open {
   color: #c4b5fd;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .ai-book-status--ready {
   color: #6ee7b7;
 }
 .ai-book-status--sent {
   color: var(--warming);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ai-book-status--blocked {
+  color: #fbbf24;
+  font-weight: 600;
 }
 .cell-zone {
   font-size: 11px;

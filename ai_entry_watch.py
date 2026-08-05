@@ -39,6 +39,138 @@ _TERMINAL_STATUSES = frozenset({
 _structure_call_ts: list[float] = []
 _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 
+# Machine code → short operator label for the AI Watch "Blocker" column.
+_BLOCKER_LABELS: dict[str, str] = {
+    "above_zone": "above zone",
+    "below_zone": "below zone",
+    "recheck_above_zone": "left zone",
+    "recheck_below_zone": "left zone",
+    "recheck_spread": "left zone",
+    "spread": "wide spread",
+    "wait_setup": "wait setup",
+    "hard_no": "hard no",
+    "no_structure": "no zone",
+    "reward_risk": "R:R low",
+    "not_trading_hours": "hours closed",
+    "above_max_price": "over max $",
+    "max_positions": "max positions",
+    "buy_cap": "buy cap",
+    "already_held": "already held",
+    "no_equity": "no equity",
+    "duel_blocked": "duel only",
+    "trader_not_ready": "trader off",
+    "not_watching": "not watching",
+    "placing": "placing…",
+    "in_zone": "in zone",
+}
+
+
+def format_blocker(code: str | None, *, detail: str | None = None) -> str | None:
+    """Short human label for the AI Watch blocker column."""
+    if not code and not detail:
+        return None
+    detail_s = str(detail or "").strip()
+    if "wash" in detail_s.lower() or "wash" in str(code or "").lower():
+        return "wash trade"
+    raw = str(code or "").strip()
+    low = raw.lower()
+    if low.startswith("recheck_"):
+        base = _BLOCKER_LABELS.get(low) or _BLOCKER_LABELS.get(low[8:]) or low[8:].replace("_", " ")
+    elif low.startswith("gate_error:"):
+        base = "broker gate"
+    elif low.startswith("tranche") or "rolled_back" in low:
+        base = "order failed"
+    elif low in _BLOCKER_LABELS:
+        base = _BLOCKER_LABELS[low]
+    elif raw:
+        # Truncate long Alpaca JSON / stack crumbs.
+        base = raw.replace("_", " ")
+        if len(base) > 28:
+            base = base[:25] + "…"
+    else:
+        base = None
+    if base:
+        return base
+    if detail_s:
+        return (detail_s[:25] + "…") if len(detail_s) > 28 else detail_s
+    return None
+
+
+def set_block_reason(
+    rec: dict,
+    code: str,
+    *,
+    now: float | None = None,
+    detail: str | None = None,
+) -> None:
+    """Persist last skip/fail so the UI can show why we did not buy."""
+    if not isinstance(rec, dict):
+        return
+    c = str(code or "").strip() or "blocked"
+    rec["block_code"] = c
+    rec["block_reason"] = format_blocker(c, detail=detail) or c
+    rec["block_ts"] = float(now if now is not None else time.time())
+    if detail:
+        rec["block_detail"] = str(detail)[:200]
+
+
+def clear_block_reason(rec: dict) -> None:
+    if not isinstance(rec, dict):
+        return
+    for k in ("block_code", "block_reason", "block_ts", "block_detail"):
+        rec.pop(k, None)
+
+
+def derive_blocker(
+    rec: dict,
+    *,
+    pad_pct: float = 0.0,
+) -> tuple[str | None, str | None]:
+    """Return (code, label) for why this watch is not an open buy.
+
+    Prefers the last poll decision; falls back to live last_ask vs zone.
+    """
+    if not isinstance(rec, dict):
+        return None, None
+    status = str(rec.get("status") or "").lower().strip()
+    if status in ("submitted", "filled", "armed"):
+        if status == "armed":
+            return "placing", format_blocker("placing")
+        if status == "submitted":
+            return "submitted", "sent"
+        return "filled", "filled"
+
+    stored = rec.get("block_code") or rec.get("block_reason")
+    if stored:
+        code = str(rec.get("block_code") or stored)
+        label = str(rec.get("block_reason") or format_blocker(code) or code)
+        return code, label
+
+    structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else {}
+    wk = str(structure.get("wait_kind") or "").lower().strip()
+    if wk == "hard_no":
+        return "hard_no", format_blocker("hard_no")
+    if wk == "wait_setup":
+        return "wait_setup", format_blocker("wait_setup")
+
+    try:
+        lo = float(structure.get("entry_low") or rec.get("entry_low") or 0)
+        hi = float(structure.get("entry_high") or rec.get("entry_high") or 0)
+        ask = float(rec.get("last_ask") or 0)
+    except (TypeError, ValueError):
+        lo = hi = ask = 0.0
+    if lo <= 0 or hi <= 0:
+        return "no_structure", format_blocker("no_structure")
+    if ask <= 0:
+        return "no_structure", "no quote"
+    if ask_in_zone(ask, lo, hi, pad_pct):
+        return "in_zone", format_blocker("in_zone")
+    frac = max(0.0, float(pad_pct or 0)) / 100.0
+    high_bound = max(lo, hi) * (1.0 + frac)
+    if ask > high_bound:
+        return "above_zone", format_blocker("above_zone")
+    return "below_zone", format_blocker("below_zone")
+
 
 def load_watch() -> dict[str, dict]:
     """Load symbol -> watch record; empty dict if missing/corrupt."""
@@ -145,6 +277,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             in_zone = ask_in_zone(
                 last_ask_f, entry_low_f, entry_high_f, pad_pct)
         ready = status == "armed" or (status == "watching" and in_zone)
+        b_code, b_label = derive_blocker(rec, pad_pct=pad_pct)
         rows.append({
             "symbol": sym,
             "status": status or None,
@@ -158,6 +291,9 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "source": str(rec.get("source") or "research")[:24] or "research",
             "ready": bool(ready),
             "in_zone": bool(in_zone),
+            "block_code": b_code,
+            "blocker": b_label,
+            "block_reason": b_label,
         })
     # Ready first, then higher score, then symbol for stable UI.
     rows.sort(key=lambda r: (
@@ -213,6 +349,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
     else:
         phase = "watching"
     src = str(rec.get("source") or "research").strip() or "research"
+    b_code, b_label = derive_blocker(rec, pad_pct=pad_pct)
     return {
         "symbol": sym,
         "phase": phase,
@@ -227,6 +364,9 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "entry_high": entry_high_f,
         "last_ask": last_ask_f,
         "price": last_ask_f,
+        "block_code": b_code,
+        "blocker": b_label,
+        "block_reason": b_label,
         "qty": None,
         "avg_entry": None,
         "pl": None,
@@ -295,6 +435,9 @@ def book_table_rows(
                 "entry_high": w.get("entry_high"),
                 "last_ask": w.get("last_ask"),
                 "price": w.get("last_ask"),
+                "block_code": w.get("block_code"),
+                "blocker": w.get("blocker") or w.get("block_reason"),
+                "block_reason": w.get("block_reason") or w.get("blocker"),
                 "qty": None,
                 "avg_entry": None,
                 "pl": None,
@@ -327,6 +470,9 @@ def book_table_rows(
             "ready": False,
             "in_zone": False,
             "is_position": True,
+            "blocker": None,
+            "block_code": None,
+            "block_reason": None,
             "price": current if current is not None else prev.get("price"),
             "last_ask": current if current is not None else prev.get("last_ask"),
             "qty": p.get("qty"),
@@ -1907,18 +2053,21 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             state[sym] = rec
             continue
 
-        if max_price_f is not None and ask_f >= max_price_f:
+        def _skip(reason: str, *, detail: str | None = None, **extra):
+            set_block_reason(rec, reason, now=t0, detail=detail)
             try:
                 events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason="above_max_price",
-                    ask=ask_f, max_price=max_price_f))
+                    "watch_skip", symbol=sym, reason=reason, ask=ask_f, **extra))
             except Exception:
                 events.append({
                     "kind": "watch_skip",
                     "symbol": sym,
-                    "reason": "above_max_price",
+                    "reason": reason,
                 })
             state[sym] = rec
+
+        if max_price_f is not None and ask_f >= max_price_f:
+            _skip("above_max_price", max_price=max_price_f)
             continue
 
         # Arm / buy
@@ -1935,109 +2084,48 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if not ok_arm:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure"):
-                try:
-                    events.append(cp.log_event(
-                        "watch_skip", symbol=sym, reason=why, ask=ask_f))
-                except Exception:
-                    events.append({
-                        "kind": "watch_skip",
-                        "symbol": sym,
-                        "reason": why,
-                    })
-            state[sym] = rec
+                _skip(why)
+            else:
+                set_block_reason(rec, why or "blocked", now=t0)
+                state[sym] = rec
             continue
 
         # Position / buy-cap gates (fail closed on errors — never place blind)
         try:
             if gt.has_open_position(sym):
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason="already_held"))
-                state[sym] = rec
+                _skip("already_held")
                 continue
         except Exception as e:  # noqa: BLE001
-            try:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym,
-                    reason=f"gate_error:has_open_position:{e}"[:200]))
-            except Exception:
-                events.append({
-                    "kind": "watch_skip",
-                    "symbol": sym,
-                    "reason": "gate_error:has_open_position",
-                })
-            state[sym] = rec
+            _skip(f"gate_error:has_open_position:{e}"[:200])
             continue
         try:
             if not gt.can_open_new_position(sym):
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason="max_positions"))
-                state[sym] = rec
+                _skip("max_positions")
                 continue
         except Exception as e:  # noqa: BLE001
-            try:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym,
-                    reason=f"gate_error:can_open_new_position:{e}"[:200]))
-            except Exception:
-                events.append({
-                    "kind": "watch_skip",
-                    "symbol": sym,
-                    "reason": "gate_error:can_open_new_position",
-                })
-            state[sym] = rec
+            _skip(f"gate_error:can_open_new_position:{e}"[:200])
             continue
         try:
             if gt.buys_left_this_poll() <= 0:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason="buy_cap"))
-                state[sym] = rec
+                _skip("buy_cap")
                 continue
         except Exception as e:  # noqa: BLE001
-            try:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym,
-                    reason=f"gate_error:buys_left_this_poll:{e}"[:200]))
-            except Exception:
-                events.append({
-                    "kind": "watch_skip",
-                    "symbol": sym,
-                    "reason": "gate_error:buys_left_this_poll",
-                })
-            state[sym] = rec
+            _skip(f"gate_error:buys_left_this_poll:{e}"[:200])
             continue
 
         structure = rec.get("structure")
         if not isinstance(structure, dict):
-            state[sym] = rec
+            _skip("no_structure")
             continue
 
         equity = _equity()
         if equity <= 0:
-            try:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason="no_equity"))
-            except Exception:
-                events.append({
-                    "kind": "watch_skip",
-                    "symbol": sym,
-                    "reason": "no_equity",
-                })
-            state[sym] = rec
+            _skip("no_equity")
             continue
 
         if not allow_buys:
             # Structure/zone ready, but no paper entry until RTH (market hours).
-            try:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason="not_trading_hours",
-                    ask=ask_f))
-            except Exception:
-                events.append({
-                    "kind": "watch_skip",
-                    "symbol": sym,
-                    "reason": "not_trading_hours",
-                })
-            state[sym] = rec
+            _skip("not_trading_hours")
             continue
 
         # Duel day: only registered A/X champions (winner-only after trial).
@@ -2046,23 +2134,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if duel.duel_enabled(cfg):
                 src_w = rec.get("duel_source") or rec.get("source")
                 if not duel.allow_entry_for_source(cfg, src_w, sym, now=t0):
-                    try:
-                        events.append(cp.log_event(
-                            "watch_skip", symbol=sym, reason="duel_blocked",
-                            ask=ask_f))
-                    except Exception:
-                        events.append({
-                            "kind": "watch_skip",
-                            "symbol": sym,
-                            "reason": "duel_blocked",
-                        })
-                    state[sym] = rec
+                    _skip("duel_blocked")
                     continue
         except Exception:
             pass
 
         # Re-check live ask immediately before place (quotes can move during
-        # gate checks). READY in the UI uses last_ask; only fill if still in zone.
+        # gate checks). Only fill if still in zone.
         try:
             ask2 = gt._latest_ask(sym)
             ask2_f = float(ask2) if ask2 is not None else 0.0
@@ -2078,17 +2156,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             bid2_f = bid_f
         ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg)
         if not ok_arm2:
-            try:
-                events.append(cp.log_event(
-                    "watch_skip", symbol=sym, reason=f"recheck_{why2}",
-                    ask=ask_f))
-            except Exception:
-                events.append({
-                    "kind": "watch_skip",
-                    "symbol": sym,
-                    "reason": f"recheck_{why2}",
-                })
-            state[sym] = rec
+            _skip(f"recheck_{why2}")
             continue
 
         place_decision = _decision_for_place(structure)
@@ -2097,6 +2165,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             place_decision["source"] = rec.get("duel_source") or rec.get("source")
             place_decision["duel_source"] = place_decision.get("source")
         rec["status"] = "armed"
+        set_block_reason(rec, "placing", now=t0)
         try:
             result = cp.place_scaled_entry(
                 sym,
@@ -2109,20 +2178,25 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 ) or None,
             )
         except Exception as e:  # noqa: BLE001
+            err = str(e)[:200]
+            set_block_reason(rec, "order_failed", now=t0, detail=err)
+            if str(rec.get("status") or "") == "armed":
+                rec["status"] = "watching"
             try:
                 events.append(cp.log_event(
-                    "entry_fail", symbol=sym, reason=str(e)[:200]))
+                    "entry_fail", symbol=sym, reason=err))
             except Exception:
                 events.append({
                     "kind": "entry_fail",
                     "symbol": sym,
-                    "reason": str(e)[:200],
+                    "reason": err,
                 })
             state[sym] = rec
             continue
 
         if isinstance(result, dict) and result.get("ok"):
             rec["status"] = "submitted"
+            clear_block_reason(rec)
             try:
                 gt.record_external_buy(sym, {
                     "reason": str(rec.get("reason") or "")[:120],
@@ -2153,6 +2227,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 err = str(result.get("error") or "place_failed")[:200]
             else:
                 err = "place_failed"
+            set_block_reason(rec, err, now=t0, detail=err)
             try:
                 events.append(cp.log_event(
                     "entry_fail", symbol=sym, reason=err))
