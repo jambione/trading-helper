@@ -499,7 +499,8 @@ def test_spread_ok_mid_pct():
     # (28.0 - 27.95) / mid * 100 ≈ 0.18%
     assert ew.spread_ok(27.95, 28.0, 1.0) is True
     assert ew.spread_ok(27.0, 28.0, 0.5) is False
-    assert ew.spread_ok(None, 28.0, 1.0) is False
+    # Missing bid must not block (IEX often one-sided).
+    assert ew.spread_ok(None, 28.0, 1.0) is True
     assert ew.spread_ok(None, 28.0, 0.0) is True  # enforcement off
 
 
@@ -557,7 +558,8 @@ def test_should_arm_buy_decision_in_zone():
     assert ok and why == "zone"
 
 
-def test_should_arm_rejects_wide_spread():
+def test_should_arm_in_zone_despite_wide_spread():
+    """READY = in zone; a wide IEX book must not block the fill."""
     import ai_entry_watch as ew
     rec = {
         "status": "watching",
@@ -568,9 +570,12 @@ def test_should_arm_rejects_wide_spread():
         },
     }
     cfg = {"ai_max_spread_pct": 0.1, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
-    # ~1.8% spread
+    # ~1.8% spread but ask is inside the entry zone → arm.
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.5, cfg=cfg)
-    assert not ok and why == "spread"
+    assert ok and why == "zone"
+    # Outside the zone, a wide spread is still reported.
+    ok2, why2 = ew.should_arm_buy(rec, ask=32.0, bid=27.5, cfg=cfg)
+    assert not ok2 and why2 == "spread"
 
 
 def _poll_cfg(**overrides):
@@ -592,6 +597,15 @@ def _poll_cfg(**overrides):
 
 
 def _patch_trading_ready(monkeypatch, gt, *, ask=28.0, bid=27.95):
+    import ai_entry_watch as ew
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    # poll_once uses ET clock / SOD gates — pin a mid-session RTH weekday.
+    fixed_et = datetime(2026, 8, 5, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    monkeypatch.setattr(ew, "_et_now", lambda now=None: fixed_et)
+    monkeypatch.setattr(ew, "sod_liquidate_done", lambda cfg, now=None: True)
+    monkeypatch.setattr(ew, "expire_stale_watches_for_new_day", lambda now: None)
     monkeypatch.setattr(gt, "market_is_open", lambda: True)
     monkeypatch.setattr(gt, "is_ready", lambda: True)
     monkeypatch.setattr(gt, "_latest_ask", lambda s: ask)
@@ -638,7 +652,8 @@ def test_poll_once_buys_when_in_zone(tmp_path, monkeypatch):
     assert saved["SMCI"]["status"] in ("submitted", "filled")
 
 
-def test_poll_once_wide_spread_does_not_place(tmp_path, monkeypatch):
+def test_poll_once_in_zone_places_despite_wide_spread(tmp_path, monkeypatch):
+    """UI READY = in zone; poll must place even when IEX spread is wide."""
     import ai_entry_watch as ew
     import ai_positions as cp
     import ai_trading as gt
@@ -658,7 +673,7 @@ def test_poll_once_wide_spread_does_not_place(tmp_path, monkeypatch):
         }
     }
     ew.save_watch(state)
-    # ~1.8% spread with max 0.1%
+    # ~1.8% spread with max 0.1% — still in zone → place.
     _patch_trading_ready(monkeypatch, gt, ask=28.0, bid=27.5)
     placed = []
     monkeypatch.setattr(
@@ -669,9 +684,8 @@ def test_poll_once_wide_spread_does_not_place(tmp_path, monkeypatch):
         cfg=_poll_cfg(ai_max_spread_pct=0.1),
         now=1e12 + 10,
     )
-    assert placed == []
-    assert any(e.get("reason") == "spread" for e in events)
-    assert ew.load_watch()["SMCI"]["status"] == "watching"
+    assert placed == ["SMCI"]
+    assert ew.load_watch()["SMCI"]["status"] in ("submitted", "filled", "armed")
 
 
 def test_poll_once_wait_setup_does_not_place(tmp_path, monkeypatch):

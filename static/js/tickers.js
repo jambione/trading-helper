@@ -76,7 +76,6 @@ export function init(panelEl) {
   _updateSortHeaders();
 
   subscribe('tickers',        rows   => _renderTable(rows));
-  subscribe('selectedTicker', ticker => _highlightSelected(ticker));
   subscribe('funnel',         f      => _renderFunnel(f));
   // AI book open/close should refresh chips on momentum rows.
   subscribe('ai_positions',   ()     => { if (_lastRows.length) _renderTable(_lastRows); });
@@ -213,15 +212,13 @@ function _renderTable(rows) {
     }
     if (row.price != null) _prevPrices[row.ticker] = row.price;
   }
-
-  _highlightSelected(get('selectedTicker'));
 }
 
 // ── Row creation ───────────────────────────────────────────────
 
 function _createRow(row) {
   const el = document.createElement('div');
-  el.className = `ticker-row${row.mentioned ? ' row-mentioned' : ''}`;
+  el.className = 'ticker-row';
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
@@ -288,11 +285,10 @@ function _setText(el, text) {
 /** Surgical update — only touch the cells that can change between scans. */
 function _updateRow(el, row) {
   const confluent = (row.confluence?.count ?? 0) >= 2;
-  // classList toggles (not className=) so burst-pulse CSS is not restarted every tick.
+  // classList toggles (not className=) so badge CSS is not restarted every tick.
+  // Row-level highlight classes (mentioned / burst / confluent / selected) are
+  // intentionally not applied — Momentum Stocks uses badges only.
   el.classList.add('ticker-row');
-  el.classList.toggle('row-mentioned', !!row.mentioned);
-  el.classList.toggle('row-burst', !!row.mention_burst);
-  el.classList.toggle('row-confluent', confluent);
 
   // Update mention badge
   const tickerCell = el.querySelector('.cell-ticker');
@@ -696,15 +692,6 @@ async function _sendToMonitors(btn) {
   setTimeout(() => {
     if (btn.isConnected) { btn.textContent = orig; btn.disabled = false; }
   }, 2500);
-}
-
-// ── Selection highlight ────────────────────────────────────────
-
-function _highlightSelected(ticker) {
-  if (!_rowsEl) return;
-  _rowsEl.querySelectorAll('[data-row]').forEach(el => {
-    el.classList.toggle('ticker-row--selected', el.dataset.row === ticker);
-  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────

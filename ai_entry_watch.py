@@ -1228,7 +1228,7 @@ def spread_ok(
     """True if bid/ask spread as % of mid is within *max_spread_pct*.
 
     When *max_spread_pct* <= 0, spread is not enforced (always OK).
-    Missing/invalid bid with enforcement on → not OK.
+    Missing/invalid bid → OK (IEX often omits one side; do not block zone fills).
     """
     try:
         a = float(ask)
@@ -1240,13 +1240,13 @@ def spread_ok(
     if msp <= 0:
         return True
     if bid is None:
-        return False
+        return True
     try:
         b = float(bid)
     except (TypeError, ValueError):
-        return False
+        return True
     if b <= 0 or a < b:
-        return False
+        return True
     mid = (a + b) / 2.0
     if mid <= 0:
         return False
@@ -1486,13 +1486,6 @@ def should_arm_buy(
         return False, "reward_risk"
 
     try:
-        max_spread = float(cfg.get("ai_max_spread_pct", 1.0) or 0.0)
-    except (TypeError, ValueError):
-        max_spread = 1.0
-    if not spread_ok(bid, ask, max_spread):
-        return False, "spread"
-
-    try:
         pad = float(cfg.get("ai_entry_zone_pad_pct", 0.0) or 0.0)
     except (TypeError, ValueError):
         pad = 0.0
@@ -1502,8 +1495,19 @@ def should_arm_buy(
     except (TypeError, ValueError):
         return False, "below_zone"
 
+    # Zone membership is the primary arm signal (matches UI READY). Check it
+    # before spread so a wide IEX quote cannot block a price already in zone.
     if ask_in_zone(a, entry_low, entry_high, pad):
         return True, "zone"
+
+    try:
+        max_spread = float(cfg.get("ai_max_spread_pct", 1.0) or 0.0)
+    except (TypeError, ValueError):
+        max_spread = 1.0
+    # Spread only as a soft pre-filter when still outside the zone (near-touch
+    # paths). Missing bid does not fail — see spread_ok.
+    if not spread_ok(bid, ask, max_spread):
+        return False, "spread"
 
     frac = max(0.0, pad) / 100.0
     high_bound = max(entry_low, entry_high) * (1.0 + frac)
@@ -2012,6 +2016,16 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         if not allow_buys:
             # Structure/zone ready, but no paper entry until RTH (market hours).
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason="not_trading_hours",
+                    ask=ask_f))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": "not_trading_hours",
+                })
             state[sym] = rec
             continue
 
@@ -2021,10 +2035,50 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if duel.duel_enabled(cfg):
                 src_w = rec.get("duel_source") or rec.get("source")
                 if not duel.allow_entry_for_source(cfg, src_w, sym, now=t0):
+                    try:
+                        events.append(cp.log_event(
+                            "watch_skip", symbol=sym, reason="duel_blocked",
+                            ask=ask_f))
+                    except Exception:
+                        events.append({
+                            "kind": "watch_skip",
+                            "symbol": sym,
+                            "reason": "duel_blocked",
+                        })
                     state[sym] = rec
                     continue
         except Exception:
             pass
+
+        # Re-check live ask immediately before place (quotes can move during
+        # gate checks). READY in the UI uses last_ask; only fill if still in zone.
+        try:
+            ask2 = gt._latest_ask(sym)
+            ask2_f = float(ask2) if ask2 is not None else 0.0
+        except Exception:
+            ask2_f = 0.0
+        if ask2_f > 0:
+            ask_f = ask2_f
+            rec["last_ask"] = ask_f
+        try:
+            bid2 = gt._latest_bid(sym)
+            bid2_f = float(bid2) if bid2 is not None else None
+        except Exception:
+            bid2_f = bid_f
+        ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg)
+        if not ok_arm2:
+            try:
+                events.append(cp.log_event(
+                    "watch_skip", symbol=sym, reason=f"recheck_{why2}",
+                    ask=ask_f))
+            except Exception:
+                events.append({
+                    "kind": "watch_skip",
+                    "symbol": sym,
+                    "reason": f"recheck_{why2}",
+                })
+            state[sym] = rec
+            continue
 
         place_decision = _decision_for_place(structure)
         if isinstance(place_decision, dict):
