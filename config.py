@@ -179,7 +179,7 @@ DEFAULT_CONFIG = {
     # At RTH open: flatten everything once before any new paper entries.
     "ai_sod_liquidate_enabled":    True,
     # Daily A vs X duel: dual trial → R score → winner-only chance 3.
-    "ai_duel_enabled":             True,
+    "ai_duel_enabled":             False,
     # Force-flat dual legs this many minutes before the next research slot.
     "ai_duel_close_before_research_min": 10,
     # Optional override for final dual cut; empty → derive from research times − lead.

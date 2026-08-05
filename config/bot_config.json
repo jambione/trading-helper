@@ -183,7 +183,7 @@
   "ai_eod_liquidate_enabled": true,
   "ai_eod_liquidate_time": "15:50",
   "ai_sod_liquidate_enabled": true,
-  "ai_duel_enabled": true,
+  "ai_duel_enabled": false,
   "ai_duel_close_before_research_min": 10,
   "ai_duel_trial_end_time": "",
   "ai_duel_chance3_time": "14:30",
