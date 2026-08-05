@@ -778,36 +778,35 @@ def test_poll_once_gate_error_fail_closed_no_place(tmp_path, monkeypatch):
 def test_synth_offset_zone_from_price():
     import ai_entry_watch as ew
     s = ew.build_offset_zone_structure(100.0, {
-        "ai_watch_zone_offset_pct": 2.0,
-        "ai_watch_zone_width_pct": 1.0,
+        "ai_watch_zone_offset_pct": 5.0,
+        "ai_watch_zone_width_pct": 2.0,
         "ai_watch_synth_stop_pct": 2.0,
         "ai_watch_synth_rr": 3.0,
     })
     assert s["wait_kind"] == "wait_for_zone"
-    assert abs(s["entry_high"] - 98.0) < 0.02  # 2% under 100
+    assert abs(s["entry_high"] - 95.0) < 0.02  # 5% under 100
     assert s["entry_low"] < s["entry_high"]
     assert s["stop_price"] < s["entry_low"]
     assert s["target_1"] > s["entry_high"]
     assert s["synthetic"] is True
     rec = {"symbol": "X", "source": "trending", "status": "watching",
            "structure": {"wait_kind": "hard_no", "entry_low": 0, "entry_high": 0}}
-    ev = ew.ensure_offset_zone_if_needed(
-        rec, 50.0,
-        {"ai_watch_synth_zone_enabled": True, "ai_watch_zone_offset_pct": 1.5,
-         "ai_watch_zone_width_pct": 1.0, "ai_watch_synth_stop_pct": 2.0,
-         "ai_watch_synth_rr": 3.0},
-        now=1.0,
-    )
+    cfg = {
+        "ai_watch_synth_zone_enabled": True, "ai_watch_zone_offset_pct": 5.0,
+        "ai_watch_zone_width_pct": 2.0, "ai_watch_synth_stop_pct": 2.0,
+        "ai_watch_synth_rr": 3.0, "ai_watch_synth_reanchor_pct": 0.5,
+    }
+    ev = ew.ensure_offset_zone_if_needed(rec, 50.0, cfg, now=1.0)
     assert ev is not None
     assert rec["structure"]["wait_kind"] == "wait_for_zone"
-    # second call keeps frozen zone
+    # Still near zone top → keep frozen zone
     hi = rec["structure"]["entry_high"]
-    ev2 = ew.ensure_offset_zone_if_needed(
-        rec, 60.0,
-        {"ai_watch_synth_zone_enabled": True, "ai_watch_zone_offset_pct": 1.5,
-         "ai_watch_zone_width_pct": 1.0, "ai_watch_synth_stop_pct": 2.0,
-         "ai_watch_synth_rr": 3.0},
-        now=2.0,
-    )
+    mid = (float(rec["structure"]["entry_low"]) + float(hi)) / 2.0
+    ev2 = ew.ensure_offset_zone_if_needed(rec, mid, cfg, now=2.0)
     assert ev2 is None
     assert rec["structure"]["entry_high"] == hi
+    # Price runs well above zone top → re-anchor from new last
+    ev3 = ew.ensure_offset_zone_if_needed(rec, 60.0, cfg, now=3.0)
+    assert ev3 is not None
+    assert ev3.get("reason") == "reanchor_from_last"
+    assert abs(float(rec["structure"]["entry_high"]) - 57.0) < 0.05  # 5% under 60

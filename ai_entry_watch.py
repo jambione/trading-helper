@@ -1282,8 +1282,8 @@ def build_offset_zone_structure(
     ``wait_for_zone`` + mechanical sizing still work.
 
     Defaults (overridable in bot_config):
-      ai_watch_zone_offset_pct  — % below last to set buy-zone *upper* (1.5)
-      ai_watch_zone_width_pct   — zone depth below that upper (1.0)
+      ai_watch_zone_offset_pct  — % below last to set buy-zone *upper* (5.0)
+      ai_watch_zone_width_pct   — zone depth below that upper (2.0)
       ai_watch_synth_stop_pct   — stop distance below entry_low (2.0)
       ai_watch_synth_rr         — reward:risk to target_1 (3.0)
     """
@@ -1311,8 +1311,8 @@ def build_offset_zone_structure(
         except (TypeError, ValueError):
             return default
 
-    offset = _pct("ai_watch_zone_offset_pct", 1.5) / 100.0
-    width = _pct("ai_watch_zone_width_pct", 1.0) / 100.0
+    offset = _pct("ai_watch_zone_offset_pct", 5.0) / 100.0
+    width = _pct("ai_watch_zone_width_pct", 2.0) / 100.0
     stop_pct = _pct("ai_watch_synth_stop_pct", 2.0) / 100.0
     try:
         rr = float(cfg.get("ai_watch_synth_rr", 3.0) or 3.0)
@@ -1400,14 +1400,34 @@ def ensure_offset_zone_if_needed(
         return None
 
     structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
-    # Keep a good existing zone; only fill gaps / replace hard_no / empty levels.
+    # Keep a good *model* zone; only fill gaps / replace hard_no / empty levels.
     if _structure_usable(structure) and not structure.get("synthetic"):
         return None
+
+    reanchor = False
     if _structure_usable(structure) and structure.get("synthetic"):
-        # Already have a frozen synth zone — leave it (wait for pullback).
-        return None
+        # Frozen synth zone: re-anchor when last has run *above* the zone top
+        # so we wait for a pullback from current levels (e.g. ZETA stuck at $24
+        # while printing $28). Below/in zone: keep waiting for the existing band.
+        try:
+            hi = float(structure.get("entry_high") or 0)
+        except (TypeError, ValueError):
+            hi = 0.0
+        try:
+            re_pct = max(
+                0.0,
+                float(cfg.get("ai_watch_synth_reanchor_pct", 0.5) or 0.5),
+            ) / 100.0
+        except (TypeError, ValueError):
+            re_pct = 0.005
+        if hi > 0 and ask_f > hi * (1.0 + re_pct):
+            reanchor = True
+        else:
+            return None
 
     reason = str(rec.get("reason") or rec.get("source") or "")
+    if reanchor:
+        reason = (reason + " · reanchor").strip(" ·")
     synth = build_offset_zone_structure(ask_f, cfg, reason=reason)
     rec["structure"] = synth
     rec["structure_ts"] = float(now)
@@ -1421,7 +1441,7 @@ def ensure_offset_zone_if_needed(
         "stop_price": synth.get("stop_price"),
         "target_1": synth.get("target_1"),
         "anchor": synth.get("anchor_price"),
-        "reason": "offset_from_last",
+        "reason": "reanchor_from_last" if reanchor else "offset_from_last",
     }
 
 
@@ -1808,9 +1828,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
 
-        # Mom/ST: prefer a mechanical pullback zone when model has no usable zone
-        # (missing levels / hard_no). Do this before invalidate so we can still trade.
-        if ask_f > 0 and _desk_source(rec) and not _structure_usable(structure):
+        # Mom/ST: attach or re-anchor a mechanical pullback zone (missing levels,
+        # hard_no, or price has run above a frozen synth top). Before invalidate.
+        if ask_f > 0 and _desk_source(rec):
             sev = ensure_offset_zone_if_needed(rec, ask_f, cfg, t0)
             if sev:
                 events.append(sev)
@@ -1821,6 +1841,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                         entry_low=sev.get("entry_low"),
                         entry_high=sev.get("entry_high"),
                         anchor=sev.get("anchor"),
+                        reason=sev.get("reason"),
                     )
                 except Exception:
                     pass

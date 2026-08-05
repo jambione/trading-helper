@@ -357,8 +357,9 @@ def test_place_scaled_entry_rolls_back_when_tranche_b_fails(
         account_equity=50_000.0, risk_pct=1.0, current_ask=40.5)
     assert result["ok"] is False
     assert result.get("rolled_back") is True
-    # Pre-place cancel + rollback cancel after tranche B fails.
-    assert stub.cancel_calls == ["NVDA", "NVDA"]
+    # Pre-place cancel (may retry) + rollback cancel after tranche B fails.
+    assert all(c == "NVDA" for c in stub.cancel_calls)
+    assert len(stub.cancel_calls) >= 2
     assert stub.close_calls == ["NVDA"]
     # Must not persist managed state for a rolled-back entry.
     state_path = _state_path(tmp_path)

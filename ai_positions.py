@@ -639,11 +639,21 @@ def place_scaled_entry(
         return {"ok": False, "error": err}
 
     # Clear leftover STOP/limit sells (failed prior attempts, orphaned legs)
-    # so Alpaca does not reject the new BUY as a wash trade.
-    try:
-        alpaca_trader.cancel_open_orders(ticker)
-    except Exception as e:  # noqa: BLE001
-        log_event("entry_pre_cancel_warn", symbol=ticker, reason=str(e)[:200])
+    # so Alpaca does not reject the new BUY as a wash trade. Cancel is async —
+    # wait and re-cancel so pending_cancel legs are gone before we submit.
+    def _clear_open(ticker_s: str) -> None:
+        for delay in (0.0, 0.35, 0.7):
+            if delay:
+                time.sleep(delay)
+            try:
+                alpaca_trader.cancel_open_orders(ticker_s)
+            except Exception as e:  # noqa: BLE001
+                log_event(
+                    "entry_pre_cancel_warn", symbol=ticker_s,
+                    reason=str(e)[:200],
+                )
+
+    _clear_open(ticker)
 
     # Size against the price the order will actually fill at, not the zone
     # bound — current_ask is already validated to fall inside that zone.
@@ -655,19 +665,42 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
 
-    qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
-    qty_b = total_qty - qty_a
+    # One OTOCO bracket for full size. Dual market buys (scale-out A+B) race
+    # Alpaca wash-trade checks when stop/TP legs from A are still open.
+    # Synthetic / desk zones and any decision with scale_out disabled use this
+    # path; research can still request a split via scale_out_pct when needed —
+    # but default to single bracket for reliability when filling READY names.
+    use_single = bool(decision.get("synthetic")) or scale_out_pct >= 99.0
+    if use_single:
+        qty_a = int(total_qty)
+        qty_b = 0
+    else:
+        qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
+        qty_b = total_qty - qty_a
 
-    result_a = alpaca_trader.buy_bracket_exact(
-        ticker, qty_a, stop_price=stop_price, target_price=target_1)
+    def _place_a():
+        return alpaca_trader.buy_bracket_exact(
+            ticker, qty_a, stop_price=stop_price, target_price=target_1)
+
+    result_a = _place_a()
     if not result_a.get("ok"):
         err = str(result_a.get("note") or result_a.get("error")
                   or result_a.get("status") or "tranche_a_failed")
-        log_event("entry_fail", symbol=ticker, reason=err, leg="A")
-        return {
-            "ok": False, "error": err, "ticker": ticker,
-            "tranche_a": result_a, "tranche_b": None,
-        }
+        # Wash-trade / leftover legs: clear again and retry once.
+        if "wash" in err.lower() or "40310000" in err:
+            _clear_open(ticker)
+            result_a = _place_a()
+            if result_a.get("ok"):
+                err = ""
+            else:
+                err = str(result_a.get("note") or result_a.get("error")
+                          or result_a.get("status") or "tranche_a_failed")
+        if err:
+            log_event("entry_fail", symbol=ticker, reason=err, leg="A")
+            return {
+                "ok": False, "error": err, "ticker": ticker,
+                "tranche_a": result_a, "tranche_b": None,
+            }
 
     if qty_b > 0:
         result_b = alpaca_trader.buy_bracket_exact(
