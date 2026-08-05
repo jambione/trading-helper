@@ -715,19 +715,26 @@ def test_is_ai_positions_wire_rejects_managed_map():
 # ── mechanical position management (no LLM) ─────────────────────────────────
 
 class _StubBrokerManage:
-    def __init__(self, order_status="new", position_open=True, current_price=44.0):
+    def __init__(self, order_status="new", position_open=True, current_price=44.0,
+                 fills=None):
         self.order_status = order_status
         self.position_open = position_open
         self.current_price = current_price
         self.replace_calls: list[dict] = []
         self.closed: list[str] = []
         self.canceled: list[str] = []
+        # order_id -> filled_avg_price. Outcomes are priced off real fills, so
+        # the stub has to be able to answer "what did this leg fill at?".
+        self.fills = dict(fills or {})
 
     def get_positions_detail(self):
         return {"NVDA": {"current": self.current_price}} if self.position_open else {}
 
     def get_order(self, order_id):
-        return {"status": self.order_status}
+        out = {"status": self.order_status}
+        if order_id in self.fills:
+            out["filled_avg_price"] = self.fills[order_id]
+        return out
 
     def replace_stop(self, ticker, old_stop_order_id, *, trail_percent=None,
                      stop_price=None):
@@ -751,7 +758,9 @@ def _seed_state(tmp_path, monkeypatch, **fields):
     base = {
         "qty_a": 100, "qty_b": 150, "total_qty": 250,
         "entry_price": 40.5,
-        "tranche_a_order_id": "order_a", "tranche_b_stop_order_id": "stop_b",
+        "tranche_a_order_id": "order_a",
+        "tranche_a_target_order_id": "target_a",
+        "tranche_b_stop_order_id": "stop_b",
         "stop_price": 38.0, "target_1": 46.0, "trail_pct": 8.0,
         "time_stop_days": 10, "entry_time": 1_000_000.0,
         "tranche_a_filled": False, "breakeven_done": False,
@@ -766,6 +775,7 @@ def _seed_state(tmp_path, monkeypatch, **fields):
 def test_tranche_a_fill_replaces_tranche_b_stop_with_trailing_stop(
         tmp_path, monkeypatch):
     _seed_state(tmp_path, monkeypatch)
+    # "filled" here must mean the TAKE-PROFIT leg filled, not the parent buy.
     stub = _StubBrokerManage(order_status="filled")
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
@@ -799,7 +809,10 @@ def test_time_stop_marks_closing_then_records_outcome_once_flat(
     fill, so the position stays tracked (marked closing) until a later tick
     observes it's actually gone, at which point the outcome is recorded."""
     _seed_state(tmp_path, monkeypatch, time_stop_days=10, entry_time=1_000_000.0)
-    stub = _StubBrokerManage(order_status="new", position_open=True)
+    # close_out returns order_id "close_1"; that leg's fill is what prices the
+    # outcome, so the exit is traceable even though no protective leg fired.
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             fills={"close_1": 43.75})
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
     # 11 days later — deadline passed with target 1 never hit.
@@ -822,11 +835,11 @@ def test_time_stop_marks_closing_then_records_outcome_once_flat(
     assert json.loads(_state_path(tmp_path).read_text()) == {}
 
     outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
-    # Exit priced at the last observed mark (44.0, from the first tick).
+    # Exit priced at the closing order's actual fill, not the last polled mark.
     assert outcome["close_reason"] == "time_stop"
-    assert outcome["exit_price_approx"] == 44.0
-    assert outcome["realized_r_multiple"] == (44.0 - 40.5) / (40.5 - 38.0)
-    assert outcome["realized_pl_usd"] == (44.0 - 40.5) * 250
+    assert outcome["exit_price"] == 43.75
+    assert outcome["realized_r_multiple"] == (43.75 - 40.5) / (40.5 - 38.0)
+    assert outcome["realized_pl_usd"] == (43.75 - 40.5) * 250
 
 
 def test_time_stop_does_not_fire_once_target_already_filled(tmp_path, monkeypatch):
@@ -864,14 +877,17 @@ def test_hard_stop_closure_with_no_scale_out_is_labeled_stopped_out(
     thing that can have closed both tranches together is the original stop."""
     _seed_state(tmp_path, monkeypatch, tranche_a_filled=False,
                 last_seen_price=39.0)
-    stub = _StubBrokerManage(position_open=False)
+    # The stop leg filled at 37.90 — slightly through the 38.00 trigger, which
+    # is exactly the slippage the old last_seen_price estimate papered over.
+    stub = _StubBrokerManage(position_open=False, fills={"stop_b": 37.90})
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
     events = cp.manage_open_positions(now=1_000_010.0)
     assert events == [{"ticker": "NVDA", "event": "closed",
                        "close_reason": "stopped_out"}]
     outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
-    assert outcome["realized_r_multiple"] < 0  # a loss, priced at the stop
+    assert outcome["exit_price"] == 37.90
+    assert outcome["realized_r_multiple"] < 0  # a loss, priced at the real fill
 
 
 # ── thesis-break review folded into the shared research call ────────────────
@@ -997,3 +1013,28 @@ def test_performance_summary_filters_by_since(tmp_path, monkeypatch):
     summary = cp.performance_summary(since=1_000_000.0)
     assert summary["count"] == 1
     assert summary["avg_r_multiple"] == 2.0
+
+
+def test_parent_buy_fill_does_not_count_as_a_scale_out(tmp_path, monkeypatch):
+    """tranche_a_order_id is the PARENT buy — it fills seconds after entry.
+
+    Keying "did tranche A scale out?" off it made tranche_a_filled True on
+    every position immediately, which labelled every close trailed_out, killed
+    the time stop, and moved a runner's stop to breakeven at entry.
+    """
+    _seed_state(tmp_path, monkeypatch)
+    stub = _StubBrokerManage(order_status="new", position_open=True)
+
+    # Parent buy is filled; the take-profit leg is not.
+    def get_order(order_id):
+        return {"status": "filled" if order_id == "order_a" else "new"}
+
+    stub.get_order = get_order
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+
+    assert events == [], "a filled entry order is not a scale-out"
+    assert stub.replace_calls == [], "runner's stop must not move at entry"
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["tranche_a_filled"] is False

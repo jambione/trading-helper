@@ -472,7 +472,12 @@ def last_reconcile() -> dict[str, Any]:
 def realized_r_today(now: float | None = None) -> float:
     """Sum of realized R multiples for AI outcomes closed today (ET)."""
     now = time.time() if now is None else now
-    day = datetime.fromtimestamp(now, tz=ET).date()
+    try:
+        day = datetime.fromtimestamp(now, tz=ET).date()
+    except (OverflowError, OSError, ValueError):
+        # An unrepresentable clock must not raise: this feeds pre_entry_gate,
+        # and an exception there fails closed and silently halts all trading.
+        day = datetime.fromtimestamp(time.time(), tz=ET).date()
     total = 0.0
     try:
         text = OUTCOMES_PATH.read_text(encoding="utf-8")
@@ -492,7 +497,11 @@ def realized_r_today(now: float | None = None) -> float:
         exit_ts = float(row.get("exit_time") or row.get("ts") or 0)
         if not exit_ts:
             continue
-        if datetime.fromtimestamp(exit_ts, tz=ET).date() != day:
+        try:
+            row_day = datetime.fromtimestamp(exit_ts, tz=ET).date()
+        except (OverflowError, OSError, ValueError):
+            continue  # corrupt row must not take down the gate
+        if row_day != day:
             continue
         total += float(r)
     return total
@@ -665,6 +674,38 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
 
+    # Notional cap. Risk-based sizing says nothing about concentration: a tight
+    # stop implies a huge position, and with no cap five names could add up to
+    # well over 100% of equity. Belt-and-braces now that the synthetic stop is a
+    # fixed 5% of the fill (~20% of equity per name at 1% risk).
+    try:
+        max_pos_pct = float(_entry_cfg().get("ai_max_position_pct", 25.0) or 0.0)
+    except (TypeError, ValueError):
+        max_pos_pct = 25.0
+    if max_pos_pct > 0 and sizing_entry > 0:
+        cap_qty = int((account_equity * max_pos_pct / 100.0) // sizing_entry)
+        if cap_qty < total_qty:
+            log_event(
+                "size_capped", symbol=ticker, risk_qty=total_qty,
+                capped_qty=cap_qty, max_position_pct=max_pos_pct,
+            )
+            total_qty = cap_qty
+        if total_qty <= 0:
+            err = f"position cap {max_pos_pct:g}% of equity rounds to 0 shares"
+            log_event("entry_fail", symbol=ticker, reason=err)
+            return {"ok": False, "error": err}
+
+    # Buying power. Nothing checked this anywhere, so an over-sized order came
+    # back as a raw Alpaca rejection string in the UI's blocker column.
+    bp = _buying_power()
+    if bp is not None and total_qty * sizing_entry > bp:
+        err = (
+            f"insufficient buying power: need ${total_qty * sizing_entry:,.0f}, "
+            f"have ${bp:,.0f}"
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
+
     # One OTOCO bracket for full size. Dual market buys (scale-out A+B) race
     # Alpaca wash-trade checks when stop/TP legs from A are still open.
     # Synthetic / desk zones and any decision with scale_out disabled use this
@@ -740,6 +781,9 @@ def place_scaled_entry(
         "total_qty": total_qty,
         "entry_price": sizing_entry,
         "tranche_a_order_id": result_a.get("buy_order_id"),
+        # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
+        # must key off this; the parent fills at entry.
+        "tranche_a_target_order_id": result_a.get("target_order_id"),
         "tranche_b_order_id": result_b.get("buy_order_id"),
         "tranche_b_stop_order_id": result_b.get("stop_order_id"),
         "stop_price": stop_price,
@@ -865,6 +909,8 @@ def apply_position_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]
             continue  # already exiting (e.g. a time-stop already fired)
         alpaca_trader.cancel_open_orders(sym)
         out = alpaca_trader.close_out(sym)
+        if isinstance(out, dict) and out.get("order_id"):
+            state[sym]["close_order_id"] = str(out["order_id"])
         state[sym]["closing_reason"] = "thesis_break"
         events.append({"ticker": sym, "event": "thesis_break",
                       "reason": r.get("reason"), "ok": bool(out.get("ok"))})
@@ -872,6 +918,69 @@ def apply_position_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]
     if changed:
         _save_state(state)
     return events
+
+
+def _entry_cfg() -> dict:
+    """Live config for placement-time limits ({} if it can't be loaded)."""
+    try:
+        from config import load_config
+        return load_config() or {}
+    except Exception:
+        return {}
+
+
+def _buying_power() -> float | None:
+    """Account buying power, or None when it can't be read (then don't gate)."""
+    try:
+        import ai_trading as gt
+        acct = gt.get_account()
+    except Exception:
+        return None
+    if not isinstance(acct, dict) or not acct.get("ok"):
+        return None
+    try:
+        bp = float(acct.get("buying_power"))
+    except (TypeError, ValueError):
+        return None
+    return bp if bp > 0 else None
+
+
+def _num(v: Any) -> float | None:
+    """float(v) or None — never raises on broker payload junk."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _order_fill_price(order_id: Any) -> float | None:
+    """filled_avg_price for *order_id*, or None when it can't be resolved."""
+    if not order_id:
+        return None
+    try:
+        import alpaca_trader
+        o = alpaca_trader.get_order(str(order_id)) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    for key in ("filled_avg_price", "filled_avg_price_usd", "avg_fill_price"):
+        v = _num(o.get(key))
+        if v and v > 0:
+            return v
+    return None
+
+
+def _exit_fill_price(pos: dict[str, Any]) -> float | None:
+    """Resolve the actual exit fill from whichever protective leg closed it.
+
+    Returns None when it genuinely cannot be resolved — the caller then writes
+    realized_r as null rather than inventing one from the last polled price.
+    """
+    for key in ("tranche_a_target_order_id", "tranche_b_stop_order_id",
+                "close_order_id"):
+        px = _order_fill_price(pos.get(key))
+        if px:
+            return px
+    return None
 
 
 def _infer_close_reason(pos: dict[str, Any]) -> str:
@@ -907,7 +1016,10 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "stop_price": stop_price,
         "target_1": pos.get("target_1"),
         "total_qty": total_qty,
-        "exit_price_approx": exit_price,
+        # None when the exit fill could not be resolved. Downstream must skip
+        # these rather than substitute an estimate — realized_r_today gates new
+        # entries via ai_daily_loss_limit_r.
+        "exit_price": exit_price,
         "realized_r_multiple": realized_r,
         "realized_pl_usd": realized_pl,
         "close_reason": close_reason,
@@ -993,6 +1105,15 @@ def manage_open_positions(
     for ticker, pos in list(state.items()):
         live = detail.get(ticker)
         if live is not None:
+            if not pos.get("entry_confirmed"):
+                # First sighting: replace the submit-time ask with what the
+                # order actually filled at, so realized R is measured against
+                # the real basis rather than an estimate.
+                fill = _order_fill_price(pos.get("tranche_a_order_id"))
+                if fill is None:
+                    fill = _num(live.get("avg_entry_price"))
+                if fill and fill > 0:
+                    pos["entry_price"] = fill
             pos["entry_confirmed"] = True
             pos["last_seen_price"] = live.get("current")
             changed = True
@@ -1020,8 +1141,19 @@ def manage_open_positions(
                 del state[ticker]
                 changed = True
             continue
-        exit_price = pos.get("last_seen_price") or pos.get("entry_price")
+        # Real fill first. last_seen_price is up to one poll stale and is never
+        # the actual exit print, so an outcome built from it is a plausible
+        # wrong number — and realized_r_today feeds the daily-loss gate.
+        exit_price = _exit_fill_price(pos)
         reason = pos.get("closing_reason") or _infer_close_reason(pos)
+        if exit_price is None:
+            # Loud, not silent: the outcome will carry realized_r=None and be
+            # excluded from realized_r_today, so the daily-loss gate is running
+            # on partial data until whatever closed this is made traceable.
+            log_event(
+                "exit_fill_unresolved", symbol=ticker, close_reason=reason,
+                last_seen_price=pos.get("last_seen_price"),
+            )
         _record_outcome(ticker, pos, exit_price, reason, now)
         # Freeze duel R immediately so trial score survives state cleanup.
         try:
@@ -1044,8 +1176,11 @@ def manage_open_positions(
     # Pass 2: only for positions still open — tranche-A fill and time-stop.
     for ticker, pos in list(state.items()):
         # Tranche A fill -> move tranche B's stop to breakeven/trailing.
-        if not pos.get("breakeven_done") and pos.get("tranche_a_order_id"):
-            order = alpaca_trader.get_order(pos["tranche_a_order_id"])
+        # Key off the take-profit leg. Using the parent buy id here meant
+        # tranche_a_filled went True within one 5s tick of every entry.
+        target_oid = pos.get("tranche_a_target_order_id")
+        if not pos.get("breakeven_done") and target_oid:
+            order = alpaca_trader.get_order(target_oid)
             if order and order.get("status") == "filled":
                 pos["tranche_a_filled"] = True
                 if pos.get("qty_b", 0) > 0:
@@ -1074,7 +1209,11 @@ def manage_open_positions(
             age_days = (now - pos.get("entry_time", now)) / 86400.0
             if age_days > days:
                 alpaca_trader.cancel_open_orders(ticker)
-                alpaca_trader.close_out(ticker)
+                # Keep the closing order id so this exit's fill is resolvable —
+                # otherwise the outcome has no price we are willing to trust.
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
                 pos["closing_reason"] = "time_stop"
                 events.append({"ticker": ticker, "event": "time_stop",
                               "age_days": round(age_days, 1)})
