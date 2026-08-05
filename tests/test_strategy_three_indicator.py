@@ -169,3 +169,93 @@ def test_stop_loss_caps_downside():
     for t in stops:
         assert t["pnl_pct"] <= 0
         assert t["pnl_pct"] > -4.0
+
+
+# ── RSI-2 buy/sell levels: dip-then-turn, peak-then-roll ─────────────────────
+
+def test_rsi_dip_and_turn_are_sequential_not_same_bar():
+    """RSI-2 is fast: while it is under 30 it is usually still falling, and once
+    it turns it clears 30 within a bar or two. Requiring "<30 AND rising" on the
+    SAME bar produced 0 buys on this fixture despite 288 bars printing under 30.
+    """
+    import numpy as np
+    p = strat.params(macd_sep_mult=0.4, confirm_window=12, cm_rsi_buy_max=30.0)
+    a = strat.to_arrays(strat.compute_indicators(_frame(_sine()), p))
+
+    rsi = a["cm_rsi"][np.isfinite(a["cm_rsi"])]
+    assert (rsi < 30).sum() > 0, "fixture must actually reach oversold"
+
+    n = len(a["close"])
+    fired = [i for i in range(n - 1) if strat.buy_signal(a, i, p)]
+    assert fired, "a dip below 30 followed by a turn up must be able to buy"
+
+
+def test_published_cm_ok_matches_the_buy_rule():
+    """evaluate_state's cm_ok is what reaches signal_state.json -> /api/state,
+    and the AI watch arms on it. If it drifts from buy_signal's own test the
+    desk buys on a different rule than the strategy is tested against."""
+    p = strat.params(macd_sep_mult=0.4, confirm_window=12, cm_rsi_buy_max=30.0)
+    a = strat.to_arrays(strat.compute_indicators(_frame(_sine()), p))
+    for i in range(30, len(a["close"]) - 1):
+        st = strat.evaluate_state(a, i, p)
+        if st["cm_ok"] and st["pctr_ok"] and st["macd_ok"]:
+            assert strat.buy_signal(a, i, p), f"state says all-ok but no buy at {i}"
+
+
+def test_sell_needs_a_peak_above_the_level_first():
+    """Straight after a buy at RSI<30 the reading is already under 90; a bare
+    'below the level' test would exit on the very next bar."""
+    import numpy as np
+    p = strat.params(exit_signals=("cm",), cm_rsi_sell_min=90.0)
+    n = 20
+
+    never_peaked = {"macd_bear": np.zeros(n, bool),
+                    "cm_rsi": np.linspace(60.0, 40.0, n),   # falling, never >90
+                    "s_percentR": np.full(n, -60.0)}
+    assert strat.sell_signal(never_peaked, 19, p) is False
+
+    # The peak must land INSIDE the confirm_window (the last 8 bars), not
+    # merely somewhere in the array — the window is what sell_signal scans.
+    peaked_then_rolled = {"macd_bear": np.zeros(n, bool),
+                          "cm_rsi": np.linspace(99.0, 91.0, n),  # >90 then down
+                          "s_percentR": np.full(n, -60.0)}
+    assert strat.sell_signal(peaked_then_rolled, 19, p) is True
+
+
+def test_pctr_ok_requires_actual_exhaustion_not_just_a_rise():
+    """It was a bare any(_rising(...)) with no level — an indicator called
+    "exhaustion" that never checked exhaustion, true on ~90% of bars."""
+    import numpy as np
+    p = strat.params()
+    tl, cw = int(p["trend_lookback"]), int(p["confirm_window"])
+    n, i = 20, 19
+    lo = max(tl, i - cw + 1)
+
+    # Rising, but never oversold (hovering mid-range) -> not exhaustion.
+    mid = {"s_percentR": np.linspace(-60.0, -40.0, n)}
+    assert strat._pctr_ok(mid, i, p, lo, tl) is False
+
+    # Reached the oversold band (<= -80) and turning up -> exhaustion.
+    deep = {"s_percentR": np.concatenate([
+        np.full(12, -90.0), np.linspace(-90.0, -70.0, 8)])}
+    assert strat._pctr_ok(deep, i, p, lo, tl) is True
+
+
+def test_the_turn_must_be_current_not_merely_somewhere_in_the_window():
+    """Accepting a rise anywhere in the window made cm_ok+pctr_ok true on
+    67-79% of bars across DKNG/UBER/SNAP/AMD/SOFI. Pinning the turn to bar i
+    brings the pair to ~8%."""
+    import numpy as np
+    p = strat.params()
+    tl, cw = int(p["trend_lookback"]), int(p["confirm_window"])
+    n, i = 20, 19
+    lo = max(tl, i - cw + 1)
+
+    # Dipped below 30, rose early in the window, but is falling again at bar i.
+    rose_then_fell = {"cm_rsi": np.concatenate([
+        np.full(12, 10.0), np.array([20.0, 35.0, 45.0, 40.0, 30.0, 20.0, 15.0, 10.0])])}
+    assert strat._cm_ok(rose_then_fell, i, p, lo, tl) is False
+
+    still_rising = {"cm_rsi": np.concatenate([
+        np.full(12, 10.0), np.linspace(10.0, 45.0, 8)])}
+    assert strat._cm_ok(still_rising, i, p, lo, tl) is True

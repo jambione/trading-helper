@@ -38,10 +38,17 @@ from signals import (
 
 # ── Tunable parameters (all sweepable from the backtest) ──────────────────────
 DEFAULT_PARAMS: dict = {
-    # CM RSI-2
+    # CM RSI-2 (Connors 2-period — fast by design, so it is a FILTER here,
+    # never a standalone trigger: an entry also needs price inside the pullback
+    # zone and %R exhaustion confirming.)
     "cm_rsi_length":   2,
-    "cm_rsi_buy_max":  40.0,    # buy only while CM RSI-2 below this …
-    "cm_rsi_sell_min": 90.0,    # … exit when CM RSI-2 above this and falling
+    "cm_rsi_buy_max":  30.0,    # oversold: dipped below this, then turning up
+    # 90, not 70. RSI-2 sits above 70 on ~34% of bars, so a 70 level marks an
+    # ordinary bounce rather than a stretched tape: measured on 5 sessions of
+    # IEX minute bars across DKNG/UBER/SNAP/AMD/SOFI, a 70-rollover came before
+    # the +7.5% target in 45 of 45 entries. 90 is Connors' own overbought level
+    # (~12% of bars) and is what this started at.
+    "cm_rsi_sell_min": 90.0,    # … reached above this, then rolled over
     # %R Trend Exhaustion
     "rte_threshold":   20,
     "rte_sell_from":  -10.0,    # %R must have been above this (near 0) to call a top
@@ -53,7 +60,13 @@ DEFAULT_PARAMS: dict = {
     "confirm_window":  8,       # bars within which the cross + filters must align
     "trend_lookback":  2,       # bars used to judge "rising" / "falling"
     # Exit
-    "exit_mode": "any",         # "any" = exit on first reversal signal; "all" = require all 3
+    "exit_mode": "any",         # "any" = exit on first reversal signal; "all" = require all
+    # WHICH reversal signals count. MACD is excluded by default: it is the
+    # laggard of the three (see buy_signal), so under exit_mode="any" a lone
+    # bearish cross closed positions that CM RSI-2 and %R both still called
+    # healthy. CM RSI-2 and %R exhaustion are the operator's actual sell
+    # signals. Put "macd" back in this list to restore the old behaviour.
+    "exit_signals": ("cm", "rte"),
 }
 
 # Columns the signal functions read, by their numpy-array key.
@@ -121,19 +134,51 @@ def _ready(a: dict, i: int, keys) -> bool:
 
 # ── Signals ───────────────────────────────────────────────────────────────────
 
+def _cm_ok(a: dict, i: int, p: dict, lo: int, tl: int) -> bool:
+    """CM RSI-2 reached oversold in the window AND is turning up *at bar i*.
+
+    "Rising somewhere in the window" was true ~85% of bars — combined with a
+    dip that also happens constantly on a 2-period RSI, the pair passed on
+    67-79% of all bars and gated nothing. Pinning the turn to the current bar
+    is what makes "trended down below 30, then turned up" mean something.
+    """
+    w = a["cm_rsi"][lo:i + 1]
+    if not np.isfinite(w).any():
+        return False
+    return bool(np.nanmin(w) < p["cm_rsi_buy_max"] and _rising(a["cm_rsi"], i, tl))
+
+
+def _pctr_ok(a: dict, i: int, p: dict, lo: int, tl: int) -> bool:
+    """%R reached the OVERSOLD band in the window AND is turning up at bar i.
+
+    The old test was a bare `any(_rising(...))` with no level at all — an
+    indicator called "exhaustion" that never checked exhaustion, true ~90% of
+    bars. Oversold is %R <= -100 + rte_threshold, the same band
+    compute_percent_r_exhaustion uses.
+    """
+    w = a["s_percentR"][lo:i + 1]
+    if not np.isfinite(w).any():
+        return False
+    oversold = -100.0 + float(p["rte_threshold"])
+    return bool(np.nanmin(w) <= oversold and _rising(a["s_percentR"], i, tl))
+
+
 def buy_signal(a: dict, i: int, p: dict) -> bool:
     """
     True when, evaluated at bar i (which fills at i+1's open):
       • a bullish MACD cross occurred within the last confirm_window bars, the
         MACD line is still above its signal at i, and the histogram is wide
         (|hist| ≥ macd_sep_mult × rolling std), AND
-      • CM RSI-2 was < cm_rsi_buy_max and rising on some bar in the window, AND
-      • %R (fast) was rising toward 0 on some bar in the window.
+      • CM RSI-2 dipped below cm_rsi_buy_max inside the window and is rising
+        AT BAR i (see _cm_ok), AND
+      • %R (fast) reached the oversold band inside the window and is rising
+        AT BAR i (see _pctr_ok).
 
-    The two oscillator conditions are checked across the window — not pinned to
-    bar i — because CM RSI-2 is fast and the MACD cross lags: by the time MACD
-    crosses up, RSI-2 has usually already climbed out of the <40 zone. Requiring
-    same-bar coincidence would essentially never fire. The window is strictly
+    The dip and the turn are sequential, not same-bar: a 2-period RSI is still
+    falling while it is under the level and clears it within a bar or two once
+    it turns, so requiring both on one bar never fires. But the TURN must be
+    current — accepting "rose somewhere in the window" made the pair true on
+    67-79% of all bars, which gates nothing. The window is strictly
     backward-looking, so there is no lookahead.
     """
     cw, tl = int(p["confirm_window"]), int(p["trend_lookback"])
@@ -153,15 +198,19 @@ def buy_signal(a: dict, i: int, p: dict) -> bool:
     if not (sep > 0 and a["macd_hist"][i] >= p["macd_sep_mult"] * sep):
         return False
 
-    # CM RSI-2 low and rising — somewhere in the window
-    cm_ok = any(a["cm_rsi"][j] < p["cm_rsi_buy_max"] and _rising(a["cm_rsi"], j, tl)
-                for j in range(lo, i + 1))
+    # CM RSI-2: reached oversold inside the window, and is turning up.
+    #
+    # The dip and the turn are SEQUENTIAL, not simultaneous. Requiring both on
+    # the same bar is a near-impossible ask of a 2-period RSI: while it is under
+    # the level it is typically still falling, and once it turns it clears the
+    # level within a bar or two. On a sine fixture that same-bar form produced
+    # 0 buys at buy_max=30 despite 288 bars printing under 30.
+    # Mirrors the sell side's "reached above sell_min, then rolled over".
+    cm_ok = _cm_ok(a, i, p, lo, tl)
     if not cm_ok:
         return False
 
-    # %R Trend Exhaustion rising toward 0 — somewhere in the window
-    rte_ok = any(_rising(a["s_percentR"], j, tl) for j in range(lo, i + 1))
-    return rte_ok
+    return _pctr_ok(a, i, p, lo, tl)
 
 
 def sell_signal(a: dict, i: int, p: dict) -> bool:
@@ -179,10 +228,16 @@ def sell_signal(a: dict, i: int, p: dict) -> bool:
 
     macd_down = bool(a["macd_bear"][lo:i + 1].any())
 
-    cm = any(np.isfinite(a["cm_rsi"][j])
-             and a["cm_rsi"][j] > p["cm_rsi_sell_min"]
-             and _falling(a["cm_rsi"], j, tl)
-             for j in range(lo, i + 1))
+    # RSI must have REACHED overbought inside the window and then rolled over —
+    # not merely be below the level. Straight after a buy at RSI<30 the reading
+    # is already under 70, so a bare "below 70" test would exit on the next bar
+    # and the trade could never develop. Same shape as the %R exhaustion exit
+    # below ("must have been above rte_sell_from to call a top").
+    cm_window = a["cm_rsi"][lo:i + 1]
+    cm_max = np.nanmax(cm_window) if np.isfinite(cm_window).any() else np.nan
+    cm = (np.isfinite(cm_max)
+          and cm_max > p["cm_rsi_sell_min"]
+          and any(_falling(a["cm_rsi"], j, tl) for j in range(lo, i + 1)))
 
     window = a["s_percentR"][lo:i + 1]
     window_max = np.nanmax(window) if np.isfinite(window).any() else np.nan
@@ -190,7 +245,13 @@ def sell_signal(a: dict, i: int, p: dict) -> bool:
            and window_max > p["rte_sell_from"]
            and any(_falling(a["s_percentR"], j, tl) for j in range(lo, i + 1)))
 
-    sigs = (macd_down, cm, rte)
+    by_name = {"macd": macd_down, "cm": cm, "rte": rte}
+    wanted = p.get("exit_signals") or ("cm", "rte")
+    if isinstance(wanted, str):                      # env override: "cm,rte"
+        wanted = [s.strip() for s in wanted.split(",") if s.strip()]
+    sigs = [by_name[k] for k in wanted if k in by_name]
+    if not sigs:
+        return False
     return all(sigs) if p["exit_mode"] == "all" else any(sigs)
 
 
@@ -224,16 +285,17 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
     if np.isfinite(cm):
         out["cm_rsi"] = round(float(cm), 1)
     out["cm_rsi_rising"] = _rising(a["cm_rsi"], i, tl)
-    out["cm_ok"] = bool(any(a["cm_rsi"][j] < p["cm_rsi_buy_max"]
-                            and _rising(a["cm_rsi"], j, tl)
-                            for j in range(lo, i + 1)))
+    # Must stay identical to buy_signal's cm_ok — this is the published flag
+    # (signal_state.json -> /api/state) that the AI watch arms on, so any drift
+    # here means the desk buys on a different rule than the strategy tests.
+    out["cm_ok"] = _cm_ok(a, i, p, lo, tl)
 
     # %R Trend Exhaustion: rising toward 0, somewhere in the window
     pr = a["s_percentR"][i]
     if np.isfinite(pr):
         out["pctr"] = round(float(pr), 1)
     out["pctr_rising"] = _rising(a["s_percentR"], i, tl)
-    out["pctr_ok"] = bool(any(_rising(a["s_percentR"], j, tl) for j in range(lo, i + 1)))
+    out["pctr_ok"] = _pctr_ok(a, i, p, lo, tl)
 
     # Fast + slow %R: deep OS band [-100, -75] and falling toward -100
     # (desk FOCUS long cue — not the same as pctr_ok which is "rising toward 0")

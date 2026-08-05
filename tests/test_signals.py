@@ -194,3 +194,56 @@ def test_compute_signals_does_not_mutate_input():
     before = df.copy()
     signals.compute_signals(df, DEFAULT_CFG)
     pd.testing.assert_frame_equal(df, before)
+
+
+# ── exit signal composition ──────────────────────────────────────────────────
+
+def _exit_arrays(*, macd_down, cm_high_falling, pctr_exhausted_falling):
+    """Minimal arrays that switch each reversal condition on/off independently."""
+    import numpy as np
+    n = 20
+    a = {
+        "macd_bear": np.array([macd_down] * n, dtype=bool),
+        "cm_rsi": np.full(n, 95.0 if cm_high_falling else 50.0),
+        "s_percentR": np.full(n, -5.0 if pctr_exhausted_falling else -60.0),
+    }
+    if cm_high_falling:
+        a["cm_rsi"] = np.linspace(99.0, 91.0, n)      # >90 and falling
+    if pctr_exhausted_falling:
+        # Must still be above rte_sell_from (-10) *inside* the 8-bar window and
+        # falling — that is what "pinned near the top, then rolled over" means.
+        a["s_percentR"] = np.linspace(-1.0, -12.0, n)
+    return a
+
+
+def test_macd_alone_no_longer_closes_a_position():
+    """exit_mode="any" over all three let a lone bearish MACD cross exit a trade
+    that CM RSI-2 and %R both still called healthy."""
+    import strategy_three_indicator as s
+
+    p = s.params()
+    a = _exit_arrays(macd_down=True, cm_high_falling=False,
+                     pctr_exhausted_falling=False)
+    assert s.sell_signal(a, 19, p) is False
+
+
+def test_rsi_or_percent_r_each_close_a_position():
+    import strategy_three_indicator as s
+
+    p = s.params()
+    only_rsi = _exit_arrays(macd_down=False, cm_high_falling=True,
+                            pctr_exhausted_falling=False)
+    assert s.sell_signal(only_rsi, 19, p) is True
+
+    only_pctr = _exit_arrays(macd_down=False, cm_high_falling=False,
+                             pctr_exhausted_falling=True)
+    assert s.sell_signal(only_pctr, 19, p) is True
+
+
+def test_macd_can_be_put_back_in_the_exit_set():
+    import strategy_three_indicator as s
+
+    p = s.params(exit_signals=("macd", "cm", "rte"))
+    a = _exit_arrays(macd_down=True, cm_high_falling=False,
+                     pctr_exhausted_falling=False)
+    assert s.sell_signal(a, 19, p) is True
