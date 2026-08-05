@@ -164,10 +164,20 @@ DEFAULT_CONFIG = {
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
     "ai_trade_style": "Moderate position",
-    "ai_min_reward_risk":        3.0,
+    # Must be <= ai_watch_synth_rr or every synthetic zone self-blocks on the
+    # reward_risk gate in should_arm_buy.
+    "ai_min_reward_risk":        1.5,
     "ai_positions_poll_sec":     5.0,
     "ai_prompt_file": "ai_prompt.txt",
     # Safety / desk quality knobs
+    # Protective stop shape. Stop-MARKET guarantees the exit fills; the limit
+    # form can miss entirely on a gap and leave the position naked long.
+    # Concentration cap. Risk sizing alone says nothing about position size:
+    # a tight stop implies a huge notional, and nothing checked buying power.
+    "ai_max_position_pct":        25.0,     # max % of equity in one name
+    "ai_reentry_cooldown_sec":    900.0,    # no re-arm this soon after an exit
+    "ai_stop_use_market":         True,
+    "ai_stop_limit_slip_pct":      1.0,     # only used when the above is False
     "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
     "ai_daily_loss_limit_r":        3.0,    # stop new entries after -NR today
     "ai_max_open_risk_pct":         5.0,    # sum open stop-risk % equity
@@ -206,19 +216,62 @@ DEFAULT_CONFIG = {
     "ai_watch_seed_trending":           True,
     "ai_watch_seed_trending_n":           20,
     # Restrictive AI Watch filters
-    "ai_watch_include_research":      False,  # never put AI Research on the book
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
-    "ai_watch_momentum_require_flag":  True,  # FIRST / NEW / BURST only
-    "ai_watch_min_pct_change":         50.0,  # |day chg %| above this also qualifies
+    "ai_watch_min_pct_change":         50.0,  # day chg % above this also qualifies
     "ai_watch_min_rvol":                3.0,  # relative volume ratio; 3.0 = 300% of avg
+    # ── Strict inclusion (conjunctive — every enabled gate must pass) ────────
+    # The old rules OR'd four criteria and admitted on any one. Three could
+    # never fire (rvol was None on every trending row, nothing hit the 50% bar,
+    # momentum contributed nothing), so the book was selected by Stocktwits
+    # popularity alone and 4 of 6 admitted names were *down* on a long-only desk.
+    "ai_watch_require_uptrend":        True,  # day change must be positive
+    # ADMISSION does NOT require indicators. benchmarks/ab_bench_* (2026-06-12)
+    # found the indicator entry has no standalone edge on this pool — every
+    # config lost money. The catalyst (mention burst / trending heat / big
+    # move) is the edge; the indicators only TIME it. Filtering admission on
+    # timing throws away the edge and re-anchors the zone on every re-admit.
+    "ai_watch_require_indicators":    False,  # admission: catalyst is the edge
+    "ai_watch_min_proximity":            67,  # >=67 = "aligning"; 100 = "buy_zone"
+    # Escalating bar: 67 to sit on the book, 100 (all three indicators) to
+    # actually arm. Re-checked at arm time, not just at admission — a name can
+    # fade between joining the book and price reaching the zone.
+    # ARMING does require them — that is where timing is the actual question.
+    "ai_watch_arm_require_indicators": True,
+    # Named conditions, not a count. proximity_pct only says "how many of the
+    # three hold", so a count of 100 silently demanded MACD too — and MACD is
+    # the laggard (see strategy_three_indicator.buy_signal). CM RSI-2 and %R
+    # exhaustion are the actual buy signals.
+    "ai_watch_arm_require": ["cm_ok", "pctr_ok"],
+    "ai_watch_arm_min_proximity":         0,  # 0 = off; named flags are the test
+    "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
+    "ai_watch_min_price":               1.0,  # no sub-$1 names
+    "ai_watch_admit_ticks":               2,  # consecutive qualifying polls to admit
+    # ── Real-time tape pre-filter ───────────────────────────────────────────
+    # The Finnhub WebSocket price (via the dashboard's ticker rows) is used to
+    # SKIP the per-symbol Alpaca quote when price is nowhere near the zone.
+    # It is never used to arm: the socket carries trades, not quotes, and a
+    # print at the bid would arm on a price the order cannot actually get.
+    # Max symbols we push into the signal engine for indicator computation.
+    # Finnhub's free tier allows ~50 concurrent WS subscriptions desk-wide and
+    # nothing enforces it, so leave headroom for the engine's own tickers.
+    "ai_watch_engine_push_max":          24,
+    "ai_watch_stream_enabled":         True,
+    "ai_watch_stream_max_age_sec":     10.0,  # older than this → fall back to REST
+    "ai_watch_stream_skip_margin_pct":  1.0,  # only skip when this far outside
     # Synthetic pullback zone when model has no levels (Mom/ST).
     "ai_watch_synth_zone_enabled":     True,
-    "ai_watch_zone_offset_pct":        5.0,  # entry_high = last * (1 - offset/100)
+    # 2.0 (not 5.0): at a 5% offset the zone is built 5% under the print and
+    # re-anchors up on every tick, so the ask sits a permanent +5.26% above the
+    # zone top (1/0.95-1) and only a 5% break from the high-water mark ever
+    # fills. above_zone was 51% of all skips. 2% fills on a routine pullback.
+    "ai_watch_zone_offset_pct":        2.0,  # entry_high = last * (1 - offset/100)
     "ai_watch_zone_width_pct":         2.0,  # zone depth below entry_high
-    "ai_watch_synth_stop_pct":         2.0,  # stop under entry_low
-    "ai_watch_synth_rr":               3.0,  # target at this R multiple
+    # Measured off the *fill*, not entry_low — see _decision_for_place.
+    "ai_watch_synth_stop_pct":         5.0,  # stop under the fill price
+    "ai_watch_synth_rr":               1.5,  # target at this R multiple
     # Re-anchor frozen synth zone when last is this far above entry_high (%).
-    "ai_watch_synth_reanchor_pct":     0.5,
+    # 0.0 = track the real-time price every poll (no deadband).
+    "ai_watch_synth_reanchor_pct":     0.0,
 
     # Anthropic (Claude) research source — provider-specific
     "claude_research_enabled":   False,
@@ -292,6 +345,92 @@ DEFAULT_CONFIG = {
     "stocktwits_max_price":      35.0,    # hide names at/above this last ($)
     "trending_max_price":        35.0,    # alias used by older bot_config keys
 }
+
+def validate_ai_config(cfg: dict) -> list[str]:
+    """Return human-readable problems with the AI desk's settings.
+
+    Every rule here corresponds to a combination that has actually shipped and
+    silently misbehaved — a knob that reads fine on its own but contradicts
+    another one. Callers surface these as operator warnings rather than
+    raising, so a bad edit degrades to a visible complaint, not a dead desk.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out: list[str] = []
+
+    def _f(key, default=0.0):
+        try:
+            return float(cfg.get(key, default) or 0.0)
+        except (TypeError, ValueError):
+            return float(default)
+
+    min_rr = _f("ai_min_reward_risk", 1.5)
+    synth_rr = _f("ai_watch_synth_rr", 1.5)
+    if synth_rr > 0 and min_rr > synth_rr:
+        out.append(
+            f"ai_min_reward_risk ({min_rr:g}) > ai_watch_synth_rr ({synth_rr:g}) — "
+            "every synthetic zone will self-block on the reward_risk gate"
+        )
+
+    offset = _f("ai_watch_zone_offset_pct", 2.0)
+    reanchor = _f("ai_watch_synth_reanchor_pct", 0.0)
+    if offset > 0 and reanchor >= offset:
+        out.append(
+            f"ai_watch_synth_reanchor_pct ({reanchor:g}) >= "
+            f"ai_watch_zone_offset_pct ({offset:g}) — the zone can never re-anchor"
+        )
+
+    stop_pct = _f("ai_watch_synth_stop_pct", 5.0)
+    risk_pct = _f("ai_risk_pct", 1.0)
+    max_pos = int(cfg.get("ai_max_positions", 5) or 0)
+    if stop_pct > 0 and risk_pct > 0 and max_pos > 0:
+        per_pos = risk_pct / (stop_pct / 100.0)
+        total = per_pos * max_pos
+        if total > 100.0:
+            out.append(
+                f"ai_risk_pct {risk_pct:g}% with a {stop_pct:g}% stop implies "
+                f"{per_pos:.0f}% of equity per position; {max_pos} positions = "
+                f"{total:.0f}% — over 100% needs margin and orders may be rejected"
+            )
+        cap = _f("ai_max_position_pct", 0.0)
+        if cap > 0 and per_pos > cap:
+            out.append(
+                f"ai_max_position_pct ({cap:g}%) will clamp every entry — risk "
+                f"sizing alone implies {per_pos:.0f}% per position"
+            )
+
+    spread = _f("ai_max_spread_pct", 1.0)
+    if stop_pct > 0 and spread > 0 and stop_pct <= spread:
+        out.append(
+            f"ai_watch_synth_stop_pct ({stop_pct:g}%) <= ai_max_spread_pct "
+            f"({spread:g}%) — the stop sits inside the quoted spread"
+        )
+
+    def _hhmm(key, default):
+        raw = str(cfg.get(key) or default).strip()
+        try:
+            h, m = raw.split(":")
+            return int(h) * 60 + int(m)
+        except Exception:
+            return None
+
+    start = _hhmm("ai_watch_start_time", "09:00")
+    bell = _hhmm("ai_open_bell_time", "09:35")
+    eod = _hhmm("ai_eod_liquidate_time", "15:50")
+    if None not in (start, bell, eod) and not (start <= bell < eod):
+        out.append(
+            "session clock out of order: expected ai_watch_start_time <= "
+            "ai_open_bell_time < ai_eod_liquidate_time"
+        )
+
+    prox = _f("ai_watch_min_proximity", 67)
+    if cfg.get("ai_watch_require_indicators", True) and prox > 100:
+        out.append(
+            f"ai_watch_min_proximity ({prox:g}) exceeds 100 — nothing can ever "
+            "be admitted to the watch book"
+        )
+
+    return out
+
 
 # Keys the dashboard API is allowed to update
 SAFE_CONFIG_KEYS = [
@@ -407,16 +546,32 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_seed_momentum_n",
     "ai_watch_seed_trending",
     "ai_watch_seed_trending_n",
-    "ai_watch_include_research",
     "ai_watch_trending_min_score",
-    "ai_watch_momentum_require_flag",
     "ai_watch_min_pct_change",
     "ai_watch_min_rvol",
     "ai_watch_synth_zone_enabled",
     "ai_watch_zone_offset_pct",
     "ai_watch_zone_width_pct",
     "ai_watch_synth_stop_pct",
+    "ai_watch_synth_reanchor_pct",
     "ai_watch_synth_rr",
+    "ai_watch_require_uptrend",
+    "ai_watch_require_indicators",
+    "ai_watch_min_proximity",
+    "ai_watch_arm_require_indicators",
+    "ai_watch_arm_require",
+    "ai_watch_arm_min_proximity",
+    "ai_watch_min_adx",
+    "ai_watch_min_price",
+    "ai_watch_admit_ticks",
+    "ai_watch_engine_push_max",
+    "ai_watch_stream_enabled",
+    "ai_watch_stream_max_age_sec",
+    "ai_watch_stream_skip_margin_pct",
+    "ai_max_position_pct",
+    "ai_reentry_cooldown_sec",
+    "ai_stop_use_market",
+    "ai_stop_limit_slip_pct",
     "ai_entry_zone_pad_pct",
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",

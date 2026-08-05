@@ -104,6 +104,11 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
         "ai_watch_single_source": False,
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": True,
+        # This test covers mirroring/preservation, not admission.
+        "ai_watch_require_uptrend": False,
+        "ai_watch_require_indicators": False,
+        "ai_watch_admit_ticks": 1,
+        "ai_watch_min_price": 0.0,
     }
     state = ew.rebuild_watch_from_book([], cfg=cfg, now=100.0)
     assert "SOFI" in state and state["SOFI"]["status"] == "watching"
@@ -142,7 +147,10 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
         ],
     )
     state = ew.sync_watch_from_source_panels(
-        {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True},
+        {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True,
+         # Mirroring/preservation test — admission gates covered separately.
+         "ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
+         "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0},
         now=100.0,
     )
     assert "GONE" not in state and "OLD_AI" not in state
@@ -328,6 +336,11 @@ def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
         "ai_watch_require_agreement": False,
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": False,
+        # Seeding/exclusion test — admission gates covered separately.
+        "ai_watch_require_uptrend": False,
+        "ai_watch_require_indicators": False,
+        "ai_watch_admit_ticks": 1,
+        "ai_watch_min_price": 0.0,
     }
     state = ew.rebuild_watch_from_book([], cfg=cfg, now=200.0)
     assert "SOFI" not in state  # research excluded
@@ -516,7 +529,10 @@ def test_should_arm_wait_for_zone(monkeypatch):
             "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
         },
     }
-    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15,
+           "ai_min_reward_risk": 3.0,
+           # zone-membership test; arm-time indicator check has its own tests
+           "ai_watch_arm_require_indicators": False}
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=cfg)
     assert ok and why == "zone"
     ok2, why2 = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=cfg)
@@ -526,7 +542,10 @@ def test_should_arm_wait_for_zone(monkeypatch):
 
 def test_should_arm_rejects_wait_setup_and_hard_no():
     import ai_entry_watch as ew
-    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15,
+           "ai_min_reward_risk": 3.0,
+           # zone-membership test; arm-time indicator check has its own tests
+           "ai_watch_arm_require_indicators": False}
     base = {
         "entry_low": 27.0, "entry_high": 28.5,
         "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
@@ -555,7 +574,10 @@ def test_should_arm_buy_decision_in_zone():
             "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
         },
     }
-    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15,
+           "ai_min_reward_risk": 3.0,
+           # zone-membership test; arm-time indicator check has its own tests
+           "ai_watch_arm_require_indicators": False}
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=cfg)
     assert ok and why == "zone"
 
@@ -571,7 +593,10 @@ def test_should_arm_in_zone_despite_wide_spread():
             "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
         },
     }
-    cfg = {"ai_max_spread_pct": 0.1, "ai_entry_zone_pad_pct": 0.15, "ai_min_reward_risk": 3.0}
+    cfg = {"ai_max_spread_pct": 0.1, "ai_entry_zone_pad_pct": 0.15,
+           "ai_min_reward_risk": 3.0,
+           # spread-vs-zone test; arm-time indicator check has its own tests
+           "ai_watch_arm_require_indicators": False}
     # ~1.8% spread but ask is inside the entry zone → arm.
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.5, cfg=cfg)
     assert ok and why == "zone"
@@ -593,6 +618,10 @@ def _poll_cfg(**overrides):
         # Isolate poll unit tests from live desk heat files.
         "ai_watch_seed_momentum": False,
         "ai_watch_seed_trending": False,
+        # These tests cover zone / gate / ordering mechanics. The arm-time
+        # indicator check is orthogonal and has its own tests below, so leave
+        # it off here rather than threading fake signal state through each.
+        "ai_watch_arm_require_indicators": False,
     }
     cfg.update(overrides)
     return cfg
@@ -846,3 +875,724 @@ def test_synth_offset_zone_from_price():
     assert ev3 is not None
     assert ev3.get("reason") == "reanchor_from_last"
     assert abs(float(rec["structure"]["entry_high"]) - 57.0) < 0.05  # 5% under 60
+
+
+def test_poll_once_resets_the_buy_cap_each_poll(tmp_path, monkeypatch):
+    """ai_max_buys_per_poll is per *poll*, so each poll must start a new budget.
+
+    reset_poll_counters() was only called from the research path, so on the
+    watch path the counter accumulated: after three lifetime buys every later
+    READY name was skipped with "buy_cap" until a research run cleared it.
+    """
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "agreement": True,
+            "reason": "test", "score": 8.0, "structure_ts": 1e12,
+            "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 27.0, "entry_high": 29.0,
+                "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                "scale_out_pct": 40,
+            },
+        }
+    })
+    _patch_trading_ready(monkeypatch, gt)
+    resets = []
+    monkeypatch.setattr(gt, "reset_poll_counters", lambda: resets.append(1))
+    monkeypatch.setattr(
+        cp, "place_scaled_entry",
+        lambda *a, **k: {"ok": True, "stop_price": 25.0, "target_1": 36.0})
+
+    ew.poll_once(cfg=_poll_cfg(), now=1e12 + 10)
+    assert resets, "poll_once must reset the per-poll buy budget"
+
+
+def test_poll_once_does_not_clobber_a_concurrent_sync(tmp_path, monkeypatch):
+    """poll_once writes back only what it touched.
+
+    The 2s book sync and the 20s poll both read-modify-write the book. Blind
+    whole-file writes meant the last writer won, silently reverting the other's
+    work — including status="submitted" back to "watching", which re-armed a
+    symbol that already had a live order.
+    """
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "agreement": True,
+            "reason": "test", "score": 8.0, "structure_ts": 1e12,
+            "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 27.0, "entry_high": 29.0,
+                "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                "scale_out_pct": 40,
+            },
+        }
+    })
+    _patch_trading_ready(monkeypatch, gt)
+
+    # A sync lands mid-poll: adds NVDA, drops nothing.
+    def fake_place(sym, decision, equity, **kw):
+        book = ew.load_watch()
+        book["NVDA"] = {"symbol": "NVDA", "status": "watching", "score": 9.0}
+        ew.save_watch(book)
+        return {"ok": True, "stop_price": 25.0, "target_1": 36.0}
+
+    monkeypatch.setattr(cp, "place_scaled_entry", fake_place)
+    ew.poll_once(cfg=_poll_cfg(), now=1e12 + 10)
+
+    saved = ew.load_watch()
+    assert saved["SMCI"]["status"] in ("submitted", "filled")
+    assert "NVDA" in saved, "poll_once clobbered a symbol added during the poll"
+
+
+def _zone_cfg(**over):
+    cfg = {
+        "ai_watch_synth_zone_enabled": True,
+        "ai_watch_zone_offset_pct": 2.0,
+        "ai_watch_zone_width_pct": 2.0,
+        "ai_watch_synth_stop_pct": 5.0,
+        "ai_watch_synth_rr": 1.5,
+        "ai_watch_synth_reanchor_pct": 0.0,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_synth_zone_sits_2pct_under_the_print(tmp_path, monkeypatch):
+    """At the old 5% offset the ask was a permanent +5.26% above the zone top,
+    so only a 5% break from the high-water mark ever filled — above_zone was
+    51% of every skip logged on 2026-08-04."""
+    import ai_entry_watch as ew
+
+    s = ew.build_offset_zone_structure(100.0, _zone_cfg())
+    assert s["entry_high"] == 98.0                  # 100 * (1 - 2%)
+    assert round(s["entry_low"], 3) == 96.04        # 98 * (1 - 2%)
+    # The gap the ask must close is now 2%, not 5.26%.
+    assert round(100.0 / s["entry_high"] - 1.0, 4) == 0.0204
+
+
+def test_synth_reanchor_tracks_price_with_no_deadband(tmp_path, monkeypatch):
+    """Operator report: 'the watchlist does not update current prices'. At the
+    old 0.5% deadband the zone lagged the print; at 0.0 it tracks every poll."""
+    import ai_entry_watch as ew
+
+    cfg = _zone_cfg()
+    rec = {"symbol": "AAA", "source": "trending", "status": "watching"}
+    assert ew.ensure_offset_zone_if_needed(rec, 100.0, cfg, 1000.0) is not None
+    assert rec["structure"]["entry_high"] == 98.0
+
+    # A tick barely above the zone top must re-anchor, not sit there.
+    ev = ew.ensure_offset_zone_if_needed(rec, 98.5, cfg, 1001.0)
+    assert ev is not None and ev["reason"] == "reanchor_from_last"
+    assert rec["structure"]["entry_high"] == round(98.5 * 0.98, 3)
+
+
+def test_synth_zone_applies_to_research_records_too(tmp_path, monkeypatch):
+    """Non-desk records used to be excluded, and the LLM refresh only fired on
+    an *unusable* structure — so a stale research zone was refreshed by neither
+    path. Zero synth_zone events were logged across all of 2026-08-04."""
+    import ai_entry_watch as ew
+
+    cfg = _zone_cfg(ai_structure_ttl_sec=100.0)
+    rec = {
+        "symbol": "HPE", "source": "anthropic", "status": "watching",
+        "structure_ts": 0.0,
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 47.75, "entry_high": 48.85,
+            "stop_price": 45.85, "target_1": 55.8, "reward_risk": 3.1,
+        },
+    }
+    # Stale (ts 0 vs now 5000, ttl 100) and the print has run to 52.85.
+    ev = ew.ensure_offset_zone_if_needed(rec, 52.85, cfg, 5000.0)
+    assert ev is not None, "a stale research zone must be re-anchored"
+    assert rec["structure"]["entry_high"] == round(52.85 * 0.98, 3)
+
+
+def test_place_decision_puts_the_stop_5pct_under_the_actual_fill():
+    """Derived from entry_low, real risk was 2-4% depending on where in the band
+    the fill landed, swinging position size ~1.9x. Keyed to the price paid it is
+    constant, and a 1.5R target is actually 1.5R."""
+    import ai_entry_watch as ew
+
+    structure = {
+        "decision": "WAIT", "wait_kind": "wait_for_zone", "synthetic": True,
+        "entry_low": 8.7514, "entry_high": 8.93,
+        "stop_price": 8.42, "target_1": 9.1, "reward_risk": 1.5,
+    }
+    d = ew._decision_for_place(structure, ask=8.90, cfg=_zone_cfg())
+    assert d["decision"] == "BUY" and d["wait_kind"] is None
+    assert d["stop_price"] == 8.455                     # 8.90 * 0.95
+    assert d["target_1"] == 9.568                       # 8.90 + 1.5 * 0.445
+    # Risk per share is exactly 5% of the fill, so sizing is deterministic.
+    assert round((8.90 - d["stop_price"]) / 8.90, 4) == 0.05
+
+
+def test_place_decision_leaves_model_levels_alone():
+    """Model zones come from real structure, not a percentage — never override."""
+    import ai_entry_watch as ew
+
+    structure = {
+        "decision": "WAIT", "wait_kind": "wait_for_zone",
+        "entry_low": 47.75, "entry_high": 48.85,
+        "stop_price": 45.85, "target_1": 55.8, "reward_risk": 3.1,
+    }
+    d = ew._decision_for_place(structure, ask=48.0, cfg=_zone_cfg())
+    assert d["stop_price"] == 45.85 and d["target_1"] == 55.8
+
+
+def _incl_cfg(**over):
+    cfg = {
+        "ai_watch_require_uptrend": True,
+        "ai_watch_require_indicators": True,
+        "ai_watch_min_proximity": 67,
+        "ai_watch_min_adx": 0.0,
+        "ai_watch_min_price": 1.0,
+        "ai_watch_admit_ticks": 1,
+        "ai_min_dollar_volume": 0.0,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def _bullish(prox=67, sell=False, adx=None):
+    d = {"proximity_pct": prox, "sell_signal": sell, "status": "aligning"}
+    if adx is not None:
+        d["adx"] = adx
+    return d
+
+
+def test_inclusion_rejects_a_name_that_is_down_on_the_day():
+    """Long-only desk. The old rule ranked on abs(pct_change), so on 2026-08-05
+    four of six admitted names were down: DKNG -7.0, UBER -6.9, SNAP -9.1,
+    CIFR -3.4 — all admitted on Stocktwits popularity alone."""
+    import ai_entry_watch as ew
+
+    row = {"symbol": "DKNG", "price": 21.98, "pct_change": -7.04, "score": 14.9}
+    ok, _met, why = ew.passes_inclusion(
+        row, _incl_cfg(), indicators={"DKNG": _bullish()})
+    assert ok is False and why == "not_uptrend"
+
+
+def test_inclusion_rejects_popularity_only():
+    """trending_score is a ranking tiebreak now, never an admission gate."""
+    import ai_entry_watch as ew
+
+    row = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0,
+           "score": 14.9, "criteria": ["score"]}
+    ok, _met, why = ew.passes_inclusion(row, _incl_cfg(), indicators={})
+    assert ok is False and why == "no_indicators", (
+        "a name with no indicator data must be rejected, not admitted")
+
+
+def test_inclusion_requires_bullish_indicator_state():
+    import ai_entry_watch as ew
+
+    row = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0}
+    cfg = _incl_cfg()
+    ok, _m, why = ew.passes_inclusion(
+        row, cfg, indicators={"AAA": _bullish(prox=33)})
+    assert ok is False and why == "proximity_33"
+
+    ok, _m, why = ew.passes_inclusion(
+        row, cfg, indicators={"AAA": _bullish(prox=100, sell=True)})
+    assert ok is False and why == "sell_signal"
+
+    ok, met, why = ew.passes_inclusion(
+        row, cfg, indicators={"AAA": _bullish(prox=100)})
+    assert ok is True and "bullish" in met and "uptrend" in met
+
+
+def test_inclusion_price_and_liquidity_floors():
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_min_dollar_volume=1_000_000.0)
+    ind = {"AAA": _bullish()}
+    sub_dollar = {"symbol": "AAA", "price": 0.75, "pct_change": 5.0}
+    ok, _m, why = ew.passes_inclusion(sub_dollar, cfg, indicators=ind)
+    assert ok is False and why == "below_min_price"
+
+    thin = {"symbol": "AAA", "price": 20.0, "pct_change": 5.0,
+            "dollar_volume": 5_000.0}
+    ok, _m, why = ew.passes_inclusion(thin, cfg, indicators=ind)
+    assert ok is False and why == "thin_dollar_volume"
+
+
+def test_admission_dwell_requires_consecutive_qualifying_polls():
+    """The book is rebuilt every 2s; without dwell a one-tick blip deleted a
+    name and threw away its frozen zone, then re-admitted it at a worse price."""
+    import ai_entry_watch as ew
+
+    ew._admit_ticks.clear()
+    cfg = _incl_cfg(ai_watch_admit_ticks=2)
+    rows = [{"symbol": "AAA", "price": 20.0, "pct_change": 3.0}]
+    ind = {"AAA": _bullish()}
+
+    kept, rejected = ew.apply_inclusion_gate(rows, cfg, indicators=ind)
+    assert kept == [] and rejected[0]["reason"] == "dwell_1/2"
+
+    kept, _ = ew.apply_inclusion_gate(rows, cfg, indicators=ind)
+    assert [r["symbol"] for r in kept] == ["AAA"]
+
+    # A failing poll resets the counter — no partial credit.
+    ew.apply_inclusion_gate(
+        [{"symbol": "AAA", "price": 20.0, "pct_change": -1.0}], cfg,
+        indicators=ind)
+    kept, rejected = ew.apply_inclusion_gate(rows, cfg, indicators=ind)
+    assert kept == [] and rejected[0]["reason"] == "dwell_1/2"
+
+
+def test_inclusion_on_the_real_2026_08_05_trending_payload():
+    """The six names the old OR-rule admitted, with their live numbers. Only the
+    two that were actually up on the day survive the direction gate."""
+    import ai_entry_watch as ew
+
+    ew._admit_ticks.clear()
+    live = [
+        ("DKNG", 21.98, 14.9, -7.04), ("UBER", 67.06, 13.2, -6.85),
+        ("APPS", 12.74, 11.4, 34.10), ("ZETA", 27.06, 11.1, 11.70),
+        ("SNAP", 5.26, 12.0, -9.13), ("CIFR", 19.69, 10.9, -3.40),
+    ]
+    rows = [{"symbol": s, "price": p, "score": sc, "pct_change": ch}
+            for s, p, sc, ch in live]
+    ind = {s: _bullish() for s, _, _, _ in live}
+
+    kept, _ = ew.apply_inclusion_gate(rows, _incl_cfg(), indicators=ind)
+    assert sorted(r["symbol"] for r in kept) == ["APPS", "ZETA"]
+
+
+def test_poll_once_enforces_the_daily_loss_limit(tmp_path, monkeypatch):
+    """pre_entry_gate lived only in the research path, so the daily loss limit,
+    aggregate open-risk cap and already-managed check did not bind on the path
+    that places essentially every live trade."""
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "agreement": True,
+            "reason": "test", "score": 8.0, "structure_ts": 1e12,
+            "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 27.0, "entry_high": 29.0,
+                "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                "scale_out_pct": 40,
+            },
+        }
+    })
+    _patch_trading_ready(monkeypatch, gt)
+    placed = []
+    monkeypatch.setattr(
+        cp, "place_scaled_entry",
+        lambda *a, **k: placed.append(a[0]) or {"ok": True})
+    # Already down 3.5R today, past the 3.0R limit.
+    monkeypatch.setattr(cp, "realized_r_today", lambda now=None: -3.5)
+
+    cfg = dict(_poll_cfg())
+    cfg["ai_daily_loss_limit_r"] = 3.0
+    ew.poll_once(cfg=cfg, now=1e12 + 10)
+
+    assert placed == [], "must not open a new position past the daily loss cap"
+    assert ew.load_watch()["SMCI"]["block_code"] == "daily_loss_limit"
+
+
+def test_poll_once_blocks_re_entry_during_cooldown(tmp_path, monkeypatch):
+    """A stopped-out name must not immediately re-arm inside the same move."""
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "agreement": True,
+            "reason": "test", "score": 8.0, "structure_ts": 1e12,
+            "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 27.0, "entry_high": 29.0,
+                "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                "scale_out_pct": 40,
+            },
+        }
+    })
+    _patch_trading_ready(monkeypatch, gt)
+    placed = []
+    monkeypatch.setattr(
+        cp, "place_scaled_entry",
+        lambda *a, **k: placed.append(a[0]) or {"ok": True})
+    monkeypatch.setattr(ew, "_recent_exit_ts", lambda s: 1e12 - 60)
+
+    cfg = dict(_poll_cfg())
+    cfg["ai_reentry_cooldown_sec"] = 900.0
+    ew.poll_once(cfg=cfg, now=1e12 + 10)
+
+    assert placed == []
+    assert ew.load_watch()["SMCI"]["block_code"] == "reentry_cooldown"
+
+
+def _stream_cfg(**over):
+    cfg = {
+        "ai_watch_stream_enabled": True,
+        "ai_watch_stream_max_age_sec": 10.0,
+        "ai_watch_stream_skip_margin_pct": 1.0,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def _zoned_rec(sym="AAA", lo=27.0, hi=29.0):
+    return {
+        "symbol": sym, "status": "watching",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": lo, "entry_high": hi,
+            "stop_price": 25.0, "target_1": 36.0, "reward_risk": 1.5,
+        },
+    }
+
+
+def _tape(monkeypatch, price, age):
+    import ai_entry_watch as ew
+    monkeypatch.setattr(
+        ew, "_dashboard_tickers",
+        lambda: [{"ticker": "AAA", "price": price, "price_age_sec": age}])
+
+
+def test_stream_skips_the_rest_quote_when_price_is_far_from_the_zone(monkeypatch):
+    """_latest_ask/_latest_bid are a REST round trip each, per symbol, per poll —
+    ~120 calls/min on a full book against a 200/min limit shared with the
+    engine, RS screener and dashboard."""
+    import ai_entry_watch as ew
+
+    _tape(monkeypatch, 40.0, 1.0)                     # way above a 27-29 zone
+    far, px = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
+    assert far is True and px == 40.0
+
+    _tape(monkeypatch, 10.0, 1.0)                     # way below
+    far, _ = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
+    assert far is True
+
+
+def test_stream_never_skips_near_the_zone(monkeypatch):
+    """The socket carries trades, not quotes: a print can land at the bid while
+    the ask is still outside the zone. Anything near the band must take the
+    real quote, or we arm on a price the order cannot get."""
+    import ai_entry_watch as ew
+
+    _tape(monkeypatch, 28.0, 1.0)                     # inside the zone
+    far, _ = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
+    assert far is False
+
+    # Just outside, but inside the 1% skip margin → still fetch the real ask.
+    _tape(monkeypatch, 29.2, 1.0)
+    far, _ = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
+    assert far is False
+
+
+def test_stale_or_unknown_tape_falls_back_to_the_real_quote(monkeypatch):
+    """price_age_sec is the real observation age — price_ts is a write time and
+    always reads fresh, so it must never be used for staleness."""
+    import ai_entry_watch as ew
+
+    _tape(monkeypatch, 40.0, 45.0)                    # far, but 45s old
+    far, _ = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
+    assert far is False
+
+    monkeypatch.setattr(
+        ew, "_dashboard_tickers",
+        lambda: [{"ticker": "AAA", "price": 40.0}])   # no age at all
+    far, _ = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
+    assert far is False
+
+
+def test_no_zone_yet_always_takes_the_real_quote(monkeypatch):
+    """Without a zone there is nothing to compare against — and the ask is what
+    builds the zone in the first place."""
+    import ai_entry_watch as ew
+
+    _tape(monkeypatch, 40.0, 1.0)
+    rec = {"symbol": "AAA", "status": "watching", "structure": None}
+    far, _ = ew.stream_says_far_from_zone(rec, _stream_cfg())
+    assert far is False
+
+
+def test_stream_prefilter_can_be_disabled(monkeypatch):
+    import ai_entry_watch as ew
+
+    _tape(monkeypatch, 40.0, 1.0)
+    far, _ = ew.stream_says_far_from_zone(
+        _zoned_rec(), _stream_cfg(ai_watch_stream_enabled=False))
+    assert far is False
+
+
+def test_poll_once_skips_quotes_but_still_reports_a_blocker(tmp_path, monkeypatch):
+    """A skipped poll must still tell the operator where price is, and must not
+    write a trade print into last_ask (which means 'ask' everywhere else)."""
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    ew.save_watch({
+        "AAA": dict(_zoned_rec(), agreement=True, score=8.0, structure_ts=1e12,
+                    last_ask=28.0),
+    })
+    _patch_trading_ready(monkeypatch, gt)
+    called = []
+    monkeypatch.setattr(gt, "_latest_ask", lambda s: called.append(s) or 28.0)
+    _tape(monkeypatch, 40.0, 1.0)
+
+    ew.poll_once(cfg={**_poll_cfg(), **_stream_cfg()}, now=1e12 + 10)
+
+    assert called == [], "no REST quote should be issued when the tape is far off"
+    rec = ew.load_watch()["AAA"]
+    assert rec["block_code"] == "above_zone"
+    assert rec["last_trade"] == 40.0
+    assert rec["last_ask"] == 28.0, "last_ask must stay an ask, not a trade print"
+
+
+def test_engine_push_respects_the_websocket_subscription_cap(monkeypatch):
+    """Finnhub's free tier allows ~50 concurrent WS subscriptions desk-wide and
+    finnhub_stream.request_subscribe does not enforce it. Overflow symbols get
+    no trades -> no forming bars -> no indicator state -> silently rejected."""
+    import ai_entry_watch as ew
+
+    known = {f"SYM{i}": {"proximity_pct": 67} for i in range(20)}
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: known)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {"ai_watch_engine_push_max": 24})
+
+    pushed = {}
+
+    def fake_urlopen(req, timeout=None):
+        import json as _j
+        pushed["tickers"] = _j.loads(req.data.decode())["tickers"]
+
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    cands = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN",
+             "META", "NFLX", "INTC", "AMD", "SOFI"]
+    out = ew.push_candidates_to_engine(cands)
+    # 20 already known, cap 24 -> only 4 slots left.
+    assert out["pushed"] == 4
+    assert len(pushed["tickers"]) == 4
+
+
+def test_engine_push_stops_entirely_when_the_cap_is_full(monkeypatch):
+    import ai_entry_watch as ew
+
+    known = {f"SYM{i}": {} for i in range(24)}
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: known)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {"ai_watch_engine_push_max": 24})
+
+    def boom(*a, **k):
+        raise AssertionError("must not push past the subscription cap")
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+    out = ew.push_candidates_to_engine(["AAPL", "MSFT"])
+    assert out["pushed"] == 0 and out.get("capped") is True
+
+
+def _armable_rec(cm=True, pctr=True, macd=False, sell=False, with_indicator=True):
+    rec = {
+        "symbol": "AAA", "status": "watching",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 27.0, "entry_high": 28.5,
+            "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        },
+    }
+    if with_indicator:
+        rec["indicator"] = {
+            "cm_ok": cm, "pctr_ok": pctr, "macd_ok": macd,
+            "sell_signal": sell,
+            "proximity_pct": 33 * sum((cm, pctr, macd)),
+        }
+    return rec
+
+
+def _arm_cfg(**over):
+    cfg = {
+        "ai_entry_zone_pad_pct": 0.15,
+        "ai_min_reward_risk": 3.0,
+        "ai_watch_arm_require_indicators": True,
+        "ai_watch_arm_require": ["cm_ok", "pctr_ok"],
+        "ai_watch_arm_min_proximity": 0,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_arm_requires_price_in_zone_AND_the_two_named_indicators():
+    """CM RSI-2 and %R exhaustion are the buy signals. The zone answers "is this
+    a good price"; those two answer "is this a good moment". Both must hold at
+    the same instant — admission only checks indicators once, at the 2s sync."""
+    import ai_entry_watch as ew
+
+    ok, why = ew.should_arm_buy(_armable_rec(), ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert ok and why == "zone"
+
+    for cm, pctr in ((True, False), (False, True), (False, False)):
+        ok, why = ew.should_arm_buy(
+            _armable_rec(cm=cm, pctr=pctr), ask=28.0, bid=27.9, cfg=_arm_cfg())
+        assert not ok and why == "indicators_faded", (cm, pctr)
+
+    ok, why = ew.should_arm_buy(
+        _armable_rec(sell=True), ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert not ok and why == "sell_signal"
+
+    # Perfect indicators at the wrong price is still not an entry.
+    ok, why = ew.should_arm_buy(_armable_rec(), ask=32.0, bid=31.9, cfg=_arm_cfg())
+    assert not ok and why == "above_zone"
+
+
+def test_macd_does_not_block_the_entry():
+    """MACD is the laggard by design — buy_signal's docstring notes that by the
+    time it crosses, CM RSI-2 has usually left the <40 zone. Requiring it (which
+    a proximity==100 count silently did) waits out the move."""
+    import ai_entry_watch as ew
+
+    rec = _armable_rec(cm=True, pctr=True, macd=False)
+    assert rec["indicator"]["proximity_pct"] == 66      # would fail a 100 count
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert ok and why == "zone"
+
+
+def test_arm_rejects_when_indicator_state_is_missing():
+    """Absence is not a pass — a name the engine has no reading for must not arm
+    on price alone."""
+    import ai_entry_watch as ew
+
+    ok, why = ew.should_arm_buy(
+        _armable_rec(with_indicator=False), ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert not ok and why == "no_indicators"
+
+
+def test_arm_require_list_is_configurable():
+    """Putting macd_ok back in the list restores the old all-three behaviour."""
+    import ai_entry_watch as ew
+
+    cfg = _arm_cfg(ai_watch_arm_require=["cm_ok", "pctr_ok", "macd_ok"])
+    ok, why = ew.should_arm_buy(_armable_rec(macd=False), ask=28.0, bid=27.9, cfg=cfg)
+    assert not ok and why == "indicators_faded"
+    ok, _ = ew.should_arm_buy(_armable_rec(macd=True), ask=28.0, bid=27.9, cfg=cfg)
+    assert ok
+
+
+def test_ready_is_false_when_the_poller_recorded_a_blocker():
+    """READY must reflect the poller's verdict, not just price-vs-zone.
+
+    Two ways they diverge: the stream pre-filter skips the REST quote and leaves
+    last_ask stale (a stale in-zone ask would read READY while the tape is far
+    away), and portfolio gates block names whose price genuinely is in the zone.
+    Either would show READY for something that will never fill.
+    """
+    import ai_entry_watch as ew
+
+    base = {
+        "symbol": "AAA", "status": "watching", "score": 8.0, "last_ask": 28.0,
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 27.0, "entry_high": 29.0,
+            "stop_price": 25.0, "target_1": 33.0, "reward_risk": 1.5,
+        },
+    }
+    clean = ew.public_snapshot(state={"AAA": dict(base)})[0]
+    assert clean["in_zone"] is True and clean["ready"] is True
+
+    # Same in-zone last_ask, but the poll refused for a portfolio reason.
+    blocked = dict(base, block_code="daily_loss_limit",
+                   block_reason="day loss cap")
+    row = ew.public_snapshot(state={"AAA": blocked})[0]
+    assert row["in_zone"] is True, "price really is in the zone"
+    assert row["ready"] is False, "but the poller will not buy it"
+
+    # Stream pre-filter case: tape is far off, last_ask left stale in-zone.
+    stale = dict(base, block_code="above_zone", block_reason="above zone")
+    assert ew.public_snapshot(state={"AAA": stale})[0]["ready"] is False
+
+
+def test_engine_push_is_debounced_between_engine_scans(monkeypatch):
+    """A pushed symbol does not appear in the indicator map until the engine's
+    next scan (60s), so without a debounce the 2s book sync re-POSTs it ~30x."""
+    import ai_entry_watch as ew
+
+    ew._pushed_at.clear()
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(
+        ew, "_push_cfg",
+        lambda: {"ai_watch_engine_push_max": 24, "scan_interval_sec": 60})
+
+    posts = []
+
+    def fake_urlopen(req, timeout=None):
+        posts.append(1)
+
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    first = ew.push_candidates_to_engine(["AAPL"])
+    assert first["pushed"] == 1 and len(posts) == 1
+
+    # Engine still has not computed it — must not re-POST.
+    for _ in range(10):
+        again = ew.push_candidates_to_engine(["AAPL"])
+        assert again["pushed"] == 0 and again.get("debounced") is True
+    assert len(posts) == 1, "re-POSTed a symbol still inside the debounce hold"
+
+
+def test_no_dead_ai_knobs_are_dashboard_editable():
+    """A key in SAFE_CONFIG_KEYS that nothing reads is worse than no key: the
+    operator edits it, the UI accepts it, and nothing changes. Several shipped
+    that way (ai_watch_include_research and ai_watch_momentum_require_flag were
+    both hardcoded in sync_watch_from_source_panels; ai_trade_amount and
+    ai_quote_poll existed only in config.py).
+    """
+    from pathlib import Path
+    from config import SAFE_CONFIG_KEYS
+
+    root = Path(__file__).resolve().parent.parent
+    # One pass over the tree — grepping per key made the suite 9x slower.
+    blob = []
+    for f in root.rglob("*.py"):
+        parts = set(f.parts)
+        if parts & {"tests", ".worktrees", ".venv", "node_modules"}:
+            continue
+        if f.name == "config.py":
+            continue
+        try:
+            blob.append(f.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
+    haystack = "\n".join(blob)
+
+    dead = [k for k in SAFE_CONFIG_KEYS
+            if k.startswith(("ai_", "claude_", "grok_")) and k not in haystack]
+    assert not dead, f"dashboard-editable keys nothing reads: {dead}"

@@ -310,6 +310,24 @@ def normalize_source(source: str | None, backend: str | None) -> str:
     return SOURCE_ANTHROPIC
 
 
+def _watch_source_error() -> str:
+    """Last candidate-feed fetch error ('' when healthy)."""
+    try:
+        import ai_entry_watch as ew
+        return ew.dashboard_error()
+    except Exception:
+        return ""
+
+
+def _watch_rejected(limit: int = 12) -> list[dict]:
+    """Names the inclusion gate turned away this sync, with the reason."""
+    try:
+        import ai_entry_watch as ew
+        return ew.last_rejected()[:limit]
+    except Exception:
+        return []
+
+
 def _positions_payload(
     mode: str,
     now: float,
@@ -392,6 +410,15 @@ def _positions_payload(
         warnings.append(
             "unconfirmed_entries:" + ",".join(reconcile["unconfirmed"][:8])
         )
+    # Contradictory settings surface here rather than silently misbehaving —
+    # e.g. ai_min_reward_risk above ai_watch_synth_rr makes every synthetic
+    # zone self-block, which looks identical to "nothing is ready".
+    try:
+        from config import load_config, validate_ai_config
+        for problem in validate_ai_config(load_config()):
+            warnings.append("config:" + problem)
+    except Exception:
+        pass
 
     entry_watch: list = []
     entry_book: list = []
@@ -478,6 +505,12 @@ def _positions_payload(
             "day_pl": day_pl,
             "day_pl_pct": day_pl_pct,
             "equity": (account or {}).get("equity") if isinstance(account, dict) else None,
+            # Why the book looks the way it does. Without these an empty book
+            # from a dead dashboard is indistinguishable from "nothing
+            # qualified", which is exactly how momentum silently contributed
+            # zero candidates for a whole session.
+            "source_error": _watch_source_error(),
+            "rejected": _watch_rejected(),
         },
         "duel": _duel_public(),
     }

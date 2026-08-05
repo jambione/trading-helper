@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,19 @@ _TERMINAL_STATUSES = frozenset({
     "filled", "submitted", "invalidated", "expired",
 })
 
+# Serializes every load -> mutate -> save of the watch file.
+#
+# Two threads in ai_trader touch it: the book thread runs
+# sync_watch_from_source_panels every 2s, and a daemon thread runs poll_once
+# every 20s. Both did read-modify-write on the *whole* dict, so last writer won
+# the entire file. A sync that read before poll_once saved silently reverted the
+# re-anchored zone, last_ask, block_code — and status="submitted" back to
+# "watching", which re-armed a symbol that already had a live order. That is how
+# one symbol took 13 entry_ok events in 93 minutes on 2026-08-04.
+#
+# Re-entrant because poll_once holds it across helpers that also load/save.
+_WATCH_LOCK = threading.RLock()
+
 # Ring of structure LLM call timestamps (module-level budget window).
 _structure_call_ts: list[float] = []
 _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
@@ -58,6 +72,16 @@ _BLOCKER_LABELS: dict[str, str] = {
     "already_held": "already held",
     "no_equity": "no equity",
     "duel_blocked": "duel only",
+    "indicators_faded": "setup faded",
+    "sell_signal": "sell signal",
+    "no_indicators": "no signal",
+    "daily_loss_limit": "day loss cap",
+    "open_risk_cap": "risk cap",
+    "dollar_volume": "too thin",
+    "already_managed": "managed",
+    "reentry_cooldown": "cooldown",
+    "no_buying_power": "no BP",
+    "risk_gate": "risk gate",
     "trader_not_ready": "trader off",
     "not_watching": "not watching",
     "placing": "placing…",
@@ -119,6 +143,20 @@ def clear_block_reason(rec: dict) -> None:
         return
     for k in ("block_code", "block_reason", "block_ts", "block_detail"):
         rec.pop(k, None)
+
+
+def _poller_blocked(rec: dict) -> bool:
+    """True when the last poll recorded a real reason it would not buy.
+
+    READY must reflect the poller's own verdict, not just price-vs-zone. Two
+    ways they diverge: the stream pre-filter skips the REST quote and leaves
+    last_ask stale (so a stale in-zone ask would read READY while the tape is
+    far away), and portfolio gates like daily_loss_limit block a name whose
+    price genuinely is in the zone. Showing READY for either is the same class
+    of lie as the zone-pad mismatch this file already had.
+    """
+    code = str(rec.get("block_code") or "").strip()
+    return bool(code) and code not in ("in_zone", "placing")
 
 
 def derive_blocker(
@@ -208,6 +246,31 @@ def save_watch(state: dict) -> None:
     tmp.replace(path)
 
 
+def merge_watch_records(records: dict[str, dict]) -> dict[str, dict]:
+    """Re-read the book and write back only *records*, leaving the rest alone.
+
+    poll_once may spend many seconds between its load and its save (quotes per
+    symbol, an LLM structure call, an order placement). Blind-writing the dict
+    it loaded at the start would clobber every symbol the 2s sync added or
+    dropped in the meantime. Merging per-record keeps both writers' work.
+    """
+    if not isinstance(records, dict) or not records:
+        return load_watch()
+    with _WATCH_LOCK:
+        state = load_watch()
+        for sym, rec in records.items():
+            if not isinstance(rec, dict):
+                continue
+            key = str(sym or rec.get("symbol") or "").upper().strip()
+            if not key:
+                continue
+            merged = dict(rec)
+            merged["symbol"] = key
+            state[key] = merged
+        save_watch(state)
+        return state
+
+
 def public_snapshot(state: dict | None = None) -> list[dict]:
     """Operator-facing watch queue rows for positions JSON.
 
@@ -276,7 +339,8 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
         ):
             in_zone = ask_in_zone(
                 last_ask_f, entry_low_f, entry_high_f, pad_pct)
-        ready = status == "armed" or (status == "watching" and in_zone)
+        ready = status == "armed" or (
+            status == "watching" and in_zone and not _poller_blocked(rec))
         b_code, b_label = derive_blocker(rec, pad_pct=pad_pct)
         rows.append({
             "symbol": sym,
@@ -339,7 +403,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         and entry_high_f > 0
     ):
         in_zone = ask_in_zone(last_ask_f, entry_low_f, entry_high_f, pad_pct)
-    ready = status == "armed" or (status == "watching" and in_zone)
+    ready = status == "armed" or (
+        status == "watching" and in_zone and not _poller_blocked(rec))
     if status == "armed" or ready:
         phase = "ready"
     elif status == "submitted":
@@ -930,20 +995,59 @@ def _momentum_has_flag(row: dict) -> bool:
     return False
 
 
-def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]:
-    """Momentum panel rows that currently show a flag (FIRST / NEW / BURST)."""
+DASHBOARD_URL = "http://127.0.0.1:8888"
+
+# Last dashboard fetch: (monotonic_ts, payload). Two callers used to issue their
+# own GET (2s timeout each) on every 2s book tick, so a slow dashboard could eat
+# ~4s per sync while holding nothing useful. One fetch, briefly cached, serves
+# both — and carries the signal_proximity rows the inclusion gate needs.
+_DASH_CACHE: tuple[float, dict] = (0.0, {})
+_DASH_CACHE_TTL = 1.5
+
+# Why the last fetch failed, surfaced as watch_meta.source_error. A bare
+# `except: return []` made "dashboard is down" indistinguishable from "nothing
+# is flagged", which is how momentum silently contributed zero for a whole day.
+_dash_error: str = ""
+
+
+def dashboard_state(*, force: bool = False) -> dict:
+    """Cached GET of /api/state. Empty dict (and _dash_error set) on failure."""
+    global _DASH_CACHE, _dash_error
+    ts, cached = _DASH_CACHE
+    mono = time.monotonic()
+    if not force and cached and (mono - ts) < _DASH_CACHE_TTL:
+        return cached
     try:
         import urllib.request
         with urllib.request.urlopen(
-            "http://127.0.0.1:8888/api/state", timeout=2.0
+            f"{DASHBOARD_URL}/api/state", timeout=2.0
         ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return []
-    if not isinstance(data, dict):
-        return []
-    tickers = data.get("tickers") or []
-    if not isinstance(tickers, list):
+        if not isinstance(data, dict):
+            raise TypeError(f"unexpected payload type {type(data).__name__}")
+        _DASH_CACHE = (mono, data)
+        _dash_error = ""
+        return data
+    except Exception as e:  # noqa: BLE001
+        _dash_error = f"{type(e).__name__}: {e}"[:200]
+        _DASH_CACHE = (mono, {})
+        return {}
+
+
+def dashboard_error() -> str:
+    """Last dashboard fetch error ('' when healthy)."""
+    return _dash_error
+
+
+def _dashboard_tickers() -> list[dict]:
+    rows = dashboard_state().get("tickers")
+    return rows if isinstance(rows, list) else []
+
+
+def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]:
+    """Momentum panel rows that currently show a flag (FIRST / NEW / BURST)."""
+    tickers = _dashboard_tickers()
+    if not tickers:
         return []
     scored: list[tuple[float, dict]] = []
     for r in tickers:
@@ -973,6 +1077,17 @@ def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]
             rank = max(rank, 9.0)
             flags.append("NEW")
         reason = "momentum " + "+".join(flags) if flags else "momentum flag"
+        # Carry the numbers the inclusion gate needs. Without price/pct_change
+        # here every momentum row fails the price floor and direction gate on
+        # missing data — the gate rejects absence rather than passing it.
+        try:
+            px = float(r.get("price")) if r.get("price") is not None else None
+        except (TypeError, ValueError):
+            px = None
+        try:
+            dvol = float(r.get("day_vol")) if r.get("day_vol") is not None else None
+        except (TypeError, ValueError):
+            dvol = None
         scored.append((rank, {
             "symbol": s,
             "trending_score": round(rank, 2),
@@ -980,6 +1095,11 @@ def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]
             "reason": reason[:40],
             "agreement": True,
             "source": "momentum",
+            "price": px,
+            "pct_change": _pct_change_value(r.get("pct_change")),
+            "rvol": r.get("rvol"),
+            "dollar_volume": (dvol * px) if (dvol and px) else None,
+            "criteria": ["flag"],
         }))
     scored.sort(key=lambda t: t[0], reverse=True)
     return scored
@@ -1007,39 +1127,39 @@ def _big_mover_from_dashboard(
     max_price: Any,
     min_pct: float,
 ) -> list[tuple[float, dict]]:
-    """Momentum desk names with |day change %| above *min_pct*."""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(
-            "http://127.0.0.1:8888/api/state", timeout=2.0
-        ) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return []
-    if not isinstance(data, dict):
-        return []
-    tickers = data.get("tickers") or []
-    if not isinstance(tickers, list):
+    """Momentum desk names whose day change is above *min_pct* — upside only."""
+    tickers = _dashboard_tickers()
+    if not tickers:
         return []
     scored: list[tuple[float, dict]] = []
     for r in tickers:
         if not isinstance(r, dict):
             continue
         pct = _pct_change_value(r.get("pct_change"))
-        if pct is None or abs(pct) <= float(min_pct):
+        # Signed, not abs(): the desk is long-only (OrderSide.BUY), so a name
+        # down 60% is not a candidate. abs() ranked exactly those highest.
+        if pct is None or pct <= float(min_pct):
             continue
         s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
         if not s or not s[0].isalpha():
             continue
         if not _price_under_cap(r.get("price"), max_price):
             continue
-        scored.append((abs(pct), {
+        try:
+            px = float(r.get("price")) if r.get("price") is not None else None
+        except (TypeError, ValueError):
+            px = None
+        scored.append((pct, {
             "symbol": s,
-            "trending_score": round(abs(pct), 2),
-            "score": round(abs(pct), 2),
+            "trending_score": round(pct, 2),
+            "score": round(pct, 2),
             "reason": f"momentum chg {pct:+.0f}%",
             "agreement": True,
             "source": "momentum",
+            "price": px,
+            "pct_change": pct,
+            "rvol": r.get("rvol"),
+            "criteria": ["big_move"],
         }))
     scored.sort(key=lambda t: t[0], reverse=True)
     return scored
@@ -1119,7 +1239,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     except (TypeError, ValueError):
                         score = 0.0
                     pct = _pct_change_value(r.get("pct_change"))
-                    big_move = pct is not None and abs(pct) > float(min_pct)
+                    # Signed: long-only desk, so a name down 60% is not a
+                    # "big mover" worth buying. abs() ranked it top.
+                    big_move = pct is not None and pct > float(min_pct)
                     rvol = None
                     for key in ("rvol", "rvol_raw"):
                         if r.get(key) is not None:
@@ -1134,15 +1256,25 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         rvol = rvol / 100.0
                     high_rvol = rvol is not None and rvol > float(min_rvol)
                     # Score path OR big day-move OR elevated relative volume.
+                    # NOTE: this is only the *shortlist*. Admission to the book
+                    # is decided by passes_inclusion(), which is conjunctive —
+                    # trending_score alone can no longer put a name on the book.
                     if score <= min_score and not big_move and not high_rvol:
                         continue
                     seen.add(s)
+                    crit: list[str] = []
+                    if score > min_score:
+                        crit.append("score")
+                    if big_move:
+                        crit.append("big_move")
+                    if high_rvol:
+                        crit.append("rvol")
                     if high_rvol and score <= min_score and not big_move:
                         reason = f"trending rvol {rvol:.2f}x"
                         use_score = float(rvol) * 10.0  # rank key only
                     elif big_move and score <= min_score:
                         reason = f"trending chg {pct:+.0f}%"
-                        use_score = abs(float(pct))
+                        use_score = float(pct)
                     else:
                         reason = f"trending score {score:.1f}"
                         use_score = score
@@ -1153,6 +1285,15 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         "reason": reason,
                         "agreement": True,
                         "source": "trending",
+                        "pct_change": pct,
+                        "rvol": rvol,
+                        "price": r.get("price"),
+                        "dollar_volume": (
+                            float(r["vol_session"]) * float(r["price"])
+                            if r.get("vol_session") and r.get("price")
+                            else None
+                        ),
+                        "criteria": crit,
                     })
                     if len([x for x in rows if x.get("source") == "trending"]) >= max(1, n):
                         break
@@ -1160,6 +1301,304 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
             pass
 
     return rows
+
+
+# symbol -> consecutive qualifying polls, for admission dwell.
+_admit_ticks: dict[str, int] = {}
+
+# symbol -> monotonic ts of the last engine push (debounce; see below).
+_pushed_at: dict[str, float] = {}
+
+# Last sync's rejections, for the wire (why a name is NOT on the book).
+_last_rejected: list[dict] = []
+
+
+def last_rejected() -> list[dict]:
+    """Most recent inclusion-gate rejections: [{symbol, reason, criteria}]."""
+    return list(_last_rejected)
+
+
+def _push_cfg() -> dict:
+    try:
+        from config import load_config
+        return load_config() or {}
+    except Exception:
+        return {}
+
+
+def push_candidates_to_engine(symbols: list[str]) -> dict:
+    """Ask the signal engine to start computing indicators for *symbols*.
+
+    The engine only evaluates its own watchlist, which is fed by Discord
+    mentions — so the trending names on this book had no indicator data at all
+    and an indicator gate would reject everything. Push the delta (never the
+    full list on every 2s tick) so the engine has bars/state ready by the time
+    the gate asks for it, one scan_interval_sec later.
+    """
+    wanted = {str(s).upper().strip() for s in symbols if str(s).strip().isalpha()}
+    wanted = {s for s in wanted if 2 <= len(s) <= 5}
+    if not wanted:
+        return {"pushed": 0, "known": 0}
+    known = set(_engine_indicator_map())
+    missing = sorted(wanted - known)
+    if not missing:
+        return {"pushed": 0, "known": len(known)}
+
+    # Hard cap. Finnhub's free tier allows ~50 concurrent WS subscriptions
+    # across the whole desk, and finnhub_stream.request_subscribe does not
+    # enforce it — it only mentions it in a docstring. Overflow symbols get no
+    # trades, so no forming bars, so no indicator state, so the inclusion gate
+    # rejects them. That failure is completely silent, which is worse than
+    # admitting fewer names, so leave headroom for the engine's own tickers.
+    try:
+        cap = int(_push_cfg().get("ai_watch_engine_push_max", 24) or 0)
+    except (TypeError, ValueError):
+        cap = 24
+    if cap > 0:
+        room = max(0, cap - len(known))
+        if room <= 0:
+            return {"pushed": 0, "known": len(known), "capped": True}
+        missing = missing[:room]
+
+    # Debounce. This runs inside the 2s book sync, but a freshly pushed symbol
+    # does not appear in the indicator map until the engine's next scan
+    # (scan_interval_sec, 60s) — so without this it stays "missing" and we
+    # re-POST it ~30 times per symbol while waiting.
+    now = time.monotonic()
+    try:
+        hold = float(_push_cfg().get("scan_interval_sec", 60) or 60) * 2.0
+    except (TypeError, ValueError):
+        hold = 120.0
+    missing = [m for m in missing if (now - _pushed_at.get(m, 0.0)) > hold]
+    if not missing:
+        return {"pushed": 0, "known": len(known), "debounced": True}
+    for m in missing:
+        _pushed_at[m] = now
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"{DASHBOARD_URL}/api/tickers/add-bulk",
+            data=json.dumps({"tickers": missing}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=2.0):
+            pass
+        return {"pushed": len(missing), "known": len(known)}
+    except Exception:
+        return {"pushed": 0, "known": len(known), "error": True}
+
+
+def stream_quote(symbol: str) -> tuple[float, float] | None:
+    """(last_trade_price, age_sec) from the real-time feed, or None.
+
+    Source is the dashboard's ticker row, whose ``price`` is fed primarily by
+    the Finnhub WebSocket (``_price_loop``) with Alpaca as fallback. We read it
+    off the /api/state payload this module already fetches and caches rather
+    than opening a second WS from this process: FINNHUB_STATE is per-process,
+    and the free tier caps subscriptions at 50 symbols shared across the desk.
+    Candidates get subscribed automatically because we push them into the
+    engine's ticker list (see push_candidates_to_engine).
+
+    ``price_age_sec`` is the real observation age — ``price_ts`` is a write
+    time and always looks fresh, so never use that for staleness.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    for r in _dashboard_tickers():
+        if not isinstance(r, dict):
+            continue
+        if str(r.get("ticker") or r.get("symbol") or "").upper().strip() != sym:
+            continue
+        try:
+            px = float(r.get("price") or 0)
+        except (TypeError, ValueError):
+            return None
+        if px <= 0:
+            return None
+        try:
+            age = float(r.get("price_age_sec"))
+        except (TypeError, ValueError):
+            return None  # unknown age is not "fresh"
+        return px, age
+    return None
+
+
+def stream_says_far_from_zone(
+    rec: dict,
+    cfg: dict,
+) -> tuple[bool, float | None]:
+    """True when the live tape puts price clearly outside this record's zone.
+
+    Used purely to *skip* a REST quote, never to arm: the socket carries
+    trades, not quotes. A print can land at the bid while the ask is still
+    above the zone, so substituting last-trade for ask would arm on a price the
+    order cannot actually get — the "price left the entry zone" failure class.
+    The real ask is still fetched for anything near the band.
+    """
+    if not bool(cfg.get("ai_watch_stream_enabled", True)):
+        return False, None
+    structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+    levels = _structure_levels(structure) if structure else None
+    if levels is None:
+        return False, None          # no zone yet — we need a real quote
+    entry_low, entry_high, _stop, _t, _rr = levels
+
+    got = stream_quote(rec.get("symbol"))
+    if got is None:
+        return False, None
+    px, age = got
+    try:
+        max_age = float(cfg.get("ai_watch_stream_max_age_sec", 10.0) or 0.0)
+    except (TypeError, ValueError):
+        max_age = 10.0
+    if max_age > 0 and age > max_age:
+        return False, px            # stale tape — fall back to REST
+
+    try:
+        margin = max(0.0, float(
+            cfg.get("ai_watch_stream_skip_margin_pct", 1.0) or 0.0)) / 100.0
+    except (TypeError, ValueError):
+        margin = 0.01
+    lo = min(entry_low, entry_high) * (1.0 - margin)
+    hi = max(entry_low, entry_high) * (1.0 + margin)
+    return (px > hi or px < lo), px
+
+
+def _engine_indicator_map() -> dict[str, dict]:
+    """symbol -> signal-engine indicator record, off the /api/state wire."""
+    out: dict[str, dict] = {}
+    for r in _dashboard_tickers():
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+        sp = r.get("signal_proximity")
+        if sym and isinstance(sp, dict):
+            out[sym] = sp
+    return out
+
+
+def passes_inclusion(
+    row: dict,
+    cfg: dict,
+    *,
+    indicators: dict[str, dict] | None = None,
+) -> tuple[bool, list[str], str]:
+    """Strict, conjunctive admission test. Returns (ok, criteria_met, reject).
+
+    The old rule OR'd four criteria and admitted on any one. In practice three
+    of them could never fire — rvol was None on every trending row, nothing hit
+    the 50% move bar, and momentum was contributing nothing — so the entire
+    book was selected by Stocktwits popularity alone, and four of six admitted
+    names were *down* on the day on a long-only desk.
+
+    Every gate here must pass. A candidate with no indicator data is rejected,
+    not admitted: absence is not a pass.
+    """
+    if not isinstance(row, dict):
+        return False, [], "bad_row"
+    sym = str(row.get("symbol") or "").upper().strip()
+    met = list(row.get("criteria") or [])
+
+    price = row.get("price")
+    try:
+        price_f = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        price_f = None
+    min_price = float(cfg.get("ai_watch_min_price", 1.0) or 0.0)
+    if min_price > 0 and (price_f is None or price_f < min_price):
+        return False, met, "below_min_price"
+
+    min_dv = float(cfg.get("ai_min_dollar_volume", 0.0) or 0.0)
+    if min_dv > 0:
+        dv = row.get("dollar_volume")
+        try:
+            dv_f = float(dv) if dv is not None else None
+        except (TypeError, ValueError):
+            dv_f = None
+        if dv_f is None or dv_f < min_dv:
+            return False, met, "thin_dollar_volume"
+        met.append("liquidity")
+
+    # Long-only: must be up on the day.
+    if bool(cfg.get("ai_watch_require_uptrend", True)):
+        pct = _pct_change_value(row.get("pct_change"))
+        if pct is None or pct <= 0:
+            return False, met, "not_uptrend"
+        met.append("uptrend")
+
+    if bool(cfg.get("ai_watch_require_indicators", True)):
+        sig = (indicators or {}).get(sym)
+        if not isinstance(sig, dict):
+            return False, met, "no_indicators"
+        if sig.get("sell_signal"):
+            return False, met, "sell_signal"
+        try:
+            prox = float(sig.get("proximity_pct") or 0)
+        except (TypeError, ValueError):
+            prox = 0.0
+        if prox < float(cfg.get("ai_watch_min_proximity", 67) or 0):
+            return False, met, f"proximity_{prox:.0f}"
+        met.append("bullish")
+        # ADX is not published by the engine yet; when it is, gate it here on
+        # ai_watch_min_adx. Until then the three-indicator state carries the
+        # trend-strength judgement.
+        adx = sig.get("adx")
+        min_adx = float(cfg.get("ai_watch_min_adx", 0) or 0)
+        if min_adx > 0 and adx is not None:
+            try:
+                if float(adx) < min_adx:
+                    return False, met, f"adx_{float(adx):.0f}"
+                met.append("adx")
+            except (TypeError, ValueError):
+                pass
+
+    return True, met, ""
+
+
+def apply_inclusion_gate(
+    rows: list[dict],
+    cfg: dict,
+    *,
+    indicators: dict[str, dict] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Filter shortlist rows through passes_inclusion + admission dwell.
+
+    Dwell exists because the book is rebuilt every 2s: a name that blinked
+    below threshold for one tick was deleted outright, taking its frozen zone
+    and structure_ts with it, then re-admitted moments later with the zone
+    re-anchored to a worse price.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    indicators = indicators if indicators is not None else _engine_indicator_map()
+    need = max(1, int(cfg.get("ai_watch_admit_ticks", 2) or 1))
+    kept: list[dict] = []
+    rejected: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        seen.add(sym)
+        ok, met, why = passes_inclusion(row, cfg, indicators=indicators)
+        if not ok:
+            _admit_ticks.pop(sym, None)
+            rejected.append({"symbol": sym, "reason": why, "criteria": met})
+            continue
+        ticks = _admit_ticks.get(sym, 0) + 1
+        _admit_ticks[sym] = ticks
+        if ticks < need:
+            rejected.append({
+                "symbol": sym, "reason": f"dwell_{ticks}/{need}", "criteria": met,
+            })
+            continue
+        out = dict(row)
+        out["criteria"] = met
+        kept.append(out)
+    for gone in [s for s in _admit_ticks if s not in seen]:
+        _admit_ticks.pop(gone, None)
+    return kept, rejected
 
 
 def research_candidate_rows() -> list[dict]:
@@ -1245,13 +1684,38 @@ def sync_watch_from_source_panels(
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
+
+    # Candidate rows come from the dashboard over HTTP (two GETs, 2s timeout
+    # each) — do that *outside* the lock so a slow/absent dashboard cannot stall
+    # poll_once behind us for seconds at a time.
+    candidates = desk_candidate_rows(cfg)
+
+    # Make sure the engine is computing indicators for everything on the
+    # shortlist, then admit only what clears the strict conjunctive gate.
+    try:
+        push_candidates_to_engine([r.get("symbol") for r in candidates])
+    except Exception:
+        pass
+    try:
+        candidates, rejected = apply_inclusion_gate(candidates, cfg)
+        _last_rejected.clear()
+        _last_rejected.extend(rejected)
+    except Exception:
+        pass
+
+    with _WATCH_LOCK:
+        return _sync_watch_locked(candidates, t0)
+
+
+def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
+    """Rebuild step of ``sync_watch_from_source_panels`` — caller holds the lock."""
     old = load_watch()
     if not isinstance(old, dict):
         old = {}
 
     # Momentum (flagged) + trending (score>min) only — research excluded.
     merged: dict[str, dict] = {}
-    for r in desk_candidate_rows(cfg):
+    for r in candidates:
         if not isinstance(r, dict):
             continue
         sym = str(r.get("symbol") or "").upper().strip()
@@ -1457,13 +1921,13 @@ def build_offset_zone_structure(
         except (TypeError, ValueError):
             return default
 
-    offset = _pct("ai_watch_zone_offset_pct", 5.0) / 100.0
+    offset = _pct("ai_watch_zone_offset_pct", 2.0) / 100.0
     width = _pct("ai_watch_zone_width_pct", 2.0) / 100.0
-    stop_pct = _pct("ai_watch_synth_stop_pct", 2.0) / 100.0
+    stop_pct = _pct("ai_watch_synth_stop_pct", 5.0) / 100.0
     try:
-        rr = float(cfg.get("ai_watch_synth_rr", 3.0) or 3.0)
+        rr = float(cfg.get("ai_watch_synth_rr", 1.5) or 1.5)
     except (TypeError, ValueError):
-        rr = 3.0
+        rr = 1.5
     rr = max(1.0, rr)
 
     # Upper buy limit sits *below* the print so we wait for a dip.
@@ -1472,10 +1936,19 @@ def build_offset_zone_structure(
     if entry_low <= 0 or entry_high <= 0 or entry_low >= entry_high:
         entry_high = px * 0.99
         entry_low = px * 0.98
+    # Stop is a percentage of the *entry price*, not a step below entry_low.
+    # Derived-from-entry_low gave 2-4% of real risk depending on where in the
+    # zone the fill landed, so position size swung ~1.9x between a fill at the
+    # zone low and one at the zone top. Keying it to the price paid makes risk
+    # per share — and therefore notional — constant.
+    #
+    # mid stands in for the fill here so reward_risk/target are coherent on the
+    # UI before an order exists; _decision_for_place recomputes both off the
+    # actual ask at placement.
     mid = (entry_low + entry_high) / 2.0
-    stop = entry_low * (1.0 - stop_pct)
+    stop = mid * (1.0 - stop_pct)
     if stop <= 0 or stop >= mid:
-        stop = mid * 0.98
+        stop = mid * 0.95
     risk = mid - stop
     target = mid + rr * risk
 
@@ -1534,7 +2007,13 @@ def ensure_offset_zone_if_needed(
     Freezes the zone at first apply (anchor = live ask) so we wait for a dip
     rather than chasing. Returns an event dict when a zone is created/replaced.
     """
-    if not isinstance(rec, dict) or not _desk_source(rec):
+    # Applies to every source, not just momentum/trending. Research records
+    # used to be excluded here, and the LLM refresh below only fires when a
+    # structure is *unusable* — so a stale-but-parseable research zone was
+    # never refreshed by either path. On 2026-08-04 the whole book was research
+    # records and not one synth_zone event was logged all day; HPE sat on a
+    # 47.75-48.85 zone against a 52.85 ask.
+    if not isinstance(rec, dict):
         return None
     if not bool(cfg.get("ai_watch_synth_zone_enabled", True)):
         return None
@@ -1546,15 +2025,28 @@ def ensure_offset_zone_if_needed(
         return None
 
     structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
-    # Keep a good *model* zone; only fill gaps / replace hard_no / empty levels.
-    if _structure_usable(structure) and not structure.get("synthetic"):
+    # Keep a good *model* zone, but only while it is fresh — a stale model zone
+    # describes a price that has moved on, so let the synth path replace it.
+    if (
+        _structure_usable(structure)
+        and not structure.get("synthetic")
+        and not _structure_stale(rec, cfg, now)
+    ):
         return None
 
     reanchor = False
-    if _structure_usable(structure) and structure.get("synthetic"):
+    if (
+        _structure_usable(structure)
+        and structure.get("synthetic")
+        and not _structure_stale(rec, cfg, now)
+    ):
         # Frozen synth zone: re-anchor when last has run *above* the zone top
         # so we wait for a pullback from current levels (e.g. ZETA stuck at $24
         # while printing $28). Below/in zone: keep waiting for the existing band.
+        #
+        # The deadband defaults to 0 now, i.e. the upper limit tracks the
+        # real-time price on every poll. At the old 0.5% it lagged, which read
+        # to the operator as "the watchlist is not updating current prices".
         try:
             hi = float(structure.get("entry_high") or 0)
         except (TypeError, ValueError):
@@ -1562,10 +2054,10 @@ def ensure_offset_zone_if_needed(
         try:
             re_pct = max(
                 0.0,
-                float(cfg.get("ai_watch_synth_reanchor_pct", 0.5) or 0.5),
+                float(cfg.get("ai_watch_synth_reanchor_pct", 0.0) or 0.0),
             ) / 100.0
         except (TypeError, ValueError):
-            re_pct = 0.005
+            re_pct = 0.0
         if hi > 0 and ask_f > hi * (1.0 + re_pct):
             reanchor = True
         else:
@@ -1651,6 +2143,45 @@ def should_arm_buy(
     if min_rr > 0 and rr + 1e-12 < min_rr:
         return False, "reward_risk"
 
+    # Indicator state must STILL hold at arm time, not just when the name was
+    # admitted. Admission is a one-off check at the 2s sync; a name let onto the
+    # book at proximity 100 can be at 33 with sell_signal true by the time price
+    # finally reaches the zone, and would otherwise arm on price alone.
+    # Bar-based indicators answer "is this a good setup"; the zone answers "is
+    # this a good price". An entry needs both true at the same moment.
+    if bool(cfg.get("ai_watch_arm_require_indicators", True)):
+        sig = record.get("indicator")
+        if not isinstance(sig, dict):
+            return False, "no_indicators"
+        if sig.get("sell_signal"):
+            return False, "sell_signal"
+        # Gate on NAMED conditions, not a count. proximity_pct is just "how
+        # many of the three hold", so requiring 100 silently demanded MACD as
+        # well — and MACD is the laggard here by design: the strategy's own
+        # buy_signal docstring notes that by the time it crosses, CM RSI-2 has
+        # usually already left the <40 zone. CM RSI-2 (cm_ok) and %R exhaustion
+        # (pctr_ok) are the operator's actual buy signals; MACD is ignored.
+        required = cfg.get("ai_watch_arm_require")
+        if not isinstance(required, (list, tuple)) or not required:
+            required = ("cm_ok", "pctr_ok")
+        missing = [k for k in required if not sig.get(k)]
+        if missing:
+            return False, "indicators_faded"
+
+        # Optional count floor on top, off by default (0) since the named
+        # flags above are the real test.
+        try:
+            arm_min = float(cfg.get("ai_watch_arm_min_proximity", 0) or 0)
+        except (TypeError, ValueError):
+            arm_min = 0.0
+        if arm_min > 0:
+            try:
+                prox = float(sig.get("proximity_pct") or 0)
+            except (TypeError, ValueError):
+                prox = 0.0
+            if prox < arm_min:
+                return False, "indicators_faded"
+
     try:
         pad = float(cfg.get("ai_entry_zone_pad_pct", 0.0) or 0.0)
     except (TypeError, ValueError):
@@ -1716,14 +2247,125 @@ def _structure_stale(record: dict, cfg: dict, now: float) -> bool:
     return (float(now) - ts) > ttl
 
 
-def _decision_for_place(structure: dict) -> dict[str, Any]:
+def _blocker_for_gate(why: str) -> str:
+    """Map a pre_entry_gate rejection string to a UI blocker code.
+
+    The gate returns detail-rich strings (``spread_pct_2.10>1``); the Blocker
+    column wants a stable code so the operator can tell "risk cap" from
+    "too wide" at a glance.
+    """
+    w = str(why or "").lower()
+    if w.startswith("daily_loss_limit_r"):
+        return "daily_loss_limit"
+    if w.startswith("open_risk_pct"):
+        return "open_risk_cap"
+    if w.startswith("spread_pct") or w in ("crossed_quote", "bad_mid"):
+        return "spread"
+    if w.startswith("dollar_vol"):
+        return "dollar_volume"
+    if w == "already_managed":
+        return "already_managed"
+    if w.startswith("above_max_price"):
+        return "above_max_price"
+    if w in ("no_ask", "no_equity", "invalid_symbol"):
+        return w
+    return "risk_gate"
+
+
+# (mtime, size) -> {symbol: last exit ts}. outcomes.jsonl only ever grows, so
+# a stat is enough to know the parse is still valid.
+_exit_cache: tuple[tuple[float, int] | None, dict[str, float]] = (None, {})
+
+
+def _exit_ts_map() -> dict[str, float]:
+    """symbol -> most recent exit timestamp, parsed at most once per write."""
+    global _exit_cache
+    try:
+        import ai_positions as cp
+        st = cp.OUTCOMES_PATH.stat()
+        key = (st.st_mtime, st.st_size)
+    except Exception:
+        return {}
+    cached_key, cached = _exit_cache
+    if cached_key == key:
+        return cached
+    out: dict[str, float] = {}
+    try:
+        text = cp.OUTCOMES_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        sym = str(row.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        try:
+            ts = float(row.get("exit_time") or row.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if ts and ts > out.get(sym, 0.0):
+            out[sym] = ts
+    _exit_cache = (key, out)
+    return out
+
+
+def _recent_exit_ts(symbol: str) -> float | None:
+    """When this symbol last closed (None if never)."""
+    return _exit_ts_map().get(str(symbol or "").upper().strip())
+
+
+def _decision_for_place(
+    structure: dict,
+    *,
+    ask: float | None = None,
+    cfg: dict | None = None,
+) -> dict[str, Any]:
     """Build a place_scaled_entry decision from stored structure levels.
 
     Zone-wait records store decision=WAIT; placement needs BUY + levels.
+
+    For a synthetic zone the stop and target are re-derived from *ask* — the
+    price the order will actually fill at — so ``ai_watch_synth_stop_pct`` means
+    "this far below what I paid" and ``ai_watch_synth_rr`` is honest. Built at
+    anchor time off the zone mid, a nominal 3R plan delivered anywhere from 2.0R
+    to 5.0R depending on where in the band the fill landed.
+
+    A model zone is left alone: those levels come from real structure (support,
+    prior day's low), not a percentage, and must not be second-guessed here.
     """
     d = dict(structure)
     d["decision"] = "BUY"
     d["wait_kind"] = None
+
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not d.get("synthetic"):
+        return d
+    try:
+        px = float(ask or 0)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0:
+        return d
+    try:
+        stop_pct = max(0.0, float(cfg.get("ai_watch_synth_stop_pct", 5.0) or 5.0)) / 100.0
+    except (TypeError, ValueError):
+        stop_pct = 0.05
+    try:
+        rr = max(1.0, float(cfg.get("ai_watch_synth_rr", 1.5) or 1.5))
+    except (TypeError, ValueError):
+        rr = 1.5
+    stop = px * (1.0 - stop_pct)
+    if stop <= 0 or stop >= px:
+        return d
+    d["stop_price"] = round(stop, 4 if px < 1 else 3 if px < 100 else 2)
+    d["target_1"] = round(px + rr * (px - stop), 4 if px < 1 else 3 if px < 100 else 2)
+    d["reward_risk"] = round(rr, 2)
     return d
 
 
@@ -1909,12 +2551,36 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     if not ready:
         return [{"kind": "watch_skip", "reason": "trader_not_ready"}]
 
+    # ai_max_buys_per_poll is a *per poll* cap, so start each poll's budget
+    # here. reset_poll_counters() was only ever called from the research path
+    # (ai_suggest), so on this path the counter just accumulated: after three
+    # lifetime buys every later READY name was skipped with "buy_cap" until a
+    # research run at 08:30/11:30/14:30 happened to clear it.
+    try:
+        gt.reset_poll_counters()
+    except Exception:
+        pass
+
     # Do not re-seed here — book thread runs sync_watch_from_source_panels
     # so this poll only evaluates symbols currently mirrored from the panels.
 
-    state = load_watch()
+    with _WATCH_LOCK:
+        state = load_watch()
     if not state:
         return events
+
+    # Only the records this poll actually touched get written back, so a
+    # concurrent sync's adds/drops survive (see merge_watch_records).
+    touched: dict[str, dict] = {}
+
+    # Live indicator state, read once per poll off the cached /api/state. It is
+    # stamped onto each record so should_arm_buy and the UI's READY badge read
+    # the same value — the alternative (each recomputing it) is how the zone-pad
+    # mismatch let the UI show READY while the poll refused to arm.
+    try:
+        indicators = _engine_indicator_map()
+    except Exception:
+        indicators = {}
 
     try:
         max_price = cfg.get("ai_max_price")
@@ -1953,6 +2619,42 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         rec["symbol"] = sym
         status = str(rec.get("status") or "").lower().strip()
         if status in _TERMINAL_STATUSES:
+            continue
+
+        sig = indicators.get(sym)
+        if isinstance(sig, dict):
+            rec["indicator"] = {
+                "proximity_pct": sig.get("proximity_pct"),
+                "status": sig.get("status"),
+                "buy_signal": sig.get("buy_signal"),
+                "sell_signal": sig.get("sell_signal"),
+                "cm_ok": sig.get("cm_ok"),
+                "pctr_ok": sig.get("pctr_ok"),
+                "macd_ok": sig.get("macd_ok"),
+                "ts": t0,
+            }
+        elif "indicator" in rec:
+            # Engine dropped it — do not keep asserting a stale reading.
+            rec.pop("indicator", None)
+
+        # Real-time pre-filter. _latest_ask/_latest_bid are one Alpaca REST
+        # round trip *each, per symbol, per poll* — with a full book that is
+        # ~120 calls/min against a 200/min limit shared with the engine, RS
+        # screener and dashboard. When the live tape puts price clearly outside
+        # the zone there is nothing to decide, so skip both calls.
+        far, stream_px = stream_says_far_from_zone(rec, cfg)
+        if far:
+            rec["last_trade"] = stream_px
+            rec["last_poll_ts"] = t0
+            zone = _structure_levels(rec.get("structure"))
+            above = bool(zone and stream_px > max(zone[0], zone[1]))
+            # last_ask is deliberately NOT updated from a trade print — it
+            # means "ask" everywhere else, including the UI's READY badge.
+            set_block_reason(
+                rec, "above_zone" if above else "below_zone", now=t0,
+                detail=f"tape {stream_px:g}",
+            )
+            touched[sym] = rec
             continue
 
         # Quotes
@@ -2008,7 +2710,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     == "hard_no"
                 ):
                     rec["status"] = "invalidated"
-                    state[sym] = rec
+                    touched[sym] = rec
                     try:
                         events.append(cp.log_event(
                             "invalidated", symbol=sym, reason="hard_no"))
@@ -2022,9 +2724,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         # Optional LLM structure only when still no usable zone and budget allows.
         # Desk names already got a synth zone above — skip model to avoid hard_no loop.
-        if _structure_stale(rec, cfg, t0) and not _structure_usable(
-            rec.get("structure")
-        ):
+        # Stale alone is enough. The old gate also required the structure to be
+        # *unusable*, so a stale-but-parseable zone was never refreshed by
+        # either path and ai_structure_ttl_sec did nothing for exactly the
+        # records that needed it. In practice ensure_offset_zone_if_needed above
+        # has already re-anchored most stale records; this still covers names
+        # with no quote, or when the synth zone is disabled.
+        if _structure_stale(rec, cfg, t0):
             if (
                 not _desk_source(rec)
                 and structure_calls_remaining(cfg, t0) > 0
@@ -2034,7 +2740,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 if sev:
                     events.append(sev)
                 if str(rec.get("status") or "").lower() in _TERMINAL_STATUSES:
-                    state[sym] = rec
+                    touched[sym] = rec
                     continue
             elif ask_f <= 0:
                 try:
@@ -2046,11 +2752,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                         "symbol": sym,
                         "reason": "no_ask",
                     })
-                state[sym] = rec
+                touched[sym] = rec
                 continue
 
         if ask_f <= 0:
-            state[sym] = rec
+            touched[sym] = rec
             continue
 
         def _skip(reason: str, *, detail: str | None = None, **extra):
@@ -2064,7 +2770,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     "symbol": sym,
                     "reason": reason,
                 })
-            state[sym] = rec
+            touched[sym] = rec
 
         if max_price_f is not None and ask_f >= max_price_f:
             _skip("above_max_price", max_price=max_price_f)
@@ -2087,7 +2793,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
-                state[sym] = rec
+                touched[sym] = rec
             continue
 
         # Position / buy-cap gates (fail closed on errors — never place blind)
@@ -2122,6 +2828,54 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if equity <= 0:
             _skip("no_equity")
             continue
+
+        # Portfolio-level risk gates. These lived only in the research path, so
+        # ai_daily_loss_limit_r, ai_max_open_risk_pct, ai_max_spread_pct,
+        # ai_min_dollar_volume and the already-managed check did not bind on the
+        # path that places essentially every live trade. Fail closed.
+        try:
+            gate_ok, gate_why = cp.pre_entry_gate(
+                sym,
+                ask=ask_f,
+                bid=bid_f,
+                account_equity=equity,
+                score=rec.get("score"),
+                min_score=float("-inf"),
+                max_price=max_price_f,
+                risk_pct=risk_pct,
+                # Spread deliberately NOT enforced here. Quotes come from IEX,
+                # a few percent of the consolidated tape, so its book is
+                # artificially wide and would block legitimate fills — the
+                # reason the spread check was removed from should_arm_buy in
+                # the first place (see test_should_arm_in_zone_despite_wide_
+                # spread). ai_max_spread_pct still binds on the research path,
+                # where the name is being judged rather than filled.
+                max_spread_pct=0.0,
+                min_dollar_volume=(
+                    float(cfg["ai_min_dollar_volume"])
+                    if cfg.get("ai_min_dollar_volume") not in (None, "", 0, 0.0)
+                    else None
+                ),
+                daily_loss_limit_r=float(cfg.get("ai_daily_loss_limit_r", 3.0)),
+                max_open_risk_pct=float(cfg.get("ai_max_open_risk_pct", 5.0)),
+                now=t0,
+            )
+        except Exception as e:  # noqa: BLE001
+            _skip(f"gate_error:pre_entry_gate:{e}"[:200])
+            continue
+        if not gate_ok:
+            _skip(_blocker_for_gate(gate_why), detail=gate_why)
+            continue
+
+        # Re-entry cooldown: a name that just stopped out must not re-arm
+        # inside the same move.
+        cool = float(cfg.get("ai_reentry_cooldown_sec", 900.0) or 0.0)
+        if cool > 0:
+            last_exit = _recent_exit_ts(sym)
+            if last_exit and (t0 - last_exit) < cool:
+                _skip("reentry_cooldown",
+                      detail=f"{int(cool - (t0 - last_exit))}s left")
+                continue
 
         if not allow_buys:
             # Structure/zone ready, but no paper entry until RTH (market hours).
@@ -2159,7 +2913,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip(f"recheck_{why2}")
             continue
 
-        place_decision = _decision_for_place(structure)
+        place_decision = _decision_for_place(structure, ask=ask_f, cfg=cfg)
         if isinstance(place_decision, dict):
             place_decision = dict(place_decision)
             place_decision["source"] = rec.get("duel_source") or rec.get("source")
@@ -2191,7 +2945,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     "symbol": sym,
                     "reason": err,
                 })
-            state[sym] = rec
+            touched[sym] = rec
             continue
 
         if isinstance(result, dict) and result.get("ok"):
@@ -2241,7 +2995,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if str(rec.get("status") or "") == "armed":
                 rec["status"] = "watching"
 
-        state[sym] = rec
+        touched[sym] = rec
 
-    save_watch(state)
+    merge_watch_records(touched)
     return events
