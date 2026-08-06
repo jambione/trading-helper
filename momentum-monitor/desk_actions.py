@@ -462,26 +462,22 @@ def desk_buy_bracket(
         sym, plan.qty, plan.entry, plan.stop, plan.target,
     )
     if not out.get("ok"):
-        # Fallback: plain policy limit if bracket rejected (e.g. ext hours)
-        plain = alpaca_trader.buy_limit_at_price(
-            sym, plan.entry,
-            dollar_amount=plan.notional,
-            note=f"policy_fallback:{dec.style}",
-        )
-        if plain.get("ok"):
-            # Adjust qty to what was actually placed
-            plan_d = plan.as_dict()
-            plan_d["qty"] = plain.get("qty") or plan.qty
-            plan_d["pricing"] = dec.as_dict()
-            plan_d["bracket"] = False
-            msg = (
-                f"BUY {sym} {plan_d['qty']}sh LMT@${plan.entry:.2f} "
-                f"[{dec.style}] NO BRACKET — set stops manually "
-                f"id={plain.get('order_id')}"
-            )
-            return msg, plan_d
+        # No bracket, no position. The old behaviour fell back to a plain
+        # limit buy and told the operator to "set stops manually" — which is
+        # not a plan, it is a hope. On 2026-08-06 CELH's bracket was rejected
+        # ("bracket orders do not support extended hours trading") and the
+        # fallback opened 353 shares / $8.4k — 83% of account equity — with no
+        # stop at all. It sat naked for 44 minutes until closed by hand. ALOY
+        # and XNDU hit the identical path on 08-04.
+        #
+        # The size is what makes this unsurvivable rather than untidy:
+        # plan_long sizes off a 0.40% stop, so the share count is deliberately
+        # large *because* the stop is tight. Dropping the stop keeps the size
+        # and removes the only thing that justified it.
+        err = out.get("note") or out.get("status") or "unknown"
         return (
-            f"BUY {sym} bracket failed: {out.get('note') or out.get('status')}",
+            f"BUY {sym} ABORTED — bracket rejected ({err}); "
+            f"refusing to open {plan.qty}sh (${plan.notional:,.0f}) unprotected",
             None,
         )
 

@@ -184,3 +184,65 @@ def test_buy_limit_bracket_rejects_bad_geometry():
     out = tr.buy_limit_bracket("X", 10, 10.0, 10.5, 11.0)  # stop above entry
     assert not out["ok"]
     tr._client.submit_order.assert_not_called()
+
+
+def test_bracket_rejection_aborts_instead_of_buying_naked(monkeypatch):
+    """No bracket, no position.
+
+    On 2026-08-06 CELH's bracket was rejected ("bracket orders do not support
+    extended hours trading") and the old fallback opened 353 shares / $8.4k —
+    83% of account equity — with no stop, telling the operator to "set stops
+    manually". It sat unprotected for 44 minutes until closed by hand. ALOY and
+    XNDU took the identical path on 08-04.
+
+    plan_long sizes off a 0.40% stop, so the share count is large *because* the
+    stop is tight. Dropping the stop keeps the size and removes the only thing
+    that justified it — which is why this must abort, not degrade.
+    """
+    desk._trader_ready = True
+    desk._trader_mode = "paper"
+    desk._limit_pad_pct = 0.1
+
+    monkeypatch.setattr(desk, "_latest_bid", lambda s: 23.72)
+    monkeypatch.setattr(desk, "_latest_ask", lambda s: 23.76)
+    monkeypatch.setattr(desk, "_latest_price", lambda s: 23.74)
+
+    naked_calls = []
+
+    class FakeAT:
+        @staticmethod
+        def is_active():
+            return True
+
+        @staticmethod
+        def get_equity():
+            return 10_183.21
+
+        @staticmethod
+        def buy_limit_bracket(sym, qty, lim, stop, target):
+            return {"ok": False, "status": "rejected",
+                    "note": "bracket orders do not support extended hours trading"}
+
+        @staticmethod
+        def buy_limit_at_price(*a, **k):
+            naked_calls.append((a, k))
+            return {"ok": True, "order_id": "should-never-happen", "qty": 353}
+
+    import alpaca_trader as real_at
+    monkeypatch.setattr(real_at, "is_active", FakeAT.is_active)
+    monkeypatch.setattr(real_at, "get_equity", FakeAT.get_equity)
+    monkeypatch.setattr(real_at, "buy_limit_bracket", FakeAT.buy_limit_bracket)
+    monkeypatch.setattr(real_at, "buy_limit_at_price", FakeAT.buy_limit_at_price)
+
+    msg, plan = desk.desk_buy_bracket(
+        "CELH",
+        row=_good_row("CELH"),
+        cfg={"risk_pct": 0.35, "stop_pct": 0.40, "reward_r": 2.0,
+             "entry_max_spread_pct": 2.0, "entry_pad_max_pct": 0.15,
+             "rvol_hot": 3.0},
+    )
+
+    assert naked_calls == [], "placed an unprotected buy after bracket rejection"
+    assert plan is None, "must not report a position it refused to open"
+    assert "ABORT" in msg.upper()
+    assert "CELH" in msg
