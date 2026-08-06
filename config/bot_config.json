@@ -144,7 +144,6 @@
   "stocktwits_rvol_time_adjusted": true,
   "discord_ocr_enabled": true,
   "tv_webhook_secret": "",
-  "engine_control_secret": "brasfield-trading",
   "strategy": "multiple_os",
   "paper": true,
   "tickers": [],

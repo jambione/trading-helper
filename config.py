@@ -6,7 +6,8 @@ from pathlib import Path
 CONFIG_FILE  = Path(__file__).parent / "config" / "bot_config.json"
 SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
 SECRETS_KEYS = ["api_key", "secret_key", "finnhub_key",
-                "push_vapid_private_key", "push_contact_email"]
+                "push_vapid_private_key", "push_contact_email",
+                "engine_control_secret"]
 
 DEFAULT_CONFIG = {
     # ── API credentials ──────────────────────────────────────

@@ -13,8 +13,8 @@
  *      "is it consistent enough to raise TRADE_AMOUNT?" view.
  */
 
-import { subscribe } from './store.js?v=103';
-import { api }       from './api.js?v=103';
+import { subscribe } from './store.js?v=105';
+import { api }       from './api.js?v=105';
 
 const SECRET_LS = 'ss:engine-secret'; // pragma: allowlist secret (localStorage key name)
 
@@ -71,7 +71,7 @@ async function _mutate(fn) {
     return await fn(_secret());
   } catch (e) {
     if (e && e.status === 403) {
-      const s = prompt('Engine control secret (set engine_control_secret in bot_config.json):');
+      const s = prompt('Engine control secret (set engine_control_secret in config/secrets.json):');
       if (!s) throw e;
       localStorage.setItem(SECRET_LS, s);
       return fn(s);
