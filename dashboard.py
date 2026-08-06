@@ -906,6 +906,24 @@ def _atomic_write_json(path: Path, data) -> None:
 
 TICKER_MAX_AGE = 15 * 60  # seconds — entries older than this are auto-purged
 
+# Hard cap on the momentum watchlist. Age alone did not bound it: the feeds
+# re-add faster than the 15-minute purge retires, so the panel drifted to 26+.
+# Every entry also costs a quote on a desk already past Alpaca's rate limit,
+# and the same list seeds AI Watch's momentum candidates
+# (ai_entry_watch._momentum_flagged_from_dashboard) — so this bounds the book's
+# intake too, not just the display.
+#
+# Newest-first is deliberate. Ranking on a "quality" signal invented today
+# would be a rule fit to one afternoon; recency matches the existing freshness
+# model and is honest about knowing nothing yet. Once shadow.jsonl has enough
+# forward-return history per symbol (tools/shadow_report.py) this can retire
+# on measured performance instead.
+_cfg_at_import = load_config()
+try:
+    TICKER_MAX_COUNT = max(1, int(_cfg_at_import.get("momentum_max_tickers", 8) or 8))
+except (TypeError, ValueError):
+    TICKER_MAX_COUNT = 8
+
 _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
 _ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/writes
 
@@ -959,10 +977,25 @@ def load_tickers() -> list:
                     added_ts = now_ts       # unparseable → treat as fresh
 
                 if added_ts >= cutoff:
-                    kept.append({"ticker": t, "added": added})
+                    kept.append({"ticker": t, "added": added, "_ts": added_ts})
                 else:
                     changed = True
                     log.debug(f"[TICKER] Purged stale {t}")
+
+            # Cap after purging, newest first. Sorted on the parsed timestamp
+            # rather than the ISO string so a mixed-offset file cannot order
+            # entries by text and silently evict the wrong ones.
+            if len(kept) > TICKER_MAX_COUNT:
+                kept.sort(key=lambda e: e["_ts"], reverse=True)
+                dropped = kept[TICKER_MAX_COUNT:]
+                kept = kept[:TICKER_MAX_COUNT]
+                changed = True
+                log.info(
+                    "[TICKER] Over cap (%d) — retired %d oldest: %s",
+                    TICKER_MAX_COUNT, len(dropped),
+                    ", ".join(e["ticker"] for e in dropped))
+            for e in kept:
+                e.pop("_ts", None)
 
             if changed:
                 _atomic_write_json(TICKER_LOG, kept)

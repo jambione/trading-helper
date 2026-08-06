@@ -232,6 +232,11 @@ DEFAULT_CONFIG = {
     # only grows on a fill and the desk can run a whole session without one,
     # which leaves every gate unmeasurable — see tools/shadow_report.py.
     "ai_shadow_log_enabled":            True,
+    # Hard cap on the momentum watchlist (dashboard.TICKER_MAX_COUNT). The
+    # 15-minute age purge did not bound it — feeds re-add faster than it
+    # retires — so it drifted to 26+, each entry costing a quote on a desk
+    # already past Alpaca's rate limit. Read once at dashboard import.
+    "momentum_max_tickers":                8,
     # Seed entry-watch from live desk heat (structure poller still defines levels).
     "ai_watch_seed_momentum":           True,
     "ai_watch_seed_momentum_n":           12,
@@ -615,6 +620,7 @@ SAFE_CONFIG_KEYS = [
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",
     "ai_shadow_log_enabled",
+    "momentum_max_tickers",
     "claude_trader_enabled",
     "claude_research_enabled",
     "claude_trading_enabled",
