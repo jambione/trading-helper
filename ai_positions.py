@@ -52,6 +52,11 @@ REPORT_DIR = resolve_report_dir()
 POSITIONS_STATE_PATH = REPORT_DIR / "positions_state.json"
 OUTCOMES_PATH = REPORT_DIR / "outcomes.jsonl"
 EVENTS_PATH = REPORT_DIR / "events.jsonl"
+# Counterfactual record: what the desk decided, and what price did next,
+# whether or not it ever traded. outcomes.jsonl only grows on a fill, and the
+# desk can go a whole session without one (2026-08-06: 530 zones, 31 symbols,
+# 0 fills) — which leaves every gate unmeasurable. See log_shadow_sample.
+SHADOW_PATH = REPORT_DIR / "shadow.jsonl"
 OPEN_BELL_STATE_PATH = REPORT_DIR / "open_bell_state.json"
 EOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "eod_liquidate_state.json"
 SOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "sod_liquidate_state.json"
@@ -425,6 +430,27 @@ def log_event(kind: str, **fields: Any) -> dict[str, Any]:
         if len(_recent_events) > _EVENT_RING_MAX:
             del _recent_events[: len(_recent_events) - _EVENT_RING_MAX]
     return row
+
+
+def log_shadow_sample(row: dict[str, Any]) -> None:
+    """Append one counterfactual sample. Fire-and-forget, never raises.
+
+    Written from the watch poller using the price it already fetched — this
+    must never cost an API call, because the desk is already over Alpaca's
+    rate limit and the names that can actually trade are the ones being
+    starved.
+
+    One row per watched symbol per poll. Forward returns, zone reachability
+    and "what would the blocked trade have done" are all derived downstream by
+    grouping these (tools/shadow_report.py) rather than tracked in the record,
+    so this stays pure append-only logging with no lifecycle hooks to break.
+    """
+    try:
+        SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with SHADOW_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, default=str) + "\n")
+    except Exception:
+        pass
 
 
 def log_entry_decision(

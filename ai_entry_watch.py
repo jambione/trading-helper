@@ -2247,6 +2247,67 @@ def _entry_features(rec: dict, *, ask: float | None = None) -> dict[str, Any]:
     }
 
 
+def _shadow_row(
+    rec: dict,
+    *,
+    price: float | None,
+    price_src: str,
+    arm_ok: bool | None,
+    arm_why: str,
+    now: float,
+) -> dict[str, Any]:
+    """One counterfactual sample: the decision, and the price that tested it.
+
+    Deliberately flat and self-describing rather than a reference into the
+    book — the book is rebuilt every 2s and a symbol can be admitted twice in
+    a session, so anything joined by symbol alone would silently mix them.
+
+    Carries only what a slice needs. Forward return, first zone touch and the
+    would-have-been outcome of a blocked entry are all reconstructed
+    downstream from a series of these.
+    """
+    rec = rec if isinstance(rec, dict) else {}
+    stru = rec.get("structure") if isinstance(rec.get("structure"), dict) else {}
+    sig = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+    lo = _f_or_none(stru.get("entry_low"))
+    hi = _f_or_none(stru.get("entry_high"))
+    px = _f_or_none(price)
+    in_zone = bool(lo is not None and hi is not None and px is not None
+                   and lo <= px <= hi)
+    return {
+        "ts": round(float(now), 2),
+        "symbol": str(rec.get("symbol") or "").upper(),
+        "price": px,
+        "price_src": price_src,          # "quote" (ask) or "tape" (trade print)
+        "status": str(rec.get("status") or ""),
+        # Zone geometry, so reachability is answerable without re-deriving it.
+        "entry_low": lo,
+        "entry_high": hi,
+        "stop_price": _f_or_none(stru.get("stop_price")),
+        "target_1": _f_or_none(stru.get("target_1")),
+        "in_zone": in_zone,
+        # The gate verdict at this instant. arm_ok False WITH in_zone True is
+        # the interesting row: price was there and the desk refused.
+        "arm_ok": arm_ok,
+        "arm_why": arm_why or "",
+        # Selection provenance — same fields the entry feature vector uses, so
+        # a shadow slice and a filled-trade slice are directly comparable.
+        "source": str(rec.get("source") or "") or None,
+        "score": _f_or_none(rec.get("score")),
+        "rvol": _f_or_none(rec.get("admit_rvol")),
+        "look_reason": rec.get("admit_look_reason") or None,
+        "criteria": list(rec.get("admit_criteria") or []),
+        "admit_ts": _f_or_none(rec.get("admit_ts")),
+        # Timing state.
+        "cm_ok": bool(sig.get("cm_ok")) if sig else None,
+        "pctr_ok": bool(sig.get("pctr_ok")) if sig else None,
+        "cm_rsi_rising": bool(sig.get("cm_rsi_rising")) if sig else None,
+        "sell_signal": bool(sig.get("sell_signal")) if sig else None,
+        "proximity_pct": _f_or_none(sig.get("proximity_pct")) if sig else None,
+        "entry_hour_et": _et_hour_decimal(now),
+    }
+
+
 def should_arm_buy(
     record: dict,
     *,
@@ -2773,6 +2834,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             equity_cache = 0.0
         return float(equity_cache or 0.0)
 
+    shadow_on = bool(cfg.get("ai_shadow_log_enabled", True))
+
     for sym_key, rec in list(state.items()):
         if not isinstance(rec, dict):
             continue
@@ -2818,6 +2881,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 rec, "above_zone" if above else "below_zone", now=t0,
                 detail=f"tape {stream_px:g}",
             )
+            if shadow_on:
+                try:
+                    cp.log_shadow_sample(_shadow_row(
+                        rec, price=stream_px, price_src="tape",
+                        arm_ok=None, arm_why="prefilter_far", now=t0))
+                except Exception:
+                    pass
             touched[sym] = rec
             continue
 
@@ -2951,6 +3021,16 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             bid_f = None
 
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg)
+        # The counterfactual record. arm_ok False with in_zone True is the row
+        # that pays for this whole mechanism: price was in the zone and the
+        # desk declined, and nothing else on disk says what that cost.
+        if shadow_on:
+            try:
+                cp.log_shadow_sample(_shadow_row(
+                    rec, price=ask_f, price_src="quote",
+                    arm_ok=bool(ok_arm), arm_why=why or "", now=t0))
+            except Exception:
+                pass
         if not ok_arm:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure"):

@@ -227,6 +227,11 @@ DEFAULT_CONFIG = {
     "ai_entry_zone_pad_pct":             0.0,   # pad around entry zone (%); 0 = exact zone
     "ai_max_structure_calls_per_hour":    12,   # rate-limit structure LLM calls
     "ai_persist_entry_decisions":       True,   # persist entry decision records
+    # Counterfactual log: one row per watched symbol per poll, off the price
+    # the poller already fetched (never an extra API call). outcomes.jsonl
+    # only grows on a fill and the desk can run a whole session without one,
+    # which leaves every gate unmeasurable — see tools/shadow_report.py.
+    "ai_shadow_log_enabled":            True,
     # Seed entry-watch from live desk heat (structure poller still defines levels).
     "ai_watch_seed_momentum":           True,
     "ai_watch_seed_momentum_n":           12,
@@ -609,6 +614,7 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_zone_pad_pct",
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",
+    "ai_shadow_log_enabled",
     "claude_trader_enabled",
     "claude_research_enabled",
     "claude_trading_enabled",
