@@ -900,6 +900,58 @@ def test_hard_stop_closure_with_no_scale_out_is_labeled_stopped_out(
     assert outcome["realized_r_multiple"] < 0  # a loss, priced at the real fill
 
 
+def test_outcome_carries_the_decision_time_feature_vector(tmp_path, monkeypatch):
+    """The whole point of the feature vector is that it reaches the outcome.
+
+    Slicing joins nothing: outcomes.jsonl has to land denormalized, features
+    and result on one row, or "did EXT-tagged entries outperform?" is
+    unanswerable. The two halves must stay distinguishable — selection
+    (source/rvol/look_reason/criteria) is a different question from timing
+    (cm_ok/pctr_ok/cm_rsi_rising).
+    """
+    features = {
+        "source": "trending", "score": 19.3, "rvol": 2.1, "pct_change": 18.0,
+        "look_reason": "EXT", "criteria": ["score", "rvol", "uptrend", "ext"],
+        "cm_ok": True, "pctr_ok": True, "cm_rsi_rising": True,
+        "macd_ok": False, "cm_rsi": 18.3, "pctr": -82.1,
+        "proximity_pct": 100.0, "entry_hour_et": 10.25, "dwell_sec": 240.0,
+        "ask": 40.5,
+    }
+    _seed_state(tmp_path, monkeypatch, tranche_a_filled=False,
+                last_seen_price=39.0, features=features)
+    stub = _StubBrokerManage(position_open=False, fills={"stop_b": 37.90})
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_010.0)
+
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    # Result side still correct — features must not disturb pricing.
+    assert outcome["exit_price"] == 37.90
+    assert outcome["realized_r_multiple"] < 0
+
+    f = outcome["features"]
+    assert f is not None, "outcome lost the feature vector — nothing is sliceable"
+    assert f["source"] == "trending" and f["look_reason"] == "EXT"
+    assert f["rvol"] == 2.1 and "ext" in f["criteria"]
+    assert f["cm_rsi_rising"] is True and f["entry_hour_et"] == 10.25
+
+
+def test_outcome_without_features_still_records(tmp_path, monkeypatch):
+    """Positions opened before the feature vector existed, or by a path that
+    does not set one, must still produce a priced outcome — instrumentation
+    must never be able to block the record that gates the daily loss limit."""
+    _seed_state(tmp_path, monkeypatch, tranche_a_filled=False,
+                last_seen_price=39.0)
+    stub = _StubBrokerManage(position_open=False, fills={"stop_b": 37.90})
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_010.0)
+
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    assert outcome["exit_price"] == 37.90
+    assert outcome["features"] is None
+
+
 # ── thesis-break review folded into the shared research call ────────────────
 
 def test_holdings_review_snippet_is_empty_with_nothing_held(tmp_path, monkeypatch):
