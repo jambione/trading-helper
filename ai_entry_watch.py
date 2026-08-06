@@ -596,6 +596,18 @@ def _score_from_row(row: dict) -> float:
     return 0.0
 
 
+def _f_or_none(v: Any) -> float | None:
+    """Float, or None when absent/unparseable. Never substitutes a default —
+    a missing feature must stay missing so slicing can exclude it rather than
+    average a zero into the result."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def upsert_from_rows(
     rows: list[dict],
     *,
@@ -668,6 +680,21 @@ def upsert_from_rows(
             ),
             "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
             "updated_ts": float(now),
+            # ── Admission provenance (A/B slicing) ──────────────────────────
+            # Why this name was let onto the book, captured at admission and
+            # carried to the outcome record. Without it an outcome says what
+            # happened but not which gate claimed credit, so no feature can
+            # ever be scored retrospectively. Falls back to prev so a refresh
+            # poll that arrives without the numbers does not erase them.
+            "admit_rvol": _f_or_none(row.get("rvol", prev.get("admit_rvol"))),
+            "admit_pct_change": _f_or_none(
+                row.get("pct_change", prev.get("admit_pct_change"))),
+            "admit_look_reason": (
+                row.get("look_reason") or prev.get("admit_look_reason") or None),
+            "admit_criteria": (
+                list(row.get("criteria") or [])
+                or list(prev.get("admit_criteria") or [])),
+            "admit_ts": float(prev.get("admit_ts") or now),
         }
         state[sym] = rec
 
@@ -747,6 +774,15 @@ def _et_now(now: float | None = None):
 
     t0 = float(now if now is not None else time.time())
     return datetime.fromtimestamp(t0, tz=ZoneInfo("America/New_York"))
+
+
+def _et_hour_decimal(now: float | None = None) -> float | None:
+    """ET hour as a decimal (9.5 == 09:30), for time-of-day slicing."""
+    try:
+        et = _et_now(now)
+        return round(et.hour + et.minute / 60.0, 2)
+    except Exception:
+        return None
 
 
 def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
@@ -2132,6 +2168,49 @@ def ensure_offset_zone_if_needed(
     }
 
 
+def _entry_features(rec: dict, *, ask: float | None = None) -> dict[str, Any]:
+    """Decision-time feature vector, for retrospective A/B slicing.
+
+    Snapshotted at the moment of entry and carried onto the position, so the
+    outcome record lands denormalized — features and result on one row, no
+    join needed. Deliberately records the values the gates SAW, not the
+    thresholds they were compared against: thresholds live in config and
+    change, so a stored threshold tells you nothing a config diff wouldn't.
+
+    Live trading cannot A/B its own features at this desk's volume (a 0.1R
+    edge needs ~780 trades per arm). This is instrumentation for observation
+    and for slicing the replay harness — not an experiment.
+    """
+    rec = rec if isinstance(rec, dict) else {}
+    sig = rec.get("indicator")
+    sig = sig if isinstance(sig, dict) else {}
+    admitted = _f_or_none(rec.get("admit_ts"))
+    now = time.time()
+    return {
+        # Which pipeline claimed it, and what its numbers were at admission.
+        "source": str(rec.get("source") or "") or None,
+        "score": _f_or_none(rec.get("score")),
+        "rvol": _f_or_none(rec.get("admit_rvol")),
+        "pct_change": _f_or_none(rec.get("admit_pct_change")),
+        "look_reason": rec.get("admit_look_reason") or None,
+        "criteria": list(rec.get("admit_criteria") or []),
+        # Indicator state at the moment of arming — the timing question,
+        # separate from the selection question above.
+        "cm_ok": bool(sig.get("cm_ok")),
+        "pctr_ok": bool(sig.get("pctr_ok")),
+        "cm_rsi_rising": bool(sig.get("cm_rsi_rising")),
+        "macd_ok": bool(sig.get("macd_ok")),
+        "cm_rsi": _f_or_none(sig.get("cm_rsi")),
+        "pctr": _f_or_none(sig.get("pctr")),
+        "proximity_pct": _f_or_none(sig.get("proximity_pct")),
+        # Time-of-day and dwell: an open-drive entry and a 15:00 entry facing
+        # the 15:50 flatten are different trades with the same signal.
+        "entry_hour_et": _et_hour_decimal(now),
+        "dwell_sec": round(now - admitted, 1) if admitted else None,
+        "ask": _f_or_none(ask),
+    }
+
+
 def should_arm_buy(
     record: dict,
     *,
@@ -2967,6 +3046,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             place_decision = dict(place_decision)
             place_decision["source"] = rec.get("duel_source") or rec.get("source")
             place_decision["duel_source"] = place_decision.get("source")
+            place_decision["features"] = _entry_features(rec, ask=ask_f)
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:

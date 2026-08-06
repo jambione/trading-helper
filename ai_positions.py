@@ -870,6 +870,11 @@ def place_scaled_entry(
         "breakeven_done": False,
         "reward_risk": decision.get("reward_risk"),
         "summary": decision.get("summary"),
+        # Decision-time feature vector (ai_entry_watch._entry_features), held
+        # so the outcome record can land denormalized — features and result on
+        # one row. A join against events.jsonl would work until a symbol is
+        # entered twice in a session, which happens.
+        "features": decision.get("features"),
         # Set once we've observed the position actually open — guards the
         # closure check below from mistaking "order hasn't filled yet" for
         # "position closed" on the very first tick after entry.
@@ -1104,6 +1109,10 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "hold_days": round((now - entry_time) / 86400.0, 2),
         "reward_risk_planned": pos.get("reward_risk"),
         "summary": pos.get("summary"),
+        # Why this trade was taken, alongside how it ended. Without it an
+        # outcome is unsliceable: you know the result but not which gate,
+        # indicator state, or time of day to attribute it to.
+        "features": pos.get("features"),
     }
     try:
         OUTCOMES_PATH.parent.mkdir(parents=True, exist_ok=True)

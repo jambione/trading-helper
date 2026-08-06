@@ -1133,6 +1133,74 @@ def test_inclusion_price_and_liquidity_floors():
     assert ok is False and why == "thin_dollar_volume"
 
 
+def test_entry_features_snapshot_selection_and_timing_separately():
+    """The feature vector must carry WHY a name was admitted (selection) and
+    the indicator state at arm (timing) as distinct fields — they are the two
+    things being A/B'd and conflating them makes either unsliceable."""
+    import time as _time
+
+    import ai_entry_watch as ew
+
+    rec = {
+        "symbol": "AAA", "source": "trending", "score": 12.5,
+        "admit_rvol": 2.4, "admit_pct_change": 6.1,
+        "admit_look_reason": "EXT",
+        "admit_criteria": ["score", "rvol", "uptrend", "ext"],
+        "admit_ts": _time.time() - 300,
+        "indicator": {"cm_ok": True, "pctr_ok": True, "cm_rsi_rising": False,
+                      "cm_rsi": 18.3, "proximity_pct": 100},
+    }
+    f = ew._entry_features(rec, ask=14.22)
+
+    # Selection side.
+    assert f["source"] == "trending" and f["rvol"] == 2.4
+    assert f["look_reason"] == "EXT" and "ext" in f["criteria"]
+    # Timing side — recorded even when false, so "armed without it" is
+    # distinguishable from "not recorded".
+    assert f["cm_ok"] is True and f["cm_rsi_rising"] is False
+    assert f["cm_rsi"] == 18.3
+    # Time-of-day and dwell: a 09:35 entry and a 15:45 entry facing the
+    # flatten are different trades with the same signal.
+    assert f["entry_hour_et"] is not None
+    assert 299 <= f["dwell_sec"] <= 301
+
+
+def test_entry_features_keep_missing_values_missing():
+    """A feature the desk never observed must stay None, not become 0.0 —
+    averaging a substituted zero into a slice silently biases the result."""
+    import ai_entry_watch as ew
+
+    f = ew._entry_features({"symbol": "AAA", "source": "momentum"}, ask=None)
+    assert f["rvol"] is None and f["pct_change"] is None
+    assert f["cm_rsi"] is None and f["ask"] is None
+    assert f["look_reason"] is None and f["criteria"] == []
+    # Booleans are a real observation (the gate was checked and was false).
+    assert f["cm_ok"] is False
+
+
+def test_admission_provenance_survives_a_refresh_without_numbers():
+    """The book is rebuilt every 2s. A refresh poll that arrives without rvol
+    must not erase the admission numbers, or the feature vector is empty by
+    the time price finally reaches the zone."""
+    import ai_entry_watch as ew
+
+    rows = [{"symbol": "AAA", "source": "trending", "score": 12.0,
+             "reason": "heat", "agreement": True, "rvol": 2.4,
+             "pct_change": 6.1, "look_reason": "EXT",
+             "criteria": ["score", "rvol"]}]
+    cfg = {"ai_watch_require_agreement": False}
+    state = ew.upsert_from_rows(rows, cfg=cfg, now=100.0)
+    assert state["AAA"]["admit_rvol"] == 2.4
+    assert state["AAA"]["admit_look_reason"] == "EXT"
+
+    bare = [{"symbol": "AAA", "source": "trending", "score": 12.0,
+             "reason": "heat", "agreement": True}]
+    state = ew.upsert_from_rows(bare, cfg=cfg, now=102.0)
+    assert state["AAA"]["admit_rvol"] == 2.4, "refresh erased admission rvol"
+    assert state["AAA"]["admit_look_reason"] == "EXT"
+    assert state["AAA"]["admit_ts"] == 100.0, "admit_ts must mark first admit"
+
+
 def test_inclusion_requires_rvol_for_momentum_and_trending():
     """Popularity/flag alone isn't evidence of a real dislocation — relative
     volume has to back it up, for both sources. Research rows are exempt."""
