@@ -197,20 +197,67 @@ def completeness(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--horizon", type=float, default=30.0,
-                    help="forward-return horizon, minutes (default 30)")
-    ap.add_argument("--all-days", action="store_true",
-                    help="ignore the date filter (default: today only)")
-    ap.add_argument("--json", action="store_true")
-    args = ap.parse_args()
+# Metrics that decide whether the desk actually got better, with the direction
+# that counts as improvement. Deliberately short: a scorecard nobody reads is
+# not a scorecard. "higher" / "lower" / "watch" — watch means a change is
+# informative but not good or bad on its own.
+SCORECARD = [
+    ("zones drawn",        "zoned",            "watch"),
+    ("zone touch rate %",  "touch_rate",       "higher"),
+    ("armed",              "armed",            "higher"),
+    ("filled",             "filled",           "higher"),
+    ("closed w/ outcome",  "closed_with_outcome", "higher"),
+    ("unprotected buys",   "naked_buys",       "lower"),
+    ("order errors",       "order_errors",     "lower"),
+    ("admitted (symbols)", "symbols_admitted", "watch"),
+    ("rejected (symbols)", "symbols_rejected", "watch"),
+]
 
-    day = None if args.all_days else date.today()
-    hz = args.horizon * 60.0
 
+def scorecard_metrics(report: dict) -> dict[str, float | None]:
+    """Flatten a report into the handful of numbers worth comparing."""
+    f = report.get("funnel") or {}
+    ex = report.get("execution") or {}
+    zoned = f.get("zoned") or 0
+    touched = f.get("zone_touched") or 0
+    return {
+        "zoned": zoned,
+        "touch_rate": (round(100.0 * touched / zoned, 1) if zoned else None),
+        "armed": f.get("armed"),
+        "filled": f.get("filled"),
+        "closed_with_outcome": f.get("closed_with_outcome"),
+        "naked_buys": len(ex.get("naked_buys") or []),
+        "order_errors": sum((ex.get("errors") or {}).values()),
+        "symbols_admitted": f.get("symbols_admitted"),
+        "symbols_rejected": f.get("symbols_rejected"),
+    }
+
+
+def print_scorecard(now: dict, prev: dict, now_day: str, prev_day: str) -> None:
+    a, b = scorecard_metrics(now), scorecard_metrics(prev)
+    print(f"\n{'=' * 66}\n  SCORECARD — {now_day} vs {prev_day}\n{'=' * 66}")
+    print(f"  {'metric':<22}{prev_day:>12}{now_day:>12}{'delta':>10}  verdict")
+    for label, key, want in SCORECARD:
+        cur, old = a.get(key), b.get(key)
+        if cur is None and old is None:
+            continue
+        c = 0 if cur is None else cur
+        o = 0 if old is None else old
+        d = round(c - o, 1)
+        if want == "watch" or d == 0:
+            verdict = "—"
+        elif (want == "higher" and d > 0) or (want == "lower" and d < 0):
+            verdict = "BETTER"
+        else:
+            verdict = "WORSE"
+        print(f"  {label:<22}{o:>12}{c:>12}{d:>+10}  {verdict}")
+    print("\n  One day against one day is not evidence of a trend — it is a"
+          "\n  check that a change did what it was supposed to do. Sustained"
+          "\n  claims need weeks, or tools/ab_bench.py.\n")
+
+
+def build_report(day, hz: float) -> dict:
+    """Assemble one day's report. Extracted so --compare can build two."""
     shadow_rows = _jsonl(SHADOW, day)
     reject_rows = _jsonl(REJECTS, day)
     events = _jsonl(EVENTS, day)
@@ -225,8 +272,7 @@ def main() -> None:
     rejected = {e["symbol"] for e in rej_eps}
     # Counted in EPISODES, not symbols, from "admitted" down. A name dropped
     # and re-admitted gets a fresh zone and a fresh chance to arm, so symbol
-    # counts made the funnel widen as it descended — 13 admitted but 20 zoned,
-    # which reads as a bug in the desk rather than a mixed unit in the report.
+    # counts made the funnel widen as it descended.
     funnel = {
         "candidates_seen": len(admitted | rejected),
         "symbols_admitted": len(admitted),
@@ -246,23 +292,66 @@ def main() -> None:
         if e["fwd_return_pct"] is not None:
             by_reason[str(e["first_reason"])].append(e["fwd_return_pct"])
 
-    report = {
+    return {
         "day": str(day) if day else "all",
-        "horizon_min": args.horizon,
+        "horizon_min": hz / 60.0,
         "funnel": funnel,
         "admitted_fwd_mean_pct": _mean(adm_fwd),
         "admitted_fwd_n": len(adm_fwd),
         "reject_arm": {r: {"n": len(v), "fwd_mean_pct": _mean(v)}
                        for r, v in sorted(by_reason.items())},
+        "reject_by_reason": {r: v for r, v in by_reason.items()},
         "completeness_admitted": completeness(shadow_rows),
         "completeness_rejected": completeness(reject_rows),
         "execution": execution_stats(day),
         "event_kinds": dict(kinds),
     }
 
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--horizon", type=float, default=30.0,
+                    help="forward-return horizon, minutes (default 30)")
+    ap.add_argument("--all-days", action="store_true",
+                    help="ignore the date filter (default: today only)")
+    ap.add_argument("--day", help="report a specific day, YYYY-MM-DD")
+    ap.add_argument("--compare",
+                    help="prior day to measure against, YYYY-MM-DD. Prints a "
+                         "SCORECARD of deltas on the metrics that decide "
+                         "whether the desk got better.")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    if args.all_days:
+        day = None
+    elif args.day:
+        day = date.fromisoformat(args.day)
+    else:
+        day = date.today()
+    hz = args.horizon * 60.0
+
+    report = build_report(day, hz)
+
+    prev = None
+    if args.compare:
+        prev_day = date.fromisoformat(args.compare)
+        prev = build_report(prev_day, hz)
+
     if args.json:
-        print(json.dumps(report, indent=2, default=str))
+        payload = {"report": report}
+        if prev is not None:
+            payload["compare"] = prev
+            payload["scorecard"] = {
+                "current": scorecard_metrics(report),
+                "previous": scorecard_metrics(prev),
+            }
+        print(json.dumps(payload, indent=2, default=str))
         return
+
+    if prev is not None:
+        print_scorecard(report, prev, report["day"], prev["day"])
 
     print(f"\n{'=' * 66}\n  DESK REPORT — {report['day']}   "
           f"(forward horizon {args.horizon:.0f}m)\n{'=' * 66}")
