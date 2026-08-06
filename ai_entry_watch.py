@@ -2363,6 +2363,11 @@ def _shadow_row(
         "source": str(rec.get("source") or "") or None,
         "score": _f_or_none(rec.get("score")),
         "rvol": _f_or_none(rec.get("admit_rvol")),
+        # Day change was recorded on the reject arm but omitted here, so the
+        # completeness report read 0% admitted / 91% rejected and the two arms
+        # could not be compared on the gate (ai_watch_require_uptrend) that
+        # does most of the actual filtering — 20 of 28 rejects on 2026-08-06.
+        "pct_change": _f_or_none(rec.get("admit_pct_change")),
         "look_reason": rec.get("admit_look_reason") or None,
         "criteria": list(rec.get("admit_criteria") or []),
         "admit_ts": _f_or_none(rec.get("admit_ts")),
