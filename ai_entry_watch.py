@@ -8,6 +8,7 @@ and poll_once paper entry placement.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -995,7 +996,21 @@ def _momentum_has_flag(row: dict) -> bool:
     return False
 
 
-DASHBOARD_URL = "http://127.0.0.1:8888"
+# Same env key and default as signal_engine.py, so the engine and this module
+# always read one universe. Hardcoding localhost here split the desk in two: the
+# engine polled the remote box for its symbol list while this module pushed
+# candidates to — and read signal_proximity from — a local dashboard the engine
+# never saw. The push was a no-op, the indicator map was permanently empty, and
+# should_arm_buy blocked every symbol on `no_indicators`.
+DASHBOARD_URL = (os.getenv("DASHBOARD_URL") or "https://trading.jbrasfield.com").rstrip("/")
+
+# Remote hop, so the old 2s local timeouts are too tight to be a real signal.
+_DASH_TIMEOUT = 4.0
+
+# The edge in front of the remote dashboard 403s urllib's default
+# "Python-urllib/x.y" agent. signal_engine.py never hit this because `requests`
+# sends its own. Any non-default agent passes; identify ourselves honestly.
+_DASH_UA = "trading-helper-desk/1.0"
 
 # Last dashboard fetch: (monotonic_ts, payload). Two callers used to issue their
 # own GET (2s timeout each) on every 2s book tick, so a slow dashboard could eat
@@ -1020,7 +1035,11 @@ def dashboard_state(*, force: bool = False) -> dict:
     try:
         import urllib.request
         with urllib.request.urlopen(
-            f"{DASHBOARD_URL}/api/state", timeout=2.0
+            urllib.request.Request(
+                f"{DASHBOARD_URL}/api/state",
+                headers={"User-Agent": _DASH_UA},
+            ),
+            timeout=_DASH_TIMEOUT,
         ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if not isinstance(data, dict):
@@ -1379,10 +1398,10 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         req = urllib.request.Request(
             f"{DASHBOARD_URL}/api/tickers/add-bulk",
             data=json.dumps({"tickers": missing}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "User-Agent": _DASH_UA},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=2.0):
+        with urllib.request.urlopen(req, timeout=_DASH_TIMEOUT):
             pass
         return {"pushed": len(missing), "known": len(known)}
     except Exception:

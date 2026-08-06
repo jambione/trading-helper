@@ -1596,3 +1596,69 @@ def test_no_dead_ai_knobs_are_dashboard_editable():
     dead = [k for k in SAFE_CONFIG_KEYS
             if k.startswith(("ai_", "claude_", "grok_")) and k not in haystack]
     assert not dead, f"dashboard-editable keys nothing reads: {dead}"
+
+
+def test_dashboard_url_follows_env_not_hardcoded_localhost(monkeypatch):
+    """The engine and this module must resolve to ONE dashboard.
+
+    Regression guard. DASHBOARD_URL was hardcoded to 127.0.0.1:8888 while
+    signal_engine.py read DASHBOARD_URL from the environment. On a two-box
+    setup that split the desk: the engine polled the remote for its symbol
+    list, this module pushed candidates to a local dashboard the engine never
+    read, and _engine_indicator_map() came back empty forever — so
+    should_arm_buy blocked every symbol on `no_indicators` and the desk could
+    not place a single trade. Nothing failed loudly; it just never traded.
+    """
+    import importlib
+    import ai_entry_watch
+
+    monkeypatch.setenv("DASHBOARD_URL", "https://example.invalid/")
+    mod = importlib.reload(ai_entry_watch)
+    try:
+        assert mod.DASHBOARD_URL == "https://example.invalid", (
+            "DASHBOARD_URL must come from the environment so the engine and the "
+            "watchlist share one universe"
+        )
+    finally:
+        monkeypatch.delenv("DASHBOARD_URL", raising=False)
+        importlib.reload(ai_entry_watch)
+
+
+def test_dashboard_requests_send_a_non_default_user_agent():
+    """The edge fronting the remote dashboard 403s urllib's default agent.
+
+    signal_engine.py never hit this because `requests` sends its own UA, so the
+    failure was invisible until this module started talking to the remote.
+    """
+    import ai_entry_watch as ew
+
+    assert ew._DASH_UA and "urllib" not in ew._DASH_UA.lower()
+
+    seen = {}
+
+    class _Resp:
+        def read(self):
+            return b'{"tickers": []}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        seen["ua"] = req.get_header("User-agent")
+        seen["timeout"] = timeout
+        return _Resp()
+
+    import urllib.request
+
+    orig = urllib.request.urlopen
+    urllib.request.urlopen = _fake_urlopen
+    try:
+        ew.dashboard_state(force=True)
+    finally:
+        urllib.request.urlopen = orig
+
+    assert seen["ua"] == ew._DASH_UA
+    assert seen["timeout"] == ew._DASH_TIMEOUT
