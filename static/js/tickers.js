@@ -6,9 +6,9 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=103';
-import { api } from './api.js?v=103';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=103';
+import { subscribe, selectTicker, get } from './store.js?v=105';
+import { api } from './api.js?v=105';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=105';
 
 let _rowsEl     = null;   // <div data-ticker-rows>
 let _countEl    = null;   // <span data-ticker-count>
@@ -295,7 +295,7 @@ function _updateRow(el, row) {
   if (tickerCell) {
     let badge = tickerCell.querySelector('.mention-badge');
     const w = row.mention_window ?? 0;
-    if (w > 0) {
+    if (w > 1) {
       if (!badge) {
         badge = document.createElement('span');
         badge.className = 'mention-badge';
@@ -322,23 +322,6 @@ function _updateRow(el, row) {
       cbadge.title = `Confluence: ${names}`;
     } else if (cbadge) {
       cbadge.remove();
-    }
-
-    // Funnel score badge — rebuild from the template so state colour + reject
-    // fallback stay correct as the scan updates.
-    const fhtml  = _funnelBadge(row.funnel);
-    let   fbadge = tickerCell.querySelector('.funnel-badge');
-    if (fhtml) {
-      if (!fbadge || fbadge.dataset.fkey !== fhtml) {
-        const tmp = document.createElement('span');
-        tmp.innerHTML = fhtml;
-        const nb = tmp.firstElementChild;
-        if (nb) nb.dataset.fkey = fhtml;
-        if (fbadge) fbadge.replaceWith(nb);
-        else if (nb) tickerCell.appendChild(nb);
-      }
-    } else if (fbadge) {
-      fbadge.remove();
     }
   }
 
@@ -573,7 +556,7 @@ function _aiPosBadge(ticker) {
 function _flagsHtml(row) {
   const parts = [];
   if (row.find_it_first) {
-    parts.push('<span class="flag-badge flag-badge--first" title="Find-it-first scanner hit">🥇FIRST</span>');
+    parts.push('<span class="flag-badge flag-badge--first" title="Find-it-first scanner hit — flagged before it was widely trending">🥇 FIRST FIND</span>');
   }
   // NEW: first minute after a mention window opens (fresh attention).
   if ((row.mention_window ?? 0) === 1 && !row.mention_burst) {
@@ -600,7 +583,6 @@ function _rowHTML(row) {
       ${mentionTxt ? `<span class="mention-badge${mentionCls}" title="${row.mention_count ?? 0} today">${mentionTxt}</span>` : ''}
       ${_aiPosBadge(row.ticker)}
       ${_confluenceBadge(row.confluence)}
-      ${_funnelBadge(row.funnel)}
     </div>
     <div class="cell-price" data-price="${row.ticker}">${price}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>

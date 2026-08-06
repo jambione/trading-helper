@@ -1818,6 +1818,8 @@ def _snapshot() -> dict:
                 "engine_strategy": sig.get("strategy"),
                 "engine_started":  sig.get("started"),
                 "engine_updated":  sig.get("updated"),
+                "product_name":    version.PRODUCT_NAME,
+                "product_version": version.PRODUCT_VERSION,
             },
         }
 

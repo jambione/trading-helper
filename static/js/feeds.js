@@ -7,10 +7,10 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=103';
-import { api }       from './api.js?v=103';
-import { copyTicker } from './tickers.js?v=103';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=103';
+import { subscribe, get } from './store.js?v=105';
+import { api }       from './api.js?v=105';
+import { copyTicker } from './tickers.js?v=105';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=105';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;

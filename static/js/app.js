@@ -5,51 +5,35 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=103';
-import { subscribe, set }                        from './store.js?v=103';
-import { init as initFeeds }                     from './feeds.js?v=103';
-import { init as initTickers }                   from './tickers.js?v=103';
-import { init as initTradingView }               from './tradingview.js?v=103';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=103';
-import { init as initResizer }                   from './resizer.js?v=103';
-import * as controls                             from './controls.js?v=103';
-import * as notifications                        from './notifications.js?v=103';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=103';
-import { init as initNews }                      from './news.js?v=103';
-import { init as initLeaderboard }               from './leaderboard.js?v=103';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=103';
-import { init as initEngine }                    from './engine.js?v=103';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=103';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=103';
+import { connect, on, api }                      from './api.js?v=105';
+import { subscribe, set }                        from './store.js?v=105';
+import { init as initFeeds }                     from './feeds.js?v=105';
+import { init as initTickers }                   from './tickers.js?v=105';
+import { init as initTradingView }               from './tradingview.js?v=105';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=105';
+import { init as initResizer }                   from './resizer.js?v=105';
+import * as controls                             from './controls.js?v=105';
+import * as notifications                        from './notifications.js?v=105';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=105';
+import { init as initNews }                      from './news.js?v=105';
+import { init as initLeaderboard }               from './leaderboard.js?v=105';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=105';
+import { init as initEngine }                    from './engine.js?v=105';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=105';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=105';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=103';
+import { init as initMobilePager }                from './mobilePager.js?v=105';
 
-// Build badge — shows which code the dashboard and the signal engine are each
-// running, so a stale or mismatched process is obvious at a glance. Amber when
-// they differ, the engine is stale (>30s since its last write), or it's off.
-function _renderBuildBadge(v) {
-  const el = document.querySelector('[data-build-badge]');
+// Product badge — "Trader Bro v0.8", replacing the old WS·Discord·AI Grok
+// text row. The connectivity/trader-on dots stay (they're live status, not
+// clutter); this is just the product's name + version, from a single
+// backend source of truth (version.py) so bumping it is a one-line change.
+function _renderProductBadge(v) {
+  const el = document.querySelector('[data-product-badge]');
   if (!el) return;
-  const dash = v.dashboard || '?';
-  const eng  = v.engine || null;
-  let stale = true;
-  if (v.engine_updated) {
-    const age = (Date.now() - Date.parse(v.engine_updated)) / 1000;
-    stale = !(age >= 0 && age < 30);
-  }
-  const mismatch = eng && eng !== dash;
-  const engTxt   = eng ? `engine ${eng}${v.engine_strategy ? ' · ' + v.engine_strategy : ''}` : 'engine off';
-  const ok       = eng && !mismatch && !stale;
-  el.textContent = `${dash} · ${(eng && stale) ? '⚠ ' : ''}${engTxt}`;
-  el.className   = `build-badge ${ok ? 'build-badge--ok' : 'build-badge--warn'}`;
-  el.title = [
-    `dashboard build: ${dash}`,
-    `engine build: ${eng || '(not running)'}`,
-    v.engine_strategy ? `engine strategy: ${v.engine_strategy}` : '',
-    v.engine_started  ? `engine started: ${v.engine_started}` : '',
-    v.engine_updated  ? `engine last write: ${v.engine_updated}${(eng && stale) ? '  (STALE — engine not writing)' : ''}` : '',
-    mismatch ? '⚠ dashboard and engine are on DIFFERENT builds — restart the engine' : '',
-  ].filter(Boolean).join('\n');
+  const name = v.product_name || 'Trader Bro';
+  const ver  = v.product_version || '?';
+  el.textContent = `${name} v${ver}`;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -185,7 +169,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=103');
+    const m = await import('./admin.js?v=105');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -259,7 +243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
     if (Object.keys(update).length)      set(update);
-    if (snap.version)                    _renderBuildBadge(snap.version);
+    if (snap.version) _renderProductBadge(snap.version);
   });
 
   on('connected', connected => set({ connected }));

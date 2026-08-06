@@ -16,6 +16,12 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent
 _IGNORE_DIRTY = ("signal_engine.env", "signal_state.json")
 
+# Product name + semantic version, shown on the dashboard header. Separate
+# from get_version()'s git-hash build badge, which tracks *code* identity for
+# debugging a stale/mismatched process — this tracks the *product* milestone.
+PRODUCT_NAME = "Trader Bro"
+PRODUCT_VERSION = "0.8"
+
 
 @lru_cache(maxsize=1)
 def get_version() -> str:

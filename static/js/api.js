@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=103';
+import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=105';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
