@@ -1589,29 +1589,41 @@ def passes_inclusion(
     # Momentum and trending both need evidence of unusual activity, not just
     # popularity — a flat RVOL means nothing dislocated today regardless of
     # score or a flag. Research-sourced rows are untouched by this gate.
+    #
+    # A KNOWN-low RVOL rejects; an UNKNOWN one abstains. The producer
+    # (trending_screener) publishes rvol=None on every row whenever the volume
+    # refresh has not resolved, so failing closed on absence empties the book
+    # outright rather than filtering it — 15 candidates to 0 on 2026-08-06.
+    # Same rule apply_look_highlights already uses: "unknown rvol neither
+    # passes nor blocks." Absence of evidence is not evidence of absence; the
+    # remaining conjunctive gates still have to pass.
     if source in ("momentum", "trending"):
         min_rvol = float(cfg.get("ai_watch_min_rvol", 1.5) or 0.0)
         if min_rvol > 0:
-            rvol = row.get("rvol")
-            try:
-                rvol_f = float(rvol) if rvol is not None else None
-            except (TypeError, ValueError):
-                rvol_f = None
-            if rvol_f is None or rvol_f < min_rvol:
-                return False, met, "thin_rvol"
-            met.append("rvol")
+            rvol_f = _f_or_none(row.get("rvol"))
+            if rvol_f is not None:
+                if rvol_f < min_rvol:
+                    return False, met, "thin_rvol"
+                met.append("rvol")
 
     # Trending admission also requires the raw Stocktwits score cleared the
     # bar (not just big_move/rvol substituting for it — "score" in criteria
-    # reflects the shortlist's own correct computation, see desk_candidate_rows)
-    # and that apply_look_highlights independently tagged it EXT: heat + move +
-    # volume + near the day's highs, not just a moving number.
+    # reflects the shortlist's own correct computation, see desk_candidate_rows).
+    #
+    # EXT (apply_look_highlights: heat + move + volume + near the day's highs)
+    # is checked only when the field is actually present. trending_screener
+    # writes `list(st.rows)`, the raw rows — apply_look_highlights runs inside
+    # snapshot(), which that loop never calls, so look_reason is absent from
+    # trending_stocks.json entirely and demanding it closed the gate
+    # permanently. Wire the producer before treating absence as a rejection.
     if source == "trending" and bool(cfg.get("ai_watch_require_look_ext", True)):
         if "score" not in met:
             return False, met, "low_score"
-        if str(row.get("look_reason") or "").upper() != "EXT":
+        look = row.get("look_reason")
+        if look is not None and str(look).upper() != "EXT":
             return False, met, "not_ext"
-        met.append("ext")
+        if look is not None:
+            met.append("ext")
 
     if bool(cfg.get("ai_watch_require_indicators", True)):
         sig = (indicators or {}).get(sym)
@@ -1639,6 +1651,11 @@ def passes_inclusion(
             except (TypeError, ValueError):
                 pass
 
+    # De-dupe, order-preserving: the shortlist already tags criteria it matched
+    # on, and the gates above append the same names when they independently
+    # confirm one. A doubled "rvol" is only cosmetic on the book but lands in
+    # the entry feature vector, where slicing reads criteria as a set.
+    met = list(dict.fromkeys(met))
     return True, met, ""
 
 

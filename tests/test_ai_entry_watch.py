@@ -1208,11 +1208,6 @@ def test_inclusion_requires_rvol_for_momentum_and_trending():
 
     cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
 
-    no_rvol = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0,
-               "source": "momentum"}
-    ok, _m, why = ew.passes_inclusion(no_rvol, cfg, indicators={})
-    assert ok is False and why == "thin_rvol"
-
     thin = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0, "rvol": 1.2,
             "source": "trending", "criteria": ["score"], "look_reason": "EXT"}
     ok, _m, why = ew.passes_inclusion(thin, cfg, indicators={})
@@ -1228,6 +1223,53 @@ def test_inclusion_requires_rvol_for_momentum_and_trending():
                 "source": "anthropic"}
     ok, _m, why = ew.passes_inclusion(research, cfg, indicators={})
     assert ok is True
+
+
+def test_unknown_rvol_and_missing_ext_abstain_rather_than_reject():
+    """The regression that emptied the book on 2026-08-06, market open.
+
+    trending_screener writes `list(st.rows)` — raw rows. apply_look_highlights
+    runs inside snapshot(), which that loop never calls, so look_reason is
+    absent from trending_stocks.json entirely; and rvol is None on every row
+    until the volume refresh resolves. Failing closed on either turned 15
+    live candidates into 0 admitted and the desk could not trade at all.
+
+    Absence of evidence is not evidence of absence: unknown abstains, and the
+    remaining conjunctive gates still have to pass. A KNOWN-bad value still
+    rejects — that is covered by the sibling tests.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
+
+    # Momentum row as the live desk emits it: flag + price + pct, no rvol.
+    mom = {"symbol": "AAA", "price": 20.0, "pct_change": 7.6,
+           "source": "momentum", "criteria": ["flag"]}
+    ok, met, why = ew.passes_inclusion(mom, cfg, indicators={})
+    assert ok is True, f"momentum row with unknown rvol was rejected: {why}"
+    assert "rvol" not in met, "must not claim an rvol it never saw"
+
+    # Trending row as trending_stocks.json actually contains it: no look_reason.
+    tr = {"symbol": "BBB", "price": 20.0, "pct_change": 18.0, "rvol": None,
+          "source": "trending", "criteria": ["score"]}
+    ok, met, why = ew.passes_inclusion(tr, cfg, indicators={})
+    assert ok is True, f"trending row with no look_reason was rejected: {why}"
+    assert "ext" not in met, "must not claim an EXT tag it never saw"
+
+
+def test_inclusion_criteria_are_not_duplicated():
+    """criteria lands in the entry feature vector, where slicing reads it as a
+    set — the shortlist tags what it matched and the gates re-append on
+    independent confirmation, so 'rvol' appeared twice on live trending rows."""
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
+    row = {"symbol": "AAA", "price": 20.0, "pct_change": 5.0, "rvol": 2.2,
+           "source": "trending", "criteria": ["score", "rvol"],
+           "look_reason": "EXT"}
+    ok, met, _why = ew.passes_inclusion(row, cfg, indicators={})
+    assert ok is True
+    assert len(met) == len(set(met)), f"duplicate criteria: {met}"
 
 
 def test_inclusion_trending_requires_score_and_ext_flag():
