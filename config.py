@@ -231,6 +231,13 @@ DEFAULT_CONFIG = {
     # the poller already fetched (never an extra API call). outcomes.jsonl
     # only grows on a fill and the desk can run a whole session without one,
     # which leaves every gate unmeasurable — see tools/shadow_report.py.
+    # No protective exit, no position. Every bare buy path in alpaca_trader
+    # (bare limit, bare market, extended-hours limit, and buy() when brackets
+    # are unconfigured) refuses while this is on. Risk-sized entries are
+    # unaffected — they go through buy_limit_bracket / buy_bracket_exact.
+    # Turning it off re-enables the path that opened CELH unhedged at 83% of
+    # equity on 2026-08-06.
+    "require_protective_exit":          True,
     "ai_shadow_log_enabled":            True,
     # The other arm of the selection question: sample what admission turned
     # away, so a gate can be judged on what it removed and not only on what it
@@ -624,6 +631,7 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_zone_pad_pct",
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",
+    "require_protective_exit",
     "ai_shadow_log_enabled",
     "ai_reject_log_enabled",
     "momentum_max_tickers",

@@ -2,7 +2,18 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import alpaca_trader as tr
+
+
+@pytest.fixture(autouse=True)
+def _restore_protection_guard():
+    """One test rebinds the module-level no-naked-buy guard; without this it
+    leaks into every later test file and silently disables the policy."""
+    orig = tr._require_protective_exit
+    yield
+    tr._require_protective_exit = orig
 
 
 def test_buy_submits_bracket_when_enabled():
@@ -44,6 +55,11 @@ def test_buy_notional_without_brackets():
     tr._use_brackets = False
     tr._stop_loss_pct = 0.0
     tr._take_profit_pct = 0.0
+    # Asserts the NOTIONAL order shape when brackets are off. The broker layer
+    # now refuses that path by default (no protective exit, no position — see
+    # test_protective_exit_required.py, which covers the refusal). Disable the
+    # policy so the order-construction coverage survives.
+    tr._require_protective_exit = lambda: False
 
     with patch.object(tr, "_log_action"):
         out = tr.buy("MSFT", price=50.0, rsi=40.0, hist=0.0)

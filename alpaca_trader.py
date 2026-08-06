@@ -161,6 +161,35 @@ def _stop_limit_slip_pct() -> float:
         return 1.0
 
 
+def _require_protective_exit() -> bool:
+    """Refuse entries that cannot carry a protective exit. Default ON.
+
+    Every unprotected buy path in this module is reachable from somewhere, and
+    on 2026-08-06 one of them opened 353 shares of CELH — 83% of account
+    equity — with no stop, after the bracket was rejected for extended hours.
+    It sat naked for 44 minutes. ALOY and XNDU took the same path on 08-04.
+
+    Fails safe on a config error: unreadable config means protection stays
+    required, because the failure mode of being too strict is a missed trade
+    and the failure mode of being too loose is an unhedged account.
+    """
+    try:
+        from config import load_config
+        return bool(load_config().get("require_protective_exit", True))
+    except Exception:
+        return True
+
+
+def _refuse_unprotected(ticker: str, price: float, rsi: float, hist: float,
+                        *, why: str) -> dict:
+    """Standard refusal for an entry that would open without a stop."""
+    note = f"refused_unprotected:{why}"
+    print(f"  [TRADER] ⛔  BUY {ticker} refused — no protective exit ({why})")
+    _log_action("BUY_REFUSED", ticker, price, rsi, hist, note=note)
+    return {"ok": False, "order_id": None, "status": "unprotected",
+            "note": note}
+
+
 def is_active() -> bool:
     """True if the trader is initialised and will place orders."""
     return _mode != "off" and _client is not None
@@ -212,7 +241,12 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
 
         if _extended_hours and price and price > 0:
             # Extended-hours orders must be limit + DAY (Alpaca requirement).
-            # Brackets are not supported outside RTH.
+            # Brackets are not supported outside RTH — so this branch cannot
+            # protect the position, and "cannot protect" now means "do not
+            # open" rather than "open it anyway and hope".
+            if _require_protective_exit():
+                return _refuse_unprotected(
+                    ticker, price, rsi, hist, why="extended_hours_no_bracket")
             limit_px = round(price * (1 + _limit_offset / 100.0), 2)
             order = _client.submit_order(
                 LimitOrderRequest(
@@ -248,6 +282,11 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
             print(f"  [TRADER] 📐 bracket  TP=${tp:.2f}  SL=${sl:.2f}  "
                   f"qty={qty}")
         else:
+            # Reached when brackets are off, or stop/take-profit percentages
+            # are unset. A plain market buy has no exit attached.
+            if _require_protective_exit():
+                return _refuse_unprotected(
+                    ticker, price, rsi, hist, why="brackets_not_configured")
             order = _client.submit_order(
                 MarketOrderRequest(
                     symbol        = ticker,
@@ -295,6 +334,14 @@ def buy_limit_at_price(
         _log_action("BUY_LOGGED", ticker, limit_px, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
         return {"ok": False, "order_id": None, "status": None, "note": None}
+
+    # A bare limit carries no exit. buy_limit_at_ask delegates here, so this
+    # single guard covers both — and both were reachable from desk_buy,
+    # desk_buy_policy and ai_trading.buy_stock. Risk-sized entries are
+    # unaffected: they go through buy_limit_bracket / buy_bracket_exact.
+    if _require_protective_exit():
+        return _refuse_unprotected(
+            ticker, limit_px, rsi, hist, why=f"bare_limit:{note}")
 
     if limit_px <= 0:
         _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="bad limit")
@@ -374,6 +421,11 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
         return {"ok": False, "order_id": None, "status": None, "note": None}
+
+    # A bare market order carries no exit.
+    if _require_protective_exit():
+        return _refuse_unprotected(
+            ticker, price, rsi, hist, why="bare_market")
 
     if not price or price <= 0:
         _log_action("BUY_SKIPPED", ticker, 0.0, rsi, hist, note="no price")

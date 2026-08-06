@@ -8,6 +8,8 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import alpaca_trader as tr
 
 # momentum-monitor/ isn't an importable package (hyphen) — add it to the path.
@@ -16,11 +18,26 @@ import desk_actions as desk  # noqa: E402
 import mac_agent as ma  # noqa: E402  (repo root is on sys.path under `python -m pytest`)
 
 
-def _arm_trader(fake, *, extended=False, amount=1000.0):
+@pytest.fixture(autouse=True)
+def _restore_protection_guard():
+    """_arm_trader rebinds the module-level guard, which would otherwise leak
+    into every later test file and silently disable the no-naked-buy policy."""
+    orig = tr._require_protective_exit
+    yield
+    tr._require_protective_exit = orig
+
+
+def _arm_trader(fake, *, extended=False, amount=1000.0, protected=False):
     tr._mode = "paper"
     tr._client = fake
     tr._trade_amount = amount
     tr._extended_hours = extended
+    # These tests assert order MECHANICS — qty rounding, limit price, TIF — on
+    # the bare buy helpers, which the broker layer now refuses by default (no
+    # protective exit, no position; see test_protective_exit_required.py).
+    # Disable the policy here so the mechanics stay covered; the policy has its
+    # own tests and is not what these are checking.
+    tr._require_protective_exit = lambda: bool(protected)
 
 
 # ── alpaca_trader.buy_limit_at_ask ────────────────────────────────────────────
