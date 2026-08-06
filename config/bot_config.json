@@ -289,5 +289,6 @@
   "ai_watch_synth_stop_pct": 5.0,
   "ai_watch_synth_rr": 1.5,
   "ai_watch_synth_reanchor_pct": 0.0,
-  "ai_watch_min_rvol": 1.5
+  "ai_watch_min_rvol": 1.5,
+  "ai_trading_host": "Jonathans-Mac-mini.local"
 }

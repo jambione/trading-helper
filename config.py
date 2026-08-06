@@ -238,6 +238,13 @@ DEFAULT_CONFIG = {
     # Turning it off re-enables the path that opened CELH unhedged at 83% of
     # equity on 2026-08-06.
     "require_protective_exit":          True,
+    # Only this host may place/cancel/replace/liquidate. Empty = unrestricted
+    # (single-box default). Both machines shared one Alpaca paper key: risk
+    # caps are per-instance so real exposure could double, liquidate_all
+    # flattens the WHOLE account so whichever box hit 15:50 first closed the
+    # other's book, and 3 of 4 outcome records were the other machine's
+    # trades. Reads are never gated — a dev box may observe, not act.
+    "ai_trading_host":                    "",
     "ai_shadow_log_enabled":            True,
     # The other arm of the selection question: sample what admission turned
     # away, so a gate can be judged on what it removed and not only on what it
@@ -632,6 +639,7 @@ SAFE_CONFIG_KEYS = [
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",
     "require_protective_exit",
+    "ai_trading_host",
     "ai_shadow_log_enabled",
     "ai_reject_log_enabled",
     "momentum_max_tickers",

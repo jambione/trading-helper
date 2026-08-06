@@ -190,6 +190,54 @@ def _refuse_unprotected(ticker: str, price: float, rsi: float, hist: float,
             "note": note}
 
 
+def _host_allowed() -> bool:
+    """True if THIS machine is permitted to mutate the broker account.
+
+    Both boxes ran against the same Alpaca paper key. Risk caps
+    (ai_max_positions, ai_max_open_risk_pct) are enforced per-instance, so real
+    exposure could be double what either believed; and liquidate_all closes
+    EVERY position in the account, so whichever box reached 15:50 first
+    flattened the other's book. Outcome records were contaminated too — 3 of
+    the 4 rows in outcomes.jsonl were the other machine's trades.
+
+    ai_trading_host empty (default) means no restriction, so nothing changes
+    for a single-box setup. When set, only the named host may place, cancel,
+    replace or liquidate. Reads are deliberately NOT gated — a dev box should
+    still see positions and quotes; it just must not act.
+
+    Hostname match is loose on the .local suffix (socket.gethostname() returns
+    "x.local" while scutil returns "x"), and fails toward REFUSING: a desk that
+    stops trading is visible and recoverable, one that trades from two places
+    silently corrupts both books.
+    """
+    try:
+        from config import load_config
+        want = str(load_config().get("ai_trading_host", "") or "").strip()
+    except Exception:
+        return False  # cannot verify identity -> do not act
+    if not want:
+        return True   # unset = single-box, unrestricted
+    import socket
+    have = socket.gethostname()
+
+    def _norm(s: str) -> str:
+        s = s.strip().lower()
+        return s[:-6] if s.endswith(".local") else s
+
+    if _norm(have) == _norm(want):
+        return True
+    print(f"  [TRADER] ⛔  mutation refused — ai_trading_host={want!r} "
+          f"but this host is {have!r}")
+    return False
+
+
+def _can_mutate() -> bool:
+    """Active AND permitted to act from this machine. Order-placing,
+    cancelling, replacing and liquidating paths gate on this; read paths keep
+    is_active() so a non-trading box can still observe."""
+    return is_active() and _host_allowed()
+
+
 def is_active() -> bool:
     """True if the trader is initialised and will place orders."""
     return _mode != "off" and _client is not None
@@ -224,7 +272,7 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
     est_shares = _trade_amount / price if price > 0 else 0
     mode_tag   = f"[{_mode.upper()}]"
 
-    if not is_active():
+    if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
         return {"ok": False, "order_id": None, "status": None}
@@ -330,7 +378,7 @@ def buy_limit_at_price(
     except (TypeError, ValueError):
         return {"ok": False, "order_id": None, "status": "bad_limit", "note": "bad limit"}
 
-    if not is_active():
+    if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, limit_px, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
         return {"ok": False, "order_id": None, "status": None, "note": None}
@@ -417,7 +465,7 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
     amount   = float(dollar_amount if dollar_amount is not None else _trade_amount)
     mode_tag = f"[{_mode.upper()}]"
 
-    if not is_active():
+    if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
         return {"ok": False, "order_id": None, "status": None, "note": None}
@@ -483,7 +531,7 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
 
     mode_tag = f"[{_mode.upper()}]"
 
-    if not is_active():
+    if not _can_mutate():
         _log_action("SELL_LOGGED", ticker, price, rsi, hist,
                     buy_price=buy_price,
                     note="TRADER_MODE=off — no order placed")
@@ -542,7 +590,7 @@ def cancel_open_orders(ticker: str | None = None) -> dict:
 
     Returns {"ok": bool, "canceled": int, "kept": int, "errors": list}.
     """
-    if not is_active():
+    if not _can_mutate():
         return {"ok": False, "canceled": 0, "kept": 0, "errors": ["trader off"]}
     canceled = 0
     errors: list[str] = []
@@ -577,7 +625,7 @@ def dedupe_open_orders(keep: str = "newest") -> dict:
     keep: "newest" (default) keeps the most recently submitted order.
     Returns {"ok", "canceled", "kept", "by_symbol"}.
     """
-    if not is_active():
+    if not _can_mutate():
         return {"ok": False, "canceled": 0, "kept": 0, "by_symbol": {}}
     try:
         from alpaca.trading.requests import GetOrdersRequest
@@ -630,7 +678,7 @@ def liquidate_all() -> dict:
     ``{ok, canceled, closed, symbols, errors}`` where ``closed`` is the count
     of successful ``close_out`` calls and ``symbols`` lists those tickers.
     """
-    if not is_active():
+    if not _can_mutate():
         return {
             "ok": False, "canceled": 0, "closed": 0,
             "symbols": [], "errors": ["trader off"],
@@ -682,7 +730,7 @@ def close_out(ticker: str, price: float = 0.0, rsi: float = 0.0, hist: float = 0
 
     Returns {"ok", "order_id", "status", "note", "canceled"}.
     """
-    if not is_active():
+    if not _can_mutate():
         _log_action("SELL_LOGGED", ticker, price, rsi, hist, note="TRADER_MODE=off")
         return {"ok": False, "order_id": None, "status": None, "note": None, "canceled": 0}
 
@@ -997,7 +1045,7 @@ def buy_limit_bracket(
     # standalone GTC stop (the ride-along tranche), same shape as
     # buy_bracket_exact. With it, a full OTOCO bracket.
     if (
-        not is_active()
+        not _can_mutate()
         or qty < 1
         or limit_price is None
         or stop_price is None
@@ -1132,7 +1180,7 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
     """
     ticker = ticker.upper()
     qty = float(qty)
-    if not is_active() or qty <= 0 or stop_price is None or stop_price <= 0:
+    if not _can_mutate() or qty <= 0 or stop_price is None or stop_price <= 0:
         return {"ok": False, "buy_order_id": None, "stop_order_id": None,
                 "status": None}
 
@@ -1228,7 +1276,7 @@ def replace_stop(ticker: str, old_stop_order_id: Optional[str],
     remaining open position — correct at that point, since the sibling
     tranche's shares are already gone from the merged Alpaca position.
     """
-    if not is_active():
+    if not _can_mutate():
         return {"ok": False, "order_id": None, "status": None}
     ticker = ticker.upper()
     if old_stop_order_id:
@@ -1269,7 +1317,7 @@ def place_trailing_stop(ticker: str, trail_percent: float,
 
     Returns {"ok": bool, "order_id": str|None, "status": str|None}.
     """
-    if not is_active():
+    if not _can_mutate():
         return {"ok": False, "order_id": None, "status": None}
     if trail_percent is None or float(trail_percent) <= 0:
         return {"ok": False, "order_id": None, "status": "invalid_trail"}
