@@ -1817,9 +1817,17 @@ def sync_watch_from_source_panels(
     except Exception:
         pass
     try:
+        # Keep the pre-gate rows: the gate returns rejects as {symbol, reason,
+        # criteria} only, and scoring a reject needs the price and features it
+        # was rejected WITH.
+        by_symbol = {
+            str(r.get("symbol") or "").upper(): r
+            for r in candidates if isinstance(r, dict)
+        }
         candidates, rejected = apply_inclusion_gate(candidates, cfg)
         _last_rejected.clear()
         _last_rejected.extend(rejected)
+        _log_rejects(rejected, by_symbol, cfg, t0)
     except Exception:
         pass
 
@@ -2245,6 +2253,66 @@ def _entry_features(rec: dict, *, ask: float | None = None) -> dict[str, Any]:
         "dwell_sec": round(now - admitted, 1) if admitted else None,
         "ask": _f_or_none(ask),
     }
+
+
+# symbol -> last ts a reject sample was written. The book is rebuilt every 2s;
+# logging every reject on every rebuild would write ~15k rows an hour and say
+# nothing a 60s series does not.
+_reject_last_logged: dict[str, float] = {}
+_REJECT_LOG_EVERY_SEC = 60.0
+
+
+def _log_rejects(
+    rejected: list[dict],
+    by_symbol: dict[str, dict],
+    cfg: dict,
+    now: float,
+) -> None:
+    """Sample candidates admission turned away, so the gate has a second arm.
+
+    Without this a filter is only ever observed on what it passed, which
+    cannot distinguish a gate that removes losers from one that removes
+    winners. Prices are taken from the candidate row the screeners already
+    refreshed — never a fresh quote.
+    """
+    if not bool(cfg.get("ai_reject_log_enabled", True)):
+        return
+    import ai_positions as cp  # module-scope name does not exist here
+    for rej in rejected or []:
+        if not isinstance(rej, dict):
+            continue
+        sym = str(rej.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        reason = str(rej.get("reason") or "")
+        # Dwell is not a verdict — the name is mid-admission and will be
+        # sampled properly once it is on the book. Logging it would pollute
+        # the reject arm with names that were never actually turned away.
+        if reason.startswith("dwell_"):
+            continue
+        last = _reject_last_logged.get(sym)
+        if last is not None and (now - last) < _REJECT_LOG_EVERY_SEC:
+            continue
+        _reject_last_logged[sym] = now
+        row = by_symbol.get(sym) or {}
+        try:
+            cp.log_reject_sample({
+                "ts": round(float(now), 2),
+                "symbol": sym,
+                "reason": reason,
+                "price": _f_or_none(row.get("price")),
+                # Same feature names the shadow log and entry vector use, so
+                # admitted and rejected arms are directly comparable.
+                "source": str(row.get("source") or "") or None,
+                "score": _f_or_none(row.get("score")),
+                "rvol": _f_or_none(row.get("rvol")),
+                "pct_change": _f_or_none(row.get("pct_change")),
+                "look_reason": row.get("look_reason") or None,
+                "criteria": list(rej.get("criteria") or row.get("criteria") or []),
+                "entry_hour_et": _et_hour_decimal(now),
+            })
+        except Exception:
+            pass
 
 
 def _shadow_row(

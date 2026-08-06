@@ -232,6 +232,11 @@ DEFAULT_CONFIG = {
     # only grows on a fill and the desk can run a whole session without one,
     # which leaves every gate unmeasurable — see tools/shadow_report.py.
     "ai_shadow_log_enabled":            True,
+    # The other arm of the selection question: sample what admission turned
+    # away, so a gate can be judged on what it removed and not only on what it
+    # passed. Throttled per symbol; prices come off rows the screeners already
+    # refreshed, never a fresh quote.
+    "ai_reject_log_enabled":            True,
     # Hard cap on the momentum watchlist (dashboard.TICKER_MAX_COUNT). The
     # 15-minute age purge did not bound it — feeds re-add faster than it
     # retires — so it drifted to 26+, each entry costing a quote on a desk
@@ -620,6 +625,7 @@ SAFE_CONFIG_KEYS = [
     "ai_max_structure_calls_per_hour",
     "ai_persist_entry_decisions",
     "ai_shadow_log_enabled",
+    "ai_reject_log_enabled",
     "momentum_max_tickers",
     "claude_trader_enabled",
     "claude_research_enabled",

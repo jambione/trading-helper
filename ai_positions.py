@@ -57,6 +57,11 @@ EVENTS_PATH = REPORT_DIR / "events.jsonl"
 # desk can go a whole session without one (2026-08-06: 530 zones, 31 symbols,
 # 0 fills) — which leaves every gate unmeasurable. See log_shadow_sample.
 SHADOW_PATH = REPORT_DIR / "shadow.jsonl"
+# The other arm of every selection question: what admission KEPT OUT. A filter
+# cannot be judged from the names it let through alone — if the rejects
+# outperform, the gate is destroying value and nothing else on disk would say
+# so. apply_inclusion_gate computed this list and discarded it.
+REJECTS_PATH = REPORT_DIR / "rejects.jsonl"
 OPEN_BELL_STATE_PATH = REPORT_DIR / "open_bell_state.json"
 EOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "eod_liquidate_state.json"
 SOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "sod_liquidate_state.json"
@@ -448,6 +453,21 @@ def log_shadow_sample(row: dict[str, Any]) -> None:
     try:
         SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
         with SHADOW_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, default=str) + "\n")
+    except Exception:
+        pass
+
+
+def log_reject_sample(row: dict[str, Any]) -> None:
+    """Append one rejected-candidate sample. Fire-and-forget, never raises.
+
+    Prices come off the candidate row the screeners already refreshed, so this
+    costs no API call — the desk is over Alpaca's rate limit and the names that
+    can trade must not lose quota to the ones that were turned away.
+    """
+    try:
+        REJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with REJECTS_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, default=str) + "\n")
     except Exception:
         pass
@@ -1174,6 +1194,46 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
     unconfirmed = sorted(
         k for k, p in state.items() if not p.get("entry_confirmed")
     )
+    # ── Safety invariant: every open position must have a resting exit ──────
+    # Nothing watched for this before. On 2026-08-06 CELH's bracket was
+    # rejected, the caller fell back to a naked buy, and 353 shares — 83% of
+    # account equity — sat with no stop for 44 minutes. It was noticed by a
+    # human looking at the screen, not by the desk. reconcile_unmanaged fired
+    # 384 times that day and aggregated to nothing.
+    #
+    # Reported as state rather than acted on: placing or cancelling orders
+    # from a reconcile pass is how one bug becomes two. The operator (and the
+    # EOD flatten) decide.
+    unprotected: list[dict[str, Any]] = []
+    try:
+        open_orders = alpaca_trader.get_open_orders(limit=100) or []
+        protected = {
+            str(o.get("symbol") or "").upper()
+            for o in open_orders
+            if str(o.get("side") or "").lower() == "sell"
+        }
+        equity = alpaca_trader.get_equity() or 0.0
+        for sym, p in detail.items():
+            s = str(sym).upper()
+            if s in protected:
+                continue
+            try:
+                mv = abs(float(p.get("mkt_val") or 0.0))
+            except (TypeError, ValueError):
+                mv = 0.0
+            unprotected.append({
+                "symbol": s,
+                "mkt_val": round(mv, 2),
+                # Concentration is the reason this is urgent rather than
+                # untidy: an unstopped position at 83% of equity IS the
+                # account.
+                "pct_equity": (round(100.0 * mv / equity, 1)
+                               if equity > 0 else None),
+                "managed": s in managed,
+            })
+    except Exception:
+        pass
+
     report = {
         "ts": now,
         "unmanaged": unmanaged,
@@ -1181,9 +1241,12 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
         "missing_live_confirmed": missing_live,
         "n_managed": len(managed),
         "n_live": len(live),
+        "unprotected": unprotected,
     }
     if unmanaged:
         log_event("reconcile_unmanaged", symbols=unmanaged)
+    if unprotected:
+        log_event("position_unprotected", positions=unprotected)
     _last_reconcile = report
     return report
 
