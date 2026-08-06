@@ -1874,3 +1874,64 @@ def test_dashboard_requests_send_a_non_default_user_agent():
 
     assert seen["ua"] == ew._DASH_UA
     assert seen["timeout"] == ew._DASH_TIMEOUT
+
+
+def test_capped_engine_push_sends_the_best_candidates_not_the_alphabet(monkeypatch):
+    """desk_candidate_rows ranks by score and the push cap truncates, so order
+    decides which names get indicator data at all.
+
+    Alphabetising first meant a capped push sent the A-names. The strongest
+    setups could then sit on the book with no indicators and be rejected as
+    "indicators_faded" — indistinguishable from a genuine fade, and invisible
+    in every metric.
+    """
+    import ai_entry_watch as ew
+
+    posted = {}
+
+    def _fake_urlopen(req, timeout=None):
+        posted["tickers"] = json.loads(req.data.decode())["tickers"]
+
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(ew, "_push_cfg",
+                        lambda: {"ai_watch_engine_push_max": 3,
+                                 "scan_interval_sec": 60})
+    ew._pushed_at.clear()
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    # Ranked best-first; the alphabetically-first names are the WORST here.
+    ew.push_candidates_to_engine(["ZTOP", "YSEC", "XTHD", "AAAA", "BBBB"])
+
+    assert posted["tickers"] == ["ZTOP", "YSEC", "XTHD"], (
+        "capped push must keep caller ranking, not sort alphabetically")
+
+
+def test_engine_push_dedupes_without_losing_order(monkeypatch):
+    import ai_entry_watch as ew
+
+    posted = {}
+
+    def _fake_urlopen(req, timeout=None):
+        posted["tickers"] = json.loads(req.data.decode())["tickers"]
+
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(ew, "_push_cfg",
+                        lambda: {"ai_watch_engine_push_max": 10,
+                                 "scan_interval_sec": 60})
+    ew._pushed_at.clear()
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    ew.push_candidates_to_engine(["ZTOP", "AAAA", "ZTOP", "", "toolongsym", "BBBB"])
+    assert posted["tickers"] == ["ZTOP", "AAAA", "BBBB"]

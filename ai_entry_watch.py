@@ -1409,12 +1409,23 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
     full list on every 2s tick) so the engine has bars/state ready by the time
     the gate asks for it, one scan_interval_sec later.
     """
-    wanted = {str(s).upper().strip() for s in symbols if str(s).strip().isalpha()}
-    wanted = {s for s in wanted if 2 <= len(s) <= 5}
+    # Preserve caller order — desk_candidate_rows ranks by score, and the cap
+    # below truncates. Alphabetising first meant a capped push sent the
+    # A-names rather than the best candidates, so the strongest setups could
+    # sit on the book with no indicator data and be rejected as
+    # "indicators_faded" — indistinguishable from a real fade.
+    seen: set[str] = set()
+    wanted: list[str] = []
+    for s in symbols:
+        t = str(s or "").upper().strip()
+        if not t.isalpha() or not (2 <= len(t) <= 5) or t in seen:
+            continue
+        seen.add(t)
+        wanted.append(t)
     if not wanted:
         return {"pushed": 0, "known": 0}
     known = set(_engine_indicator_map())
-    missing = sorted(wanted - known)
+    missing = [s for s in wanted if s not in known]
     if not missing:
         return {"pushed": 0, "known": len(known)}
 
