@@ -17,7 +17,7 @@ debug.log
 backtest_trades.csv
 backtest_results.csv
 transcription/__pycache__/
-venv/
+venv
 .venv/
 transcription/wb_watchlist.json
 # Signal engine runtime state (regenerated every few seconds)
