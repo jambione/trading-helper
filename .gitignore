@@ -39,6 +39,21 @@ signal_state.json
 swing_candidates.json
 swing_universe.json
 
+# Per-machine runtime data. These are written continuously by the running desk
+# and differ between the Mac mini and the MacBook, so tracking them produced a
+# merge conflict on every pull — alpaca_trade_log.json genuinely conflicted on
+# 2026-08-06 and had to be resolved by hand. They are observations of what one
+# machine did, not shared source.
+alpaca_trade_log.json
+suggestions.json
+claude_suggestions.json
+grok_suggestions.json
+benchmarks/mention_bursts.jsonl
+benchmarks/price_spikes.jsonl
+# Note: benchmarks/ab_bench_*.csv stays TRACKED — those are A/B results worth
+# keeping in history, unlike the raw feeds above.
+scratch-pad
+
 # RS screener — ranked output + local universe override. The bar cache is a few
 # hundred MB of rebuildable vendor data; the glob matters because WAL mode also
 # creates rs_cache.sqlite-wal and -shm.
