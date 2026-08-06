@@ -1206,9 +1206,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         min_pct = 50.0
     try:
         # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 3.0) or 3.0)
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 1.5) or 1.5)
     except (TypeError, ValueError):
-        min_rvol = 1.0
+        min_rvol = 1.5
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:
@@ -1306,6 +1306,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         "source": "trending",
                         "pct_change": pct,
                         "rvol": rvol,
+                        "look_reason": r.get("look_reason"),
                         "price": r.get("price"),
                         "dollar_volume": (
                             float(r["vol_session"]) * float(r["price"])
@@ -1546,6 +1547,35 @@ def passes_inclusion(
         if pct is None or pct <= 0:
             return False, met, "not_uptrend"
         met.append("uptrend")
+
+    source = str(row.get("source") or "").strip().lower()
+
+    # Momentum and trending both need evidence of unusual activity, not just
+    # popularity — a flat RVOL means nothing dislocated today regardless of
+    # score or a flag. Research-sourced rows are untouched by this gate.
+    if source in ("momentum", "trending"):
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 1.5) or 0.0)
+        if min_rvol > 0:
+            rvol = row.get("rvol")
+            try:
+                rvol_f = float(rvol) if rvol is not None else None
+            except (TypeError, ValueError):
+                rvol_f = None
+            if rvol_f is None or rvol_f < min_rvol:
+                return False, met, "thin_rvol"
+            met.append("rvol")
+
+    # Trending admission also requires the raw Stocktwits score cleared the
+    # bar (not just big_move/rvol substituting for it — "score" in criteria
+    # reflects the shortlist's own correct computation, see desk_candidate_rows)
+    # and that apply_look_highlights independently tagged it EXT: heat + move +
+    # volume + near the day's highs, not just a moving number.
+    if source == "trending" and bool(cfg.get("ai_watch_require_look_ext", True)):
+        if "score" not in met:
+            return False, met, "low_score"
+        if str(row.get("look_reason") or "").upper() != "EXT":
+            return False, met, "not_ext"
+        met.append("ext")
 
     if bool(cfg.get("ai_watch_require_indicators", True)):
         sig = (indicators or {}).get(sym)

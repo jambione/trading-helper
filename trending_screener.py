@@ -91,6 +91,9 @@ def main() -> None:
         volume_interval=float(cfg.get("stocktwits_volume_poll", 60.0)),
         avg_days=int(cfg.get("stocktwits_avg_days", 10)),
         rvol_time_adjusted=bool(cfg.get("stocktwits_rvol_time_adjusted", True)),
+        look_max=int(cfg.get("ai_watch_look_max", 20)),
+        # Same RVOL floor AI Watch admission uses — one knob, not a duplicate.
+        look_min_rvol=float(cfg.get("ai_watch_min_rvol", 1.5) or 0.0) or None,
     )
 
     print(f"[trending] polling Stocktwits every {st.poll_interval:.0f}s "

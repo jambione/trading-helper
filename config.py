@@ -235,7 +235,14 @@ DEFAULT_CONFIG = {
     # Restrictive AI Watch filters
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
     "ai_watch_min_pct_change":         50.0,  # day chg % above this also qualifies
-    "ai_watch_min_rvol":                3.0,  # relative volume ratio; 3.0 = 300% of avg
+    "ai_watch_min_rvol":                1.5,  # relative volume ratio; 1.5 = 150% of avg
+    # Trending admission requires look_reason == "EXT" (apply_look_highlights in
+    # stocktwits_trending.py). That function defaults to tagging only the top 2
+    # names panel-wide — fine as a UI spotlight, too narrow to be an admission
+    # filter. Raise it so every qualifying name gets tagged, and reuse
+    # ai_watch_min_rvol as its RVOL floor rather than adding a duplicate knob.
+    "ai_watch_look_max":                  20,  # cap on EXT/WASH-tagged trending rows
+    "ai_watch_require_look_ext":        True,  # trending admission needs look_reason == EXT
     # ── Strict inclusion (conjunctive — every enabled gate must pass) ────────
     # The old rules OR'd four criteria and admitted on any one. Three could
     # never fire (rvol was None on every trending row, nothing hit the 50% bar,
@@ -258,7 +265,7 @@ DEFAULT_CONFIG = {
     # three hold", so a count of 100 silently demanded MACD too — and MACD is
     # the laggard (see strategy_three_indicator.buy_signal). CM RSI-2 and %R
     # exhaustion are the actual buy signals.
-    "ai_watch_arm_require": ["cm_ok", "pctr_ok"],
+    "ai_watch_arm_require": ["cm_ok", "pctr_ok", "cm_rsi_rising"],
     "ai_watch_arm_min_proximity":         0,  # 0 = off; named flags are the test
     "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
     "ai_watch_min_price":               1.0,  # no sub-$1 names
@@ -571,6 +578,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_trending_min_score",
     "ai_watch_min_pct_change",
     "ai_watch_min_rvol",
+    "ai_watch_look_max",
+    "ai_watch_require_look_ext",
     "ai_watch_synth_zone_enabled",
     "ai_watch_zone_offset_pct",
     "ai_watch_zone_width_pct",

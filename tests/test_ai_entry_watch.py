@@ -109,6 +109,8 @@ def test_rebuild_watch_from_book(tmp_path, monkeypatch):
         "ai_watch_require_indicators": False,
         "ai_watch_admit_ticks": 1,
         "ai_watch_min_price": 0.0,
+        "ai_watch_min_rvol": 0.0,
+        "ai_watch_require_look_ext": False,
     }
     state = ew.rebuild_watch_from_book([], cfg=cfg, now=100.0)
     assert "SOFI" in state and state["SOFI"]["status"] == "watching"
@@ -150,7 +152,8 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
         {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True,
          # Mirroring/preservation test — admission gates covered separately.
          "ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
-         "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0},
+         "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0,
+         "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False},
         now=100.0,
     )
     assert "GONE" not in state and "OLD_AI" not in state
@@ -341,6 +344,7 @@ def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
         "ai_watch_require_indicators": False,
         "ai_watch_admit_ticks": 1,
         "ai_watch_min_price": 0.0,
+        "ai_watch_min_rvol": 0.0,
     }
     state = ew.rebuild_watch_from_book([], cfg=cfg, now=200.0)
     assert "SOFI" not in state  # research excluded
@@ -1127,6 +1131,58 @@ def test_inclusion_price_and_liquidity_floors():
             "dollar_volume": 5_000.0}
     ok, _m, why = ew.passes_inclusion(thin, cfg, indicators=ind)
     assert ok is False and why == "thin_dollar_volume"
+
+
+def test_inclusion_requires_rvol_for_momentum_and_trending():
+    """Popularity/flag alone isn't evidence of a real dislocation — relative
+    volume has to back it up, for both sources. Research rows are exempt."""
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
+
+    no_rvol = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0,
+               "source": "momentum"}
+    ok, _m, why = ew.passes_inclusion(no_rvol, cfg, indicators={})
+    assert ok is False and why == "thin_rvol"
+
+    thin = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0, "rvol": 1.2,
+            "source": "trending", "criteria": ["score"], "look_reason": "EXT"}
+    ok, _m, why = ew.passes_inclusion(thin, cfg, indicators={})
+    assert ok is False and why == "thin_rvol"
+
+    strong = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0, "rvol": 2.0,
+              "source": "momentum"}
+    ok, met, why = ew.passes_inclusion(strong, cfg, indicators={})
+    assert ok is True and "rvol" in met
+
+    # Research-sourced rows carry no rvol at all — must not be gated on it.
+    research = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0,
+                "source": "anthropic"}
+    ok, _m, why = ew.passes_inclusion(research, cfg, indicators={})
+    assert ok is True
+
+
+def test_inclusion_trending_requires_score_and_ext_flag():
+    """Trending admission needs the raw score AND apply_look_highlights'
+    independent EXT tag (heat + move + volume + near the day's highs) —
+    either alone is not enough."""
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
+    base = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0, "rvol": 2.0,
+            "source": "trending"}
+
+    no_score = dict(base, criteria=["rvol"], look_reason="EXT")
+    ok, _m, why = ew.passes_inclusion(no_score, cfg, indicators={})
+    assert ok is False and why == "low_score"
+
+    no_ext = dict(base, criteria=["score"], look_reason="WASH")
+    ok, _m, why = ew.passes_inclusion(no_ext, cfg, indicators={})
+    assert ok is False and why == "not_ext"
+
+    both = dict(base, criteria=["score"], look_reason="EXT")
+    ok, met, why = ew.passes_inclusion(both, cfg, indicators={})
+    assert ok is True and "ext" in met
 
 
 def test_admission_dwell_requires_consecutive_qualifying_polls():
