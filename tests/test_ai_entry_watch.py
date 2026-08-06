@@ -1201,6 +1201,52 @@ def test_admission_provenance_survives_a_refresh_without_numbers():
     assert state["AAA"]["admit_ts"] == 100.0, "admit_ts must mark first admit"
 
 
+def test_live_sync_path_records_admission_provenance(tmp_path, monkeypatch):
+    """The LIVE book is rebuilt by _sync_locked every 2s, not upsert_from_rows.
+
+    The admission fields were first added only to upsert_from_rows, so every
+    record the running desk actually created carried admit_rvol=None and
+    admit_criteria=None — the selection half of the entry feature vector was
+    silently empty on 2026-08-06 while appearing correct in tests.
+    """
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(
+        ew, "desk_candidate_rows",
+        lambda cfg=None: [{
+            "symbol": "SOUN", "source": "trending", "score": 19.3,
+            "reason": "trending score 19.3", "agreement": True,
+            "rvol": 2.1, "pct_change": 18.0, "look_reason": "EXT",
+            "criteria": ["score", "rvol"],
+        }],
+    )
+    cfg = {"ai_watch_seed_momentum": True, "ai_watch_seed_trending": True,
+           "ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
+           "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0,
+           "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False}
+
+    state = ew.sync_watch_from_source_panels(cfg, now=500.0)
+    rec = state["SOUN"]
+    assert rec["admit_rvol"] == 2.1, "live path lost admission rvol"
+    assert rec["admit_look_reason"] == "EXT"
+    assert rec["admit_criteria"] == ["score", "rvol"]
+    assert rec["admit_ts"] == 500.0
+
+    # And it survives the 2s rebuild that arrives without the numbers.
+    monkeypatch.setattr(
+        ew, "desk_candidate_rows",
+        lambda cfg=None: [{
+            "symbol": "SOUN", "source": "trending", "score": 19.3,
+            "reason": "trending score 19.3", "agreement": True,
+        }],
+    )
+    state = ew.sync_watch_from_source_panels(cfg, now=502.0)
+    rec = state["SOUN"]
+    assert rec["admit_rvol"] == 2.1, "rebuild erased admission rvol"
+    assert rec["admit_ts"] == 500.0, "admit_ts must mark first admit"
+
+
 def test_inclusion_requires_rvol_for_momentum_and_trending():
     """Popularity/flag alone isn't evidence of a real dislocation — relative
     volume has to back it up, for both sources. Research rows are exempt."""

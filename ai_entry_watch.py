@@ -596,6 +596,38 @@ def _score_from_row(row: dict) -> float:
     return 0.0
 
 
+def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
+    """Admission provenance for a watch record — why this name was let on.
+
+    Shared by both record builders. The live book is rebuilt by ``_sync_locked``
+    every 2s; ``upsert_from_rows`` serves the research path. Duplicating these
+    fields once already left the live path silently unrecorded, so both callers
+    go through here.
+
+    Falls back to *prev* so a refresh poll that arrives without the numbers
+    (the producer publishes rvol=None until its volume refresh resolves) does
+    not erase what admission actually saw.
+    """
+    prev = prev if isinstance(prev, dict) else {}
+    row = row if isinstance(row, dict) else {}
+    rvol = row.get("rvol")
+    pct = row.get("pct_change")
+    return {
+        "admit_rvol": (
+            _f_or_none(rvol) if rvol is not None
+            else _f_or_none(prev.get("admit_rvol"))),
+        "admit_pct_change": (
+            _f_or_none(pct) if pct is not None
+            else _f_or_none(prev.get("admit_pct_change"))),
+        "admit_look_reason": (
+            row.get("look_reason") or prev.get("admit_look_reason") or None),
+        "admit_criteria": (
+            list(row.get("criteria") or [])
+            or list(prev.get("admit_criteria") or [])),
+        "admit_ts": float(prev.get("admit_ts") or now),
+    }
+
+
 def _f_or_none(v: Any) -> float | None:
     """Float, or None when absent/unparseable. Never substitutes a default —
     a missing feature must stay missing so slicing can exclude it rather than
@@ -680,21 +712,7 @@ def upsert_from_rows(
             ),
             "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
             "updated_ts": float(now),
-            # ── Admission provenance (A/B slicing) ──────────────────────────
-            # Why this name was let onto the book, captured at admission and
-            # carried to the outcome record. Without it an outcome says what
-            # happened but not which gate claimed credit, so no feature can
-            # ever be scored retrospectively. Falls back to prev so a refresh
-            # poll that arrives without the numbers does not erase them.
-            "admit_rvol": _f_or_none(row.get("rvol", prev.get("admit_rvol"))),
-            "admit_pct_change": _f_or_none(
-                row.get("pct_change", prev.get("admit_pct_change"))),
-            "admit_look_reason": (
-                row.get("look_reason") or prev.get("admit_look_reason") or None),
-            "admit_criteria": (
-                list(row.get("criteria") or [])
-                or list(prev.get("admit_criteria") or [])),
-            "admit_ts": float(prev.get("admit_ts") or now),
+            **_admission_fields(row, prev, float(now)),
         }
         state[sym] = rec
 
@@ -1856,6 +1874,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             ),
             "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
             "updated_ts": t0,
+            **_admission_fields(row, prev, float(t0)),
         }
 
     # Keep in-flight paper entries even if they left the panels (still managing).
