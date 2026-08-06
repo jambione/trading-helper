@@ -1,7 +1,19 @@
 secrets.json
+secrets.json.*
 # Per-machine credentials — ship signal_engine.env.example instead.
 signal_engine.env
 .env
+# Backups and editor copies of the credential files. signal_engine.env is
+# ignored but signal_engine.env.bak was not, and sat untracked in a PUBLIC
+# repo holding live Alpaca keys — one `git add -A` from being published.
+# Same reason engine_control_secret had to be rotated (ce1e799): a leaked
+# credential stays in history even after the value is changed.
+*.env.bak
+*.env.backup
+*.env.save
+*.env.local
+signal_engine.env.*
+!signal_engine.env.example
 # Monitor bootstrap venv (scripts/setup_monitor.sh|ps1)
 .venv-monitor/
 .DS_Store
