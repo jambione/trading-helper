@@ -51,7 +51,9 @@ def _load_env_file(path: Path) -> None:
 _load_env_file(ROOT / "signal_engine.env")
 
 from config import load_config  # noqa: E402
-from stocktwits_trending import StocktwitsTrending  # noqa: E402
+from stocktwits_trending import (  # noqa: E402
+    StocktwitsTrending, apply_look_highlights,
+)
 
 TRENDING_FILE = ROOT / "trending_stocks.json"
 
@@ -107,13 +109,39 @@ def main() -> None:
             st.refresh_quotes(t0)
             st.refresh_volume(t0)
 
+        # Tag LOOK (EXT near 52w high / WASH near 52w low) before writing.
+        # This file is what AI Watch admission reads, and it previously held
+        # the raw rows: apply_look_highlights only ran inside snapshot(), which
+        # this loop never calls, so look_reason never reached the gate and the
+        # EXT requirement could not pass for any name, ever.
+        #
+        # Three consumers were disagreeing about which names are LOOK — the
+        # terminal (via snapshot), the browser (its own JS reimplementation in
+        # feeds.js), and admission (which saw nothing at all). Now the file
+        # carries it, so the server-side path agrees with what is on screen.
+        #
+        # Shallow copies: st.rows stays clean for snapshot(), which applies its
+        # own highlighting with the same parameters.
+        rows_out = [dict(r) for r in st.rows]
+        try:
+            rows_out = apply_look_highlights(
+                rows_out,
+                min_abs_chg=st.look_min_abs_chg,
+                max_looks=st.look_max,
+                near_high=st.look_near_high,
+                near_low=st.look_near_low,
+                min_rvol=st.look_min_rvol,
+            )
+        except Exception as e:  # never let tagging stop the feed
+            print(f"[trending] look tagging failed: {e}", flush=True)
+
         _write_json(TRENDING_FILE, {
             "updated": t0,
             "last_ok": st.last_ok,
             "error": st.error,
             "quotes_error": st.quotes_error,
             "last_quote_ok": st.last_quote_ok,
-            "rows": list(st.rows),
+            "rows": rows_out,
         })
 
         time.sleep(LOOP_SLEEP)
