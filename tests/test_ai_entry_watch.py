@@ -986,9 +986,23 @@ def test_synth_zone_sits_2pct_under_the_print(tmp_path, monkeypatch):
     assert round(100.0 / s["entry_high"] - 1.0, 4) == 0.0204
 
 
-def test_synth_reanchor_tracks_price_with_no_deadband(tmp_path, monkeypatch):
-    """Operator report: 'the watchlist does not update current prices'. At the
-    old 0.5% deadband the zone lagged the print; at 0.0 it tracks every poll."""
+def test_synth_zone_does_not_chase_a_falling_price(tmp_path, monkeypatch):
+    """A pullback zone must hold still while price pulls back into it.
+
+    This previously compared the live ask against entry_high. The zone sits
+    ai_watch_zone_offset_pct BELOW its anchor, so that comparison was true on
+    almost every poll — including while price fell — and the band was redrawn
+    under each new lower print. Price could only ever enter it by dropping
+    more than the offset within one poll interval: a crash, not a pullback.
+
+    Measured on 2026-08-06: 22 zones drawn, 4 touched, 0 armed, 0 trades. The
+    three that touched fell 12%, 24% and 30% in minutes; SOUN fell 2.4%
+    against a 2.0% zone and never touched it, because the zone kept retreating.
+
+    The original change was made for a cosmetic report ("the watchlist does not
+    update current prices"). Showing a live price is a display concern; moving
+    the entry level is not.
+    """
     import ai_entry_watch as ew
 
     cfg = _zone_cfg()
@@ -996,10 +1010,31 @@ def test_synth_reanchor_tracks_price_with_no_deadband(tmp_path, monkeypatch):
     assert ew.ensure_offset_zone_if_needed(rec, 100.0, cfg, 1000.0) is not None
     assert rec["structure"]["entry_high"] == 98.0
 
-    # A tick barely above the zone top must re-anchor, not sit there.
-    ev = ew.ensure_offset_zone_if_needed(rec, 98.5, cfg, 1001.0)
+    # Price drifts DOWN toward the zone — the band must not move away.
+    assert ew.ensure_offset_zone_if_needed(rec, 98.5, cfg, 1001.0) is None
+    assert rec["structure"]["entry_high"] == 98.0, "zone chased price down"
+
+    assert ew.ensure_offset_zone_if_needed(rec, 98.1, cfg, 1002.0) is None
+    assert rec["structure"]["entry_high"] == 98.0
+
+    # And a pullback that reaches the band finds it where it was left.
+    assert 98.0 >= rec["structure"]["entry_low"]
+
+
+def test_synth_zone_reanchors_when_price_runs_away_upward(tmp_path, monkeypatch):
+    """The behaviour the re-anchor exists for: a name that got away (ZETA stuck
+    at $24 while printing $28) must have its band lifted, or it waits forever
+    for a level the stock has left behind."""
+    import ai_entry_watch as ew
+
+    cfg = _zone_cfg()
+    rec = {"symbol": "AAA", "source": "trending", "status": "watching"}
+    ew.ensure_offset_zone_if_needed(rec, 100.0, cfg, 1000.0)
+    assert rec["structure"]["entry_high"] == 98.0
+
+    ev = ew.ensure_offset_zone_if_needed(rec, 110.0, cfg, 1001.0)
     assert ev is not None and ev["reason"] == "reanchor_from_last"
-    assert rec["structure"]["entry_high"] == round(98.5 * 0.98, 3)
+    assert rec["structure"]["entry_high"] == round(110.0 * 0.98, 3)
 
 
 def test_synth_zone_applies_to_research_records_too(tmp_path, monkeypatch):

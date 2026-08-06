@@ -2180,17 +2180,35 @@ def ensure_offset_zone_if_needed(
         and structure.get("synthetic")
         and not _structure_stale(rec, cfg, now)
     ):
-        # Frozen synth zone: re-anchor when last has run *above* the zone top
-        # so we wait for a pullback from current levels (e.g. ZETA stuck at $24
-        # while printing $28). Below/in zone: keep waiting for the existing band.
+        # Re-anchor when price has run above the level the zone was drawn
+        # FROM, so the band follows a name that got away (e.g. ZETA stuck at
+        # $24 while printing $28) without chasing one that is coming back.
         #
-        # The deadband defaults to 0 now, i.e. the upper limit tracks the
-        # real-time price on every poll. At the old 0.5% it lagged, which read
-        # to the operator as "the watchlist is not updating current prices".
+        # This used to compare against entry_high. The zone sits
+        # ai_watch_zone_offset_pct BELOW its anchor, so `ask > entry_high` was
+        # true on essentially every poll — including while price fell — and the
+        # band was redrawn under each new lower print. Price could then only
+        # enter it by dropping more than the offset inside a single poll
+        # interval, i.e. a crash rather than a pullback.
+        #
+        # 2026-08-06 measured the damage: 22 zones drawn, 4 ever touched, 0
+        # armed, 0 trades. The three that touched fell 12%, 24% and 30% in
+        # minutes; every gradual pullback (SOUN -2.4%, IOVA -0.7%) watched the
+        # zone retreat ahead of it. See tools/pullback_study.py.
         try:
-            hi = float(structure.get("entry_high") or 0)
+            anchor = float(structure.get("anchor_price")
+                           or structure.get("anchor") or 0)
         except (TypeError, ValueError):
-            hi = 0.0
+            anchor = 0.0
+        if anchor <= 0:
+            # Pre-existing zone with no recorded anchor — reconstruct it from
+            # the band rather than falling back to the broken comparison.
+            try:
+                hi = float(structure.get("entry_high") or 0)
+                off = float(cfg.get("ai_watch_zone_offset_pct", 2.0) or 0.0)
+                anchor = hi / (1.0 - off / 100.0) if hi > 0 and off < 100 else 0.0
+            except (TypeError, ValueError, ZeroDivisionError):
+                anchor = 0.0
         try:
             re_pct = max(
                 0.0,
@@ -2198,7 +2216,7 @@ def ensure_offset_zone_if_needed(
             ) / 100.0
         except (TypeError, ValueError):
             re_pct = 0.0
-        if hi > 0 and ask_f > hi * (1.0 + re_pct):
+        if anchor > 0 and ask_f > anchor * (1.0 + re_pct):
             reanchor = True
         else:
             return None
