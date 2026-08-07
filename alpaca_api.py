@@ -192,7 +192,13 @@ def get_latest_trade_quotes(data_client, tickers: list, cfg: dict = None) -> dic
 
     try:
         return _fetch()
-    except Exception:                                      # noqa: BLE001
+    except Exception as e:                                 # noqa: BLE001
+        # Returning {} silently made a dead feed indistinguishable from a quiet
+        # market: the panel kept showing whatever the other source last said,
+        # with no error anywhere, so prices simply stopped moving and nothing
+        # explained why. Same swallow that hid the minute-bar 401.
+        logging.warning("[ALPACA] latest trades failed for %d symbol(s): %s",
+                    len(tickers), " ".join(str(e).split())[:200])
         return {}
 
 
