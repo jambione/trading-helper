@@ -1,0 +1,23 @@
+variant,trades,win_rate,avg_pnl,total_pnl,pf,sharpe,max_dd,max_cl,avg_win,avg_loss,expectancy_dollar,score,halfA_avg,halfB_avg,robust,exits
+A:prod SL1/TP2 any,118,39.8,-0.425,-50.14,0.58,-0.159,48.2,13,1.459,-1.672,-2.12,8.5,-1.049,-0.257,False,reversal:42/98  stop_loss:0/15  take_profit:5/5
+B1:exit=all,100,39.0,0.011,1.1,1.02,0.008,16.5,11,1.719,-1.081,0.06,17.8,-0.447,0.148,False,reversal:6/9  stop_loss:0/58  take_profit:33/33
+B2:no TP (reversal+SL),118,39.8,-0.377,-44.54,0.62,-0.137,48.7,13,1.578,-1.672,-1.89,9.2,-1.049,-0.197,False,reversal:47/103  stop_loss:0/15
+B3:SL1/TP3,118,39.8,-0.41,-48.36,0.59,-0.152,48.7,13,1.496,-1.672,-2.05,8.7,-1.049,-0.238,False,reversal:44/100  stop_loss:0/15  take_profit:3/3
+B4:SL0.5/TP1.5 tight,118,37.3,-0.474,-55.9,0.5,-0.189,50.9,13,1.272,-1.512,-2.37,4.8,-1.28,-0.257,False,reversal:38/92  stop_loss:0/20  take_profit:6/6
+B5:SL1.5/TP2,113,39.8,-0.475,-53.73,0.55,-0.174,51.4,13,1.487,-1.774,-2.38,8.1,-1.109,-0.295,False,reversal:40/97  stop_loss:0/11  take_profit:5/5
+B6:SL2/TP2 symmetric,113,39.8,-0.524,-59.22,0.53,-0.19,53.8,13,1.487,-1.855,-2.62,7.8,-1.169,-0.341,False,reversal:40/97  stop_loss:0/11  take_profit:5/5
+B7:sep1.5 strict entry,63,42.9,-0.334,-21.04,0.72,-0.098,32.1,4,1.975,-2.066,-1.67,21.6,-1.043,-0.131,False,reversal:23/54  stop_loss:0/5  take_profit:4/4
+B8:sep0.5 loose entry,197,40.1,-0.221,-43.55,0.73,-0.086,56.8,10,1.509,-1.379,-1.11,11.1,-0.251,-0.214,False,reversal:69/163  stop_loss:0/24  take_profit:10/10
+B9:cw4 fresh cross,27,29.6,-0.435,-11.75,0.52,-0.263,14.6,13,1.565,-1.278,-2.18,0.0,-1.366,-0.224,False,reversal:4/19  stop_loss:0/4  take_profit:4/4
+B10:cm35 deeper dip,127,39.4,-0.479,-60.84,0.53,-0.179,53.0,13,1.4,-1.699,-2.4,7.4,-1.049,-0.339,False,reversal:45/107  stop_loss:0/15  take_profit:5/5
+C1:all SL1/TP1.5,100,40.0,-0.132,-13.25,0.8,-0.112,20.4,11,1.29,-1.081,-0.66,11.9,-0.556,-0.006,False,reversal:5/8  stop_loss:0/57  take_profit:35/35
+C2:all SL0.75/TP1.5,102,35.3,-0.081,-8.31,0.85,-0.077,17.7,13,1.316,-0.844,-0.41,10.4,-0.361,-0.0,False,reversal:4/7  stop_loss:0/63  take_profit:32/32
+C3:all SL1/TP3,99,35.4,0.157,15.51,1.22,0.089,13.6,11,2.421,-1.082,0.78,21.0,-0.404,0.326,False,reversal:9/12  stop_loss:0/61  take_profit:26/26
+C4:all+sep1.5,54,38.9,0.034,1.85,1.05,0.024,10.4,7,1.772,-1.072,0.17,24.5,-0.177,0.101,False,reversal:4/5  stop_loss:0/32  take_profit:17/17
+C5:all+cw4,26,46.2,0.314,8.15,1.56,0.214,7.9,7,1.887,-1.035,1.57,0.0,-0.5,0.507,False,reversal:1/2  stop_loss:0/13  take_profit:11/11
+C6:all no TP,94,24.5,-0.018,-1.65,0.98,-0.008,31.6,24,3.312,-1.096,-0.09,0.0,-1.099,0.313,False,reversal:23/25  stop_loss:0/69
+D1:legacy fast-only %R,146,40.4,-0.253,-36.98,0.69,-0.11,43.9,12,1.374,-1.357,-1.27,10.7,-0.822,-0.141,False,reversal:54/118  stop_loss:0/23  take_profit:5/5
+D2:slow 5min,191,39.8,-0.355,-67.78,0.59,-0.149,60.2,14,1.276,-1.433,-1.77,8.6,-1.193,-0.205,False,reversal:69/161  stop_loss:0/23  take_profit:7/7
+D3:slow 30min,90,37.8,-0.616,-55.42,0.49,-0.209,47.3,11,1.536,-1.922,-3.08,5.1,-1.223,-0.395,False,reversal:30/73  stop_loss:0/13  take_profit:4/4
+D4:slow window 120,143,39.9,-0.421,-60.19,0.55,-0.171,51.6,7,1.294,-1.557,-2.1,8.1,-1.021,-0.275,False,reversal:52/117  stop_loss:0/21  take_profit:5/5
+D5:slow band -70,139,41.0,-0.354,-49.18,0.62,-0.136,52.0,14,1.426,-1.591,-1.77,10.4,-1.131,-0.175,False,reversal:51/117  stop_loss:0/16  take_profit:6/6

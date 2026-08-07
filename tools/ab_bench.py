@@ -92,6 +92,21 @@ VARIANTS: list[dict] = [
     dict(name="C5:all+cw4",              params={"exit_mode": "all", "confirm_window": 4},
          stop=1.0, target=2.0),
     dict(name="C6:all no TP",            params={"exit_mode": "all"},  stop=1.0, target=0.0),
+
+    # D — the %R timeframe question. A:prod now runs the two-timeframe gate
+    # (long scale for the setup, short scale for the trigger), so D1 is the
+    # LEGACY arm: the single fast-line test both %R lines used to share. Read
+    # D1 against A to price the change; the rest vary the long scale itself.
+    dict(name="D1:legacy fast-only %R",
+         params={"rte_require_slow": False},                  stop=1.0, target=2.0),
+    dict(name="D2:slow 5min",
+         params={"rte_slow_timeframe": "5min"},               stop=1.0, target=2.0),
+    dict(name="D3:slow 30min",
+         params={"rte_slow_timeframe": "30min"},              stop=1.0, target=2.0),
+    dict(name="D4:slow window 120",
+         params={"rte_slow_window": 120},                     stop=1.0, target=2.0),
+    dict(name="D5:slow band -70",
+         params={"rte_slow_threshold": 30},                   stop=1.0, target=2.0),
 ]
 
 
