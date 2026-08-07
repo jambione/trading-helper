@@ -326,7 +326,15 @@ def enrich_with_alpaca(rows: list[dict[str, Any]],
         from alpaca.data.requests import StockSnapshotRequest
         snaps = client.get_stock_snapshot(
             StockSnapshotRequest(symbol_or_symbols=syms, **_feed_arg()))
-    except Exception:
+    except Exception as e:                                 # noqa: BLE001
+        # Returning rows untouched left every price and %chg as None with
+        # quotes_error still empty — the panel said nothing was wrong while
+        # nothing was working. That is how a whole set of stale Alpaca keys in
+        # signal_engine.env went unnoticed: the credentials the dashboard uses
+        # had been replaced, these had not, and only this silence separated
+        # the two.
+        print(f"[trending] snapshot failed for {len(syms)} symbol(s): "
+              f"{' '.join(str(e).split())[:200]}", flush=True)
         return rows
 
     today_et = et_session_date(now)
