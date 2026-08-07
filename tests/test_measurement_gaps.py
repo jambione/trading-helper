@@ -185,3 +185,72 @@ def test_a_day_before_the_log_existed_is_not_instrumented(tmp_path,
     assert dr._instrumented(date(2026, 8, 6))["shadow"] is True
     # A log that does not exist at all was never recording on any day.
     assert dr._instrumented(date(2026, 8, 6))["rejects"] is False
+
+
+# ── A failed fetch must not be cached as a day-long verdict ──────────────────
+
+def test_failed_history_fetch_does_not_poison_the_day_cache(monkeypatch):
+    """avg_session_volumes caches per ET day and skips anything already cached.
+    fetch_minutes_history returns None when it could not ask at all (429,
+    network, auth), as distinct from {} meaning "asked, nobody had history".
+    Caching a negative for the first promotes one transient rejection into a
+    whole session with no rvol — which is what happened on 2026-08-07 and
+    emptied the rvol column on half the A/B reject arm.
+    """
+    import sys, os
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+    import morning_funnel as mf
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""
+    mf._AVG_VOL_RETRY_AT = 0.0
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+
+    monkeypatch.setattr(mf, "fetch_minutes_history", lambda *a, **k: None)
+    out = mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, now_et)
+    assert out == {}, "a failed fetch must cache nothing"
+    assert "AAA" not in mf._AVG_VOL_CACHE
+
+    # Backed off, not blacklisted: after the retry floor the symbols are
+    # asked for again. Retrying every cycle instead simply 429s forever.
+    assert mf._AVG_VOL_RETRY_AT > 0
+    mf._AVG_VOL_RETRY_AT = 0.0
+
+    import pandas as pd
+    monkeypatch.setattr(mf, "fetch_minutes_history",
+                        lambda *a, **k: {"AAA": pd.DataFrame()})
+    monkeypatch.setattr(mf, "avg_session_volume", lambda df, d, n: 1234.0)
+    out = mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, now_et)
+    assert out.get("AAA") == 1234.0
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""
+
+
+def test_successful_fetch_still_caches_a_genuine_none(monkeypatch):
+    """A symbol absent from a NON-empty result really has no usable history —
+    that None is a real answer and must be cached, or a fresh listing is
+    re-requested every 60s and never resolves."""
+    import sys, os
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+    import morning_funnel as mf
+    import pandas as pd
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""
+    mf._AVG_VOL_RETRY_AT = 0.0
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    monkeypatch.setattr(mf, "fetch_minutes_history",
+                        lambda *a, **k: {"AAA": pd.DataFrame()})
+    monkeypatch.setattr(mf, "avg_session_volume",
+                        lambda df, d, n: 999.0 if df is not None else None)
+    out = mf.avg_session_volumes(object(), ["AAA", "NEWIPO"], {}, now_et)
+    assert out["AAA"] == 999.0
+    assert "NEWIPO" in mf._AVG_VOL_CACHE and out["NEWIPO"] is None
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""

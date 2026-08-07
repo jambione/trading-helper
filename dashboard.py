@@ -1585,6 +1585,13 @@ def _vol_avg_volumes(mf, client, tickers: list, cfg: dict, now_et) -> dict:
     # prefers the funnel value and falls back to this one.
     avg_days = int(mf.knobs_from_cfg(cfg)["avg_days"])
     hist = mf.fetch_minutes_history(client, wanted, cfg, now_et)
+    if hist is None:
+        # Same trap as tools/morning_funnel.avg_session_volumes: a fetch that
+        # could not be made returns None, and this cache is keyed by the ET
+        # day, so caching a negative here turns one 429 into a session with no
+        # rvol at all. An empty-but-successful {} still falls through and
+        # caches negatives, which is what a fresh listing needs.
+        return _VOL_AVG_CACHE
     for sym in wanted:
         try:
             _VOL_AVG_CACHE[sym] = mf.avg_session_volume(

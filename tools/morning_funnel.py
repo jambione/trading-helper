@@ -424,7 +424,11 @@ def fetch_minutes_history(client, tickers: list, cfg: dict, now_et: datetime,
     except Exception as e:                                 # noqa: BLE001
         log.warning("[FUNNEL] history minute bars failed for %d symbol(s): %s",
                     len(tickers), str(e)[:200])
-        return {}
+        # None means "could not ask", distinct from {} meaning "asked, nobody
+        # had history". Callers cache a negative for the second and must not
+        # for the first: this result feeds a cache keyed by the ET day, so
+        # conflating them turned one 429 into a session with no rvol at all.
+        return None
 
 
 # Average session volume changes once every 24h. Cached for the ET day, with
@@ -435,10 +439,18 @@ _AVG_VOL_CACHE: dict = {}
 _AVG_VOL_DATE: str = ""
 
 
+# Retry floor after a failed history fetch. Not caching the failure (see below)
+# is right, but retrying it every cycle is not: 28 trending symbols over 18
+# days is the desk's heaviest request, and two processes asking every 60s
+# simply 429 forever and never resolve. Back off, then ask again.
+_AVG_VOL_RETRY_SEC = 300.0
+_AVG_VOL_RETRY_AT = 0.0
+
+
 def avg_session_volumes(client, tickers: list, cfg: dict, now_et: datetime,
                         days: int = 18) -> dict:
     """{sym: minute-based average session volume or None}, day-cached."""
-    global _AVG_VOL_DATE
+    global _AVG_VOL_DATE, _AVG_VOL_RETRY_AT
     today = now_et.date()
     stamp = today.isoformat()
     if _AVG_VOL_DATE != stamp:
@@ -449,9 +461,26 @@ def avg_session_volumes(client, tickers: list, cfg: dict, now_et: datetime,
     if not wanted or client is None:
         return _AVG_VOL_CACHE
 
+    if time.time() < _AVG_VOL_RETRY_AT:
+        return _AVG_VOL_CACHE
+
     avg_days = int(knobs_from_cfg(cfg)["avg_days"])
     hist = fetch_minutes_history(client, wanted, cfg, now_et, days=days)
+    if hist is None:
+        _AVG_VOL_RETRY_AT = time.time() + _AVG_VOL_RETRY_SEC
+        # The fetch could not be made (429, network, auth) — and
+        # this cache is keyed by the ET day. Writing None for every symbol here
+        # promotes one transient rejection into a day-long verdict, because
+        # `wanted` skips anything already cached and nothing is retried until
+        # tomorrow. A single 429 at startup is what left every trending row
+        # with rvol=None for a whole session on 2026-08-07, which also emptied
+        # the rvol column on half the A/B reject arm. Cache nothing; the next
+        # poll asks again. An empty-but-successful {} still caches negatives,
+        # so a fresh listing with no history is not re-requested every cycle.
+        return _AVG_VOL_CACHE
     for sym in wanted:
+        # The ask succeeded, so a symbol missing from the result genuinely has
+        # no usable history — that None is a real answer and worth caching.
         _AVG_VOL_CACHE[sym] = avg_session_volume(
             hist.get(sym), today, avg_days)
     return _AVG_VOL_CACHE
