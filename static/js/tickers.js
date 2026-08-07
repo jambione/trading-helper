@@ -200,14 +200,27 @@ function _renderTable(rows) {
     }
   }
 
-  // Price-change flash — uses CSS transition (no forced reflow)
+  // Price-change flash — uses CSS transition (no forced reflow). Coloured by
+  // direction: which way a tick went is the part worth catching out of the
+  // corner of an eye, and a single accent colour threw that away.
   for (const row of rows) {
-    if (row.price != null && _prevPrices[row.ticker] !== undefined && _prevPrices[row.ticker] !== row.price) {
+    const prev = _prevPrices[row.ticker];
+    if (row.price != null && prev !== undefined && prev !== row.price) {
       const priceEl = _rowsEl.querySelector(`[data-price="${row.ticker}"]`);
       if (priceEl) {
-        priceEl.classList.add('price-flash');
+        const dir = row.price > prev ? 'up' : 'down';
+        // Drop the opposite direction first — successive ticks can flip inside
+        // one flash window, and both classes at once resolves by stylesheet
+        // order rather than by which tick actually happened.
+        priceEl.classList.remove('price-flash--up', 'price-flash--down');
+        priceEl.classList.add(`price-flash--${dir}`);
         clearTimeout(priceEl._flashTimer);
-        priceEl._flashTimer = setTimeout(() => priceEl.classList.remove('price-flash'), 600);
+        // Hold at full colour, then let the class come off and the base rule's
+        // long transition decay it. Paired with the CSS: 140ms rise + this
+        // hold + 900ms fade. Shortening this without shortening the rise gives
+        // a flash that never reaches its colour.
+        priceEl._flashTimer = setTimeout(() => priceEl.classList.remove(
+          'price-flash--up', 'price-flash--down'), 600);
       }
     }
     if (row.price != null) _prevPrices[row.ticker] = row.price;

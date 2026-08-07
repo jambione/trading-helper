@@ -2458,13 +2458,44 @@ body.mobile .icon-btn {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-bright);
+  background-color: transparent;
   font-variant-numeric: tabular-nums;
-  transition: color 0.5s ease-out, text-shadow 0.5s;
   font-weight: 500;
+  /* The SLOW half of the flash. A transition declared on the base rule is what
+     runs when the flash class comes off, so this is the fade-out. */
+  transition: color 900ms ease-out, background-color 900ms ease-out;
 }
-.cell-price.price-flash {
-  color: var(--accent);
-  text-shadow: 0 0 10px rgba(201, 160, 68, 0.55);
+
+/* Tick flash, coloured by direction — same green/red the Chg% column uses, so
+   one glance reads the same way in both places.
+
+   Deliberately asymmetric: a fast rise and a long decay reads as a gentle
+   pulse, where a symmetric fade reads as a blink and an instant swap reads as
+   a strobe. The rule below applies while the class is ON, so it governs the
+   rise; the base rule above governs the decay.
+
+   A soft background wash rather than a glow. text-shadow on 12px mono at full
+   saturation was the harsh part — it smears the digits at the exact moment
+   you are trying to read them. The wash leaves the number crisp and still
+   catches peripheral vision. */
+.cell-price.price-flash--up,
+.cell-price.price-flash--down {
+  transition: color 140ms ease-out, background-color 140ms ease-out;
+}
+.cell-price.price-flash--up {
+  color: var(--buy);
+  background-color: rgba(74, 222, 128, 0.13);
+}
+.cell-price.price-flash--down {
+  color: var(--danger);
+  background-color: rgba(251, 113, 133, 0.13);
+}
+
+/* Colour still carries the direction; only the animation is dropped. */
+@media (prefers-reduced-motion: reduce) {
+  .cell-price,
+  .cell-price.price-flash--up,
+  .cell-price.price-flash--down { transition: none; }
 }
 /* Scanner snapshot standing in for a quote we will never get (OTC). Dimmed and
    italic so it reads as "last known" at a glance and is never confused with a
