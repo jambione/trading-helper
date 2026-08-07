@@ -302,4 +302,62 @@ def test_bare_ticker_without_header_is_not_a_card():
     assert cards == []
 
 
+# ── Sidebar bleed: values typed by their own markers, not by position ─────────
+# The OCR sweep captures Discord's channel sidebar alongside the card, so
+# unrelated text lands between a label row and its values. These are verbatim
+# captures from the live window — both parsed wrong before the field scan
+# started trusting "$" and K/M/B over reading order.
+
+def test_sidebar_text_between_label_row_and_values_keeps_price_and_float():
+    """Live $MB frame. Column order is Float-then-Price but the values arrive
+    price-first, with a sidebar channel name between them. Position alone put
+    $5.33 in the float column and lost the 4.69M float entirely."""
+    lines = [
+        "Find It First Alert! [ELITE]",
+        "APP",
+        "• LIVE Trading...",
+        "$MB",
+        "05",
+        "50",
+        "P...",
+        "Float Size Price",
+        "Premium Scanners LIVE",
+        "$5.33",
+        "4.69M",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    assert cards[0]["ticker"] == "MB"
+    assert cards[0]["price"] == 5.33
+    assert cards[0]["float_size"] == pytest.approx(4.69e6)
+
+
+def test_sidebar_numbers_before_any_label_are_not_mistaken_for_fields():
+    """Live $NEPH frame. Only the float is on screen; the stray sidebar digits
+    must not be promoted into the price just because a label row follows."""
+    lines = [
+        "Find It First Alert! [ELITE]",
+        "APP",
+        "10-quick-notes",
+        "$NEPH",
+        "-discord-tips",
+        "Float Size Price",
+        "#general",
+        "6.04M",
+        "NEW",
+    ]
+    cards, _ = ds.parse_scanner_cards(lines)
+    assert len(cards) == 1
+    assert cards[0]["float_size"] == pytest.approx(6.04e6)
+    assert cards[0]["price"] is None
+
+
+def test_arrow_alert_price_readout_is_not_a_column_label():
+    """'Price = 41.83' in a classic arrow alert is a readout, not a card column
+    — otherwise the arrow line emits a duplicate card of its own."""
+    cards, _ = ds.parse_scanner_cards(
+        ["INHD Price Volatility Spike! >>>>> 1 Minute High Price = 41.83"])
+    assert cards == []
+
+
 import pytest

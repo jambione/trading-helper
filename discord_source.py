@@ -117,6 +117,84 @@ _TV_STRATEGY_RE = re.compile(r'STRATEGY\s*:\s*(?P<strat>BULLISH|BEARISH)', re.IG
 _CHAT_SKIP = frozenset({"HOD", "LOD", "PDT", "ATH", "AM", "PM", "EST", "ETF",
                         "IPO", "HALT", "SEC", "FDA", "CEO", "BULL", "BEAR"})
 
+# Words that can legitimately sit alone on a card line without being a ticker.
+# Only consulted for symbols OUTSIDE the NASDAQ/NYSE universe — a real listed
+# ticker (LIVE, CART, OPEN, …) is accepted on the universe check before this
+# ever runs, so listing them here costs nothing.
+_CARD_HEADLINE_SKIP = frozenset({
+    "ALERT", "ELITE", "PRICE", "FLOAT", "SIZE", "VOLUME", "SHARES", "APP",
+    "NEW", "HIGH", "LOW", "OPEN", "CLOSE", "LIVE", "CHAT", "HERE", "NOW",
+    "TIER", "FREE", "VIP", "PRO", "BUY", "SELL", "LONG", "SHORT", "TRADE",
+    "IDEAS", "AUDIENCE", "LISTEN",
+})
+
+# ── Drop accounting ───────────────────────────────────────────────────────────
+# A rejected card used to vanish without a trace, which is exactly why a feed
+# that had stopped surfacing names still looked healthy. Every rejection is
+# counted, and the first of each (ticker, reason) pair gets a log line.
+_drop_counts: dict[str, int] = {}
+_off_universe_count = 0
+_noted: set[tuple[str, str]] = set()
+
+
+def _note_once(ticker: str, message: str) -> bool:
+    """Log "$TICKER — message" the first time this pair is seen. Returns whether
+    it was logged, so a card that stays on screen for hours can't spam the log."""
+    key = (ticker, message)
+    if key in _noted:
+        return False
+    _noted.add(key)
+    print(f"[discord] ${ticker} — {message}", flush=True)
+    return True
+
+
+def _note_drop(ticker: str, reason: str) -> None:
+    """Count a rejected ticker and log it once per ticker per reason.
+
+    Counted on first sight only. Every OCR frame re-parses whatever is on
+    screen, so counting each parse would report how long a card stayed visible
+    rather than how many symbols were lost — these are distinct-ticker totals.
+    """
+    if _note_once(ticker, f"dropped: {reason}"):
+        _drop_counts[reason] = _drop_counts.get(reason, 0) + 1
+
+
+def _note_off_universe(ticker: str, where: str) -> None:
+    """Count a ticker accepted despite being absent from the NASDAQ/NYSE list.
+    Distinct tickers, for the same reason as _note_drop."""
+    global _off_universe_count
+    if _note_once(ticker, f"accepted off-universe (OTC) from {where}"):
+        _off_universe_count += 1
+
+
+def drop_counts() -> dict[str, int]:
+    """Session totals by reason, POSTed with each heartbeat so the dashboard can
+    show what the source is throwing away instead of only what it accepted.
+    accepted_off_universe is the count the OTC fix rescued."""
+    return {**_drop_counts, "accepted_off_universe": _off_universe_count}
+
+
+def _off_universe_ticker_ok(raw_headline: str, ticker: str, hm: "re.Match") -> bool:
+    """Whether to accept a card ticker that is not in the NASDAQ/NYSE universe.
+
+    valid_tickers.txt is built from nasdaqlisted.txt + otherlisted.txt, which
+    carry no OTC symbols — so scanner cards for OTC names (the scanner posts
+    plenty) failed validation and were dropped. A headline sitting directly
+    under a recognised "… Alert! [TIER]" header is strong enough evidence on
+    its own; this just insists the symbol still takes the shape of one.
+    """
+    if ticker in _CARD_HEADLINE_SKIP or ticker in _CHAT_SKIP:
+        return False
+    # An alert type is fine when it is a phrase the scanner actually uses; any
+    # other trailing words are more likely OCR running two lines together.
+    alert_type = (hm.group("alert_type") or "").strip()
+    if alert_type and not _SCANNER_ALERT_TYPE_RE.search(alert_type):
+        return False
+    # "$SYM" (how the scanner writes it) or a bare all-caps SYM. Mixed case is
+    # ordinary prose that happened to fit the headline pattern.
+    stripped = raw_headline.lstrip()
+    return stripped.startswith("$") or ticker == hm.group("ticker")
+
 _BULLISH_KW = {
     "breakout": 1.0, "breaking out": 1.0, "ripping": 1.0, "mooning": 1.0,
     "red to green": 0.9, "new high": 0.9, "bounce": 0.7, "bouncing": 0.7,
@@ -353,17 +431,30 @@ _SCANNER_ALERT_TYPE_RE = re.compile(
 )
 
 # One ordered pass over the card body yields Price/Float labels and numeric
-# values in reading order. A label only counts when it's directly followed by a
-# value, another label, or end-of-text — so the "Price" inside a "Price Spike!"
-# headline (followed by the word "Spike") is ignored. Pairing each label with the
-# next value FIFO (see _extract_price_float_from_lines) then handles every
-# observed layout: interleaved ("Price $251 Float Size 2.42M"), vertically
-# stacked (label / value / label / value), and two-column tables whose header row
-# lists the labels and the following row the values ("Float Size Price" /
-# "41.12M $4.05") — including Float-before-Price column order.
+# values in reading order. See _extract_price_float_from_lines for how they are
+# paired — between them they handle every observed layout: interleaved
+# ("Price $251 Float Size 2.42M"), vertically stacked (label / value / label /
+# value), and two-column tables whose header row lists the labels and the
+# following row the values ("Float Size Price" / "41.12M $4.05"), in either
+# column order.
+#
+# A label used to count only when a value, another label, or end-of-text came
+# next. That was too strict in practice: the OCR sweep pulls Discord's sidebar
+# into the card body, so a live $MB card read "… Float Size Price / Premium
+# Scanners LIVE / $5.33 / 4.69M" and the Price label was skipped because the
+# sidebar's channel name followed it — the price was silently lost. Two narrow
+# exclusions replace it, letting arbitrary sidebar text sit between a label and
+# its value while still rejecting the two non-column uses of the words:
+#   "Price Spike!" / "Price Volatility Spike" — part of a card headline.
+#   "Price = 41.83"                           — a classic arrow-alert readout,
+#                                               parsed by parse_alert_line.
+#
+# The exclusions sit inside a lookahead that spans the separator itself. Placed
+# after "\s*:?\s*" instead, the engine simply backtracks the whitespace to
+# zero width and the guard passes on the very text it was meant to reject.
 _FIELD_SCAN_RE = re.compile(
-    r"(?P<flabel>Float\s*Size|Float)\b\s*:?\s*(?=\$?\d|Price\b|Float\b|$)"
-    r"|(?P<plabel>Price)\b\s*:?\s*(?=\$?\d|Float\b|Price\b|$)"
+    r"(?P<flabel>Float\s*Size|Float)\b(?!\s*:?\s*=)\s*:?\s*"
+    r"|(?P<plabel>Price)\b(?!\s*:?\s*(?:(?:Volatility\s+)?Spike\b|=))\s*:?\s*"
     r"|(?P<value>\$?\d[\d,]*\.?\d*)\s*(?P<suffix>[KMB])?\b",
     re.I,
 )
@@ -440,23 +531,50 @@ def _extract_price_float_from_lines(
     for m in _FIELD_SCAN_RE.finditer(blob):
         if m.group("flabel") is not None:
             pending.append(("float", _line_of(m.start())))
-        elif m.group("plabel") is not None:
+            continue
+        if m.group("plabel") is not None:
             pending.append(("price", _line_of(m.start())))
+            continue
+
+        raw    = m.group("value")
+        suffix = m.group("suffix") or ""
+        val    = _parse_scaled_number(raw.lstrip("$"), suffix)
+        if val is None or not pending:
+            continue
+
+        # A value carries its own type: "$4.05" is a price, "41.12M" is a float
+        # size — a float is never written with "$" and a price never with a
+        # K/M/B suffix. Trust that over reading order, because the OCR sweep
+        # pulls Discord's sidebar into the card body, so a "Float Size Price"
+        # header row is regularly followed by the price value first. Position
+        # alone put $5.33 in the float column on a live $MB card and dropped
+        # the 4.69M float entirely. Both markers or neither is ambiguous —
+        # those still fall back to the reading-order FIFO.
+        typed: str | None = None
+        if raw.startswith("$") and not suffix:
+            typed = "price"
+        elif suffix and not raw.startswith("$"):
+            typed = "float"
+
+        idx = 0
+        if typed is not None:
+            # Only honour the hint once that field's label has been seen, so a
+            # stray "$5.00" swept in from the sidebar cannot become a price.
+            idx = next((k for k, (kind, _) in enumerate(pending)
+                        if kind == typed), -1)
+            if idx < 0:
+                continue
+
+        kind, label_line = pending.pop(idx)
+        if kind == "price" and price is None:
+            price = val
+        elif kind == "float" and float_size is None:
+            float_size = val
         else:
-            val = _parse_scaled_number(
-                m.group("value").lstrip("$"), m.group("suffix") or "")
-            if val is None or not pending:
-                continue
-            kind, label_line = pending.pop(0)
-            if kind == "price" and price is None:
-                price = val
-            elif kind == "float" and float_size is None:
-                float_size = val
-            else:
-                continue
-            for li in (label_line, _line_of(m.start())):
-                if li is not None:
-                    used.add(li)
+            continue
+        for li in (label_line, _line_of(m.start())):
+            if li is not None:
+                used.add(li)
 
     return price, float_size, used
 
@@ -493,12 +611,20 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
         headline_idx: int, tier: str | None, header_idx: int | None,
         require_fields: bool, brand: str = "",
     ) -> bool:
-        hm = _SCANNER_CARD_HEADLINE_RE.match(lines[headline_idx].strip())
+        raw_headline = lines[headline_idx].strip()
+        hm = _SCANNER_CARD_HEADLINE_RE.match(raw_headline)
         if not hm:
             return False
         ticker = hm.group("ticker").upper()
+        off_universe = False
         if not is_valid_ticker(ticker):
-            return False
+            if header_idx is None:
+                _note_drop(ticker, "not a listed ticker, no alert header above it")
+                return False
+            if not _off_universe_ticker_ok(raw_headline, ticker, hm):
+                _note_drop(ticker, "not a listed ticker and headline failed the OTC guard")
+                return False
+            off_universe = True
 
         alert_type = re.sub(
             r"[!?.,]+$", "", (hm.group("alert_type") or "").strip(),
@@ -531,8 +657,11 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
             "float_size":   float_size,
             "scanner_tier": tier,
             "card_brand":   brand,
+            "off_universe": off_universe,
             "volume":       None,
         })
+        if off_universe:
+            _note_off_universe(ticker, "a scanner card")
         return True
 
     i = 0
@@ -596,6 +725,7 @@ def _scanner_card_to_alert(card: dict) -> dict:
         "float_size":   card.get("float_size"),
         "scanner_tier": card.get("scanner_tier"),
         "card_brand":   card.get("card_brand") or "",
+        "off_universe": bool(card.get("off_universe")),
         "price_spike":  price_spike,
     }
 
@@ -614,13 +744,30 @@ def parse_alert_line(line: str) -> tuple[str, str, dict] | tuple[None, None, dic
         if not alpha:
             continue
         sym = alpha.upper()
-        if 2 <= len(sym) <= 5 and is_valid_ticker(sym):
-            if is_squeeze:
-                meta = {"levels": _parse_squeeze_levels(line)}
-            else:
-                meta = _parse_regular_meta(sym, line)
-            return sym, ("squeeze" if is_squeeze else "alert"), meta
-        return None, None, {}
+        if not (2 <= len(sym) <= 5):
+            return None, None, {}
+        # Same universe gap as the scanner cards: valid_tickers.txt has no OTC
+        # symbols, so OTC alert lines were dropped in silence. Accept an unknown
+        # symbol only when the rest of the line is shaped the way the scanner
+        # writes one — an all-caps leading symbol followed by a recognised alert
+        # phrase ("New Daily High", "Price Volatility Spike") before the arrow,
+        # or a squeeze line, whose "close over" marker is specific on its own.
+        # Ordinary prose that happens to start with a 5-letter word and contain
+        # arrows ("HELLO there SPY >>>>>") fails that shape and still drops.
+        if not is_valid_ticker(sym):
+            head = _ALERT_MARKER.split(line, 1)[0]
+            head = head[head.find(tok) + len(tok):] if tok in head else ""
+            shaped = is_squeeze or bool(_SCANNER_ALERT_TYPE_RE.search(head))
+            if (alpha != sym or not shaped
+                    or sym in _CARD_HEADLINE_SKIP or sym in _CHAT_SKIP):
+                _note_drop(sym, "not a listed ticker and alert line failed the OTC guard")
+                return None, None, {}
+            _note_off_universe(sym, "an alert line")
+        if is_squeeze:
+            meta = {"levels": _parse_squeeze_levels(line)}
+        else:
+            meta = _parse_regular_meta(sym, line)
+        return sym, ("squeeze" if is_squeeze else "alert"), meta
     return None, None, {}
 
 
@@ -810,7 +957,8 @@ def _post_ingest(alerts: list[dict], sentiment: list) -> None:
     sentiment carries SentimentEvent records (market/chat/chart direction)."""
     try:
         body = json.dumps({"alerts": alerts,
-                           "sentiment": [asdict(e) for e in sentiment]}).encode()
+                           "sentiment": [asdict(e) for e in sentiment],
+                           "drops": drop_counts()}).encode()
         req  = urllib.request.Request(
             f"{DASHBOARD_URL}/api/discord/ingest",
             data=body,
