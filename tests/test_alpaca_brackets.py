@@ -179,3 +179,50 @@ def test_the_session_is_cached_so_it_is_not_asked_per_order_leg():
     finally:
         tr.market_is_open = orig
         tr._clock_cache = (0.0, False)
+
+
+def test_dedupe_keeps_both_bracket_legs():
+    """A bracket rests TWO sell orders for one symbol; neither is a duplicate.
+
+    dedupe_open_orders grouped on (symbol, side) alone, so the take-profit
+    (limit) and the stop-loss (stop) collided and one was cancelled. It runs
+    from cleanup_duplicate_orders() on every ai_trader start, so restarting
+    with positions open stripped protection from all of them — which is what a
+    position_unprotected event and an empty order book showed on 2026-08-07.
+    """
+    import alpaca_trader as tr
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    def _o(oid, side, otype, mins):
+        return SimpleNamespace(
+            id=oid, symbol="NVDA", side=side, type=otype,
+            submitted_at=datetime(2026, 8, 7, 14, mins, tzinfo=timezone.utc))
+
+    orders = [
+        _o("tp", "sell", "limit", 20),     # take-profit leg
+        _o("sl", "sell", "stop", 20),      # stop-loss leg
+        _o("buy_old", "buy", "limit", 10),  # genuinely stacked buys
+        _o("buy_new", "buy", "limit", 30),
+    ]
+
+    canceled = []
+
+    class _C:
+        def get_orders(self, filter=None):
+            return orders
+
+        def cancel_order_by_id(self, oid):
+            canceled.append(oid)
+
+    orig_mode, orig_client = tr._mode, tr._client
+    tr._mode, tr._client = "paper", _C()
+    try:
+        out = tr.dedupe_open_orders(keep="newest")
+    finally:
+        tr._mode, tr._client = orig_mode, orig_client
+
+    assert out["ok"] is True
+    assert "tp" not in canceled, "take-profit leg must survive"
+    assert "sl" not in canceled, "stop-loss leg must survive"
+    assert canceled == ["buy_old"], "only the stacked buy is a duplicate"

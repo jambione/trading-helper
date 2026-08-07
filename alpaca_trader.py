@@ -745,7 +745,18 @@ def cancel_open_orders(ticker: str | None = None) -> dict:
 
 
 def dedupe_open_orders(keep: str = "newest") -> dict:
-    """Leave at most one open order per (symbol, side); cancel the rest.
+    """Leave at most one open order per (symbol, side, type); cancel the rest.
+
+    This exists to stop repeated polls stacking BUY orders for the same name.
+    It grouped on (symbol, side) alone, which quietly made it a position
+    DISARMER: a bracket rests two SELL legs for one symbol — the take-profit
+    (limit) and the stop-loss (stop) — so every run cancelled one of them. It
+    is called from cleanup_duplicate_orders() on every ai_trader start, so a
+    restart with positions open stripped protection from all of them.
+
+    Including the order TYPE separates the two legs while still collapsing what
+    this is actually for: two resting limit buys for the same symbol. A
+    protective leg is never a duplicate of a differently-typed one.
 
     keep: "newest" (default) keeps the most recently submitted order.
     Returns {"ok", "canceled", "kept", "by_symbol"}.
@@ -761,19 +772,20 @@ def dedupe_open_orders(keep: str = "newest") -> dict:
         return {"ok": False, "canceled": 0, "kept": 0, "by_symbol": {},
                 "errors": [str(e)]}
 
-    # Group by (symbol, side)
+    # Group by (symbol, side, type) — see the docstring on why type matters.
     groups: dict[tuple, list] = {}
     for o in open_orders:
         sym = str(getattr(o, "symbol", "") or "").upper()
         side = str(getattr(o, "side", "") or "").split(".")[-1].lower()
+        otype = str(getattr(o, "type", "") or "").split(".")[-1].lower()
         if not sym:
             continue
-        groups.setdefault((sym, side), []).append(o)
+        groups.setdefault((sym, side, otype), []).append(o)
 
     canceled = 0
     kept = 0
     by_symbol: dict[str, int] = {}
-    for (sym, side), orders in groups.items():
+    for (sym, side, _otype), orders in groups.items():
         def _ts(o):
             t = getattr(o, "submitted_at", None) or getattr(o, "created_at", None)
             try:
