@@ -1168,6 +1168,73 @@ def test_inclusion_price_and_liquidity_floors():
     assert ok is False and why == "thin_dollar_volume"
 
 
+def test_absent_price_rejects_as_no_price_not_below_min():
+    """A missing price is a feed outage, not a penny stock.
+
+    Both still reject — nothing downstream can size or zone a name with no
+    price — but the gate scorecard reads the reason as a verdict about the
+    symbol. Reporting a quote gap as "below_min_price" put PLTR, ABNB and NET
+    in the penny-stock bucket, in bursts of the whole shortlist at once.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg()
+    ind = {"AAA": _bullish()}
+
+    no_px = {"symbol": "AAA", "price": None, "pct_change": 5.0}
+    ok, _m, why = ew.passes_inclusion(no_px, cfg, indicators=ind)
+    assert ok is False and why == "no_price"
+
+    missing_key = {"symbol": "AAA", "pct_change": 5.0}
+    ok, _m, why = ew.passes_inclusion(missing_key, cfg, indicators=ind)
+    assert ok is False and why == "no_price"
+
+    # A real sub-$1 price is still a real price verdict.
+    cheap = {"symbol": "AAA", "price": 0.75, "pct_change": 5.0}
+    ok, _m, why = ew.passes_inclusion(cheap, cfg, indicators=ind)
+    assert ok is False and why == "below_min_price"
+
+    # Relabelling must not become a new policy: a zero floor disables the
+    # check, and a priceless row still passes it to be judged further down.
+    no_floor = _incl_cfg(ai_watch_min_price=0.0)
+    ok, _m, why = ew.passes_inclusion(no_px, no_floor, indicators=ind)
+    assert why not in ("no_price", "below_min_price")
+
+
+def test_indicator_record_carries_every_key_the_arm_gate_reads():
+    """The arm gate must not require a field the record never copies.
+
+    ai_watch_arm_require defaults to naming cm_rsi_rising. It was absent from
+    the dict built during the watch sync, so should_arm_buy saw None for it on
+    every record and no candidate could ever arm — 326 zones and 0 arms on
+    2026-08-07 while the engine published cm_rsi_rising=True on the wire.
+    """
+    import ai_entry_watch as ew
+    from config import DEFAULT_CONFIG
+
+    wire = {
+        "proximity_pct": 67, "status": "watching", "buy_signal": False,
+        "sell_signal": False, "cm_ok": True, "pctr_ok": True,
+        "cm_rsi_rising": True, "macd_ok": False, "cm_rsi": 30.7,
+        "pctr": -74.7,
+    }
+    rec = {
+        "symbol": "AAA", "status": "watching",
+        "structure": {"decision": "WAIT", "wait_kind": "wait_for_zone",
+                      "entry_low": 10.0, "entry_high": 11.0,
+                      "stop_price": 9.5, "target_1": 12.0, "reward_risk": 1.5},
+        "indicator": {k: wire[k] for k in wire},
+    }
+    cfg = {"ai_watch_arm_require_indicators": True, "ai_min_reward_risk": 0.0}
+    ok, why = ew.should_arm_buy(rec, ask=10.5, bid=10.4, cfg=cfg)
+    assert ok is True, why
+
+    # Every flag the shipped default gates on must be present on the wire
+    # shape above, or the gate is unsatisfiable by construction.
+    for key in DEFAULT_CONFIG["ai_watch_arm_require"]:
+        assert key in wire, f"{key} is gated on but never published"
+
+
 def test_entry_features_snapshot_selection_and_timing_separately():
     """The feature vector must carry WHY a name was admitted (selection) and
     the indicator state at arm (timing) as distinct fields — they are the two

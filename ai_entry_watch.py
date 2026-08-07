@@ -1614,8 +1614,24 @@ def passes_inclusion(
     except (TypeError, ValueError):
         price_f = None
     min_price = float(cfg.get("ai_watch_min_price", 1.0) or 0.0)
-    if min_price > 0 and (price_f is None or price_f < min_price):
-        return False, met, "below_min_price"
+    # Two different facts under one label. A name with no price still cannot be
+    # admitted — nothing downstream can size or zone it — but calling that
+    # "below_min_price" reports a penny stock that was screened out, which is a
+    # verdict about the name rather than about the feed. On 2026-08-07 all 111
+    # below_min_price rejects had price=None and not one had a real price under
+    # $1; the list included PLTR, ABNB, NET, TEAM and VST, and it fired in
+    # bursts of the entire shortlist at once during quote outages. Read as
+    # intended, the gate scorecard was scoring a price filter that never
+    # actually rejected anything on price.
+    #
+    # Reporting only: the admission decision is unchanged, including the case
+    # where a zero floor disables the check entirely and a priceless row passes
+    # to be judged by the gates below.
+    if min_price > 0:
+        if price_f is None:
+            return False, met, "no_price"
+        if price_f < min_price:
+            return False, met, "below_min_price"
 
     min_dv = float(cfg.get("ai_min_dollar_volume", 0.0) or 0.0)
     if min_dv > 0:
@@ -2974,6 +2990,16 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         sig = indicators.get(sym)
         if isinstance(sig, dict):
+            # Keep this in step with what reads it. should_arm_buy gates on
+            # ai_watch_arm_require, whose default names cm_rsi_rising — and
+            # that key was not copied here, so sig.get() returned None on every
+            # record and the gate could never be satisfied by anything. Across
+            # 2026-08-07 cm_rsi_rising was False or None in all 2017 shadow
+            # rows and True in none, while the engine was publishing it as True
+            # on the wire. _entry_features and _shadow_row read cm_rsi and pctr
+            # off the same dict, so both were logged as null for every arm and
+            # reject, which is worse than not logging them: the columns exist
+            # and read as a measurement.
             rec["indicator"] = {
                 "proximity_pct": sig.get("proximity_pct"),
                 "status": sig.get("status"),
@@ -2981,7 +3007,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "sell_signal": sig.get("sell_signal"),
                 "cm_ok": sig.get("cm_ok"),
                 "pctr_ok": sig.get("pctr_ok"),
+                "cm_rsi_rising": sig.get("cm_rsi_rising"),
                 "macd_ok": sig.get("macd_ok"),
+                "cm_rsi": sig.get("cm_rsi"),
+                "pctr": sig.get("pctr"),
                 "ts": t0,
             }
         elif "indicator" in rec:
