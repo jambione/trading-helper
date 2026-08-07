@@ -1649,10 +1649,10 @@ def call_grok_cli(
             "Grok CLI not found — install from https://x.ai/cli "
             "or set GROK_CLI_BIN to the grok binary"
         )
-    if not cli_logged_in() and not api_key():
+    if not cli_logged_in():
         raise RuntimeError(
             "Grok CLI not logged in — run: grok login   "
-            "(or set XAI_API_KEY as a fallback for the CLI)"
+            "(subscription only; do not set XAI_API_KEY for research)"
         )
 
     model_id = model or DEFAULT_XAI_MODEL
@@ -1678,9 +1678,11 @@ def call_grok_cli(
         if not live_search:
             cmd.append("--disable-web-search")
 
-        # Prefer session auth over any accidental API-key env for this path.
+        # Subscription path only: never pass console API keys into the Grok CLI
+        # subprocess. XAI_API_KEY / GROK_API_KEY bill usage outside SuperGrok.
         env = {**os.environ}
-        # Leave XAI_API_KEY if present as CLI fallback; session wins when logged in.
+        env.pop("XAI_API_KEY", None)
+        env.pop("GROK_API_KEY", None)
 
         started = time.time()
         try:
@@ -3191,12 +3193,15 @@ class AiSuggestions:
                 self.error = "Grok CLI missing — install https://x.ai/cli"
                 self.last_attempt = now
                 return False
-            if not cli_logged_in() and not api_key():
+            if not cli_logged_in():
                 self.error = "Grok CLI not logged in — run: grok login"
                 self.last_attempt = now
                 return False
         elif not api_key():
-            self.error = "no XAI_API_KEY (or set claude_backend=claude_cli|cli)"
+            # Paid HTTP backend only — prefer cli / claude_cli to avoid console bills.
+            self.error = (
+                "no XAI_API_KEY (paid API) — set grok_backend=cli or claude_backend=claude_cli"
+            )
             self.last_attempt = now
             return False
 
