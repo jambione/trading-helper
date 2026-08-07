@@ -932,6 +932,63 @@ _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
 _ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/writes
 
 
+# Symbols the desk is committed to. This list is what the engine computes
+# indicators FOR, so being retired from it means a name goes dark — no CM RSI,
+# no %R, no sell_signal. Fine for a candidate nobody acted on; not fine for a
+# position, which is exactly when the desk needs to know whether to hold or
+# get out. The purge and the cap are both keyed on recency, so a name bought at
+# 14:20 was evicted by 14:35 while still held, and the sell_signal defence in
+# ai_positions could never fire for it.
+#
+# Operator rule: if we are in a position, that symbol's data takes precedence.
+_HELD_TTL_SEC = 5.0
+_held_cache: tuple[float, frozenset] = (0.0, frozenset())
+
+
+def _committed_symbols() -> frozenset:
+    """Symbols with an open position or a live order — never evict these.
+
+    Read off the desk's own state files rather than the broker: this is
+    consulted from load_tickers(), which runs at the price loop's poll rate,
+    and a network round trip there would be a rate-limit problem of its own.
+    Cached briefly for the same reason. Fails open (empty) — a missing file
+    must not take the watchlist down.
+    """
+    global _held_cache
+    now = time.time()
+    ts, val = _held_cache
+    if now - ts < _HELD_TTL_SEC:
+        return val
+    out: set[str] = set()
+    try:
+        import ai_paths
+        report_dir = ai_paths.resolve_report_dir()
+        for name in ("positions_state.json", "entry_watch_state.json"):
+            path = report_dir / name
+            if not path.exists():
+                continue
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                continue
+            for sym, rec in raw.items():
+                t = str(sym or "").strip().upper()
+                if not (2 <= len(t) <= 5 and t.isalpha()):
+                    continue
+                # The watch book holds candidates too. Only names the desk has
+                # actually committed to are protected — "watching" is still
+                # just a candidate and stays subject to the normal churn.
+                if name == "entry_watch_state.json":
+                    status = str((rec or {}).get("status") or "").lower()
+                    if status not in ("armed", "submitted", "filled"):
+                        continue
+                out.add(t)
+    except Exception:
+        pass
+    val = frozenset(out)
+    _held_cache = (now, val)
+    return val
+
+
 def load_tickers() -> list:
     """Read watchlist, purge entries ≥ 15 min old, return list of ticker strings.
 
@@ -956,6 +1013,7 @@ def load_tickers() -> list:
             now_ts  = time.time()
             now_iso = datetime.now(ET).isoformat(timespec="seconds")
             cutoff  = now_ts - TICKER_MAX_AGE
+            held    = _committed_symbols()
 
             kept    = []
             changed = False   # True if any entry was purged or migrated from old format
@@ -980,25 +1038,51 @@ def load_tickers() -> list:
                 except Exception:
                     added_ts = now_ts       # unparseable → treat as fresh
 
-                if added_ts >= cutoff:
-                    kept.append({"ticker": t, "added": added, "_ts": added_ts})
+                # A held name is exempt from BOTH the age purge and the cap
+                # below. Recency is a fine proxy for "still interesting" while
+                # a symbol is only a candidate; once the desk owns it, the
+                # question changes from "is this worth watching" to "when do I
+                # get out", and that question cannot be answered without live
+                # indicators. Evicting a position is how a name goes dark.
+                if added_ts >= cutoff or t in held:
+                    kept.append({"ticker": t, "added": added, "_ts": added_ts,
+                                 "_held": t in held})
                 else:
                     changed = True
                     log.debug(f"[TICKER] Purged stale {t}")
 
             # Cap after purging, newest first. Sorted on the parsed timestamp
             # rather than the ISO string so a mixed-offset file cannot order
-            # entries by text and silently evict the wrong ones.
+            # entries by text and silently evict the wrong ones. Held names
+            # sort ahead of everything and are never in the dropped tail — the
+            # cap exists to bound quote cost, and a position has to be quoted
+            # regardless.
             if len(kept) > TICKER_MAX_COUNT:
-                kept.sort(key=lambda e: e["_ts"], reverse=True)
-                dropped = kept[TICKER_MAX_COUNT:]
-                kept = kept[:TICKER_MAX_COUNT]
+                kept.sort(key=lambda e: (e["_held"], e["_ts"]), reverse=True)
+                n_held = sum(1 for e in kept if e["_held"])
+                limit = max(TICKER_MAX_COUNT, n_held)
+                dropped = kept[limit:]
+                kept = kept[:limit]
                 changed = True
-                log.info(
-                    "[TICKER] Over cap (%d) — retired %d oldest: %s",
-                    TICKER_MAX_COUNT, len(dropped),
-                    ", ".join(e["ticker"] for e in dropped))
+                if dropped:
+                    log.info(
+                        "[TICKER] Over cap (%d) — retired %d oldest: %s%s",
+                        TICKER_MAX_COUNT, len(dropped),
+                        ", ".join(e["ticker"] for e in dropped),
+                        f" (held {n_held} exempt)" if n_held else "")
+            # Re-admit a held name that is not on the list at all. Exempting
+            # them from eviction is only half the rule: a position opened after
+            # its symbol had already aged out would otherwise stay dark for as
+            # long as it was held, which is the case that matters most.
+            present = {e["ticker"] for e in kept}
+            for t in sorted(held - present):
+                kept.append({"ticker": t, "added": now_iso, "_ts": now_ts,
+                             "_held": True})
+                changed = True
+                log.info("[TICKER] Re-admitted held position %s", t)
+
             for e in kept:
+                e.pop("_held", None)
                 e.pop("_ts", None)
 
             if changed:
