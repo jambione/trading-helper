@@ -243,6 +243,58 @@ def is_active() -> bool:
     return _mode != "off" and _client is not None
 
 
+# Alpaca's own asset registry, cached — the answer is static per symbol.
+# Definitive answers are cached; a transient API failure is not, so a network
+# blip cannot permanently blacklist a good symbol.
+_asset_ok: dict[str, bool] = {}
+
+
+def symbol_tradable(ticker: str) -> bool:
+    """Whether Alpaca will accept an order for this symbol at all.
+
+    The buy path had no such check, and the momentum panel feeds it candidates
+    straight off an OCR read of a Discord scanner. That let two kinds of
+    symbol reach order submission:
+
+      • Names Alpaca has never heard of — OTC tickers and OCR inventions.
+        $BOM and $NIANI both return "asset not found".
+      • Delisted or dormant names that still quote. $HOM is INACTIVE with a
+        last print from 2023-04-11, and a three-year-old price would have
+        sized the order and set the stop. The stop guard checks stop < limit,
+        not whether either number describes today.
+
+    Fails CLOSED. Refusing one buy because the lookup failed costs a missed
+    entry; allowing one because the lookup failed is the trade this exists to
+    prevent.
+    """
+    sym = (ticker or "").strip().upper()
+    if not sym:
+        return False
+    if sym in _asset_ok:
+        return _asset_ok[sym]
+    if _client is None:
+        return False
+    try:
+        a = _client.get_asset(sym)
+    except Exception as e:                                 # noqa: BLE001
+        err = str(e)
+        if "not found" in err.lower() or "40410000" in err:
+            _asset_ok[sym] = False          # definitive — cache it
+            log.warning("[TRADER] %s is not an Alpaca asset — buy blocked", sym)
+            return False
+        # Transient: do not cache, do not trade this pass.
+        log.warning("[TRADER] %s tradability unknown (%s) — buy blocked",
+                    sym, " ".join(err.split())[:120])
+        return False
+    ok = bool(getattr(a, "tradable", False)) and \
+        str(getattr(a, "status", "")).upper().endswith("ACTIVE")
+    _asset_ok[sym] = ok
+    if not ok:
+        log.warning("[TRADER] %s not tradable (status=%s) — buy blocked",
+                    sym, getattr(a, "status", "?"))
+    return ok
+
+
 def market_is_open() -> bool:
     """True if the US market is currently open (Alpaca clock).
 
@@ -275,7 +327,16 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
     if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
-        return {"ok": False, "order_id": None, "status": None}
+    # Alpaca must actually accept an order for this symbol. The momentum panel
+    # feeds candidates off an OCR read of a Discord scanner, so names Alpaca
+    # has never heard of and delisted names that still quote both reach here.
+    # Checked per buy path rather than inside _can_mutate, because SELL,
+    # cancel and liquidate must keep working on a symbol that has since gone
+    # untradable — exiting a position can never be gated on this.
+    if not symbol_tradable(ticker):
+        _log_action("BUY_SKIPPED", ticker, price, rsi, hist,
+                    note="not tradable on Alpaca — no order placed")
+        return {"ok": False, "order_id": None, "status": "not_tradable"}
 
     print(f"\n  [TRADER] {mode_tag} 🟢 BUY  {ticker}  "
           f"${_trade_amount:.0f} notional  ~{est_shares:.2f} shares @ ${price:.2f}")
@@ -381,7 +442,17 @@ def buy_limit_at_price(
     if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, limit_px, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
-        return {"ok": False, "order_id": None, "status": None, "note": None}
+    # Alpaca must actually accept an order for this symbol. The momentum panel
+    # feeds candidates off an OCR read of a Discord scanner, so names Alpaca
+    # has never heard of and delisted names that still quote both reach here.
+    # Checked per buy path rather than inside _can_mutate, because SELL,
+    # cancel and liquidate must keep working on a symbol that has since gone
+    # untradable — exiting a position can never be gated on this.
+    if not symbol_tradable(ticker):
+        _log_action("BUY_SKIPPED", ticker, limit_px, rsi, hist,
+                    note="not tradable on Alpaca — no order placed")
+        return {"ok": False, "order_id": None, "status": "not_tradable",
+                "note": "not tradable on Alpaca"}
 
     # A bare limit carries no exit. buy_limit_at_ask delegates here, so this
     # single guard covers both — and both were reachable from desk_buy,
@@ -468,7 +539,17 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
     if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
-        return {"ok": False, "order_id": None, "status": None, "note": None}
+    # Alpaca must actually accept an order for this symbol. The momentum panel
+    # feeds candidates off an OCR read of a Discord scanner, so names Alpaca
+    # has never heard of and delisted names that still quote both reach here.
+    # Checked per buy path rather than inside _can_mutate, because SELL,
+    # cancel and liquidate must keep working on a symbol that has since gone
+    # untradable — exiting a position can never be gated on this.
+    if not symbol_tradable(ticker):
+        _log_action("BUY_SKIPPED", ticker, price, rsi, hist,
+                    note="not tradable on Alpaca — no order placed")
+        return {"ok": False, "order_id": None, "status": "not_tradable",
+                "note": "not tradable on Alpaca"}
 
     # A bare market order carries no exit.
     if _require_protective_exit():
@@ -1046,6 +1127,7 @@ def buy_limit_bracket(
     # buy_bracket_exact. With it, a full OTOCO bracket.
     if (
         not _can_mutate()
+        or not symbol_tradable(ticker)
         or qty < 1
         or limit_price is None
         or stop_price is None
@@ -1180,7 +1262,8 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
     """
     ticker = ticker.upper()
     qty = float(qty)
-    if not _can_mutate() or qty <= 0 or stop_price is None or stop_price <= 0:
+    if (not _can_mutate() or not symbol_tradable(ticker)
+            or qty <= 0 or stop_price is None or stop_price <= 0):
         return {"ok": False, "buy_order_id": None, "stop_order_id": None,
                 "status": None}
 

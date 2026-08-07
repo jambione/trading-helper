@@ -10,6 +10,8 @@ trade_guard_state.json — and fake losses could trip the real kill switch.
 import os
 import tempfile
 
+import pytest
+
 os.environ.setdefault(
     "TRADE_GUARD_STATE_FILE",
     os.path.join(tempfile.mkdtemp(prefix="trade_guard_test_"), "trade_guard_state.json"),
@@ -50,3 +52,24 @@ def column_cells(table, header):
             return list(col.cells)
     raise AssertionError(
         f"no column {header!r} in {[c.header for c in table.columns]}")
+
+
+@pytest.fixture(autouse=True)
+def _permissive_tradability():
+    """Let order-mechanics tests place buys without an asset lookup.
+
+    alpaca_trader.symbol_tradable asks Alpaca whether it will accept an order
+    for a symbol, and fails closed. Every test that arms the trader with a mock
+    client would otherwise have its buys refused — they assert qty rounding,
+    limit prices, TIF and bracket shape, none of which is what the gate is for.
+    Same reasoning as _arm_trader disabling _require_protective_exit: the
+    policy has its own tests (test_tradable_gate.py, which restores the real
+    function) and is not what these are checking.
+    """
+    import alpaca_trader as _at
+    orig = _at.symbol_tradable
+    _at.symbol_tradable = lambda ticker: True
+    try:
+        yield
+    finally:
+        _at.symbol_tradable = orig
