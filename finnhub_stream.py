@@ -50,12 +50,28 @@ class FinnhubState:
             self.log_lines.append({"ts": ts, "level": level, "msg": msg})
 
     def update_price(self, ticker: str, price: float, volume: int = 0, timestamp: int = 0):
+        """Record a price. `timestamp` is the trade's OWN time in ms (stream
+        trades have one; REST quotes do not) and is kept separately from
+        ts_unix.
+
+        ts_unix is when WE learned the price, which is the right basis for
+        "is this source still covering the symbol". trade_ts is when the print
+        happened, which is the only honest basis for "how old is this number".
+        Collapsing the two made a 30s REST re-fetch of an unchanged price read
+        as a 3-second-old tick.
+        """
         now = time.time()
+        trade_ts = (timestamp / 1000.0) if timestamp and timestamp > 0 else None
+        # A clock-skewed or malformed stamp is worse than none: it would claim
+        # a print from the future and win every merge.
+        if trade_ts is not None and not (0 < trade_ts <= now + 5):
+            trade_ts = None
         with self.lock:
             self.prices[ticker] = {
                 "price":     price,
                 "volume":    volume,
                 "timestamp": timestamp,
+                "trade_ts":  trade_ts,
                 "ts_unix":   now,
                 "updated":   datetime.now(ET).strftime("%H:%M:%S"),
             }

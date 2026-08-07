@@ -1337,11 +1337,17 @@ def stream_covered(fh_prices: dict, now: float,
 
 
 def freshest_prices(*sources: dict) -> dict:
-    """Merge {ticker: (price, observed_ts)} maps, newest observation winning.
+    """Merge {ticker: (price, observed_ts[, trade_ts])} maps, newest observation
+    winning. Returns {ticker: (price, observed_ts, trade_ts|None)}.
 
     Preferring a source over an observation time is what let a 90s-old stream
     tick beat a 5s-old Alpaca print. Ties keep the earlier source so repeated
     merges of unchanged input cannot flap between polls.
+
+    The merge runs on OBSERVED time — the most recently learned price is the
+    one to show — while trade_ts rides along so the age we publish can be the
+    print's age rather than the fetch's. A source that cannot supply one passes
+    None, which means "unknown", not "now".
     """
     merged: dict = {}
     for src in sources:
@@ -1350,9 +1356,13 @@ def freshest_prices(*sources: dict) -> dict:
                 p, obs = float(val[0]), float(val[1])
             except (TypeError, ValueError, IndexError):
                 continue
+            try:
+                trade_ts = float(val[2]) if len(val) > 2 and val[2] else None
+            except (TypeError, ValueError):
+                trade_ts = None
             cur = merged.get(t)
             if cur is None or obs > cur[1]:
-                merged[t] = (p, obs)
+                merged[t] = (p, obs, trade_ts)
     return merged
 
 
@@ -1364,9 +1374,13 @@ def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
         now = time.time()
         with _alpaca_cache_lock:
             for t, (p, ts) in quotes.items():
-                # An absent or implausible trade time falls back to fetch time,
-                # which is at most one poll interval off.
-                _alpaca_price_cache[t] = (p, ts if ts and ts > 0 else now)
+                # Observed-time falls back to fetch time so the merge still
+                # ranks this as a fresh observation. The trade's own time is
+                # kept separately and stays None when Alpaca did not supply
+                # one — the published age must not claim a print happened at
+                # the moment we happened to ask.
+                trade_ts = ts if ts and 0 < ts <= now + 5 else None
+                _alpaca_price_cache[t] = (p, trade_ts or now, trade_ts)
     finally:
         _alpaca_fallback_running = False
 
@@ -1496,14 +1510,15 @@ def _price_loop():
                     cached_alpaca = dict(_alpaca_price_cache)
                 with FINNHUB_STATE.lock:
                     fh_all = {t: (float(d["price"]),
-                                  float(d.get("ts_unix") or 0))
+                                  float(d.get("ts_unix") or 0),
+                                  d.get("trade_ts"))
                               for t, d in FINNHUB_STATE.prices.items()
                               if d.get("price")}
 
                 merged = freshest_prices(cached_alpaca, fh_all)
 
                 with STATE.lock:
-                    for t, (p, obs) in merged.items():
+                    for t, (p, obs, trade_ts) in merged.items():
                         if t not in tickers:
                             continue
                         entry = STATE.tickers.setdefault(t, {})
@@ -1511,10 +1526,15 @@ def _price_loop():
                         # price_ts is a WRITE time and always reads fresh; it is
                         # kept only because the web UI shows it. price_age_sec is
                         # the real answer to "how old is this number" — seconds
-                        # since the print itself.
+                        # since the print ITSELF, so it is computed from the
+                        # trade's own timestamp and is None when the winning
+                        # source could not supply one. A Finnhub REST quote
+                        # cannot: stamping it with fetch time made a 30s
+                        # re-fetch of an unchanged price read as 3 seconds old.
                         entry["price_ts"] = ts
-                        entry["price_age_sec"] = (round(max(0.0, now - obs), 1)
-                                                  if obs > 0 else None)
+                        entry["price_age_sec"] = (
+                            round(max(0.0, now - trade_ts), 1)
+                            if trade_ts and trade_ts > 0 else None)
 
             _fail_streak = 0
         except Exception as e:
