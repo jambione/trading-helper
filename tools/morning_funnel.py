@@ -25,6 +25,7 @@ or ALPACA_API_KEY / ALPACA_SECRET_KEY env vars.
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -397,7 +398,13 @@ def fetch_minutes_today(client, tickers: list, cfg: dict, now_et: datetime) -> d
     except Exception as e:                                 # noqa: BLE001
         log.warning("[FUNNEL] today's minute bars failed for %d symbol(s): %s",
                     len(tickers), str(e)[:200])
-        return {}
+        # None means "could not ask", {} means "asked, nobody had bars" — the
+        # same distinction fetch_minutes_history draws, and for the same
+        # reason. Returning {} here made a 429 indistinguishable from a quiet
+        # tape, so callers that clear vol_session on an empty result erased
+        # good readings every time the feed throttled. Callers that do not care
+        # spell it `or {}` and behave exactly as before.
+        return None
 
 
 def fetch_minutes_history(client, tickers: list, cfg: dict, now_et: datetime,
@@ -447,6 +454,47 @@ _AVG_VOL_RETRY_SEC = 300.0
 _AVG_VOL_RETRY_AT = 0.0
 
 
+# The cache above is per-process, so every restart throws away a day's worth of
+# baselines and has to rebuild them with the desk's heaviest request — against a
+# rate limit four processes already share. Losing it mid-session is not a slow
+# start, it is no rvol at all until the backoff clears, and rvol=None silently
+# narrows AI Watch admission to Stocktwits score alone. These are averages of
+# COMPLETED sessions, so they are valid for the whole ET day and safe on disk:
+# spend the request once per day per symbol across the whole desk, not once per
+# process per restart. Stamped with the ET day so it self-invalidates.
+_AVG_VOL_DISK = Path(
+    os.environ.get("AVG_VOL_CACHE_FILE")
+    or ROOT / "cache" / "avg_session_volume.json")
+
+
+def _load_avg_disk(stamp: str) -> dict:
+    """Day-matched baselines from disk, or {}. Never raises."""
+    try:
+        raw = json.loads(_AVG_VOL_DISK.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and raw.get("date") == stamp:
+            avg = raw.get("avg")
+            if isinstance(avg, dict):
+                return {str(k).upper(): v for k, v in avg.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_avg_disk(stamp: str) -> None:
+    """Persist the day's baselines. Best effort — never raises, never blocks."""
+    try:
+        _AVG_VOL_DISK.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _AVG_VOL_DISK.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps({"date": stamp, "avg": _AVG_VOL_CACHE}),
+            encoding="utf-8")
+        # Atomic: several processes write this concurrently and a torn read
+        # would look like a corrupt cache and silently drop every baseline.
+        tmp.replace(_AVG_VOL_DISK)
+    except Exception:
+        pass
+
+
 def avg_session_volumes(client, tickers: list, cfg: dict, now_et: datetime,
                         days: int = 18) -> dict:
     """{sym: minute-based average session volume or None}, day-cached."""
@@ -456,6 +504,9 @@ def avg_session_volumes(client, tickers: list, cfg: dict, now_et: datetime,
     if _AVG_VOL_DATE != stamp:
         _AVG_VOL_CACHE.clear()
         _AVG_VOL_DATE = stamp
+        # Warm from disk before deciding anything is missing, so a restart
+        # costs no requests and no blind window.
+        _AVG_VOL_CACHE.update(_load_avg_disk(stamp))
 
     wanted = [t for t in tickers if t not in _AVG_VOL_CACHE]
     if not wanted or client is None:
@@ -475,14 +526,33 @@ def avg_session_volumes(client, tickers: list, cfg: dict, now_et: datetime,
         # tomorrow. A single 429 at startup is what left every trending row
         # with rvol=None for a whole session on 2026-08-07, which also emptied
         # the rvol column on half the A/B reject arm. Cache nothing; the next
-        # poll asks again. An empty-but-successful {} still caches negatives,
-        # so a fresh listing with no history is not re-requested every cycle.
+        # poll asks again.
+        return _AVG_VOL_CACHE
+    if not hist:
+        # Asked, and got back nothing for ANY symbol. Read literally that says
+        # every name on the list lacks history, and the loop below would cache
+        # that verdict for the rest of the ET day. But `wanted` is a live
+        # trending list of names that are, by construction, trading heavily
+        # right now — all of them lacking 18 days of bars is not a thing that
+        # happens, while a batch degrading to an empty frame under load is.
+        # This is the same conflation the `hist is None` branch above fixes,
+        # one layer down: _split_batch returns {} both when the response was
+        # empty and when it could not be parsed. On 2026-08-07 it left all 26
+        # trending rows with rvol=None from the open, which silently reduced
+        # admission to "Stocktwits score > 10" — the exact popularity-only
+        # selection passes_inclusion was written to end.
+        #
+        # A partial result is still trustworthy per-symbol (below); it is only
+        # the all-or-nothing empty that is indistinguishable from a failure.
+        _AVG_VOL_RETRY_AT = time.time() + _AVG_VOL_RETRY_SEC
         return _AVG_VOL_CACHE
     for sym in wanted:
-        # The ask succeeded, so a symbol missing from the result genuinely has
-        # no usable history — that None is a real answer and worth caching.
+        # The ask succeeded and returned data for at least one symbol, so a
+        # symbol missing from the result genuinely has no usable history —
+        # that None is a real answer and worth caching.
         _AVG_VOL_CACHE[sym] = avg_session_volume(
             hist.get(sym), today, avg_days)
+    _save_avg_disk(stamp)
     return _AVG_VOL_CACHE
 
 
@@ -577,7 +647,7 @@ def build_view(rows: list, now_et: datetime, feed: str = "IEX"):
 def scan_once(client, tickers: list, cfg: dict, knobs: dict, now_et=None) -> list:
     now_et = now_et or datetime.now(ET)
     daily = fetch_daily(client, tickers, cfg)
-    minutes = fetch_minutes_today(client, tickers, cfg, now_et)
+    minutes = fetch_minutes_today(client, tickers, cfg, now_et) or {}
     quotes = fetch_quotes(client, tickers, cfg)
     # Day-cached, and off the same minute tape as the numerator above.
     avg = avg_session_volumes(client, tickers, cfg, now_et)

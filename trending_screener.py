@@ -135,14 +135,34 @@ def main() -> None:
         except Exception as e:  # never let tagging stop the feed
             print(f"[trending] look tagging failed: {e}", flush=True)
 
+        # Age the carried-forward rvol so a consumer can tell a live reading
+        # from one held over a rate-limit backoff (see refresh()).
+        for r in rows_out:
+            ts = r.get("rvol_ts")
+            r["rvol_age_sec"] = (t0 - float(ts)) if ts else None
+
+        # Volume health, alongside the quote health already published. Without
+        # it, rvol going None across every row — which silently drops the AI
+        # Watch shortlist to "Stocktwits score alone" — is indistinguishable
+        # from a genuinely flat session, and nothing anywhere says a word.
+        # That is what happened on 2026-08-07: 26 rows, rvol null on all of
+        # them from the open, no error published and none logged.
+        n_rvol = sum(1 for r in rows_out if r.get("rvol") is not None)
         _write_json(TRENDING_FILE, {
             "updated": t0,
             "last_ok": st.last_ok,
             "error": st.error,
             "quotes_error": st.quotes_error,
             "last_quote_ok": st.last_quote_ok,
+            "last_volume_ok": st.last_volume_ok,
+            "volume_error": st.volume_error,
+            "rvol_coverage": f"{n_rvol}/{len(rows_out)}",
             "rows": rows_out,
         })
+        if rows_out and not n_rvol:
+            print("[trending] WARNING rvol is None on all "
+                  f"{len(rows_out)} rows — admission is running on "
+                  "Stocktwits score alone", flush=True)
 
         time.sleep(LOOP_SLEEP)
 

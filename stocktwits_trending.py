@@ -348,9 +348,23 @@ def enrich_with_alpaca(rows: list[dict[str, Any]],
             row.update(snapshot_fields(snap, now, today_et))
         except Exception:
             continue
-        row["rvol"], row["rvol_raw"] = row_rvol(
-            row, (avg_by_sym or {}).get(row["symbol"]), now,
-            time_adjusted=time_adjusted)
+        # Re-derive RVOL only when there is a baseline to re-derive it FROM.
+        # This is the quote path: it runs every 15s and knows nothing about
+        # volume, so `avg_by_sym` is None unless a caller supplies it — and
+        # `(None or {}).get(sym)` makes row_rvol return (None, None), which
+        # was then written straight over the good reading refresh_volume had
+        # computed moments earlier. The docstring says this re-derives RVOL;
+        # with no caller passing the averages it only destroyed it, blanking
+        # the whole column once every quote cycle. Coverage flickered 27/27 ->
+        # 0/27 all session, and each blank cycle silently narrowed AI Watch
+        # admission to `score > 10` alone.
+        avg = (avg_by_sym or {}).get(row["symbol"])
+        if avg is None:
+            continue
+        rv, rv_raw = row_rvol(row, avg, now, time_adjusted=time_adjusted)
+        if rv is not None:
+            row["rvol"], row["rvol_raw"] = rv, rv_raw
+            row["rvol_ts"] = now
     return rows
 
 
@@ -620,11 +634,15 @@ class StocktwitsTrending:
         self.last_quote_attempt: float = 0.0
         self.error: str = ""
         self.quotes_error: str = ""
+        self.volume_error: str = ""
         self._seen: set[str] = set()
         self._prev_look: dict[str, bool] = {}
         self._seeded = False          # suppress alerts on the first poll
         self.last_volume_ok: float = 0.0
         self.last_volume_attempt: float = 0.0
+        # Baselines from the last successful refresh_volume, so the 15s quote
+        # path can re-derive rvol instead of blanking it.
+        self._avg_by_sym: dict = {}
 
     # ── volume + RVOL, off minute bars, on their own slower clock ────────
     def refresh_volume(self, now: float | None = None, client=None) -> bool:
@@ -660,6 +678,24 @@ class StocktwitsTrending:
         except Exception:
             return False
 
+        if minutes is None or (self.rows and not minutes):
+            # `None` is "could not ask" (429, network, auth). `{}` for a
+            # non-empty ask is read literally as "nobody had a single bar
+            # today" — but these are the market's most-discussed names, whose
+            # vol_session reads in the millions one poll earlier, so in practice
+            # it is a batch that degraded rather than a silent tape. Both blank
+            # every row, and rvol=None is not inert downstream: the AI Watch
+            # shortlist rule is `score > 10 OR pct > 50 OR rvol > 1.5`, so an
+            # empty column quietly narrows admission to popularity alone. That
+            # is what made rvol flicker 27/27 -> 0/27 every minute.
+            #
+            # A PARTIAL batch is still trusted per symbol below — one name with
+            # no bars yet genuinely has no volume evidence. Same distinction
+            # avg_session_volumes draws, and for the same reason.
+            self.volume_error = "minute bars unavailable"
+            return False
+        self.volume_error = ""
+
         for r in self.rows:
             sym = r.get("symbol")
             df = minutes.get(sym) if sym else None
@@ -671,10 +707,32 @@ class StocktwitsTrending:
             # None, not 0 — "no bars yet" and "traded nothing" both mean there
             # is no volume evidence, and a 0 would divide into a real RVOL.
             r["vol_session"] = vol if (vol or 0) > 0 else None
-            r["rvol"], r["rvol_raw"] = row_rvol(
+            rv, rv_raw = row_rvol(
                 r, avg.get(sym), now, time_adjusted=self.rvol_time_adjusted)
+            if rv is not None:
+                r["rvol"], r["rvol_raw"] = rv, rv_raw
+                r["rvol_ts"] = now
+            elif r["vol_session"] is None or avg.get(sym) is not None:
+                # A real negative: today's bars are missing, or the baseline was
+                # there and the division still declined. Say so.
+                r["rvol"], r["rvol_raw"] = None, None
+            # Else: numerator present, denominator absent. avg_session_volumes
+            # is a day-cached fetch of COMPLETED sessions, so a gap in it is a
+            # baseline outage — not evidence that this symbol stopped being
+            # unusual. Blanking rvol here overwrites the value refresh() just
+            # carried forward and re-creates the failure this all started with:
+            # rvol empty across the panel, and admission silently falling back
+            # to Stocktwits score alone. Keep the prior reading; rvol_age_sec
+            # already reports how old it is.
         self.by_symbol = {r["symbol"]: r for r in self.rows}
         self.last_volume_ok = now
+        if avg:
+            self._avg_by_sym = dict(avg)
+        # Surface a baseline outage rather than letting it read as a flat tape.
+        missing_avg = sum(1 for r in self.rows if avg.get(r.get("symbol")) is None)
+        self.volume_error = (
+            f"no volume baseline for {missing_avg}/{len(self.rows)}"
+            if missing_avg else "")
         return True
 
     def refresh(self, now: float | None = None) -> bool:
@@ -689,6 +747,27 @@ class StocktwitsTrending:
             return False
         if self.stocks_only:
             rows = [r for r in rows if r.get("is_equity") and not r.get("is_crypto")]
+        # Stocktwits rows carry popularity, not volume — so replacing self.rows
+        # wholesale drops vol_session/rvol for every name, and only the
+        # refresh_volume() call below puts them back. That call is throttled on
+        # its own clock and backs off for minutes after a 429, so on any poll
+        # where it declines the whole panel publishes rvol=None. Downstream that
+        # is not "unknown", it is a silent policy change: the AI Watch shortlist
+        # rule is `score > 10 OR pct > 50 OR rvol > 1.5`, so a blank rvol column
+        # quietly reduces admission to Stocktwits popularity alone.
+        #
+        # Volume is cumulative within a session, so the previous reading is
+        # stale but never wrong-signed — strictly better than None. Carry it
+        # across the swap and stamp its age so consumers can judge it.
+        prev = self.by_symbol or {}
+        for r in rows:
+            old = prev.get(r.get("symbol"))
+            if not old:
+                continue
+            for key in ("vol_session", "rvol", "rvol_raw"):
+                if old.get(key) is not None:
+                    r[key] = old[key]
+            r["rvol_ts"] = old.get("rvol_ts") or self.last_volume_ok or None
         self.rows = rows
         self.by_symbol = {r["symbol"]: r for r in rows}
         self.last_ok = now
@@ -722,7 +801,14 @@ class StocktwitsTrending:
             self.quotes_error = "no Alpaca keys (signal_engine.env)"
             return False
         self.quotes_error = ""
+        # Hand over the baselines refresh_volume last resolved. Volume itself
+        # does not move on this path, but the time-adjustment denominator does
+        # — rvol is a pace, so the same share count means a different multiple
+        # at 09:45 than at 15:45, and without this it only updated once a
+        # minute. Empty on the first pass, which now leaves rvol alone rather
+        # than blanking it.
         enrich_with_alpaca(self.rows, now=now,
+                           avg_by_sym=self._avg_by_sym,
                            time_adjusted=self.rvol_time_adjusted,
                            client=client)
         self.by_symbol = {r["symbol"]: r for r in self.rows}

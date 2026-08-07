@@ -1639,7 +1639,7 @@ def _vol_loop():
             mins_open = (now_et.hour * 60 + now_et.minute) - mf.OPEN_MIN
 
             avg_by_sym = _vol_avg_volumes(mf, client, tickers, cfg, now_et)
-            minutes = mf.fetch_minutes_today(client, tickers, cfg, now_et)
+            minutes = mf.fetch_minutes_today(client, tickers, cfg, now_et) or {}
 
             vol_data: dict = {}
             stale: list = []

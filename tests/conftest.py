@@ -38,6 +38,21 @@ os.environ.setdefault(
     "AI_REPORT_DIR", tempfile.mkdtemp(prefix="ai_reports_test_"),
 )
 
+# Fourth instance, and the first that feeds a live trading decision rather than
+# an audit trail. morning_funnel persists the day's average session volumes to
+# cache/avg_session_volume.json so a restart does not have to rebuild them with
+# the desk's heaviest request. Tests drive avg_session_volumes with synthetic
+# frames, so an unredirected run writes fixture baselines into the file the
+# running screener reads — and that number is the DENOMINATOR of rvol, which
+# gates AI Watch admission. A fake baseline there does not fail loudly; it
+# quietly rescales every rvol on the desk. Today only the ET date stamp on the
+# file kept a fixture-dated write from being loaded.
+os.environ.setdefault(
+    "AVG_VOL_CACHE_FILE",
+    os.path.join(tempfile.mkdtemp(prefix="avg_vol_test_"),
+                 "avg_session_volume.json"),
+)
+
 
 def column_cells(table, header):
     """Cells of the rich table column with this header — by NAME, not index.

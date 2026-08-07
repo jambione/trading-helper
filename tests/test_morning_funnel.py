@@ -1,7 +1,7 @@
 """Tests for tools/morning_funnel.py — pure functions only, no network."""
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -212,3 +212,129 @@ def test_build_view_renders():
     import io
     from rich.console import Console
     Console(file=io.StringIO(), width=100).print(mf.build_view(rows, NOW))
+
+
+def history_df(sessions=8, bars=20, vol_per_bar=23_000):
+    """Minute bars across several COMPLETED sessions before NOW.
+
+    avg_session_volume needs MIN_AVG_SESSIONS closed sessions and excludes
+    today, so a single-session frame resolves to None no matter how healthy
+    the fetch was.
+    """
+    frames = []
+    for back in range(1, sessions + 1):
+        day = NOW.date() - timedelta(days=back)
+        frames.append(minute_df(
+            start=f"{day.isoformat()} 09:30", bars=bars,
+            vol_per_bar=vol_per_bar))
+    return pd.concat(frames).sort_index()
+
+
+def _reset_avg_cache():
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""
+    mf._AVG_VOL_RETRY_AT = 0.0
+    # The day cache is also on disk (so a restart does not rebuild it with the
+    # desk's heaviest request), and conftest points it at one tmpdir for the
+    # whole session — so without this a previous test's baselines warm straight
+    # back into the next one.
+    mf._AVG_VOL_DISK.unlink(missing_ok=True)
+
+
+def test_empty_history_batch_is_not_cached_as_a_verdict(monkeypatch):
+    """An all-empty history response must not become a day-long "no rvol".
+
+    The cache is keyed by the ET day and `wanted` skips anything already in it,
+    so writing None for every symbol here is never retried until tomorrow.
+    _split_batch returns {} both when the feed genuinely had nothing and when
+    the batch degraded under load, and a live trending list — names trading
+    heavily enough to trend — lacking 18 days of bars is not a real scenario.
+    On 2026-08-07 this left all 26 trending rows with rvol=None from the open,
+    which silently reduced admission to Stocktwits score alone.
+    """
+    _reset_avg_cache()
+    monkeypatch.setattr(mf, "fetch_minutes_history", lambda *a, **k: {})
+    out = mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, NOW)
+    assert out == {}, "an empty batch must cache nothing"
+
+    # And once the feed recovers the symbols must actually resolve.
+    _reset_avg_cache()
+    monkeypatch.setattr(
+        mf, "fetch_minutes_history",
+        lambda *a, **k: {"AAA": history_df(), "BBB": history_df()})
+    out = mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, NOW)
+    assert set(out) == {"AAA", "BBB"}
+    assert all(v is not None for v in out.values())
+
+
+def test_partial_history_still_caches_the_real_negatives(monkeypatch):
+    """A non-empty response is trustworthy per symbol.
+
+    Only the all-or-nothing empty is indistinguishable from a failure — if the
+    feed answered for one name and not another, the absent one genuinely has no
+    usable history and re-requesting it every cycle never resolves.
+    """
+    _reset_avg_cache()
+    monkeypatch.setattr(
+        mf, "fetch_minutes_history", lambda *a, **k: {"AAA": history_df()})
+    out = mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, NOW)
+    assert out["AAA"] is not None
+    assert "BBB" in out and out["BBB"] is None
+
+
+def test_baselines_survive_a_process_restart_without_refetching(monkeypatch):
+    """The day cache must outlive the process that built it.
+
+    It is an average of COMPLETED sessions, so it is valid for the whole ET day
+    — but it lived only in memory, so every restart rebuilt it with an 18-day
+    batch for every symbol, against a rate limit four processes share. Losing it
+    mid-session is not a slow start: the refetch 429s, the backoff holds for
+    minutes, and rvol is None for all of it. On 2026-08-07 restarting the
+    trending screener at 13:17 did exactly that.
+    """
+    _reset_avg_cache()
+    calls = []
+
+    def _fetch(*a, **k):
+        calls.append(1)
+        return {"AAA": history_df(), "BBB": history_df()}
+
+    monkeypatch.setattr(mf, "fetch_minutes_history", _fetch)
+    first = dict(mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, NOW))
+    assert len(calls) == 1
+    assert all(v is not None for v in first.values())
+
+    # Simulate a restart: in-memory state gone, disk file left alone.
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""
+    mf._AVG_VOL_RETRY_AT = 0.0
+
+    after = mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, NOW)
+    assert after == first, "restart must reuse the persisted baselines"
+    assert len(calls) == 1, "and must not spend another history request"
+
+
+def test_stale_day_cache_on_disk_is_ignored(monkeypatch):
+    """Yesterday's baselines are the wrong denominator for today."""
+    _reset_avg_cache()
+    monkeypatch.setattr(
+        mf, "fetch_minutes_history",
+        lambda *a, **k: {"AAA": history_df(), "BBB": history_df()})
+    mf.avg_session_volumes(object(), ["AAA", "BBB"], {}, NOW)
+
+    import json as _json
+    raw = _json.loads(mf._AVG_VOL_DISK.read_text())
+    raw["date"] = "1999-01-01"
+    mf._AVG_VOL_DISK.write_text(_json.dumps(raw))
+
+    mf._AVG_VOL_CACHE.clear()
+    mf._AVG_VOL_DATE = ""
+    assert mf._load_avg_disk(NOW.date().isoformat()) == {}
+
+
+def test_corrupt_day_cache_never_raises():
+    """A torn or hand-edited file must degrade to a refetch, not a crash."""
+    _reset_avg_cache()
+    mf._AVG_VOL_DISK.parent.mkdir(parents=True, exist_ok=True)
+    mf._AVG_VOL_DISK.write_text("{not json at all")
+    assert mf._load_avg_disk(NOW.date().isoformat()) == {}

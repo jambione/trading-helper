@@ -335,16 +335,29 @@ def test_volume_and_rvol_come_off_minute_bars():
 
 def test_a_symbol_with_no_bars_yet_gets_none_not_zero():
     """A 0 would divide into a real RVOL and would read as "traded nothing"
-    rather than "no bars yet"."""
+    rather than "no bars yet".
+
+    Stated as a PARTIAL batch — one name answered, one did not — because that
+    is the only shape in which "this symbol has no bars" is distinguishable
+    from "the whole request came back degraded". A wholly empty response for a
+    non-empty ask is the latter, and blanking on it is what made rvol flicker
+    across the entire panel every minute.
+    """
+    import pandas as pd
     import stocktwits_trending as stt
     import tools.morning_funnel as mf
 
     st = StocktwitsTrending(enrich_quotes=True)
-    st.rows = [_row(vol_session=123.0, rvol=9.9)]
+    st.rows = [_row(vol_session=123.0, rvol=9.9),
+               _row(sym="BBBB", vol_session=456.0, rvol=1.1)]
+    idx = pd.date_range("2026-07-24 09:30", periods=2, freq="1min", tz=stt.ET)
+    other = pd.DataFrame({"volume": [10_000.0] * 2}, index=idx)
+
     orig = (stt._alpaca_client, mf.fetch_minutes_today, mf.avg_session_volumes)
     stt._alpaca_client = lambda: object()
-    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: {}
-    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {}
+    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: {"BBBB": other}
+    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {
+        "AAAA": 1_000_000.0, "BBBB": 1_000_000.0}
     try:
         st.refresh_volume(T0)
     finally:
@@ -353,3 +366,171 @@ def test_a_symbol_with_no_bars_yet_gets_none_not_zero():
 
     assert st.by_symbol["AAAA"]["vol_session"] is None
     assert st.by_symbol["AAAA"]["rvol"] is None
+    # The name that did answer still resolves.
+    assert st.by_symbol["BBBB"]["vol_session"] == 20_000.0
+
+
+def test_a_wholly_empty_batch_is_a_failure_not_a_flat_tape():
+    """{} for a non-empty ask must not blank the panel.
+
+    These are the market's most-discussed names; every one of them having zero
+    bars on the day does not happen, while a batch degrading under load does.
+    Reading it literally flipped rvol coverage 27/27 -> 0/27 once a minute,
+    and each blank cycle silently dropped AI Watch admission to score alone.
+    """
+    import stocktwits_trending as stt
+    import tools.morning_funnel as mf
+
+    st = StocktwitsTrending(enrich_quotes=True)
+    st.rows = [_row(vol_session=123.0, rvol=9.9)]
+    st.by_symbol = {"AAAA": st.rows[0]}
+    orig = (stt._alpaca_client, mf.fetch_minutes_today, mf.avg_session_volumes)
+    stt._alpaca_client = lambda: object()
+    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: {}
+    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {"AAAA": 1_000_000.0}
+    try:
+        assert st.refresh_volume(T0) is False
+    finally:
+        (stt._alpaca_client, mf.fetch_minutes_today,
+         mf.avg_session_volumes) = orig
+
+    assert st.by_symbol["AAAA"]["vol_session"] == 123.0
+    assert st.by_symbol["AAAA"]["rvol"] == 9.9
+    assert st.volume_error
+
+
+def test_unavailable_minute_bars_keep_the_last_rvol_instead_of_blanking_it():
+    """A throttled fetch must not read as a flat tape.
+
+    fetch_minutes_today returns None when it could not ask and {} when it asked
+    and nobody had bars. Those were the same value, so every 429 wiped rvol off
+    the whole panel — and rvol=None is not inert downstream: the AI Watch
+    shortlist rule is `score > 10 OR pct > 50 OR rvol > 1.5`, so a blank column
+    silently narrows admission to Stocktwits popularity alone. That is what
+    emptied 20 of 26 trending rows on 2026-08-07.
+    """
+    import stocktwits_trending as stt
+    import tools.morning_funnel as mf
+
+    st = StocktwitsTrending(enrich_quotes=True)
+    st.rows = [_row(vol_session=123.0, rvol=9.9)]
+    st.by_symbol = {"AAAA": st.rows[0]}
+    orig = (stt._alpaca_client, mf.fetch_minutes_today, mf.avg_session_volumes)
+    stt._alpaca_client = lambda: object()
+    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: None   # could not ask
+    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {}
+    try:
+        assert st.refresh_volume(T0) is False
+    finally:
+        (stt._alpaca_client, mf.fetch_minutes_today,
+         mf.avg_session_volumes) = orig
+
+    assert st.by_symbol["AAAA"]["vol_session"] == 123.0
+    assert st.by_symbol["AAAA"]["rvol"] == 9.9
+    assert st.volume_error
+
+
+def test_restocking_the_trending_list_does_not_drop_volume_fields():
+    """refresh() replaces self.rows wholesale with popularity-only rows.
+
+    Stocktwits carries no volume, so the swap blanks vol_session/rvol for every
+    name and only the refresh_volume() call at the end puts them back — and
+    that call is throttled on its own clock and backs off after a 429. Volume
+    is cumulative within a session, so the previous reading is stale but never
+    wrong-signed, which is strictly better than None.
+    """
+    import stocktwits_trending as stt
+
+    st = StocktwitsTrending(enrich_quotes=False)
+    st.rows = [_row(vol_session=2_000_000.0, rvol=3.5, rvol_raw=1.6)]
+    st.by_symbol = {"AAAA": st.rows[0]}
+    st.last_volume_ok = T0 - 30.0
+
+    orig = stt.fetch_trending
+    stt.fetch_trending = lambda: [
+        {"symbol": "AAAA", "rank": 1, "trending_score": 15.0,
+         "is_equity": True, "is_crypto": False},
+    ]
+    try:
+        assert st.refresh(T0) is True
+    finally:
+        stt.fetch_trending = orig
+
+    row = st.by_symbol["AAAA"]
+    assert row["rvol"] == 3.5
+    assert row["vol_session"] == 2_000_000.0
+    assert row["rvol_ts"] == T0 - 30.0
+    # The fresh popularity number still wins.
+    assert row["trending_score"] == 15.0
+
+
+def test_missing_volume_baseline_keeps_rvol_instead_of_blanking_it():
+    """A gap in the day-cached baseline is not evidence about the symbol.
+
+    rvol needs a numerator (today's minute bars) and a denominator (the average
+    of completed sessions). Those come from two different fetches, and only the
+    numerator says anything about what the symbol is doing today. When the
+    baseline fetch is throttled the old code wrote None over a good rvol on
+    every row, which is what silently dropped AI Watch admission to Stocktwits
+    score alone. A stale rvol is still a measurement; None is not.
+    """
+    import pandas as pd
+    import stocktwits_trending as stt
+    import tools.morning_funnel as mf
+
+    st = StocktwitsTrending(enrich_quotes=True, rvol_time_adjusted=False)
+    st.rows = [_row(vol_session=2_000_000.0, rvol=3.5, rvol_raw=3.5)]
+    st.by_symbol = {"AAAA": st.rows[0]}
+    idx = pd.date_range("2026-07-24 09:30", periods=4, freq="1min", tz=stt.ET)
+    df = pd.DataFrame({"volume": [500_000.0] * 4}, index=idx)
+
+    orig = (stt._alpaca_client, mf.fetch_minutes_today, mf.avg_session_volumes)
+    stt._alpaca_client = lambda: object()
+    mf.fetch_minutes_today = lambda c, syms, cfg, now_et: {"AAAA": df}
+    mf.avg_session_volumes = lambda c, syms, cfg, now_et: {}   # baseline gone
+    try:
+        st.refresh_volume(T0)
+    finally:
+        (stt._alpaca_client, mf.fetch_minutes_today,
+         mf.avg_session_volumes) = orig
+
+    row = st.by_symbol["AAAA"]
+    assert row["vol_session"] == 2_000_000.0, "numerator was available"
+    assert row["rvol"] == 3.5, "baseline outage must not blank a good rvol"
+    assert st.volume_error, "and it must not be silent"
+
+
+def test_quote_refresh_never_blanks_rvol_it_cannot_re_derive():
+    """The 15s quote path knows nothing about volume.
+
+    enrich_with_alpaca re-derives RVOL only for rows whose volume an earlier
+    pass established, and it needs `avg_by_sym` to do it. _quote() never passed
+    that, so `(None or {}).get(sym)` made row_rvol return (None, None) and the
+    result was written straight over the reading refresh_volume had just
+    computed. Coverage flickered 27/27 -> 0/27 every quote cycle for a whole
+    session, and each blank cycle narrowed AI Watch admission to score alone.
+    """
+    import stocktwits_trending as stt
+
+    rows = [_row(vol_session=2_000_000.0, rvol=3.5, rvol_raw=3.5)]
+
+    class _Client:
+        def get_stock_snapshot(self, _req):
+            return {"AAAA": object()}
+
+    orig_fields = stt.snapshot_fields
+    stt.snapshot_fields = lambda snap, now, today_et: {}
+    try:
+        out = stt.enrich_with_alpaca(rows, now=T0, client=_Client())
+        assert out[0]["rvol"] == 3.5, \
+            "no baseline supplied — must leave rvol alone"
+
+        # With baselines it re-derives, which is what the parameter is for:
+        # rvol is a pace, so the same share count reads differently later in
+        # the session.
+        out = stt.enrich_with_alpaca(
+            rows, now=T0, avg_by_sym={"AAAA": 1_000_000.0},
+            time_adjusted=False, client=_Client())
+        assert out[0]["rvol"] == 2.0
+    finally:
+        stt.snapshot_fields = orig_fields

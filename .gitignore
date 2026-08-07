@@ -121,3 +121,6 @@ ai_reports/
 .worktrees/
 .trading.watchdog.pid
 .trading.tunnel.want
+
+# Day-scoped rvol baselines (rebuilt daily; never source)
+cache/

@@ -3390,7 +3390,7 @@ class AiSuggestions:
             cfg = {"funnel_avg_days": self.avg_days}
             now_et = datetime.fromtimestamp(now, ET)
             avg = mf.avg_session_volumes(client, syms, cfg, now_et)
-            minutes = mf.fetch_minutes_today(client, syms, cfg, now_et)
+            minutes = mf.fetch_minutes_today(client, syms, cfg, now_et) or {}
         except Exception:
             return False
 
