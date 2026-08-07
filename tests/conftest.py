@@ -88,3 +88,23 @@ def _permissive_tradability():
         yield
     finally:
         _at.symbol_tradable = orig
+
+
+@pytest.fixture(autouse=True)
+def _restore_market_session():
+    """Never let one test decide what session a later one is in.
+
+    extended_hours is now derived from the clock rather than being a startup
+    constant, so a leftover market_is_open stub silently changes whether an
+    order carries the flag — and carrying it on a bracket makes Alpaca reject
+    the order outright. Tests that set a session do it by rebinding these
+    module globals, and nothing else puts them back.
+    """
+    import alpaca_trader as _at
+    orig_clock = _at.market_is_open
+    orig_cache = _at._clock_cache
+    try:
+        yield
+    finally:
+        _at.market_is_open = orig_clock
+        _at._clock_cache = orig_cache

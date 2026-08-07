@@ -20,18 +20,34 @@ import mac_agent as ma  # noqa: E402  (repo root is on sys.path under `python -m
 
 @pytest.fixture(autouse=True)
 def _restore_protection_guard():
-    """_arm_trader rebinds the module-level guard, which would otherwise leak
-    into every later test file and silently disable the no-naked-buy policy."""
+    """_arm_trader rebinds module-level globals, which would otherwise leak
+    into every later test file and silently disable the no-naked-buy policy.
+
+    market_is_open and the session cache are here for the same reason: a stub
+    left behind by one test decides what session a later one thinks it is in,
+    and the session now controls whether an order carries extended_hours.
+    """
     orig = tr._require_protective_exit
+    orig_clock = tr.market_is_open
+    orig_cache = tr._clock_cache
     yield
     tr._require_protective_exit = orig
+    tr.market_is_open = orig_clock
+    tr._clock_cache = orig_cache
 
 
-def _arm_trader(fake, *, extended=False, amount=1000.0, protected=False):
+def _arm_trader(fake, *, extended=False, amount=1000.0, protected=False,
+                market_open=False):
     tr._mode = "paper"
     tr._client = fake
     tr._trade_amount = amount
+    # `_extended_hours` is desk POLICY; what lands on the order is
+    # ext_hours_now(), which is that policy AND the session. Both have to be
+    # stated or the fake MagicMock clock decides — its get_clock().is_open is
+    # a truthy Mock, so every test would silently read as "market open".
     tr._extended_hours = extended
+    tr._clock_cache = (0.0, False)          # never inherit a cached session
+    tr.market_is_open = lambda: bool(market_open)
     # These tests assert order MECHANICS — qty rounding, limit price, TIF — on
     # the bare buy helpers, which the broker layer now refuses by default (no
     # protective exit, no position; see test_protective_exit_required.py).
@@ -61,7 +77,8 @@ def test_limit_at_ask_qty_price_and_tif():
     assert float(req.qty).is_integer()             # never fractional
     assert float(req.limit_price) == 50.05
     assert str(req.time_in_force).lower().endswith("day")
-    assert bool(req.extended_hours) is True        # reflects _extended_hours
+    # Policy on AND outside RTH — the one combination that carries the flag.
+    assert bool(req.extended_hours) is True
 
 
 def test_limit_at_ask_extended_flag_off():

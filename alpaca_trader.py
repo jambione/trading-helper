@@ -30,7 +30,9 @@ _TRADE_LOG   = _HERE / "alpaca_trade_log.json"
 # Module-level state — set by init()
 _mode:           str   = "off"    # "off" | "paper" | "live"
 _trade_amount:   float = 500.0    # dollars per BUY
-_extended_hours: bool  = False    # allow pre/post-market orders
+# Desk POLICY: may this desk trade outside RTH at all. Never put this on an
+# order — use ext_hours_now(), which also asks what session it is.
+_extended_hours: bool  = False
 _limit_offset:   float = 0.0      # % to push ext-hours limit prices for fills
 _stop_loss_pct:  float = 0.0      # % below entry for bracket stop (0 = off)
 _take_profit_pct: float = 0.0     # % above entry for bracket TP (0 = off)
@@ -310,6 +312,42 @@ def market_is_open() -> bool:
         return False
 
 
+# Clock reads are cheap but this is consulted per order LEG, and the desk
+# already competes with three other processes for the same rate limit. The
+# session boundary does not move within a few seconds.
+_CLOCK_TTL_SEC = 5.0
+_clock_cache: tuple[float, bool] = (0.0, False)
+
+
+def _market_open_cached() -> bool:
+    global _clock_cache
+    now = time.time()
+    ts, val = _clock_cache
+    if now - ts < _CLOCK_TTL_SEC:
+        return val
+    val = market_is_open()
+    _clock_cache = (now, val)
+    return val
+
+
+def ext_hours_now() -> bool:
+    """Whether THIS order should carry the extended-hours flag.
+
+    `_extended_hours` is desk policy — "this desk may trade outside RTH" — and
+    was being submitted verbatim on every order for the whole session. Alpaca
+    refuses a bracket that carries the flag, so during regular hours, when
+    brackets are both legal and required, every protected entry was rejected:
+    192 of them on 2026-08-07, which is 100% of the desk's attempts that day.
+    Meanwhile the unprotected fallback is refused by _require_protective_exit,
+    so the desk could not buy at all, at any hour.
+
+    The flag describes the SESSION, not the desk. Inside RTH it must be off so
+    the bracket is accepted and the fill is protected; outside RTH it stays on,
+    where the protective-exit rule still decides whether to open at all.
+    """
+    return _extended_hours and not _market_open_cached()
+
+
 # ── Order execution ───────────────────────────────────────────────────────────
 
 def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
@@ -348,11 +386,15 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
         )
         from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
-        if _extended_hours and price and price > 0:
+        if ext_hours_now() and price and price > 0:
             # Extended-hours orders must be limit + DAY (Alpaca requirement).
             # Brackets are not supported outside RTH — so this branch cannot
             # protect the position, and "cannot protect" now means "do not
             # open" rather than "open it anyway and hope".
+            #
+            # Gated on the SESSION, not on desk policy: with `_extended_hours`
+            # here, an RTH buy took this unprotectable branch and was refused
+            # even though a bracket was available and legal.
             if _require_protective_exit():
                 return _refuse_unprotected(
                     ticker, price, rsi, hist, why="extended_hours_no_bracket")
@@ -409,7 +451,7 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
         print(f"  [TRADER] ✓  BUY order submitted  id={order_id}  status={status}")
         _log_action("BUY", ticker, price, rsi, hist,
                     order_id=order_id, order_status=status,
-                    note=("bracket" if _use_brackets and not _extended_hours
+                    note=("bracket" if _use_brackets and not ext_hours_now()
                           and _stop_loss_pct > 0 else None))
         return {"ok": True, "order_id": order_id, "status": status}
 
@@ -487,7 +529,7 @@ def buy_limit_at_price(
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY,
                 limit_price=limit_px,
-                extended_hours=_extended_hours,
+                extended_hours=ext_hours_now(),
             )
         )
         order_id = str(order.id)
@@ -632,10 +674,12 @@ def sell(ticker: str, price: float, rsi: float, hist: float,
           f"{qty_held} shares @ ${price:.2f}{pnl_str}")
 
     try:
-        if _extended_hours and price and price > 0:
+        if ext_hours_now() and price and price > 0:
             # close_position() submits a MARKET order, which Alpaca rejects
             # outside regular hours. Sell the held qty as an ext-hours limit
             # order, nudged below the touch so it fills in thin books.
+            # Session-gated: inside RTH a market close is legal and is the
+            # surer exit, which matters more on the way out than the way in.
             from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums   import OrderSide, TimeInForce
             limit_px = round(price * (1 - _limit_offset / 100.0), 2)
@@ -1173,7 +1217,7 @@ def buy_limit_bracket(
                 LimitOrderRequest(
                     symbol=ticker, qty=int(qty), side=OrderSide.BUY,
                     time_in_force=TimeInForce.DAY, limit_price=lim,
-                    extended_hours=_extended_hours,
+                    extended_hours=ext_hours_now(),
                 )
             )
             stop_order = _client.submit_order(
@@ -1205,7 +1249,12 @@ def buy_limit_bracket(
                 order_class=OrderClass.BRACKET,
                 take_profit=TakeProfitRequest(limit_price=tp),
                 stop_loss=StopLossRequest(**stop_kwargs),
-                extended_hours=_extended_hours,
+                # A BRACKET carrying this flag is refused outright:
+                # "bracket orders do not support extended hours trading".
+                # Sourced from desk policy it was true for the whole session,
+                # so every protected entry died here — 192 on 2026-08-07,
+                # every attempt the desk made. It has to describe the session.
+                extended_hours=ext_hours_now(),
             )
         )
         print(

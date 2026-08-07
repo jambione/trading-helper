@@ -123,3 +123,59 @@ def test_bracket_stop_limit_form_uses_configured_slippage(monkeypatch):
     at.buy_bracket_exact("NVDA", 10, stop_price=38.0, target_price=46.0)
     sl = captured["req"].stop_loss
     assert float(sl.limit_price) == 37.62      # 38.00 * (1 - 1%)
+
+
+# ── the flag describes the session, not the desk ─────────────────────────────
+
+def _clock(tr, *, is_open):
+    """Set the session by patching the clock, not the cache wrapper.
+
+    Replacing _market_open_cached leaks into every later test in the module —
+    it is a module global with no fixture restoring it.
+    """
+    tr._clock_cache = (0.0, False)
+    tr.market_is_open = lambda: bool(is_open)
+
+
+def test_ext_hours_flag_is_off_inside_rth_so_brackets_are_accepted():
+    """A BRACKET carrying extended_hours is refused by Alpaca outright.
+
+    `_extended_hours` is desk policy — "this desk may trade outside RTH" — and
+    was submitted verbatim on every order for the whole session. So during
+    regular hours, when a bracket is both legal and required, every protected
+    entry came back "bracket orders do not support extended hours trading":
+    192 of them on 2026-08-07, which was 100% of the desk's attempts. The
+    unprotected fallback is refused by _require_protective_exit, so the desk
+    could not buy at all, at any hour.
+    """
+    import alpaca_trader as tr
+
+    tr._extended_hours = True           # desk MAY trade outside RTH
+    _clock(tr, is_open=True)            # ...but right now it is regular hours
+    assert tr.ext_hours_now() is False
+
+    _clock(tr, is_open=False)
+    assert tr.ext_hours_now() is True
+
+    # Policy off means off in every session.
+    tr._extended_hours = False
+    _clock(tr, is_open=False)
+    assert tr.ext_hours_now() is False
+
+
+def test_the_session_is_cached_so_it_is_not_asked_per_order_leg():
+    """Consulted per leg, against a rate limit four processes share."""
+    import alpaca_trader as tr
+
+    calls = []
+    orig = tr.market_is_open
+    tr.market_is_open = lambda: (calls.append(1), True)[1]
+    tr._clock_cache = (0.0, False)
+    try:
+        assert tr._market_open_cached() is True
+        assert tr._market_open_cached() is True
+        assert tr._market_open_cached() is True
+        assert len(calls) == 1, "session re-read once per leg"
+    finally:
+        tr.market_is_open = orig
+        tr._clock_cache = (0.0, False)
