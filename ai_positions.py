@@ -57,6 +57,12 @@ EVENTS_PATH = REPORT_DIR / "events.jsonl"
 # desk can go a whole session without one (2026-08-06: 530 zones, 31 symbols,
 # 0 fills) — which leaves every gate unmeasurable. See log_shadow_sample.
 SHADOW_PATH = REPORT_DIR / "shadow.jsonl"
+# The buy side's counterpart. Deliberately a SEPARATE file: shadow_report keys
+# episodes on (symbol, admit_ts), so held-position rows written into
+# shadow.jsonl would fold into the admission episode they came from and inflate
+# touch%, armed% and every forward return computed off it. The buy-side
+# analytics are the ones that work; do not put them at risk to save a file.
+POSITION_SHADOW_PATH = REPORT_DIR / "position_shadow.jsonl"
 # The other arm of every selection question: what admission KEPT OUT. A filter
 # cannot be judged from the names it let through alone — if the rejects
 # outperform, the gate is destroying value and nothing else on disk would say
@@ -1133,15 +1139,20 @@ def _num(v: Any) -> float | None:
         return None
 
 
+def _cfg_flag(key: str, default: bool = True) -> bool:
+    """One config read, never raising — these run inside the position tick."""
+    try:
+        from config import load_config
+        return bool(load_config().get(key, default))
+    except Exception:
+        return bool(default)
+
+
 def _sell_signal_defends(state: dict) -> bool:
     """Whether to let a live sell_signal tighten stops. Off = old behaviour."""
     if not state:
         return False
-    try:
-        from config import load_config
-        return bool(load_config().get("ai_sell_signal_breakeven", True))
-    except Exception:
-        return False
+    return _cfg_flag("ai_sell_signal_breakeven", True)
 
 
 def _engine_indicators() -> dict:
@@ -1239,6 +1250,103 @@ def _fill_ts(raw: Any) -> float | None:
     try:
         from datetime import datetime
         return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _log_position_shadow(ticker: str, pos: dict[str, Any], price: float | None,
+                         sig: dict | None, exit_why: str, now: float) -> None:
+    """One row per tick per OPEN position — the exit side's decision log.
+
+    The buy side samples every candidate every poll and records why it did not
+    arm, which is what makes "should we have bought this?" answerable. The
+    moment a position opened it left the telemetry completely: 4099 shadow rows
+    on 2026-08-07, every one of them status=watching, none for anything held.
+    So there was no way to ask "should we have sold there?" — only a terminal
+    outcome row saying what happened, with nothing about the decision to keep
+    holding on any of the ticks before it.
+
+    `exit_why` is the mirror of the buy side's `arm_why`: what the exit
+    machinery concluded on THIS tick, including "hold". Without the refusals
+    the log only shows exits that happened and can never price the ones that
+    did not.
+
+    MAE/MFE are carried on the position and stamped here because they cannot be
+    reconstructed afterwards — an outcome row knows the entry and the exit and
+    nothing about the worst and best prices in between, which is exactly what
+    says whether a stop was too tight or a target left money behind.
+    """
+    try:
+        entry = _num(pos.get("entry_price")) or 0.0
+        stop = _num(pos.get("stop_price")) or 0.0
+        target = _num(pos.get("target_1")) or 0.0
+        px = _num(price)
+        risk = entry - stop
+        sig = sig if isinstance(sig, dict) else {}
+        row = {
+            "ts": now,
+            "symbol": ticker,
+            "exit_why": exit_why,
+            "price": px,
+            "entry_price": entry or None,
+            "stop_price": stop or None,
+            "target_1": target or None,
+            "hold_sec": round(now - float(pos.get("entry_time") or now), 1),
+            # Where the trade stands, in the unit the desk sizes on.
+            "unrealized_r": ((px - entry) / risk) if (px and entry and risk > 0) else None,
+            "unrealized_pct": (100.0 * (px - entry) / entry) if (px and entry) else None,
+            "pct_to_stop": (100.0 * (px - stop) / px) if (px and stop) else None,
+            "pct_to_target": (100.0 * (target - px) / px) if (px and target) else None,
+            # Excursions — unreconstructable after the fact.
+            "mae_r": _num(pos.get("mae_r")),
+            "mfe_r": _num(pos.get("mfe_r")),
+            # The same indicator wire the entry gate reads, so an exit and an
+            # entry can never disagree about what the signals said.
+            "cm_ok": sig.get("cm_ok"),
+            "pctr_ok": sig.get("pctr_ok"),
+            "cm_rsi_rising": sig.get("cm_rsi_rising"),
+            "sell_signal": sig.get("sell_signal"),
+            "proximity_pct": _num(sig.get("proximity_pct")),
+            "cm_rsi": _num(sig.get("cm_rsi")),
+            "pctr": _num(sig.get("pctr")),
+            "has_indicators": bool(sig),
+            # Position machinery state.
+            "scaled_out": bool(pos.get("tranche_a_filled")),
+            "breakeven_done": bool(pos.get("breakeven_done")),
+            "sell_signal_stop_done": bool(pos.get("sell_signal_stop_done")),
+            "closing_reason": pos.get("closing_reason"),
+            "source": (pos.get("features") or {}).get("source"),
+            "entry_hour_et": _et_hour(now),
+        }
+        POSITION_SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with POSITION_SHADOW_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except Exception:
+        # Telemetry must never take the position manager down.
+        pass
+
+
+def _update_excursions(pos: dict[str, Any], price: float | None) -> None:
+    """Track worst/best R reached while held. Cheap, and only recorded here."""
+    entry = _num(pos.get("entry_price")) or 0.0
+    stop = _num(pos.get("stop_price")) or 0.0
+    px = _num(price)
+    risk = entry - stop
+    if not (px and entry and risk > 0):
+        return
+    r = (px - entry) / risk
+    mae = _num(pos.get("mae_r"))
+    mfe = _num(pos.get("mfe_r"))
+    pos["mae_r"] = r if mae is None else min(mae, r)
+    pos["mfe_r"] = r if mfe is None else max(mfe, r)
+
+
+def _et_hour(now: float) -> float | None:
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromtimestamp(now, tz=ZoneInfo("America/New_York"))
+        return round(dt.hour + dt.minute / 60.0, 2)
     except Exception:
         return None
 
@@ -1556,8 +1664,13 @@ def manage_open_positions(
     # an unmeasured signal is the kind of confident, fake verdict the reports
     # are careful to avoid. Moving the stop to entry caps the loss at a scratch
     # and keeps the target live if the signal is wrong.
+    # One indicator read per tick, shared by the defence below and the exit
+    # shadow log — not one per position, against a rate limit four processes
+    # already share.
+    indicators = _engine_indicators() if state else {}
+    exit_why: dict[str, str] = {t: "hold" for t in state}
+
     if _sell_signal_defends(state):
-        indicators = _engine_indicators()
         for ticker, pos in list(state.items()):
             if pos.get("sell_signal_stop_done") or pos.get("closing_reason"):
                 continue
@@ -1581,6 +1694,7 @@ def manage_open_positions(
                                "stop": cur_stop})
                 log_event("sell_signal_underwater", symbol=ticker,
                           entry=entry, last=last, stop=cur_stop)
+                exit_why[ticker] = "sell_signal_underwater"
                 pos["sell_signal_stop_done"] = True
                 changed = True
                 continue
@@ -1600,6 +1714,7 @@ def manage_open_positions(
                                "last": last})
                 log_event("sell_signal_breakeven", symbol=ticker,
                           from_stop=cur_stop, to_stop=entry, last=last)
+                exit_why[ticker] = "sell_signal_breakeven"
 
     # Pass 2: only for positions still open — tranche-A fill and time-stop.
     for ticker, pos in list(state.items()):
@@ -1643,9 +1758,24 @@ def manage_open_positions(
                 if isinstance(out, dict) and out.get("order_id"):
                     pos["close_order_id"] = str(out["order_id"])
                 pos["closing_reason"] = "time_stop"
+                exit_why[ticker] = "time_stop"
                 events.append({"ticker": ticker, "event": "time_stop",
                               "age_days": round(age_days, 1)})
                 changed = True
+
+    # Exit-side shadow log. Written last so it records the state the tick
+    # actually left the position in, and for every position including the ones
+    # nothing happened to — "hold" is the row that makes the log able to price
+    # the decisions that were NOT taken, which is the whole point of the buy
+    # side's arm_why and the thing the exit side never had.
+    if bool(_cfg_flag("ai_position_shadow_enabled", True)):
+        for ticker, pos in list(state.items()):
+            price = _num(pos.get("last_seen_price"))
+            _update_excursions(pos, price)
+            _log_position_shadow(ticker, pos, price, indicators.get(ticker),
+                                 exit_why.get(ticker, "hold"), now)
+        if state:
+            changed = True     # excursions moved
 
     if changed:
         _save_state(state)

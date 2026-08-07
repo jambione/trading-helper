@@ -304,6 +304,13 @@ DEFAULT_CONFIG = {
     # (below it, a breakeven stop sits above the market and fills instantly,
     # which is a market exit, not a tighter stop).
     "ai_sell_signal_breakeven":        True,
+    # Exit-side shadow log — one row per tick per OPEN position, including the
+    # ticks where nothing happened. The buy side samples every candidate and
+    # records why it did NOT arm, which is what makes its refusals priceable;
+    # the moment a position opened it left the telemetry entirely (4099 shadow
+    # rows on 2026-08-07, every one status=watching), so "should we have sold
+    # there?" had no data behind it at all. Writes position_shadow.jsonl.
+    "ai_position_shadow_enabled":      True,
     "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
     "ai_watch_min_price":               1.0,  # no sub-$1 names
     "ai_watch_admit_ticks":               2,  # consecutive qualifying polls to admit

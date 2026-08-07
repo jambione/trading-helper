@@ -25,9 +25,14 @@ def _outcomes_path(tmp_path):
     return tmp_path / "outcomes.jsonl"
 
 
+def _pos_shadow_path(tmp_path):
+    return tmp_path / "position_shadow.jsonl"
+
+
 def _use_tmp_state(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "POSITIONS_STATE_PATH", _state_path(tmp_path))
     monkeypatch.setattr(cp, "OUTCOMES_PATH", _outcomes_path(tmp_path))
+    monkeypatch.setattr(cp, "POSITION_SHADOW_PATH", _pos_shadow_path(tmp_path))
 
 
 
@@ -1403,3 +1408,117 @@ def test_an_explicit_closing_reason_outranks_forensics(tmp_path, monkeypatch):
     assert events[0]["close_reason"] == "time_stop"
     outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
     assert outcome["exit_price"] == 41.5, "still priced off the real fill"
+
+
+# ── exit-side shadow log ─────────────────────────────────────────────────────
+
+def _pos_shadow_rows(tmp_path):
+    p = _pos_shadow_path(tmp_path)
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
+def test_an_open_position_is_logged_every_tick_including_quiet_ones(
+        tmp_path, monkeypatch):
+    """"hold" is the row that makes refusals priceable.
+
+    The buy side samples every candidate every poll and records why it did not
+    arm; that is what lets shadow_report say what a gate cost. A position left
+    the telemetry the instant it opened — 4099 rows on 2026-08-07, all
+    status=watching — so the exit side had terminal outcomes and nothing about
+    the ticks where it chose to keep holding.
+    """
+    _seed_state(tmp_path, monkeypatch, last_seen_price=44.0)
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+    stub = _StubBrokerManage(current_price=44.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+    cp.manage_open_positions(now=1_000_105.0)
+
+    rows = _pos_shadow_rows(tmp_path)
+    assert len(rows) == 2, "one row per tick, even when nothing happens"
+    assert all(r["exit_why"] == "hold" for r in rows)
+    assert rows[0]["symbol"] == "NVDA"
+
+
+def test_the_row_carries_what_an_exit_decision_needs(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, last_seen_price=44.0)
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {
+        "NVDA": {"cm_ok": True, "pctr_ok": False, "cm_rsi_rising": True,
+                 "sell_signal": False, "proximity_pct": 67, "cm_rsi": 30.1,
+                 "pctr": -80.0}})
+    stub = _StubBrokerManage(current_price=44.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+    r = _pos_shadow_rows(tmp_path)[0]
+
+    # entry 40.5, stop 38.0 -> risk 2.5; price 44.0 -> +1.4R
+    assert round(r["unrealized_r"], 2) == 1.40
+    assert r["pct_to_stop"] is not None and r["pct_to_target"] is not None
+    assert r["cm_ok"] is True and r["sell_signal"] is False
+    assert r["has_indicators"] is True
+    assert r["hold_sec"] > 0
+
+
+def test_excursions_track_the_worst_and_best_reached(tmp_path, monkeypatch):
+    """MAE/MFE cannot be reconstructed from an outcome row.
+
+    Entry and exit say nothing about the worst and best prices in between,
+    which is exactly what tells you a stop was too tight or a target left
+    money on the table.
+    """
+    _seed_state(tmp_path, monkeypatch, last_seen_price=44.0)
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+    stub = _StubBrokerManage(current_price=44.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    cp.manage_open_positions(now=1_000_100.0)          # +1.4R
+
+    stub.current_price = 39.0                          # dipped below entry
+    cp.manage_open_positions(now=1_000_105.0)
+    stub.current_price = 46.0                          # then ran
+    cp.manage_open_positions(now=1_000_110.0)
+
+    last = _pos_shadow_rows(tmp_path)[-1]
+    assert last["mae_r"] < 0, "worst excursion went negative"
+    assert last["mfe_r"] > last["unrealized_r"] - 0.01
+    assert round(last["mfe_r"], 2) == 2.20             # (46-40.5)/2.5
+
+
+def test_exit_why_records_what_the_machinery_decided(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_price=19.94,
+                last_seen_price=20.105, stop_price=18.943)
+    _sell_sig(monkeypatch)
+    stub = _StubBrokerManage(current_price=20.105)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+
+    assert _pos_shadow_rows(tmp_path)[0]["exit_why"] == "sell_signal_breakeven"
+
+
+def test_the_log_can_be_switched_off(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, last_seen_price=44.0)
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+    monkeypatch.setattr(cp, "_cfg_flag",
+                        lambda k, d=True: False if "position_shadow" in k else d)
+    stub = _StubBrokerManage(current_price=44.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+    assert _pos_shadow_rows(tmp_path) == []
+
+
+def test_telemetry_failure_never_breaks_the_position_manager(
+        tmp_path, monkeypatch):
+    """A logging bug must not stop stops being managed."""
+    _seed_state(tmp_path, monkeypatch, last_seen_price=44.0)
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+    monkeypatch.setattr(cp, "POSITION_SHADOW_PATH",
+                        tmp_path / "nope" / "\0bad" / "x.jsonl")
+    stub = _StubBrokerManage(current_price=44.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)   # must not raise
