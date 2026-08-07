@@ -337,7 +337,20 @@ def _three_ind_env_params() -> dict:
         if raw is None:
             continue
         try:
-            if isinstance(default, int):
+            # bool BEFORE int: bool is an int subclass, so isinstance(True, int)
+            # is True and a boolean knob went down the int path — int(float(
+            # "false")) raises and the override was dropped with only a log
+            # line. The obvious spelling of turning a flag off was the one
+            # spelling that silently did nothing.
+            if isinstance(default, bool):
+                low = raw.strip().lower()
+                if low in ("1", "true", "yes", "on"):
+                    overrides[key] = True
+                elif low in ("0", "false", "no", "off"):
+                    overrides[key] = False
+                else:
+                    raise ValueError(raw)
+            elif isinstance(default, int):
                 overrides[key] = int(float(raw))
             elif isinstance(default, float):
                 overrides[key] = float(raw)
