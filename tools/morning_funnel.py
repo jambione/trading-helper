@@ -24,6 +24,7 @@ or ALPACA_API_KEY / ALPACA_SECRET_KEY env vars.
 """
 import argparse
 import json
+import logging
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from config import load_config                              # noqa: E402
+
+# These fetches feed day_vol, rvol and every funnel score. They used to return
+# {} on any failure, so an expired key or a rate-limit rejection looked exactly
+# like a quiet premarket — the panel showed 'no data' and nothing said why.
+log = logging.getLogger(__name__)
 from alpaca_api import connect_data_client, _get_feed_arg   # noqa: E402
 from signals import williams_pr, vwap_calc                  # noqa: E402
 from session_clock import ET, next_shot, session_window     # noqa: E402,F401
@@ -388,7 +394,9 @@ def fetch_minutes_today(client, tickers: list, cfg: dict, now_et: datetime) -> d
             extended_hours=True,
             **_get_feed_arg(cfg))
         return _split_batch(client.get_stock_bars(req).df, tickers)
-    except Exception:
+    except Exception as e:                                 # noqa: BLE001
+        log.warning("[FUNNEL] today's minute bars failed for %d symbol(s): %s",
+                    len(tickers), str(e)[:200])
         return {}
 
 
@@ -413,7 +421,9 @@ def fetch_minutes_history(client, tickers: list, cfg: dict, now_et: datetime,
             start=start.astimezone(timezone.utc),
             **_get_feed_arg(cfg))
         return _split_batch(client.get_stock_bars(req).df, tickers)
-    except Exception:
+    except Exception as e:                                 # noqa: BLE001
+        log.warning("[FUNNEL] history minute bars failed for %d symbol(s): %s",
+                    len(tickers), str(e)[:200])
         return {}
 
 

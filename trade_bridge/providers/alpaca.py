@@ -198,6 +198,15 @@ class AlpacaMarketData(MarketDataProvider):
         self._active = 0
         self._bad: dict[str, float] = {}
         self._bad_ttl = float(cfg.get("alpaca_bad_symbol_ttl", 600.0))
+        # Consecutive empty (not failed) quotes per symbol. An OTC symbol is
+        # not an error to Alpaca — it answers with no quote at all, forever, so
+        # the error-based cooldown below never catches it and the symbol is
+        # re-polled every cycle for the rest of the session. That is the shape
+        # of the "too many requests" floods: unquotable names eating the
+        # request budget the quotable ones need. Park them the same way, then
+        # let the TTL expire so a symbol that starts quoting later recovers.
+        self._empty: dict[str, int] = {}
+        self._empty_limit = int(cfg.get("alpaca_empty_quote_limit", 10))
 
     def _interval(self) -> float:
         return max(self.poll, max(self._active, 1) / self.max_rps)
@@ -229,8 +238,19 @@ class AlpacaMarketData(MarketDataProvider):
             else:
                 q = quotes
             book = quote_to_book(q)
+            sym = symbol.upper()
             if book:
                 self._last[symbol] = book
+                self._empty.pop(sym, None)
+            else:
+                n = self._empty.get(sym, 0) + 1
+                self._empty[sym] = n
+                if n >= self._empty_limit:
+                    self._bad[sym] = time.time() + self._bad_ttl
+                    del self._empty[sym]
+                    log.warning(
+                        "[ALPACA] %s no quote after %d tries (OTC or unlisted) "
+                        "— cooldown %.0fs", symbol, n, self._bad_ttl)
             return book
         except Exception as e:
             err = str(e)

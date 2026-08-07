@@ -237,6 +237,11 @@
   "signal_sell_enabled": false,
   "momentum_quality_rsi_min": 25,
   "momentum_quality_rsi_max": 85,
+
+  "//momentum_budget": "Alpaca free tier allows 200 req/min = 3.33/s across EVERY consumer. The L2 auto-watch runs one engine per momentum ticker, and its default max_rps of 10 is three times the whole allowance — so it alone ran at ~10/s and starved the quote poll and the minute-bar fetches that day_vol, rvol and the funnel are built from. That is why the panel had prices but no volume and 'no data' funnels. Sized so the desk fits the budget with headroom: L2 1.5/s + quote poll ~0.2/s + bars leaves ~1.5/s spare.",
+  "alpaca_max_rps": 1.5,
+  "alpaca_poll_sec": 0.5,
+  "momentum_max_tickers": 5,
   "rte_max_entry_extension_pct": 0.03,
   "etf_tickers": [
     "SQQQ",
@@ -290,5 +295,6 @@
   "ai_watch_synth_rr": 1.5,
   "ai_watch_synth_reanchor_pct": 0.0,
   "ai_watch_min_rvol": 1.5,
+  "ai_watch_require_look_ext": false,
   "ai_trading_host": "Jonathans-Mac-mini.local"
 }

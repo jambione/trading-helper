@@ -252,3 +252,53 @@ def test_alpaca_market_data_fetch():
         assert s.best_bid == 10.0
 
     asyncio.run(snap())
+
+
+def _market_data(cfg):
+    """AlpacaMarketData wired to a fake SDK client, returned alongside it."""
+    from trade_bridge.providers.alpaca import AlpacaMarketData
+    fake_data = MagicMock()
+    with patch("trade_bridge.providers.alpaca._require_sdk"), \
+         patch("trade_bridge.providers.alpaca._credentials",
+               return_value=("K", "S")), \
+         patch("alpaca.data.historical.StockHistoricalDataClient",
+               return_value=fake_data):
+        return AlpacaMarketData(cfg), fake_data
+
+
+def test_unquotable_symbol_parks_after_repeated_empty_quotes():
+    """An OTC symbol is not an error to Alpaca — it answers with no quote at
+    all. Without an empty-quote cooldown it is re-polled every cycle forever,
+    burning the request budget the quotable names need."""
+    md, fake_data = _market_data({"alpaca_poll_sec": 0.1,
+                                  "alpaca_empty_quote_limit": 3})
+    fake_data.get_stock_latest_quote.return_value = {"FENIA": None}
+
+    for _ in range(3):
+        assert md._fetch("FENIA") is None
+
+    assert md.known_bad("FENIA")
+    calls_when_parked = fake_data.get_stock_latest_quote.call_count
+    assert md._fetch("FENIA") is None
+    # Parked: short-circuits before the request, so no further API traffic.
+    assert fake_data.get_stock_latest_quote.call_count == calls_when_parked
+
+
+def test_empty_quote_streak_resets_once_a_symbol_quotes():
+    """A thin name that prints intermittently must not accumulate its way into
+    a cooldown across unrelated gaps."""
+    quote = SimpleNamespace(
+        bid_price=1.0, ask_price=1.02, bid_size=10, ask_size=10,
+    )
+    md, fake_data = _market_data({"alpaca_poll_sec": 0.1,
+                                  "alpaca_empty_quote_limit": 3})
+
+    fake_data.get_stock_latest_quote.return_value = {"THIN": None}
+    md._fetch("THIN")
+    md._fetch("THIN")
+    fake_data.get_stock_latest_quote.return_value = {"THIN": quote}
+    assert md._fetch("THIN") is not None
+    fake_data.get_stock_latest_quote.return_value = {"THIN": None}
+    md._fetch("THIN")
+    md._fetch("THIN")
+    assert not md.known_bad("THIN")
