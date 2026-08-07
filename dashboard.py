@@ -113,6 +113,10 @@ class _State:
         # render a live feed + a 'source alive' status (in-memory only).
         self.discord_alerts: deque = deque(maxlen=_MAX_DISCORD_ALERTS)
         self.discord_last_ts: float = 0.0
+        # {reason: count} reported by the OCR source each heartbeat — what it
+        # threw away, so a feed that has stopped surfacing names is visible
+        # here instead of only inferable from the absence of alerts.
+        self.discord_drops: dict = {}
         # TradingView webhook feed — a second independent signal source. Each
         # inbound webhook fires as a burst and is tracked separately so the UI
         # can show both sources and their agreement.
@@ -1100,7 +1104,7 @@ def refresh_ticker_timestamps(tickers: list[str]):
 # like the old transcriber did (watchlist add + _track_mention → burst), and is
 # recorded in a rolling feed the dashboard renders.
 
-def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
+def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None) -> int:
     """Record captured Discord alerts: add each ticker to the watchlist, count a
     mention (for burst detection), and append to the live feed. Returns the
     number of alerts accepted. Always stamps discord_last_ts (so an empty list is
@@ -1132,6 +1136,20 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
                 _mark_price_spike_seen(ticker, a)
             if card_brand == "find_it_first":
                 STATE.find_it_first_ts[ticker] = time.time()
+            # Seed the scanner's own price. Kept in its own field, never merged
+            # into "price": it is a snapshot from when the alert fired, not a
+            # quote, and the two disagree (a live $MB card read $5.33 against a
+            # 3.75 print). For an OTC symbol it is the only number we will ever
+            # have — Alpaca and Finnhub both return empty for those — so a row
+            # that would otherwise be permanently blank shows something, aged.
+            try:
+                seed = float(a.get("price") or 0)
+            except (TypeError, ValueError):
+                seed = 0.0
+            if seed > 0:
+                entry = STATE.tickers.setdefault(ticker, {})
+                entry["scanner_price"]    = round(seed, 4)
+                entry["scanner_price_ts"] = time.time()
             for _ in range(hits):
                 _track_mention(ticker)
             alert_rec = {
@@ -1217,6 +1235,11 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None) -> int:
 
     with STATE.lock:
         STATE.discord_last_ts = time.time()
+        if isinstance(drops, dict):
+            STATE.discord_drops = {
+                str(k): int(v) for k, v in drops.items()
+                if isinstance(v, (int, float))
+            }
     return accepted
 
 
@@ -1225,10 +1248,12 @@ def discord_status() -> dict:
     with STATE.lock:
         last  = STATE.discord_last_ts
         feed  = list(STATE.discord_alerts)
+        drops = dict(STATE.discord_drops)
     return {
         "running":   bool(last) and (time.time() - last) <= _DISCORD_STALE_SEC,
         "last_ts":   last,
         "alerts":    feed,
+        "drops":     drops,
     }
 
 
@@ -1724,6 +1749,11 @@ def _snapshot() -> dict:
             d["mentioned"] = t in mention_rank
             price    = d.get("price")
             day_open = d.get("day_open")
+            # Scanner snapshot age, so the UI can grey it out by staleness and
+            # never mistake it for a live print.
+            snap_ts = d.pop("scanner_price_ts", None)
+            if d.get("scanner_price") is not None and snap_ts:
+                d["scanner_price_age_sec"] = round(max(0.0, now_ts - snap_ts), 1)
             d["pct_change"] = round((price - day_open) / day_open * 100, 2) if (price and day_open and day_open > 0) else None
             # Mention counts — count in-window entries without rebuilding the list;
             # _track_mention() prunes at write time so this path stays read-only.
@@ -2514,11 +2544,16 @@ async def api_discord_ingest(request: Request):
         sentiment = body.get("sentiment", [])
         if not isinstance(sentiment, list):
             sentiment = []
+        drops = body.get("drops", {})
+        if not isinstance(drops, dict):
+            drops = {}
     except Exception:
         alerts    = []
         sentiment = []
+        drops     = {}
     loop = asyncio.get_running_loop()
-    accepted = await loop.run_in_executor(None, lambda: ingest_discord_alerts(alerts, sentiment))
+    accepted = await loop.run_in_executor(
+        None, lambda: ingest_discord_alerts(alerts, sentiment, drops))
     return JSONResponse({"ok": True, "accepted": accepted})
 
 

@@ -325,8 +325,14 @@ function _updateRow(el, row) {
     }
   }
 
-  const priceTxt = row.price != null ? `$${row.price.toFixed(2)}` : '—';
-  _setText(el.querySelector('[data-price]'), priceTxt);
+  const p = _priceCell(row);
+  const priceEl2 = el.querySelector('[data-price]');
+  _setText(priceEl2, p.txt);
+  if (priceEl2) {
+    priceEl2.classList.toggle('cell-price--snapshot', p.snap);
+    if (p.snap) priceEl2.title = _snapTitle(p.age);
+    else priceEl2.removeAttribute('title');
+  }
 
   const chgEl = el.querySelector('[data-chg]');
   if (chgEl) {
@@ -568,8 +574,29 @@ function _flagsHtml(row) {
   return parts.join('');
 }
 
+// Price text for a row. Falls back to the scanner's own snapshot when no quote
+// exists — OTC names never get one (Alpaca and Finnhub both return empty), so
+// the cell would otherwise read "—" all session on exactly the small-caps the
+// scanner surfaces. Marked and titled with its age so a snapshot from alert
+// time is never mistaken for a live print.
+function _priceCell(row) {
+  if (row.price != null) return { txt: `$${row.price.toFixed(2)}`, snap: false, age: null };
+  if (row.scanner_price != null) {
+    return { txt: `$${row.scanner_price.toFixed(2)}`, snap: true,
+             age: row.scanner_price_age_sec };
+  }
+  return { txt: '\u2014', snap: false, age: null };
+}
+
+function _snapTitle(age) {
+  if (age == null) return 'Scanner snapshot \u2014 no live quote';
+  const mins = Math.floor(age / 60);
+  const when = mins >= 1 ? `${mins}m ago` : `${Math.round(age)}s ago`;
+  return `Scanner snapshot from ${when} \u2014 no live quote for this symbol`;
+}
+
 function _rowHTML(row) {
-  const price  = row.price != null ? `$${row.price.toFixed(2)}` : '—';
+  const p      = _priceCell(row);
   const chgCls = _chgClass(row.pct_change ?? null);
   const volCls = (row.rvol ?? 0) >= 1.5 ? ' vol-high' : '';
 
@@ -584,7 +611,7 @@ function _rowHTML(row) {
       ${_aiPosBadge(row.ticker)}
       ${_confluenceBadge(row.confluence)}
     </div>
-    <div class="cell-price" data-price="${row.ticker}">${price}</div>
+    <div class="cell-price${p.snap ? ' cell-price--snapshot' : ''}" data-price="${row.ticker}"${p.snap ? ` title="${_snapTitle(p.age)}"` : ''}>${p.txt}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-flags" data-flags>${_flagsHtml(row)}</div>

@@ -2466,6 +2466,14 @@ body.mobile .icon-btn {
   color: var(--accent);
   text-shadow: 0 0 10px rgba(201, 160, 68, 0.55);
 }
+/* Scanner snapshot standing in for a quote we will never get (OTC). Dimmed and
+   italic so it reads as "last known" at a glance and is never confused with a
+   live print; the cell's title carries its age. */
+.cell-price--snapshot {
+  color: var(--text-dim, #8a8f98);
+  font-style: italic;
+  font-weight: 400;
+}
 
 .cell-chg {
   font-family: var(--font-mono);

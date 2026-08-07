@@ -195,3 +195,51 @@ def test_snapshot_exposes_discord_block_not_transcriber(monkeypatch):
     assert "transcriber" not in snap
     assert snap["discord"]["running"] is True
     assert any(a["ticker"] == "AMD" for a in snap["discord"]["alerts"])
+
+
+# ── Scanner price seeding ────────────────────────────────────────────────────
+
+def test_scanner_price_seeds_its_own_field_not_the_live_price(monkeypatch):
+    """The card price is a snapshot from alert time, not a quote — the two
+    disagree in practice. It must never land in "price", where the UI and the
+    signal path would read it as a live print."""
+    d.ingest_discord_alerts([{
+        "ticker": "MB",
+        "line": "[ELITE] $MB | Price $5.33 | Float 4.69M",
+        "price": 5.33,
+        "float_size": 4_690_000,
+    }])
+    with d.STATE.lock:
+        entry = d.STATE.tickers.get("MB", {})
+        assert entry.get("scanner_price") == 5.33
+        assert entry.get("price") is None
+
+
+def test_scanner_price_surfaces_with_an_age(monkeypatch):
+    """An OTC row would otherwise be permanently blank — Alpaca and Finnhub
+    both return empty for those, so this is the only number it will ever get."""
+    d.ingest_discord_alerts([{
+        "ticker": "FENIA",
+        "line": "[ELITE] $FENIA | Price $1.20 | Float 909M",
+        "price": 1.20,
+    }])
+    monkeypatch.setattr(d, "load_tickers", lambda: ["FENIA"])
+    monkeypatch.setattr(d, "load_news", lambda: [])
+    monkeypatch.setattr(d, "load_swing", lambda: [])
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
+    row = next(r for r in d._snapshot()["tickers"] if r["ticker"] == "FENIA")
+    assert row["scanner_price"] == 1.20
+    assert row["scanner_price_age_sec"] is not None
+    assert row.get("price") is None
+    # The raw timestamp is an internal detail; only the age is published.
+    assert "scanner_price_ts" not in row
+
+
+def test_absent_or_zero_scanner_price_seeds_nothing():
+    d.ingest_discord_alerts([
+        {"ticker": "AMD", "line": "AMD >>>>> x"},
+        {"ticker": "NVDA", "line": "NVDA >>>>> x", "price": 0},
+    ])
+    with d.STATE.lock:
+        assert "scanner_price" not in d.STATE.tickers.get("AMD", {})
+        assert "scanner_price" not in d.STATE.tickers.get("NVDA", {})
