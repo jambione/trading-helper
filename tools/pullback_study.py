@@ -42,7 +42,14 @@ from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parent.parent
-SHADOW = _ROOT / "claude_reports" / "shadow.jsonl"
+sys.path.insert(0, str(_ROOT))
+
+from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
+
+# Resolve the way the desk writes (ai_reports/ preferred, claude_reports/
+# legacy) — a hardcoded path silently freezes after a migration.
+SHADOW = (find_report_file("shadow.jsonl")
+          or resolve_report_dir() / "shadow.jsonl")
 
 # Depths to test, in percent below the anchor.
 DEPTHS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]

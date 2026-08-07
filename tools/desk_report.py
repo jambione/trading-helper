@@ -50,6 +50,7 @@ import statistics
 import sys
 from collections import Counter, defaultdict
 from datetime import date, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -59,14 +60,98 @@ sys.path.insert(0, str(_ROOT / "tools"))
 
 import shadow_report as sr  # noqa: E402
 
-REPORTS = _ROOT / "claude_reports"
-SHADOW = REPORTS / "shadow.jsonl"
-REJECTS = REPORTS / "rejects.jsonl"
-OUTCOMES = REPORTS / "outcomes.jsonl"
-EVENTS = REPORTS / "events.jsonl"
+from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
+
+
+def _report(name: str) -> Path:
+    """Resolve a report file the same way the desk writes it.
+
+    The runtime binds ai_paths.resolve_report_dir(), which PREFERS ai_reports/
+    and falls back to claude_reports/. Hardcoding the legacy directory here
+    agreed with the writers only for as long as ai_reports/ did not exist:
+    the first migration would have moved the desk and left every tool
+    reporting a frozen tree — with no error, just numbers that stopped moving.
+    """
+    return find_report_file(name) or (resolve_report_dir() / name)
+
+
+SHADOW = _report("shadow.jsonl")
+REJECTS = _report("rejects.jsonl")
+OUTCOMES = _report("outcomes.jsonl")
+EVENTS = _report("events.jsonl")
 TRADELOG = _ROOT / "alpaca_trade_log.json"
 
 MIN_N = 30  # below this, a group is an anecdote
+
+
+@lru_cache(maxsize=None)
+def _first_day(path: Path) -> date | None:
+    """Earliest day this log holds a row for, or None when it holds none.
+
+    The whole point of the report is that missing is not zero, and the
+    scorecard broke that rule the day it shipped: shadow.jsonl and
+    rejects.jsonl start on 2026-08-06, so comparing 08-06 against 08-05 read
+    every shadow metric as 0 -> N and printed BETTER for instrumentation
+    arriving. Knowing when a log STARTS is what separates "the desk did not
+    do this" from "nothing was watching".
+    """
+    first: date | None = None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ts = json.loads(line).get("ts")
+            d = datetime.fromtimestamp(float(ts)).date()
+        except Exception:
+            continue
+        if first is None or d < first:
+            first = d
+    return first
+
+
+def _tradelog_first_day() -> date | None:
+    """Earliest day in the (JSON list, ISO-timestamped) execution log."""
+    try:
+        rows = json.loads(TRADELOG.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(rows, list):
+        return None
+    first: date | None = None
+    for e in rows:
+        try:
+            d = datetime.fromisoformat(
+                str(e.get("time") or "").replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        if first is None or d < first:
+            first = d
+    return first
+
+
+def _instrumented(day: date | None) -> dict[str, bool]:
+    """Which records were actually being written on *day*.
+
+    A source counts as instrumented from its first row onward. Before that it
+    is unknowable, not zero, and any metric derived from it must decline to
+    answer rather than score a change that only reflects the logger starting.
+    """
+    if day is None:
+        return {k: True for k in
+                ("shadow", "rejects", "events", "outcomes", "tradelog")}
+    starts = {
+        "shadow": _first_day(SHADOW),
+        "rejects": _first_day(REJECTS),
+        "events": _first_day(EVENTS),
+        "outcomes": _first_day(OUTCOMES),
+        "tradelog": _tradelog_first_day(),
+    }
+    return {k: (v is not None and day >= v) for k, v in starts.items()}
 
 
 def _jsonl(path: Path, day: date | None) -> list[dict]:
@@ -187,6 +272,12 @@ def execution_stats(day: date | None) -> dict[str, Any]:
 _FEATURES = ["rvol", "look_reason", "score", "pct_change",
              "cm_ok", "pctr_ok", "cm_rsi_rising", "proximity_pct"]
 
+# Indicator state is read when a name is already on the book and being polled.
+# A rejection happens before that, so these can never appear on the reject arm
+# — 0% there is the shape of the pipeline, not a hole in the logging, and
+# printing it as 0% alongside real gaps made every reader chase it once.
+_ADMITTED_ONLY = {"cm_ok", "pctr_ok", "cm_rsi_rising", "proximity_pct"}
+
 
 def completeness(rows: list[dict]) -> dict[str, dict]:
     out = {}
@@ -213,14 +304,34 @@ SCORECARD = [
     ("rejected (symbols)", "symbols_rejected", "watch"),
 ]
 
+# Which record each scorecard metric is derived from. A metric whose source
+# was not yet being written is unanswerable for that day, not zero.
+_METRIC_SOURCE = {
+    "zoned": "shadow",
+    "touch_rate": "shadow",
+    "armed": "shadow",
+    "symbols_admitted": "shadow",
+    "symbols_rejected": "rejects",
+    "filled": "events",
+    "closed_with_outcome": "outcomes",
+    "naked_buys": "tradelog",
+    "order_errors": "tradelog",
+}
+
 
 def scorecard_metrics(report: dict) -> dict[str, float | None]:
-    """Flatten a report into the handful of numbers worth comparing."""
+    """Flatten a report into the handful of numbers worth comparing.
+
+    A metric reads None when its source log was not yet recording on that day
+    — otherwise the first day of instrumentation scores as improvement, which
+    is the one result a scorecard must never produce.
+    """
     f = report.get("funnel") or {}
     ex = report.get("execution") or {}
+    ins = report.get("instrumented") or {}
     zoned = f.get("zoned") or 0
     touched = f.get("zone_touched") or 0
-    return {
+    vals: dict[str, float | None] = {
         "zoned": zoned,
         "touch_rate": (round(100.0 * touched / zoned, 1) if zoned else None),
         "armed": f.get("armed"),
@@ -231,26 +342,50 @@ def scorecard_metrics(report: dict) -> dict[str, float | None]:
         "symbols_admitted": f.get("symbols_admitted"),
         "symbols_rejected": f.get("symbols_rejected"),
     }
+    for key, src in _METRIC_SOURCE.items():
+        if not ins.get(src, True):
+            vals[key] = None
+    return vals
 
 
 def print_scorecard(now: dict, prev: dict, now_day: str, prev_day: str) -> None:
     a, b = scorecard_metrics(now), scorecard_metrics(prev)
     print(f"\n{'=' * 66}\n  SCORECARD — {now_day} vs {prev_day}\n{'=' * 66}")
     print(f"  {'metric':<22}{prev_day:>12}{now_day:>12}{'delta':>10}  verdict")
+
+    def cell(v: float | None) -> str:
+        return "n/a" if v is None else f"{v}"
+
+    any_na = False
     for label, key, want in SCORECARD:
         cur, old = a.get(key), b.get(key)
         if cur is None and old is None:
             continue
-        c = 0 if cur is None else cur
-        o = 0 if old is None else old
-        d = round(c - o, 1)
+        if cur is None or old is None:
+            # One side is unanswerable. Show both, score neither — a delta
+            # against an unrecorded day measures the logger, not the desk.
+            any_na = True
+            print(f"  {label:<22}{cell(old):>12}{cell(cur):>12}"
+                  f"{'—':>10}  n/a")
+            continue
+        d = round(cur - old, 1)
         if want == "watch" or d == 0:
             verdict = "—"
         elif (want == "higher" and d > 0) or (want == "lower" and d < 0):
             verdict = "BETTER"
         else:
             verdict = "WORSE"
-        print(f"  {label:<22}{o:>12}{c:>12}{d:>+10}  {verdict}")
+        print(f"  {label:<22}{old:>12}{cur:>12}{d:>+10}  {verdict}")
+
+    if any_na:
+        missing = sorted(
+            src for src, on in (prev.get("instrumented") or {}).items()
+            if not on)
+        note = (f" — {', '.join(missing)} not recording yet"
+                if missing else "")
+        print(f"\n  n/a: the metric's source log has no data for {prev_day}"
+              f"{note}.\n  Scoring it would credit the desk for "
+              f"instrumentation arriving.")
     print("\n  One day against one day is not evidence of a trend — it is a"
           "\n  check that a change did what it was supposed to do. Sustained"
           "\n  claims need weeks, or tools/ab_bench.py.\n")
@@ -305,6 +440,7 @@ def build_report(day, hz: float) -> dict:
         "completeness_rejected": completeness(reject_rows),
         "execution": execution_stats(day),
         "event_kinds": dict(kinds),
+        "instrumented": _instrumented(day),
     }
 
 
@@ -357,7 +493,7 @@ def main() -> None:
           f"(forward horizon {args.horizon:.0f}m)\n{'=' * 66}")
 
     print("\n1. FUNNEL   (symbols at the top, admission episodes below)")
-    f = funnel
+    f = report["funnel"]
     print(f"   candidates seen      {f['candidates_seen']:>5}  symbols")
     print(f"     admitted           {f['symbols_admitted']:>5}  symbols")
     print(f"     rejected           {f['symbols_rejected']:>5}  symbols")
@@ -380,7 +516,8 @@ def main() -> None:
 
     print("\n2. GATE SCORECARD  (what the desk turned away, and what it did next)")
     am = report["admitted_fwd_mean_pct"]
-    print(f"   admitted        n={len(adm_fwd):<4} fwd "
+    by_reason = report["reject_by_reason"]
+    print(f"   admitted        n={report['admitted_fwd_n']:<4} fwd "
           f"{(f'{am:+.3f}%' if am is not None else '—')}")
     if not by_reason:
         print("   rejected        no reject episodes with a usable forward window yet")
@@ -397,8 +534,11 @@ def main() -> None:
     ca, cr = report["completeness_admitted"], report["completeness_rejected"]
     for feat in _FEATURES:
         a = ca.get(feat, {}).get("pct", 0.0)
-        r = cr.get(feat, {}).get("pct", 0.0)
         warn = "  <- never observed" if a == 0.0 else ""
+        if feat in _ADMITTED_ONLY:
+            print(f"   {feat:<16}{a:>11.0f}%{'n/a':>12}{warn}")
+            continue
+        r = cr.get(feat, {}).get("pct", 0.0)
         print(f"   {feat:<16}{a:>11.0f}%{r:>11.0f}%{warn}")
 
     ex = report["execution"]

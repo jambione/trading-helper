@@ -51,7 +51,12 @@ from typing import Any
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-OUTCOMES = _ROOT / "claude_reports" / "outcomes.jsonl"
+from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
+
+# Resolve the way the desk writes (ai_reports/ preferred, claude_reports/
+# legacy) — a hardcoded path silently freezes after a migration.
+OUTCOMES = (find_report_file("outcomes.jsonl")
+            or resolve_report_dir() / "outcomes.jsonl")
 
 # Per-trade R is roughly unit-variance on this desk, so the sample needed to
 # resolve an effect is ~7.85/delta^2 (two-sided, alpha .05, power .80).

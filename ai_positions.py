@@ -437,6 +437,60 @@ def log_event(kind: str, **fields: Any) -> dict[str, Any]:
     return row
 
 
+# Steady-state conditions re-logged on every poll. reconcile_unmanaged fired
+# 384 times on 2026-08-06 for one unchanging fact — CELH unmanaged, all day —
+# and synth_zone another 2199, so 84% of that day's log was repetition and the
+# 20 entry_skip / 7 entry_decision rows that actually explain the session were
+# buried under it. A count of 384 measures how often the desk LOOKED, not how
+# often anything happened.
+_STATE_RELOG_SEC = 900.0
+_state_last: dict[tuple[str, Any], dict[str, Any]] = {}
+
+
+def log_state_event(kind: str, key: Any, *, scope: Any = None,
+                    **fields: Any) -> dict[str, Any] | None:
+    """Log *kind* when its condition changes; otherwise fold the poll away.
+
+    *scope* separates independent conditions sharing a kind. synth_zone
+    interleaves 36 symbols, so a single slot per kind would see every symbol
+    as a change and suppress nothing; scoped by symbol, each name's zone is
+    compared against its own last one.
+
+    Transitions are the information. A heartbeat every ``_STATE_RELOG_SEC``
+    keeps a condition that persists for hours from being invisible to anyone
+    reading a window of the log rather than the whole day.
+
+    ``folded`` counts the polls suppressed since this kind last wrote a row —
+    on the heartbeat and on the change alike, so the observation count is
+    compressed rather than lost. Attributing it to the previous condition
+    would need a row nobody wrote; attributing it to the gap between rows is
+    both true and what a reader wants to know.
+
+    Returns the written row, or None when the poll was folded.
+    """
+    slot = (str(kind), scope)
+    k = json.dumps(key, sort_keys=True, default=str)
+    now = time.time()
+    prev = _state_last.get(slot)
+    if prev is not None and prev["key"] == k:
+        prev["folded"] += 1
+        if (now - prev["ts"]) < _STATE_RELOG_SEC:
+            return None
+    folded = prev["folded"] if prev is not None else 0
+    _state_last[slot] = {"key": k, "ts": now, "folded": 0}
+    return log_event(kind, folded=folded or None, **fields)
+
+
+def clear_state_event(kind: str, scope: Any = None) -> None:
+    """Forget a condition, so its next occurrence logs as new.
+
+    Without this a condition that clears and later returns identical would be
+    read as "unchanged" and silently folded — the recurrence is exactly the
+    event worth seeing.
+    """
+    _state_last.pop((str(kind), scope), None)
+
+
 def log_shadow_sample(row: dict[str, Any]) -> None:
     """Append one counterfactual sample. Fire-and-forget, never raises.
 
@@ -1243,10 +1297,19 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
         "n_live": len(live),
         "unprotected": unprotected,
     }
+    # Both are steady state — an unmanaged position stays unmanaged until
+    # someone acts on it — so they log on transition, not per poll.
     if unmanaged:
-        log_event("reconcile_unmanaged", symbols=unmanaged)
+        log_state_event("reconcile_unmanaged", sorted(unmanaged),
+                        symbols=unmanaged)
+    else:
+        clear_state_event("reconcile_unmanaged")
     if unprotected:
-        log_event("position_unprotected", positions=unprotected)
+        log_state_event("position_unprotected",
+                        sorted(p["symbol"] for p in unprotected),
+                        positions=unprotected)
+    else:
+        clear_state_event("position_unprotected")
     _last_reconcile = report
     return report
 

@@ -619,8 +619,8 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
         "admit_pct_change": (
             _f_or_none(pct) if pct is not None
             else _f_or_none(prev.get("admit_pct_change"))),
-        "admit_look_reason": (
-            row.get("look_reason") or prev.get("admit_look_reason") or None),
+        "admit_look_reason": _look_reason_value(
+            row, prev.get("admit_look_reason")),
         "admit_criteria": (
             list(row.get("criteria") or [])
             or list(prev.get("admit_criteria") or [])),
@@ -638,6 +638,28 @@ def _f_or_none(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _look_reason_value(row: dict, prev_val: Any = None) -> str | None:
+    """The LOOK tag as a recorded VALUE, not a truthiness test.
+
+    apply_look_highlights writes ``look_reason=""`` on every row it did not
+    tag, so ``row.get("look_reason") or None`` collapsed "computed, not
+    tagged" into the same None as "the producer never ran". completeness()
+    counts non-None, so the feature read 0% present on BOTH arms forever —
+    and the gate that turns on look_reason was the one thing it could not be
+    measured against. Missing is not zero, and "not EXT" is not missing.
+
+    Provenance stays sticky: a name admitted while tagged keeps the tag that
+    let it on, the same way admit_ts keeps the moment it was admitted.
+    """
+    cur = str(row.get("look_reason") or "").strip().upper()
+    if cur:
+        return cur
+    prior = str(prev_val or "").strip().upper()
+    if prior and prior != "NONE":
+        return prior
+    return "NONE" if "look_reason" in row else None
 
 
 def upsert_from_rows(
@@ -2265,7 +2287,7 @@ def _entry_features(rec: dict, *, ask: float | None = None) -> dict[str, Any]:
         "score": _f_or_none(rec.get("score")),
         "rvol": _f_or_none(rec.get("admit_rvol")),
         "pct_change": _f_or_none(rec.get("admit_pct_change")),
-        "look_reason": rec.get("admit_look_reason") or None,
+        "look_reason": rec.get("admit_look_reason"),
         "criteria": list(rec.get("admit_criteria") or []),
         # Indicator state at the moment of arming — the timing question,
         # separate from the selection question above.
@@ -2336,7 +2358,7 @@ def _log_rejects(
                 "score": _f_or_none(row.get("score")),
                 "rvol": _f_or_none(row.get("rvol")),
                 "pct_change": _f_or_none(row.get("pct_change")),
-                "look_reason": row.get("look_reason") or None,
+                "look_reason": _look_reason_value(row),
                 "criteria": list(rej.get("criteria") or row.get("criteria") or []),
                 "entry_hour_et": _et_hour_decimal(now),
             })
@@ -2397,7 +2419,7 @@ def _shadow_row(
         # could not be compared on the gate (ai_watch_require_uptrend) that
         # does most of the actual filtering — 20 of 28 rejects on 2026-08-06.
         "pct_change": _f_or_none(rec.get("admit_pct_change")),
-        "look_reason": rec.get("admit_look_reason") or None,
+        "look_reason": rec.get("admit_look_reason"),
         "criteria": list(rec.get("admit_criteria") or []),
         "admit_ts": _f_or_none(rec.get("admit_ts")),
         # Timing state.
@@ -3019,8 +3041,16 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if sev:
                 events.append(sev)
                 try:
-                    cp.log_event(
+                    # A zone is redrawn far more often than it MOVES: 2199
+                    # rows on 2026-08-06 held 439 distinct zones across 36
+                    # names, and drowned the 27 rows that explained the day.
+                    # Scoped per symbol so each name is compared with its own
+                    # last zone rather than whichever name logged most
+                    # recently.
+                    cp.log_state_event(
                         "synth_zone",
+                        (sev.get("entry_low"), sev.get("entry_high")),
+                        scope=sym,
                         symbol=sym,
                         entry_low=sev.get("entry_low"),
                         entry_high=sev.get("entry_high"),

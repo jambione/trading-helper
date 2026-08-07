@@ -54,7 +54,13 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "tools"))
 
-SHADOW = _ROOT / "claude_reports" / "shadow.jsonl"
+from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
+
+# Resolve the way the desk writes: ai_paths prefers ai_reports/ and falls back
+# to claude_reports/. A hardcoded legacy path agrees with the writers only
+# until something creates the primary tree, then reports frozen data silently.
+SHADOW = (find_report_file("shadow.jsonl")
+          or resolve_report_dir() / "shadow.jsonl")
 
 
 def load(path: Path = SHADOW) -> list[dict]:
