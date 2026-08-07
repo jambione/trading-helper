@@ -1288,3 +1288,118 @@ def test_no_sell_signal_leaves_the_position_alone(tmp_path, monkeypatch):
     assert stub.replace_calls == []
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["stop_price"] == 18.943
+
+
+# ── exits the desk did not place ─────────────────────────────────────────────
+
+class _StubBrokerFills(_StubBrokerManage):
+    """Broker that remembers fills the desk never placed (manual close, EOD)."""
+
+    def __init__(self, filled=None, **kw):
+        super().__init__(**kw)
+        self._filled = list(filled or [])
+
+    def get_filled_orders(self, limit=200, days=None):
+        return self._filled
+
+
+def _sell(sym="NVDA", qty=250, px=41.5, otype="market",
+          at="2026-08-07T18:43:51+00:00"):
+    return {"symbol": sym, "side": "sell", "qty": qty, "type": otype,
+            "filled_avg_price": px, "filled_at": at, "status": "filled"}
+
+
+def test_a_hand_liquidated_exit_is_priced_and_labelled_from_the_broker(
+        tmp_path, monkeypatch):
+    """The case that produced four null outcomes on 2026-08-07.
+
+    The desk can only recognise exits it placed itself. A hand-liquidated
+    position, an EOD flatten, or a leg whose id was lost to a restart all
+    resolved to exit_price=None and were then labelled "stopped_out" by
+    default — none of that day's four exits was within 2% of its stop. The
+    fills were in the broker's history the whole time.
+    """
+    _seed_state(tmp_path, monkeypatch, entry_time=1_786_126_000.0,
+                tranche_a_order_id=None, tranche_a_target_order_id=None,
+                tranche_b_stop_order_id=None, last_seen_price=41.0)
+    stub = _StubBrokerFills(position_open=False, filled=[_sell(px=41.5)])
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_786_128_300.0)
+
+    assert events == [{"ticker": "NVDA", "event": "closed",
+                       "close_reason": "flattened"}]
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    assert outcome["exit_price"] == 41.5, "priced off the real fill"
+    assert outcome["realized_r_multiple"] is not None, "R is computable now"
+    assert outcome["close_reason"] == "flattened", "a market sell is not a stop"
+
+
+def test_an_unresolvable_exit_says_unknown_rather_than_stopped_out(
+        tmp_path, monkeypatch):
+    """No label beats a wrong one — the scorecard reads it as observed fact."""
+    _seed_state(tmp_path, monkeypatch, tranche_a_order_id=None,
+                tranche_a_target_order_id=None, tranche_b_stop_order_id=None)
+    stub = _StubBrokerFills(position_open=False, filled=[])
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_010.0)
+
+    assert events[0]["close_reason"] == "unknown"
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    assert outcome["exit_price"] is None
+    assert outcome["realized_r_multiple"] is None
+
+
+def test_a_broker_stop_fill_is_still_called_a_stop_out(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_time=1_786_126_000.0,
+                tranche_a_order_id=None, tranche_a_target_order_id=None,
+                tranche_b_stop_order_id=None)
+    stub = _StubBrokerFills(position_open=False,
+                            filled=[_sell(px=37.9, otype="stop")])
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_786_128_300.0)
+    assert events[0]["close_reason"] == "stopped_out"
+
+
+def test_a_broker_limit_fill_is_the_target(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_time=1_786_126_000.0,
+                tranche_a_order_id=None, tranche_a_target_order_id=None,
+                tranche_b_stop_order_id=None)
+    stub = _StubBrokerFills(position_open=False,
+                            filled=[_sell(px=46.0, otype="limit")])
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_786_128_300.0)
+    assert events[0]["close_reason"] == "target_hit"
+
+
+def test_an_earlier_round_trip_does_not_price_this_one(tmp_path, monkeypatch):
+    """Same symbol, traded twice — the older fill must not be used."""
+    _seed_state(tmp_path, monkeypatch, entry_time=1_786_126_000.0,
+                tranche_a_order_id=None, tranche_a_target_order_id=None,
+                tranche_b_stop_order_id=None)
+    stub = _StubBrokerFills(position_open=False, filled=[
+        _sell(px=99.0, at="2026-08-07T10:00:00+00:00"),   # before entry
+    ])
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_786_128_300.0)
+    assert events[0]["close_reason"] == "unknown"
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    assert outcome["exit_price"] is None
+
+
+def test_an_explicit_closing_reason_outranks_forensics(tmp_path, monkeypatch):
+    """time_stop/thesis_break are the desk saying why IT closed the trade."""
+    _seed_state(tmp_path, monkeypatch, entry_time=1_786_126_000.0,
+                closing_reason="time_stop", tranche_a_order_id=None,
+                tranche_a_target_order_id=None, tranche_b_stop_order_id=None)
+    stub = _StubBrokerFills(position_open=False, filled=[_sell(px=41.5)])
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_786_128_300.0)
+    assert events[0]["close_reason"] == "time_stop"
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    assert outcome["exit_price"] == 41.5, "still priced off the real fill"

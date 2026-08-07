@@ -1193,29 +1193,105 @@ def _order_fill_price(order_id: Any) -> float | None:
     return None
 
 
-def _exit_fill_price(pos: dict[str, Any]) -> float | None:
-    """Resolve the actual exit fill from whichever protective leg closed it.
+def _broker_exit_fill(ticker: str, since_ts: float | None) -> dict | None:
+    """The SELL fill that actually closed *ticker*, straight from the broker.
 
-    Returns None when it genuinely cannot be resolved — the caller then writes
-    realized_r as null rather than inventing one from the last polled price.
+    The desk can only recognise exits it placed itself, which is the minority
+    of them: a hand-liquidated position, an EOD flatten, a bracket leg whose id
+    was lost to a restart, or anything cancelled and replaced all resolve to
+    nothing. On 2026-08-07 that was every trade — four outcomes, four null exit
+    prices, four null R. The fills were sitting in the broker's history the
+    whole time.
+
+    Returns the fill dict (symbol/qty/type/filled_avg_price/filled_at) or None.
     """
-    for key in ("tranche_a_target_order_id", "tranche_b_stop_order_id",
-                "close_order_id"):
-        px = _order_fill_price(pos.get(key))
-        if px:
-            return px
-    return None
+    try:
+        import alpaca_trader
+        sym = str(ticker or "").upper()
+        best = None
+        best_ts = -1.0
+        for f in alpaca_trader.get_filled_orders(limit=200, days=2) or []:
+            if str(f.get("symbol") or "").upper() != sym:
+                continue
+            if str(f.get("side") or "").lower() != "sell":
+                continue
+            px = _num(f.get("filled_avg_price"))
+            if not px or px <= 0:
+                continue
+            ts = _fill_ts(f.get("filled_at"))
+            # Only fills after this position opened — an earlier round trip in
+            # the same name would otherwise price this one.
+            if since_ts and ts and ts < float(since_ts):
+                continue
+            if ts is None or ts > best_ts:
+                best, best_ts = f, (ts if ts is not None else best_ts)
+        return best
+    except Exception:
+        return None
 
 
-def _infer_close_reason(pos: dict[str, Any]) -> str:
-    """Best-effort label when nothing explicitly set one.
+def _fill_ts(raw: Any) -> float | None:
+    """Epoch seconds from a broker timestamp, or None. Never raises."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
 
-    Not per-leg order forensics — just what the mechanism implies: if
-    tranche A already scaled out, the eventual full close came from
-    tranche B's later (breakeven/trailing) stop; if it never scaled out,
-    the only way both tranches share is the original hard stop.
+
+def resolve_exit(pos: dict[str, Any], ticker: str = "") -> tuple:
+    """(exit_price, close_reason) for a position that has gone flat.
+
+    Price and reason are resolved together because they come from the same
+    evidence — the order that actually filled. Resolving them apart is how the
+    desk ended up labelling exits it had never seen.
+
+    Order of evidence, strongest first:
+      1. The desk's own legs. If our take-profit filled it is a target; if our
+         stop filled it is a stop-out. No network call, and it is the one case
+         where the desk genuinely knows.
+      2. The broker's fill history. Covers everything the desk did not place —
+         a hand-liquidated position, an EOD flatten, a leg whose id was lost to
+         a restart. The order TYPE is the label: stop -> stopped out, limit ->
+         target, market -> flattened.
+      3. Nothing. Returns (None, "unknown").
+
+    Never guesses. The old code returned "stopped_out" for anything that
+    vanished without tranche A scaling out, which was wrong on all four of
+    2026-08-07's trades — three hand-liquidated, one closed at the bell, none
+    within 2% of its stop — while every exit_price came back null because the
+    fills belonged to orders the desk had not placed. A wrong label is worse
+    than no label: the scorecard reads it as observed fact.
     """
-    return "trailed_out" if pos.get("tranche_a_filled") else "stopped_out"
+    px = _order_fill_price(pos.get("tranche_a_target_order_id"))
+    if px:
+        return px, "target_hit"
+    px = _order_fill_price(pos.get("tranche_b_stop_order_id"))
+    if px:
+        return px, ("trailed_out" if pos.get("tranche_a_filled")
+                    else "stopped_out")
+    px = _order_fill_price(pos.get("close_order_id"))
+    if px:
+        return px, "flattened"
+
+    fill = _broker_exit_fill(ticker or pos.get("symbol") or "",
+                             pos.get("entry_time"))
+    if fill:
+        otype = str(fill.get("type") or "").lower()
+        price = _num(fill.get("filled_avg_price"))
+        if "stop" in otype:
+            return price, ("trailed_out" if pos.get("tranche_a_filled")
+                           else "stopped_out")
+        if "limit" in otype:
+            return price, "target_hit"
+        if "market" in otype:
+            return price, "flattened"
+        return price, "unknown"
+    return None, "unknown"
 
 
 def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
@@ -1437,8 +1513,11 @@ def manage_open_positions(
         # Real fill first. last_seen_price is up to one poll stale and is never
         # the actual exit print, so an outcome built from it is a plausible
         # wrong number — and realized_r_today feeds the daily-loss gate.
-        exit_price = _exit_fill_price(pos)
-        reason = pos.get("closing_reason") or _infer_close_reason(pos)
+        exit_price, observed_reason = resolve_exit(pos, ticker)
+        # An explicit closing_reason is the desk saying why IT closed this
+        # (time_stop, thesis_break, ...) and outranks forensics. Otherwise take
+        # what actually filled — including "unknown".
+        reason = pos.get("closing_reason") or observed_reason
         if exit_price is None:
             # Loud, not silent: the outcome will carry realized_r=None and be
             # excluded from realized_r_today, so the daily-loss gate is running
