@@ -296,5 +296,6 @@
   "ai_watch_synth_reanchor_pct": 0.0,
   "ai_watch_min_rvol": 1.5,
   "ai_watch_require_look_ext": false,
+  "ai_watch_arm_require_indicators": false,
   "ai_trading_host": "Jonathans-Mac-mini.local"
 }
