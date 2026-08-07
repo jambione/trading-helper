@@ -49,8 +49,25 @@ DEFAULT_PARAMS: dict = {
     # the +7.5% target in 45 of 45 entries. 90 is Connors' own overbought level
     # (~12% of bars) and is what this started at.
     "cm_rsi_sell_min": 90.0,    # … reached above this, then rolled over
-    # %R Trend Exhaustion
+    # %R Trend Exhaustion — TWO TIMEFRAMES, which is the point of it.
+    # The long scale says the move is exhausted (the setup); the short scale
+    # says it is turning now (the trigger). Both lines used to be computed on
+    # the native 1-minute series, ~21m vs ~112m, which is not two timeframes so
+    # much as one indicator sampled twice — and on thin IEX names the 112-bar
+    # window often had no valid span, so the long line published null.
+    # See signals._resampled_percent_r.
     "rte_threshold":   20,
+    "rte_fast_length": 21,       # native bars
+    "rte_slow_timeframe": "15min",   # None = long lookback on native bars
+    "rte_slow_length": 21,       # 21 x 15m ≈ 5.25h vs the fast line's 21m
+    "rte_slow_native_length": 112,   # fallback when resampling is impossible
+    "rte_slow_threshold": 20,    # exhaustion band for the long line
+    # The long line's own lookback, in NATIVE bars — ~4 coarse bars at 15m.
+    # It cannot share confirm_window (8 native bars): asking an indicator built
+    # from 15-minute bars to be extreme inside 8 minutes is a scale mismatch,
+    # and it silenced the strategy completely when first written that way.
+    "rte_slow_window": 60,
+    "rte_require_slow": True,    # False restores the single fast-line test
     "rte_sell_from":  -10.0,    # %R must have been above this (near 0) to call a top
     # MACD
     "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
@@ -149,18 +166,59 @@ def _cm_ok(a: dict, i: int, p: dict, lo: int, tl: int) -> bool:
 
 
 def _pctr_ok(a: dict, i: int, p: dict, lo: int, tl: int) -> bool:
-    """%R reached the OVERSOLD band in the window AND is turning up at bar i.
+    """%R exhaustion on the LONG scale, with the short scale confirming the turn.
 
     The old test was a bare `any(_rising(...))` with no level at all — an
     indicator called "exhaustion" that never checked exhaustion, true ~90% of
     bars. Oversold is %R <= -100 + rte_threshold, the same band
     compute_percent_r_exhaustion uses.
+
+    It then checked that band on `s_percentR`, the FAST line, so the desk ran
+    two short-scale indicators (CM RSI-2 and %R-fast) that largely agree,
+    rather than the two timeframes the strategy is built on. The slow line was
+    computed, published as pctr_slow, and gated on by nothing.
+
+    Split by role, which is what the operator actually trades:
+      • the LONG scale decides whether the move is exhausted (the setup),
+      • the SHORT scale decides whether it is turning now (the trigger).
+
+    Requiring exhaustion on both was rejected: the fast line leaves the
+    oversold band within a bar or two of turning, so demanding it be there at
+    the moment it is also rising is the same near-impossible same-bar ask that
+    _cm_ok documents. `rte_require_slow` restores the old single-line test.
     """
-    w = a["s_percentR"][lo:i + 1]
-    if not np.isfinite(w).any():
+    fast = a["s_percentR"]
+    if not np.isfinite(fast[lo:i + 1]).any():
         return False
     oversold = -100.0 + float(p["rte_threshold"])
-    return bool(np.nanmin(w) <= oversold and _rising(a["s_percentR"], i, tl))
+
+    if not bool(p.get("rte_require_slow", True)):
+        w = fast[lo:i + 1]
+        return bool(np.nanmin(w) <= oversold and _rising(fast, i, tl))
+
+    slow = a.get("l_percentR")
+    if slow is None:
+        # Absence is not a pass. The long scale is the setup; without it there
+        # is only a fast oscillator twitching, which is what this replaced.
+        return False
+    # The long scale gets its OWN window. `lo` is the fast line's
+    # confirm_window — 8 native bars — and asking an indicator built from
+    # 15-minute bars to be extreme inside 8 minutes is a scale mismatch, not a
+    # strict gate: on a 600-bar fixture the slow line was in the band on 30
+    # bars against the fast line's 244, and the intersection with cm_ok was
+    # empty, so the whole strategy stopped firing. Measured in native bars so
+    # it stays meaningful whatever the resample period is.
+    slow_win = int(p.get("rte_slow_window", 60))
+    s_lo = max(0, i - max(1, slow_win) + 1)
+    w_slow = slow[s_lo:i + 1]
+    if not np.isfinite(w_slow).any():
+        return False
+    slow_band = -100.0 + float(p.get("rte_slow_threshold", p["rte_threshold"]))
+    if not (np.nanmin(w_slow) <= slow_band):
+        return False
+    # Trigger: the short scale turning up. Level on the long line, timing on
+    # the short one.
+    return bool(_rising(fast, i, tl))
 
 
 def buy_signal(a: dict, i: int, p: dict) -> bool:

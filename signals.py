@@ -165,6 +165,58 @@ def compute_obv_oscillator(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 # Based on Pine Script by upslidedown
 # ============================================================================
 
+def _resampled_percent_r(df: pd.DataFrame, timeframe: str,
+                         length: int) -> pd.Series | None:
+    """%R computed on coarser bars, mapped back onto the native index.
+
+    Returns None when the frame cannot support it — no time index, or fewer
+    than `length` resampled bars — so the caller can fall back rather than
+    publish a column of NaN.
+
+    Forward-filled and SHIFTED by one coarse bar. A 15-minute bar is not
+    complete until its close, so using its value inside itself would let a
+    signal depend on prices later than the moment being evaluated. Shifting
+    means bars during 10:00-10:15 read the bar that closed at 10:00. This is
+    the same lookahead trap the buy_signal docstring guards against on the
+    native series, and it is easier to introduce here.
+    """
+    if df.empty:
+        return None
+    idx = df.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        # The signal engine's fetch_bars returns a RangeIndex with the
+        # timestamp in a `time` column, so requiring a DatetimeIndex here made
+        # this fall back to the native long lookback on every live symbol —
+        # the resample would have run in tests and never once in production.
+        if "time" not in df.columns:
+            return None
+        try:
+            idx = pd.to_datetime(df["time"], utc=True, format="mixed")
+        except Exception:
+            try:
+                idx = pd.to_datetime(df["time"], utc=True)
+            except Exception:
+                return None
+        if idx.isna().any():
+            return None
+    try:
+        src = df[["high", "low", "close"]].set_axis(idx)
+        agg = src.resample(timeframe, label="right", closed="right").agg(
+            {"high": "max", "low": "min", "close": "last"}).dropna()
+    except Exception:
+        return None
+    if len(agg) < max(2, int(length)):
+        return None
+    pr = williams_pr(agg["high"], agg["low"], agg["close"], int(length))
+    pr = pr.ewm(span=3, adjust=False).mean().shift(1)
+    out = pr.reindex(idx, method="ffill")
+    # Hand back a series aligned to the CALLER's index, not the datetime one we
+    # built to resample with.
+    out = pd.Series(out.to_numpy(), index=df.index)
+    # All-NaN means the resample produced nothing usable at this index.
+    return None if not out.notna().any() else out
+
+
 def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """
     %R Trend Exhaustion Logic (Updated for Multiple Oversold Support):
@@ -175,17 +227,41 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     REWORKED: Now supports tracking "Multiple Oversold" indicators.
     """
     df = df.copy()
-    
+
     threshold = cfg.get("rte_threshold", 20)
-    
-    # Calculate %R for fast (21) and slow (112) periods
-    s_pr = williams_pr(df["high"], df["low"], df["close"], 21)
-    l_pr = williams_pr(df["high"], df["low"], df["close"], 112)
-    
-    # Apply smoothing
+
+    # Fast line: native bars. This is the short scale.
+    s_pr = williams_pr(df["high"], df["low"], df["close"],
+                       int(cfg.get("rte_fast_length", 21)))
     s_percentR = s_pr.ewm(span=7, adjust=False).mean()
-    l_percentR = l_pr.ewm(span=3, adjust=False).mean()
-    
+
+    # Slow line: a genuinely LONGER SCALE, which means coarser bars — not
+    # merely a longer lookback over the same ones.
+    #
+    # It was %R(112) on the native 1-minute series. Two problems. IEX is a few
+    # percent of the consolidated tape, so a thin momentum name — precisely
+    # what this desk trades — does not print every minute; a 112-bar window
+    # frequently had no valid span at all, and pctr_slow published null on live
+    # names while the fast line computed fine. And 112 native bars is only
+    # ~1.9h against the fast line's 21m, a 5:1 separation that makes the two
+    # lines near-duplicates rather than two timeframes.
+    #
+    # Resampling 1m -> 15m and taking %R(21) covers ~5.25h from bars that
+    # actually exist, a ~15:1 separation. Resampled, not re-fetched: the desk
+    # already takes hundreds of rate-limit rejections a day and a second bar
+    # series per symbol would make that worse for information already held.
+    slow_tf = cfg.get("rte_slow_timeframe", "15min")
+    slow_len = int(cfg.get("rte_slow_length", 21))
+    l_percentR = None
+    if slow_tf:
+        l_percentR = _resampled_percent_r(df, slow_tf, slow_len)
+    if l_percentR is None:
+        # No usable time index, or too little history to resample. Fall back to
+        # the native-bar long lookback rather than dropping the line entirely.
+        l_pr = williams_pr(df["high"], df["low"], df["close"],
+                           int(cfg.get("rte_slow_native_length", 112)))
+        l_percentR = l_pr.ewm(span=3, adjust=False).mean()
+
     df["s_percentR"] = s_percentR
     df["l_percentR"] = l_percentR
     

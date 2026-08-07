@@ -108,3 +108,34 @@ def _restore_market_session():
     finally:
         _at.market_is_open = orig_clock
         _at._clock_cache = orig_cache
+
+
+@pytest.fixture(autouse=True)
+def _clean_avg_volume_cache():
+    """Start every test with an empty rvol baseline cache, memory AND disk.
+
+    The day cache is now persisted (so a restart does not rebuild it with the
+    desk's heaviest request), and conftest points it at ONE tmpdir for the
+    whole session. Without this, a baseline written by one test warms straight
+    into the next — the in-memory clears that tests already do are no longer
+    sufficient on their own, and the failure shows up as an unrelated test
+    seeing symbols it never asked for.
+    """
+    try:
+        import morning_funnel as _mf
+    except Exception:
+        yield
+        return
+    def _wipe():
+        _mf._AVG_VOL_CACHE.clear()
+        _mf._AVG_VOL_DATE = ""
+        _mf._AVG_VOL_RETRY_AT = 0.0
+        try:
+            _mf._AVG_VOL_DISK.unlink(missing_ok=True)
+        except Exception:
+            pass
+    _wipe()
+    try:
+        yield
+    finally:
+        _wipe()

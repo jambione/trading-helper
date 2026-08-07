@@ -190,7 +190,15 @@ EXPIRY_WARM    = int(os.getenv("EXPIRY_WARM",    "600"))   # 10 min — showed p
 
 MAX_ACTIVE_TICKERS = int(os.getenv("MAX_ACTIVE_TICKERS", "20"))  # hard cap on active list
 
-BAR_COUNT          = int(os.getenv("BAR_COUNT",         "200"))  # max bars to fetch
+# 200 was enough for every indicator computed off native bars, but the %R slow
+# line is now a 15-minute resample (signals._resampled_percent_r) and 200
+# one-minute bars resample to ~13 — short of the 21 it needs, so the long scale
+# would silently never compute and the arm gate would refuse everything. 500
+# gives ~33 coarse bars with headroom for the gaps IEX leaves in a thin name.
+# The rate limit counts REQUESTS, not bytes: this is the same one call per
+# symbol, with a bigger payload, and costs nothing against the 200/min budget
+# that four processes already share.
+BAR_COUNT          = int(os.getenv("BAR_COUNT",         "500"))  # max bars to fetch
 BAR_LOOKBACK_DAYS  = int(os.getenv("BAR_LOOKBACK_DAYS",  "5"))   # calendar days back (steady-state)
 # Longer lookback on first successful load — thin/illiquid names often have
 # <40 1-min IEX bars in 5 calendar days, especially after hours / overnight.

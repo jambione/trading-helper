@@ -118,8 +118,24 @@ def test_separation_gate_blocks_weak_crosses():
 
 # ── End-to-end backtest runner (no network) ───────────────────────────────────
 
+def _exhausted_then_recovering(n_down=400, n_up=400, seed=2) -> np.ndarray:
+    """A sustained decline into exhaustion, then a recovery.
+
+    A pure sine cannot exercise the entry any more, and that is the gate
+    working rather than a bug: %R exhaustion on the LONG scale asks whether a
+    move is spent, and a clean oscillator has no spent move — on _sine(800, 90)
+    the slow line bottoms at -78.1 and never reaches the -80 band. The strategy
+    is a pullback-in-trend entry, so the fixture has to contain a trend.
+    """
+    rng = np.random.default_rng(seed)
+    decline = np.linspace(60, 42, n_down)
+    recover = (42 + 8 * (1 - np.cos(2 * np.pi * np.arange(n_up) / 120)) / 2
+               + rng.normal(0, 0.06, n_up))
+    return np.concatenate([decline, recover])
+
+
 def test_simulate_produces_round_trips():
-    df = _frame(_sine(n=800, period=90))
+    df = _frame(_exhausted_then_recovering())
     trades = backtest_3ind.simulate(df, LOOSE, slippage_bps=10.0)
     assert len(trades) >= 1
     for t in trades:
@@ -224,21 +240,77 @@ def test_sell_needs_a_peak_above_the_level_first():
 
 def test_pctr_ok_requires_actual_exhaustion_not_just_a_rise():
     """It was a bare any(_rising(...)) with no level — an indicator called
-    "exhaustion" that never checked exhaustion, true on ~90% of bars."""
+    "exhaustion" that never checked exhaustion, true on ~90% of bars.
+
+    Now split by timeframe: the LONG scale carries the exhaustion level (the
+    setup), the SHORT scale carries the turn (the trigger).
+    """
     import numpy as np
     p = strat.params()
     tl, cw = int(p["trend_lookback"]), int(p["confirm_window"])
     n, i = 20, 19
     lo = max(tl, i - cw + 1)
+    exhausted = np.full(n, -90.0)      # long scale deep in the band
 
-    # Rising, but never oversold (hovering mid-range) -> not exhaustion.
-    mid = {"s_percentR": np.linspace(-60.0, -40.0, n)}
+    # Rising, but neither scale oversold -> not exhaustion.
+    mid = {"s_percentR": np.linspace(-60.0, -40.0, n),
+           "l_percentR": np.full(n, -50.0)}
     assert strat._pctr_ok(mid, i, p, lo, tl) is False
 
-    # Reached the oversold band (<= -80) and turning up -> exhaustion.
+    # Long scale exhausted and the short scale turning up -> exhaustion.
     deep = {"s_percentR": np.concatenate([
-        np.full(12, -90.0), np.linspace(-90.0, -70.0, 8)])}
+        np.full(12, -90.0), np.linspace(-90.0, -70.0, 8)]),
+        "l_percentR": exhausted}
     assert strat._pctr_ok(deep, i, p, lo, tl) is True
+
+
+def test_the_long_scale_must_agree_before_the_short_one_can_trigger():
+    """The whole point of two timeframes: a fast twitch is not a setup.
+
+    Both lines used to run on the native series (~21m vs ~112m), so the desk
+    was really gating on one short-scale oscillator sampled twice. A short-scale
+    bounce with the long scale mid-range is exactly the entry that should not
+    fire.
+    """
+    import numpy as np
+    p = strat.params()
+    tl, cw = int(p["trend_lookback"]), int(p["confirm_window"])
+    n, i = 20, 19
+    lo = max(tl, i - cw + 1)
+    turning = np.concatenate([np.full(12, -90.0), np.linspace(-90.0, -70.0, 8)])
+
+    # Short scale exhausted and turning, long scale NOT -> refuse.
+    a = {"s_percentR": turning, "l_percentR": np.full(n, -45.0)}
+    assert strat._pctr_ok(a, i, p, lo, tl) is False
+
+    # Same short scale, long scale exhausted -> allow.
+    a["l_percentR"] = np.full(n, -85.0)
+    assert strat._pctr_ok(a, i, p, lo, tl) is True
+
+    # rte_require_slow=False restores the old single-line behaviour.
+    loose = strat.params(rte_require_slow=False)
+    a["l_percentR"] = np.full(n, -45.0)
+    assert strat._pctr_ok(a, i, loose, lo, tl) is True
+
+
+def test_a_missing_long_scale_refuses_rather_than_falling_back():
+    """Absence is not a pass.
+
+    The long scale IS the setup; without it there is only a fast oscillator
+    twitching, which is what this replaced. Silently degrading to the old
+    single-line test would run a different, looser strategy without saying so.
+    """
+    import numpy as np
+    p = strat.params()
+    tl, cw = int(p["trend_lookback"]), int(p["confirm_window"])
+    n, i = 20, 19
+    lo = max(tl, i - cw + 1)
+    turning = np.concatenate([np.full(12, -90.0), np.linspace(-90.0, -70.0, 8)])
+
+    assert strat._pctr_ok({"s_percentR": turning}, i, p, lo, tl) is False
+    assert strat._pctr_ok(
+        {"s_percentR": turning, "l_percentR": np.full(n, np.nan)},
+        i, p, lo, tl) is False
 
 
 def test_the_turn_must_be_current_not_merely_somewhere_in_the_window():
@@ -259,3 +331,57 @@ def test_the_turn_must_be_current_not_merely_somewhere_in_the_window():
     still_rising = {"cm_rsi": np.concatenate([
         np.full(12, 10.0), np.linspace(10.0, 45.0, 8)])}
     assert strat._cm_ok(still_rising, i, p, lo, tl) is True
+
+
+# ── the slow line must survive the shape production actually uses ────────────
+
+def test_resample_works_on_a_range_indexed_frame_with_a_time_column():
+    """The engine's fetch_bars returns a RangeIndex + a `time` column.
+
+    Requiring a DatetimeIndex made _resampled_percent_r return None on every
+    live symbol, so the long scale silently fell back to the native 112-bar
+    lookback — the resample would have run in tests and never once in
+    production. That is the same silent-fallback failure this whole strategy
+    change exists to remove.
+    """
+    import signals
+    closes = _exhausted_then_recovering()
+    df = _frame(closes)
+    idx = df.index
+    flat = df.reset_index(drop=True)          # RangeIndex, keeps `time`
+    assert not isinstance(flat.index, pd.DatetimeIndex)
+
+    out = signals._resampled_percent_r(flat, "15min", 21)
+    assert out is not None, "must resample off the time column"
+    assert list(out.index) == list(flat.index), "aligned to the caller's index"
+    assert out.notna().any()
+
+    # And it must agree with the DatetimeIndex path.
+    ref = signals._resampled_percent_r(df.set_axis(idx), "15min", 21)
+    assert np.allclose(out.to_numpy(dtype=float),
+                       ref.to_numpy(dtype=float), equal_nan=True)
+
+
+def test_no_time_information_falls_back_rather_than_crashing():
+    import signals
+    df = _frame(_exhausted_then_recovering()).reset_index(drop=True)
+    assert signals._resampled_percent_r(df.drop(columns=["time"]),
+                                        "15min", 21) is None
+
+
+def test_the_slow_line_does_not_peek_into_its_own_bar():
+    """A 15-minute bar is not complete until its close.
+
+    Using its value inside itself lets a signal depend on prices later than the
+    moment being evaluated — the lookahead trap buy_signal guards against on
+    the native series, and much easier to introduce when resampling.
+    """
+    import signals
+    df = _frame(_exhausted_then_recovering())
+    out = signals._resampled_percent_r(df, "15min", 21)
+    # Truncating the frame must not change values that were already emitted.
+    cut = len(df) - 30
+    part = signals._resampled_percent_r(df.iloc[:cut], "15min", 21)
+    a = out.to_numpy(dtype=float)[:cut - 15]
+    b = part.to_numpy(dtype=float)[:cut - 15]
+    assert np.allclose(a, b, equal_nan=True), "past values changed with future bars"
