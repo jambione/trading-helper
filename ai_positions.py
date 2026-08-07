@@ -1133,6 +1133,50 @@ def _num(v: Any) -> float | None:
         return None
 
 
+def _sell_signal_defends(state: dict) -> bool:
+    """Whether to let a live sell_signal tighten stops. Off = old behaviour."""
+    if not state:
+        return False
+    try:
+        from config import load_config
+        return bool(load_config().get("ai_sell_signal_breakeven", True))
+    except Exception:
+        return False
+
+
+def _engine_indicators() -> dict:
+    """symbol -> signal_proximity from the engine, or {} if unreachable.
+
+    Same wire the entry gate reads, so an exit cannot disagree with an entry
+    about what the indicators currently say.
+    """
+    try:
+        import ai_entry_watch as ew
+        return ew._engine_indicator_map() or {}
+    except Exception:
+        return {}
+
+
+def _resting_stop_order_id(ticker: str) -> str | None:
+    """The open protective STOP leg for *ticker*, if one is resting.
+
+    A bracket's stop id is not stored at entry (only the take-profit leg is),
+    so it has to be found. Passing None to replace_stop would leave the
+    original resting and add a second stop for the same shares.
+    """
+    try:
+        import alpaca_trader
+        sym = str(ticker or "").upper()
+        for o in alpaca_trader.get_open_orders() or []:
+            if (o.get("symbol") == sym
+                    and str(o.get("side", "")).lower() == "sell"
+                    and "stop" in str(o.get("type", "")).lower()):
+                return o.get("id") or None
+    except Exception:
+        pass
+    return None
+
+
 def _order_fill_price(order_id: Any) -> float | None:
     """filled_avg_price for *order_id*, or None when it can't be resolved."""
     if not order_id:
@@ -1421,6 +1465,62 @@ def manage_open_positions(
                        "close_reason": reason})
         del state[ticker]
         changed = True
+
+    # Indicator-driven defence. sell_signal gated four ENTRY checks and
+    # nothing on the way out, so the desk would refuse to buy a name the
+    # engine had flagged and then hold that same name without comment when the
+    # flag turned on afterwards. The three-indicator strategy computes it every
+    # scan and no exit path was listening.
+    #
+    # It tightens rather than closes. The desk has no completed-trade history
+    # to say whether this signal beats letting the bracket work, and closing on
+    # an unmeasured signal is the kind of confident, fake verdict the reports
+    # are careful to avoid. Moving the stop to entry caps the loss at a scratch
+    # and keeps the target live if the signal is wrong.
+    if _sell_signal_defends(state):
+        indicators = _engine_indicators()
+        for ticker, pos in list(state.items()):
+            if pos.get("sell_signal_stop_done") or pos.get("closing_reason"):
+                continue
+            sig = indicators.get(ticker)
+            if not isinstance(sig, dict) or not sig.get("sell_signal"):
+                continue
+            entry = _num(pos.get("entry_price"))
+            last = _num(pos.get("last_seen_price"))
+            cur_stop = _num(pos.get("stop_price"))
+            if not entry or not last:
+                continue
+            # A stop is only a stop while it sits BELOW the market. Underwater,
+            # "move it to breakeven" places it above the last print, which
+            # Alpaca triggers on receipt — that is a market exit wearing a stop
+            # order's name, and it is the opposite of tightening. Both open
+            # positions were below entry the moment this was written. Leave the
+            # original stop to do its job and record that we saw the flag.
+            if last <= entry:
+                events.append({"ticker": ticker, "event": "sell_signal_underwater",
+                               "entry": entry, "last": last,
+                               "stop": cur_stop})
+                log_event("sell_signal_underwater", symbol=ticker,
+                          entry=entry, last=last, stop=cur_stop)
+                pos["sell_signal_stop_done"] = True
+                changed = True
+                continue
+            # Never loosen: a stop already above entry is better than entry.
+            if cur_stop is not None and cur_stop >= entry:
+                pos["sell_signal_stop_done"] = True
+                changed = True
+                continue
+            out = alpaca_trader.replace_stop(
+                ticker, _resting_stop_order_id(ticker), stop_price=entry)
+            if isinstance(out, dict) and out.get("ok"):
+                pos["stop_price"] = entry
+                pos["sell_signal_stop_done"] = True
+                changed = True
+                events.append({"ticker": ticker, "event": "sell_signal_breakeven",
+                               "from_stop": cur_stop, "to_stop": entry,
+                               "last": last})
+                log_event("sell_signal_breakeven", symbol=ticker,
+                          from_stop=cur_stop, to_stop=entry, last=last)
 
     # Pass 2: only for positions still open — tranche-A fill and time-stop.
     for ticker, pos in list(state.items()):

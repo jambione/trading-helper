@@ -1192,3 +1192,99 @@ def test_a_filled_but_unconfirmed_position_keeps_the_long_ttl(
     events = cp.manage_open_positions(now=1_000_045.0)
     assert not any(e["event"] == "entry_unconfirmed_expired" for e in events)
     assert "NVDA" in json.loads(_state_path(tmp_path).read_text())
+
+
+# ── sell_signal defends an open position ─────────────────────────────────────
+
+def _sell_sig(monkeypatch, *, sell=True, enabled=True):
+    """Point the exit path at a fixed engine reading."""
+    monkeypatch.setattr(cp, "_engine_indicators",
+                        lambda: {"NVDA": {"sell_signal": sell}})
+    monkeypatch.setattr(cp, "_sell_signal_defends", lambda state: bool(enabled))
+    monkeypatch.setattr(cp, "_resting_stop_order_id", lambda t: "stop_leg_1")
+
+
+def test_sell_signal_underwater_never_places_a_stop_above_the_market(
+        tmp_path, monkeypatch):
+    """The hazard this whole feature turns on.
+
+    A stop is only a stop while it sits BELOW the market. Underwater, moving it
+    "to breakeven" puts it above the last print and Alpaca triggers it on
+    receipt — a market exit wearing a stop order's name. That is the opposite
+    of tightening, and both open positions were below entry when this was
+    written. Leave the original stop and record that the flag was seen.
+    """
+    _seed_state(tmp_path, monkeypatch, entry_price=48.676,
+                last_seen_price=48.585, stop_price=46.217)
+    _sell_sig(monkeypatch)
+    stub = _StubBrokerManage(current_price=48.585)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+
+    assert stub.replace_calls == [], "must not touch the stop while underwater"
+    assert any(e["event"] == "sell_signal_underwater" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["stop_price"] == 46.217, "original stop left working"
+
+
+def test_sell_signal_in_profit_tightens_the_stop_to_entry(tmp_path, monkeypatch):
+    """In profit the move is safe and is the point: cap the trade at a scratch
+    while leaving the target live in case the signal is wrong."""
+    _seed_state(tmp_path, monkeypatch, entry_price=19.94,
+                last_seen_price=20.105, stop_price=18.943)
+    _sell_sig(monkeypatch)
+    stub = _StubBrokerManage(current_price=20.105)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+
+    assert len(stub.replace_calls) == 1
+    call = stub.replace_calls[0]
+    assert call["stop_price"] == 19.94
+    assert call["old"] == "stop_leg_1", "must cancel the resting leg, not stack"
+    assert any(e["event"] == "sell_signal_breakeven" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["stop_price"] == 19.94
+
+
+def test_sell_signal_never_loosens_a_stop_already_past_entry(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_price=19.94,
+                last_seen_price=22.0, stop_price=21.0)
+    _sell_sig(monkeypatch)
+    stub = _StubBrokerManage(current_price=22.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+
+    assert stub.replace_calls == [], "21.0 already beats breakeven"
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["stop_price"] == 21.0
+
+
+def test_sell_signal_acts_once_not_every_tick(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_price=19.94,
+                last_seen_price=20.105, stop_price=18.943)
+    _sell_sig(monkeypatch)
+    stub = _StubBrokerManage(current_price=20.105)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+    cp.manage_open_positions(now=1_000_105.0)
+    cp.manage_open_positions(now=1_000_110.0)
+
+    assert len(stub.replace_calls) == 1, "one replacement, not one per tick"
+
+
+def test_no_sell_signal_leaves_the_position_alone(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_price=19.94,
+                last_seen_price=20.105, stop_price=18.943)
+    _sell_sig(monkeypatch, sell=False)
+    stub = _StubBrokerManage(current_price=20.105)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+
+    assert stub.replace_calls == []
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["stop_price"] == 18.943

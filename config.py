@@ -296,6 +296,14 @@ DEFAULT_CONFIG = {
     # exhaustion are the actual buy signals.
     "ai_watch_arm_require": ["cm_ok", "pctr_ok", "cm_rsi_rising"],
     "ai_watch_arm_min_proximity":         0,  # 0 = off; named flags are the test
+    # sell_signal gated four ENTRY checks and nothing on the way out: the desk
+    # refused to buy a flagged name, then held that same name silently when the
+    # flag turned on later. This tightens the stop to entry rather than
+    # closing — there is no completed-trade history yet to say the signal beats
+    # letting the bracket work, and it only acts when price is ABOVE entry
+    # (below it, a breakeven stop sits above the market and fills instantly,
+    # which is a market exit, not a tighter stop).
+    "ai_sell_signal_breakeven":        True,
     "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
     "ai_watch_min_price":               1.0,  # no sub-$1 names
     "ai_watch_admit_ticks":               2,  # consecutive qualifying polls to admit
