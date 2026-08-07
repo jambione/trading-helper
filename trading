@@ -52,12 +52,19 @@ _start_tunnel() {
     fi
     mkdir -p "$LOGDIR"
     echo "Starting Cloudflare tunnel → $PUBLIC_URL"
+    # Marker tells the watchdog the tunnel is meant to be up. Without it the
+    # watchdog cannot distinguish a tunnel that died from one you chose not to
+    # run ('./trading start local'), and would restart the latter every cycle.
+    touch "$ROOT/.trading.tunnel.want"
     nohup "$CF" tunnel --config "$CF_CONFIG" run "$CF_TUNNEL" >"$LOGDIR/tunnel.log" 2>&1 &
     echo "$!" >> "$PIDFILE"
     sleep 2
 }
 
 _stop_tunnel() {
+    # Clear the marker BEFORE killing, so the watchdog cannot revive the tunnel
+    # in the window between the kill and its next check.
+    rm -f "$ROOT/.trading.tunnel.want"
     pkill -TERM -f "cloudflared.*$CF_TUNNEL" 2>/dev/null || true
     sleep 1
     pkill -KILL -f "cloudflared.*$CF_TUNNEL" 2>/dev/null || true
@@ -184,6 +191,14 @@ cmd_start() {
 
     [ "$want_tunnel" = 1 ] && _start_tunnel
 
+    # Watchdog last: it restarts whatever is down, so starting it before the
+    # others would have it racing this function to launch the same processes.
+    if ! _running "tools/watchdog.py"; then
+        echo "Starting watchdog (restarts the stack if a process drops)"
+        nohup "$PY" -u tools/watchdog.py >"$LOGDIR/watchdog.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
+    fi
+
     sleep 2
     echo "✅ Started. Logs: $LOGDIR/{dashboard,engine,discord,trending,ai_trader}.log"
     _version
@@ -193,6 +208,17 @@ cmd_start() {
 
 cmd_stop() {
     echo "Stopping…"
+    # Watchdog FIRST, and wait for it to be gone. Killed in the same sweep as
+    # everything else it would race the teardown and restart the dashboard it
+    # had just watched exit.
+    pkill -TERM -f "tools/watchdog.py" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+        _running "tools/watchdog.py" || break
+        sleep 0.25
+    done
+    pkill -KILL -f "tools/watchdog.py" 2>/dev/null || true
+    rm -f "$ROOT/.trading.watchdog.pid"
+
     # Graceful first — by tracked PID, then by name as a backstop.
     if [ -f "$PIDFILE" ]; then
         while read -r pid; do [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true; done < "$PIDFILE"
@@ -215,17 +241,19 @@ cmd_stop() {
 }
 
 cmd_status() {
-    local d e g t c
+    local d e g t c w
     d=$(pgrep -f "dashboard.py"        | tr '\n' ' ' || true)
     e=$(pgrep -f "signal_engine.py"    | tr '\n' ' ' || true)
     g=$(pgrep -f "discord_source.py"   | tr '\n' ' ' || true)
     t=$(pgrep -f "trending_screener.py" | tr '\n' ' ' || true)
     c=$(pgrep -f "ai_trader.py"    | tr '\n' ' ' || true)
+    w=$(pgrep -f "tools/watchdog.py"   | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
     echo "discord   : ${g:-not running}"
     echo "trending  : ${t:-not running}"
     echo "ai_trader : ${c:-not running}"
+    echo "watchdog  : ${w:-not running}"
     if _tunnel_running; then
         echo "tunnel    : up → $PUBLIC_URL"
     else

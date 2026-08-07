@@ -119,3 +119,5 @@ momentum-monitor/journal/
 claude_reports/
 ai_reports/
 .worktrees/
+.trading.watchdog.pid
+.trading.tunnel.want
