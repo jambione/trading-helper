@@ -641,6 +641,17 @@ def parse_scanner_cards(lines: list[str]) -> tuple[list[dict], set[int]]:
         if require_fields and price is None and float_size is None:
             return False
 
+        # An unknown symbol has to bring a float size with it. Every genuine
+        # scanner card carries one — it is the whole point of the alert — so
+        # requiring it costs nothing on real cards ($NIANI Float 909M,
+        # $BSEM Float 11.49M) and rejects the ones OCR invents out of screen
+        # furniture, which never have it: $HOM "Price $1422", $BOM "Price
+        # $9595", $AANA "Price $4", none on Discord at all. A listed ticker
+        # still needs no float, because the universe already vouched for it.
+        if off_universe and float_size is None:
+            _note_drop(ticker, "unknown symbol with no float size — not a real card")
+            return False
+
         used.add(headline_idx)
         used.update(field_used)
         if header_idx is not None:

@@ -361,3 +361,37 @@ def test_arrow_alert_price_readout_is_not_a_column_label():
 
 
 import pytest
+
+
+# ── Off-universe symbols must bring evidence they are real ───────────────────
+# Loosening the ticker universe for OTC names let OCR-invented symbols through:
+# $HOM, $BOM and $AANA all reached the live momentum list on 2026-08-07 and none
+# of them was ever on screen. HOM is a real symbol whose last IEX print is from
+# 2023, so it even quoted — an 8.72 price sitting beside live ones.
+
+def test_unknown_symbol_without_a_float_size_is_rejected():
+    """The phantoms' tell: no float size, and a "price" scraped from whatever
+    digits were nearby. A real scanner card always carries the float."""
+    for sym, price in (("HOM", "$1422"), ("BOM", "$9595"), ("AANA", "$4")):
+        cards, _ = ds.parse_scanner_cards(
+            ["Find It First Alert! [ELITE]", f"${sym}", "Price", price])
+        assert cards == [], f"{sym} should not have been admitted"
+
+
+def test_unknown_symbol_with_a_float_size_is_still_admitted():
+    """The OTC names this loosening exists for do carry one."""
+    cards, _ = ds.parse_scanner_cards(
+        ["Find It First Alert! [ELITE]", "$BSEM", "Float Size", "11.49M"])
+    assert len(cards) == 1
+    assert cards[0]["ticker"] == "BSEM"
+    assert cards[0]["off_universe"] is True
+
+
+def test_a_listed_ticker_needs_no_float_size():
+    """The universe already vouched for it; requiring a float would drop real
+    cards whose float line the OCR happened to miss."""
+    cards, _ = ds.parse_scanner_cards(
+        ["Find It First Alert! [ELITE]", "$VATE", "Price", "$7.41"])
+    assert len(cards) == 1
+    assert cards[0]["ticker"] == "VATE"
+    assert cards[0]["off_universe"] is False
