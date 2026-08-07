@@ -808,12 +808,21 @@ def dedupe_open_orders(keep: str = "newest") -> dict:
     return {"ok": True, "canceled": canceled, "kept": kept, "by_symbol": by_symbol}
 
 
+# How long to let a cancel settle before closing, and how many close passes to
+# make. Both exist because of the pending-cancel race described in
+# liquidate_all: one refusal used to be final.
+_CANCEL_SETTLE_SEC = 2.0
+_LIQUIDATE_ATTEMPTS = 3
+
+
 def liquidate_all() -> dict:
     """EOD flatten: cancel every open order, then close every open position.
 
-    Returns
-    ``{ok, canceled, closed, symbols, errors}`` where ``closed`` is the count
-    of successful ``close_out`` calls and ``symbols`` lists those tickers.
+    Returns ``{ok, canceled, closed, symbols, errors, still_open}``.
+
+    ``ok`` is True only when the broker confirms no positions remain — not
+    when the attempt merely ran. ``still_open`` names anything left behind, and
+    is the field to alert on.
     """
     if not _can_mutate():
         return {
@@ -828,30 +837,66 @@ def liquidate_all() -> dict:
     if detail is None:
         errors.append("get_positions_detail failed")
         detail = {}
-    for sym in sorted(str(s).upper() for s in detail.keys() if s):
-        try:
-            res = close_out(sym)
-            if res.get("ok"):
-                symbols.append(sym)
-            else:
-                errors.append(
-                    f"{sym}:{res.get('note') or res.get('status') or 'close_failed'}"
-                )
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"{sym}:{e}")
-            log.warning("[TRADER] liquidate_all %s failed: %s", sym, e)
-    ok = not errors or bool(symbols) or canceled > 0 or not detail
+
+    # A cancel is not instant. Alpaca reports the order "pending cancel" while
+    # the shares are still held_for_orders, so an immediate close is rejected
+    # with available:0 — and by the time that error is read the cancel HAS
+    # completed, leaving a position with no stop and no target. That is exactly
+    # how USAR ended 2026-08-07 naked. Give the cancels a moment to settle, and
+    # retry rather than accept one refusal.
+    for attempt in range(_LIQUIDATE_ATTEMPTS):
+        remaining = sorted(str(s).upper() for s in detail.keys() if s)
+        remaining = [s for s in remaining if s not in symbols]
+        if not remaining:
+            break
+        if canceled and attempt == 0:
+            time.sleep(_CANCEL_SETTLE_SEC)
+        for sym in remaining:
+            try:
+                res = close_out(sym)
+                if res.get("ok"):
+                    symbols.append(sym)
+                elif attempt == _LIQUIDATE_ATTEMPTS - 1:
+                    errors.append(
+                        f"{sym}:{res.get('note') or res.get('status') or 'close_failed'}"
+                    )
+            except Exception as e:  # noqa: BLE001
+                if attempt == _LIQUIDATE_ATTEMPTS - 1:
+                    errors.append(f"{sym}:{e}")
+                log.warning("[TRADER] liquidate_all %s failed: %s", sym, e)
+        if attempt < _LIQUIDATE_ATTEMPTS - 1:
+            time.sleep(_CANCEL_SETTLE_SEC)
+            detail = get_positions_detail() or {}
+
+    # ok means THE BOOK IS FLAT — nothing weaker. It used to be
+    # `not errors or bool(symbols) or canceled > 0 or not detail`, so having
+    # cancelled one order was enough to report success on a liquidate that
+    # closed nothing: on 2026-08-07 that returned ok:true with closed:0 and one
+    # error, the caller stamped the day done, and a naked position went into
+    # the weekend. Verify against the broker rather than inferring from what we
+    # attempted.
+    still_open = get_positions_detail()
+    if still_open is None:
+        errors.append("post-liquidate position check failed")
+        leftover = ["unverified"]
+    else:
+        leftover = sorted(str(s).upper() for s in still_open.keys() if s)
+    ok = not leftover
     print(
         f"  [TRADER] liquidate_all: canceled={canceled} closed={len(symbols)} "
-        f"symbols={symbols or '-'} errors={len(errors)}",
+        f"symbols={symbols or '-'} errors={len(errors)} "
+        f"still_open={leftover or '-'}",
         flush=True,
     )
+    if leftover:
+        log.error("[TRADER] liquidate_all left positions OPEN: %s", leftover)
     return {
         "ok": ok,
         "canceled": canceled,
         "closed": len(symbols),
         "symbols": symbols,
         "errors": errors,
+        "still_open": leftover,
     }
 
 

@@ -829,7 +829,26 @@ def _run_eod_liquidate(cfg: dict, now: float) -> dict:
             print("[ai] EOD liquidate — AI Watch cleared", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[ai] EOD clear watch failed: {e}", flush=True)
-    _mark_eod_liquidate_done(now, result)
+    # Only stamp the day done when the book is actually flat. The stamp is what
+    # makes _eod_liquidate_due return False for the rest of the day, so writing
+    # it after a failed flatten retires the one mechanism that would try again.
+    # On 2026-08-07 a pending-cancel race left USAR open with its bracket
+    # already cancelled, liquidate_all still reported ok, the day was stamped,
+    # and the position was heading into the weekend naked with no stop.
+    still_open = (result or {}).get("still_open") or []
+    if result.get("ok") and not still_open:
+        _mark_eod_liquidate_done(now, result)
+    else:
+        print(f"[ai] ⛔ EOD liquidate did NOT flatten: still_open={still_open} "
+              f"— leaving the day unstamped so it retries", flush=True)
+        try:
+            ai_positions.log_event(
+                "eod_liquidate_incomplete",
+                still_open=still_open,
+                errors=(result.get("errors") or [])[:8],
+            )
+        except Exception:
+            pass
     return result if isinstance(result, dict) else {}
 
 
