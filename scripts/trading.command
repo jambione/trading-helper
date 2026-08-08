@@ -12,7 +12,10 @@
 
 set -uo pipefail
 
-REPO="/Users/jonathanbrasfield/repo/trading-helper"
+# Cannot self-locate off BASH_SOURCE like the scripts/ helpers do: this file is
+# meant to be copied to ~/Desktop, where dirname would resolve to the Desktop.
+# Absolute default, overridable by env for a differently-placed checkout.
+REPO="${REPO:-/Users/jambimac/repo/trading-helper}"
 VENV_PY="$REPO/.venv-monitor/bin/python"
 MONITOR="$REPO/momentum-monitor/momentum_signal.py"
 

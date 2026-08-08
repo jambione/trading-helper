@@ -4,7 +4,10 @@
 # re-docks the window right, in case Discord drifted. The OCR source reads whatever
 # channel is on screen, so keeping the alert channel up is all we need.
 
-REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
+# Resolve the repo from this script's own location. The hardcoded home
+# directory that used to sit here pointed at a path that does not exist on the
+# trading host, so the 7:15 AM channel re-assert never actually ran.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo ""
 echo "========================================"

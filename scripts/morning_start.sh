@@ -8,7 +8,10 @@
 # Source: the ticker source is screen OCR of the Discord alert channel (discord_source.py,
 # auto-started by start_all.py). The Discord window must stay visible (not minimized).
 
-REPO="/Users/jonathanbrasfield/repo/trading-helper/trading-helper"
+# Resolve the repo from this script's own location. The hardcoded home
+# directory that used to sit here pointed at a path that does not exist on the
+# trading host, so every run died on the first command that used it.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="http://localhost:8888"
 
 echo ""

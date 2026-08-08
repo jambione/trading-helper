@@ -243,7 +243,7 @@ This opens a browser. Authorise the `jambione` Cloudflare account. The
 credentials file is saved to `~/.cloudflared/`.
 
 Then update `config/cloudflared-config.yml` so the path matches your home
-directory (the default has `/Users/jonathanbrasfield/`):
+directory (it currently points at the trading host's, `/Users/jambimac/`):
 
 ```yaml
 credentials-file: /Users/YOUR_USERNAME/.cloudflared/56c84116-0ef0-47c7-bbea-25634d765487.json
@@ -291,7 +291,7 @@ This script:
 - Tears the tunnel down cleanly when the server exits
 
 > **Update the hardcoded path** in `scripts/run_trading_server.sh` if your repo
-> is not at `/Users/jonathanbrasfield/repo/trading-helper/trading-helper`:
+> is not at `/Users/jambimac/repo/trading-helper`:
 > ```bash
 > REPO="/Users/YOUR_USERNAME/path/to/trading-helper"
 > ```

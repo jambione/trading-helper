@@ -3,7 +3,10 @@
 # Cleanly shuts down the trading server.
 # Called by launchd at 11:00 AM on weekdays.
 
-LOG="/Users/jonathanbrasfield/repo/trading-helper/trading-helper/server.log"
+# Resolve the repo from this script's own location — a hardcoded home directory
+# silently rotted here once already (the log went to a path that didn't exist).
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG="$REPO/server.log"
 
 # Guard: only run if it's actually between 10:30–11:30 AM.
 # launchd replays "missed" jobs when the Mac wakes up, which would kill
