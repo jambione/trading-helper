@@ -2,10 +2,11 @@
 plumbing stays untouched. Overrides live in config/trade_bridge.json.
 
 Alpaca credentials resolve in this order (first non-empty wins per key):
-  1. process env  ALPACA_API_KEY / ALPACA_SECRET_KEY
-  2. signal_engine.env  (same file the signal engine / trader use)
-  3. config/secrets.json  api_key / secret_key
-  4. config/trade_bridge.json  alpaca_api_key / alpaca_secret_key
+  1. config/secrets.json  api_key / secret_key   ← the desk's source of truth
+  2. process env  ALPACA_API_KEY / ALPACA_SECRET_KEY
+  3. config/trade_bridge.json  alpaca_api_key / alpaca_secret_key
+
+signal_engine.env no longer carries credentials — it holds engine settings.
 """
 import json
 import os
@@ -88,30 +89,28 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 
 def _resolve_alpaca_credentials(file_cfg: dict) -> tuple[str, str]:
-    """Fill alpaca keys from env → signal_engine.env → secrets → trade_bridge.json."""
-    key = (
-        os.getenv("ALPACA_API_KEY", "").strip()
+    """Fill alpaca keys from secrets.json → process env → trade_bridge.json.
+
+    config/secrets.json is the desk's source of truth for credentials, so it
+    is consulted first rather than as a last resort. The process env is still
+    honoured after it, because a desk process has already had secrets.json
+    overlaid onto its environment by desk_core.load_desk_env() — and a genuine
+    shell export survives that overlay deliberately.
+    """
+    key = secret = ""
+    try:
+        if SECRETS_FILE.exists():
+            secrets = json.loads(SECRETS_FILE.read_text(encoding="utf-8"))
+            if isinstance(secrets, dict):
+                key = (secrets.get("api_key") or "").strip()
+                secret = (secrets.get("secret_key") or "").strip()
+    except (OSError, ValueError):
+        pass
+
+    key = key or os.getenv("ALPACA_API_KEY", "").strip() \
         or (file_cfg.get("alpaca_api_key") or "").strip()
-    )
-    secret = (
-        os.getenv("ALPACA_SECRET_KEY", "").strip()
+    secret = secret or os.getenv("ALPACA_SECRET_KEY", "").strip() \
         or (file_cfg.get("alpaca_secret_key") or "").strip()
-    )
-
-    if not key or not secret:
-        env_file = _parse_env_file(ENGINE_ENV_FILE)
-        key = key or env_file.get("ALPACA_API_KEY", "").strip()
-        secret = secret or env_file.get("ALPACA_SECRET_KEY", "").strip()
-
-    if not key or not secret:
-        try:
-            if SECRETS_FILE.exists():
-                secrets = json.loads(SECRETS_FILE.read_text(encoding="utf-8"))
-                if isinstance(secrets, dict):
-                    key = key or (secrets.get("api_key") or "").strip()
-                    secret = secret or (secrets.get("secret_key") or "").strip()
-        except Exception:
-            pass
 
     return key, secret
 

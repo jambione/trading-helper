@@ -127,7 +127,7 @@ _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 
 import desk_core  # noqa: E402
 
-_load_env = desk_core.load_env_file
+_load_env = desk_core.load_desk_env
 
 
 def _f(v) -> float | None:

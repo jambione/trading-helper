@@ -39,7 +39,7 @@ _ENV_FILE_KEYS: list = []
 
 # Alpaca credentials live only in signal_engine.env; config.load_config() never
 # sees them. Must run before anything imports a broker client.
-_loaded_env_keys = desk_core.load_env_file(ROOT / "signal_engine.env")
+_loaded_env_keys = desk_core.load_desk_env(ROOT / "signal_engine.env")
 if _loaded_env_keys:
     _ENV_FILE_KEYS.extend(_loaded_env_keys)
     print(f"[ENV] Loaded {len(_loaded_env_keys)} setting(s) from signal_engine.env",

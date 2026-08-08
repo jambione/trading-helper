@@ -44,7 +44,7 @@ if str(ROOT) not in sys.path:
 
 import desk_core  # noqa: E402
 
-_load_env = desk_core.load_env_file
+_load_env = desk_core.load_desk_env
 
 
 _load_env()

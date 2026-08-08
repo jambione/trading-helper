@@ -180,7 +180,7 @@ from signals import rsi as calc_rsi, compute_macd
 
 import desk_core
 
-_load_env = desk_core.load_env_file
+_load_env = desk_core.load_desk_env
 _load_env(_HERE / "signal_engine.env")
 
 

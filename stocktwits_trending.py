@@ -106,7 +106,7 @@ def mins_since_open(now: float | None = None) -> float:
 
 import desk_core  # noqa: E402
 
-_load_env = desk_core.load_env_file
+_load_env = desk_core.load_desk_env
 
 
 def parse_trending_payload(data: dict) -> list[dict[str, Any]]:

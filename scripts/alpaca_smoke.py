@@ -26,17 +26,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# Load signal_engine.env if present and keys not already set
-_env = ROOT / "signal_engine.env"
-if _env.exists():
-    for line in _env.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k, v = k.strip(), v.strip().split("#")[0].strip().strip('"').strip("'")
-        if k and k not in os.environ:
-            os.environ[k] = v
+import desk_core  # noqa: E402
+
+# Credentials come from config/secrets.json; signal_engine.env supplies the
+# non-credential engine settings.
+desk_core.load_desk_env()
 
 
 def main():
