@@ -24,9 +24,7 @@ positions are managed in ai_positions.manage_open_positions().
     python3 ai_trader.py
 """
 import json
-import os
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -35,34 +33,17 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import desk_core  # noqa: E402
+
 _ENV_FILE_KEYS: list = []
-
-
-def _load_env_file(path: Path) -> None:
-    """Parse KEY=VALUE lines into os.environ. Shell environment always wins."""
-    if not path.exists():
-        return
-    loaded = []
-    with open(path, encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.split(" #", 1)[0].strip()
-            if key and key not in os.environ:
-                os.environ[key] = value
-                loaded.append(key)
-    if loaded:
-        _ENV_FILE_KEYS.extend(loaded)
-        print(f"[ENV] Loaded {len(loaded)} setting(s) from signal_engine.env",
-              flush=True)
-
 
 # Alpaca credentials live only in signal_engine.env; config.load_config() never
 # sees them. Must run before anything imports a broker client.
-_load_env_file(ROOT / "signal_engine.env")
+_loaded_env_keys = desk_core.load_env_file(ROOT / "signal_engine.env")
+if _loaded_env_keys:
+    _ENV_FILE_KEYS.extend(_loaded_env_keys)
+    print(f"[ENV] Loaded {len(_loaded_env_keys)} setting(s) from signal_engine.env",
+          flush=True)
 
 import ai_positions  # noqa: E402
 from ai_suggest import (  # noqa: E402
@@ -91,26 +72,7 @@ _last_good_account: dict = {}
 LOOP_SLEEP = 5.0
 
 
-def _write_json(path: Path, payload: dict) -> None:
-    """Atomic replace — dashboard.py may read this file mid-write."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = None
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, default=str)
-        except Exception:
-            os.close(fd)
-            raise
-        Path(tmp_path).replace(path)
-        tmp_path = None
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+_write_json = desk_core.write_json_atomic
 
 
 def _read_json(path: Path) -> dict:
@@ -743,11 +705,7 @@ def _mark_open_bell_done(now: float) -> None:
 
 
 def _parse_hhmm(raw: str, default: tuple[int, int] = (15, 50)) -> tuple[int, int]:
-    try:
-        hh, mm = str(raw or "").strip().split(":")
-        return int(hh), int(mm)
-    except Exception:
-        return default
+    return desk_core.parse_hhmm(raw, default)
 
 
 def _eod_liquidate_due(cfg: dict, now: float) -> bool:

@@ -125,19 +125,9 @@ DEFAULT_MODEL = DEFAULT_CLAUDE_MODEL
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 
 
-def _load_env() -> None:
-    env_path = ROOT / "signal_engine.env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.strip().split("#")[0].strip().strip('"').strip("'")
-        if k and k not in os.environ:
-            os.environ[k] = v
+import desk_core  # noqa: E402
+
+_load_env = desk_core.load_env_file
 
 
 def _f(v) -> float | None:

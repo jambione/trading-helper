@@ -1,7 +1,8 @@
 import json
 import os
-import tempfile
 from pathlib import Path
+
+import desk_core
 
 CONFIG_FILE  = Path(__file__).parent / "config" / "bot_config.json"
 SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
@@ -831,28 +832,15 @@ def load_config() -> dict:
 
 
 def _write_json(path: Path, data: dict):
-    tmp_path = None
+    """Save config, complaining rather than raising.
+
+    A failed settings write must not take the dashboard down with it — the
+    caller has no better recovery than to leave the old file in place.
+    """
     try:
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception:
-            try:
-                os.close(tmp_fd)
-            except Exception:
-                pass
-            raise
-        Path(tmp_path).replace(path)
-        tmp_path = None   # rename succeeded — nothing to clean up
+        desk_core.write_json_atomic(path, data)
     except Exception as e:
         print(f"[CFG] Failed to save {path.name}: {e}")
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
 
 
 def save_config(cfg: dict):

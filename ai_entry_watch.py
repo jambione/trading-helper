@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import desk_core  # noqa: E402
 from ai_paths import resolve_report_dir  # noqa: E402
 
 REPORT_DIR = resolve_report_dir()
@@ -800,12 +801,7 @@ def should_expire_watches_on_close(
     return False, bool(seen_open), expired
 
 
-def _parse_hhmm(raw: str, default: tuple[int, int]) -> tuple[int, int]:
-    try:
-        hh, mm = str(raw or "").strip().split(":")
-        return int(hh), int(mm)
-    except Exception:
-        return default
+_parse_hhmm = desk_core.parse_hhmm
 
 
 def _et_now(now: float | None = None):

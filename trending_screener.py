@@ -15,9 +15,7 @@ file publishes the full ranked list.
     python3 trending_screener.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -26,29 +24,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _load_env_file(path: Path) -> None:
-    """Parse KEY=VALUE lines into os.environ. Shell environment always wins."""
-    if not path.exists():
-        return
-    loaded = 0
-    with open(path, encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.split(" #", 1)[0].strip()
-            if key and key not in os.environ:
-                os.environ[key] = value
-                loaded += 1
-    if loaded:
-        print(f"[ENV] Loaded {loaded} setting(s) from signal_engine.env",
-              flush=True)
-
+import desk_core  # noqa: E402
 
 # Quote enrichment needs Alpaca keys, which live only in signal_engine.env.
-_load_env_file(ROOT / "signal_engine.env")
+_loaded_env_keys = desk_core.load_env_file(ROOT / "signal_engine.env")
+if _loaded_env_keys:
+    print(f"[ENV] Loaded {len(_loaded_env_keys)} setting(s) from signal_engine.env",
+          flush=True)
 
 from config import load_config  # noqa: E402
 from stocktwits_trending import (  # noqa: E402
@@ -60,26 +42,7 @@ TRENDING_FILE = ROOT / "trending_stocks.json"
 LOOP_SLEEP = 5.0
 
 
-def _write_json(path: Path, payload: dict) -> None:
-    """Atomic replace — dashboard.py may read this file mid-write."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = None
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, default=str)
-        except Exception:
-            os.close(fd)
-            raise
-        Path(tmp_path).replace(path)
-        tmp_path = None
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+_write_json = desk_core.write_json_atomic
 
 
 def main() -> None:

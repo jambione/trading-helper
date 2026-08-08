@@ -178,20 +178,9 @@ from signals import rsi as calc_rsi, compute_macd
 
 # ── Environment / credentials ─────────────────────────────────────────────────
 
-def _load_env(path: Path):
-    if not path.exists():
-        return
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k = k.strip()
-            v = v.split(" #", 1)[0].strip()   # drop inline comments
-            if k and k not in os.environ:
-                os.environ[k] = v
+import desk_core
 
+_load_env = desk_core.load_env_file
 _load_env(_HERE / "signal_engine.env")
 
 

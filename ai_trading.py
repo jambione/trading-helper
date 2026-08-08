@@ -43,19 +43,9 @@ from ai_paths import resolve_report_dir  # noqa: E402
 TRADE_LOG_PATH = resolve_report_dir() / "trades.jsonl"
 
 
-def _load_env() -> None:
-    env_path = ROOT / "signal_engine.env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.strip().split("#")[0].strip().strip('"').strip("'")
-        if k and k not in os.environ:
-            os.environ[k] = v
+import desk_core  # noqa: E402
+
+_load_env = desk_core.load_env_file
 
 
 def init_for_ai(

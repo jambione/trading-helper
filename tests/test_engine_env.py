@@ -122,13 +122,14 @@ def test_engine_would_load_updated_value(env_file, monkeypatch):
     """End-to-end: the engine's env loader sees what the dashboard wrote."""
     # Import FIRST — module import loads the real env into os.environ; the
     # delenv below must come after so our tmp file values actually land.
-    import signal_engine as se
+    import signal_engine  # noqa: F401
+    import desk_core
 
     engine_env.update_engine_env({"TAKE_PROFIT": "1.8", "TRADER_MODE": "off"}, env_file)
     monkeypatch.delenv("TAKE_PROFIT", raising=False)
     monkeypatch.delenv("TRADER_MODE", raising=False)
 
-    se._load_env_file(env_file)
+    desk_core.load_env_file(env_file)
     assert os.environ["TAKE_PROFIT"] == "1.8"
     assert os.environ["TRADER_MODE"] == "off"
     monkeypatch.delenv("TAKE_PROFIT", raising=False)

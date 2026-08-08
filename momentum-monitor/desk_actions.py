@@ -102,18 +102,10 @@ _extended = False             # allow pre/post-market B/S
 
 
 def _load_env():
-    env_path = ROOT / "signal_engine.env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.strip().split("#")[0].strip().strip('"').strip("'")
-        if k and k not in os.environ:
-            os.environ[k] = v
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    import desk_core
+    desk_core.load_env_file(ROOT / "signal_engine.env")
 
 
 def init_trader(cfg: dict | None = None) -> str:

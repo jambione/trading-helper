@@ -42,18 +42,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _load_env() -> None:
-    path = ROOT / "signal_engine.env"
-    if not path.exists():
-        return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k, v = k.strip(), v.split(" #", 1)[0].strip()
-        if k and k not in os.environ:
-            os.environ[k] = v
+import desk_core  # noqa: E402
+
+_load_env = desk_core.load_env_file
 
 
 _load_env()

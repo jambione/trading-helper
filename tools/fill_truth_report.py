@@ -35,19 +35,9 @@ ET = ZoneInfo("America/New_York")
 SIGNAL_LOG = ROOT / "signal_log.json"
 
 
-def _load_env() -> None:
-    env_path = ROOT / "signal_engine.env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.strip().split("#")[0].strip().strip('"').strip("'")
-        if k and k not in os.environ:
-            os.environ[k] = v
+import desk_core  # noqa: E402
+
+_load_env = desk_core.load_env_file
 
 
 def _read_jsonl(path: Path) -> list[dict]:
