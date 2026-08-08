@@ -71,20 +71,9 @@ from signals import rsi as calc_rsi, compute_macd
 
 # ── Load credentials from signal_engine.env ──────────────────────────────────
 
-def _load_env_file(path: Path):
-    """Read KEY=VALUE lines from an env file into os.environ (shell wins)."""
-    if not path.exists():
-        return
-    with open(path, encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            if key and key not in os.environ:
-                os.environ[key] = value.strip()
+import desk_core  # noqa: E402
 
+_load_env_file = desk_core.load_env_file
 _load_env_file(_ROOT / "signal_engine.env")
 
 

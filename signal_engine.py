@@ -87,6 +87,7 @@ import requests
 # ── Import our own signal library ─────────────────────────────────────────────
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+import desk_core
 from signals import (
     rsi as calc_rsi, compute_macd,
     compute_cm_rsi_lower, compute_obv_oscillator,
@@ -120,32 +121,10 @@ from realtime_bars import RealtimeBarAggregator
 # environment would shadow the freshly edited file ("env always wins").
 _ENV_FILE_KEYS: list = []
 
-def _load_env_file(path: Path):
-    """
-    Parse KEY=VALUE lines from an env file and inject into os.environ.
-    Shell environment always wins — we only set keys that aren't already set.
-    """
-    if not path.exists():
-        return
-    loaded = []
-    with open(path, encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            # Strip trailing inline comments ("KEY=value  # note") — secret
-            # allowlist pragmas live on the value line and must not pollute it.
-            value = value.split(" #", 1)[0].strip()
-            if key and key not in os.environ:
-                os.environ[key] = value
-                loaded.append(key)
-    if loaded:
-        _ENV_FILE_KEYS.extend(loaded)
-        print(f"[ENV] Loaded {len(loaded)} setting(s) from signal_engine.env")
-
-_load_env_file(_HERE / "signal_engine.env")
+_loaded_env_keys = desk_core.load_env_file(_HERE / "signal_engine.env")
+if _loaded_env_keys:
+    _ENV_FILE_KEYS.extend(_loaded_env_keys)
+    print(f"[ENV] Loaded {len(_loaded_env_keys)} setting(s) from signal_engine.env")
 
 # Touched by the dashboard's "Restart Engine" button (POST /api/engine/restart).
 # The main loop notices the flag, closes positions cleanly is NOT attempted —

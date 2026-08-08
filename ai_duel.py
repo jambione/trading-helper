@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import desk_core
 from ai_paths import resolve_report_dir
 
 ET = ZoneInfo("America/New_York")
@@ -35,12 +36,7 @@ def _norm_source(raw: str | None) -> str | None:
     return None
 
 
-def _parse_hhmm(raw: str, default: tuple[int, int]) -> tuple[int, int]:
-    try:
-        hh, mm = str(raw or "").strip().split(":")
-        return int(hh), int(mm)
-    except Exception:
-        return default
+_parse_hhmm = desk_core.parse_hhmm
 
 
 def _et_day_key(now: float | None = None) -> str:

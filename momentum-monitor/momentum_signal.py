@@ -288,7 +288,7 @@ DEFAULTS = {
     # Claude suggestions panel — keys K-T. Same quote columns as ST.
     #
     # The research, the entries and the position management all run on the
-    # server (claude_trader.py) and arrive in /api/state. The keys below are
+    # server (ai_trader.py) and arrive in /api/state. The keys below are
     # display tuning only; the model, schedule, risk sizing and trading
     # switches live in config/bot_config.json next to the process that uses
     # them. Nothing here can place an order.

@@ -4,7 +4,7 @@ shadow_report.py — measure the desk's decisions without needing a fill.
 
 outcomes.jsonl only grows when a trade closes. On 2026-08-06 the desk built
 530 zones across 31 symbols and filled nothing, so every gate that day was
-unmeasurable. claude_reports/shadow.jsonl records one sample per watched
+unmeasurable. ai_reports/shadow.jsonl records one sample per watched
 symbol per poll — the decision, and the price that tested it — off the quote
 the poller already fetched. This turns those samples into three answers:
 
@@ -56,9 +56,8 @@ sys.path.insert(0, str(_ROOT / "tools"))
 
 from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
 
-# Resolve the way the desk writes: ai_paths prefers ai_reports/ and falls back
-# to claude_reports/. A hardcoded legacy path agrees with the writers only
-# until something creates the primary tree, then reports frozen data silently.
+# Resolve the way the desk writes, via ai_paths. A hardcoded path agrees with
+# the writers only until the tree moves, then reports frozen data silently.
 SHADOW = (find_report_file("shadow.jsonl")
           or resolve_report_dir() / "shadow.jsonl")
 

@@ -242,11 +242,11 @@ def test_defaults_have_claude_off():
     # and every switch that can place an order ships off.
     assert DEFAULT_CONFIG["claude_live_search"] is True
     assert DEFAULT_CONFIG["claude_backend"] == "claude_cli"
+    # claude_trader_enabled / claude_trading_enabled were aliases of these two
+    # and have been retired; ai_* is the only spelling now.
     assert DEFAULT_CONFIG["ai_trader_enabled"] is False
     assert DEFAULT_CONFIG["ai_trading_enabled"] is False
-    assert DEFAULT_CONFIG["claude_trader_enabled"] is False
     assert DEFAULT_CONFIG["claude_research_enabled"] is False
-    assert DEFAULT_CONFIG["claude_trading_enabled"] is False
     # Grok source stubs (subscription CLI) — research/trading off until wired.
     assert DEFAULT_CONFIG["grok_research_enabled"] is False
     assert DEFAULT_CONFIG["grok_trading_enabled"] is False

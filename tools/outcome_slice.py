@@ -4,7 +4,7 @@ outcome_slice.py — slice realized outcomes by decision-time feature.
 
 Answers "did EXT-tagged entries actually do better?" and the like, off the
 feature vector ai_entry_watch._entry_features attaches at entry and
-ai_positions._record_outcome carries into claude_reports/outcomes.jsonl. No
+ai_positions._record_outcome carries into ai_reports/outcomes.jsonl. No
 join: each row already holds both the features and the result.
 
 WHAT THIS IS NOT
@@ -53,8 +53,8 @@ sys.path.insert(0, str(_ROOT))
 
 from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
 
-# Resolve the way the desk writes (ai_reports/ preferred, claude_reports/
-# legacy) — a hardcoded path silently freezes after a migration.
+# Resolve the way the desk writes, via ai_paths — a hardcoded path silently
+# freezes after a migration instead of failing.
 OUTCOMES = (find_report_file("outcomes.jsonl")
             or resolve_report_dir() / "outcomes.jsonl")
 

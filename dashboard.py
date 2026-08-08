@@ -2504,7 +2504,7 @@ async def api_ai_suggestions():
 
 @app.get("/api/ai/token-metrics")
 async def api_ai_token_metrics(day: str = "today"):
-    """Token / cost rollup from ai_reports/ (or legacy claude_reports/) token_metrics.jsonl.
+    """Token / cost rollup from ai_reports/ token_metrics.jsonl.
 
     Query ``day=today`` (default ET calendar day), ``day=YYYY-MM-DD``, or
     ``day=all``.

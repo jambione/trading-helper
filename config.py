@@ -1,7 +1,8 @@
 import json
 import os
-import tempfile
 from pathlib import Path
+
+import desk_core
 
 CONFIG_FILE  = Path(__file__).parent / "config" / "bot_config.json"
 SECRETS_FILE = Path(__file__).parent / "config" / "secrets.json"
@@ -20,18 +21,13 @@ DEFAULT_CONFIG = {
     "bar_count":        300,
     "scan_interval_sec": 60,
 
-    # ── Ticker source ────────────────────────────────────────
-    "ticker_log_file": "transcription/ticker_log.csv",
-
     # ── Signal: %R Trend Exhaustion ─────────────────────────
     "rte_threshold":  20,    # overbought/oversold zone edge (0-50)
     "rte_min_boxes":   2,    # consecutive bars required to be "on deck"
-    "rte_side":      "red",  # "red" = overbought watch
 
     # ── Signal: CM RSI-2 ────────────────────────────────────
     "cm_rsi_length":    2,   # RSI period (2 = original Larry Connors CM RSI-2)
     "cm_rsi_oversold": 25,   # approaching-oversold threshold for signal
-    "rmi_ma_slow":    200,   # slow MA for price-above-trend filter
 
     # ── Signal: OBV Oscillator ──────────────────────────────
     "obv_length": 20,
@@ -389,7 +385,6 @@ DEFAULT_CONFIG = {
     "claude_research_times": ["08:30", "11:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
-    "claude_prompt_file": "ai_prompt.txt",
     "claude_request_timeout":   600.0,
     "claude_live_search":        True,
     # web_x = web_search + x_search on xAI API; Claude CLI uses WebSearch/WebFetch.
@@ -401,21 +396,6 @@ DEFAULT_CONFIG = {
     "claude_use_desk_snapshot":  True,
     "claude_save_reports":       True,
     # Legacy aliases (mirrored in load_config from ai_* when missing)
-    "claude_trader_enabled":     False,
-    "claude_trading_enabled":    False,
-    "claude_max_price":         100.0,
-    "claude_quote_poll":         15.0,
-    "claude_volume_poll":        60.0,
-    "claude_avg_days":             10,
-    "claude_rvol_time_adjusted": True,
-    "claude_trade_amount":     1000.0,
-    "claude_max_positions":         5,
-    "claude_max_buys_per_poll":     3,
-    "claude_max_sells_per_poll":    5,
-    "claude_risk_pct":            1.0,
-    "claude_trade_style": "Moderate position",
-    "claude_min_reward_risk":     3.0,
-    "claude_positions_poll_sec":  5.0,
 
     # ── Grok research source (xAI subscription via Grok CLI) ──────────────────
     "grok_research_enabled":   False,   # scheduled Grok research via ai_trader.py
@@ -543,10 +523,8 @@ def validate_ai_config(cfg: dict) -> list[str]:
 SAFE_CONFIG_KEYS = [
     "api_key", "secret_key", "finnhub_key",
     "bar_timeframe", "bar_count", "scan_interval_sec",
-    "ticker_log_file",
-    "rte_threshold", "rte_min_boxes", "rte_side",
+    "rte_threshold", "rte_min_boxes",
     "cm_rsi_length", "cm_rsi_oversold",
-    "rmi_ma_slow",
     "obv_length",
     "macd_fast", "macd_slow", "macd_signal",
     "volume_surge_mult",
@@ -710,9 +688,7 @@ SAFE_CONFIG_KEYS = [
     "ai_shadow_log_enabled",
     "ai_reject_log_enabled",
     "momentum_max_tickers",
-    "claude_trader_enabled",
     "claude_research_enabled",
-    "claude_trading_enabled",
     "claude_backend",
     "claude_cli_bin",
     "claude_model",
@@ -720,7 +696,6 @@ SAFE_CONFIG_KEYS = [
     "claude_research_times",
     "claude_research_weekdays_only",
     "claude_research_catchup_min",
-    "claude_prompt_file",
     "claude_request_timeout",
     "claude_live_search",
     "claude_search_tools",
@@ -729,19 +704,6 @@ SAFE_CONFIG_KEYS = [
     "claude_use_prior_context",
     "claude_use_desk_snapshot",
     "claude_save_reports",
-    "claude_max_price",
-    "claude_quote_poll",
-    "claude_volume_poll",
-    "claude_avg_days",
-    "claude_rvol_time_adjusted",
-    "claude_trade_amount",
-    "claude_max_positions",
-    "claude_max_buys_per_poll",
-    "claude_max_sells_per_poll",
-    "claude_risk_pct",
-    "claude_trade_style",
-    "claude_min_reward_risk",
-    "claude_positions_poll_sec",
     "grok_research_enabled",
     "grok_trading_enabled",
     "grok_backend",
@@ -771,43 +733,64 @@ SAFE_CONFIG_KEYS = [
 ]
 
 
-# Shared AI keys ↔ legacy claude_* names (one-release dual-read).
-_AI_CONFIG_ALIASES: list[tuple[str, str]] = [
-    ("ai_trader_enabled", "claude_trader_enabled"),
-    ("ai_trading_enabled", "claude_trading_enabled"),
-    ("ai_max_price", "claude_max_price"),
-    ("ai_quote_poll", "claude_quote_poll"),
-    ("ai_volume_poll", "claude_volume_poll"),
-    ("ai_avg_days", "claude_avg_days"),
-    ("ai_rvol_time_adjusted", "claude_rvol_time_adjusted"),
-    ("ai_trade_amount", "claude_trade_amount"),
-    ("ai_max_positions", "claude_max_positions"),
-    ("ai_max_buys_per_poll", "claude_max_buys_per_poll"),
-    ("ai_max_sells_per_poll", "claude_max_sells_per_poll"),
-    ("ai_risk_pct", "claude_risk_pct"),
-    ("ai_trade_style", "claude_trade_style"),
-    ("ai_min_reward_risk", "claude_min_reward_risk"),
-    ("ai_positions_poll_sec", "claude_positions_poll_sec"),
-    ("ai_prompt_file", "claude_prompt_file"),
-]
+def _stamp() -> tuple:
+    """(path, mtime, size) of both config files — cheap staleness check.
+
+    The path is part of the key because tests monkeypatch CONFIG_FILE to a
+    tmp dir: without it, two different config files that are both absent share
+    a stamp, and the second test reads the first one's cache.
+    """
+    out = []
+    for p in (CONFIG_FILE, SECRETS_FILE):
+        try:
+            st = p.stat()
+            out.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((str(p), None, None))
+    return tuple(out)
 
 
-def _apply_ai_config_aliases(cfg: dict) -> dict:
-    """Fill missing ai_* from claude_* and vice versa so either name works."""
-    for new, old in _AI_CONFIG_ALIASES:
-        new_set = new in cfg and cfg[new] is not None
-        old_set = old in cfg and cfg[old] is not None
-        if new_set and not old_set:
-            cfg[old] = cfg[new]
-        elif old_set and not new_set:
-            cfg[new] = cfg[old]
-        elif new_set and old_set:
-            # Prefer explicit ai_* when both present and differ.
-            cfg[old] = cfg[new]
-    return cfg
+# Memoized parse, keyed on the files' (mtime, size). load_config() is called
+# per config key in places — _cfg_flag() reads one flag per call, inside the
+# per-position, per-poll loops — so this used to reparse two JSON files
+# thousands of times a session. A dashboard settings write changes the mtime,
+# so a live edit is still picked up on the next read.
+_cache: dict | None = None
+_cache_stamp: tuple | None = None
+
+
+def invalidate_cache() -> None:
+    """Force the next load_config() to re-read from disk."""
+    global _cache, _cache_stamp
+    _cache = None
+    _cache_stamp = None
+
+
+def _copy(cfg: dict) -> dict:
+    """Copy deep enough that a caller cannot reach into the cache.
+
+    A plain dict() would still share the handful of list values (research
+    times, arm_require, tickers), and a caller appending to one of those would
+    corrupt the live config for every later reader until the process restarts.
+    """
+    return {
+        k: list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v
+        for k, v in cfg.items()
+    }
 
 
 def load_config() -> dict:
+    """Resolved config: defaults <- bot_config.json <- secrets.json.
+
+    Returns a fresh copy each call — several callers mutate the dict they get
+    (ai_trader edits it in place), which would otherwise poison the cache.
+    """
+    global _cache, _cache_stamp
+
+    stamp = _stamp()
+    if _cache is not None and stamp == _cache_stamp:
+        return _copy(_cache)
+
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG_FILE.exists():
         try:
@@ -827,32 +810,21 @@ def load_config() -> dict:
                         cfg[k] = secrets[k]
         except Exception as e:
             print(f"[CFG] Failed to load secrets ({e})")
-    return _apply_ai_config_aliases(cfg)
+
+    _cache, _cache_stamp = cfg, stamp
+    return _copy(cfg)
 
 
 def _write_json(path: Path, data: dict):
-    tmp_path = None
+    """Save config, complaining rather than raising.
+
+    A failed settings write must not take the dashboard down with it — the
+    caller has no better recovery than to leave the old file in place.
+    """
     try:
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception:
-            try:
-                os.close(tmp_fd)
-            except Exception:
-                pass
-            raise
-        Path(tmp_path).replace(path)
-        tmp_path = None   # rename succeeded — nothing to clean up
+        desk_core.write_json_atomic(path, data)
     except Exception as e:
         print(f"[CFG] Failed to save {path.name}: {e}")
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
 
 
 def save_config(cfg: dict):
@@ -861,3 +833,6 @@ def save_config(cfg: dict):
     _write_json(CONFIG_FILE, main_cfg)
     if secrets:
         _write_json(SECRETS_FILE, secrets)
+    # Same-second writes can land on an unchanged (mtime, size) on coarse
+    # filesystems, so drop the cache explicitly rather than trusting the stat.
+    invalidate_cache()

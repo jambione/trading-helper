@@ -66,11 +66,10 @@ from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
 def _report(name: str) -> Path:
     """Resolve a report file the same way the desk writes it.
 
-    The runtime binds ai_paths.resolve_report_dir(), which PREFERS ai_reports/
-    and falls back to claude_reports/. Hardcoding the legacy directory here
-    agreed with the writers only for as long as ai_reports/ did not exist:
-    the first migration would have moved the desk and left every tool
-    reporting a frozen tree — with no error, just numbers that stopped moving.
+    Goes through ai_paths.resolve_report_dir() rather than hardcoding a
+    directory, so AI_REPORT_DIR and any future move stay in one place. A
+    hardcoded path does not fail loudly when it drifts from the writers — it
+    just reports a frozen tree, with no error and numbers that stopped moving.
     """
     return find_report_file(name) or (resolve_report_dir() / name)
 
