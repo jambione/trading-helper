@@ -27,6 +27,12 @@ Alert formats:
     Price          Float Size
     $251           2.42M
 
+  Bullish Bob LIVE call-out (the room's caller naming the symbol he's on):
+    8:28 AM Bullish Bob LIVE 🟢 🍏BULL NRXP pop
+  These become the "Suggests:" chip in the dashboard header. They are
+  display-only — see parse_bb_live_lines — and never feed mentions or the
+  trader; a call-out with no symbol we can confirm serves nothing at all.
+
 Setup:
   1. Build the OCR helper (one time):   swiftc discord_ocr.swift -o discord_ocr
   2. Keep the Discord window with the alert channel visible (not minimized).
@@ -825,6 +831,205 @@ def parse_chat_sentiment(line: str) -> tuple[str | None, float, str]:
     return ticker, score, body.strip()
 
 
+# ── "Bullish Bob LIVE" call-outs ─────────────────────────────────────────────
+# A content type distinct from the scanner alerts: the room's caller types a
+# short line naming the symbol he is on. On screen it is one compact row —
+# timestamp, author, role badges, then the message:
+#
+#   8:28 AM  Bullish Bob LIVE 🟢 🍏BULL  NRXP pop
+#
+# OCR does not always keep it that way (parse_bb_live_lines has the details),
+# so the frame parser is the entry point; parse_bb_live handles a single row.
+#
+# The leading symbol becomes a Trader Bro suggestion in the dashboard header.
+# The bar for serving one is deliberately high — a wrong symbol sitting under
+# the product badge is worse than no symbol at all — so the ticker must be
+# ALL-CAPS *and* listed. A lower-case lead ("nami test res") reads as prose we
+# can't confirm, and returns no symbol.
+
+@dataclass
+class BBLiveCall:
+    ticker: str
+    text:   str
+    ts:     float
+    said:   str = ""   # Discord's own "8:21 AM" stamp; "" when OCR missed it
+
+
+# Author line. The badges that follow are emoji/icons, so anything non-alnum
+# between "LIVE" and the message body is consumed here.
+_BB_LIVE_AUTHOR_RE = re.compile(r"Bullish\s+Bob\s+LIVE\b[^A-Za-z0-9$]*", re.IGNORECASE)
+
+# On a real author row the name leads, behind nothing but Discord's timestamp.
+# The channel blurb "LIVE Trading @ 7:00am Eastern With @Bullish Bob LIVE" also
+# contains the name, and treating that as an author row would let any badge line
+# that happened to land beside it be attributed to the caller.
+_BB_AUTHOR_PREFIX_RE = re.compile(
+    r"^[\s\[\(]*(?:\d{1,2}:\d{2}\s*[AP]\.?M\.?)?[\s\]\)\-–—•]*$", re.IGNORECASE)
+
+
+def _bb_author_match(line: str) -> "re.Match | None":
+    """The author match for a row that genuinely starts with the caller's name."""
+    m = _BB_LIVE_AUTHOR_RE.search(line)
+    if m and _BB_AUTHOR_PREFIX_RE.match(line[:m.start()]):
+        return m
+    return None
+
+# Discord role badges OCR renders as bare words wedged between the author and
+# the message ("🍏BULL" reads as "BULL"). Stripped so the caller's first real
+# word lands in the ticker slot. APP is also AppLovin's symbol — losing a
+# genuine "APP" call-out is the acceptable side of this trade, since the cost
+# is a missing chip rather than a wrong one.
+_BB_LIVE_BADGES = frozenset({"BULL", "BEAR", "APP", "BOT", "MOD", "OP"})
+
+# Trade-action words that can legitimately open a call-out and would otherwise
+# resolve to a real symbol — "ALL out" is Allstate, "ON" is ON Semiconductor,
+# "NEW" is Newmont. _CHAT_SKIP covers the rest (HOD, LOD, PDT, …).
+_BB_CALL_SKIP = frozenset({
+    "ALL", "OUT", "IN", "ON", "OFF", "BUY", "SELL", "LONG", "SHORT", "ADD",
+    "STOP", "HOLD", "WATCH", "SEE", "GO", "UP", "DOWN", "NEW", "BIG", "NICE",
+    "GOOD", "YES", "NO", "OK", "LOL", "LFG", "IT", "IF", "SO", "AT", "BE",
+})
+
+# "$NRXP" (how a symbol is often written) or a bare "NRXP", with one trailing
+# punctuation mark tolerated. Anchored and upper-case-only by construction, so
+# "nami" and "Nami" never match — that is the "unsure" gate.
+_BB_TICKER_RE = re.compile(r"^\$?([A-Z]{2,5})[.,:;!?]?$")
+
+
+# A split call-out's message row leads with the role badge and its bullet glyph
+# ("•BULL low vol", "* BULL sold azi lotto - loss").
+_BB_BODY_RE = re.compile(r"^[^A-Za-z0-9$]*(?:BULL|BEAR)\b\s*(?P<body>.+)$")
+
+# Discord stamps the author row with the message's own time ("8:21AM Bullish Bob
+# LIVE", "[9:32 AM] Bullish Bob LIVE"). Worth the trouble to read: capture time
+# is when we happened to look at the screen, which on a fresh start collapses an
+# hour of call-outs into a single minute and reads as if they all just fired.
+_BB_TIME_RE = re.compile(r"(?<![\d:])(\d{1,2}):(\d{2})\s*([AP])\.?M\.?", re.IGNORECASE)
+
+
+def _bb_said_time(prefix: str) -> str:
+    """Discord's timestamp from the text ahead of the author name on its row,
+    normalised to "8:21 AM", or "" when OCR didn't catch one.
+
+    Only the prefix is searched — a time inside the message itself ("out by
+    3:45 PM") is the caller talking, not when he said it.
+    """
+    m = _BB_TIME_RE.search(prefix)
+    if not m:
+        return ""
+    hh, mm = int(m.group(1)), int(m.group(2))
+    if not (1 <= hh <= 12 and mm <= 59):
+        return ""
+    return f"{hh}:{mm:02d} {m.group(3).upper()}M"
+
+
+def _bb_call_from(remainder: str) -> tuple[str | None, str]:
+    """(ticker, message_text) from whatever follows the author/badge.
+
+    The ticker gate is deliberately strict: the first word must be an ALL-CAPS
+    2–5 letter symbol that is in the NASDAQ/NYSE universe and isn't a chat
+    abbreviation or a trade-action word. Every other shape returns (None, text)
+    — the message stays readable, it just carries no symbol suggestion.
+    """
+    words = remainder.split()
+    while words:
+        w = words[0].strip(".,:;!?")
+        # Badges, bullet glyphs, and lone characters are chrome, not message.
+        # Vision renders 🟢/🍏 as a stray "O", "G" or "C", so a one-character
+        # word is noise — dropping it is what lets a bare author row still read
+        # as bare and pair with its body row.
+        if (w.upper() in _BB_LIVE_BADGES or len(w) < 2
+                or not re.search(r"[A-Za-z0-9]", w)):
+            words.pop(0)
+            continue
+        break
+    if not words:
+        return None, ""
+
+    text = " ".join(words)
+    tm   = _BB_TICKER_RE.match(words[0])
+    if not tm:
+        return None, text
+
+    sym = tm.group(1)
+    if sym in _BB_CALL_SKIP or sym in _CHAT_SKIP or not is_valid_ticker(sym):
+        _note_drop(sym, "Bullish Bob LIVE call-out led with a word we can't confirm as a ticker")
+        return None, text
+    return sym, text
+
+
+def parse_bb_live(line: str) -> tuple[str | None, str]:
+    """Parse ONE OCR line into (ticker, message_text) for a call-out that Vision
+    kept on a single row, or (None, "") when the line isn't one.
+
+    Most frames need parse_bb_live_lines instead — see there for why.
+    """
+    m = _bb_author_match(line)
+    if not m:
+        return None, ""
+    return _bb_call_from(line[m.end():])
+
+
+def parse_bb_live_lines(
+    lines: list[str],
+) -> tuple[list[tuple[str | None, str, str]], set[int]]:
+    """Pull every "Bullish Bob LIVE" call-out out of one OCR frame.
+
+    Returns (calls, used_line_indexes); each call is (ticker, text, said), with
+    ticker None whenever no symbol could be confirmed and said Discord's own
+    timestamp for the message ("" when OCR didn't catch it).
+
+    Apple Vision orders text by vertical midpoint, and the author's name sits a
+    hair off the message's baseline — so the same call-out arrives in one of two
+    shapes, and both are real:
+
+        one row     8:28 AM Bullish Bob LIVE• Ó BULL NRXP pop
+        two rows    •BULL low vol            ← body and author split, in
+                    Bullish Bob LIVE            EITHER order
+
+    In the split shape the body is the row carrying the role badge, and it is
+    accepted only when a bare "Bullish Bob LIVE" row sits directly above or
+    below it. That adjacency is what ties the text to this caller instead of to
+    any other member wearing the same badge — without it, a "BULL FLAG setup"
+    line anywhere on screen would read as a call-out.
+    """
+    inline: dict[int, tuple[str | None, str, str]] = {}
+    authors: dict[int, str] = {}          # row index → Discord's timestamp
+    for i, ln in enumerate(lines):
+        m = _bb_author_match(ln)
+        if not m:
+            continue
+        authors[i] = _bb_said_time(ln[:m.start()])
+        tkr, text = _bb_call_from(ln[m.end():])
+        if text:
+            inline[i] = (tkr, text, authors[i])
+    # An author row that already carries its own message can't also own a
+    # neighbouring badge row — that row belongs to some other message.
+    bare_authors = set(authors) - set(inline)
+
+    calls: list[tuple[str | None, str, str]] = []
+    used:  set[int] = set()
+    for i, ln in enumerate(lines):
+        if i in inline:
+            calls.append(inline[i])
+            used.add(i)
+            continue
+        if i in authors:
+            used.add(i)          # bare author row — says nothing on its own
+            continue
+        bm = _BB_BODY_RE.match(ln)
+        if not bm:
+            continue
+        owner = {i - 1, i + 1} & bare_authors
+        if not owner:
+            continue
+        tkr, text = _bb_call_from(bm.group("body"))
+        if text:
+            calls.append((tkr, text, authors[min(owner)]))
+            used.add(i)
+    return calls, used
+
+
 def _update_tv_state(line: str, tv_state: "_TvState",
                      new_sentiment: list, seen: dict, t0: float) -> None:
     """Pair TREND + STRATEGY chart labels across consecutive OCR lines into a
@@ -961,14 +1166,17 @@ def _run_ocr(cmd: list[str], cfg: dict | None = None) -> tuple[list[str], bool]:
     return _run_ocr_binary(cmd)
 
 
-def _post_ingest(alerts: list[dict], sentiment: list) -> None:
+def _post_ingest(alerts: list[dict], sentiment: list, bb_live: list | None = None) -> None:
     """POST this poll's newly-captured alerts (and an implicit heartbeat) to the
     dashboard. Sent every poll even when empty so the dashboard knows the source
     is alive. Each alert drives the mention system + the live feed downstream.
-    sentiment carries SentimentEvent records (market/chat/chart direction)."""
+    sentiment carries SentimentEvent records (market/chat/chart direction).
+    bb_live carries BBLiveCall records — display-only Trader Bro suggestions
+    that deliberately do NOT feed the mention/burst system."""
     try:
         body = json.dumps({"alerts": alerts,
                            "sentiment": [asdict(e) for e in sentiment],
+                           "bb_live": [asdict(c) for c in (bb_live or [])],
                            "drops": drop_counts()}).encode()
         req  = urllib.request.Request(
             f"{DASHBOARD_URL}/api/discord/ingest",
@@ -1019,12 +1227,22 @@ def check() -> int:
     cards, _ = parse_scanner_cards(lines)
     for card in cards:
         alerts.append((card["ticker"], card["kind"], card["line"]))
-    for ln in lines:
+    bb_calls, bb_used = parse_bb_live_lines(lines)
+    for idx, ln in enumerate(lines):
+        if idx in bb_used:
+            continue
         tkr, kind, _ = parse_alert_line(ln)
         if tkr:
             alerts.append((tkr, kind, ln))
 
     print(f"[discord] OCR read {len(lines)} text line(s) from the Discord window.")
+    if bb_calls:
+        served = sum(1 for t, _, _ in bb_calls if t)
+        print(f"[discord] {len(bb_calls)} Bullish Bob LIVE call-out(s), "
+              f"{served} with a confident symbol:")
+        for tkr, text, said in bb_calls:
+            label = f"suggests {tkr}" if tkr else "no symbol (unsure)"
+            print(f"   {said or '--:--':8} {label:20} <=  {text[:60]}")
     if not lines:
         print("[discord] VERDICT: ✗ window not captured — is Discord open, on this "
               "display/Space, and NOT minimized? (Grant Screen Recording if prompted.)")
@@ -1090,9 +1308,31 @@ def main() -> None:
         fail_streak = 0
         new_alerts: list[dict] = []
         new_sentiment: list[SentimentEvent] = []
+        new_bb_live: list[BBLiveCall] = []
         scanner_state = _ScannerState()  # resets each scan
         first_frame: "OrderedDict[str, dict]" = OrderedDict()   # ticker → alert dict
+        first_frame_bb: "OrderedDict[str, BBLiveCall]" = OrderedDict()
         cards, card_used = parse_scanner_cards(lines)
+        # Call-outs are read from the whole frame, not line by line: Vision
+        # splits the author and the message across rows (see parse_bb_live_lines).
+        bb_calls, bb_used = parse_bb_live_lines(lines)
+        for bb_ticker, bb_text, bb_said in bb_calls:
+            if not bb_ticker:
+                continue          # no confident symbol → serve no suggestion
+            sig = _signature(f"bblive {bb_ticker} {bb_text}")
+            if sig in seen:
+                continue
+            seen[sig] = t0
+            call = BBLiveCall(bb_ticker, bb_text, t0, bb_said)
+            if primed:
+                new_bb_live.append(call)
+            else:
+                # Frames read top→bottom, so a repeat of the same symbol lower
+                # on screen is the newer call — re-insert it at the end so the
+                # last entry is the current one.
+                first_frame_bb.pop(bb_ticker, None)
+                first_frame_bb[bb_ticker] = call
+
         for card in cards:
             sig = _scanner_card_signature(card)
             if sig in seen:
@@ -1105,7 +1345,7 @@ def main() -> None:
                 first_frame.setdefault(card["ticker"], alert)
 
         for idx, line in enumerate(lines):
-            if idx in card_used:
+            if idx in card_used or idx in bb_used:
                 continue
             sig = _signature(line)
             ticker, kind, meta = parse_alert_line(line)
@@ -1137,12 +1377,18 @@ def main() -> None:
                     SentimentEvent(c_ticker, c_score, "chat", c_raw, t0))
         if not primed:
             primed = True
-            new_alerts = list(first_frame.values())
-            print(f"[discord] startup: surfacing {len(new_alerts)} visible ticker(s); "
+            new_alerts  = list(first_frame.values())
+            new_bb_live = list(first_frame_bb.values())
+            print(f"[discord] startup: surfacing {len(new_alerts)} visible ticker(s) "
+                  f"and {len(new_bb_live)} Bullish Bob call-out(s); "
                   "watching for new alerts…", flush=True)
+        for call in new_bb_live:
+            when = f"[{call.said}] " if call.said else ""
+            print(f"  ⇒ Trader Bro suggests {call.ticker}  <=  {when}{call.text[:60]}",
+                  flush=True)
         # POST every poll (even with no new alerts) — it doubles as a heartbeat
         # so the dashboard can show the source is alive on a quiet market.
-        _post_ingest(new_alerts, new_sentiment)
+        _post_ingest(new_alerts, new_sentiment, new_bb_live)
         elapsed = time.time() - t0
         time.sleep(max(0.0, poll_sec - elapsed))
 

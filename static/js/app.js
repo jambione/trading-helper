@@ -5,24 +5,24 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=105';
-import { subscribe, set }                        from './store.js?v=105';
-import { init as initFeeds }                     from './feeds.js?v=105';
-import { init as initTickers }                   from './tickers.js?v=105';
-import { init as initTradingView }               from './tradingview.js?v=105';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=105';
-import { init as initResizer }                   from './resizer.js?v=105';
-import * as controls                             from './controls.js?v=105';
-import * as notifications                        from './notifications.js?v=105';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=105';
-import { init as initNews }                      from './news.js?v=105';
-import { init as initLeaderboard }               from './leaderboard.js?v=105';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=105';
-import { init as initEngine }                    from './engine.js?v=105';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=105';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=105';
+import { connect, on, api }                      from './api.js?v=107';
+import { subscribe, set, selectTicker }          from './store.js?v=107';
+import { init as initFeeds }                     from './feeds.js?v=107';
+import { init as initTickers }                   from './tickers.js?v=107';
+import { init as initTradingView }               from './tradingview.js?v=107';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=107';
+import { init as initResizer }                   from './resizer.js?v=107';
+import * as controls                             from './controls.js?v=107';
+import * as notifications                        from './notifications.js?v=107';
+import { isAuthenticated, logout, getQueryUser } from './auth.js?v=107';
+import { init as initNews }                      from './news.js?v=107';
+import { init as initLeaderboard }               from './leaderboard.js?v=107';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=107';
+import { init as initEngine }                    from './engine.js?v=107';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=107';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=107';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=105';
+import { init as initMobilePager }                from './mobilePager.js?v=107';
 
 // Product badge — "Trader Bro v0.8", replacing the old WS·Discord·AI Grok
 // text row. The connectivity/trader-on dots stay (they're live status, not
@@ -34,6 +34,110 @@ function _renderProductBadge(v) {
   const name = v.product_name || 'Trader Bro';
   const ver  = v.product_version || '?';
   el.textContent = `${name} v${ver}`;
+}
+
+// Trader Bro's call-out suggestions — "Suggests: NRXP 8:28 AM" beside the
+// product badge, the few before it trailing inline, and the whole session
+// behind a click. The backend only sends a symbol it could confirm against the
+// universe, so an empty `current` means the caller said something we couldn't
+// read a symbol out of; the chip shows no symbol rather than guessing.
+const _BB_INLINE_PAST = 3;   // recent calls shown inline; the rest need a click
+
+// When the call was made. `said` is Discord's own stamp for the message and is
+// what the operator recognises; `ts` is when OCR read it off the screen, which
+// is only a fallback (on a fresh start it collapses an hour of calls into one
+// minute). Seconds are noise at a glance, so the fallback drops them.
+function _bbWhen(c) {
+  return c?.said || String(c?.ts || '').split(':').slice(0, 2).join(':');
+}
+
+function _renderBbLive(bb) {
+  const wrap = document.querySelector('[data-bb-live]');
+  if (!wrap) return;
+  const cur     = bb?.current || null;
+  const history = bb?.history || [];
+
+  wrap.hidden = !cur && !history.length;
+  const symEl = wrap.querySelector('[data-bb-live-sym]');
+  const tsEl  = wrap.querySelector('[data-bb-live-ts]');
+  const chip  = wrap.querySelector('[data-bb-live-chip]');
+  if (symEl && tsEl && chip) {
+    // No fresh call → keep the history reachable but don't show a stale symbol.
+    symEl.textContent = cur ? cur.ticker : '—';
+    tsEl.textContent  = cur ? _bbWhen(cur) : '';
+    chip.classList.toggle('bb-suggest-chip--live', !!cur);
+    chip.title = cur
+      ? `${cur.ticker} — "${cur.text}" at ${_bbWhen(cur)}`
+      : 'No current call-out — click for past suggestions';
+  }
+
+  // Inline recents: the calls behind the current one, newest first. `history`
+  // leads with the current call whenever there is one, so skip it there.
+  const past = wrap.querySelector('[data-bb-live-past]');
+  if (past) {
+    past.replaceChildren();
+    const earlier = history.slice(cur ? 1 : 0, (cur ? 1 : 0) + _BB_INLINE_PAST);
+    for (const c of earlier) {
+      const el = document.createElement('button');
+      el.className = 'bb-suggest-past-chip';
+      el.title     = `${c.ticker} — "${c.text}" at ${_bbWhen(c)}`;
+      const sym = document.createElement('span');
+      sym.className   = 'bb-suggest-past-sym';
+      sym.textContent = c.ticker;
+      const ts  = document.createElement('span');
+      ts.className    = 'bb-suggest-past-ts';
+      ts.textContent  = _bbWhen(c);
+      el.append(sym, ts);
+      el.addEventListener('click', () => selectTicker(c.ticker));
+      past.appendChild(el);
+    }
+  }
+
+  const list = wrap.querySelector('[data-bb-live-list]');
+  if (!list) return;
+  list.replaceChildren();
+  if (!history.length) {
+    const li = document.createElement('li');
+    li.className   = 'bb-suggest-empty';
+    li.textContent = 'No suggestions yet today.';
+    list.appendChild(li);
+    return;
+  }
+  for (const c of history) {
+    const li = document.createElement('li');
+    li.className = 'bb-suggest-row';
+    const ts  = document.createElement('span');
+    ts.className   = 'bb-suggest-row-ts';
+    ts.textContent = _bbWhen(c);
+    const sym = document.createElement('span');
+    sym.className   = 'bb-suggest-row-sym';
+    sym.textContent = c.ticker || '';
+    const txt = document.createElement('span');
+    txt.className   = 'bb-suggest-row-txt';
+    txt.textContent = c.text || '';
+    li.append(ts, sym, txt);
+    li.addEventListener('click', () => {
+      selectTicker(c.ticker);
+      const pop = wrap.querySelector('[data-bb-live-pop]');
+      if (pop) pop.hidden = true;
+    });
+    list.appendChild(li);
+  }
+}
+
+function _initBbLive() {
+  const wrap = document.querySelector('[data-bb-live]');
+  if (!wrap) return;
+  const chip = wrap.querySelector('[data-bb-live-chip]');
+  const pop  = wrap.querySelector('[data-bb-live-pop]');
+  if (!chip || !pop) return;
+  chip.addEventListener('click', e => {
+    e.stopPropagation();
+    pop.hidden = !pop.hidden;
+  });
+  document.addEventListener('click', e => {
+    if (!pop.hidden && !wrap.contains(e.target)) pop.hidden = true;
+  });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -101,6 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
   try { initPriceSpikes(document.querySelector('[data-price-spikes]')); }        catch (e) { console.error('[app] initPriceSpikes', e); }
   try { initEngine(document.querySelector('[data-panel="engine"]')); }           catch (e) { console.error('[app] initEngine', e); }
+  try { _initBbLive(); }                                                          catch (e) { console.error('[app] initBbLive', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }
   }
@@ -169,7 +274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=105');
+    const m = await import('./admin.js?v=107');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };
@@ -244,6 +349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
     if (Object.keys(update).length)      set(update);
     if (snap.version) _renderProductBadge(snap.version);
+    if (snap.bb_live !== undefined) _renderBbLive(snap.bb_live);
   });
 
   on('connected', connected => set({ connected }));

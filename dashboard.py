@@ -117,6 +117,11 @@ class _State:
         # threw away, so a feed that has stopped surfacing names is visible
         # here instead of only inferable from the absence of alerts.
         self.discord_drops: dict = {}
+        # "Bullish Bob LIVE" call-outs read off the same OCR stream, oldest
+        # first. Display-only: they drive the header's "Suggests:" chip and its
+        # history list, and are deliberately kept out of the mention/burst path
+        # so a caller's chatter can never move the trader.
+        self.bb_live: deque = deque(maxlen=_MAX_BB_LIVE)
         # TradingView webhook feed — a second independent signal source. Each
         # inbound webhook fires as a burst and is tracked separately so the UI
         # can show both sources and their agreement.
@@ -158,6 +163,12 @@ _DISCORD_STALE_SEC  = 15.0
 _SENTIMENT_WINDOW_SEC = 30 * 60
 # How long a ticker keeps its "Find It First" provenance badge after the card.
 _FIND_IT_FIRST_TTL = 30 * 60
+# "Bullish Bob LIVE" call-outs → the header's "Suggests:" chip. History is kept
+# for the session so the operator can look back; only the newest call within
+# _BB_LIVE_FRESH_SEC is promoted to the live chip, so a symbol from two hours
+# ago can never keep sitting under the product badge as if it were current.
+_MAX_BB_LIVE       = 40
+_BB_LIVE_FRESH_SEC = 30 * 60
 
 STATE = _State()
 
@@ -1188,7 +1199,8 @@ def refresh_ticker_timestamps(tickers: list[str]):
 # like the old transcriber did (watchlist add + _track_mention → burst), and is
 # recorded in a rolling feed the dashboard renders.
 
-def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None) -> int:
+def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None,
+                          bb_live=None) -> int:
     """Record captured Discord alerts: add each ticker to the watchlist, count a
     mention (for burst detection), and append to the live feed. Returns the
     number of alerts accepted. Always stamps discord_last_ts (so an empty list is
@@ -1196,6 +1208,10 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None) -> int
 
     sentiment is a list of SentimentEvent dicts (ticker/score/source/raw/ts);
     near-zero scores are dropped, the rest stored per-ticker for the rolling mean.
+
+    bb_live is a list of BBLiveCall dicts (ticker/text/ts) — "Bullish Bob LIVE"
+    call-outs for the header's "Suggests:" chip. Recorded for display only: they
+    do not touch the watchlist, mentions, or sentiment.
 
     A "burst" alert (e.g. a 'Squeeze Potential Alert') injects a full burst's
     worth of mentions at once (mention_alert_threshold) so the existing burst
@@ -1317,6 +1333,40 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None) -> int
                     add_ticker_to_log(key)
                     _track_mention(key)
 
+    for c in (bb_live or []):
+        if not isinstance(c, dict):
+            continue
+        ticker = str(c.get("ticker", "")).strip().upper()
+        # Re-validate the shape here: the header chip is the one place a bad
+        # symbol would be most visible, and the producer is a separate process.
+        if not ticker.isalpha() or not (2 <= len(ticker) <= 5):
+            continue
+        try:
+            ts = float(c.get("ts") or 0) or time.time()
+        except (TypeError, ValueError):
+            ts = time.time()
+        # Discord's own stamp for the message, when OCR caught it. Preferred
+        # over capture time for both display and freshness: on a fresh start the
+        # source sees an hour of call-outs at once and would otherwise stamp
+        # them all with the same minute and call them all current.
+        said      = str(c.get("said", "")).strip()[:10]
+        said_unix = _bb_said_unix(said, ts)
+        with STATE.lock:
+            # Same symbol called again replaces the earlier entry rather than
+            # stacking duplicates — the history is a list of calls, not of OCR
+            # frames, and the newest one is what the chip should show.
+            existing = [r for r in STATE.bb_live if r["ticker"] == ticker]
+            for r in existing:
+                STATE.bb_live.remove(r)
+            STATE.bb_live.append({
+                "ts":     datetime.fromtimestamp(ts, ET).strftime("%H:%M:%S"),
+                "unix":   ts,
+                "said":   said,
+                "at":     said_unix or ts,
+                "ticker": ticker,
+                "text":   str(c.get("text", "")).strip()[:120],
+            })
+
     with STATE.lock:
         STATE.discord_last_ts = time.time()
         if isinstance(drops, dict):
@@ -1325,6 +1375,63 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None) -> int
                 if isinstance(v, (int, float))
             }
     return accepted
+
+
+_BB_SAID_RE = re.compile(r"^(\d{1,2}):(\d{2})\s*([AP])M$", re.IGNORECASE)
+
+
+def _bb_said_unix(said: str, seen_ts: float) -> float | None:
+    """Discord's "8:21 AM" resolved against the ET day we read it, or None.
+
+    The stamp carries no date, so it is anchored to seen_ts's ET date. A result
+    that lands in the future means the message is from an earlier day (or OCR
+    misread the digits) — safer to fall back to capture time than to invent a
+    call-out that hasn't happened yet.
+    """
+    m = _BB_SAID_RE.match(said.strip())
+    if not m:
+        return None
+    hh, mm = int(m.group(1)), int(m.group(2))
+    if not (1 <= hh <= 12 and mm <= 59):
+        return None
+    hh = hh % 12 + (12 if m.group(3).upper() == "P" else 0)
+    seen = datetime.fromtimestamp(seen_ts, ET)
+    at   = seen.replace(hour=hh, minute=mm, second=0, microsecond=0).timestamp()
+    return None if at > seen_ts + 120 else at
+
+
+def _bb_live_payload(calls: list[dict], now_ts: float) -> tuple[dict | None, list[dict]]:
+    """(current, history) from STATE.bb_live's oldest-first records.
+
+    current: the newest call, but only while it is still fresh — an old symbol
+    must not sit under the product badge looking like a live idea. Freshness is
+    measured from when the call was *said* where Discord told us, not from when
+    OCR happened to read it off the screen.
+    history:  every call this session, newest first, regardless of age.
+
+    Takes the records as an argument rather than reading STATE, so the snapshot
+    builder (which already holds STATE.lock) can reuse it without deadlocking.
+    """
+    def _at(r: dict) -> float:
+        return float(r.get("at") or r.get("unix") or 0)
+
+    # Order by when it was said, not by when we read it — priming reads a whole
+    # screen at once, so arrival order alone would jumble an hour of calls.
+    # sorted() is stable, so same-minute calls keep newest-arrival-first.
+    history = sorted(reversed(calls), key=_at, reverse=True)
+    current = history[0] if history else None
+    if current and now_ts - _at(current) > _BB_LIVE_FRESH_SEC:
+        current = None
+    return current, history
+
+
+def bb_live_snapshot(now_ts: float | None = None) -> dict:
+    """Trader Bro's call-out suggestions for the header: {current, history}."""
+    now_ts = now_ts if now_ts is not None else time.time()
+    with STATE.lock:
+        calls = list(STATE.bb_live)
+    current, history = _bb_live_payload(calls, now_ts)
+    return {"current": current, "history": history}
 
 
 def discord_status() -> dict:
@@ -1947,6 +2054,7 @@ def _snapshot() -> dict:
         tv_feed = list(STATE.tv_alerts)
 
         _prune_expired_price_spikes(now_ts)
+        bb_current, bb_history = _bb_live_payload(list(STATE.bb_live), now_ts)
 
         return {
             "discord": {
@@ -1957,6 +2065,11 @@ def _snapshot() -> dict:
                 "count":   len(tickers),
             },
             "price_spikes": list(STATE.price_spikes),
+            # Trader Bro's "Suggests:" chip + its history (header, display-only).
+            "bb_live": {
+                "current": bb_current,
+                "history": bb_history,
+            },
             "tradingview": {
                 "last_ts": tv_last,
                 "alerts":  tv_feed,
@@ -2644,9 +2757,11 @@ async def api_save_news(request: Request):
 @app.post("/api/discord/ingest")
 async def api_discord_ingest(request: Request):
     """The Discord OCR source POSTs here each poll: any newly-captured alerts
-    plus an implicit heartbeat. Body: {"alerts": [{"ticker","line"}, ...]}.
-    Each alert feeds the mention system (watchlist add + burst) and the live
-    feed; an empty list is a valid heartbeat that keeps the source 'alive'."""
+    plus an implicit heartbeat. Body: {"alerts": [{"ticker","line"}, ...],
+    "bb_live": [{"ticker","text","ts"}, ...]}. Each alert feeds the mention
+    system (watchlist add + burst) and the live feed; bb_live carries the
+    "Bullish Bob LIVE" call-outs, which are display-only. An empty body is a
+    valid heartbeat that keeps the source 'alive'."""
     try:
         body   = await request.json()
         alerts = body.get("alerts", [])
@@ -2658,13 +2773,17 @@ async def api_discord_ingest(request: Request):
         drops = body.get("drops", {})
         if not isinstance(drops, dict):
             drops = {}
+        bb_live = body.get("bb_live", [])
+        if not isinstance(bb_live, list):
+            bb_live = []
     except Exception:
         alerts    = []
         sentiment = []
         drops     = {}
+        bb_live   = []
     loop = asyncio.get_running_loop()
     accepted = await loop.run_in_executor(
-        None, lambda: ingest_discord_alerts(alerts, sentiment, drops))
+        None, lambda: ingest_discord_alerts(alerts, sentiment, drops, bb_live))
     return JSONResponse({"ok": True, "accepted": accepted})
 
 

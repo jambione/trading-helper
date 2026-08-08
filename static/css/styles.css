@@ -251,6 +251,108 @@ body::after  { display: none; }
   color: var(--border-hi);
   font-size: 12px;
 }
+
+/* ── Trader Bro call-out suggestion ("Suggests: NRXP") ──────── */
+.bb-suggest { position: relative; display: flex; align-items: center; }
+.bb-suggest-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bb-suggest-chip:hover { border-color: var(--accent-border); }
+.bb-suggest-lbl { color: var(--text-muted); font-weight: 500; }
+.bb-suggest-sym { color: var(--text-dim); }
+.bb-suggest-ts  { color: var(--text-muted); font-weight: 400; font-size: 10px; }
+.bb-suggest-ts:empty { display: none; }
+/* Only a call-out that is still fresh gets the gold treatment. */
+.bb-suggest-chip--live {
+  border-color: var(--goldbor);
+  background: var(--goldbg);
+}
+.bb-suggest-chip--live .bb-suggest-sym { color: var(--accent-2); }
+
+/* Recent calls trailing the current one — deliberately quieter than the chip
+   so the live suggestion still reads first. */
+.bb-suggest-past { display: flex; align-items: center; gap: 6px; margin-left: 7px; }
+.bb-suggest-past-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.bb-suggest-past-sym { color: var(--text-dim); font-weight: 600; }
+.bb-suggest-past-ts  { color: var(--text-muted); }
+.bb-suggest-past-chip:hover .bb-suggest-past-sym { color: var(--accent-2); }
+/* The header has to stay readable before it has to stay complete — drop the
+   inline recents first, then the whole row (see .hdr-status below). */
+@media (max-width: 1100px) { .bb-suggest-past { display: none; } }
+
+.bb-suggest-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  min-width: 280px;
+  max-width: 380px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--nav2);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  padding: 6px 0;
+}
+.bb-suggest-pop-hd {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 4px 10px 6px;
+}
+.bb-suggest-list { list-style: none; margin: 0; padding: 0; }
+.bb-suggest-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bb-suggest-row:hover { background: var(--card-hi); }
+.bb-suggest-row-ts  { font-family: var(--font-mono); color: var(--text-muted); font-size: 10px; }
+.bb-suggest-row-sym { font-family: var(--font-mono); font-weight: 700; color: var(--accent-2); }
+.bb-suggest-row-txt {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bb-suggest-empty {
+  padding: 4px 10px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 @media (max-width: 700px) { .hdr-status { display: none; } }
 body.mobile .hdr-status { display: none; }
 

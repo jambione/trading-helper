@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=105" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=107" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -93,6 +93,24 @@
                 <div class="ws-dot ws-dot--sm" id="discord-status-dot"></div>
                 <div data-ai-trader-dot class="ws-dot ws-dot--sm ws-dot--off" title="AI trader"></div>
                 <span class="hdr-status-label" data-product-badge title="AI watchlist + trader">…</span>
+
+                <!-- Trader Bro's call-out suggestions. Hidden until the Discord
+                     OCR source reads a symbol it is confident about. The chip
+                     is the current call with its time; the recent ones trail it
+                     inline, and the chip opens the full session list. -->
+                <div class="bb-suggest" data-bb-live hidden>
+                    <button class="bb-suggest-chip" data-bb-live-chip
+                            title="Latest Bullish Bob LIVE call-out — click for the full list">
+                        <span class="bb-suggest-lbl">Suggests:</span>
+                        <span class="bb-suggest-sym" data-bb-live-sym></span>
+                        <span class="bb-suggest-ts" data-bb-live-ts></span>
+                    </button>
+                    <span class="bb-suggest-past" data-bb-live-past></span>
+                    <div class="bb-suggest-pop" data-bb-live-pop hidden>
+                        <div class="bb-suggest-pop-hd">All suggestions</div>
+                        <ul class="bb-suggest-list" data-bb-live-list></ul>
+                    </div>
+                </div>
             </div>
 
             <div class="hdr-actions">
@@ -733,7 +751,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=105"></script>
+        <script type="module" src="/static/js/app.js?v=107"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
