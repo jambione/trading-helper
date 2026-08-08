@@ -710,21 +710,13 @@ def pre_entry_gate(
 
 
 def _entry_cfg() -> dict[str, Any]:
-    """Live config for entry shaping. Local to this module on purpose.
+    """Live config for entry shaping / order shape. {} on any failure.
 
-    ai_suggest has a same-named helper, but importing it here would pull the
-    research stack into the order path for what is a plain config read — and
-    ai_positions is imported by ai_entry_watch on every poll.
+    Local to this module on purpose: ai_suggest has a same-named helper, but
+    importing it here would pull the research stack into the order path for
+    what is a plain config read — and ai_positions is imported by
+    ai_entry_watch on every poll.
     """
-    try:
-        from config import load_config
-        return load_config() or {}
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _entry_cfg() -> dict:
-    """Live config for entry-order shape. Empty dict on any failure."""
     try:
         from config import load_config
         return load_config() or {}
@@ -1184,15 +1176,6 @@ def apply_position_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]
     if changed:
         _save_state(state)
     return events
-
-
-def _entry_cfg() -> dict:
-    """Live config for placement-time limits ({} if it can't be loaded)."""
-    try:
-        from config import load_config
-        return load_config() or {}
-    except Exception:
-        return {}
 
 
 def _buying_power() -> float | None:

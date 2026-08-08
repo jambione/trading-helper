@@ -733,7 +733,64 @@ SAFE_CONFIG_KEYS = [
 ]
 
 
+def _stamp() -> tuple:
+    """(path, mtime, size) of both config files — cheap staleness check.
+
+    The path is part of the key because tests monkeypatch CONFIG_FILE to a
+    tmp dir: without it, two different config files that are both absent share
+    a stamp, and the second test reads the first one's cache.
+    """
+    out = []
+    for p in (CONFIG_FILE, SECRETS_FILE):
+        try:
+            st = p.stat()
+            out.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((str(p), None, None))
+    return tuple(out)
+
+
+# Memoized parse, keyed on the files' (mtime, size). load_config() is called
+# per config key in places — _cfg_flag() reads one flag per call, inside the
+# per-position, per-poll loops — so this used to reparse two JSON files
+# thousands of times a session. A dashboard settings write changes the mtime,
+# so a live edit is still picked up on the next read.
+_cache: dict | None = None
+_cache_stamp: tuple | None = None
+
+
+def invalidate_cache() -> None:
+    """Force the next load_config() to re-read from disk."""
+    global _cache, _cache_stamp
+    _cache = None
+    _cache_stamp = None
+
+
+def _copy(cfg: dict) -> dict:
+    """Copy deep enough that a caller cannot reach into the cache.
+
+    A plain dict() would still share the handful of list values (research
+    times, arm_require, tickers), and a caller appending to one of those would
+    corrupt the live config for every later reader until the process restarts.
+    """
+    return {
+        k: list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v
+        for k, v in cfg.items()
+    }
+
+
 def load_config() -> dict:
+    """Resolved config: defaults <- bot_config.json <- secrets.json.
+
+    Returns a fresh copy each call — several callers mutate the dict they get
+    (ai_trader edits it in place), which would otherwise poison the cache.
+    """
+    global _cache, _cache_stamp
+
+    stamp = _stamp()
+    if _cache is not None and stamp == _cache_stamp:
+        return _copy(_cache)
+
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG_FILE.exists():
         try:
@@ -753,7 +810,9 @@ def load_config() -> dict:
                         cfg[k] = secrets[k]
         except Exception as e:
             print(f"[CFG] Failed to load secrets ({e})")
-    return cfg
+
+    _cache, _cache_stamp = cfg, stamp
+    return _copy(cfg)
 
 
 def _write_json(path: Path, data: dict):
@@ -774,3 +833,6 @@ def save_config(cfg: dict):
     _write_json(CONFIG_FILE, main_cfg)
     if secrets:
         _write_json(SECRETS_FILE, secrets)
+    # Same-second writes can land on an unchanged (mtime, size) on coarse
+    # filesystems, so drop the cache explicitly rather than trusting the stat.
+    invalidate_cache()
