@@ -53,7 +53,7 @@ def test_trading_system_addon_mentions_paper():
     assert "buy_stock" in text
 
 
-# ── helpers used by claude_positions.py's risk-sized entry path ─────────────
+# ── helpers used by ai_positions.py's risk-sized entry path ─────────────
 
 def test_buys_left_this_poll_reflects_the_cap():
     gt._max_buys_per_poll = 3

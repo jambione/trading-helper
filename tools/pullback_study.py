@@ -46,8 +46,8 @@ sys.path.insert(0, str(_ROOT))
 
 from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
 
-# Resolve the way the desk writes (ai_reports/ preferred, claude_reports/
-# legacy) — a hardcoded path silently freezes after a migration.
+# Resolve the way the desk writes, via ai_paths — a hardcoded path silently
+# freezes after a migration instead of failing.
 SHADOW = (find_report_file("shadow.jsonl")
           or resolve_report_dir() / "shadow.jsonl")
 

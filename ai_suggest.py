@@ -1496,7 +1496,7 @@ def call_claude_cli(
     Not free unlimited — subscription/API usage still applies.
 
     Runs with ``--output-format json`` so per-call token usage and cost land
-    in ``claude_reports/token_metrics.jsonl`` (latest also in ``last_usage``).
+    in ``ai_reports/token_metrics.jsonl`` (latest also in ``last_usage``).
     """
     binary = resolve_claude_cli(cli_bin)
     if not binary:
@@ -1630,7 +1630,7 @@ def call_grok_cli(
     free compute, just a different billing/auth path than the developer API.
 
     Runs with ``--output-format json`` so per-call token usage and cost land
-    in ``claude_reports/token_metrics.jsonl`` (latest also in ``last_usage``),
+    in ``ai_reports/token_metrics.jsonl`` (latest also in ``last_usage``),
     same path as the Claude CLI metrics.
     """
     binary = resolve_grok_cli(cli_bin)
@@ -2611,7 +2611,7 @@ def call_claude(
     cli_bin: str | None = None,
     max_price: float | None = None,
     effort: str | None = DEFAULT_CLAUDE_EFFORT,
-    # Risk-sized entries (claude_positions.py) — literal defaults here (not
+    # Risk-sized entries (ai_positions.py) — literal defaults here (not
     # imported from claude_positions) to avoid a load-time circular import;
     # kept in sync with claude_positions.DEFAULT_RISK_PCT / DEFAULT_STYLE /
     # DEFAULT_MIN_REWARD_RISK.
@@ -2645,7 +2645,7 @@ def call_claude(
         )
     if trading and backend in ("cli", "claude_cli"):
         # Rides this call's existing web-search budget rather than a
-        # separate per-position invocation — see claude_positions.py.
+        # separate per-position invocation — see ai_positions.py.
         import ai_positions as cp
         user_content += cp.build_holdings_review_snippet()
     # Prepend system efficiency rules for CLI backends (no separate instructions field).
