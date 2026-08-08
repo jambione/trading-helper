@@ -378,8 +378,15 @@ def test_unknown_symbol_without_a_float_size_is_rejected():
         assert cards == [], f"{sym} should not have been admitted"
 
 
-def test_unknown_symbol_with_a_float_size_is_still_admitted():
-    """The OTC names this loosening exists for do carry one."""
+def test_unknown_symbol_with_a_float_size_is_still_admitted(monkeypatch):
+    """The OTC names this loosening exists for do carry one.
+
+    The symbol is forced off-universe instead of being picked from real life:
+    this test named a genuine OTC ticker until NASDAQ listed it, at which point
+    the next 7-day refresh of valid_tickers.txt turned it green-to-red with no
+    code change behind it.
+    """
+    monkeypatch.setattr(ds, "is_valid_ticker", lambda sym: False)
     cards, _ = ds.parse_scanner_cards(
         ["Find It First Alert! [ELITE]", "$BSEM", "Float Size", "11.49M"])
     assert len(cards) == 1
