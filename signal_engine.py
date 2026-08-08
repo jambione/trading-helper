@@ -121,7 +121,7 @@ from realtime_bars import RealtimeBarAggregator
 # environment would shadow the freshly edited file ("env always wins").
 _ENV_FILE_KEYS: list = []
 
-_loaded_env_keys = desk_core.load_env_file(_HERE / "signal_engine.env")
+_loaded_env_keys = desk_core.load_desk_env(_HERE / "signal_engine.env")
 if _loaded_env_keys:
     _ENV_FILE_KEYS.extend(_loaded_env_keys)
     print(f"[ENV] Loaded {len(_loaded_env_keys)} setting(s) from signal_engine.env")

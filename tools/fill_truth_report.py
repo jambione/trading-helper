@@ -37,7 +37,7 @@ SIGNAL_LOG = ROOT / "signal_log.json"
 
 import desk_core  # noqa: E402
 
-_load_env = desk_core.load_env_file
+_load_env = desk_core.load_desk_env
 
 
 def _read_jsonl(path: Path) -> list[dict]:

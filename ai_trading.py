@@ -45,7 +45,7 @@ TRADE_LOG_PATH = resolve_report_dir() / "trades.jsonl"
 
 import desk_core  # noqa: E402
 
-_load_env = desk_core.load_env_file
+_load_env = desk_core.load_desk_env
 
 
 def init_for_ai(

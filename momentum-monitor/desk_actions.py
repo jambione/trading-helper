@@ -105,7 +105,7 @@ def _load_env():
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     import desk_core
-    desk_core.load_env_file(ROOT / "signal_engine.env")
+    desk_core.load_desk_env(ROOT / "signal_engine.env")
 
 
 def init_trader(cfg: dict | None = None) -> str:

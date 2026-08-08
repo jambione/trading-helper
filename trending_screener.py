@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
 import desk_core  # noqa: E402
 
 # Quote enrichment needs Alpaca keys, which live only in signal_engine.env.
-_loaded_env_keys = desk_core.load_env_file(ROOT / "signal_engine.env")
+_loaded_env_keys = desk_core.load_desk_env(ROOT / "signal_engine.env")
 if _loaded_env_keys:
     print(f"[ENV] Loaded {len(_loaded_env_keys)} setting(s) from signal_engine.env",
           flush=True)

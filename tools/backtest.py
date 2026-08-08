@@ -73,7 +73,7 @@ from signals import rsi as calc_rsi, compute_macd
 
 import desk_core  # noqa: E402
 
-_load_env_file = desk_core.load_env_file
+_load_env_file = desk_core.load_desk_env
 _load_env_file(_ROOT / "signal_engine.env")
 
 
