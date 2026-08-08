@@ -122,6 +122,10 @@ class _State:
         # history list, and are deliberately kept out of the mention/burst path
         # so a caller's chatter can never move the trader.
         self.bb_live: deque = deque(maxlen=_MAX_BB_LIVE)
+        # Signals currently being price-tracked, keyed (ticker, kind) so a
+        # call-out and a scanner spike on the same name stay separable —
+        # telling them apart is the whole point of measuring them.
+        self.signal_watch: dict = {}
         # TradingView webhook feed — a second independent signal source. Each
         # inbound webhook fires as a burst and is tracked separately so the UI
         # can show both sources and their agreement.
@@ -169,6 +173,13 @@ _FIND_IT_FIRST_TTL = 30 * 60
 # ago can never keep sitting under the product badge as if it were current.
 _MAX_BB_LIVE       = 40
 _BB_LIVE_FRESH_SEC = 30 * 60
+# Signal shadow — the counterfactual price track behind every Discord-side
+# signal (call-out, price spike, mention burst). Sampled off prices the price
+# loop has already fetched, so it costs no API quota; forward returns are
+# derived downstream by tools/signal_report.py rather than tracked here, the
+# same division of labour ai_positions.log_shadow_sample uses.
+_SIGNAL_WINDOW_SEC = 30 * 60   # how long a signal stays sampled
+_SIGNAL_SAMPLE_SEC = 30.0      # cadence per symbol (price loop runs at 10Hz)
 
 STATE = _State()
 
@@ -565,6 +576,8 @@ def _track_mention(ticker: str):
         entry = STATE.tickers.get(ticker, {})
         price = entry.get("price")
         _archive_burst(ticker, price, len(STATE.mention_ts[ticker]), entry, now)
+        # Locked variant: this function is documented as lock-held.
+        note_signal_locked(ticker, "mention_burst", now, entry, now)
         threading.Thread(
             target=_send_push_notifications,
             args=(ticker, price),
@@ -799,6 +812,104 @@ def _archive_bb_live(rec: dict, entry: dict | None = None, now: float | None = N
             }) + "\n")
     except Exception as e:
         log.warning(f"[BB-LIVE] archive failed: {e}")
+
+
+def _entry_price(entry: dict, now: float) -> tuple[float | None, str | None, float | None]:
+    """(price, source, seed_age) from a watchlist entry, quote preferred.
+
+    The scanner seed is a snapshot from when the alert fired, not a quote, so it
+    is reported as its own source with its age rather than merged into `price`.
+    """
+    price = entry.get("price")
+    if price is not None:
+        return price, "quote", None
+    seed = entry.get("scanner_price")
+    if seed is None:
+        return None, None, None
+    seed_ts = entry.get("scanner_price_ts")
+    age = round(max(0.0, now - float(seed_ts)), 1) if seed_ts else None
+    return seed, "scanner", age
+
+
+def note_signal_locked(ticker: str, kind: str, at: float,
+                       entry: dict | None = None, now: float | None = None) -> None:
+    """note_signal for callers that already hold STATE.lock (_track_mention)."""
+    now = now or time.time()
+    price, src, age = _entry_price(entry or {}, now)
+    STATE.signal_watch[(ticker, kind)] = {
+        "ticker": ticker, "kind": kind, "at": at,
+        "entry_price": price, "entry_price_src": src,
+        "entry_price_age_sec": age,
+        "last_sample": 0.0,
+    }
+
+
+def note_signal(ticker: str, kind: str, at: float, entry: dict | None = None,
+                now: float | None = None) -> None:
+    """Start price-tracking a Discord-side signal.
+
+    `kind` is "bb_live" | "price_spike" | "mention_burst". `at` is when the
+    signal happened (Discord's own stamp for a call-out, capture time
+    otherwise) — the anchor forward returns are measured from.
+
+    Re-signalling the same (ticker, kind) restarts the window: a second call on
+    a name is a fresh opinion, and the row it anchors should be measured from
+    when it was made rather than from the first one.
+    """
+    with STATE.lock:
+        note_signal_locked(ticker, kind, at, entry, now)
+
+
+def _sample_signal_shadow(now: float | None = None) -> int:
+    """Append one price sample per tracked signal that is due. Returns the count.
+
+    Called from the price loop off prices it has already merged — this must
+    never cost an API call, for the same reason log_shadow_sample must not: the
+    desk is already over Alpaca's rate limit and the names that can actually
+    trade are the ones being starved.
+
+    A symbol with no price yet is still sampled, with price null. Call-outs are
+    deliberately kept out of the watchlist, so some never get a quote at all —
+    recording the blank makes that coverage gap measurable instead of leaving
+    the file quietly short of the signals it was supposed to cover.
+    """
+    if not STATE.signal_watch:      # fast path — the price loop calls this at 10Hz
+        return 0
+    now = now or time.time()
+    due: list[dict] = []
+    with STATE.lock:
+        for key, rec in list(STATE.signal_watch.items()):
+            if now - rec["at"] > _SIGNAL_WINDOW_SEC:
+                del STATE.signal_watch[key]
+                continue
+            if now - rec["last_sample"] < _SIGNAL_SAMPLE_SEC:
+                continue
+            rec["last_sample"] = now
+            price, src, age = _entry_price(STATE.tickers.get(rec["ticker"], {}), now)
+            due.append({
+                "ts":     round(now, 1),
+                "time":   datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "ticker": rec["ticker"],
+                "signal": rec["kind"],
+                "signal_at": round(rec["at"], 1),
+                "elapsed_sec": round(now - rec["at"], 1),
+                "entry_price": rec["entry_price"],
+                "entry_price_src": rec["entry_price_src"],
+                "price": price,
+                "price_src": src,
+                "price_age_sec": age,
+            })
+    if not due:
+        return 0
+    try:
+        import ai_paths
+        path = ai_paths.report_file("signal_shadow.jsonl", create_parent=True)
+        with open(path, "a", encoding="utf-8") as f:
+            for row in due:
+                f.write(json.dumps(row) + "\n")
+    except Exception as e:
+        log.warning("[SIGNAL] shadow sample failed: %s", e)
+    return len(due)
 
 
 def _mention_window_count(ticker: str) -> int:
@@ -1351,6 +1462,8 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None,
                 STATE.price_spikes.append(spike_rec)
         if spike_rec:
             _archive_price_spike(spike_rec)
+            note_signal(ticker, "price_spike", spike_rec["unix"],
+                        {"price": spike_rec.get("price")})
             threading.Thread(
                 target=_send_price_spike_push,
                 args=(
@@ -1443,6 +1556,8 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None,
             entry = STATE.tickers.get(ticker, {})
         if not replay:
             _archive_bb_live(rec, entry, ts)
+            # Measure from when the call was MADE, not when OCR read it.
+            note_signal(ticker, "bb_live", said_unix or ts, entry, ts)
 
     with STATE.lock:
         STATE.discord_last_ts = time.time()
@@ -1803,6 +1918,11 @@ def _price_loop():
                         entry["price_age_sec"] = (
                             round(max(0.0, now - trade_ts), 1)
                             if trade_ts and trade_ts > 0 else None)
+
+            # Counterfactual track for Discord-side signals, off the prices
+            # just merged above — no extra API call. Self-throttling per
+            # symbol, so calling it at 10Hz is fine.
+            _sample_signal_shadow(now)
 
             _fail_streak = 0
         except Exception as e:
