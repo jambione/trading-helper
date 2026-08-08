@@ -274,7 +274,7 @@ class _StubBroker:
         return alpaca_trader.size_by_risk(equity, risk_pct, entry, stop)
 
     def buy_limit_bracket(self, ticker, qty, limit_price, stop_price,
-                          target_price=None):
+                          target_price=None, **kwargs):
         self.limit_calls.append({
             "ticker": ticker, "qty": qty, "limit_price": limit_price,
             "stop_price": stop_price, "target_price": target_price,
@@ -289,9 +289,13 @@ class _StubBroker:
                            "stop_price": stop_price, "target_price": target_price})
         if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
             return {"ok": False, "error": "rejected", "status": "rejected"}
-        return {"ok": True, "buy_order_id": oid,
-                "stop_order_id": (None if target_price else f"stop_{oid}"),
-                "status": "accepted"}
+        # Day scalp: every successful arm must expose stop + (when given) TP ids.
+        return {
+            "ok": True, "buy_order_id": oid,
+            "stop_order_id": f"stop_{oid}",
+            "target_order_id": (f"tp_{oid}" if target_price else None),
+            "status": "accepted",
+        }
 
     def cancel_open_orders(self, ticker):
         self.cancel_calls.append(ticker)
@@ -751,6 +755,18 @@ class _StubBrokerManage:
             out["filled_avg_price"] = self.fills[order_id]
         return out
 
+    def get_open_orders(self, limit=100):
+        # Protected book: open long has a resting stop sell so heal does not fire.
+        if not self.position_open:
+            return []
+        return [{
+            "id": "stop_b", "symbol": "NVDA", "side": "sell",
+            "type": "stop", "status": "new",
+        }]
+
+    def get_equity(self):
+        return 50_000.0
+
     def replace_stop(self, ticker, old_stop_order_id, *, trail_percent=None,
                      stop_price=None):
         self.replace_calls.append({
@@ -1152,7 +1168,8 @@ def test_market_style_and_missing_quote_fall_back_to_market(monkeypatch):
 def test_place_scaled_entry_uses_a_limit_and_never_bids_above_the_zone(
         tmp_path, monkeypatch):
     _use_tmp_state(tmp_path, monkeypatch)
-    _lim_cfg(monkeypatch)
+    # Dual off so this test only asserts the limit shape of one bracket.
+    _lim_cfg(monkeypatch, ai_day_scalp_dual_tranche=False)
     stub = _StubBroker(market_open=True)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
@@ -1522,3 +1539,105 @@ def test_telemetry_failure_never_breaks_the_position_manager(
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
     cp.manage_open_positions(now=1_000_100.0)   # must not raise
+
+# ── Day Scalp v0: capital protection + sell strategy ─────────────────────────
+
+def test_place_scaled_entry_refuses_without_stop_or_target(
+        tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    d = _buy_decision(stop_price=0)
+    out = cp.place_scaled_entry("nvda", d, account_equity=50_000.0,
+                                current_ask=40.5)
+    assert out["ok"] is False
+    assert "stop and target" in out["error"]
+    assert stub.calls == []
+
+    d = _buy_decision(target_1=0)
+    out = cp.place_scaled_entry("nvda", d, account_equity=50_000.0,
+                                current_ask=40.5)
+    assert out["ok"] is False
+    assert stub.calls == []
+
+
+def test_synthetic_dual_tranche_when_day_scalp_enabled(tmp_path, monkeypatch):
+    """Synth used to force a single full-size bracket (scaled_out always false).
+    Day scalp dual tranche banks T1 on half and leaves a stopped runner."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_watch_synth_trail_pct": 2.5,
+        "ai_entry_order_style": "limit",
+        "ai_entry_limit_pad_pct": 0.15,
+        "ai_max_position_pct": 25.0,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    decision = _buy_decision(
+        synthetic=True, scale_out_pct=50, trail_pct=2.5, target_1=42.0)
+    # 200 shares at 40.5 with $2.5 risk → dual 100/100
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=40.5)
+    assert out["ok"] is True
+    assert out["qty_a"] == 100
+    assert out["qty_b"] == 100
+    assert len(stub.calls) == 2
+    assert stub.calls[0]["target_price"] == 42.0
+    assert stub.calls[1]["target_price"] is None
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["qty_b"] == 100
+    assert state["NVDA"]["strategy"] == "day_scalp_v0"
+
+
+def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        time_stop_days=None, entry_time=1_000_000.0,
+        last_seen_price=40.4, mfe_r=0.05, mae_r=-0.1,
+        entry_confirmed=True, tranche_a_filled=False,
+    )
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_dead_trade_min": 90.0,
+        "ai_dead_trade_mfe_r": 0.25,
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_entry_limit_ttl_sec": 30.0,
+    })
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             current_price=40.4)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    later = 1_000_000.0 + 91 * 60
+    events = cp.manage_open_positions(now=later)
+    assert any(e["event"] == "dead_trade" for e in events)
+    assert stub.closed == ["NVDA"]
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "dead_trade"
+
+
+def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        time_stop_days=None, entry_time=1_000_000.0,
+        last_seen_price=40.4, mfe_r=0.5, entry_confirmed=True,
+    )
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_dead_trade_min": 90.0,
+        "ai_dead_trade_mfe_r": 0.25,
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+    })
+    stub = _StubBrokerManage(position_open=True, current_price=40.4)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    later = 1_000_000.0 + 91 * 60
+    events = cp.manage_open_positions(now=later)
+    assert not any(e["event"] == "dead_trade" for e in events)
+    assert stub.closed == []

@@ -844,6 +844,91 @@ def test_format_blocker_and_derive():
     assert l3 == "in zone"
 
 
+def test_find_double_bottom_support_matches_two_swing_lows():
+    import ai_entry_watch as ew
+    # Synthetic path of lows: trend down to 20, bounce, retest 20, bounce.
+    lows = (
+        [21.0, 20.8, 20.5, 20.2, 20.0, 20.1, 20.3, 20.5, 20.4, 20.2]
+        + [20.0, 20.15, 20.4, 20.6, 20.8, 21.0, 21.2]
+    )
+    found = ew.find_double_bottom_support(
+        lows, swing=2, match_pct=0.5, min_sep_bars=3)
+    assert found is not None
+    assert abs(found["support"] - 20.0) < 0.05
+    assert found["low_a"] <= 20.05 and found["low_b"] <= 20.05
+
+
+def test_build_double_bottom_zone_geometry():
+    import ai_entry_watch as ew
+    cfg = {
+        "ai_watch_db_above_pct": 1.25,
+        "ai_watch_db_below_pct": 0.25,
+        "ai_watch_db_stop_below_pct": 0.5,
+        "ai_watch_synth_rr": 0.6,
+        "ai_watch_synth_scale_out_pct": 50,
+        "ai_watch_synth_trail_pct": 2.5,
+        "ai_watch_db_require_price_above": True,
+    }
+    z = ew.build_double_bottom_zone_structure(
+        20.0, cfg, reason="test", low_a=20.0, low_b=19.98, last_price=20.50)
+    assert z is not None
+    assert z["zone_kind"] == "double_bottom"
+    assert abs(z["entry_low"] - 20.0 * 0.9975) < 0.01
+    assert abs(z["entry_high"] - 20.0 * 1.0125) < 0.01
+    assert z["stop_price"] < z["entry_low"]
+    assert z["target_1"] > z["entry_low"]  # T1 above zone floor; may sit near high at 0.6R
+    assert z["support"] == 20.0
+    # Price already through support → refuse long zone
+    assert ew.build_double_bottom_zone_structure(
+        20.0, cfg, last_price=19.5) is None
+
+
+def test_double_bottom_zone_for_symbol_uses_injected_lows():
+    import ai_entry_watch as ew
+    lows = (
+        [22, 21.5, 21, 20.5, 20.0, 20.2, 20.5, 20.8, 20.5, 20.2]
+        + [20.0, 20.3, 20.6, 21.0, 21.2]
+    )
+    cfg = {
+        "ai_watch_db_above_pct": 1.0,
+        "ai_watch_db_below_pct": 0.25,
+        "ai_watch_db_stop_below_pct": 0.5,
+        "ai_watch_db_match_pct": 0.5,
+        "ai_watch_db_swing_bars": 2,
+        "ai_watch_db_min_sep_bars": 3,
+        "ai_watch_synth_rr": 0.6,
+    }
+    z = ew.build_double_bottom_zone_for_symbol(
+        "TEST", 21.0, cfg, lows=lows, reason="unit")
+    assert z is not None
+    assert z["zone_kind"] == "double_bottom"
+    assert abs(z["support"] - 20.0) < 0.05
+    assert z["entry_high"] > z["support"] > z["stop_price"]
+
+
+def test_decision_for_place_keeps_db_stop_under_support():
+    import ai_entry_watch as ew
+    structure = {
+        "synthetic": True,
+        "zone_kind": "double_bottom",
+        "entry_low": 19.95,
+        "entry_high": 20.25,
+        "stop_price": 19.90,
+        "target_1": 20.50,
+        "support": 20.0,
+        "reward_risk": 0.6,
+        "scale_out_pct": 50,
+        "trail_pct": 2.5,
+    }
+    d = ew._decision_for_place(
+        structure, ask=20.20,
+        cfg={"ai_watch_synth_rr": 0.6, "ai_watch_db_stop_below_pct": 0.5})
+    assert d["decision"] == "BUY"
+    assert d["stop_price"] < 20.20
+    assert d["stop_price"] <= 20.0  # still under support shelf
+    assert d["target_1"] > d["stop_price"]
+
+
 def test_synth_offset_zone_from_price():
     import ai_entry_watch as ew
     s = ew.build_offset_zone_structure(100.0, {
@@ -861,7 +946,9 @@ def test_synth_offset_zone_from_price():
     rec = {"symbol": "X", "source": "trending", "status": "watching",
            "structure": {"wait_kind": "hard_no", "entry_low": 0, "entry_high": 0}}
     cfg = {
-        "ai_watch_synth_zone_enabled": True, "ai_watch_zone_offset_pct": 5.0,
+        "ai_watch_synth_zone_enabled": True,
+        "ai_watch_zone_mode": "offset",  # legacy path under test
+        "ai_watch_zone_offset_pct": 5.0,
         "ai_watch_zone_width_pct": 2.0, "ai_watch_synth_stop_pct": 2.0,
         "ai_watch_synth_rr": 3.0, "ai_watch_synth_reanchor_pct": 0.5,
     }

@@ -160,14 +160,14 @@ DEFAULT_CONFIG = {
     "ai_avg_days":                10,
     "ai_rvol_time_adjusted":    True,
     "ai_trade_amount":        1000.0,
-    "ai_max_positions":            5,
-    "ai_max_buys_per_poll":        3,
+    "ai_max_positions":            3,
+    "ai_max_buys_per_poll":        2,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
-    "ai_trade_style": "Moderate position",
+    "ai_trade_style": "Day scalp",
     # Must be <= ai_watch_synth_rr or every synthetic zone self-blocks on the
-    # reward_risk gate in should_arm_buy.
-    "ai_min_reward_risk":        1.5,
+    # reward_risk gate in should_arm_buy. Day scalp uses sub-1R first targets.
+    "ai_min_reward_risk":        0.5,
     "ai_positions_poll_sec":     5.0,
     "ai_prompt_file": "ai_prompt.txt",
     # Safety / desk quality knobs
@@ -328,6 +328,22 @@ DEFAULT_CONFIG = {
     "ai_watch_stream_skip_margin_pct":  1.0,  # only skip when this far outside
     # Synthetic pullback zone when model has no levels (Mom/ST).
     "ai_watch_synth_zone_enabled":     True,
+    # Zone construction mode for synthetic levels:
+    #   "double_bottom" — two matching swing lows on 1m bars; buy band from
+    #                     support up ~1.25% (tiny pad under). Falls back to
+    #                     "offset" when bars/pattern unavailable.
+    #   "offset"        — % under the live print (legacy).
+    "ai_watch_zone_mode":     "double_bottom",
+    # Double-bottom geometry (see find_double_bottom_support / build_db_zone).
+    "ai_watch_db_above_pct":           1.25,  # entry_high = S * (1 + above/100)
+    "ai_watch_db_below_pct":           0.25,  # entry_low  = S * (1 - below/100) fill pad
+    "ai_watch_db_stop_below_pct":      0.50,  # stop under the lower of the two lows
+    "ai_watch_db_match_pct":           0.40,  # two lows "same support" if within this %
+    "ai_watch_db_swing_bars":             2,  # pivot: lower than this many bars each side
+    "ai_watch_db_min_sep_bars":           3,  # min bars between the two bottoms
+    "ai_watch_db_lookback_bars":         90,  # recent 1m bars to scan
+    "ai_watch_db_bar_refresh_sec":     120.0,  # throttle REST bar pulls per symbol
+    "ai_watch_db_require_price_above": True,  # only arm structure if last > support
     # 2.0 (not 5.0): at a 5% offset the zone is built 5% under the print and
     # re-anchors up on every tick, so the ask sits a permanent +5.26% above the
     # zone top (1/0.95-1) and only a 5% break from the high-water mark ever
@@ -341,7 +357,25 @@ DEFAULT_CONFIG = {
     "ai_watch_zone_width_pct":         4.0,  # zone depth below entry_high
     # Measured off the *fill*, not entry_low — see _decision_for_place.
     "ai_watch_synth_stop_pct":         5.0,  # stop under the fill price
-    "ai_watch_synth_rr":               1.5,  # target at this R multiple
+    # Day Scalp v0: first bank inside a normal day's range. 1.5R at 5% stop
+    # demanded +7.5% (above p75 of day range) and ~77% of replay exits hit the
+    # 15:50 clock instead. 0.6R ≈ +3% — reachable for small consistent banks.
+    "ai_watch_synth_rr":               0.6,  # target at this R multiple
+    # Scale-out / runner (synthetic dual tranche when ai_day_scalp_dual_tranche).
+    "ai_watch_synth_scale_out_pct":   50.0,  # % of shares with T1 take-profit
+    "ai_watch_synth_trail_pct":        2.5,  # runner trail after T1 (percent)
+    # Dual tranche for synth: T1 bank half + runner with BE/trail. Single
+    # bracket (legacy) never set scaled_out and left all size on one target.
+    "ai_day_scalp_dual_tranche":      True,
+    # Dead trade: still flat/red with tiny MFE after N minutes → market out.
+    "ai_dead_trade_min":               90.0,
+    "ai_dead_trade_mfe_r":            0.25,
+    # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
+    "ai_position_shadow_enabled":     True,
+    # On sell_signal while green, move stop to entry (never loosen).
+    "ai_sell_signal_breakeven":       True,
+    # If an open long has no resting sell stop, place one from managed state.
+    "ai_heal_unprotected":            True,
     # Re-anchor frozen synth zone when last is this far above entry_high (%).
     # 0.0 = track the real-time price every poll (no deadband).
     "ai_watch_synth_reanchor_pct":     0.0,
@@ -625,11 +659,29 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_look_max",
     "ai_watch_require_look_ext",
     "ai_watch_synth_zone_enabled",
+    "ai_watch_zone_mode",
+    "ai_watch_db_above_pct",
+    "ai_watch_db_below_pct",
+    "ai_watch_db_stop_below_pct",
+    "ai_watch_db_match_pct",
+    "ai_watch_db_swing_bars",
+    "ai_watch_db_min_sep_bars",
+    "ai_watch_db_lookback_bars",
+    "ai_watch_db_bar_refresh_sec",
+    "ai_watch_db_require_price_above",
     "ai_watch_zone_offset_pct",
     "ai_watch_zone_width_pct",
     "ai_watch_synth_stop_pct",
     "ai_watch_synth_reanchor_pct",
     "ai_watch_synth_rr",
+    "ai_watch_synth_scale_out_pct",
+    "ai_watch_synth_trail_pct",
+    "ai_day_scalp_dual_tranche",
+    "ai_dead_trade_min",
+    "ai_dead_trade_mfe_r",
+    "ai_position_shadow_enabled",
+    "ai_sell_signal_breakeven",
+    "ai_heal_unprotected",
     "ai_watch_require_uptrend",
     "ai_watch_require_indicators",
     "ai_watch_min_proximity",

@@ -68,6 +68,8 @@ POSITION_SHADOW_PATH = REPORT_DIR / "position_shadow.jsonl"
 # outperform, the gate is destroying value and nothing else on disk would say
 # so. apply_inclusion_gate computed this list and discarded it.
 REJECTS_PATH = REPORT_DIR / "rejects.jsonl"
+# Exit-side decision log: one row per open position per tick (MAE/MFE, exit_why).
+POSITION_SHADOW_PATH = REPORT_DIR / "position_shadow.jsonl"
 OPEN_BELL_STATE_PATH = REPORT_DIR / "open_bell_state.json"
 EOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "eod_liquidate_state.json"
 SOD_LIQUIDATE_STATE_PATH = REPORT_DIR / "sod_liquidate_state.json"
@@ -77,7 +79,7 @@ ET = ZoneInfo("America/New_York")
 # Never more than this much of the account on a single trade's stop distance.
 DEFAULT_RISK_PCT = 1.0
 DEFAULT_STYLE = "Moderate position"
-DEFAULT_MIN_REWARD_RISK = 3.0
+DEFAULT_MIN_REWARD_RISK = 0.5
 # Cancel unfilled / unconfirmed entries after this many seconds in RTH.
 DEFAULT_UNCONFIRMED_TTL_SEC = 900.0
 # Stop new entries when today's realized R from closed AI trades <= -this.
@@ -86,6 +88,9 @@ DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
 DEFAULT_MAX_OPEN_RISK_PCT = 5.0
 # Max bid/ask spread % of mid (0 = disabled).
 DEFAULT_MAX_SPREAD_PCT = 1.0
+# Day-scalp dead trade: minutes held with no meaningful MFE.
+DEFAULT_DEAD_TRADE_MIN = 90.0
+DEFAULT_DEAD_TRADE_MFE_R = 0.25
 # Keep a small ring of recent events for /api/state.
 _EVENT_RING_MAX = 80
 _event_lock = threading.Lock()
@@ -785,6 +790,9 @@ def place_scaled_entry(
 
     If tranche A succeeds and B fails, A is cancelled / flattened so the
     book never sits half-armed.
+
+    Day Scalp rule: no entry without a hard stop *and* a sell strategy
+    (T1 take-profit on A; stop+optional trail on B). Bare longs are refused.
     """
     import alpaca_trader
 
@@ -804,12 +812,47 @@ def place_scaled_entry(
     entry_high = float(decision.get("entry_high") or entry_low)
     stop_price = float(decision.get("stop_price") or 0)
     target_1 = float(decision.get("target_1") or 0)
-    scale_out_pct = max(0.0, min(100.0, float(decision.get("scale_out_pct") or 40)))
+    cfg = _entry_cfg()
+    try:
+        default_scale = float(cfg.get("ai_watch_synth_scale_out_pct", 50) or 50)
+    except (TypeError, ValueError):
+        default_scale = 50.0
+    scale_out_pct = max(
+        0.0, min(100.0, float(decision.get("scale_out_pct") or default_scale)))
+    try:
+        default_trail = float(cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5)
+    except (TypeError, ValueError):
+        default_trail = 2.5
+    trail_pct = float(decision.get("trail_pct") or 0) or default_trail or None
 
     if current_ask is not None and not (entry_low <= current_ask <= max(entry_high, entry_low)):
         err = (
             f"price ${current_ask:.2f} left the entry zone "
             f"${entry_low:.2f}-${entry_high:.2f} before the order could go in"
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
+
+    # Size against the price the order will actually fill at, not the zone
+    # bound — current_ask is already validated to fall inside that zone.
+    sizing_entry = current_ask or entry_high or entry_low
+
+    # Capital protection: refuse any entry without a defined stop and sell plan.
+    if stop_price <= 0 or target_1 <= 0 or sizing_entry <= 0:
+        err = "refused: stop and target_1 required (no naked long / no sell plan)"
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
+    if stop_price >= sizing_entry:
+        err = (
+            f"refused: stop ${stop_price:.4f} must be below entry "
+            f"${sizing_entry:.4f}"
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
+    if target_1 <= sizing_entry:
+        err = (
+            f"refused: target_1 ${target_1:.4f} must be above entry "
+            f"${sizing_entry:.4f} (sell strategy required)"
         )
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
@@ -831,9 +874,6 @@ def place_scaled_entry(
 
     _clear_open(ticker)
 
-    # Size against the price the order will actually fill at, not the zone
-    # bound — current_ask is already validated to fall inside that zone.
-    sizing_entry = current_ask or entry_high or entry_low
     total_qty = alpaca_trader.size_by_risk(
         account_equity, risk_pct, sizing_entry, stop_price)
     if total_qty <= 0:
@@ -846,7 +886,7 @@ def place_scaled_entry(
     # well over 100% of equity. Belt-and-braces now that the synthetic stop is a
     # fixed 5% of the fill (~20% of equity per name at 1% risk).
     try:
-        max_pos_pct = float(_entry_cfg().get("ai_max_position_pct", 25.0) or 0.0)
+        max_pos_pct = float(cfg.get("ai_max_position_pct", 25.0) or 0.0)
     except (TypeError, ValueError):
         max_pos_pct = 25.0
     if max_pos_pct > 0 and sizing_entry > 0:
@@ -873,18 +913,24 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
 
-    # One OTOCO bracket for full size. Dual market buys (scale-out A+B) race
-    # Alpaca wash-trade checks when stop/TP legs from A are still open.
-    # Synthetic / desk zones and any decision with scale_out disabled use this
-    # path; research can still request a split via scale_out_pct when needed —
-    # but default to single bracket for reliability when filling READY names.
-    use_single = bool(decision.get("synthetic")) or scale_out_pct >= 99.0
+    # Day scalp: dual tranche for synthetic (T1 bank + runner). Need ≥2 shares
+    # to split. scale_out ≥99 or dual disabled → single full bracket (still
+    # has stop + target — never a naked long).
+    dual = bool(cfg.get("ai_day_scalp_dual_tranche", True))
+    use_single = (
+        scale_out_pct >= 99.0
+        or total_qty < 2
+        or (bool(decision.get("synthetic")) and not dual)
+    )
     if use_single:
         qty_a = int(total_qty)
         qty_b = 0
     else:
         qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
         qty_b = total_qty - qty_a
+        if qty_b <= 0:
+            qty_a = int(total_qty)
+            qty_b = 0
 
     entry_limit = _entry_limit_price(current_ask, entry_high, entry_low)
 
@@ -892,7 +938,8 @@ def place_scaled_entry(
         if entry_limit is not None:
             return alpaca_trader.buy_limit_bracket(
                 ticker, qty_a, limit_price=entry_limit,
-                stop_price=stop_price, target_price=target_1)
+                stop_price=stop_price, target_price=target_1,
+                stop_market=True)
         return alpaca_trader.buy_bracket_exact(
             ticker, qty_a, stop_price=stop_price, target_price=target_1)
 
@@ -916,16 +963,39 @@ def place_scaled_entry(
                 "tranche_a": result_a, "tranche_b": None,
             }
 
+    # Bracket submit included stop+target on A. Alpaca may not echo leg ids in
+    # the parent response (legs empty until refresh) — do not roll back a live
+    # OTOCO because of missing ids. Heal pass covers a truly naked long.
+    if not result_a.get("buy_order_id"):
+        err = "refused: buy order id missing after place"
+        log_event("entry_fail", symbol=ticker, reason=err, leg="A")
+        return {
+            "ok": False, "error": err, "ticker": ticker,
+            "tranche_a": result_a, "tranche_b": None,
+        }
+    if not result_a.get("target_order_id"):
+        log_event(
+            "entry_warn", symbol=ticker,
+            reason="target_order_id_missing_from_response",
+            note="OTOCO submitted with target; will reconcile/heal if naked",
+        )
+
     if qty_b > 0:
         if entry_limit is not None:
             # No target on the runner leg — it rides until manage_open_positions
             # replaces its stop with breakeven/trailing after A scales out.
             result_b = alpaca_trader.buy_limit_bracket(
                 ticker, qty_b, limit_price=entry_limit,
-                stop_price=stop_price, target_price=None)
+                stop_price=stop_price, target_price=None,
+                stop_market=True)
         else:
             result_b = alpaca_trader.buy_bracket_exact(
                 ticker, qty_b, stop_price=stop_price)
+        if result_b.get("ok") and not result_b.get("stop_order_id"):
+            result_b = {
+                "ok": False, "error": "runner missing stop_order_id",
+                "status": "no_stop",
+            }
     else:
         result_b = {"ok": True, "buy_order_id": None, "stop_order_id": None}
 
@@ -955,6 +1025,10 @@ def place_scaled_entry(
 
     state = _load_state()
     src = duel_source or decision.get("duel_source") or decision.get("source")
+    strategy = (
+        decision.get("strategy")
+        or ("day_scalp_v0" if decision.get("synthetic") else "research")
+    )
     state[ticker] = {
         "qty_a": qty_a,
         "qty_b": qty_b,
@@ -965,17 +1039,20 @@ def place_scaled_entry(
         # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
         # must key off this; the parent fills at entry.
         "tranche_a_target_order_id": result_a.get("target_order_id"),
+        "tranche_a_stop_order_id": result_a.get("stop_order_id"),
         "tranche_b_order_id": result_b.get("buy_order_id"),
         "tranche_b_stop_order_id": result_b.get("stop_order_id"),
         "stop_price": stop_price,
         "target_1": target_1,
-        "trail_pct": float(decision.get("trail_pct") or 0) or None,
+        "trail_pct": trail_pct,
         "time_stop_days": int(decision.get("time_stop_days") or 0) or None,
         "entry_time": time.time(),
         "tranche_a_filled": False,
         "breakeven_done": False,
         "reward_risk": decision.get("reward_risk"),
         "summary": decision.get("summary"),
+        "strategy": strategy,
+        "scale_out_pct": scale_out_pct,
         # Decision-time feature vector (ai_entry_watch._entry_features), held
         # so the outcome record can land denormalized — features and result on
         # one row. A join against events.jsonl would work until a symbol is
@@ -988,12 +1065,15 @@ def place_scaled_entry(
         "last_seen_price": None,
         "closing_reason": None,
         "duel_source": src,
+        "mae_r": None,
+        "mfe_r": None,
+        "sell_signal_stop_done": False,
     }
     _save_state(state)
     log_event(
         "entry_ok", symbol=ticker, qty_a=qty_a, qty_b=qty_b,
         stop_price=stop_price, target_1=target_1, entry_price=sizing_entry,
-        duel_source=src,
+        duel_source=src, strategy=strategy, dual=bool(qty_b > 0),
     )
     try:
         import ai_duel as duel
@@ -1016,6 +1096,7 @@ def place_scaled_entry(
         "target_1": target_1,
         "tranche_a": result_a,
         "tranche_b": result_b,
+        "strategy": strategy,
     }
 
 
@@ -1315,6 +1396,7 @@ def _log_position_shadow(ticker: str, pos: dict[str, Any], price: float | None,
             "breakeven_done": bool(pos.get("breakeven_done")),
             "sell_signal_stop_done": bool(pos.get("sell_signal_stop_done")),
             "closing_reason": pos.get("closing_reason"),
+            "strategy": pos.get("strategy"),
             "source": (pos.get("features") or {}).get("source"),
             "entry_hour_et": _et_hour(now),
         }
@@ -1402,6 +1484,62 @@ def resolve_exit(pos: dict[str, Any], ticker: str = "") -> tuple:
     return None, "unknown"
 
 
+def _cfg_float(key: str, default: float) -> float:
+    try:
+        return float(_entry_cfg().get(key, default) or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _heal_unprotected(
+    unprotected: list[dict[str, Any]], state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Place a resting stop for managed longs that have no sell protection.
+
+    Never opens new risk — only attaches a stop (or flattens if we cannot).
+    """
+    import alpaca_trader
+
+    events: list[dict[str, Any]] = []
+    if not unprotected or not _cfg_flag("ai_heal_unprotected", True):
+        return events
+    for u in unprotected:
+        sym = str(u.get("symbol") or "").upper()
+        if not sym or not u.get("managed"):
+            continue
+        pos = state.get(sym) or {}
+        stop = _num(pos.get("stop_price"))
+        entry = _num(pos.get("entry_price"))
+        if not stop or not entry or stop >= entry:
+            # No known stop — flatten rather than invent levels.
+            try:
+                alpaca_trader.cancel_open_orders(sym)
+            except Exception:  # noqa: BLE001
+                pass
+            out = alpaca_trader.close_out(sym) or {}
+            if isinstance(out, dict) and out.get("order_id"):
+                pos["close_order_id"] = str(out["order_id"])
+            pos["closing_reason"] = pos.get("closing_reason") or "unprotected_flatten"
+            state[sym] = pos
+            events.append({"ticker": sym, "event": "unprotected_flatten"})
+            log_event("unprotected_flatten", symbol=sym)
+            continue
+        out = alpaca_trader.replace_stop(sym, None, stop_price=stop)
+        if isinstance(out, dict) and out.get("ok"):
+            pos["tranche_b_stop_order_id"] = out.get("order_id") or pos.get(
+                "tranche_b_stop_order_id")
+            state[sym] = pos
+            events.append({"ticker": sym, "event": "unprotected_healed",
+                           "stop_price": stop})
+            log_event("unprotected_healed", symbol=sym, stop_price=stop)
+        else:
+            log_event(
+                "unprotected_heal_failed", symbol=sym,
+                reason=str((out or {}).get("error") or (out or {}).get("status"))[:160],
+            )
+    return events
+
+
 def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
                     close_reason: str, now: float) -> dict[str, Any]:
     entry_price = pos.get("entry_price") or 0
@@ -1435,8 +1573,12 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "entry_time": entry_time,
         "exit_time": now,
         "hold_days": round((now - entry_time) / 86400.0, 2),
+        "hold_sec": round(now - float(entry_time or now), 1),
         "reward_risk_planned": pos.get("reward_risk"),
         "summary": pos.get("summary"),
+        "strategy": pos.get("strategy"),
+        "mae_r": pos.get("mae_r"),
+        "mfe_r": pos.get("mfe_r"),
         # Why this trade was taken, alongside how it ended. Without it an
         # outcome is unsliceable: you know the result but not which gate,
         # indicator state, or time of day to attribute it to.
@@ -1536,6 +1678,10 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
         log_state_event("position_unprotected",
                         sorted(p["symbol"] for p in unprotected),
                         positions=unprotected)
+        heal_events = _heal_unprotected(unprotected, state)
+        if heal_events:
+            _save_state(state)
+            report["heal_events"] = heal_events
     else:
         clear_state_event("position_unprotected")
     _last_reconcile = report
@@ -1547,7 +1693,7 @@ def manage_open_positions(
     *,
     unconfirmed_ttl_sec: float = DEFAULT_UNCONFIRMED_TTL_SEC,
 ) -> list[dict[str, Any]]:
-    """Desk-tick check, no LLM: closures, tranche-A fills, TTL, time-stops.
+    """Desk-tick check, no LLM: closures, scale-out, dead-trade, defense.
 
     Cheap enough to run every tick — everything it needs (position detail,
     order status, a breakeven/trailing-stop replacement, a time-boxed close)
@@ -1580,6 +1726,7 @@ def manage_open_positions(
                     pos["entry_price"] = fill
             pos["entry_confirmed"] = True
             pos["last_seen_price"] = live.get("current")
+            _update_excursions(pos, live.get("current"))
             changed = True
             continue
         if not pos.get("entry_confirmed"):
@@ -1659,11 +1806,8 @@ def manage_open_positions(
     # flag turned on afterwards. The three-indicator strategy computes it every
     # scan and no exit path was listening.
     #
-    # It tightens rather than closes. The desk has no completed-trade history
-    # to say whether this signal beats letting the bracket work, and closing on
-    # an unmeasured signal is the kind of confident, fake verdict the reports
-    # are careful to avoid. Moving the stop to entry caps the loss at a scratch
-    # and keeps the target live if the signal is wrong.
+    # It tightens rather than closes. Moving the stop to entry caps the loss
+    # at a scratch and keeps the target live if the signal is wrong.
     # One indicator read per tick, shared by the defence below and the exit
     # shadow log — not one per position, against a rate limit four processes
     # already share.
@@ -1684,14 +1828,12 @@ def manage_open_positions(
                 continue
             # A stop is only a stop while it sits BELOW the market. Underwater,
             # "move it to breakeven" places it above the last print, which
-            # Alpaca triggers on receipt — that is a market exit wearing a stop
-            # order's name, and it is the opposite of tightening. Both open
-            # positions were below entry the moment this was written. Leave the
-            # original stop to do its job and record that we saw the flag.
+            # Alpaca triggers on receipt — leave the original stop to work.
             if last <= entry:
-                events.append({"ticker": ticker, "event": "sell_signal_underwater",
-                               "entry": entry, "last": last,
-                               "stop": cur_stop})
+                events.append({
+                    "ticker": ticker, "event": "sell_signal_underwater",
+                    "entry": entry, "last": last, "stop": cur_stop,
+                })
                 log_event("sell_signal_underwater", symbol=ticker,
                           entry=entry, last=last, stop=cur_stop)
                 exit_why[ticker] = "sell_signal_underwater"
@@ -1709,14 +1851,18 @@ def manage_open_positions(
                 pos["stop_price"] = entry
                 pos["sell_signal_stop_done"] = True
                 changed = True
-                events.append({"ticker": ticker, "event": "sell_signal_breakeven",
-                               "from_stop": cur_stop, "to_stop": entry,
-                               "last": last})
+                events.append({
+                    "ticker": ticker, "event": "sell_signal_breakeven",
+                    "from_stop": cur_stop, "to_stop": entry, "last": last,
+                })
                 log_event("sell_signal_breakeven", symbol=ticker,
                           from_stop=cur_stop, to_stop=entry, last=last)
                 exit_why[ticker] = "sell_signal_breakeven"
 
-    # Pass 2: only for positions still open — tranche-A fill and time-stop.
+    # Pass 2: tranche-A fill, dead-trade, day time-stop.
+    dead_min = _cfg_float("ai_dead_trade_min", DEFAULT_DEAD_TRADE_MIN)
+    dead_mfe = _cfg_float("ai_dead_trade_mfe_r", DEFAULT_DEAD_TRADE_MFE_R)
+
     for ticker, pos in list(state.items()):
         # Tranche A fill -> move tranche B's stop to breakeven/trailing.
         # Key off the take-profit leg. Using the parent buy id here meant
@@ -1728,7 +1874,7 @@ def manage_open_positions(
                 pos["tranche_a_filled"] = True
                 if pos.get("qty_b", 0) > 0:
                     trail_pct = pos.get("trail_pct")
-                    # Prefer true breakeven when no trail_pct; otherwise trail.
+                    # Prefer trail when set (day scalp runner); else BE.
                     be_price = pos.get("entry_price")
                     out = alpaca_trader.replace_stop(
                         ticker, pos.get("tranche_b_stop_order_id"),
@@ -1741,19 +1887,52 @@ def manage_open_positions(
                     pos["tranche_b_stop_order_id"] = out.get("order_id")
                     events.append({"ticker": ticker, "event": "scaled_out",
                                    "target_1": pos.get("target_1")})
+                    exit_why[ticker] = "scaled_out"
                 pos["breakeven_done"] = True
                 changed = True
 
-        # Time stop: first target never hit within the model's own deadline.
-        # Guarded on closing_reason so a still-open position (close_out
-        # submitted but not yet filled) doesn't re-trigger every tick.
+        if pos.get("closing_reason"):
+            continue
+
+        # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
+        if (
+            dead_min > 0
+            and not pos.get("tranche_a_filled")
+            and pos.get("entry_confirmed")
+        ):
+            age_min = (now - float(pos.get("entry_time") or now)) / 60.0
+            mfe = _num(pos.get("mfe_r"))
+            last = _num(pos.get("last_seen_price"))
+            entry = _num(pos.get("entry_price"))
+            mfe_ok = mfe is None or mfe < dead_mfe
+            underwater_or_flat = (
+                last is None or entry is None or last <= entry * 1.001
+            )
+            if age_min >= dead_min and mfe_ok and underwater_or_flat:
+                alpaca_trader.cancel_open_orders(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = "dead_trade"
+                exit_why[ticker] = "dead_trade"
+                events.append({
+                    "ticker": ticker, "event": "dead_trade",
+                    "age_min": round(age_min, 1),
+                    "mfe_r": mfe,
+                })
+                log_event(
+                    "dead_trade", symbol=ticker,
+                    age_min=round(age_min, 1), mfe_r=mfe,
+                )
+                changed = True
+                continue
+
+        # Multi-day time stop (research / swing only).
         days = pos.get("time_stop_days")
-        if days and not pos.get("tranche_a_filled") and not pos.get("closing_reason"):
+        if days and not pos.get("tranche_a_filled"):
             age_days = (now - pos.get("entry_time", now)) / 86400.0
             if age_days > days:
                 alpaca_trader.cancel_open_orders(ticker)
-                # Keep the closing order id so this exit's fill is resolvable —
-                # otherwise the outcome has no price we are willing to trust.
                 out = alpaca_trader.close_out(ticker) or {}
                 if isinstance(out, dict) and out.get("order_id"):
                     pos["close_order_id"] = str(out["order_id"])
@@ -1764,16 +1943,15 @@ def manage_open_positions(
                 changed = True
 
     # Exit-side shadow log. Written last so it records the state the tick
-    # actually left the position in, and for every position including the ones
-    # nothing happened to — "hold" is the row that makes the log able to price
-    # the decisions that were NOT taken, which is the whole point of the buy
-    # side's arm_why and the thing the exit side never had.
+    # actually left the position in, including "hold" (decisions NOT taken).
     if bool(_cfg_flag("ai_position_shadow_enabled", True)):
         for ticker, pos in list(state.items()):
             price = _num(pos.get("last_seen_price"))
             _update_excursions(pos, price)
-            _log_position_shadow(ticker, pos, price, indicators.get(ticker),
-                                 exit_why.get(ticker, "hold"), now)
+            _log_position_shadow(
+                ticker, pos, price, indicators.get(ticker),
+                exit_why.get(ticker, "hold"), now,
+            )
         if state:
             changed = True     # excursions moved
 

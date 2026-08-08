@@ -2057,6 +2057,324 @@ def _structure_levels(structure: dict) -> tuple[float, float, float, float, floa
     return entry_low, entry_high, stop, target, rr
 
 
+# ── Double-bottom structure zones ───────────────────────────────────────────
+# Two candle lows at the same support shelf. Buy band: from S (tiny pad under)
+# up ~1–1.5%. Stop under the lower low. Bars are throttled; failure falls back
+# to the legacy % offset zone.
+
+_bar_cache: dict[str, tuple[float, Any]] = {}  # symbol -> (ts, lows list or df)
+_bar_cache_lock = threading.Lock()
+
+
+def find_double_bottom_support(
+    lows: list[float],
+    *,
+    swing: int = 2,
+    match_pct: float = 0.40,
+    min_sep_bars: int = 3,
+) -> dict[str, Any] | None:
+    """Find two matching swing lows that define the same support shelf.
+
+    A swing low is a bar whose low is <= lows within ``swing`` bars on each
+    side. Two swings "match" when |L1−L2| / mid <= match_pct/100 and they are
+    at least ``min_sep_bars`` apart. Support S = min of the two lows (floor of
+    the shelf). Returns None when no pair qualifies.
+    """
+    if not lows or len(lows) < max(5, 2 * swing + min_sep_bars + 1):
+        return None
+    try:
+        xs = [float(x) for x in lows]
+    except (TypeError, ValueError):
+        return None
+    n = len(xs)
+    swing = max(1, int(swing))
+    min_sep = max(1, int(min_sep_bars))
+    match = max(0.0, float(match_pct)) / 100.0
+
+    pivots: list[tuple[int, float]] = []
+    for i in range(swing, n - swing):
+        lo = xs[i]
+        if lo <= 0:
+            continue
+        window = xs[i - swing: i + swing + 1]
+        if lo <= min(window) + 1e-12:
+            # strict-ish local min: at least as low as neighbors
+            pivots.append((i, lo))
+    if len(pivots) < 2:
+        return None
+
+    # Prefer the most recent pair that matches (walk newest-first).
+    for j in range(len(pivots) - 1, 0, -1):
+        i2, l2 = pivots[j]
+        for k in range(j - 1, -1, -1):
+            i1, l1 = pivots[k]
+            if i2 - i1 < min_sep:
+                continue
+            mid = (l1 + l2) / 2.0
+            if mid <= 0:
+                continue
+            if abs(l1 - l2) / mid > match:
+                continue
+            s = min(l1, l2)
+            return {
+                "support": s,
+                "low_a": l1,
+                "low_b": l2,
+                "index_a": i1,
+                "index_b": i2,
+                "match_pct": round(100.0 * abs(l1 - l2) / mid, 3),
+            }
+    return None
+
+
+def build_double_bottom_zone_structure(
+    support: float,
+    cfg: dict | None = None,
+    *,
+    reason: str = "",
+    low_a: float | None = None,
+    low_b: float | None = None,
+    last_price: float | None = None,
+) -> dict[str, Any] | None:
+    """Zone from double-bottom support S: tiny pad under → ~1.25% above.
+
+    entry_low  ≈ S × (1 − below_pct)
+    entry_high ≈ S × (1 + above_pct)   # preferred entry near top
+    stop       ≈ min(lows) × (1 − stop_below_pct)
+    target     from day-scalp R multiple off mid-zone risk
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        s = float(support)
+    except (TypeError, ValueError):
+        return None
+    if s <= 0:
+        return None
+
+    def _pct(key: str, default: float) -> float:
+        try:
+            return max(0.0, float(cfg.get(key, default) or default))
+        except (TypeError, ValueError):
+            return default
+
+    above = _pct("ai_watch_db_above_pct", 1.25) / 100.0
+    below = _pct("ai_watch_db_below_pct", 0.25) / 100.0
+    stop_below = _pct("ai_watch_db_stop_below_pct", 0.50) / 100.0
+    try:
+        rr = max(0.25, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.6))
+    except (TypeError, ValueError):
+        rr = 0.6
+    try:
+        scale_out = max(1.0, min(99.0, float(
+            cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0)))
+    except (TypeError, ValueError):
+        scale_out = 50.0
+    try:
+        trail_pct = max(0.0, float(
+            cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5))
+    except (TypeError, ValueError):
+        trail_pct = 2.5
+
+    floor = s
+    for x in (low_a, low_b):
+        try:
+            if x is not None and float(x) > 0:
+                floor = min(floor, float(x))
+        except (TypeError, ValueError):
+            pass
+
+    entry_low = s * (1.0 - below)
+    entry_high = s * (1.0 + above)
+    if entry_low <= 0 or entry_high <= entry_low:
+        return None
+    stop = floor * (1.0 - stop_below)
+    if stop <= 0 or stop >= entry_low:
+        stop = entry_low * 0.995
+    mid = (entry_low + entry_high) / 2.0
+    risk = mid - stop
+    if risk <= 0:
+        return None
+    target = mid + rr * risk
+
+    if bool(cfg.get("ai_watch_db_require_price_above", True)):
+        try:
+            px = float(last_price) if last_price is not None else 0.0
+        except (TypeError, ValueError):
+            px = 0.0
+        if px > 0 and px < s:
+            # Price already through the shelf — do not publish a long zone.
+            return None
+
+    def _r(x: float) -> float:
+        if x >= 100:
+            return round(x, 2)
+        if x >= 1:
+            return round(x, 3)
+        return round(x, 4)
+
+    return {
+        "decision": "WAIT",
+        "wait_kind": "wait_for_zone",
+        "entry_low": _r(entry_low),
+        "entry_high": _r(entry_high),
+        "stop_price": _r(stop),
+        "target_1": _r(target),
+        "reward_risk": round(rr, 2),
+        "scale_out_pct": scale_out,
+        "trail_pct": trail_pct,
+        "trail_method": "pct",
+        "synthetic": True,
+        "zone_kind": "double_bottom",
+        "strategy": "day_scalp_v0",
+        "support": _r(s),
+        "db_low_a": _r(float(low_a)) if low_a else None,
+        "db_low_b": _r(float(low_b)) if low_b else None,
+        "anchor_price": _r(float(last_price)) if last_price else _r(s),
+        "summary": (
+            f"double-bottom zone: support {_r(s)} "
+            f"band {_r(entry_low)}-{_r(entry_high)} (+{above * 100:.2f}%/-{below * 100:.2f}%)"
+            + (f" · {reason}" if reason else "")
+        ),
+    }
+
+
+def _extract_lows_from_bars(bars: Any, lookback: int) -> list[float]:
+    """Pull recent low prices from a DataFrame or sequence."""
+    if bars is None:
+        return []
+    try:
+        import pandas as pd
+        if isinstance(bars, pd.DataFrame):
+            if "low" not in bars.columns:
+                return []
+            series = bars["low"].tail(int(lookback))
+            out: list[float] = []
+            for v in series.tolist():
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if fv > 0:
+                    out.append(fv)
+            return out
+    except Exception:
+        pass
+    if isinstance(bars, (list, tuple)):
+        out = []
+        for v in list(bars)[-int(lookback):]:
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if fv > 0:
+                out.append(fv)
+        return out
+    return []
+
+
+def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
+    """Throttled bar lows for double-bottom detection. Empty on failure."""
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return []
+    try:
+        refresh = float(cfg.get("ai_watch_db_bar_refresh_sec", 120.0) or 120.0)
+    except (TypeError, ValueError):
+        refresh = 120.0
+    refresh = max(30.0, refresh)
+    try:
+        lookback = int(cfg.get("ai_watch_db_lookback_bars", 90) or 90)
+    except (TypeError, ValueError):
+        lookback = 90
+    lookback = max(20, min(300, lookback))
+
+    with _bar_cache_lock:
+        hit = _bar_cache.get(sym)
+        if hit and (now - hit[0]) < refresh and hit[1]:
+            return list(hit[1])
+
+    lows: list[float] = []
+    try:
+        from config import load_config
+        full = load_config() or {}
+        full = {**full, **(cfg or {})}
+        # Prefer short history for structure (not full bar_count 300 every time).
+        bar_cfg = dict(full)
+        bar_cfg["bar_timeframe"] = str(
+            full.get("ai_watch_db_bar_timeframe") or "1Min")
+        bar_cfg["bar_count"] = lookback
+        api_key = full.get("api_key") or full.get("alpaca_key")
+        secret = full.get("secret_key") or full.get("alpaca_secret")
+        if not api_key or not secret:
+            try:
+                import json
+                sec_path = ROOT / "config" / "secrets.json"
+                if sec_path.exists():
+                    sec = json.loads(sec_path.read_text(encoding="utf-8"))
+                    api_key = api_key or sec.get("api_key") or sec.get("ALPACA_API_KEY")
+                    secret = secret or sec.get("secret_key") or sec.get("ALPACA_SECRET_KEY")
+            except Exception:
+                pass
+        if api_key and secret:
+            import alpaca_api as aa
+            client = aa.connect_data_client({
+                "api_key": api_key, "secret_key": secret,
+            })
+            df = aa.fetch_bars(client, sym, bar_cfg)
+            lows = _extract_lows_from_bars(df, lookback)
+    except Exception:
+        lows = []
+
+    with _bar_cache_lock:
+        if lows:
+            _bar_cache[sym] = (now, lows)
+        elif hit:
+            return list(hit[1])
+    return lows
+
+
+def build_double_bottom_zone_for_symbol(
+    symbol: str,
+    last_price: float,
+    cfg: dict | None = None,
+    *,
+    now: float | None = None,
+    reason: str = "",
+    lows: list[float] | None = None,
+) -> dict[str, Any] | None:
+    """Full path: bars → double bottom → zone structure. None if unavailable."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    t0 = time.time() if now is None else float(now)
+    if lows is None:
+        lows = _fetch_symbol_lows(symbol, cfg, t0)
+    if not lows:
+        return None
+    try:
+        swing = int(cfg.get("ai_watch_db_swing_bars", 2) or 2)
+    except (TypeError, ValueError):
+        swing = 2
+    try:
+        match_pct = float(cfg.get("ai_watch_db_match_pct", 0.40) or 0.40)
+    except (TypeError, ValueError):
+        match_pct = 0.40
+    try:
+        min_sep = int(cfg.get("ai_watch_db_min_sep_bars", 3) or 3)
+    except (TypeError, ValueError):
+        min_sep = 3
+    found = find_double_bottom_support(
+        lows, swing=swing, match_pct=match_pct, min_sep_bars=min_sep)
+    if not found:
+        return None
+    return build_double_bottom_zone_structure(
+        found["support"],
+        cfg,
+        reason=reason or "double_bottom",
+        low_a=found.get("low_a"),
+        low_b=found.get("low_b"),
+        last_price=last_price,
+    )
+
+
 def build_offset_zone_structure(
     price: float,
     cfg: dict | None = None,
@@ -2103,10 +2421,21 @@ def build_offset_zone_structure(
     width = _pct("ai_watch_zone_width_pct", 2.0) / 100.0
     stop_pct = _pct("ai_watch_synth_stop_pct", 5.0) / 100.0
     try:
-        rr = float(cfg.get("ai_watch_synth_rr", 1.5) or 1.5)
+        rr = float(cfg.get("ai_watch_synth_rr", 0.6) or 0.6)
     except (TypeError, ValueError):
-        rr = 1.5
-    rr = max(1.0, rr)
+        rr = 0.6
+    # Sub-1R first targets are intentional for day scalp (reachable T1).
+    rr = max(0.25, rr)
+    try:
+        scale_out = float(cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0)
+    except (TypeError, ValueError):
+        scale_out = 50.0
+    scale_out = max(1.0, min(99.0, scale_out))
+    try:
+        trail_pct = float(cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5)
+    except (TypeError, ValueError):
+        trail_pct = 2.5
+    trail_pct = max(0.0, trail_pct)
 
     # Upper buy limit sits *below* the print so we wait for a dip.
     entry_high = px * (1.0 - offset)
@@ -2147,8 +2476,11 @@ def build_offset_zone_structure(
         "stop_price": _r(stop),
         "target_1": _r(target),
         "reward_risk": round(rr, 2),
-        "scale_out_pct": 40,
+        "scale_out_pct": scale_out,
+        "trail_pct": trail_pct,
+        "trail_method": "pct",
         "synthetic": True,
+        "strategy": "day_scalp_v0",
         "anchor_price": _r(px),
         "summary": (
             f"synth pullback: upper {_r(entry_high)} "
@@ -2262,20 +2594,36 @@ def ensure_offset_zone_if_needed(
     reason = str(rec.get("reason") or rec.get("source") or "")
     if reanchor:
         reason = (reason + " · reanchor").strip(" ·")
-    synth = build_offset_zone_structure(ask_f, cfg, reason=reason)
+    sym = str(rec.get("symbol") or "").upper()
+    mode = str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
+    synth: dict[str, Any] | None = None
+    zone_reason = "offset_from_last"
+    if mode in ("double_bottom", "db", "structure"):
+        synth = build_double_bottom_zone_for_symbol(
+            sym, ask_f, cfg, now=float(now), reason=reason)
+        if synth is not None:
+            zone_reason = (
+                "reanchor_double_bottom" if reanchor else "double_bottom")
+    if synth is None:
+        # Bars missing, no matching lows, or mode=offset → legacy % band.
+        synth = build_offset_zone_structure(ask_f, cfg, reason=reason)
+        synth.setdefault("zone_kind", "offset")
+        zone_reason = "reanchor_from_last" if reanchor else "offset_from_last"
     rec["structure"] = synth
     rec["structure_ts"] = float(now)
     if str(rec.get("status") or "").lower() in ("invalidated", "expired"):
         rec["status"] = "watching"
     return {
         "kind": "synth_zone",
-        "symbol": str(rec.get("symbol") or "").upper(),
+        "symbol": sym,
         "entry_low": synth.get("entry_low"),
         "entry_high": synth.get("entry_high"),
         "stop_price": synth.get("stop_price"),
         "target_1": synth.get("target_1"),
         "anchor": synth.get("anchor_price"),
-        "reason": "reanchor_from_last" if reanchor else "offset_from_last",
+        "support": synth.get("support"),
+        "zone_kind": synth.get("zone_kind"),
+        "reason": zone_reason,
     }
 
 
@@ -2695,11 +3043,12 @@ def _decision_for_place(
 
     Zone-wait records store decision=WAIT; placement needs BUY + levels.
 
-    For a synthetic zone the stop and target are re-derived from *ask* — the
-    price the order will actually fill at — so ``ai_watch_synth_stop_pct`` means
-    "this far below what I paid" and ``ai_watch_synth_rr`` is honest. Built at
-    anchor time off the zone mid, a nominal 3R plan delivered anywhere from 2.0R
-    to 5.0R depending on where in the band the fill landed.
+    For a synthetic *offset* zone the stop and target are re-derived from *ask*
+    so ``ai_watch_synth_stop_pct`` means "this far below what I paid".
+
+    For a *double_bottom* zone the stop stays under support (structure). Only
+    target is re-based off fill so R stays honest if we fill near the top of
+    the band.
 
     A model zone is left alone: those levels come from real structure (support,
     prior day's low), not a percentage, and must not be second-guessed here.
@@ -2718,19 +3067,64 @@ def _decision_for_place(
     if px <= 0:
         return d
     try:
-        stop_pct = max(0.0, float(cfg.get("ai_watch_synth_stop_pct", 5.0) or 5.0)) / 100.0
+        rr = max(0.25, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.6))
     except (TypeError, ValueError):
-        stop_pct = 0.05
-    try:
-        rr = max(1.0, float(cfg.get("ai_watch_synth_rr", 1.5) or 1.5))
-    except (TypeError, ValueError):
-        rr = 1.5
-    stop = px * (1.0 - stop_pct)
-    if stop <= 0 or stop >= px:
-        return d
-    d["stop_price"] = round(stop, 4 if px < 1 else 3 if px < 100 else 2)
-    d["target_1"] = round(px + rr * (px - stop), 4 if px < 1 else 3 if px < 100 else 2)
-    d["reward_risk"] = round(rr, 2)
+        rr = 0.6
+
+    zone_kind = str(d.get("zone_kind") or "").lower()
+    if zone_kind == "double_bottom":
+        # Keep structural stop under the shelf; size risk from fill → stop.
+        try:
+            stop = float(d.get("stop_price") or 0)
+        except (TypeError, ValueError):
+            stop = 0.0
+        if stop <= 0 or stop >= px:
+            try:
+                support = float(d.get("support") or 0)
+            except (TypeError, ValueError):
+                support = 0.0
+            try:
+                stop_below = max(0.0, float(
+                    cfg.get("ai_watch_db_stop_below_pct", 0.5) or 0.5)) / 100.0
+            except (TypeError, ValueError):
+                stop_below = 0.005
+            if support > 0:
+                stop = support * (1.0 - stop_below)
+        if stop > 0 and stop < px:
+            d["stop_price"] = round(
+                stop, 4 if px < 1 else 3 if px < 100 else 2)
+            d["target_1"] = round(
+                px + rr * (px - stop),
+                4 if px < 1 else 3 if px < 100 else 2)
+            d["reward_risk"] = round(rr, 2)
+    else:
+        try:
+            stop_pct = max(0.0, float(
+                cfg.get("ai_watch_synth_stop_pct", 5.0) or 5.0)) / 100.0
+        except (TypeError, ValueError):
+            stop_pct = 0.05
+        stop = px * (1.0 - stop_pct)
+        if stop <= 0 or stop >= px:
+            return d
+        d["stop_price"] = round(stop, 4 if px < 1 else 3 if px < 100 else 2)
+        d["target_1"] = round(
+            px + rr * (px - stop), 4 if px < 1 else 3 if px < 100 else 2)
+        d["reward_risk"] = round(rr, 2)
+
+    # Ensure sell-strategy fields survive placement recompute.
+    if d.get("scale_out_pct") is None:
+        try:
+            d["scale_out_pct"] = float(
+                cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0)
+        except (TypeError, ValueError):
+            d["scale_out_pct"] = 50.0
+    if d.get("trail_pct") is None:
+        try:
+            d["trail_pct"] = float(
+                cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5)
+        except (TypeError, ValueError):
+            d["trail_pct"] = 2.5
+    d.setdefault("strategy", "day_scalp_v0")
     return d
 
 
