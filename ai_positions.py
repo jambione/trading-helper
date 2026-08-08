@@ -91,6 +91,15 @@ DEFAULT_MAX_SPREAD_PCT = 1.0
 # Day-scalp dead trade: minutes held with no meaningful MFE.
 DEFAULT_DEAD_TRADE_MIN = 90.0
 DEFAULT_DEAD_TRADE_MFE_R = 0.25
+# Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
+# is a different trade on every name: at 2.5% it is 2.5R behind a 1%-wide stop
+# and 0.5R behind a 5%-wide one, so on the tight double-bottom zones the runner
+# risked more than tranche A had just banked and a trade that HIT its target
+# still closed red. In R it is the same trade everywhere.
+DEFAULT_RUNNER_TRAIL_R = 1.0
+# Only rewrite the resting stop when the ratchet gains at least this much R —
+# the position tick runs every 5s and each move is a cancel + submit.
+DEFAULT_RUNNER_STEP_R = 0.10
 # Keep a small ring of recent events for /api/state.
 _EVENT_RING_MAX = 80
 _event_lock = threading.Lock()
@@ -650,6 +659,8 @@ def pre_entry_gate(
     max_spread_pct: float | None = DEFAULT_MAX_SPREAD_PCT,
     min_dollar_volume: float | None = None,
     dollar_volume: float | None = None,
+    stop_price: float | None = None,
+    max_spread_r: float | None = None,
 ) -> tuple[bool, str]:
     """Code-only portfolio/risk veto before spending an entry CLI call.
 
@@ -681,6 +692,28 @@ def pre_entry_gate(
         spr = 100.0 * (float(ask) - float(bid)) / mid
         if spr > msp + 1e-12:
             return False, f"spread_pct_{spr:.2f}>{msp:g}"
+
+    # The same cost, denominated in the trade's own risk unit. A percent-of-mid
+    # cap answers "is this book wide for a $50 stock", which is not the question
+    # — the question is what fraction of the money at risk the round trip costs.
+    # On a double-bottom zone 1R is under 1% of price, so a spread that reads as
+    # negligible against price can be half of 1R.
+    #
+    # Crossing is paid twice: buy at the ask, sell at the bid.
+    if (
+        max_spread_r is not None
+        and float(max_spread_r) > 0
+        and bid is not None
+        and float(bid) > 0
+        and stop_price is not None
+        and 0 < float(stop_price) < float(ask)
+    ):
+        risk = float(ask) - float(stop_price)
+        round_trip_r = 2.0 * (float(ask) - float(bid)) / risk
+        if round_trip_r > float(max_spread_r) + 1e-12:
+            return False, (
+                f"spread_r_{round_trip_r:.2f}>{float(max_spread_r):g}"
+            )
 
     if (
         min_dollar_volume is not None
@@ -776,8 +809,10 @@ def place_scaled_entry(
     Tranche A (``scale_out_pct``) carries both the stop and the first
     target — it closes itself the moment either level trips, no code
     involved. Tranche B carries the stop only and is meant to ride; once
-    tranche A's target fills, ``manage_open_positions`` replaces tranche
-    B's stop with breakeven or a trailing stop.
+    tranche A's target fills, ``manage_open_positions`` moves tranche B's
+    stop to ``max(breakeven, peak − ai_runner_trail_r × R)`` and ratchets it
+    up from there — never below entry, so a trade that reached its target
+    cannot close red.
 
     If tranche A succeeds and B fails, A is cancelled / flattened so the
     book never sits half-armed.
@@ -810,11 +845,12 @@ def place_scaled_entry(
         default_scale = 50.0
     scale_out_pct = max(
         0.0, min(100.0, float(decision.get("scale_out_pct") or default_scale)))
-    try:
-        default_trail = float(cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5)
-    except (TypeError, ValueError):
-        default_trail = 2.5
-    trail_pct = float(decision.get("trail_pct") or 0) or default_trail or None
+    default_trail = _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5)
+    trail_pct = _opt_float(decision.get("trail_pct"), default_trail)
+    # Runner protection is denominated in R, not percent — see
+    # _runner_stop_level(). trail_pct is retained for display/telemetry only.
+    runner_trail_r = max(0.0, _opt_float(
+        cfg.get("ai_runner_trail_r"), DEFAULT_RUNNER_TRAIL_R))
 
     if current_ask is not None and not (entry_low <= current_ask <= max(entry_high, entry_low)):
         err = (
@@ -1034,8 +1070,17 @@ def place_scaled_entry(
         "tranche_b_order_id": result_b.get("buy_order_id"),
         "tranche_b_stop_order_id": result_b.get("stop_order_id"),
         "stop_price": stop_price,
+        # The R basis, frozen at entry. Every later stop move (breakeven on a
+        # sell_signal, the runner ratchet) rewrites stop_price, and R measured
+        # against a moving stop is not R: a stop lifted to entry makes
+        # entry-stop zero, which silently dropped the trade out of realized_r
+        # and therefore out of the daily-loss gate.
+        "risk_per_share": max(0.0, sizing_entry - stop_price),
         "target_1": target_1,
         "trail_pct": trail_pct,
+        "runner_trail_r": runner_trail_r,
+        "runner_stop_price": None,
+        "peak_price": None,
         "time_stop_days": int(decision.get("time_stop_days") or 0) or None,
         "entry_time": time.time(),
         "tranche_a_filled": False,
@@ -1200,6 +1245,22 @@ def _num(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _opt_float(value: Any, default: float) -> float:
+    """float(value), treating only missing/blank/unparseable as *default*.
+
+    ``float(x or default)`` cannot express a deliberate zero: it is how
+    ``ai_watch_synth_trail_pct: 0`` ("no trail, use breakeven") silently came
+    back as 2.5%, and no value in bot_config.json could turn the trail off.
+    Every knob that legitimately accepts 0 must read through here.
+    """
+    if value is None or value == "":
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def _cfg_flag(key: str, default: bool = True) -> bool:
@@ -1390,19 +1451,59 @@ def _log_position_shadow(ticker: str, pos: dict[str, Any], price: float | None,
         pass
 
 
-def _update_excursions(pos: dict[str, Any], price: float | None) -> None:
-    """Track worst/best R reached while held. Cheap, and only recorded here."""
+def _risk_basis(pos: dict[str, Any]) -> float:
+    """Per-share risk this position's R is measured in. 0 when unknowable.
+
+    Prefers the value frozen at entry. Falls back to entry-stop for positions
+    opened before ``risk_per_share`` existed, which is correct only while the
+    stop has not been moved — hence the frozen field for everything new.
+    """
+    frozen = _num(pos.get("risk_per_share"))
+    if frozen and frozen > 0:
+        return frozen
     entry = _num(pos.get("entry_price")) or 0.0
     stop = _num(pos.get("stop_price")) or 0.0
+    return max(0.0, entry - stop)
+
+
+def _update_excursions(pos: dict[str, Any], price: float | None) -> None:
+    """Track worst/best R and the high-water price. Only recorded here."""
+    entry = _num(pos.get("entry_price")) or 0.0
     px = _num(price)
-    risk = entry - stop
+    risk = _risk_basis(pos)
     if not (px and entry and risk > 0):
         return
+    peak = _num(pos.get("peak_price"))
+    pos["peak_price"] = px if peak is None else max(peak, px)
     r = (px - entry) / risk
     mae = _num(pos.get("mae_r"))
     mfe = _num(pos.get("mfe_r"))
     pos["mae_r"] = r if mae is None else min(mae, r)
     pos["mfe_r"] = r if mfe is None else max(mfe, r)
+
+
+def _runner_stop_level(pos: dict[str, Any]) -> float | None:
+    """Where tranche B's stop belongs right now: max(breakeven, peak - nR).
+
+    The breakeven floor is the whole point. Tranche A banks its target at
+    ``reward_risk`` R (0.6R on the day-scalp recipe); if the runner is allowed
+    to sit below entry after that, a trade that reached its target still closes
+    red — which is exactly what the fixed 2.5% trail did on any name whose stop
+    was tighter than 2.5%. Once price has run far enough that peak - nR clears
+    entry, the trail takes over and ratchets.
+
+    Returns None when there is no basis to compute one (no entry, no risk).
+    """
+    entry = _num(pos.get("entry_price"))
+    risk = _risk_basis(pos)
+    if not entry or risk <= 0:
+        return None
+    peak = _num(pos.get("peak_price")) or entry
+    trail_r = _num(pos.get("runner_trail_r"))
+    if trail_r is None:
+        trail_r = DEFAULT_RUNNER_TRAIL_R
+    trail_r = max(0.0, trail_r)
+    return max(float(entry), float(peak) - trail_r * risk)
 
 
 def _et_hour(now: float) -> float | None:
@@ -1527,7 +1628,11 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
     entry_price = pos.get("entry_price") or 0
     stop_price = pos.get("stop_price") or 0
     total_qty = pos.get("total_qty") or 0
-    per_share_risk = entry_price - stop_price
+    # Against the ENTRY stop, not wherever the stop was moved to. A breakeven
+    # or ratcheted stop makes entry-stop zero or negative, which turned
+    # realized_r into None and quietly excluded the trade from the daily-loss
+    # gate — the more a trade was actively managed, the less it counted.
+    per_share_risk = _risk_basis(pos)
 
     realized_r = None
     realized_pl = None
@@ -1561,6 +1666,9 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "strategy": pos.get("strategy"),
         "mae_r": pos.get("mae_r"),
         "mfe_r": pos.get("mfe_r"),
+        # Cost of crossing on the way in, in R. None until a fill is observed
+        # against a limit — never estimated from a quote.
+        "entry_slippage_r": pos.get("entry_slippage_r"),
         # Why this trade was taken, alongside how it ended. Without it an
         # outcome is unsliceable: you know the result but not which gate,
         # indicator state, or time of day to attribute it to.
@@ -1705,6 +1813,20 @@ def manage_open_positions(
                 if fill is None:
                     fill = _num(live.get("avg_entry_price"))
                 if fill and fill > 0:
+                    # What crossing actually cost, in this trade's own risk
+                    # unit — measured against the limit we asked for, before
+                    # entry_price is overwritten by the fill.
+                    #
+                    # This is the honest instrument for the spread question.
+                    # A percent-of-mid cap is read off the IEX book, which is a
+                    # few percent of the tape and always looks wide, so gating
+                    # on it blocks good fills; this measures the price we really
+                    # paid. Positive = we paid up. Feed a few days of these into
+                    # ai_max_spread_r before turning that gate on.
+                    want = _num(pos.get("entry_limit_price"))
+                    risk = _num(pos.get("risk_per_share"))
+                    if want and want > 0 and risk and risk > 0:
+                        pos["entry_slippage_r"] = round((fill - want) / risk, 4)
                     pos["entry_price"] = fill
             pos["entry_confirmed"] = True
             pos["last_seen_price"] = live.get("current")
@@ -1822,8 +1944,16 @@ def manage_open_positions(
                 pos["sell_signal_stop_done"] = True
                 changed = True
                 continue
-            # Never loosen: a stop already above entry is better than entry.
-            if cur_stop is not None and cur_stop >= entry:
+            # Never loosen: a stop already at or above entry is better than
+            # entry. Includes the runner's ratcheted level — that lives in
+            # runner_stop_price, not stop_price, so comparing stop_price alone
+            # would walk a trailed-up runner back down to breakeven.
+            best_stop = max(
+                [x for x in (cur_stop, _num(pos.get("runner_stop_price")))
+                 if x is not None],
+                default=None,
+            )
+            if best_stop is not None and best_stop >= entry:
                 pos["sell_signal_stop_done"] = True
                 changed = True
                 continue
@@ -1845,8 +1975,16 @@ def manage_open_positions(
     dead_min = _cfg_float("ai_dead_trade_min", DEFAULT_DEAD_TRADE_MIN)
     dead_mfe = _cfg_float("ai_dead_trade_mfe_r", DEFAULT_DEAD_TRADE_MFE_R)
 
+    step_r = max(0.0, _cfg_float("ai_runner_step_r", DEFAULT_RUNNER_STEP_R))
+
     for ticker, pos in list(state.items()):
-        # Tranche A fill -> move tranche B's stop to breakeven/trailing.
+        # Keep the high-water mark current BEFORE the ratchet reads it. The
+        # shadow-log block at the bottom also calls this, but it is behind
+        # ai_position_shadow_enabled — the runner's stop must not depend on
+        # whether logging happens to be on.
+        _update_excursions(pos, _num(pos.get("last_seen_price")))
+
+        # Tranche A fill -> tranche B's stop moves to max(breakeven, peak-nR).
         # Key off the take-profit leg. Using the parent buy id here meant
         # tranche_a_filled went True within one 5s tick of every entry.
         target_oid = pos.get("tranche_a_target_order_id")
@@ -1855,26 +1993,88 @@ def manage_open_positions(
             if order and order.get("status") == "filled":
                 pos["tranche_a_filled"] = True
                 if pos.get("qty_b", 0) > 0:
-                    trail_pct = pos.get("trail_pct")
-                    # Prefer trail when set (day scalp runner); else BE.
-                    be_price = pos.get("entry_price")
-                    out = alpaca_trader.replace_stop(
-                        ticker, pos.get("tranche_b_stop_order_id"),
-                        trail_percent=trail_pct,
-                        stop_price=(
-                            None if trail_pct
-                            else (be_price or pos.get("stop_price"))
-                        ),
-                    )
-                    pos["tranche_b_stop_order_id"] = out.get("order_id")
-                    events.append({"ticker": ticker, "event": "scaled_out",
-                                   "target_1": pos.get("target_1")})
-                    exit_why[ticker] = "scaled_out"
+                    want = _runner_stop_level(pos)
+                    last = _num(pos.get("last_seen_price"))
+                    # A stop only works below the market. If price has already
+                    # collapsed back through entry between the target fill and
+                    # this tick, leave the original stop to do its job.
+                    if want is None or (last is not None and want >= last):
+                        events.append({
+                            "ticker": ticker, "event": "runner_stop_skipped",
+                            "want": want, "last": last,
+                        })
+                        log_event("runner_stop_skipped", symbol=ticker,
+                                  want=want, last=last)
+                    else:
+                        out = alpaca_trader.replace_stop(
+                            ticker, pos.get("tranche_b_stop_order_id"),
+                            stop_price=want,
+                        ) or {}
+                        if out.get("ok"):
+                            pos["tranche_b_stop_order_id"] = out.get("order_id")
+                            pos["runner_stop_price"] = want
+                            events.append({
+                                "ticker": ticker, "event": "scaled_out",
+                                "target_1": pos.get("target_1"),
+                                "runner_stop": want,
+                                "breakeven": _num(pos.get("entry_price")),
+                            })
+                            log_event(
+                                "runner_stop_set", symbol=ticker,
+                                stop=want, entry=pos.get("entry_price"),
+                                peak=pos.get("peak_price"),
+                                trail_r=pos.get("runner_trail_r"),
+                            )
+                            exit_why[ticker] = "scaled_out"
+                        else:
+                            # Loud: the runner is now unprotected by anything
+                            # except the original entry stop.
+                            log_event(
+                                "runner_stop_failed", symbol=ticker,
+                                want=want, error=str(out.get("error"))[:160],
+                            )
                 pos["breakeven_done"] = True
                 changed = True
 
         if pos.get("closing_reason"):
             continue
+
+        # Ratchet: once the runner is on a breakeven/trail stop, follow price
+        # up. Only ever raises, and only when the gain clears step_r so a 5s
+        # tick does not turn a fast move into dozens of cancel+submit pairs.
+        if (
+            pos.get("tranche_a_filled")
+            and pos.get("qty_b", 0) > 0
+            and pos.get("runner_stop_price") is not None
+        ):
+            want = _runner_stop_level(pos)
+            cur = _num(pos.get("runner_stop_price"))
+            last = _num(pos.get("last_seen_price"))
+            risk = _risk_basis(pos)
+            step = max(0.01, step_r * risk)
+            if (
+                want is not None
+                and cur is not None
+                and want >= cur + step
+                and (last is None or want < last)
+            ):
+                out = alpaca_trader.replace_stop(
+                    ticker, pos.get("tranche_b_stop_order_id"),
+                    stop_price=want,
+                ) or {}
+                if out.get("ok"):
+                    pos["tranche_b_stop_order_id"] = out.get("order_id")
+                    pos["runner_stop_price"] = want
+                    changed = True
+                    events.append({
+                        "ticker": ticker, "event": "runner_stop_raised",
+                        "from_stop": cur, "to_stop": want,
+                        "peak": pos.get("peak_price"),
+                    })
+                    log_event("runner_stop_raised", symbol=ticker,
+                              from_stop=cur, to_stop=want,
+                              peak=pos.get("peak_price"))
+                    exit_why[ticker] = "runner_stop_raised"
 
         # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
         if (
@@ -1955,6 +2155,13 @@ def performance_summary(since: float | None = None) -> dict[str, Any]:
     cost accounting alone can't; you need to know what happened after entry.
     """
     rows: list[dict[str, Any]] = []
+    # Closed trades that could not be graded, kept as a COUNT rather than
+    # dropped. Silently skipping them means a day where every exit fill went
+    # unresolved reports as "no trades" — and realized_r_today, which gates new
+    # entries on ai_daily_loss_limit_r, is running on the same partial set. The
+    # scorecard has to be able to say "I cannot grade N of these".
+    ungraded: list[str] = []
+    unknown_reason = 0
     try:
         text = OUTCOMES_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -1969,12 +2176,23 @@ def performance_summary(since: float | None = None) -> dict[str, Any]:
             continue
         if since is not None and row.get("exit_time", 0) < since:
             continue
+        if str(row.get("close_reason") or "") == "unknown":
+            unknown_reason += 1
         if row.get("realized_r_multiple") is None:
+            ungraded.append(str(row.get("symbol") or "?"))
             continue  # no computable risk basis — nothing to grade
         rows.append(row)
 
+    # Data-quality block, always present so a caller can never read the graded
+    # numbers without seeing what they were computed from.
+    quality = {
+        "ungraded": len(ungraded),
+        "ungraded_symbols": ungraded[-8:],
+        "unknown_close_reason": unknown_reason,
+    }
+
     if not rows:
-        return {"count": 0}
+        return {"count": 0, **quality}
 
     wins = [r for r in rows if r["realized_r_multiple"] > 0]
     losses = [r for r in rows if r["realized_r_multiple"] <= 0]
@@ -2000,13 +2218,26 @@ def performance_summary(since: float | None = None) -> dict[str, Any]:
         ),
         "avg_hold_days": sum(r.get("hold_days", 0) for r in rows) / len(rows),
         "by_close_reason": by_reason,
+        **quality,
     }
+
+
+def _print_quality(s: dict[str, Any]) -> None:
+    if s.get("ungraded"):
+        print(f"⚠  {s['ungraded']} closed trade(s) could NOT be graded — no exit "
+              f"fill resolved: {', '.join(s.get('ungraded_symbols') or [])}")
+        print("   These are excluded from every number above AND from the "
+              "daily-loss gate. Check events.jsonl for exit_fill_unresolved.")
+    if s.get("unknown_close_reason"):
+        print(f"⚠  {s['unknown_close_reason']} trade(s) closed for an "
+              f"unidentified reason (resolve_exit found no matching leg).")
 
 
 def print_performance_summary(since: float | None = None) -> None:
     s = performance_summary(since=since)
     if s["count"] == 0:
-        print("No closed positions yet — nothing to summarize.")
+        print("No graded closed positions yet — nothing to summarize.")
+        _print_quality(s)
         return
     print(f"Closed positions: {s['count']}")
     print(f"Win rate: {s['win_rate']:.0%}")
@@ -2020,6 +2251,7 @@ def print_performance_summary(since: float | None = None) -> None:
     print("By close reason:")
     for reason, count in sorted(s["by_close_reason"].items()):
         print(f"  {reason}: {count}")
+    _print_quality(s)
 
 
 if __name__ == "__main__":

@@ -433,6 +433,8 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
     keys = {
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
         "last_ask", "score", "agreement", "reason", "source", "ready", "in_zone",
+        # Which geometry drew the band — double_bottom vs the offset fallback.
+        "zone_kind",
         "block_code", "blocker", "block_reason",
     }
     for row in snap:
@@ -2124,3 +2126,139 @@ def test_engine_push_dedupes_without_losing_order(monkeypatch):
 
     ew.push_candidates_to_engine(["ZTOP", "AAAA", "ZTOP", "", "toolongsym", "BBBB"])
     assert posted["tickers"] == ["ZTOP", "AAAA", "BBBB"]
+
+
+# ── config values of 0 must survive the read ────────────────────────────────
+
+def test_opt_float_keeps_a_deliberate_zero():
+    import ai_entry_watch as ew
+    """`float(cfg.get(k, d) or d)` silently replaced 0 with the default, so no
+    value in bot_config.json could turn the runner trail off."""
+    assert ew._opt_float(0, 2.5) == 0.0
+    assert ew._opt_float(0.0, 2.5) == 0.0
+    assert ew._opt_float(None, 2.5) == 2.5
+    assert ew._opt_float("", 2.5) == 2.5
+    assert ew._opt_float("junk", 2.5) == 2.5
+
+
+def test_zero_trail_is_honored_by_both_zone_builders():
+    import ai_entry_watch as ew
+
+    cfg = {"ai_watch_synth_trail_pct": 0}
+
+    offset = ew.build_offset_zone_structure(10.0, cfg)
+    assert offset["trail_pct"] == 0.0
+
+    db = ew.build_double_bottom_zone_structure(10.0, cfg, last_price=10.2)
+    assert db["trail_pct"] == 0.0
+
+
+def test_zero_zone_percentages_are_honored():
+    import ai_entry_watch as ew
+    """A 0 band below support means 'entry_low sits exactly on the shelf', not
+    'use the 0.25% default'."""
+    db = ew.build_double_bottom_zone_structure(
+        10.0, {"ai_watch_db_below_pct": 0}, last_price=10.2)
+    assert db["entry_low"] == 10.0
+
+    offset = ew.build_offset_zone_structure(
+        10.0, {"ai_watch_zone_offset_pct": 0})
+    assert offset["entry_high"] == 10.0     # zone top at the print, no offset
+
+
+# ── the offset-zone fallback is a different strategy ────────────────────────
+
+def _armable_record(structure):
+    return {
+        "symbol": "AAA", "status": "watching", "structure": structure,
+        "indicator": {"cm_ok": True, "pctr_ok": True, "cm_rsi_rising": True,
+                      "sell_signal": False, "proximity_pct": 100.0},
+    }
+
+
+def _db_cfg(**over):
+    cfg = {"ai_watch_zone_mode": "double_bottom", "ai_min_reward_risk": 0.5}
+    cfg.update(over)
+    return cfg
+
+
+def test_offset_fallback_zone_is_refused_in_double_bottom_mode():
+    """No shelf found -> a percentage band with a 5% stop. That is not the
+    trade the zone mode asks for, and it was indistinguishable downstream."""
+    import ai_entry_watch as ew
+
+    offset = ew.build_offset_zone_structure(10.0, {})
+    offset.setdefault("zone_kind", "offset")
+    ask = (offset["entry_low"] + offset["entry_high"]) / 2      # inside the zone
+
+    ok, why = ew.should_arm_buy(
+        _armable_record(offset), ask=ask, bid=ask - 0.01, cfg=_db_cfg())
+    assert (ok, why) == (False, "offset_zone")
+    assert ew.format_blocker("offset_zone") == "no shelf"
+
+
+def test_double_bottom_zone_still_arms():
+    import ai_entry_watch as ew
+
+    db = ew.build_double_bottom_zone_structure(10.0, {}, last_price=10.2)
+    ask = (db["entry_low"] + db["entry_high"]) / 2
+
+    ok, why = ew.should_arm_buy(
+        _armable_record(db), ask=ask, bid=ask - 0.01, cfg=_db_cfg())
+    assert (ok, why) == (True, "zone")
+
+
+def test_offset_fallback_can_be_re_enabled_by_config():
+    import ai_entry_watch as ew
+
+    offset = ew.build_offset_zone_structure(10.0, {})
+    offset.setdefault("zone_kind", "offset")
+    ask = (offset["entry_low"] + offset["entry_high"]) / 2
+
+    ok, why = ew.should_arm_buy(
+        _armable_record(offset), ask=ask, bid=ask - 0.01,
+        cfg=_db_cfg(ai_watch_require_db_zone=False))
+    assert (ok, why) == (True, "zone")
+
+
+# ── risk per share must be a real risk unit ─────────────────────────────────
+
+def test_a_fill_at_the_bottom_of_the_band_is_too_tight_to_size():
+    """The double-bottom band spans 6.9x of risk-per-share. At the tight end a
+    1% risk implies ~400% of equity, so the notional cap becomes the sizer and
+    the trade's real risk is a fraction of what it is booked as."""
+    import ai_entry_watch as ew
+
+    zone = ew.build_double_bottom_zone_structure(
+        10.0, {}, low_a=10.0, low_b=10.0, last_price=10.5)
+    rec = _armable_record(zone)
+    cfg = _db_cfg(ai_watch_min_stop_pct=0.5)
+
+    # bottom of the band: 9.975 vs a 9.95 stop = 0.25% of price
+    assert ew.should_arm_buy(rec, ask=zone["entry_low"], bid=None, cfg=cfg) == (
+        False, "stop_too_tight")
+    # top of the band: 10.125 vs 9.95 = 1.73% — a real risk unit
+    assert ew.should_arm_buy(rec, ask=zone["entry_high"], bid=None, cfg=cfg) == (
+        True, "zone")
+    assert ew.format_blocker("stop_too_tight") == "stop too tight"
+
+
+def test_min_stop_pct_of_zero_disables_the_check():
+    import ai_entry_watch as ew
+
+    zone = ew.build_double_bottom_zone_structure(
+        10.0, {}, low_a=10.0, low_b=10.0, last_price=10.5)
+    ok, why = ew.should_arm_buy(
+        _armable_record(zone), ask=zone["entry_low"], bid=None,
+        cfg=_db_cfg(ai_watch_min_stop_pct=0))
+    assert (ok, why) == (True, "zone")
+
+
+def test_stop_of_reads_the_structure_stop():
+    import ai_entry_watch as ew
+
+    assert ew._stop_of({"structure": {"stop_price": 9.95}}) == 9.95
+    assert ew._stop_of({"structure": {"stop_price": 0}}) is None
+    assert ew._stop_of({"structure": {}}) is None
+    assert ew._stop_of({}) is None
+    assert ew._stop_of(None) is None

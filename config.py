@@ -209,7 +209,16 @@ DEFAULT_CONFIG = {
     "ai_duel_trial_end_time":       "",
     "ai_duel_chance3_time":     "14:30",   # usually = last research slot
     "ai_require_agreement":       False,    # only trade AX-agreed names
-    "ai_max_spread_pct":            1.0,    # reject entry if bid/ask wider (% mid)
+    # Reject entry if bid/ask wider (% of mid). Paid twice — in and out — so it
+    # is measured against the first target, not the stop: at the old 1.0% an
+    # accepted trade could pay its entire 0.6R T1 to the spread.
+    "ai_max_spread_pct":           0.25,
+    # The same cost in R: reject when a round trip (crossed twice) exceeds this
+    # fraction of the distance to the stop. 0 = off, which is the shipped
+    # default — the live path reads IEX quotes, which are a few percent of the
+    # tape and always look wide, so this would block good fills. Turn it on
+    # once outcomes.jsonl has real entry_slippage_r to calibrate against.
+    "ai_max_spread_r":              0.0,
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
     # Entry watch poller (agreement queue + structure TTL / arming)
     "ai_watch_enabled":                 True,   # enable entry-watch queue
@@ -330,6 +339,20 @@ DEFAULT_CONFIG = {
     #                     "offset" when bars/pattern unavailable.
     #   "offset"        — % under the live print (legacy).
     "ai_watch_zone_mode":     "double_bottom",
+    # In double_bottom mode, refuse to arm on the offset fallback. Without this
+    # a name with no detectable shelf quietly becomes a different trade — a
+    # percentage band with a 5% stop, the regime the 90-day replay measured at
+    # -0.0027R — and lands in outcomes.jsonl indistinguishable from a real
+    # double-bottom entry. Set False to allow the fallback to trade again.
+    "ai_watch_require_db_zone":       True,
+    # Minimum risk per share, as % of the price paid, before an entry may arm.
+    # The double-bottom band spans S*0.9975 to S*1.0125 against a stop fixed at
+    # S*0.995, so risk per share is 0.25% of price at the bottom of the band and
+    # 1.73% at the top — a 6.9x swing set purely by where the fill lands. At the
+    # tight end, sizing asks for ~400% of equity and the notional cap silently
+    # becomes the position sizer. Decline the fill rather than move a stop that
+    # is deliberately structural.
+    "ai_watch_min_stop_pct":          0.5,
     # Double-bottom geometry (see find_double_bottom_support / build_db_zone).
     "ai_watch_db_above_pct":           1.25,  # entry_high = S * (1 + above/100)
     "ai_watch_db_below_pct":           0.25,  # entry_low  = S * (1 - below/100) fill pad
@@ -359,7 +382,15 @@ DEFAULT_CONFIG = {
     "ai_watch_synth_rr":               0.6,  # target at this R multiple
     # Scale-out / runner (synthetic dual tranche when ai_day_scalp_dual_tranche).
     "ai_watch_synth_scale_out_pct":   50.0,  # % of shares with T1 take-profit
-    "ai_watch_synth_trail_pct":        2.5,  # runner trail after T1 (percent)
+    # Runner trail after T1, in R — a percent trail is a different trade on
+    # every name (2.5% is 2.5R behind a 1% stop, 0.5R behind a 5% one), which
+    # let the runner lose more than tranche A had just banked. The stop is
+    # floored at breakeven, so a trade that reaches T1 cannot finish red.
+    "ai_runner_trail_r":               1.0,
+    "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
+    # Display/telemetry only since the runner moved to R. Kept so the zone
+    # payload and UI keep their field.
+    "ai_watch_synth_trail_pct":        2.5,
     # Dual tranche for synth: T1 bank half + runner with BE/trail. Single
     # bracket (legacy) never set scaled_out and left all size on one target.
     "ai_day_scalp_dual_tranche":      True,
@@ -485,11 +516,42 @@ def validate_ai_config(cfg: dict) -> list[str]:
                 f"sizing alone implies {per_pos:.0f}% per position"
             )
 
+    # In double_bottom mode the stop is structural and typically well under 2%,
+    # so the notional cap binds on EVERY entry and ai_risk_pct stops being the
+    # thing that sets risk. Say so rather than letting the R unit quietly mean a
+    # different number of dollars on every trade.
+    cap = _f("ai_max_position_pct", 0.0)
+    if (
+        str(cfg.get("ai_watch_zone_mode") or "").lower() in
+        ("double_bottom", "db", "structure")
+        and cap > 0 and risk_pct > 0
+    ):
+        binds_below = 100.0 * risk_pct / cap
+        min_stop = _f("ai_watch_min_stop_pct", 0.0)
+        if min_stop < binds_below:
+            out.append(
+                f"in double_bottom mode the notional cap ({cap:g}%) binds on any "
+                f"stop tighter than {binds_below:.1f}% — with ai_watch_min_stop_pct "
+                f"at {min_stop:g}%, ai_risk_pct ({risk_pct:g}%) does not set the "
+                f"size, the cap does"
+            )
+
     spread = _f("ai_max_spread_pct", 1.0)
     if stop_pct > 0 and spread > 0 and stop_pct <= spread:
         out.append(
             f"ai_watch_synth_stop_pct ({stop_pct:g}%) <= ai_max_spread_pct "
             f"({spread:g}%) — the stop sits inside the quoted spread"
+        )
+    # The spread is paid twice — crossing in and crossing out — so it must be
+    # small against the FIRST target, not just against the stop. At the old
+    # 1.0% cap against a 0.6R target on a 1.6% double-bottom stop, an accepted
+    # trade could hand its entire T1 to the market maker.
+    t1_pct = synth_rr * stop_pct
+    if spread > 0 and t1_pct > 0 and 2.0 * spread > 0.5 * t1_pct:
+        out.append(
+            f"ai_max_spread_pct ({spread:g}%) is wide against the first target "
+            f"({synth_rr:g}R = {t1_pct:.2f}% on a {stop_pct:g}% stop) — "
+            f"round-trip spread can consume {200.0 * spread / t1_pct:.0f}% of T1"
         )
 
     def _hhmm(key, default):
@@ -638,6 +700,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_require_look_ext",
     "ai_watch_synth_zone_enabled",
     "ai_watch_zone_mode",
+    "ai_watch_require_db_zone",
+    "ai_watch_min_stop_pct",
+    "ai_max_spread_r",
     "ai_watch_db_above_pct",
     "ai_watch_db_below_pct",
     "ai_watch_db_stop_below_pct",
@@ -654,6 +719,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_synth_rr",
     "ai_watch_synth_scale_out_pct",
     "ai_watch_synth_trail_pct",
+    "ai_runner_trail_r",
+    "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",

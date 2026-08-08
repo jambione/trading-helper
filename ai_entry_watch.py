@@ -88,6 +88,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_watching": "not watching",
     "placing": "placing…",
     "in_zone": "in zone",
+    "offset_zone": "no shelf",
+    "stop_too_tight": "stop too tight",
 }
 
 
@@ -357,6 +359,10 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "source": str(rec.get("source") or "research")[:24] or "research",
             "ready": bool(ready),
             "in_zone": bool(in_zone),
+            # Which geometry drew this band. A double-bottom zone is anchored to
+            # a real shelf; an offset zone is a percentage guess off the last
+            # print with a 5% stop. They were indistinguishable on the wire.
+            "zone_kind": str(structure.get("zone_kind") or "") or None,
             "block_code": b_code,
             "blocker": b_label,
             "block_reason": b_label,
@@ -431,6 +437,9 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "entry_high": entry_high_f,
         "last_ask": last_ask_f,
         "price": last_ask_f,
+        # See public_snapshot: double_bottom (real shelf) vs offset (percentage
+        # band, 5% stop) is the difference between two strategies, not a detail.
+        "zone_kind": str(structure.get("zone_kind") or "") or None,
         "block_code": b_code,
         "blocker": b_label,
         "block_reason": b_label,
@@ -639,6 +648,21 @@ def _f_or_none(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _opt_float(value: Any, default: float) -> float:
+    """float(value), treating only missing/blank/unparseable as *default*.
+
+    ``float(cfg.get(k, d) or d)`` cannot express a deliberate zero — it is why
+    ai_watch_synth_trail_pct=0 came back as 2.5 and no config value could turn
+    the runner trail off. Same trap for every zone percentage below.
+    """
+    if value is None or value == "":
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def _look_reason_value(row: dict, prev_val: Any = None) -> str | None:
@@ -2038,6 +2062,24 @@ def spread_ok(
     return spr <= msp + 1e-12
 
 
+def _stop_of(rec: dict) -> float | None:
+    """The stop this watch record would enter with, or None.
+
+    Needed by the R-denominated spread gate: a spread only means something
+    against the distance to the stop.
+    """
+    if not isinstance(rec, dict):
+        return None
+    structure = rec.get("structure")
+    if not isinstance(structure, dict):
+        return None
+    try:
+        stop = float(structure.get("stop_price") or 0)
+    except (TypeError, ValueError):
+        return None
+    return stop if stop > 0 else None
+
+
 def _structure_levels(structure: dict) -> tuple[float, float, float, float, float] | None:
     """Parse entry/stop/target/rr from structure; None if incomplete for zone arm."""
     try:
@@ -2148,28 +2190,15 @@ def build_double_bottom_zone_structure(
         return None
 
     def _pct(key: str, default: float) -> float:
-        try:
-            return max(0.0, float(cfg.get(key, default) or default))
-        except (TypeError, ValueError):
-            return default
+        return max(0.0, _opt_float(cfg.get(key, default), default))
 
     above = _pct("ai_watch_db_above_pct", 1.25) / 100.0
     below = _pct("ai_watch_db_below_pct", 0.25) / 100.0
     stop_below = _pct("ai_watch_db_stop_below_pct", 0.50) / 100.0
-    try:
-        rr = max(0.25, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.6))
-    except (TypeError, ValueError):
-        rr = 0.6
-    try:
-        scale_out = max(1.0, min(99.0, float(
-            cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0)))
-    except (TypeError, ValueError):
-        scale_out = 50.0
-    try:
-        trail_pct = max(0.0, float(
-            cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5))
-    except (TypeError, ValueError):
-        trail_pct = 2.5
+    rr = max(0.25, _opt_float(cfg.get("ai_watch_synth_rr"), 0.6))
+    scale_out = max(1.0, min(99.0, _opt_float(
+        cfg.get("ai_watch_synth_scale_out_pct"), 50.0)))
+    trail_pct = max(0.0, _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5))
 
     floor = s
     for x in (low_a, low_b):
@@ -2408,30 +2437,16 @@ def build_offset_zone_structure(
         }
 
     def _pct(key: str, default: float) -> float:
-        try:
-            return max(0.0, float(cfg.get(key, default) or default))
-        except (TypeError, ValueError):
-            return default
+        return max(0.0, _opt_float(cfg.get(key, default), default))
 
     offset = _pct("ai_watch_zone_offset_pct", 2.0) / 100.0
     width = _pct("ai_watch_zone_width_pct", 2.0) / 100.0
     stop_pct = _pct("ai_watch_synth_stop_pct", 5.0) / 100.0
-    try:
-        rr = float(cfg.get("ai_watch_synth_rr", 0.6) or 0.6)
-    except (TypeError, ValueError):
-        rr = 0.6
     # Sub-1R first targets are intentional for day scalp (reachable T1).
-    rr = max(0.25, rr)
-    try:
-        scale_out = float(cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0)
-    except (TypeError, ValueError):
-        scale_out = 50.0
-    scale_out = max(1.0, min(99.0, scale_out))
-    try:
-        trail_pct = float(cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5)
-    except (TypeError, ValueError):
-        trail_pct = 2.5
-    trail_pct = max(0.0, trail_pct)
+    rr = max(0.25, _opt_float(cfg.get("ai_watch_synth_rr"), 0.6))
+    scale_out = max(1.0, min(99.0, _opt_float(
+        cfg.get("ai_watch_synth_scale_out_pct"), 50.0)))
+    trail_pct = max(0.0, _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5))
 
     # Upper buy limit sits *below* the print so we wait for a dip.
     entry_high = px * (1.0 - offset)
@@ -2845,6 +2860,26 @@ def should_arm_buy(
     entry_low, entry_high, _stop, _target, rr = levels
 
     cfg = cfg if isinstance(cfg, dict) else {}
+
+    # When the double-bottom detector finds no shelf, ensure_offset_zone_if_needed
+    # silently substitutes a percentage band: a 5% stop, a target 2-6% below the
+    # last print, no structural level anywhere in it. That is a different trade
+    # from the one the zone mode asks for, and it is the regime the 1,220
+    # symbol-day replay measured at -0.0027R with 77% of exits at the 15:50
+    # clock. GLXY — the only live trade on record — was one of these.
+    #
+    # Refused rather than merely labelled: nothing downstream distinguishes
+    # them, so an unlabelled offset fill lands in outcomes.jsonl next to a
+    # double-bottom fill and the scorecard averages two different strategies.
+    # Flip ai_watch_require_db_zone to False to allow them back.
+    if (
+        str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
+        in ("double_bottom", "db", "structure")
+        and bool(cfg.get("ai_watch_require_db_zone", True))
+        and bool(structure.get("synthetic"))
+        and str(structure.get("zone_kind") or "").lower() != "double_bottom"
+    ):
+        return False, "offset_zone"
     try:
         min_rr = float(cfg.get("ai_min_reward_risk", 0) or 0)
     except (TypeError, ValueError):
@@ -2900,6 +2935,33 @@ def should_arm_buy(
         a = float(ask)
     except (TypeError, ValueError):
         return False, "below_zone"
+
+    # Risk per share must be a real risk unit before anything sizes off it.
+    #
+    # A double-bottom zone spans [S*0.9975, S*1.0125] against a stop fixed at
+    # S*0.995 — floor is always exactly S, because find_double_bottom_support
+    # already returns min(low_a, low_b). So risk per share is 0.25% of price at
+    # the bottom of the band and 1.73% at the top: a 6.9x swing decided purely
+    # by where the fill lands. At the tight end size_by_risk asks for ~400% of
+    # equity for a 1% risk, the notional cap chops it to 25%, and the trade's
+    # real risk is ~1/16th of intended while still being booked as "1R".
+    #
+    # A 0.25% stop is also below the noise floor of these names (2-11% observed
+    # intraday range on the 10 replayed): it is not a thesis level, it is a
+    # rounding error that the spread alone can trip.
+    #
+    # build_offset_zone_structure solved its own version of this by keying the
+    # stop to the price paid. That is wrong for a shelf — the whole point of a
+    # structural stop is that it sits under real support — so the fix here is
+    # to decline the fill instead of moving the stop.
+    try:
+        min_stop_pct = float(cfg.get("ai_watch_min_stop_pct", 0.5) or 0.0)
+    except (TypeError, ValueError):
+        min_stop_pct = 0.5
+    if min_stop_pct > 0 and a > 0 and _stop > 0:
+        risk_pct_of_px = 100.0 * (a - _stop) / a
+        if risk_pct_of_px < min_stop_pct:
+            return False, "stop_too_tight"
 
     # Zone membership is the primary arm signal (matches UI READY).
     if ask_in_zone(a, entry_low, entry_high, pad):
@@ -3109,17 +3171,10 @@ def _decision_for_place(
 
     # Ensure sell-strategy fields survive placement recompute.
     if d.get("scale_out_pct") is None:
-        try:
-            d["scale_out_pct"] = float(
-                cfg.get("ai_watch_synth_scale_out_pct", 50.0) or 50.0)
-        except (TypeError, ValueError):
-            d["scale_out_pct"] = 50.0
+        d["scale_out_pct"] = _opt_float(
+            cfg.get("ai_watch_synth_scale_out_pct"), 50.0)
     if d.get("trail_pct") is None:
-        try:
-            d["trail_pct"] = float(
-                cfg.get("ai_watch_synth_trail_pct", 2.5) or 2.5)
-        except (TypeError, ValueError):
-            d["trail_pct"] = 2.5
+        d["trail_pct"] = _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5)
     d.setdefault("strategy", "day_scalp_v0")
     return d
 
@@ -3638,14 +3693,23 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 min_score=float("-inf"),
                 max_price=max_price_f,
                 risk_pct=risk_pct,
-                # Spread deliberately NOT enforced here. Quotes come from IEX,
-                # a few percent of the consolidated tape, so its book is
-                # artificially wide and would block legitimate fills — the
-                # reason the spread check was removed from should_arm_buy in
-                # the first place (see test_should_arm_in_zone_despite_wide_
+                # Percent-of-mid spread deliberately NOT enforced here. Quotes
+                # come from IEX, a few percent of the consolidated tape, so its
+                # book is artificially wide and would block legitimate fills —
+                # the reason the spread check was removed from should_arm_buy
+                # in the first place (see test_should_arm_in_zone_despite_wide_
                 # spread). ai_max_spread_pct still binds on the research path,
                 # where the name is being judged rather than filled.
                 max_spread_pct=0.0,
+                # The R-denominated cap IS available here, because it asks a
+                # different question: not "is this book wide" (IEX always looks
+                # wide) but "would crossing it cost an unacceptable fraction of
+                # the money at risk". Off by default (0) precisely because the
+                # quote it reads is the same untrusted IEX book — turn it on
+                # only once the server's realized entry_slippage_r says what
+                # crossing actually costs. See ai_max_spread_r in config.py.
+                stop_price=_stop_of(rec),
+                max_spread_r=float(cfg.get("ai_max_spread_r", 0.0) or 0.0),
                 min_dollar_volume=(
                     float(cfg["ai_min_dollar_volume"])
                     if cfg.get("ai_min_dollar_volume") not in (None, "", 0, 0.0)

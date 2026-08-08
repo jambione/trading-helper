@@ -803,7 +803,7 @@ def _seed_state(tmp_path, monkeypatch, **fields):
     _state_path(tmp_path).write_text(json.dumps({"NVDA": base}))
 
 
-def test_tranche_a_fill_replaces_tranche_b_stop_with_trailing_stop(
+def test_tranche_a_fill_puts_the_runner_stop_one_r_behind_the_peak(
         tmp_path, monkeypatch):
     _seed_state(tmp_path, monkeypatch)
     # "filled" here must mean the TAKE-PROFIT leg filled, not the parent buy.
@@ -814,11 +814,102 @@ def test_tranche_a_fill_replaces_tranche_b_stop_with_trailing_stop(
 
     assert len(events) == 1
     assert events[0]["event"] == "scaled_out"
-    assert stub.replace_calls[0]["trail_percent"] == 8.0
+    # entry 40.5, stop 38.0 -> 1R = 2.50. Peak 44.0 -> 44.0 - 1R = 41.50,
+    # which is above breakeven, so the trail (not the floor) sets the level.
+    # A trailing PERCENT is never sent: it would be a different distance on
+    # every name.
+    assert stub.replace_calls[0]["stop_price"] == 41.5
+    assert stub.replace_calls[0]["trail_percent"] is None
 
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["breakeven_done"] is True
     assert state["NVDA"]["tranche_a_filled"] is True
+    assert state["NVDA"]["runner_stop_price"] == 41.5
+
+
+def test_runner_stop_floors_at_breakeven_so_a_target_hit_cannot_finish_red(
+        tmp_path, monkeypatch):
+    """The whole point of P0: tranche A banked 0.6R, so the runner must not be
+    allowed to give back more than that. peak-1R is below entry here."""
+    _seed_state(tmp_path, monkeypatch)
+    # Peak 41.0: peak - 1R = 38.5, well under the 40.5 entry.
+    stub = _StubBrokerManage(order_status="filled", current_price=41.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+
+    assert stub.replace_calls[0]["stop_price"] == 40.5     # breakeven, not 38.5
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["runner_stop_price"] == 40.5
+
+
+def test_runner_stop_ratchets_up_with_the_peak_and_never_back_down(
+        tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch)
+    stub = _StubBrokerManage(order_status="filled")
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+    assert stub.replace_calls[-1]["stop_price"] == 41.5
+
+    stub.current_price = 48.0                    # runs further
+    events = cp.manage_open_positions(now=1_000_105.0)
+    assert stub.replace_calls[-1]["stop_price"] == 45.5
+    assert any(e.get("event") == "runner_stop_raised" for e in events)
+
+    calls_before = len(stub.replace_calls)
+    stub.current_price = 46.0                    # pulls back; peak unchanged
+    cp.manage_open_positions(now=1_000_110.0)
+    assert len(stub.replace_calls) == calls_before, "a pullback must not move it"
+
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["runner_stop_price"] == 45.5
+    assert state["NVDA"]["peak_price"] == 48.0
+
+
+def test_runner_stop_is_not_placed_above_the_market(tmp_path, monkeypatch):
+    """Price fell back through entry between the target fill and this tick —
+    a breakeven stop would sit above the last print and trigger on receipt."""
+    _seed_state(tmp_path, monkeypatch)
+    stub = _StubBrokerManage(order_status="filled", current_price=39.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+
+    assert stub.replace_calls == []
+    assert any(e.get("event") == "runner_stop_skipped" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    # Nothing was placed, so nothing was recorded — the original entry stop is
+    # still the only protection, which is the correct outcome here.
+    assert state["NVDA"].get("runner_stop_price") is None
+
+
+def test_realized_r_is_measured_against_the_entry_stop_not_the_moved_one(
+        tmp_path, monkeypatch):
+    """A managed trade must not fall out of the daily-loss gate. stop_price is
+    rewritten by every stop move; risk_per_share is frozen at entry."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    pos = {
+        "entry_price": 40.5, "stop_price": 40.5,   # already lifted to breakeven
+        "risk_per_share": 2.5, "total_qty": 100,
+        "entry_time": 1_000_000.0, "tranche_a_filled": True,
+    }
+
+    out = cp._record_outcome("NVDA", pos, 43.0, "trailed_out", 1_000_100.0)
+
+    assert out["realized_r_multiple"] == pytest.approx(1.0)   # not None
+    assert out["realized_pl_usd"] == pytest.approx(250.0)
+
+
+def test_a_deliberate_zero_survives_config_read():
+    """float(x or default) cannot express 0 — which is how a configured
+    'no trail' came back as 2.5%."""
+    assert cp._opt_float(0, 2.5) == 0.0
+    assert cp._opt_float(0.0, 2.5) == 0.0
+    assert cp._opt_float(None, 2.5) == 2.5
+    assert cp._opt_float("", 2.5) == 2.5
+    assert cp._opt_float("junk", 2.5) == 2.5
+    assert cp._opt_float(1.25, 2.5) == 1.25
 
 
 def test_no_action_while_tranche_a_order_is_still_open(tmp_path, monkeypatch):
@@ -1055,7 +1146,12 @@ def _write_outcome(tmp_path, **fields):
 
 def test_performance_summary_with_no_outcomes_yet(tmp_path, monkeypatch):
     _use_tmp_state(tmp_path, monkeypatch)
-    assert cp.performance_summary() == {"count": 0}
+    # The data-quality block is always present, so a caller can never read the
+    # graded numbers without seeing what they were computed from.
+    assert cp.performance_summary() == {
+        "count": 0, "ungraded": 0, "ungraded_symbols": [],
+        "unknown_close_reason": 0,
+    }
 
 
 def test_performance_summary_computes_win_rate_and_avg_r(tmp_path, monkeypatch):
@@ -1641,3 +1737,99 @@ def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):
     events = cp.manage_open_positions(now=later)
     assert not any(e["event"] == "dead_trade" for e in events)
     assert stub.closed == []
+
+
+# ── outcome data quality is reported, not swallowed ─────────────────────────
+
+def _write_outcomes(tmp_path, *rows):
+    _outcomes_path(tmp_path).write_text(
+        "".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_performance_summary_counts_trades_it_cannot_grade(
+        tmp_path, monkeypatch):
+    """An unresolved exit fill must show up as a number, not vanish. It is
+    excluded from realized R *and* from the daily-loss gate, so a silent skip
+    reports a clean scorecard computed off an unknown fraction of the day."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    _write_outcomes(
+        tmp_path,
+        {"symbol": "AAA", "realized_r_multiple": 0.6, "realized_pl_usd": 60.0,
+         "close_reason": "target_hit", "exit_time": 10.0, "hold_days": 0.0},
+        {"symbol": "BBB", "realized_r_multiple": None, "exit_price": None,
+         "close_reason": "unknown", "exit_time": 20.0},
+        {"symbol": "CCC", "realized_r_multiple": None, "exit_price": None,
+         "close_reason": "unknown", "exit_time": 30.0},
+    )
+
+    s = cp.performance_summary()
+
+    assert s["count"] == 1                      # graded
+    assert s["ungraded"] == 2
+    assert s["ungraded_symbols"] == ["BBB", "CCC"]
+    assert s["unknown_close_reason"] == 2
+    assert s["win_rate"] == 1.0                 # the graded row only
+
+
+def test_performance_summary_reports_quality_even_with_nothing_gradable(
+        tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    _write_outcomes(
+        tmp_path,
+        {"symbol": "AAA", "realized_r_multiple": None, "close_reason": "unknown",
+         "exit_time": 10.0},
+    )
+
+    s = cp.performance_summary()
+
+    assert s["count"] == 0
+    assert s["ungraded"] == 1        # not reported as "no trading happened"
+
+
+# ── spread measured in R, not in percent of price ───────────────────────────
+
+def test_spread_gate_in_r_rejects_a_cheap_looking_spread_on_a_tight_stop():
+    """A 0.20% spread reads as negligible against price, but against a 0.50%
+    stop the round trip is 80% of 1R."""
+    ok, why = cp.pre_entry_gate(
+        "AAA", ask=10.0, bid=9.98, account_equity=50_000.0,
+        stop_price=9.95, max_spread_r=0.25, max_spread_pct=0.0,
+    )
+    assert ok is False
+    assert why.startswith("spread_r_0.80>")
+
+
+def test_spread_gate_in_r_passes_when_the_risk_unit_is_wide_enough():
+    # Same 0.02 spread, but a 5% stop: round trip is 0.008R.
+    ok, why = cp.pre_entry_gate(
+        "AAA", ask=10.0, bid=9.98, account_equity=50_000.0,
+        stop_price=9.50, max_spread_r=0.25, max_spread_pct=0.0,
+    )
+    assert (ok, why) == (True, "")
+
+
+def test_spread_gate_in_r_is_off_by_default():
+    """Shipped off: the live path reads IEX quotes, which always look wide."""
+    ok, why = cp.pre_entry_gate(
+        "AAA", ask=10.0, bid=9.98, account_equity=50_000.0,
+        stop_price=9.95, max_spread_pct=0.0,
+    )
+    assert (ok, why) == (True, "")
+
+
+def test_entry_slippage_is_measured_against_the_limit_in_r(
+        tmp_path, monkeypatch):
+    """The honest answer to 'what does crossing cost' — a real fill against the
+    limit we asked for, never a quote."""
+    _seed_state(tmp_path, monkeypatch, entry_confirmed=False,
+                entry_limit_price=40.50, risk_per_share=2.5,
+                tranche_a_order_id="order_a")
+    stub = _StubBrokerManage(order_status="new", fills={"order_a": 40.75})
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_100.0)
+
+    state = json.loads(_state_path(tmp_path).read_text())
+    # paid 40.75 against a 40.50 limit, on 2.50 of risk = 0.10R
+    assert state["NVDA"]["entry_slippage_r"] == pytest.approx(0.10)
+    assert state["NVDA"]["entry_price"] == 40.75
