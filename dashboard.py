@@ -562,8 +562,9 @@ def _track_mention(ticker: str):
     threshold = int(STATE.cfg.get("mention_alert_threshold", 5))
     if len(STATE.mention_ts[ticker]) >= threshold and ticker not in STATE.push_notified:
         STATE.push_notified.add(ticker)
-        price = STATE.tickers.get(ticker, {}).get("price")
-        _archive_burst(ticker, price, len(STATE.mention_ts[ticker]))
+        entry = STATE.tickers.get(ticker, {})
+        price = entry.get("price")
+        _archive_burst(ticker, price, len(STATE.mention_ts[ticker]), entry, now)
         threading.Thread(
             target=_send_push_notifications,
             args=(ticker, price),
@@ -711,7 +712,8 @@ def _send_price_spike_push(ticker: str, price, float_size, tier: str) -> None:
             ]
 
 
-def _archive_burst(ticker: str, price, window_count: int):
+def _archive_burst(ticker: str, price, window_count: int,
+                   entry: dict | None = None, now: float | None = None):
     """
     Append every mention burst to an append-only JSONL archive.
 
@@ -719,19 +721,84 @@ def _archive_burst(ticker: str, price, window_count: int):
     3-indicator entry has no standalone edge on alert-pool microcaps — the
     catalyst (the burst) is the candidate edge. Replaying catalyst-gated
     entries needs burst timestamps, which the in-memory state doesn't keep.
+
+    A burst usually fires before the price poller has a quote for the name —
+    Discord surfaces a microcap the instant it is mentioned, and for OTC symbols
+    Alpaca and Finnhub return nothing at all — which left 60% of the archive
+    carrying price=null and therefore useless for the forward-return work it
+    exists to support. The scanner's own price seed is the fallback: it is a
+    snapshot from when the alert fired rather than a live quote, so it is
+    recorded with its source and age instead of being merged into `price` and
+    silently passed off as one.
     """
+    entry = entry or {}
+    now   = now or time.time()
+    src   = "quote" if price is not None else None
+    age   = None
+    if price is None:
+        seed = entry.get("scanner_price")
+        if seed is not None:
+            price = seed
+            src   = "scanner"
+            seed_ts = entry.get("scanner_price_ts")
+            if seed_ts:
+                age = round(max(0.0, now - float(seed_ts)), 1)
     try:
         _BURST_LOG.parent.mkdir(exist_ok=True)
         with open(_BURST_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "ticker": ticker,
                 "time":   datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "unix":   round(time.time(), 1),
+                "unix":   round(now, 1),
                 "price":  price,
+                "price_src": src,          # "quote" | "scanner" | None
+                "price_age_sec": age,      # how stale the scanner seed was
                 "window_count": window_count,
             }) + "\n")
     except Exception as e:
         log.warning(f"[BURST] archive failed: {e}")
+
+
+def _archive_bb_live(rec: dict, entry: dict | None = None, now: float | None = None):
+    """Append one "Bullish Bob LIVE" call-out to ai_reports/bb_live.jsonl.
+
+    The header chip is in-memory only — a deque that empties on every dashboard
+    restart, of which there are several on any day the code changes. That made
+    the desk's newest and most prominent signal the only one it kept no record
+    of, so "was the call worth acting on?" had no data behind it at all.
+
+    Each row carries the price at call time and where that price came from, so
+    it can serve as the t0 anchor for forward-return work. `at` is when the call
+    was made (Discord's stamp where OCR caught it), `unix` when we read it.
+
+    A dashboard restart can re-archive a call still on screen; dedupe on
+    (ticker, said, text) when analysing.
+    """
+    entry = entry or {}
+    now   = now or time.time()
+    price = entry.get("price")
+    src   = "quote" if price is not None else None
+    age   = None
+    if price is None:
+        seed = entry.get("scanner_price")
+        if seed is not None:
+            price, src = seed, "scanner"
+            seed_ts = entry.get("scanner_price_ts")
+            if seed_ts:
+                age = round(max(0.0, now - float(seed_ts)), 1)
+    try:
+        import ai_paths
+        path = ai_paths.report_file("bb_live.jsonl", create_parent=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                **rec,
+                "time":  datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "price": price,
+                "price_src": src,
+                "price_age_sec": age,
+            }) + "\n")
+    except Exception as e:
+        log.warning(f"[BB-LIVE] archive failed: {e}")
 
 
 def _mention_window_count(ticker: str) -> int:
@@ -1351,21 +1418,31 @@ def ingest_discord_alerts(alerts: list[dict], sentiment=None, drops=None,
         # them all with the same minute and call them all current.
         said      = str(c.get("said", "")).strip()[:10]
         said_unix = _bb_said_unix(said, ts)
+        text      = str(c.get("text", "")).strip()[:120]
+        rec = {
+            "ts":     datetime.fromtimestamp(ts, ET).strftime("%H:%M:%S"),
+            "unix":   ts,
+            "said":   said,
+            "at":     said_unix or ts,
+            "ticker": ticker,
+            "text":   text,
+        }
         with STATE.lock:
             # Same symbol called again replaces the earlier entry rather than
             # stacking duplicates — the history is a list of calls, not of OCR
             # frames, and the newest one is what the chip should show.
             existing = [r for r in STATE.bb_live if r["ticker"] == ticker]
+            # The OCR source re-posts everything visible when it restarts, so an
+            # identical call already in memory is a replay, not a new call — the
+            # archive must not count it twice.
+            replay = any(r.get("said") == said and r.get("text") == text
+                         for r in existing)
             for r in existing:
                 STATE.bb_live.remove(r)
-            STATE.bb_live.append({
-                "ts":     datetime.fromtimestamp(ts, ET).strftime("%H:%M:%S"),
-                "unix":   ts,
-                "said":   said,
-                "at":     said_unix or ts,
-                "ticker": ticker,
-                "text":   str(c.get("text", "")).strip()[:120],
-            })
+            STATE.bb_live.append(rec)
+            entry = STATE.tickers.get(ticker, {})
+        if not replay:
+            _archive_bb_live(rec, entry, ts)
 
     with STATE.lock:
         STATE.discord_last_ts = time.time()

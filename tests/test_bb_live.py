@@ -13,6 +13,7 @@ Run:
     venv/bin/python -m pytest tests/test_bb_live.py -q
 """
 
+import json
 import os
 import sys
 import time
@@ -351,6 +352,92 @@ def test_malformed_symbol_is_refused_server_side():
         {"ticker": "NRXP", "text": "ok", "ts": "garbage"},
     ])
     assert [c["ticker"] for c in dash.bb_live_snapshot()["history"]] == ["NRXP"]
+
+
+# ── the on-disk archive ──────────────────────────────────────────────────────
+# The header chip is a deque that empties on every dashboard restart. Without
+# this file the desk keeps no record of its most prominent signal.
+
+def _read_archive(dash) -> list[dict]:
+    import ai_paths
+    p = ai_paths.report_file("bb_live.jsonl")
+    if not p.exists():
+        return []
+    return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
+
+
+def _clear_archive():
+    import ai_paths
+    p = ai_paths.report_file("bb_live.jsonl")
+    if p.exists():
+        p.unlink()
+
+
+def test_call_out_is_archived_to_disk():
+    dash = _fresh_dashboard()
+    _clear_archive()
+    now = time.time()
+    dash.ingest_discord_alerts([], [], {}, [
+        {"ticker": "NRXP", "text": "NRXP pop", "ts": now, "said": "8:21 AM"},
+    ])
+    rows = _read_archive(dash)
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "NRXP"
+    assert rows[0]["text"] == "NRXP pop"
+    assert rows[0]["said"] == "8:21 AM"
+    assert "at" in rows[0] and "time" in rows[0]
+
+
+def test_archive_survives_a_state_reset():
+    """The point of the file: memory is cleared, the record is not."""
+    dash = _fresh_dashboard()
+    _clear_archive()
+    dash.ingest_discord_alerts([], [], {}, [{"ticker": "NAMI", "text": "NAMI vol"}])
+    dash.STATE.bb_live.clear()                       # simulate a restart
+    assert dash.bb_live_snapshot()["history"] == []
+    assert [r["ticker"] for r in _read_archive(dash)] == ["NAMI"]
+
+
+def test_replayed_call_out_is_not_archived_twice():
+    """The OCR source re-posts everything visible when it restarts."""
+    dash = _fresh_dashboard()
+    _clear_archive()
+    call = {"ticker": "NRXP", "text": "NRXP pop", "said": "8:21 AM"}
+    dash.ingest_discord_alerts([], [], {}, [dict(call)])
+    dash.ingest_discord_alerts([], [], {}, [dict(call)])
+    assert len(_read_archive(dash)) == 1
+    # A genuinely new call on the same symbol IS a second row.
+    dash.ingest_discord_alerts([], [], {},
+                               [{"ticker": "NRXP", "text": "NRXP again", "said": "9:02 AM"}])
+    assert len(_read_archive(dash)) == 2
+
+
+def test_archive_records_the_price_and_its_source():
+    dash = _fresh_dashboard()
+    _clear_archive()
+    now = time.time()
+    with dash.STATE.lock:
+        dash.STATE.tickers["AAA"] = {"price": 4.20}
+        # OTC name the quote feed has nothing for — only the scanner's seed.
+        dash.STATE.tickers["BBB"] = {"scanner_price": 1.75,
+                                     "scanner_price_ts": now - 30}
+    dash.ingest_discord_alerts([], [], {}, [
+        {"ticker": "AAA", "text": "AAA pop"},
+        {"ticker": "BBB", "text": "BBB pop"},
+        {"ticker": "CCC", "text": "CCC pop"},      # nothing known at all
+    ])
+    by = {r["ticker"]: r for r in _read_archive(dash)}
+    assert (by["AAA"]["price"], by["AAA"]["price_src"]) == (4.20, "quote")
+    assert (by["BBB"]["price"], by["BBB"]["price_src"]) == (1.75, "scanner")
+    assert by["BBB"]["price_age_sec"] >= 30
+    assert (by["CCC"]["price"], by["CCC"]["price_src"]) == (None, None)
+
+
+def test_archive_honours_the_test_report_dir():
+    """conftest redirects AI_REPORT_DIR; a suite run must never append to the
+    real ai_reports/bb_live.jsonl mid-session."""
+    import ai_paths
+    assert "ai_reports_test_" in str(ai_paths.report_file("bb_live.jsonl"))
 
 
 def test_call_outs_never_touch_mentions():

@@ -11,6 +11,7 @@ Run:
     venv/bin/python -m pytest tests/test_discord_ingest.py -q
 """
 
+import json
 import os
 import sys
 import time
@@ -243,3 +244,58 @@ def test_absent_or_zero_scanner_price_seeds_nothing():
     with d.STATE.lock:
         assert "scanner_price" not in d.STATE.tickers.get("AMD", {})
         assert "scanner_price" not in d.STATE.tickers.get("NVDA", {})
+
+
+# ── burst archive: the price fallback ────────────────────────────────────────
+# 238 of 394 rows in the real mention_bursts.jsonl carried price=null, which is
+# 60% of the dataset the file's own docstring calls the input for forward-return
+# threshold work. A burst fires the moment a name is mentioned, usually before
+# the quote poller has anything for it — and for OTC symbols Alpaca and Finnhub
+# never return anything at all. The scanner's own seed is the fallback.
+
+def _burst_rows(tmp_path, monkeypatch, ticker, entry):
+    log = tmp_path / "mention_bursts.jsonl"
+    monkeypatch.setattr(d, "_BURST_LOG", log)
+    monkeypatch.setattr(d, "_send_push_notifications", lambda *a, **k: None)
+    threshold = int(d.STATE.cfg.get("mention_alert_threshold", 5))
+    with d.STATE.lock:
+        d.STATE.push_notified.discard(ticker)
+        d.STATE.tickers[ticker] = dict(entry)
+        for _ in range(threshold):
+            d._track_mention(ticker)
+    if not log.exists():
+        return []
+    return [json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
+
+
+def test_burst_uses_the_live_quote_when_there_is_one(tmp_path, monkeypatch):
+    rows = _burst_rows(tmp_path, monkeypatch, "AAA", {"price": 4.20})
+    assert len(rows) == 1
+    assert (rows[0]["price"], rows[0]["price_src"]) == (4.20, "quote")
+    assert rows[0]["price_age_sec"] is None
+
+
+def test_burst_falls_back_to_the_scanner_seed(tmp_path, monkeypatch):
+    """An OTC name the quote feed has nothing for used to archive price=null."""
+    now  = time.time()
+    rows = _burst_rows(tmp_path, monkeypatch, "BBB",
+                       {"scanner_price": 1.75, "scanner_price_ts": now - 45})
+    assert len(rows) == 1
+    assert (rows[0]["price"], rows[0]["price_src"]) == (1.75, "scanner")
+    # The seed is a snapshot from when the alert fired, not a quote — analysis
+    # has to be able to tell how stale it was.
+    assert rows[0]["price_age_sec"] >= 45
+
+
+def test_burst_with_no_price_at_all_is_still_recorded_and_labelled(tmp_path, monkeypatch):
+    rows = _burst_rows(tmp_path, monkeypatch, "CCC", {})
+    assert len(rows) == 1
+    assert (rows[0]["price"], rows[0]["price_src"]) == (None, None)
+
+
+def test_scanner_seed_never_masquerades_as_a_quote(tmp_path, monkeypatch):
+    """A live quote must win; the seed must never overwrite one."""
+    rows = _burst_rows(tmp_path, monkeypatch, "DDD",
+                       {"price": 9.99, "scanner_price": 1.11,
+                        "scanner_price_ts": time.time()})
+    assert (rows[0]["price"], rows[0]["price_src"]) == (9.99, "quote")
