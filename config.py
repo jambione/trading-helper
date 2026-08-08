@@ -390,7 +390,6 @@ DEFAULT_CONFIG = {
     "claude_research_times": ["08:30", "11:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
-    "claude_prompt_file": "ai_prompt.txt",
     "claude_request_timeout":   600.0,
     "claude_live_search":        True,
     # web_x = web_search + x_search on xAI API; Claude CLI uses WebSearch/WebFetch.
@@ -402,21 +401,6 @@ DEFAULT_CONFIG = {
     "claude_use_desk_snapshot":  True,
     "claude_save_reports":       True,
     # Legacy aliases (mirrored in load_config from ai_* when missing)
-    "claude_trader_enabled":     False,
-    "claude_trading_enabled":    False,
-    "claude_max_price":         100.0,
-    "claude_quote_poll":         15.0,
-    "claude_volume_poll":        60.0,
-    "claude_avg_days":             10,
-    "claude_rvol_time_adjusted": True,
-    "claude_trade_amount":     1000.0,
-    "claude_max_positions":         5,
-    "claude_max_buys_per_poll":     3,
-    "claude_max_sells_per_poll":    5,
-    "claude_risk_pct":            1.0,
-    "claude_trade_style": "Moderate position",
-    "claude_min_reward_risk":     3.0,
-    "claude_positions_poll_sec":  5.0,
 
     # ── Grok research source (xAI subscription via Grok CLI) ──────────────────
     "grok_research_enabled":   False,   # scheduled Grok research via ai_trader.py
@@ -711,9 +695,7 @@ SAFE_CONFIG_KEYS = [
     "ai_shadow_log_enabled",
     "ai_reject_log_enabled",
     "momentum_max_tickers",
-    "claude_trader_enabled",
     "claude_research_enabled",
-    "claude_trading_enabled",
     "claude_backend",
     "claude_cli_bin",
     "claude_model",
@@ -721,7 +703,6 @@ SAFE_CONFIG_KEYS = [
     "claude_research_times",
     "claude_research_weekdays_only",
     "claude_research_catchup_min",
-    "claude_prompt_file",
     "claude_request_timeout",
     "claude_live_search",
     "claude_search_tools",
@@ -730,19 +711,6 @@ SAFE_CONFIG_KEYS = [
     "claude_use_prior_context",
     "claude_use_desk_snapshot",
     "claude_save_reports",
-    "claude_max_price",
-    "claude_quote_poll",
-    "claude_volume_poll",
-    "claude_avg_days",
-    "claude_rvol_time_adjusted",
-    "claude_trade_amount",
-    "claude_max_positions",
-    "claude_max_buys_per_poll",
-    "claude_max_sells_per_poll",
-    "claude_risk_pct",
-    "claude_trade_style",
-    "claude_min_reward_risk",
-    "claude_positions_poll_sec",
     "grok_research_enabled",
     "grok_trading_enabled",
     "grok_backend",
@@ -772,42 +740,6 @@ SAFE_CONFIG_KEYS = [
 ]
 
 
-# Shared AI keys ↔ legacy claude_* names (one-release dual-read).
-_AI_CONFIG_ALIASES: list[tuple[str, str]] = [
-    ("ai_trader_enabled", "claude_trader_enabled"),
-    ("ai_trading_enabled", "claude_trading_enabled"),
-    ("ai_max_price", "claude_max_price"),
-    ("ai_quote_poll", "claude_quote_poll"),
-    ("ai_volume_poll", "claude_volume_poll"),
-    ("ai_avg_days", "claude_avg_days"),
-    ("ai_rvol_time_adjusted", "claude_rvol_time_adjusted"),
-    ("ai_trade_amount", "claude_trade_amount"),
-    ("ai_max_positions", "claude_max_positions"),
-    ("ai_max_buys_per_poll", "claude_max_buys_per_poll"),
-    ("ai_max_sells_per_poll", "claude_max_sells_per_poll"),
-    ("ai_risk_pct", "claude_risk_pct"),
-    ("ai_trade_style", "claude_trade_style"),
-    ("ai_min_reward_risk", "claude_min_reward_risk"),
-    ("ai_positions_poll_sec", "claude_positions_poll_sec"),
-    ("ai_prompt_file", "claude_prompt_file"),
-]
-
-
-def _apply_ai_config_aliases(cfg: dict) -> dict:
-    """Fill missing ai_* from claude_* and vice versa so either name works."""
-    for new, old in _AI_CONFIG_ALIASES:
-        new_set = new in cfg and cfg[new] is not None
-        old_set = old in cfg and cfg[old] is not None
-        if new_set and not old_set:
-            cfg[old] = cfg[new]
-        elif old_set and not new_set:
-            cfg[new] = cfg[old]
-        elif new_set and old_set:
-            # Prefer explicit ai_* when both present and differ.
-            cfg[old] = cfg[new]
-    return cfg
-
-
 def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG_FILE.exists():
@@ -828,7 +760,7 @@ def load_config() -> dict:
                         cfg[k] = secrets[k]
         except Exception as e:
             print(f"[CFG] Failed to load secrets ({e})")
-    return _apply_ai_config_aliases(cfg)
+    return cfg
 
 
 def _write_json(path: Path, data: dict):

@@ -368,7 +368,7 @@ def _normalize_positions_state(raw: Any) -> dict[str, Any]:
 
 def _load_state() -> dict[str, Any]:
     """Load managed positions; prefer POSITIONS_STATE_PATH (monkeypatchable)."""
-    from ai_paths import REPORT_DIR_LEGACY, REPORT_DIR_PRIMARY, find_report_file
+    from ai_paths import find_report_file, resolve_report_dir
 
     def _try(path: Path | None) -> dict[str, Any] | None:
         if path is None or not path.exists():
@@ -393,8 +393,7 @@ def _load_state() -> dict[str, Any]:
     try:
         parent = POSITIONS_STATE_PATH.parent.resolve()
         allowed = {
-            REPORT_DIR_PRIMARY.resolve(),
-            REPORT_DIR_LEGACY.resolve(),
+            resolve_report_dir().resolve(),
             ROOT.resolve(),
         }
         if parent not in allowed:

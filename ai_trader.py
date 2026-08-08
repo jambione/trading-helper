@@ -487,13 +487,10 @@ def _duel_public() -> dict:
         return {}
 
 
-def _cfg(cfg: dict, new_key: str, old_key: str, default=None):
-    """Prefer ai_* shared keys; fall back to legacy claude_* names."""
-    if new_key in cfg and cfg.get(new_key) is not None:
-        return cfg.get(new_key)
-    if old_key in cfg and cfg.get(old_key) is not None:
-        return cfg.get(old_key)
-    return default
+def _cfg(cfg: dict, key: str, default=None):
+    """Config read where an explicit null counts as unset, not as a value."""
+    v = cfg.get(key)
+    return default if v is None else v
 
 
 def resolve_trading_source(cfg: dict) -> str:
@@ -508,7 +505,7 @@ def resolve_trading_source(cfg: dict) -> str:
             return "off"
         return raw
     grok_on = bool(cfg.get("grok_trading_enabled", False))
-    claude_on = bool(_cfg(cfg, "ai_trading_enabled", "claude_trading_enabled", False))
+    claude_on = bool(_cfg(cfg, "ai_trading_enabled", False))
     if grok_on and claude_on:
         return "grok"
     if grok_on:
@@ -540,14 +537,14 @@ def apply_trading_source(cfg: dict, source: str) -> dict:
 
 def _build_suggestions(cfg: dict) -> AiSuggestions:
     """Anthropic research source (optional paper trading)."""
-    trading = bool(_cfg(cfg, "ai_trading_enabled", "claude_trading_enabled", False))
+    trading = bool(_cfg(cfg, "ai_trading_enabled", False))
     return AiSuggestions(
-        max_price=_cfg(cfg, "ai_max_price", "claude_max_price"),
-        quote_interval=float(_cfg(cfg, "ai_quote_poll", "claude_quote_poll", 15.0)),
-        volume_interval=float(_cfg(cfg, "ai_volume_poll", "claude_volume_poll", 60.0)),
-        avg_days=int(_cfg(cfg, "ai_avg_days", "claude_avg_days", 10)),
+        max_price=_cfg(cfg, "ai_max_price"),
+        quote_interval=float(_cfg(cfg, "ai_quote_poll", 15.0)),
+        volume_interval=float(_cfg(cfg, "ai_volume_poll", 60.0)),
+        avg_days=int(_cfg(cfg, "ai_avg_days", 10)),
         rvol_time_adjusted=bool(
-            _cfg(cfg, "ai_rvol_time_adjusted", "claude_rvol_time_adjusted", True)),
+            _cfg(cfg, "ai_rvol_time_adjusted", True)),
         model=cfg.get("claude_model", "sonnet"),
         prompt_file=cfg.get("claude_prompt_file")
         or cfg.get("ai_prompt_file")
@@ -556,12 +553,12 @@ def _build_suggestions(cfg: dict) -> AiSuggestions:
         live_search=bool(cfg.get("claude_live_search", True)),
         save_reports=bool(cfg.get("claude_save_reports", True)),
         trading=trading,
-        trade_amount=float(_cfg(cfg, "ai_trade_amount", "claude_trade_amount", 1000.0)),
-        max_positions=int(_cfg(cfg, "ai_max_positions", "claude_max_positions", 5)),
+        trade_amount=float(_cfg(cfg, "ai_trade_amount", 1000.0)),
+        max_positions=int(_cfg(cfg, "ai_max_positions", 5)),
         max_buys_per_poll=int(
-            _cfg(cfg, "ai_max_buys_per_poll", "claude_max_buys_per_poll", 3)),
+            _cfg(cfg, "ai_max_buys_per_poll", 3)),
         max_sells_per_poll=int(
-            _cfg(cfg, "ai_max_sells_per_poll", "claude_max_sells_per_poll", 5)),
+            _cfg(cfg, "ai_max_sells_per_poll", 5)),
         max_turns=int(cfg.get("claude_max_turns", 8)),
         max_output_tokens=int(cfg.get("claude_max_output_tokens", 10000)),
         search_tools=cfg.get("claude_search_tools", "web_x"),
@@ -577,11 +574,10 @@ def _build_suggestions(cfg: dict) -> AiSuggestions:
         research_weekdays_only=bool(
             cfg.get("claude_research_weekdays_only", True)),
         research_catchup_min=int(cfg.get("claude_research_catchup_min", 120)),
-        risk_pct=float(_cfg(cfg, "ai_risk_pct", "claude_risk_pct", 1.0)),
-        trade_style=_cfg(cfg, "ai_trade_style", "claude_trade_style",
-                         "Moderate position"),
+        risk_pct=float(_cfg(cfg, "ai_risk_pct", 1.0)),
+        trade_style=_cfg(cfg, "ai_trade_style", "Moderate position"),
         min_reward_risk=float(
-            _cfg(cfg, "ai_min_reward_risk", "claude_min_reward_risk", 3.0)),
+            _cfg(cfg, "ai_min_reward_risk", 3.0)),
     )
 
 
@@ -591,12 +587,12 @@ def _build_grok(cfg: dict) -> AiSuggestions:
     # Shared quote/volume/risk knobs; fall back to ai_* / claude_* values.
     return AiSuggestions(
         max_price=cfg.get("grok_max_price",
-                          _cfg(cfg, "ai_max_price", "claude_max_price", 100.0)),
-        quote_interval=float(_cfg(cfg, "ai_quote_poll", "claude_quote_poll", 15.0)),
-        volume_interval=float(_cfg(cfg, "ai_volume_poll", "claude_volume_poll", 60.0)),
-        avg_days=int(_cfg(cfg, "ai_avg_days", "claude_avg_days", 10)),
+                          _cfg(cfg, "ai_max_price", 100.0)),
+        quote_interval=float(_cfg(cfg, "ai_quote_poll", 15.0)),
+        volume_interval=float(_cfg(cfg, "ai_volume_poll", 60.0)),
+        avg_days=int(_cfg(cfg, "ai_avg_days", 10)),
         rvol_time_adjusted=bool(
-            _cfg(cfg, "ai_rvol_time_adjusted", "claude_rvol_time_adjusted", True)),
+            _cfg(cfg, "ai_rvol_time_adjusted", True)),
         model=cfg.get("grok_model", "grok-4.5"),
         prompt_file=cfg.get("grok_prompt_file")
         or cfg.get("claude_prompt_file")
@@ -607,12 +603,12 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         live_search=bool(cfg.get("grok_live_search", True)),
         save_reports=bool(cfg.get("grok_save_reports", True)),
         trading=trading,
-        trade_amount=float(_cfg(cfg, "ai_trade_amount", "claude_trade_amount", 1000.0)),
-        max_positions=int(_cfg(cfg, "ai_max_positions", "claude_max_positions", 5)),
+        trade_amount=float(_cfg(cfg, "ai_trade_amount", 1000.0)),
+        max_positions=int(_cfg(cfg, "ai_max_positions", 5)),
         max_buys_per_poll=int(
-            _cfg(cfg, "ai_max_buys_per_poll", "claude_max_buys_per_poll", 3)),
+            _cfg(cfg, "ai_max_buys_per_poll", 3)),
         max_sells_per_poll=int(
-            _cfg(cfg, "ai_max_sells_per_poll", "claude_max_sells_per_poll", 5)),
+            _cfg(cfg, "ai_max_sells_per_poll", 5)),
         max_turns=int(cfg.get("grok_max_turns", 4)),
         search_tools=cfg.get("grok_search_tools",
                              cfg.get("claude_search_tools", "web_x")),
@@ -627,11 +623,10 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         research_weekdays_only=bool(
             cfg.get("grok_research_weekdays_only", True)),
         research_catchup_min=int(cfg.get("grok_research_catchup_min", 120)),
-        risk_pct=float(_cfg(cfg, "ai_risk_pct", "claude_risk_pct", 1.0)),
-        trade_style=_cfg(cfg, "ai_trade_style", "claude_trade_style",
-                         "Moderate position"),
+        risk_pct=float(_cfg(cfg, "ai_risk_pct", 1.0)),
+        trade_style=_cfg(cfg, "ai_trade_style", "Moderate position"),
         min_reward_risk=float(
-            _cfg(cfg, "ai_min_reward_risk", "claude_min_reward_risk", 3.0)),
+            _cfg(cfg, "ai_min_reward_risk", 3.0)),
     )
 
 
@@ -1074,7 +1069,7 @@ def main() -> None:
           flush=True)
 
     positions_poll = float(
-        _cfg(cfg, "ai_positions_poll_sec", "claude_positions_poll_sec", 5.0))
+        _cfg(cfg, "ai_positions_poll_sec", 5.0))
     unconfirmed_ttl = float(cfg.get("ai_entry_unconfirmed_ttl_sec", 900.0))
     watch_poll_sec = float(cfg.get("ai_watch_poll_sec", 20.0) or 20.0)
 
