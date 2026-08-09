@@ -50,6 +50,8 @@ claude_suggestions.json
 grok_suggestions.json
 benchmarks/mention_bursts.jsonl
 benchmarks/price_spikes.jsonl
+# Rebuildable vendor bars — desk_replay_bench --bars refetches on demand.
+benchmarks/replay_bars_cache.json
 # Note: benchmarks/ab_bench_*.csv stays TRACKED — those are A/B results worth
 # keeping in history, unlike the raw feeds above.
 scratch-pad
