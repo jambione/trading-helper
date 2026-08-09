@@ -1132,7 +1132,15 @@ def test_synth_zone_applies_to_research_records_too(tmp_path, monkeypatch):
     path. Zero synth_zone events were logged across all of 2026-08-04."""
     import ai_entry_watch as ew
 
-    cfg = _zone_cfg(ai_structure_ttl_sec=100.0)
+    # Pin the offset band: this test is about *whether* a stale research zone
+    # gets re-anchored, and asserts the offset geometry to prove it did. Left
+    # unset it inherits the ai_watch_zone_mode default, which became
+    # double_bottom in 697c854 — and because HPE is a real ticker,
+    # build_double_bottom_zone_for_symbol found real bars and re-anchored to an
+    # actual support level (46.97), so the assertion read as a regression when
+    # the behaviour was correct. Pinning also drops the bar-cache dependency
+    # that made this test's result depend on the machine it ran on.
+    cfg = _zone_cfg(ai_structure_ttl_sec=100.0, ai_watch_zone_mode="offset")
     rec = {
         "symbol": "HPE", "source": "anthropic", "status": "watching",
         "structure_ts": 0.0,
