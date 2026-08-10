@@ -1088,6 +1088,10 @@ def place_scaled_entry(
         "reward_risk": decision.get("reward_risk"),
         "summary": decision.get("summary"),
         "strategy": strategy,
+        # Carried from the zone structure so the outcome row can be sliced by
+        # geometry (double_bottom vs pullback_band). "strategy" is too coarse:
+        # both are day_scalp_v0.
+        "zone_kind": decision.get("zone_kind"),
         "scale_out_pct": scale_out_pct,
         # Decision-time feature vector (ai_entry_watch._entry_features), held
         # so the outcome record can land denormalized — features and result on
@@ -1664,6 +1668,12 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "reward_risk_planned": pos.get("reward_risk"),
         "summary": pos.get("summary"),
         "strategy": pos.get("strategy"),
+        # Which geometry drew the zone this trade entered on. A double-bottom
+        # fill and a measured-pullback-band fill are different strategies, and
+        # averaging them into one realized-R number is what the arm gate in
+        # ai_entry_watch originally refused offset zones to prevent. Recorded
+        # so performance_summary and the replay tooling can slice by it.
+        "zone_kind": pos.get("zone_kind"),
         "mae_r": pos.get("mae_r"),
         "mfe_r": pos.get("mfe_r"),
         # Cost of crossing on the way in, in R. None until a fill is observed

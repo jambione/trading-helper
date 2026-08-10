@@ -356,6 +356,10 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "entry_high": entry_high_f,
             "last_ask": last_ask_f,
             "score": score_f,
+            # RVOL as measured at admission. The score is a blend whose scale
+            # differs per source (momentum ~1000, Stocktwits ~10-20), so it is
+            # not comparable down the column; rvol is one unit everywhere.
+            "rvol": _f_or_none(rec.get("admit_rvol")),
             "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
             "reason": str(rec.get("reason") or "")[:80] or None,
             "source": str(rec.get("source") or "research")[:24] or "research",
@@ -433,6 +437,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "in_zone": bool(in_zone),
         "source": src,
         "score": score_f,
+        "rvol": _f_or_none(rec.get("admit_rvol")),
         "reason": str(rec.get("reason") or "")[:80] or None,
         "wait_kind": wait_kind,
         "entry_low": entry_low_f,
@@ -1910,7 +1915,10 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         import urllib.request
         req = urllib.request.Request(
             f"{DASHBOARD_URL}/api/tickers/add-bulk",
-            data=json.dumps({"tickers": missing}).encode("utf-8"),
+            # src="book" marks these as data subscriptions, not momentum
+            # candidates — the Momentum panel filters them out so pushing the
+            # whole book does not bury the panel it seeds from.
+            data=json.dumps({"tickers": missing, "src": "book"}).encode("utf-8"),
             headers={"Content-Type": "application/json", "User-Agent": _DASH_UA},
             method="POST",
         )
@@ -2544,6 +2552,9 @@ def _structure_levels(structure: dict) -> tuple[float, float, float, float, floa
 
 _bar_cache: dict[str, tuple[float, Any]] = {}  # symbol -> (ts, lows list or df)
 _bar_cache_lock = threading.Lock()
+# symbol -> (ts, [(high, low, close), ...]) filled by the same fetch as above.
+_ohlc_cache: dict[str, tuple[float, list[tuple[float, float, float]]]] = {}
+_ohlc_cache_lock = threading.Lock()
 
 
 def find_double_bottom_support(
@@ -2705,6 +2716,221 @@ def build_double_bottom_zone_structure(
     }
 
 
+def _extract_ohlc_from_bars(bars: Any, lookback: int) -> list[tuple[float, float, float]]:
+    """(high, low, close) rows from a DataFrame or sequence. Empty on failure.
+
+    Same request the double-bottom scan already pays for — the zone sizing
+    below needs highs and closes as well as lows, and re-fetching for that
+    would put a second bar call per symbol on the rate limit this desk is
+    already fighting.
+    """
+    if bars is None:
+        return []
+    try:
+        import pandas as pd
+        if isinstance(bars, pd.DataFrame):
+            cols = {"high", "low", "close"}
+            if not cols.issubset(set(bars.columns)):
+                return []
+            tail = bars[["high", "low", "close"]].tail(int(lookback))
+            out: list[tuple[float, float, float]] = []
+            for h, lo, c in tail.itertuples(index=False, name=None):
+                try:
+                    hf, lf, cf = float(h), float(lo), float(c)
+                except (TypeError, ValueError):
+                    continue
+                if hf > 0 and lf > 0 and hf >= lf:
+                    out.append((hf, lf, cf))
+            return out
+    except Exception:
+        pass
+    if isinstance(bars, (list, tuple)):
+        out = []
+        for row in list(bars)[-int(lookback):]:
+            h = getattr(row, "high", None)
+            lo = getattr(row, "low", None)
+            c = getattr(row, "close", None)
+            if h is None and isinstance(row, dict):
+                h, lo, c = row.get("high"), row.get("low"), row.get("close")
+            try:
+                hf, lf, cf = float(h), float(lo), float(c)
+            except (TypeError, ValueError):
+                continue
+            if hf > 0 and lf > 0 and hf >= lf:
+                out.append((hf, lf, cf))
+        return out
+    return []
+
+
+def pullback_depths(
+    rows: list[tuple[float, float, float]],
+    window: int = 15,
+) -> list[float]:
+    """Deepest drawdown below a running high, over each rolling window (%).
+
+    This is the statistic the entry zone is built on, and it is a measurement
+    rather than a parameter: "how far below a recent high does THIS name
+    typically trade within `window` bars".
+
+    The obvious alternative — recording each *completed* pullback, i.e. a dip
+    that resolved into a new high — was tried first and is unusable on exactly
+    the names this desk trades. A strong trender prints one running high and
+    then fades, so it yields a single sample; measured on 2026-08-10, six of
+    thirteen book names produced fewer than three completed pullbacks over 90
+    minutes of 1-minute bars, and their one sample was the whole afternoon's
+    decline. A rolling window always has ~N samples regardless of trend shape,
+    and on that same day its median tracked the next 30 minutes' actual dip
+    closely (FSLY 1.28 vs 1.24, SMCI 1.12 vs 1.40, ACHR 2.02 vs 3.47).
+
+    Expressed in percent rather than as an ATR multiple: the same multiplier
+    means a different depth on 1Min than on 5Min bars, which is how a "2% zone"
+    silently becomes a 10% zone when a bar timeframe is retuned.
+    """
+    w = max(2, int(window or 15))
+    if len(rows) < w:
+        return []
+    depths: list[float] = []
+    for i in range(len(rows) - w + 1):
+        run = 0.0
+        worst = 0.0
+        for high, low, _close in rows[i:i + w]:
+            if high > run:
+                run = high
+            if run > 0 and low < run:
+                worst = max(worst, 100.0 * (run - low) / run)
+        if worst > 0:
+            depths.append(worst)
+    return depths
+
+
+def _percentile(vals: list[float], pct: float) -> float:
+    """Linear-interpolated percentile. 0.0 on an empty list."""
+    xs = sorted(v for v in vals if v is not None)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    k = max(0.0, min(1.0, pct / 100.0)) * (len(xs) - 1)
+    lo_i = int(k)
+    hi_i = min(lo_i + 1, len(xs) - 1)
+    frac = k - lo_i
+    return float(xs[lo_i] * (1.0 - frac) + xs[hi_i] * frac)
+
+
+def _session_decay(cfg: dict, now: float) -> float:
+    """Shrink factor for zone depth as the session runs out (1.0 → floor).
+
+    A 4% pullback is an ordinary morning event and a fantasy at 15:30: there
+    are not enough minutes left to make one. Without this the book spends the
+    afternoon waiting on depths the remaining session cannot produce, which is
+    the same "never hits it" failure as an over-deep zone, just arriving later
+    in the day.
+    """
+    if not bool(cfg.get("ai_watch_zone_time_decay", True)):
+        return 1.0
+    try:
+        floor = float(cfg.get("ai_watch_zone_decay_floor", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        floor = 0.5
+    floor = max(0.1, min(1.0, floor))
+    try:
+        sh, sm = _parse_hhmm(str(cfg.get("ai_watch_start_time", "09:00")), (9, 0))
+        eh, em = _parse_hhmm(str(cfg.get("ai_eod_liquidate_time", "15:50")), (15, 50))
+        start, end = sh * 60 + sm, eh * 60 + em
+        et = _et_now(now)
+    except Exception:
+        return 1.0
+    if end <= start:
+        return 1.0
+    mins = et.hour * 60 + et.minute
+    if mins <= start:
+        return 1.0
+    if mins >= end:
+        return floor
+    frac = (mins - start) / float(end - start)
+    return 1.0 - (1.0 - floor) * frac
+
+
+def variable_zone_band(
+    price: float,
+    rows: list[tuple[float, float, float]],
+    cfg: dict,
+    now: float,
+) -> tuple[float, float, dict] | None:
+    """Entry band scaled to how deep this name actually pulls back.
+
+    Returns (entry_low, entry_high, meta) or None when there is not enough
+    history to measure. The band is bounded on both sides for different
+    reasons: the TOP must sit far enough below the print that this is a
+    pullback and not a market order at the ask, and the BOTTOM must stay
+    within a depth the name reaches often enough to be worth waiting for.
+
+    Calibration on 2026-08-10's book (13 names): median 5-minute ATR was 0.65%
+    of price and the median deepest intraday retrace was 5.9% — every single
+    name pulled back at least 3x its own ATR. The zones in force that day sat
+    20-30% below price because they were pinned to 90-bar double-bottom
+    structure, so not one of eleven rows ever came within reach and the book
+    took zero entries. Depth has to come from the name's own behaviour.
+    """
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0 or not rows:
+        return None
+
+    try:
+        window = int(cfg.get("ai_watch_zone_dip_window_bars", 15) or 15)
+    except (TypeError, ValueError):
+        window = 15
+    depths = pullback_depths(rows, window=window)
+    try:
+        min_obs = int(cfg.get("ai_watch_zone_min_samples", 10) or 10)
+    except (TypeError, ValueError):
+        min_obs = 10
+    if len(depths) < max(2, min_obs):
+        return None
+
+    def _f(key: str, default: float) -> float:
+        try:
+            return float(cfg.get(key, default) if cfg.get(key) is not None else default)
+        except (TypeError, ValueError):
+            return default
+
+    top_pctl = _f("ai_watch_zone_top_pctl", 25.0)
+    bot_pctl = _f("ai_watch_zone_bottom_pctl", 65.0)
+    top_raw = _percentile(depths, top_pctl)
+    bot_raw = _percentile(depths, bot_pctl)
+
+    decay = _session_decay(cfg, now)
+    top = top_raw * decay
+    bot = bot_raw * decay
+
+    top = max(_f("ai_watch_zone_top_min_pct", 0.4),
+              min(_f("ai_watch_zone_top_max_pct", 3.0), top))
+    bot = max(_f("ai_watch_zone_bottom_min_pct", 1.2),
+              min(_f("ai_watch_zone_bottom_max_pct", 9.0), bot))
+    if bot <= top:
+        # Percentiles collapsed (a name that only ever dips one depth). Keep a
+        # usable band rather than an inverted or zero-width one.
+        bot = top + max(0.3, _f("ai_watch_zone_min_width_pct", 0.6))
+
+    entry_high = px * (1.0 - top / 100.0)
+    entry_low = px * (1.0 - bot / 100.0)
+    if entry_low <= 0 or entry_high <= entry_low:
+        return None
+    meta = {
+        "zone_src": "pullback_band",
+        "depth_top_pct": round(top, 3),
+        "depth_bottom_pct": round(bot, 3),
+        "depth_p25": round(top_raw, 3),
+        "depth_p65": round(bot_raw, 3),
+        "decay": round(decay, 3),
+        "samples": len(depths),
+    }
+    return entry_low, entry_high, meta
+
+
 def _extract_lows_from_bars(bars: Any, lookback: int) -> list[float]:
     """Pull recent low prices from a DataFrame or sequence."""
     if bars is None:
@@ -2789,6 +3015,10 @@ def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
             })
             df = aa.fetch_bars(client, sym, bar_cfg)
             lows = _extract_lows_from_bars(df, lookback)
+            ohlc = _extract_ohlc_from_bars(df, lookback)
+            if ohlc:
+                with _ohlc_cache_lock:
+                    _ohlc_cache[sym] = (now, ohlc)
     except Exception:
         lows = []
 
@@ -2798,6 +3028,32 @@ def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
         elif hit:
             return list(hit[1])
     return lows
+
+
+def symbol_ohlc(symbol: str, cfg: dict, now: float) -> list[tuple[float, float, float]]:
+    """Cached (high, low, close) rows, populated by the double-bottom fetch.
+
+    Deliberately does NOT fetch on its own. The structure scan already pulls
+    these bars on its own throttle; adding a second trigger here would double
+    the bar requests for every watched name. Returns [] until that scan has
+    run for the symbol, and callers fall back to a fixed zone.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return []
+    try:
+        refresh = float(cfg.get("ai_watch_db_bar_refresh_sec", 120.0) or 120.0)
+    except (TypeError, ValueError):
+        refresh = 120.0
+    # Bars age out slower than the structure refresh: a pullback distribution
+    # measured four minutes ago is still a fair description of the name, while
+    # a support level that old may already be broken.
+    max_age = max(60.0, refresh * 3.0)
+    with _ohlc_cache_lock:
+        hit = _ohlc_cache.get(sym)
+        if hit and (now - hit[0]) < max_age:
+            return list(hit[1])
+    return []
 
 
 def build_double_bottom_zone_for_symbol(
@@ -2943,6 +3199,84 @@ def build_offset_zone_structure(
     }
 
 
+def build_band_zone_structure(
+    price: float,
+    entry_low: float,
+    entry_high: float,
+    cfg: dict | None = None,
+    *,
+    reason: str = "",
+    meta: dict | None = None,
+) -> dict[str, Any] | None:
+    """Zone structure around a pre-measured pullback band.
+
+    Same stop/target/rounding contract as build_offset_zone_structure — only
+    the band comes from measurement instead of a fixed percentage, so sizing,
+    the READY badge and _decision_for_place all keep working unchanged.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        px, lo, hi = float(price), float(entry_low), float(entry_high)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0 or lo <= 0 or hi <= lo:
+        return None
+
+    stop_pct = max(0.0, _opt_float(
+        cfg.get("ai_watch_synth_stop_pct", 5.0), 5.0)) / 100.0
+    rr = max(0.25, _opt_float(cfg.get("ai_watch_synth_rr"), 0.6))
+    scale_out = max(1.0, min(99.0, _opt_float(
+        cfg.get("ai_watch_synth_scale_out_pct"), 50.0)))
+    trail_pct = max(0.0, _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5))
+
+    mid = (lo + hi) / 2.0
+    stop = mid * (1.0 - stop_pct)
+    if stop <= 0 or stop >= mid:
+        stop = mid * 0.95
+    risk = mid - stop
+    target = mid + rr * risk
+
+    def _r(x: float) -> float:
+        if x >= 100:
+            return round(x, 2)
+        if x >= 1:
+            return round(x, 3)
+        return round(x, 4)
+
+    m = meta or {}
+    top_pct = float(m.get("depth_top_pct") or 0.0)
+    bot_pct = float(m.get("depth_bottom_pct") or 0.0)
+    out: dict[str, Any] = {
+        "decision": "WAIT",
+        "wait_kind": "wait_for_zone",
+        "entry_low": _r(lo),
+        "entry_high": _r(hi),
+        "stop_price": _r(stop),
+        "target_1": _r(target),
+        "reward_risk": round(rr, 2),
+        "scale_out_pct": scale_out,
+        "trail_pct": trail_pct,
+        "trail_method": "pct",
+        "synthetic": True,
+        "strategy": "day_scalp_v0",
+        "anchor_price": _r(px),
+        "zone_kind": "pullback_band",
+        "summary": (
+            f"pullback band {_r(hi)}–{_r(lo)} "
+            f"({top_pct:.1f}–{bot_pct:.1f}% under {_r(px)}"
+            f", {int(m.get('samples') or 0)} dips"
+            + (f", decay {m.get('decay')}" if m.get("decay") not in (None, 1.0)
+               else "")
+            + ")"
+            + (f" · {reason}" if reason else "")
+        ),
+    }
+    for k in ("depth_top_pct", "depth_bottom_pct", "decay", "samples"):
+        if k in m:
+            out[k] = m[k]
+    return out
+
+
 def _structure_usable(structure: Any) -> bool:
     """True when structure has a real armable zone (not hard_no / empty)."""
     if not isinstance(structure, dict):
@@ -2988,12 +3322,46 @@ def ensure_offset_zone_if_needed(
         return None
 
     structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+    sym_early = str(rec.get("symbol") or "").upper()
+
+    # Is the zone we already hold still within reach of the print?
+    #
+    # Every other exit from this function keeps the existing zone, and the
+    # re-anchor test below only fires when price runs ABOVE the anchor the zone
+    # was drawn from. So a zone that was never reachable at the moment it was
+    # created is never revisited: ABCL sat at 5.58-5.67 against a 9.21 print
+    # (-38%) with anchor_price 9.32 — price was *below* its anchor, so no
+    # re-anchor, and the row waited all session for a 40% crash. Eight of
+    # thirteen rows were in that state on 2026-08-10.
+    #
+    # This is what makes the band a live constraint rather than a build-time
+    # one. Bars come from the throttled cache (>=120s per symbol), so the
+    # re-check costs nothing on most polls.
+    force_rebuild = False
+    if _structure_usable(structure) and bool(
+            cfg.get("ai_watch_zone_variable", True)):
+        try:
+            rows = symbol_ohlc(sym_early, cfg, float(now))
+            if not rows:
+                _fetch_symbol_lows(sym_early, cfg, float(now))
+                rows = symbol_ohlc(sym_early, cfg, float(now))
+            reach = variable_zone_band(ask_f, rows, cfg, float(now))
+            if reach is not None:
+                lv = _structure_levels(structure)
+                if lv is not None:
+                    z_lo, z_hi = min(lv[0], lv[1]), max(lv[0], lv[1])
+                    if z_hi < reach[0] or z_lo > reach[1]:
+                        force_rebuild = True
+        except Exception:
+            force_rebuild = False
+
     # Keep a good *model* zone, but only while it is fresh — a stale model zone
     # describes a price that has moved on, so let the synth path replace it.
     if (
         _structure_usable(structure)
         and not structure.get("synthetic")
         and not _structure_stale(rec, cfg, now)
+        and not force_rebuild
     ):
         return None
 
@@ -3002,6 +3370,7 @@ def ensure_offset_zone_if_needed(
         _structure_usable(structure)
         and structure.get("synthetic")
         and not _structure_stale(rec, cfg, now)
+        and not force_rebuild
     ):
         # Re-anchor when price has run above the level the zone was drawn
         # FROM, so the band follows a name that got away (e.g. ZETA stuck at
@@ -3051,12 +3420,60 @@ def ensure_offset_zone_if_needed(
     mode = str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
     synth: dict[str, Any] | None = None
     zone_reason = "offset_from_last"
+
     if mode in ("double_bottom", "db", "structure"):
         synth = build_double_bottom_zone_for_symbol(
             sym, ask_f, cfg, now=float(now), reason=reason)
         if synth is not None:
             zone_reason = (
                 "reanchor_double_bottom" if reanchor else "double_bottom")
+
+    # Reachable band for this name, measured from its own pullback history.
+    # Deliberately computed AFTER the double-bottom attempt: that call is what
+    # fetches and caches the bars (_fetch_symbol_lows fills _ohlc_cache), so
+    # measuring first would see an empty cache on a symbol's first poll and
+    # silently skip the reachability check below — exactly when a fresh name is
+    # most likely to be handed an out-of-reach zone.
+    band = None
+    if bool(cfg.get("ai_watch_zone_variable", True)):
+        try:
+            band = variable_zone_band(
+                ask_f, symbol_ohlc(sym, cfg, float(now)), cfg, float(now))
+        except Exception:
+            band = None
+
+    # Structure wins only while it is reachable. A double bottom found over 90
+    # bars can sit 25% under the print, and on 2026-08-10 that is exactly what
+    # happened to all eleven rows: every one parked at above_zone for the whole
+    # session and the book took no entries. Below the band floor the level is
+    # real but not tradable today, so fall back rather than wait on a dip that
+    # is not coming.
+    if synth is not None and band is not None:
+        db_levels = _structure_levels(synth)
+        band_low, band_high, _bmeta = band
+        if db_levels is not None:
+            db_low = min(db_levels[0], db_levels[1])
+            db_high = max(db_levels[0], db_levels[1])
+            if db_high < band_low:
+                synth = None
+                zone_reason = "db_out_of_reach"
+            elif db_low > band_high:
+                # Structure sits above the entry band — price is under its own
+                # support, which is a broken level, not a dip.
+                synth = None
+                zone_reason = "db_above_price"
+
+    if synth is None and band is not None:
+        band_low, band_high, bmeta = band
+        synth = build_band_zone_structure(
+            ask_f, band_low, band_high, cfg, reason=reason, meta=bmeta)
+        if synth is not None:
+            synth.setdefault("zone_kind", "pullback_band")
+            if zone_reason not in ("db_out_of_reach", "db_above_price"):
+                zone_reason = "pullback_band"
+            if reanchor:
+                zone_reason = f"reanchor_{zone_reason}"
+
     if synth is None:
         # Bars missing, no matching lows, or mode=offset → legacy % band.
         synth = build_offset_zone_structure(ask_f, cfg, reason=reason)
@@ -3314,12 +3731,28 @@ def should_arm_buy(
     # them, so an unlabelled offset fill lands in outcomes.jsonl next to a
     # double-bottom fill and the scorecard averages two different strategies.
     # Flip ai_watch_require_db_zone to False to allow them back.
+    # ``pullback_band`` is armable, ``offset`` is not, and the difference is the
+    # whole point. The offset band above is a fixed percentage off the last
+    # print — the same 2%/5% for a name that moves 0.4% a day and one that moves
+    # 20% — which is what the replay measured at -0.0027R. A pullback band is
+    # sized from the symbol's own measured dip distribution, so its depth is a
+    # statement about that name rather than a constant.
+    #
+    # It carries no replay of its own yet, so it is enabled on the condition
+    # that made the original refusal necessary being removed: fills now record
+    # zone_kind (see _entry_zone_kind), so band trades and double-bottom trades
+    # can be scored apart instead of averaging into one meaningless number.
+    # Drop "pullback_band" from ai_watch_armable_zone_kinds to go back.
+    armable = cfg.get("ai_watch_armable_zone_kinds")
+    if not isinstance(armable, (list, tuple)) or not armable:
+        armable = ("double_bottom", "pullback_band")
+    armable = {str(k).lower().strip() for k in armable}
     if (
         str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
         in ("double_bottom", "db", "structure")
         and bool(cfg.get("ai_watch_require_db_zone", True))
         and bool(structure.get("synthetic"))
-        and str(structure.get("zone_kind") or "").lower() != "double_bottom"
+        and str(structure.get("zone_kind") or "").lower() not in armable
     ):
         return False, "offset_zone"
     try:
@@ -3866,6 +4299,17 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         return float(equity_cache or 0.0)
 
     shadow_on = bool(cfg.get("ai_shadow_log_enabled", True))
+
+    # One quote call for the whole book, before the per-record fan-out below.
+    # Each record that survives the tape prefilter asks for _latest_ask and
+    # _latest_bid; unbatched that is two REST round trips per name per poll.
+    # Priming here makes those cache reads, so the poll costs one call whether
+    # the book holds 3 names or 30. Failure is silent by design — the
+    # per-symbol path still works, it is just the expensive one.
+    try:
+        gt.prime_quotes(list(state.keys()))
+    except Exception:
+        pass
 
     for sym_key, rec in list(state.items()):
         if not isinstance(rec, dict):

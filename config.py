@@ -261,6 +261,13 @@ DEFAULT_CONFIG = {
     # retires — so it drifted to 26+, each entry costing a quote on a desk
     # already past Alpaca's rate limit. Read once at dashboard import.
     "momentum_max_tickers":                8,
+    # Ceiling on symbols carrying real-time data at once — momentum candidates
+    # plus every name the AI Watch book is on. Bounded by Finnhub's free tier
+    # (~50 concurrent WS subscriptions desk-wide, unenforced by the client), so
+    # this stays under it with headroom. Unlike momentum_max_tickers this is not
+    # a display preference: over the ceiling, symbols silently stop receiving
+    # trades. Read once at dashboard import.
+    "realtime_symbol_budget":             40,
     # Seed entry-watch from live desk heat (structure poller still defines levels).
     "ai_watch_seed_momentum":           True,
     "ai_watch_seed_momentum_n":           12,
@@ -369,6 +376,11 @@ DEFAULT_CONFIG = {
     # percentage band with a 5% stop, the regime the 90-day replay measured at
     # -0.0027R — and lands in outcomes.jsonl indistinguishable from a real
     # double-bottom entry. Set False to allow the fallback to trade again.
+    # Zone geometries allowed to arm a real order. "offset" is deliberately
+    # absent: a fixed percentage band measured -0.0027R over a 1,220 symbol-day
+    # replay. "pullback_band" is sized from each symbol's own dip distribution
+    # and is scored separately via the zone_kind stamped on every outcome row.
+    "ai_watch_armable_zone_kinds": ["double_bottom", "pullback_band"],
     "ai_watch_require_db_zone":       True,
     # Minimum risk per share, as % of the price paid, before an entry may arm.
     # The double-bottom band spans S*0.9975 to S*1.0125 against a stop fixed at
@@ -392,6 +404,27 @@ DEFAULT_CONFIG = {
     # re-anchors up on every tick, so the ask sits a permanent +5.26% above the
     # zone top (1/0.95-1) and only a 5% break from the high-water mark ever
     # fills. above_zone was 51% of all skips. 2% fills on a routine pullback.
+    # Variable pullback band. Depth is measured from the name's OWN completed
+    # pullbacks (ai_entry_watch.pullback_depths) rather than set as one global
+    # percentage, because the right depth for RIG (deepest dip 1.0% on
+    # 2026-08-10) and for BTDR (20.6% the same day) are not the same number.
+    # Percentiles, not multiples of ATR: an ATR multiple means a different
+    # depth on 1Min than on 5Min bars, so retuning the bar timeframe would
+    # silently move every zone.
+    "ai_watch_zone_variable":         True,
+    "ai_watch_zone_top_pctl":         65.0,   # zone ceiling: a dip it makes often
+    "ai_watch_zone_bottom_pctl":      90.0,   # zone floor: deep but still routine
+    "ai_watch_zone_dip_window_bars":    15,   # rolling window the dips are measured over
+    "ai_watch_zone_top_min_pct":       0.8,   # never buy within this of the print
+    "ai_watch_zone_top_max_pct":       3.0,
+    "ai_watch_zone_bottom_min_pct":    1.2,
+    "ai_watch_zone_bottom_max_pct":    9.0,   # past this it will not come back today
+    "ai_watch_zone_min_width_pct":     0.6,
+    "ai_watch_zone_min_samples":        10,   # fewer dips than this → not measured
+    # Depth available shrinks with the session: a 4% dip is an ordinary 10:00
+    # event and a fantasy at 15:30.
+    "ai_watch_zone_time_decay":       True,
+    "ai_watch_zone_decay_floor":       0.5,
     "ai_watch_zone_offset_pct":        2.0,  # entry_high = last * (1 - offset/100)
     # 4.0, not 2.0: the zone re-anchors to `offset` below every new high, so
     # price must fall that far from the RUNNING high-water mark and any upward
@@ -560,6 +593,24 @@ def validate_ai_config(cfg: dict) -> list[str]:
                 f"at {min_stop:g}%, ai_risk_pct ({risk_pct:g}%) does not set the "
                 f"size, the cap does"
             )
+
+    # Real-time coverage budget. The book pushes candidates into the dashboard's
+    # ticker list so they carry live tape (ai_entry_watch.push_candidates_to_engine
+    # → stream_quote); anything that does not fit falls back to a REST ask+bid
+    # per symbol per poll. On 2026-08-10 the push cap was 24 against a 10-slot
+    # list, which thrashed: 305 evictions in 40 minutes and 882 rate-limit
+    # errors. The two numbers have to be sized against each other or the
+    # overflow is silent.
+    push_max = int(cfg.get("ai_watch_engine_push_max", 24) or 0)
+    mom_max = int(cfg.get("momentum_max_tickers", 8) or 0)
+    budget = int(cfg.get("realtime_symbol_budget", 40) or 0)
+    if budget > 0 and push_max > 0 and mom_max + push_max > budget:
+        out.append(
+            f"realtime_symbol_budget ({budget}) is under momentum_max_tickers "
+            f"({mom_max}) + ai_watch_engine_push_max ({push_max}) = "
+            f"{mom_max + push_max} — the overflow gets no live tape and falls "
+            f"back to per-symbol REST quotes"
+        )
 
     spread = _f("ai_max_spread_pct", 1.0)
     if stop_pct > 0 and spread > 0 and stop_pct <= spread:
@@ -733,6 +784,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_synth_zone_enabled",
     "ai_watch_zone_mode",
     "ai_watch_require_db_zone",
+    "ai_watch_armable_zone_kinds",
     "ai_watch_min_stop_pct",
     "ai_max_spread_r",
     "ai_watch_db_above_pct",
@@ -744,6 +796,18 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_db_lookback_bars",
     "ai_watch_db_bar_refresh_sec",
     "ai_watch_db_require_price_above",
+    "ai_watch_zone_variable",
+    "ai_watch_zone_top_pctl",
+    "ai_watch_zone_bottom_pctl",
+    "ai_watch_zone_top_min_pct",
+    "ai_watch_zone_top_max_pct",
+    "ai_watch_zone_bottom_min_pct",
+    "ai_watch_zone_bottom_max_pct",
+    "ai_watch_zone_min_width_pct",
+    "ai_watch_zone_min_samples",
+    "ai_watch_zone_dip_window_bars",
+    "ai_watch_zone_time_decay",
+    "ai_watch_zone_decay_floor",
     "ai_watch_zone_offset_pct",
     "ai_watch_zone_width_pct",
     "ai_watch_synth_stop_pct",
@@ -787,6 +851,7 @@ SAFE_CONFIG_KEYS = [
     "ai_shadow_log_enabled",
     "ai_reject_log_enabled",
     "momentum_max_tickers",
+    "realtime_symbol_budget",
     "claude_research_enabled",
     "claude_backend",
     "claude_cli_bin",
