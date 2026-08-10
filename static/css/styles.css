@@ -2149,7 +2149,7 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | Status | Src | Price | Zone | RVOL | Qty | P&L */
+  /* Ticker | Status | Src | Price | Zone | RVOL | EXH | Qty | P&L */
   grid-template-columns:
     minmax(48px, 1.05fr)
     minmax(48px, 0.7fr)
@@ -2157,6 +2157,7 @@ body.mobile .icon-btn {
     minmax(52px, 0.75fr)
     minmax(64px, 1fr)
     minmax(44px, 0.5fr)
+    minmax(46px, 0.5fr)
     minmax(32px, 0.45fr)
     minmax(52px, 0.75fr);
   width: 100%;
@@ -2174,6 +2175,7 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-zone,
 .panel-ai-watch .feed-cols--ai-book .cell-rvol,
+.panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
@@ -3823,3 +3825,15 @@ body.engine-visible .engine-bar                         { display: none !importa
 .auto-alert-toggle                                      { display: none !important; }
 .tx-status-row                                          { display: none !important; }
 .tx-controls                                            { display: none !important; }
+
+/* Exhaustion: level + direction. Colour carries the direction so the column
+   reads at a glance; the number carries how far along it is. */
+.cell-exh {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #8a8f98);
+}
+.cell-exh.exh--ob   { color: var(--buy); font-weight: 600; }
+.cell-exh.exh--up   { color: var(--buy); }
+.cell-exh.exh--down { color: var(--danger); }

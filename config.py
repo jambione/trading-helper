@@ -385,6 +385,13 @@ DEFAULT_CONFIG = {
     # trade's own risk unit (R = zone floor - stop), so the allowance scales
     # with the setup instead of meaning several R on a tight structural stop
     # and a fraction of one on a wide synthetic stop.
+    # Exhaustion rules (operator, 2026-08-10). BUY: price in/below zone AND
+    # overbought or heading there. HOLD: while overbought. SELL: when the fast
+    # %R line trends away from overbought for N consecutive reads. No other
+    # indicator gates entry. A missing %R reading refuses the buy — the reading
+    # IS the thesis here, unlike the old optional timing filter.
+    "ai_watch_exhaustion_rules":      True,
+    "ai_watch_exhaustion_exit_reads":    2,
     "ai_watch_arm_below_zone":        True,
     "ai_watch_arm_below_zone_max_r":   0.5,
     "ai_watch_require_db_zone":       True,
@@ -804,6 +811,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_zone_mode",
     "ai_watch_require_db_zone",
     "ai_watch_armable_zone_kinds",
+    "ai_watch_exhaustion_rules",
+    "ai_watch_exhaustion_exit_reads",
     "ai_watch_arm_below_zone",
     "ai_watch_arm_below_zone_max_r",
     "ai_watch_min_stop_pct",

@@ -360,6 +360,11 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             # differs per source (momentum ~1000, Stocktwits ~10-20), so it is
             # not comparable down the column; rvol is one unit everywhere.
             "rvol": _f_or_none(rec.get("admit_rvol")),
+            # % of the way to overbought (100 + fast %R) and which way it is
+            # moving. Both, because the level alone cannot tell "pinned at the
+            # highs and rolling over" from "climbing into them".
+            "exhaustion": _f_or_none(exhaustion_pct(rec)),
+            "exhaustion_state": exhaustion_state(rec, _push_cfg()),
             "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
             "reason": str(rec.get("reason") or "")[:80] or None,
             "source": str(rec.get("source") or "research")[:24] or "research",
@@ -438,6 +443,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "source": src,
         "score": score_f,
         "rvol": _f_or_none(rec.get("admit_rvol")),
+        "exhaustion": _f_or_none(exhaustion_pct(rec)),
+        "exhaustion_state": exhaustion_state(rec, _push_cfg()),
         "reason": str(rec.get("reason") or "")[:80] or None,
         "wait_kind": wait_kind,
         "entry_low": entry_low_f,
@@ -2450,6 +2457,115 @@ def rebuild_watch_from_book(
     return sync_watch_from_source_panels(cfg=cfg, now=now)
 
 
+def exhaustion_pct(record: dict) -> float | None:
+    """0-100: how far this name has run toward overbought. None when unknown.
+
+    Williams %R runs 0 at the top of its range to -100 at the bottom, so
+    ``100 + %R`` reads as a plain percentage where 100 is pinned at the highs.
+    The fast line is used: it is the desk's trigger scale, and the operator's
+    question here ("is it heading into overbought right now") is a trigger
+    question, not a setup one.
+
+    None is a real answer and must not be coerced to 0. ~18% of decisions on
+    2026-08-10 had no indicator block at all — thin names without enough bars
+    to compute %R — and a missing reading scored as 0 would read as "deeply
+    oversold", the exact opposite of "we do not know".
+    """
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    if not isinstance(ind, dict):
+        return None
+    raw = ind.get("pctr")
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not (-100.5 <= v <= 0.5):
+        return None
+    return max(0.0, min(100.0, 100.0 + v))
+
+
+def is_overbought(record: dict, cfg: dict) -> bool | None:
+    """True when %R has reached the overbought band. None when unknown."""
+    ex = exhaustion_pct(record)
+    if ex is None:
+        return None
+    try:
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    return ex >= (100.0 - thr)
+
+
+def exhaustion_state(record: dict, cfg: dict) -> str:
+    """'overbought' | 'heating' | 'cooling' | 'flat' | 'unknown'.
+
+    The operator's three states plus the two honest extras: 'flat' when the
+    line is neither rising nor falling, and 'unknown' when there is no reading.
+    """
+    ex = exhaustion_pct(record)
+    if ex is None:
+        return "unknown"
+    ind = record.get("indicator") or {}
+    if is_overbought(record, cfg):
+        return "overbought"
+    if ind.get("pctr_rising"):
+        return "heating"
+    if ind.get("pctr_falling"):
+        return "cooling"
+    return "flat"
+
+
+def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
+    """Buy side of the exhaustion rule: overbought, or heading there.
+
+    Operator rule 2026-08-10: price in (or below) the zone AND the name is
+    either already overbought or trending toward it. No other indicator gates
+    the entry.
+
+    A missing reading refuses. Under the old scheme indicators were an optional
+    timing filter, so absence could fall through to price alone; here the
+    reading IS the thesis, and buying without it is buying on half a rule.
+    """
+    if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
+        return True, "exhaustion_off"
+    state = exhaustion_state(record, cfg)
+    if state == "unknown":
+        return False, "no_exhaustion_data"
+    if state == "overbought":
+        return True, "overbought"
+    if state == "heating":
+        return True, "heating"
+    return False, f"not_heating_{state}"
+
+
+def exhaustion_says_exit(record: dict, cfg: dict) -> bool:
+    """True once the fast line has been falling for N consecutive reads.
+
+    Confirmation rather than a single read: the fast line is EWM-smoothed but
+    still wiggles bar to bar, and a one-read test would routinely sell inside a
+    minute of buying. The counter lives on the record and is reset by any
+    non-falling read, so N means "N in a row", not "N times today".
+    """
+    if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
+        return False
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    if not isinstance(ind, dict) or ind.get("pctr") is None:
+        # No reading: do not manufacture an exit. Stop and target still apply.
+        record["pctr_fall_streak"] = 0
+        return False
+    try:
+        need = int(cfg.get("ai_watch_exhaustion_exit_reads", 2) or 2)
+    except (TypeError, ValueError):
+        need = 2
+    need = max(1, need)
+    if ind.get("pctr_falling"):
+        streak = int(record.get("pctr_fall_streak") or 0) + 1
+    else:
+        streak = 0
+    record["pctr_fall_streak"] = streak
+    return streak >= need
+
+
 def ask_in_zone(
     ask: float,
     entry_low: float,
@@ -3842,9 +3958,18 @@ def should_arm_buy(
         if risk_pct_of_px < min_stop_pct:
             return False, "stop_too_tight"
 
+    # Exhaustion is the only indicator gating an entry (operator rule
+    # 2026-08-10): price in or below the zone AND the name is overbought or
+    # heading there. Checked before the zone tests so the refusal reason names
+    # the condition that actually failed rather than reporting "below_zone" for
+    # a price that was in the zone all along.
+    exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
+    if not exh_ok:
+        return False, exh_why
+
     # Zone membership is the primary arm signal (matches UI READY).
     if ask_in_zone(a, entry_low, entry_high, pad):
-        return True, "zone"
+        return True, f"zone_{exh_why}"
 
     frac = max(0.0, pad) / 100.0
     high_bound = max(entry_low, entry_high) * (1.0 + frac)
@@ -3879,7 +4004,7 @@ def should_arm_buy(
         return False, "below_zone"
     if a < low_bound - max_r * r_unit:
         return False, "below_zone"
-    return True, "below_zone_dip"
+    return True, f"below_zone_dip_{exh_why}"
 
 
 def _prune_structure_budget(now: float) -> None:
@@ -4374,7 +4499,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "cm_rsi_rising": sig.get("cm_rsi_rising"),
                 "macd_ok": sig.get("macd_ok"),
                 "cm_rsi": sig.get("cm_rsi"),
+                # Raw %R and its direction, not just the derived booleans. The
+                # exhaustion rules below trade off the LEVEL and the TURN, and
+                # pctr_ok collapses both into one bit that answers neither
+                # "how overbought" nor "which way is it going".
                 "pctr": sig.get("pctr"),
+                "pctr_slow": sig.get("pctr_slow"),
+                "pctr_rising": sig.get("pctr_rising"),
+                "pctr_falling": sig.get("pctr_falling"),
+                "pctr_slow_falling": sig.get("pctr_slow_falling"),
                 "ts": t0,
             }
         elif "indicator" in rec:

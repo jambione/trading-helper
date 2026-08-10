@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=110" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=111" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -345,6 +345,7 @@
                         <div class="th">Price</div>
                         <div class="th">Zone</div>
                         <div class="th" title="Relative volume at admission — today's pace vs its own average">RVOL</div>
+                        <div class="th" title="% of the way to overbought (100 + fast %R). ↑ heating · ↓ cooling · OB overbought">EXH</div>
                         <div class="th">Qty</div>
                         <div class="th">P&amp;L</div>
                     </div>
@@ -751,7 +752,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=110"></script>
+        <script type="module" src="/static/js/app.js?v=111"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

@@ -641,6 +641,11 @@ function _updateBookRow(el, r, owner) {
     _setText(rvolEl, _fmtRvol(r.rvol));
     rvolEl.classList.toggle('vol-high', Number(r.rvol ?? 0) >= 1.5);
   }
+  const exhEl = el.querySelector('.cell-exh');
+  if (exhEl) {
+    _setText(exhEl, _fmtExh(r.exhaustion, r.exhaustion_state));
+    exhEl.className = `cell-exh${_exhClass(r.exhaustion_state)}`;
+  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -711,6 +716,7 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
     + `<div class="cell-rvol${Number(r.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}">${_esc(_fmtRvol(r.rvol))}</div>`
+    + `<div class="cell-exh${_exhClass(r.exhaustion_state)}">${_esc(_fmtExh(r.exhaustion, r.exhaustion_state))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -726,6 +732,25 @@ function _bookSourceLabel(source) {
   if (s === 'position') return 'Pos';
   if (!s) return '—';
   return s.slice(0, 4);
+}
+
+/** Exhaustion as "72%↑" — level and direction together, because the level
+ *  alone cannot tell "pinned at the highs and rolling over" from "climbing
+ *  into them". OB marks the overbought band. */
+function _fmtExh(v, state) {
+  const n = Number(v);
+  if (v == null || !Number.isFinite(n)) return '—';
+  const mark = state === 'overbought' ? ' OB'
+    : state === 'heating' ? '\u2191'
+    : state === 'cooling' ? '\u2193' : '';
+  return `${n.toFixed(0)}%${mark}`;
+}
+
+function _exhClass(state) {
+  if (state === 'overbought') return ' exh--ob';
+  if (state === 'heating')    return ' exh--up';
+  if (state === 'cooling')    return ' exh--down';
+  return '';
 }
 
 /** RVOL as "1.92×" — same shape the Research/Trending columns use. */

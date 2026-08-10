@@ -2086,6 +2086,50 @@ def manage_open_positions(
                               peak=pos.get("peak_price"))
                     exit_why[ticker] = "runner_stop_raised"
 
+        # Exhaustion exit — the operator's primary sell reason (2026-08-10):
+        # hold while the name is overbought, sell when it trends away from
+        # overbought. The stop and the T1 limit still work underneath; this is
+        # the discretionary exit they were never a substitute for, because a
+        # name that rolls over from the highs usually reaches neither.
+        #
+        # Confirmation, not a single read: the fast %R line is EWM-smoothed and
+        # still wiggles bar to bar, so one falling read would routinely close a
+        # position within a minute of opening it. The streak counter lives on
+        # the position and resets on any non-falling read, so N means N in a
+        # row. No reading at all never manufactures an exit.
+        if _cfg_flag("ai_watch_exhaustion_rules", True) and pos.get("entry_confirmed"):
+            sig = indicators.get(ticker)
+            need = int(_cfg_float("ai_watch_exhaustion_exit_reads", 2.0) or 2)
+            need = max(1, need)
+            if isinstance(sig, dict) and sig.get("pctr") is not None:
+                if sig.get("pctr_falling"):
+                    streak = int(pos.get("pctr_fall_streak") or 0) + 1
+                else:
+                    streak = 0
+                if streak != int(pos.get("pctr_fall_streak") or 0):
+                    pos["pctr_fall_streak"] = streak
+                    changed = True
+                if streak >= need:
+                    alpaca_trader.cancel_open_orders(ticker)
+                    out = alpaca_trader.close_out(ticker) or {}
+                    if isinstance(out, dict) and out.get("order_id"):
+                        pos["close_order_id"] = str(out["order_id"])
+                    pos["closing_reason"] = "exhaustion_fade"
+                    exit_why[ticker] = "exhaustion_fade"
+                    pctr = sig.get("pctr")
+                    events.append({
+                        "ticker": ticker, "event": "exhaustion_fade",
+                        "pctr": pctr, "reads": streak,
+                    })
+                    log_event("exhaustion_fade", symbol=ticker,
+                              pctr=pctr, reads=streak)
+                    changed = True
+                    continue
+            else:
+                if pos.get("pctr_fall_streak"):
+                    pos["pctr_fall_streak"] = 0
+                    changed = True
+
         # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
         if (
             dead_min > 0
