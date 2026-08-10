@@ -1296,6 +1296,7 @@ except (TypeError, ValueError):
     _SUB_BUDGET = 40
 
 _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
+_ticker_err_ts: float = 0.0   # last load_tickers failure log (rate limit)
 _ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/writes
 
 
@@ -1413,12 +1414,14 @@ def load_tickers() -> list:
             changed = False   # True if any entry was purged or migrated from old format
 
             for item in raw:
+                src_tag = ""
                 if isinstance(item, str):
                     t, added = item.strip().upper(), now_iso
                     changed = True          # migrate plain string → object
                 elif isinstance(item, dict):
                     t     = str(item.get("ticker", "")).strip().upper()
                     added = item.get("added", now_iso)
+                    src_tag = str(item.get("src") or "")
                 else:
                     changed = True
                     continue
@@ -1441,8 +1444,8 @@ def load_tickers() -> list:
                 if added_ts >= cutoff or t in held:
                     row = {"ticker": t, "added": added, "_ts": added_ts,
                            "_held": t in held}
-                    if e.get("src"):
-                        row["src"] = e["src"]
+                    if src_tag:
+                        row["src"] = src_tag
                     kept.append(row)
                 else:
                     changed = True
@@ -1499,6 +1502,17 @@ def load_tickers() -> list:
             _ticker_cache.update(mtime=mtime, tickers=tickers, entries=kept)
             return tickers
         except Exception:
+            # Empty here means "the whole desk has no symbols": no momentum
+            # panel, no quotes, no indicators. A bare `return []` made a code
+            # bug in this function indistinguishable from a genuinely empty
+            # watchlist, and a NameError went unnoticed until the panel was
+            # observed empty by eye. Loud, and rate-limited so a persistent
+            # failure cannot flood the log at the 10Hz poll rate.
+            global _ticker_err_ts
+            now_mono = time.monotonic()
+            if now_mono - _ticker_err_ts > 30.0:
+                _ticker_err_ts = now_mono
+                log.exception("[TICKER] load_tickers failed — watchlist reads as EMPTY")
             return []
 
 
@@ -1546,23 +1560,22 @@ def add_ticker_to_log(ticker: str, src: str = "") -> tuple[bool, bool]:
 def _ticker_src(ticker: str) -> str:
     """The recorded ``src`` for a watchlist entry ('' when plain candidate).
 
-    Falls back to "book" for an unstamped entry that is currently on the AI
-    Watch book. Entries written before src existed have no tag, and
-    push_candidates_to_engine only pushes symbols MISSING from the list — so a
-    book symbol already present would never be re-pushed, never get stamped,
-    and never be filtered. The client still un-hides any of these that carry
-    momentum activity of their own, so the fallback cannot hide a real
-    candidate that happens to also be on the book.
+    The stamp is authoritative and there is deliberately NO fallback to "is it
+    on the book". The book SEEDS from the momentum panel, so nearly every
+    momentum name gets adopted onto the book within a poll or two; inferring
+    "book" from book membership therefore hides the very candidates the panel
+    exists to show, and the panel empties itself as the book fills. Only rows
+    the book itself introduced carry the tag — set by push_candidates_to_engine
+    and by the re-admit path in load_tickers — and an unstamped entry is a
+    candidate that some other source put there, whatever the book later does
+    with it.
     """
     t = str(ticker or "").upper()
     with _ticker_lock:
         for e in _ticker_cache.get("entries") or []:
             if str(e.get("ticker") or "").upper() == t:
-                src = str(e.get("src") or "")
-                if src:
-                    return src
-                break
-    return "book" if t in _committed_symbols() else ""
+                return str(e.get("src") or "")
+    return ""
 
 
 def remove_ticker_from_log(ticker: str) -> bool:
