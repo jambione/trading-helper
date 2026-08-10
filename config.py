@@ -316,7 +316,10 @@ DEFAULT_CONFIG = {
     # actually arm. Re-checked at arm time, not just at admission — a name can
     # fade between joining the book and price reaching the zone.
     # ARMING does require them — that is where timing is the actual question.
-    "ai_watch_arm_require_indicators": True,
+    # When False, in-zone price alone can arm (indicators still used if present
+    # for sell_signal / optional arm_min_proximity). Operator desk often has no
+    # engine indicator map for book symbols; requiring the triple blocked every buy.
+    "ai_watch_arm_require_indicators": False,
     # Named conditions, not a count. proximity_pct only says "how many of the
     # three hold", so a count of 100 silently demanded MACD too — and MACD is
     # the laggard (see strategy_three_indicator.buy_signal). CM RSI-2 and %R

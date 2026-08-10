@@ -294,7 +294,14 @@ def buy_stock(
     """
     global _buys_this_poll
     if not is_ready():
-        return {"ok": False, "error": "Claude trading off — need ALPACA paper keys + ai_trading_enabled (or legacy claude_trading_enabled)"}
+        return {
+            "ok": False,
+            "error": (
+                "AI trading off — need ALPACA paper keys in config/secrets.json "
+                "(or signal_engine.env), alpaca-py installed in .venv, and "
+                "ai_trading_source=grok|claude with matching *_trading_enabled"
+            ),
+        }
 
     sym = _norm_sym(symbol)
     if not sym:
@@ -385,7 +392,7 @@ def sell_stock(symbol: str, reason: str = "") -> dict[str, Any]:
     """Paper SELL — close entire position for symbol."""
     global _sells_this_poll
     if not is_ready():
-        return {"ok": False, "error": "Claude trading off"}
+        return {"ok": False, "error": "AI trading off"}
 
     sym = _norm_sym(symbol)
     if not sym:
@@ -429,7 +436,7 @@ def sell_stock(symbol: str, reason: str = "") -> dict[str, Any]:
 
 def list_positions() -> dict[str, Any]:
     if not is_ready():
-        return {"ok": False, "error": "Claude trading off", "positions": []}
+        return {"ok": False, "error": "AI trading off", "positions": []}
     import alpaca_trader
     detail = alpaca_trader.get_positions_detail() or {}
     rows = []
@@ -448,7 +455,7 @@ def list_positions() -> dict[str, Any]:
 
 def get_account() -> dict[str, Any]:
     if not is_ready():
-        return {"ok": False, "error": "Claude trading off"}
+        return {"ok": False, "error": "AI trading off"}
     import alpaca_trader
     if not alpaca_trader.is_active():
         return {"ok": False, "error": "trader inactive"}

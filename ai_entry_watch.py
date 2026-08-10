@@ -3329,13 +3329,11 @@ def should_arm_buy(
     if min_rr > 0 and rr + 1e-12 < min_rr:
         return False, "reward_risk"
 
-    # Indicator state must STILL hold at arm time, not just when the name was
-    # admitted. Admission is a one-off check at the 2s sync; a name let onto the
-    # book at proximity 100 can be at 33 with sell_signal true by the time price
-    # finally reaches the zone, and would otherwise arm on price alone.
-    # Bar-based indicators answer "is this a good setup"; the zone answers "is
-    # this a good price". An entry needs both true at the same moment.
-    if bool(cfg.get("ai_watch_arm_require_indicators", True)):
+    # Indicators: optional timing filter. Default off — book symbols often have
+    # no engine indicator map, so requiring cm_ok/pctr_ok/cm_rsi_rising blocked
+    # every in-zone arm. When present and enabled, still refuse sell_signal and
+    # missing named flags. When disabled, in-zone price alone can arm.
+    if bool(cfg.get("ai_watch_arm_require_indicators", False)):
         sig = record.get("indicator")
         if not isinstance(sig, dict):
             return False, "no_indicators"
@@ -3367,6 +3365,12 @@ def should_arm_buy(
                 prox = 0.0
             if prox < arm_min:
                 return False, "indicators_faded"
+    else:
+        # Soft sell-signal veto when the engine has published one, even if the
+        # full arm triple is not required.
+        sig = record.get("indicator")
+        if isinstance(sig, dict) and sig.get("sell_signal"):
+            return False, "sell_signal"
 
     try:
         pad = float(cfg.get("ai_entry_zone_pad_pct", 0.0) or 0.0)
