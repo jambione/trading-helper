@@ -67,6 +67,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_setup": "wait setup",
     "hard_no": "hard no",
     "no_structure": "no zone",
+    "no_quote": "no quote",
     "reward_risk": "R:R low",
     "not_trading_hours": "hours closed",
     "above_max_price": "over max $",
@@ -574,6 +575,25 @@ def book_table_rows(
             filtered.append(r)
     rows = filtered
 
+    # Fill a blank PRICE from the dashboard tape when the poller has not yet
+    # written last_ask (or REST is dark). Display only — never invents a zone.
+    for r in rows:
+        if _positive_price(r.get("price")) is not None:
+            continue
+        if _positive_price(r.get("last_ask")) is not None:
+            r["price"] = r["last_ask"]
+            continue
+        try:
+            got = stream_quote(r.get("symbol"))
+        except Exception:
+            got = None
+        if got is None:
+            continue
+        px, _age = got
+        if px and px > 0:
+            r["price"] = px
+            r["last_ask"] = px
+
     def _sort_key(r: dict) -> tuple:
         phase = str(r.get("phase") or "")
         phase_rank = {"open": 0, "ready": 1, "submitted": 2, "watching": 3}.get(
@@ -649,6 +669,35 @@ def _f_or_none(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _positive_price(v: Any) -> float | None:
+    """Strict positive price, or None. Used to seed last_ask / reject blanks."""
+    p = _f_or_none(v)
+    if p is None or p <= 0:
+        return None
+    return p
+
+
+def _seed_last_ask(prev: dict, row: dict | None = None) -> float | None:
+    """Best price to put on a new/refreshed book row before the poller quotes.
+
+    Prefer an already-polled ask, then the admission/producer price. Without
+    this seed the book shows PRICE — until REST succeeds, and structure never
+    builds on that first cycle (desk synth + LLM both require ask > 0).
+    """
+    prev = prev if isinstance(prev, dict) else {}
+    row = row if isinstance(row, dict) else {}
+    for v in (
+        prev.get("last_ask"),
+        row.get("last_ask"),
+        row.get("price"),
+        prev.get("price"),
+    ):
+        p = _positive_price(v)
+        if p is not None:
+            return p
+    return None
 
 
 def _opt_float(value: Any, default: float) -> float:
@@ -744,6 +793,7 @@ def upsert_from_rows(
                 score = float(prev.get("score"))
             except (TypeError, ValueError):
                 score = _score_from_row(row)
+        seeded_ask = _seed_last_ask(prev, row)
         rec: dict[str, Any] = {
             "symbol": sym,
             "status": status,
@@ -758,13 +808,18 @@ def upsert_from_rows(
             "last_poll_ts": float(
                 prev.get("last_poll_ts", _EMPTY_RECORD_DEFAULTS["last_poll_ts"]) or 0.0
             ),
-            "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
+            "last_ask": seeded_ask,
             "updated_ts": float(now),
             **_admission_fields(row, prev, float(now)),
         }
         state[sym] = rec
 
     save_watch(state)
+    # Subscribe quotes/indicators for every name we just put on the book.
+    try:
+        push_candidates_to_engine(list(state.keys()))
+    except Exception:
+        pass
     return state
 
 
@@ -2183,7 +2238,9 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             "last_poll_ts": float(
                 prev.get("last_poll_ts", _EMPTY_RECORD_DEFAULTS["last_poll_ts"]) or 0.0
             ),
-            "last_ask": prev.get("last_ask", _EMPTY_RECORD_DEFAULTS["last_ask"]),
+            # Carry poller ask when present; otherwise seed from the shortlist
+            # row so the UI is not blank and the next structure pass has a print.
+            "last_ask": _seed_last_ask(prev, row),
             "updated_ts": t0,
             **_admission_fields(row, prev, float(t0)),
         }
@@ -2206,6 +2263,13 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             new_state[key] = kept
 
     save_watch(new_state)
+    # Book membership is the universe that needs live quotes + indicators.
+    # Candidate push above only covers the shortlist *before* admission; names
+    # already on the book (held, duel, sticky last_ask) need the same wire.
+    try:
+        push_candidates_to_engine(list(new_state.keys()))
+    except Exception:
+        pass
     return new_state
 
 
@@ -3724,7 +3788,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             touched[sym] = rec
             continue
 
-        # Quotes
+        # Quotes — REST ask preferred; Finnhub tape from the dashboard as
+        # fallback when IEX is dark. Tape fills last_ask for the UI and lets
+        # desk synth zones build, but never arms/places (see tape_only below).
         try:
             ask = gt._latest_ask(sym)
         except Exception:
@@ -3737,8 +3803,23 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             ask_f = float(ask) if ask is not None else 0.0
         except (TypeError, ValueError):
             ask_f = 0.0
+        tape_only = False
         if ask_f > 0:
             rec["last_ask"] = ask_f
+            rec.pop("last_ask_src", None)
+        else:
+            got = stream_quote(sym)
+            if got is not None:
+                px, _age = got
+                if px and px > 0:
+                    rec["last_trade"] = px
+                    # Prefer a prior real ask for the READY badge; only seed
+                    # from tape when the book still has no price at all.
+                    if _positive_price(rec.get("last_ask")) is None:
+                        rec["last_ask"] = px
+                        rec["last_ask_src"] = "tape"
+                    ask_f = float(px)
+                    tape_only = True
         rec["last_poll_ts"] = t0
 
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
@@ -3831,6 +3912,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 continue
 
         if ask_f <= 0:
+            set_block_reason(rec, "no_quote", now=t0, detail="no rest or tape")
             touched[sym] = rec
             continue
 
@@ -3849,6 +3931,33 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         if max_price_f is not None and ask_f >= max_price_f:
             _skip("above_max_price", max_price=max_price_f)
+            continue
+
+        # Tape-only cycle: we have a print for zone/UI, but not a real ask.
+        # Do not arm — a trade can print through the bid while the offer sits
+        # outside the zone (same class of bug stream_says_far_from_zone guards).
+        if tape_only:
+            # Prefer a live zone blocker when we already have structure so the
+            # column still says above/below rather than a blank "no quote".
+            b_code, _b_label = derive_blocker(rec, pad_pct=0.0)
+            if b_code in ("above_zone", "below_zone", "in_zone", "no_structure"):
+                if b_code == "in_zone":
+                    set_block_reason(
+                        rec, "no_quote", now=t0, detail="tape only — need rest ask")
+                else:
+                    set_block_reason(
+                        rec, b_code, now=t0, detail="tape")
+            else:
+                set_block_reason(
+                    rec, "no_quote", now=t0, detail="tape only — need rest ask")
+            if shadow_on:
+                try:
+                    cp.log_shadow_sample(_shadow_row(
+                        rec, price=ask_f, price_src="tape",
+                        arm_ok=None, arm_why="tape_only", now=t0))
+                except Exception:
+                    pass
+            touched[sym] = rec
             continue
 
         # Arm / buy

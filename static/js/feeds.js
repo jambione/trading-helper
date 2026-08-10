@@ -145,6 +145,15 @@ export function init(panelEl, kind) {
   });
   if (kind === 'claude') {
     subscribe('ai_positions', () => _refresh(lastPayload));
+    // Momentum ticker ticks → re-paint book PRICE without waiting for the next
+    // ai_positions file write (server also overlays stream prices on the wire).
+    subscribe('tickers', () => {
+      if (bookRowsEl) {
+        _paintBookTable(
+          bookSection, bookRowsEl, bookCountEl, bookStampEl, _aiBook(), bookDayPlEl,
+        );
+      }
+    });
   }
 }
 
@@ -203,6 +212,10 @@ function _stableAiBook(book) {
  * Prefer server entry_book; always merge open positions; fall back to entry_watch.
  * Sticky last-good positions when the wire drops them under a query error so the
  * OPEN row does not blink out for one poll cycle.
+ *
+ * Live prices: server overlays Finnhub/Alpaca onto entry_book at 4Hz. Client
+ * also merges Momentum ``tickers`` prices for dual-listed names so a ticker
+ * tick alone re-paints the book without waiting for the next ai_positions write.
  */
 function _bookRows(book) {
   let pos = (book && book.positions && typeof book.positions === 'object')
@@ -273,7 +286,32 @@ function _bookRows(book) {
       plpc: p.plpc,
     };
   }
+
+  // Overlay Momentum desk live prints onto book PRICE (open rows keep broker mark).
+  const live = _tickerPriceMap();
+  for (const r of Object.values(by)) {
+    if (!r || r.is_position || r.phase === 'open') continue;
+    const px = live[r.symbol];
+    if (px == null || !Number.isFinite(px) || px <= 0) continue;
+    r.price = px;
+    r.last_ask = px;
+  }
   return Object.values(by);
+}
+
+/** symbol → last live price from the Momentum tickers store slice. */
+function _tickerPriceMap() {
+  const rows = get('tickers') || [];
+  const out = Object.create(null);
+  if (!Array.isArray(rows)) return out;
+  for (const t of rows) {
+    if (!t) continue;
+    const s = String(t.ticker || t.symbol || '').toUpperCase();
+    if (!s) continue;
+    const px = Number(t.price);
+    if (Number.isFinite(px) && px > 0) out[s] = px;
+  }
+  return out;
 }
 
 /** Stable display order — phase groups, then symbol (no score shuffle). */

@@ -465,6 +465,142 @@ def load_ai_positions() -> dict:
 load_claude_positions = load_ai_positions
 
 
+def _ai_book_symbols(payload: dict | None = None) -> list[str]:
+    """Symbols currently on the AI Watch book (entry_book / entry_watch / positions).
+
+    Used to Finnhub-subscribe and paint live prices without waiting for the
+    ~20s REST watch poller — same trade stream as Momentum Stocks.
+    """
+    if payload is None:
+        payload = load_ai_positions()
+    if not isinstance(payload, dict):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw) -> None:
+        t = str(raw or "").strip().upper()
+        if not t or not t.isalpha() or not (2 <= len(t) <= 5) or t in seen:
+            return
+        seen.add(t)
+        out.append(t)
+
+    for key in ("entry_book", "entry_watch"):
+        rows = payload.get(key)
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if isinstance(r, dict):
+                _add(r.get("symbol") or r.get("ticker"))
+    pos = payload.get("positions")
+    if isinstance(pos, dict):
+        for sym in pos:
+            _add(sym)
+    return out
+
+
+def _live_quote_for(sym: str, now: float | None = None) -> tuple[float | None, float | None]:
+    """(price, age_sec) from Finnhub/Alpaca desk feeds, or (None, None).
+
+    Prefers the freshest trade among STATE.tickers (already merged by the price
+    loop), Finnhub stream, and the Alpaca REST cache — same sources Momentum
+    Stocks uses.
+    """
+    t = str(sym or "").strip().upper()
+    if not t:
+        return None, None
+    now = float(now if now is not None else time.time())
+    candidates: list[tuple[float, float]] = []  # (obs_ts, price)
+
+    with STATE.lock:
+        ent = STATE.tickers.get(t) or {}
+    try:
+        px = float(ent.get("price") or 0)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px > 0:
+        age = ent.get("price_age_sec")
+        try:
+            age_f = float(age) if age is not None else None
+        except (TypeError, ValueError):
+            age_f = None
+        if age_f is not None and age_f >= 0:
+            candidates.append((now - age_f, px))
+        else:
+            # Unknown age still usable as a last resort (below fresher prints).
+            candidates.append((0.0, px))
+
+    with FINNHUB_STATE.lock:
+        fh = FINNHUB_STATE.prices.get(t) or {}
+    try:
+        fpx = float(fh.get("price") or 0)
+    except (TypeError, ValueError):
+        fpx = 0.0
+    if fpx > 0:
+        ts = float(fh.get("ts_unix") or fh.get("trade_ts") or 0)
+        candidates.append((ts if ts > 0 else 0.0, fpx))
+
+    with _alpaca_cache_lock:
+        ap = _alpaca_price_cache.get(t)
+    if ap:
+        try:
+            # cache: (price, write_ts, trade_ts)
+            apx = float(ap[0] or 0)
+            ats = float(ap[2] or ap[1] or 0)
+        except (TypeError, ValueError, IndexError):
+            apx, ats = 0.0, 0.0
+        if apx > 0:
+            candidates.append((ats if ats > 0 else 0.0, apx))
+
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    obs, price = candidates[0]
+    age_sec = round(max(0.0, now - obs), 1) if obs > 0 else None
+    return round(price, 4), age_sec
+
+
+def overlay_ai_book_live_prices(
+    payload: dict | None,
+    *,
+    now: float | None = None,
+    max_age_sec: float = 120.0,
+) -> dict:
+    """Stamp entry_book / entry_watch rows with live desk prices for the WS.
+
+    Mutates a shallow copy of *payload* so the on-disk ai_positions file is
+    untouched (poller last_ask stays the authority for arming). Rows with a
+    print older than *max_age_sec* keep the poller's last_ask.
+    """
+    if not isinstance(payload, dict) or not payload:
+        return payload if isinstance(payload, dict) else {}
+    now = float(now if now is not None else time.time())
+    out = dict(payload)
+    for key in ("entry_book", "entry_watch"):
+        rows = out.get(key)
+        if not isinstance(rows, list) or not rows:
+            continue
+        new_rows = []
+        for r in rows:
+            if not isinstance(r, dict):
+                new_rows.append(r)
+                continue
+            row = dict(r)
+            sym = str(row.get("symbol") or row.get("ticker") or "").upper()
+            px, age = _live_quote_for(sym, now)
+            if px is not None and (age is None or age <= max_age_sec):
+                row["price"] = px
+                # last_ask drives the PRICE cell when price is absent; keep both
+                # in step so UI paths that prefer last_ask still tick.
+                row["last_ask"] = px
+                row["price_src"] = "stream"
+                if age is not None:
+                    row["price_age_sec"] = age
+            new_rows.append(row)
+        out[key] = new_rows
+    return out
+
+
 _trending_cache: dict = {"mtime": -1.0, "payload": {}}
 
 def load_trending() -> dict:
@@ -1828,22 +1964,33 @@ def _price_loop():
     last_fh_rest_poll   = 0
     _fail_streak        = 0
     _prev_tickers: set  = set(load_tickers())  # seed from file; avoids first-run flood
+    _prev_book: set     = set()
     while True:
         try:
             tickers = load_tickers()
             current = set(tickers)
+            # AI Watch book symbols need the same trade stream even when they
+            # are not on the momentum watchlist (cap / age purge). Subscribe
+            # them and price them into STATE.tickers so the 4Hz snapshot can
+            # overlay live prints onto entry_book.
+            try:
+                book_syms = set(_ai_book_symbols())
+            except Exception:
+                book_syms = set()
+            quote_universe = current | book_syms
 
             # Subscribe new tickers to Finnhub as they appear; periodic scan picks them up.
-            new = current - _prev_tickers
+            new = (current | book_syms) - (_prev_tickers | _prev_book)
             if new and FINNHUB_STATE.connected:
                 _fh_subscribe(list(new))
             _prev_tickers = current
+            _prev_book = book_syms
 
             client = STATE.data_client
             ts     = datetime.now(ET).strftime("%H:%M:%S")
             now    = time.time()
 
-            if tickers and client:
+            if quote_universe and client:
                 # Primary: Finnhub real-time stream prices (zero extra HTTP cost).
                 # Only prices young enough to still be current count as
                 # "covered" — a symbol that printed once and went quiet must not
@@ -1854,7 +2001,7 @@ def _price_loop():
                 if FINNHUB_STATE.connected:
                     with FINNHUB_STATE.lock:
                         fh_snap = {t: FINNHUB_STATE.prices.get(t)
-                                   for t in tickers
+                                   for t in quote_universe
                                    if FINNHUB_STATE.prices.get(t)}
                     for t in stream_covered(fh_snap, now):
                         finnhub_prices[t] = float(fh_snap[t]["price"])
@@ -1862,19 +2009,19 @@ def _price_loop():
                 # Finnhub REST quote poll — supplements WebSocket during extended hours
                 # when no trades have streamed yet. 30s cadence, free-tier safe.
                 fh_key = STATE.cfg.get("finnhub_key", "")
-                if fh_key and tickers and not _finnhub_rest_running and (now - last_fh_rest_poll > _FINNHUB_REST_INTERVAL):
+                if fh_key and quote_universe and not _finnhub_rest_running and (now - last_fh_rest_poll > _FINNHUB_REST_INTERVAL):
                     last_fh_rest_poll     = now
                     _finnhub_rest_running = True
                     threading.Thread(
                         target=_finnhub_rest_poll_worker,
-                        args=(fh_key, list(tickers)),
+                        args=(fh_key, list(quote_universe)),
                         daemon=True, name="fh-rest-poll",
                     ).start()
 
                 # Fallback: Alpaca REST for tickers not covered by Finnhub.
                 # Runs in a background thread — never blocks this loop.
                 # Polls every 5s when Finnhub has gaps; every 2s when Finnhub is down.
-                alpaca_tickers = [t for t in tickers if t not in finnhub_prices]
+                alpaca_tickers = [t for t in quote_universe if t not in finnhub_prices]
                 poll_interval  = 2.0 if not FINNHUB_STATE.connected else 5.0
                 if alpaca_tickers and not _alpaca_fallback_running and (now - last_alpaca_poll > poll_interval):
                     last_alpaca_poll       = now
@@ -1902,7 +2049,7 @@ def _price_loop():
 
                 with STATE.lock:
                     for t, (p, obs, trade_ts) in merged.items():
-                        if t not in tickers:
+                        if t not in quote_universe:
                             continue
                         entry = STATE.tickers.setdefault(t, {})
                         entry["price"]    = round(p, 4)
@@ -2142,6 +2289,15 @@ def _snapshot() -> dict:
     grok_suggestions   = load_grok_suggestions()
     ai_suggestions     = build_ai_suggestions(claude_suggestions, grok_suggestions)
     claude_positions   = load_ai_positions()
+    # Live Finnhub/Alpaca prints on AI Watch rows (up to 4Hz WS), independent of
+    # the ~20s REST poller that owns arming last_ask on disk.
+    try:
+        book_syms = _ai_book_symbols(claude_positions)
+        if book_syms:
+            _fh_subscribe(book_syms)
+        claude_positions = overlay_ai_book_live_prices(claude_positions)
+    except Exception:
+        pass
     trending           = filter_trending_by_max_price(
         load_trending(), _trending_max_price_from_cfg(STATE.cfg))
     # _build_mention_rank acquires STATE.lock internally, so call it BEFORE the
