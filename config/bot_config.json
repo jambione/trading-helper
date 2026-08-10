@@ -182,7 +182,6 @@
   "ai_watch_seed_momentum_n": 12,
   "ai_watch_seed_momentum_open": true,
   "ai_watch_seed_momentum_open_n": 10,
-  "ai_watch_mom_open_bypass_gates": true,
   "ai_watch_seed_trending": true,
   "ai_watch_seed_trending_n": 20,
   "ai_watch_seed_research": true,

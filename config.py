@@ -268,7 +268,6 @@ DEFAULT_CONFIG = {
     # gates (min_price only). Prefers names also on Stocktwits trending.
     "ai_watch_seed_momentum_open":      True,
     "ai_watch_seed_momentum_open_n":      10,
-    "ai_watch_mom_open_bypass_gates":   True,
     "ai_watch_seed_trending":           True,
     "ai_watch_seed_trending_n":           20,
     # AI Research boards (grok_suggestions.json / claude_suggestions.json) as a
@@ -716,7 +715,6 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_seed_momentum_n",
     "ai_watch_seed_momentum_open",
     "ai_watch_seed_momentum_open_n",
-    "ai_watch_mom_open_bypass_gates",
     "ai_watch_seed_trending",
     "ai_watch_seed_trending_n",
     "ai_watch_seed_research",
