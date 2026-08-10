@@ -287,7 +287,7 @@ DEFAULT_CONFIG = {
     # Restrictive AI Watch filters
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
     "ai_watch_min_pct_change":         50.0,  # day chg % above this also qualifies
-    "ai_watch_min_rvol":                1.5,  # relative volume ratio; 1.5 = 150% of avg
+    "ai_watch_min_rvol":                1.0,  # relative volume ratio; 1.0 = 100% of avg
     # Trending admission requires look_reason == "EXT" (apply_look_highlights in
     # stocktwits_trending.py). That function defaults to tagging only the top 2
     # names panel-wide — fine as a UI spotlight, too narrow to be an admission

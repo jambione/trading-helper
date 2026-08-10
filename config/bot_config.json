@@ -182,6 +182,9 @@
   "ai_watch_seed_momentum_n": 12,
   "ai_watch_seed_trending": true,
   "ai_watch_seed_trending_n": 20,
+  "ai_watch_seed_research": true,
+  "ai_watch_seed_research_n": 12,
+  "ai_watch_require_uptrend": true,
   "ai_watch_trending_min_score": 10.0,
   "ai_watch_momentum_require_flag": true,
   "ai_watch_min_pct_change": 50.0,
@@ -214,7 +217,7 @@
   "ai_heal_unprotected": true,
   "require_protective_exit": true,
   "ai_watch_synth_reanchor_pct": 0.0,
-  "ai_watch_min_rvol": 1.5,
+  "ai_watch_min_rvol": 1.0,
   "ai_watch_require_look_ext": false,
   "ai_watch_arm_require_indicators": true,
   "ai_trading_host": "Jonathans-Mac-mini.local"

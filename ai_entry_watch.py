@@ -1635,9 +1635,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
 
     # AI Research boards. No numeric gate here on purpose: a research row is a
     # thesis, and the board has already been through the research pass's own
-    # filters. What it does NOT carry is price or pct_change, so every research
-    # name is judged on the desk row for its symbol — same enrichment the bro
-    # calls get below, same "no row yet means no_price for one tick" behaviour.
+    # filters. Price / day-change come from Momentum desk first, then Trending
+    # file — without that enrichment every research name fails no_price /
+    # not_uptrend even when the thesis is live on the board.
     if cfg.get("ai_watch_seed_research", True):
         try:
             n = max(1, int(cfg.get("ai_watch_seed_research_n", 12) or 12))
@@ -1647,6 +1647,18 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     k = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
                     if k:
                         desk_rows[k] = r
+            tr_by: dict[str, dict] = {}
+            try:
+                path = ROOT / "trending_stocks.json"
+                raw_tr = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+                for tr in (raw_tr.get("rows") or []):
+                    if not isinstance(tr, dict):
+                        continue
+                    k = str(tr.get("symbol") or tr.get("ticker") or "").upper().strip()
+                    if k:
+                        tr_by[k] = tr
+            except Exception:
+                tr_by = {}
             added = 0
             for r in research_candidate_rows():
                 if added >= n:
@@ -1655,23 +1667,37 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 if not s or s in seen:
                     continue
                 live = desk_rows.get(s) or {}
-                if not _price_under_cap(live.get("price"), max_price):
+                tr = tr_by.get(s) or {}
+                # Prefer live desk quote; fall back to trending snapshot.
+                px_src = live.get("price") if live.get("price") is not None else tr.get("price")
+                pct_src = (
+                    live.get("pct_change")
+                    if live.get("pct_change") is not None
+                    else tr.get("pct_change")
+                )
+                rvol_src = live.get("rvol") if live.get("rvol") is not None else tr.get("rvol")
+                if not _price_under_cap(px_src, max_price):
                     continue
                 try:
-                    px = float(live.get("price")) if live.get("price") is not None else None
+                    px = float(px_src) if px_src is not None else None
                 except (TypeError, ValueError):
                     px = None
                 try:
                     dvol = float(live.get("day_vol")) if live.get("day_vol") is not None else None
                 except (TypeError, ValueError):
                     dvol = None
+                if dvol is None and tr.get("vol_session") is not None and px:
+                    try:
+                        dvol = float(tr.get("vol_session"))
+                    except (TypeError, ValueError):
+                        dvol = None
                 seen.add(s)
                 added += 1
                 row = dict(r)
                 row.update({
                     "price": px,
-                    "pct_change": _pct_change_value(live.get("pct_change")),
-                    "rvol": live.get("rvol"),
+                    "pct_change": _pct_change_value(pct_src),
+                    "rvol": rvol_src,
                     "dollar_volume": (dvol * px) if (dvol and px) else None,
                     "criteria": ["research"],
                 })
