@@ -1555,6 +1555,91 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         except Exception:
             pass
 
+    # Momentum Stocks panel → AI Watch without flag / uptrend / rvol gates.
+    # Operator: "suggestions from Momentum that are hot/trending on the desk"
+    # should land on the book even when strict inclusion would reject them.
+    # Only min_price (and max_price) still apply so we can zone and size.
+    if cfg.get("ai_watch_seed_momentum_open", True):
+        try:
+            n = int(cfg.get("ai_watch_seed_momentum_open_n", 10) or 10)
+            n = max(1, n)
+            # Prefer names also on Stocktwits trending (heat overlap), then the
+            # rest of the momentum panel so the book fills from the desk.
+            tr_rank: dict[str, float] = {}
+            try:
+                path = ROOT / "trending_stocks.json"
+                raw_tr = (
+                    json.loads(path.read_text(encoding="utf-8"))
+                    if path.exists() else {}
+                )
+                for i, tr in enumerate(raw_tr.get("rows") or []):
+                    if not isinstance(tr, dict):
+                        continue
+                    k = str(tr.get("symbol") or tr.get("ticker") or "").upper().strip()
+                    if not k:
+                        continue
+                    try:
+                        sc = float(tr.get("trending_score", tr.get("score") or 0) or 0)
+                    except (TypeError, ValueError):
+                        sc = 0.0
+                    tr_rank[k] = max(tr_rank.get(k, 0.0), sc, 1000.0 - i)
+            except Exception:
+                tr_rank = {}
+            open_scored: list[tuple[float, dict]] = []
+            for r in _dashboard_tickers():
+                if not isinstance(r, dict):
+                    continue
+                s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+                if not s or not s[0].isalpha() or s in seen:
+                    continue
+                if not _price_under_cap(r.get("price"), max_price):
+                    continue
+                try:
+                    px = float(r.get("price")) if r.get("price") is not None else None
+                except (TypeError, ValueError):
+                    px = None
+                try:
+                    dvol = float(r.get("day_vol")) if r.get("day_vol") is not None else None
+                except (TypeError, ValueError):
+                    dvol = None
+                on_tr = s in tr_rank
+                # Prefer trending-overlap, then |day chg| as a soft rank only.
+                pct = _pct_change_value(r.get("pct_change"))
+                rank = float(tr_rank.get(s) or 0.0)
+                if not on_tr:
+                    rank = abs(pct or 0.0)
+                reason = (
+                    f"mom+trending {tr_rank[s]:.0f}"
+                    if on_tr
+                    else "momentum desk"
+                )
+                open_scored.append((rank, {
+                    "symbol": s,
+                    "trending_score": round(rank, 2),
+                    "score": round(rank, 2),
+                    "reason": reason[:40],
+                    "agreement": True,
+                    "source": "momentum",
+                    "price": px,
+                    "pct_change": pct,
+                    "rvol": r.get("rvol"),
+                    "dollar_volume": (dvol * px) if (dvol and px) else None,
+                    "criteria": ["mom_open", "mom_trending"] if on_tr else ["mom_open"],
+                    "bypass_inclusion": True,
+                }))
+            open_scored.sort(key=lambda t: t[0], reverse=True)
+            added = 0
+            for _, r in open_scored:
+                if added >= n:
+                    break
+                if r["symbol"] in seen:
+                    continue
+                seen.add(r["symbol"])
+                rows.append(r)
+                added += 1
+        except Exception:
+            pass
+
     if cfg.get("ai_watch_seed_trending", True):
         try:
             path = ROOT / "trending_stocks.json"
@@ -1972,6 +2057,14 @@ def passes_inclusion(
             return False, met, "no_price"
         if price_f < min_price:
             return False, met, "below_min_price"
+
+    # Open Momentum desk suggestions: skip uptrend / rvol / score / indicators.
+    # Still require a usable price above (for zone + sizing).
+    if bool(row.get("bypass_inclusion")) or "mom_open" in met:
+        if "mom_open" not in met:
+            met.append("mom_open")
+        met = list(dict.fromkeys(met))
+        return True, met, ""
 
     min_dv = float(cfg.get("ai_min_dollar_volume", 0.0) or 0.0)
     if min_dv > 0:
