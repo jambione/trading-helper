@@ -590,12 +590,39 @@ def overlay_ai_book_live_prices(
             px, age = _live_quote_for(sym, now)
             if px is not None and (age is None or age <= max_age_sec):
                 row["price"] = px
-                # last_ask drives the PRICE cell when price is absent; keep both
-                # in step so UI paths that prefer last_ask still tick.
+                # Always overwrite last_ask for display so AI Watch tracks the
+                # same Finnhub/Alpaca stream as Momentum Stocks (arming still
+                # uses the poller's on-disk last_ask via entry_watch_state).
                 row["last_ask"] = px
                 row["price_src"] = "stream"
                 if age is not None:
                     row["price_age_sec"] = age
+                # Live above/below from stream vs zone so BLOCKER is not stuck
+                # on a 20s poller verdict while PRICE ticks.
+                try:
+                    lo = float(row.get("entry_low") or 0)
+                    hi = float(row.get("entry_high") or 0)
+                except (TypeError, ValueError):
+                    lo = hi = 0.0
+                if lo > 0 and hi > 0:
+                    pad = 0.0
+                    hi_b = max(lo, hi) * (1.0 + pad)
+                    lo_b = min(lo, hi) * (1.0 - pad)
+                    if lo_b <= px <= hi_b:
+                        row["blocker"] = "in zone"
+                        row["block_code"] = "in_zone"
+                        row["in_zone"] = True
+                        row["ready"] = True
+                    elif px > hi_b:
+                        row["blocker"] = "above zone"
+                        row["block_code"] = "above_zone"
+                        row["in_zone"] = False
+                        row["ready"] = False
+                    else:
+                        row["blocker"] = "below zone"
+                        row["block_code"] = "below_zone"
+                        row["in_zone"] = False
+                        row["ready"] = False
             new_rows.append(row)
         out[key] = new_rows
     return out

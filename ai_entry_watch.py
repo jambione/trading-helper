@@ -560,39 +560,51 @@ def book_table_rows(
             "mkt_val": p.get("mkt_val"),
         }
 
-    # Display filter: only panel-live names, plus true open/submitted positions.
-    try:
-        live = live_panel_universe()
-    except Exception:
-        live = set()
-    filtered: list[dict] = []
-    for r in by_sym.values():
-        sym = str(r.get("symbol") or "").upper()
-        phase = str(r.get("phase") or "")
-        if phase in ("open", "submitted", "filled") or r.get("is_position"):
-            filtered.append(r)
-        elif not live or sym in live:
-            filtered.append(r)
-    rows = filtered
+    # Membership is owned by sync_watch_from_source_panels (watch file). Do NOT
+    # re-filter against the pre-gate shortlist here: Stocktwits score/rvol
+    # flicker was hiding valid book names (file had 5, UI showed 2 forever).
+    # Open/submitted positions already land in by_sym above.
+    rows = list(by_sym.values())
 
-    # Fill a blank PRICE from the dashboard tape when the poller has not yet
-    # written last_ask (or REST is dark). Display only — never invents a zone.
+    # Prefer live desk tape for PRICE on every paint (same Finnhub/Alpaca path
+    # as Momentum Stocks). Zone levels stay from structure; only the print moves.
     for r in rows:
-        if _positive_price(r.get("price")) is not None:
-            continue
-        if _positive_price(r.get("last_ask")) is not None:
-            r["price"] = r["last_ask"]
+        if r.get("is_position") or str(r.get("phase") or "") == "open":
             continue
         try:
             got = stream_quote(r.get("symbol"))
         except Exception:
             got = None
-        if got is None:
-            continue
-        px, _age = got
-        if px and px > 0:
-            r["price"] = px
-            r["last_ask"] = px
+        if got is not None:
+            px, _age = got
+            if px and px > 0:
+                r["price"] = px
+                r["last_ask"] = px
+                # Refresh above/below from live print so BLOCKER tracks the tape.
+                try:
+                    lo = float(r.get("entry_low") or 0)
+                    hi = float(r.get("entry_high") or 0)
+                except (TypeError, ValueError):
+                    lo = hi = 0.0
+                if lo > 0 and hi > 0:
+                    if ask_in_zone(px, lo, hi, 0.0):
+                        r["blocker"] = format_blocker("in_zone")
+                        r["block_code"] = "in_zone"
+                        r["in_zone"] = True
+                        r["ready"] = True
+                    elif px > max(lo, hi):
+                        r["blocker"] = format_blocker("above_zone")
+                        r["block_code"] = "above_zone"
+                        r["in_zone"] = False
+                        r["ready"] = False
+                    else:
+                        r["blocker"] = format_blocker("below_zone")
+                        r["block_code"] = "below_zone"
+                        r["in_zone"] = False
+                        r["ready"] = False
+                continue
+        if _positive_price(r.get("price")) is None and _positive_price(r.get("last_ask")) is not None:
+            r["price"] = r["last_ask"]
 
     def _sort_key(r: dict) -> tuple:
         phase = str(r.get("phase") or "")
@@ -2250,7 +2262,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             status = prev_status
         else:
             status = "watching"
-        new_state[sym] = {
+        seeded_ask = _seed_last_ask(prev, row)
+        rec = {
             "symbol": sym,
             "status": status,
             "agreement": True,
@@ -2266,10 +2279,21 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             ),
             # Carry poller ask when present; otherwise seed from the shortlist
             # row so the UI is not blank and the next structure pass has a print.
-            "last_ask": _seed_last_ask(prev, row),
+            "last_ask": seeded_ask,
             "updated_ts": t0,
             **_admission_fields(row, prev, float(t0)),
         }
+        # Attach a zone immediately on admission — do not wait up to 20s for
+        # poll_once REST. Mom/ST names were stuck on "no zone" until then.
+        try:
+            ask_for_zone = _positive_price(seeded_ask)
+            if ask_for_zone and not _structure_usable(rec.get("structure")):
+                from config import load_config as _lc
+                cfg_z = _lc() or {}
+                ensure_offset_zone_if_needed(rec, ask_for_zone, cfg_z, t0)
+        except Exception:
+            pass
+        new_state[sym] = rec
 
     # Keep in-flight paper entries even if they left the panels (still managing).
     # Also keep daily A/X duel champions (research) — desk-only sync would drop them.
