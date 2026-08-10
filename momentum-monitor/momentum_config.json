@@ -34,8 +34,8 @@
   "claude_max_price": 100.0,
   "positions_panel_enabled": true,
   "positions_poll": 5.0,
-  "auto_limit_enabled": true,
-  "auto_limit_live": true,
+  "auto_limit_enabled": false,
+  "auto_limit_live": false,
   "auto_limit_signals": [
     "buy_zone"
   ],

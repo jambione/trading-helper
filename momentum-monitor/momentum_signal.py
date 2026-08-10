@@ -301,8 +301,16 @@ DEFAULTS = {
     "positions_poll": 5.0,        # seconds between position/order refreshes
     # Adaptive limit + risk bracket + ratchet (OFF by default — paper wall).
     # Spec: docs/superpowers/specs/2026-08-04-entry-pricing-auto-limit-design.md
-    "auto_limit_enabled": True,        # buy_zone auto path (paper unless live flags)
-    "auto_limit_live": True,           # allow when TRADER_MODE=live
+    #
+    # These defaulted to True, which contradicted the line above and meant any
+    # config without the keys turned the monitor into a second buyer on the same
+    # account. Desk rule as of 2026-08-10: the AI Watch book is the only thing
+    # that opens positions. The monitor still shows signals, positions and
+    # resting orders, and manual B/S keys still work — it just does not enter on
+    # its own. Turning this back on means two desks sizing against one equity
+    # balance with no shared budget.
+    "auto_limit_enabled": False,       # buy_zone auto path (paper unless live flags)
+    "auto_limit_live": False,          # allow when TRADER_MODE=live
     "auto_limit_signals": ["buy_zone"],
     "auto_limit_rth_only": True,       # no auto before/after window
     "auto_limit_start_et": "09:30",    # first auto entries at the open
