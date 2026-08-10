@@ -3850,7 +3850,36 @@ def should_arm_buy(
     high_bound = max(entry_low, entry_high) * (1.0 + frac)
     if a > high_bound:
         return False, "above_zone"
-    return False, "below_zone"
+
+    # Price has fallen THROUGH the zone. A pullback that overshoots is still a
+    # pullback — refusing it meant the book watched price trade past a level it
+    # had committed to and then bought nothing, which is the same missed-entry
+    # failure as an out-of-reach zone arriving from the other side.
+    #
+    # Bounded in the trade's own risk unit rather than a flat percentage, so
+    # the allowance scales with the setup: R here is (zone floor − stop), and
+    # the default lets price sit half an R below the zone before the dip is
+    # treated as a breakdown instead of an overshoot. A flat percentage would
+    # be several R on a tight structural stop and a fraction of one on a wide
+    # synthetic stop — the same number meaning two different trades.
+    #
+    # The min_stop_pct gate above still applies and bites first as price nears
+    # the stop, so this cannot arm a fill with no room left in it.
+    if not bool(cfg.get("ai_watch_arm_below_zone", True)):
+        return False, "below_zone"
+    low_bound = min(entry_low, entry_high) * (1.0 - frac)
+    r_unit = low_bound - _stop
+    if r_unit <= 0:
+        return False, "below_zone"      # stop at/above the zone: no room
+    try:
+        max_r = float(cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
+    except (TypeError, ValueError):
+        max_r = 0.5
+    if max_r <= 0:
+        return False, "below_zone"
+    if a < low_bound - max_r * r_unit:
+        return False, "below_zone"
+    return True, "below_zone_dip"
 
 
 def _prune_structure_budget(now: float) -> None:

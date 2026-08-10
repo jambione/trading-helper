@@ -251,6 +251,13 @@ def execution_stats(day: date | None) -> dict[str, Any]:
 
     # A buy that carries a policy_fallback note is one that lost its bracket.
     # This is the exact shape that opened a naked 83%-of-equity position.
+    #
+    # It is NOT the only shape, and scoring only this one made the metric lie.
+    # On 2026-08-10 the report printed "unprotected buys 0" while AXTI sat on
+    # 20 shares with no protective order at all: a dual-tranche entry whose
+    # second leg was refused as a wash trade, and whose rollback cancelled the
+    # first leg's stop while its fill survived. No fallback note anywhere —
+    # the bracket was never rejected, it was cancelled afterwards.
     naked = [e for e in rows
              if e.get("action") == "BUY"
              and "fallback" in str(e.get("note") or "").lower()]
@@ -263,7 +270,51 @@ def execution_stats(day: date | None) -> dict[str, Any]:
              "price": e.get("price"), "note": e.get("note"), "time": e.get("time")}
             for e in naked
         ],
+        "live_naked": _live_unprotected(),
     }
+
+
+def _live_unprotected() -> list[dict]:
+    """Positions held RIGHT NOW with no protective sell order against them.
+
+    Ground truth from the broker rather than a pattern in the trade log. The
+    log-based check above can only recognise failure shapes someone has already
+    seen; this one is the operator rule stated directly — "no position without
+    a protective stop" — so it catches shapes nobody has thought of yet,
+    including the rollback orphan that produced it.
+
+    Returns [] when the broker cannot be reached: an EOD report must still run
+    offline, and "cannot tell" must not print as "all clear" — the caller
+    distinguishes them via the None-vs-empty check on `err`.
+    """
+    try:
+        import alpaca_trader
+        pos = alpaca_trader.get_positions_detail() or {}
+        if not pos:
+            return []
+        orders = alpaca_trader.get_open_orders() or []
+        protected = {
+            str(o.get("symbol") or "").upper()
+            for o in orders
+            if str(o.get("side") or "").lower() == "sell"
+            and (o.get("stop") is not None
+                 or str(o.get("type") or "") in ("stop", "stop_limit", "trailing_stop"))
+        }
+        out = []
+        for sym, p in pos.items():
+            s = str(sym).upper()
+            if s in protected:
+                continue
+            try:
+                qty = float(p.get("qty") or 0)
+                px = float(p.get("avg_entry_price") or p.get("avg_entry") or 0)
+            except (TypeError, ValueError):
+                qty = px = 0.0
+            out.append({"ticker": s, "qty": qty, "price": px,
+                        "notional": round(qty * px, 2)})
+        return out
+    except Exception:
+        return []
 
 
 # ── 3. completeness ──────────────────────────────────────────────────────
@@ -557,7 +608,15 @@ def main() -> None:
                 print(f"     {b['ticker']} {b['qty']}sh @ {b['price']} "
                       f"[{b['note']}] {b['time']}")
         else:
-            print("   unprotected buys     0")
+            print("   unprotected buys     0  (from trade log)")
+        live = ex.get("live_naked") or []
+        if live:
+            print("   *** HELD RIGHT NOW WITH NO PROTECTIVE ORDER:")
+            for b in live:
+                print(f"     {b['ticker']} {b['qty']:.0f}sh @ {b['price']:.2f} "
+                      f"= ${b['notional']:,.0f}  — NO STOP")
+        else:
+            print("   live unprotected     0  (broker check)")
 
     print("\nNone of this is randomized — the desk chose what it watched.")
     print("Anything promising is a hypothesis for tools/ab_bench.py, not a verdict.\n")

@@ -381,6 +381,12 @@ DEFAULT_CONFIG = {
     # replay. "pullback_band" is sized from each symbol's own dip distribution
     # and is scored separately via the zone_kind stamped on every outcome row.
     "ai_watch_armable_zone_kinds": ["double_bottom", "pullback_band"],
+    # A pullback that overshoots the zone is still a pullback. Bounded in the
+    # trade's own risk unit (R = zone floor - stop), so the allowance scales
+    # with the setup instead of meaning several R on a tight structural stop
+    # and a fraction of one on a wide synthetic stop.
+    "ai_watch_arm_below_zone":        True,
+    "ai_watch_arm_below_zone_max_r":   0.5,
     "ai_watch_require_db_zone":       True,
     # Minimum risk per share, as % of the price paid, before an entry may arm.
     # The double-bottom band spans S*0.9975 to S*1.0125 against a stop fixed at
@@ -451,7 +457,20 @@ DEFAULT_CONFIG = {
     "ai_watch_synth_trail_pct":        2.5,
     # Dual tranche for synth: T1 bank half + runner with BE/trail. Single
     # bracket (legacy) never set scaled_out and left all size on one target.
-    "ai_day_scalp_dual_tranche":      True,
+    #
+    # OFF as of 2026-08-10. Tranche A is submitted as a bracket, so its
+    # protective SELL legs are live by the time tranche B's BUY goes in, and
+    # Alpaca refuses that as a wash trade:
+    #   40310000 "opposite side limit order exists. use complex/limit/stop_limit"
+    # The rollback then cancels A's stop, which is how AXTI ended the session
+    # holding 20 shares with no protective order. 2026-08-10 logged 468
+    # entry_fail against 16 entry_ok — 96% of buy attempts — and the funnel
+    # stopped at 2 fills from 13 armed.
+    #
+    # Re-enabling needs tranche B to join the SAME OTOCO order rather than
+    # being a second buy; two independent orders on one symbol cannot both
+    # carry protection under that rule.
+    "ai_day_scalp_dual_tranche":     False,
     # Dead trade: still flat/red with tiny MFE after N minutes → market out.
     "ai_dead_trade_min":               90.0,
     "ai_dead_trade_mfe_r":            0.25,
@@ -785,6 +804,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_zone_mode",
     "ai_watch_require_db_zone",
     "ai_watch_armable_zone_kinds",
+    "ai_watch_arm_below_zone",
+    "ai_watch_arm_below_zone_max_r",
     "ai_watch_min_stop_pct",
     "ai_max_spread_r",
     "ai_watch_db_above_pct",

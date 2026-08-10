@@ -212,7 +212,7 @@
   "ai_watch_synth_trail_pct": 2.5,
   "ai_runner_trail_r": 1.0,
   "ai_runner_step_r": 0.1,
-  "ai_day_scalp_dual_tranche": true,
+  "ai_day_scalp_dual_tranche": false,
   "ai_dead_trade_min": 90.0,
   "ai_dead_trade_mfe_r": 0.25,
   "ai_position_shadow_enabled": true,
