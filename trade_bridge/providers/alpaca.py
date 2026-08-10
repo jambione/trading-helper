@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from typing import AsyncIterator, Optional
 
@@ -207,9 +208,74 @@ class AlpacaMarketData(MarketDataProvider):
         # let the TTL expire so a symbol that starts quoting later recovers.
         self._empty: dict[str, int] = {}
         self._empty_limit = int(cfg.get("alpaca_empty_quote_limit", 10))
+        # Symbols with a live subscribe_depth loop, and the shared batch these
+        # loops read from. Each loop used to issue its own single-symbol quote
+        # request, so cost scaled with subscriptions: 17 names at the default
+        # 0.5s poll / 10 rps is ~600 requests/min against a 200/min account
+        # limit shared with the engine, the book and the screeners. The desk
+        # spent 2026-08-10 in "too many requests" for that reason alone.
+        # Alpaca prices a symbol LIST the same as one symbol on this endpoint,
+        # so one batch per interval serves every subscriber.
+        self._subscribed: set[str] = set()
+        self._batch_lock = threading.Lock()
+        self._batch_ts = 0.0
 
     def _interval(self) -> float:
         return max(self.poll, max(self._active, 1) / self.max_rps)
+
+    def _batch_ttl(self) -> float:
+        """How long one batch serves. Matches the per-symbol cadence."""
+        return max(0.0, self._interval() * 0.9)
+
+    def _refresh_batch(self, want: str) -> None:
+        """Quote every subscribed symbol in one request.
+
+        Only one thread fetches per TTL window; the rest fall through to the
+        book the winner stored. ``want`` is included even if it is not (yet) a
+        subscriber, so snapshot() of an unsubscribed symbol still works.
+        """
+        with self._batch_lock:
+            if time.time() - self._batch_ts < self._batch_ttl():
+                return          # another thread just refreshed
+            syms = {s for s in self._subscribed if not self.known_bad(s)}
+            if want and not self.known_bad(want):
+                syms.add(want)
+            if not syms:
+                return
+            self._batch_ts = time.time()
+        try:
+            from alpaca.data.requests import StockLatestQuoteRequest
+            quotes = self.client.get_stock_latest_quote(
+                StockLatestQuoteRequest(
+                    symbol_or_symbols=sorted(syms), **self._feed_kw))
+        except Exception as e:
+            # Batch failure is not per-symbol news; _fetch's own path reports.
+            log.debug("[ALPACA] batch quote (%d syms) failed: %s",
+                      len(syms), str(e)[:160])
+            return
+        if not isinstance(quotes, dict):
+            return
+        for sym in syms:
+            q = quotes.get(sym)
+            if q is None:
+                continue
+            book = quote_to_book(q)
+            if book:
+                self._last[sym] = book
+                self._empty.pop(sym, None)
+            else:
+                self._note_empty(sym)
+
+    def _note_empty(self, sym: str) -> None:
+        """Park a symbol that answers with no quote at all (OTC/unlisted)."""
+        n = self._empty.get(sym, 0) + 1
+        self._empty[sym] = n
+        if n >= self._empty_limit:
+            self._bad[sym] = time.time() + self._bad_ttl
+            del self._empty[sym]
+            log.warning(
+                "[ALPACA] %s no quote after %d tries (OTC or unlisted) "
+                "— cooldown %.0fs", sym, n, self._bad_ttl)
 
     def known_bad(self, symbol: str) -> bool:
         until = self._bad.get(symbol.upper())
@@ -223,6 +289,14 @@ class AlpacaMarketData(MarketDataProvider):
     def _fetch(self, symbol: str) -> Optional[L2Book]:
         if self.known_bad(symbol):
             return None
+        # Shared batch first. Only when it has nothing fresh for this symbol do
+        # we fall through to the single-symbol request below — which still
+        # exists so an unsubscribed snapshot(), or a batch outage, is served.
+        sym_u = symbol.upper()
+        self._refresh_batch(sym_u)
+        book = self._last.get(sym_u)
+        if book is not None and time.time() - book.ts < self._batch_ttl() + self.poll:
+            return book
         try:
             from alpaca.data.requests import StockLatestQuoteRequest
             req = StockLatestQuoteRequest(
@@ -238,19 +312,14 @@ class AlpacaMarketData(MarketDataProvider):
             else:
                 q = quotes
             book = quote_to_book(q)
-            sym = symbol.upper()
             if book:
-                self._last[symbol] = book
-                self._empty.pop(sym, None)
+                # Keyed upper, like every read — this used to store under the
+                # caller's spelling, so a lowercase symbol wrote a cache entry
+                # nothing could ever read back.
+                self._last[sym_u] = book
+                self._empty.pop(sym_u, None)
             else:
-                n = self._empty.get(sym, 0) + 1
-                self._empty[sym] = n
-                if n >= self._empty_limit:
-                    self._bad[sym] = time.time() + self._bad_ttl
-                    del self._empty[sym]
-                    log.warning(
-                        "[ALPACA] %s no quote after %d tries (OTC or unlisted) "
-                        "— cooldown %.0fs", symbol, n, self._bad_ttl)
+                self._note_empty(sym_u)
             return book
         except Exception as e:
             err = str(e)
@@ -268,6 +337,7 @@ class AlpacaMarketData(MarketDataProvider):
         loop = asyncio.get_running_loop()
         misses = 0
         self._active += 1
+        self._subscribed.add(symbol)
         try:
             while True:
                 t0 = time.time()
@@ -285,6 +355,7 @@ class AlpacaMarketData(MarketDataProvider):
                 await asyncio.sleep(max(0.0, delay - (time.time() - t0)))
         finally:
             self._active -= 1
+            self._subscribed.discard(symbol)
 
     async def snapshot(self, symbol: str) -> Optional[L2Book]:
         symbol = symbol.upper()

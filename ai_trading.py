@@ -163,7 +163,90 @@ def _open_position_count() -> int:
     return len(detail)
 
 
+# One multi-symbol quote fetch per poll, shared by every _latest_ask/_latest_bid
+# call in that poll. The per-symbol path below is two REST round trips per name
+# (ask, then bid) and the watch loop runs it over the whole book every 20s — 11
+# names was ~66 calls/min against a 200/min account limit shared with the
+# engine, the screeners and the dashboard, and on 2026-08-10 it spent the whole
+# session in "too many requests". Alpaca takes a symbol LIST on the same
+# endpoint for the same cost as one symbol, so the batch is free.
+#
+# TTL is deliberately short. This is a cache for one poll's fan-out, not a
+# quote store: arming reads the ask to decide whether price is in the entry
+# zone, and a stale ask arms on a price the order cannot get.
+_QUOTE_TTL_SEC = 3.0
+_quote_cache: dict[str, tuple[float, float | None, float | None]] = {}
+
+
+def prime_quotes(symbols: list[str]) -> int:
+    """Fetch ask+bid for many symbols in one call. Returns symbols cached.
+
+    Best-effort: on any failure the callers fall through to their per-symbol
+    path, so a batch failure degrades to the old behaviour rather than leaving
+    the book without quotes.
+    """
+    wanted = []
+    seen = set()
+    for s in symbols or []:
+        sym = _norm_sym(s)
+        if sym and sym not in seen:
+            seen.add(sym)
+            wanted.append(sym)
+    if not wanted:
+        return 0
+    _load_env()
+    api = os.getenv("ALPACA_API_KEY", "")
+    sec = os.getenv("ALPACA_SECRET_KEY", "")
+    if not api or not sec:
+        return 0
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestQuoteRequest
+        from alpaca.data.enums import DataFeed
+        client = StockHistoricalDataClient(api, sec)
+        q = client.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=wanted, feed=DataFeed.IEX))
+    except Exception:
+        return 0
+    if not isinstance(q, dict):
+        return 0
+    now = time.time()
+    n = 0
+    for sym in wanted:
+        quote = q.get(sym)
+        if quote is None:
+            continue
+        try:
+            ask = float(getattr(quote, "ask_price", 0) or 0) or None
+            bid = float(getattr(quote, "bid_price", 0) or 0) or None
+        except (TypeError, ValueError):
+            continue
+        if ask is None and bid is None:
+            continue
+        _quote_cache[sym] = (now, ask, bid)
+        n += 1
+    return n
+
+
+def _cached_quote(symbol: str) -> tuple[float | None, float | None] | None:
+    """(ask, bid) from the last prime_quotes, or None when absent/stale."""
+    sym = _norm_sym(symbol)
+    if not sym:
+        return None
+    got = _quote_cache.get(sym)
+    if got is None:
+        return None
+    ts, ask, bid = got
+    if time.time() - ts > _QUOTE_TTL_SEC:
+        _quote_cache.pop(sym, None)
+        return None
+    return ask, bid
+
+
 def _latest_ask(symbol: str) -> float | None:
+    hit = _cached_quote(symbol)
+    if hit is not None and hit[0] is not None:
+        return hit[0]
     try:
         import desk_actions as da
         return da._latest_ask(symbol)
@@ -199,6 +282,9 @@ def _latest_ask(symbol: str) -> float | None:
 
 
 def _latest_bid(symbol: str) -> float | None:
+    hit = _cached_quote(symbol)
+    if hit is not None and hit[1] is not None:
+        return hit[1]
     try:
         import desk_actions as da
         return da._latest_bid(symbol)
