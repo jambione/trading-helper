@@ -287,20 +287,28 @@ function _bookRows(book) {
     };
   }
 
-  // Overlay Momentum desk live prints onto book PRICE (open rows keep broker mark).
-  const live = _tickerPriceMap();
+  // Overlay Momentum desk live prints + day % onto book PRICE (open rows keep
+  // broker mark for the number; day % still colours the cell when known).
+  const live = _tickerQuoteMap();
   for (const r of Object.values(by)) {
-    if (!r || r.is_position || r.phase === 'open') continue;
-    const px = live[r.symbol];
-    if (px == null || !Number.isFinite(px) || px <= 0) continue;
-    r.price = px;
-    r.last_ask = px;
+    if (!r) continue;
+    const q = live[r.symbol];
+    if (!q) continue;
+    if (!(r.is_position || r.phase === 'open')) {
+      if (q.price != null && Number.isFinite(q.price) && q.price > 0) {
+        r.price = q.price;
+        r.last_ask = q.price;
+      }
+    }
+    if (q.pct_change != null && Number.isFinite(q.pct_change)) {
+      r.pct_change = q.pct_change;
+    }
   }
   return Object.values(by);
 }
 
-/** symbol → last live price from the Momentum tickers store slice. */
-function _tickerPriceMap() {
+/** symbol → { price, pct_change } from the Momentum tickers store slice. */
+function _tickerQuoteMap() {
   const rows = get('tickers') || [];
   const out = Object.create(null);
   if (!Array.isArray(rows)) return out;
@@ -309,10 +317,26 @@ function _tickerPriceMap() {
     const s = String(t.ticker || t.symbol || '').toUpperCase();
     if (!s) continue;
     const px = Number(t.price);
-    if (Number.isFinite(px) && px > 0) out[s] = px;
+    const pct = t.pct_change != null ? Number(t.pct_change) : NaN;
+    out[s] = {
+      price: Number.isFinite(px) && px > 0 ? px : null,
+      pct_change: Number.isFinite(pct) ? pct : null,
+    };
   }
   return out;
 }
+
+/** Day-change colour class — same rules as Momentum Stocks. */
+function _bookChgClass(pct) {
+  if (pct == null || !Number.isFinite(Number(pct))) return '';
+  const n = Number(pct);
+  if (n > 0) return 'chg-pos';
+  if (n < 0) return 'chg-neg';
+  return '';
+}
+
+/** Last painted price per book symbol — drives up/down flash like Momentum. */
+const _bookPrevPrices = Object.create(null);
 
 /** Stable display order — phase groups, then symbol (no score shuffle). */
 function _sortBookRows(rows) {
@@ -573,17 +597,35 @@ function _updateBookRow(el, r, owner) {
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) statusEl.className = _bookBlockerClass(r);
   const src = _bookSourceLabel(r.source);
-  const px = r.price != null && Number.isFinite(Number(r.price))
-    ? `$${Number(r.price).toFixed(2)}`
+  const rawPx = r.price != null && Number.isFinite(Number(r.price))
+    ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
-      ? `$${Number(r.last_ask).toFixed(2)}` : '—');
+      ? Number(r.last_ask) : null);
+  const px = rawPx != null ? `$${rawPx.toFixed(2)}` : '—';
   const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
   const score = r.score != null && Number.isFinite(Number(r.score))
     ? Number(r.score).toFixed(1) : '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
   _setText(el.querySelector('.cell-src'), src);
-  _setText(el.querySelector('.cell-price'), px);
+  const priceEl = el.querySelector('.cell-price');
+  if (priceEl) {
+    const prev = _bookPrevPrices[r.symbol];
+    if (rawPx != null && prev !== undefined && prev !== rawPx) {
+      const dir = rawPx > prev ? 'up' : 'down';
+      priceEl.classList.remove('price-flash--up', 'price-flash--down');
+      priceEl.classList.add(`price-flash--${dir}`);
+      clearTimeout(priceEl._flashTimer);
+      priceEl._flashTimer = setTimeout(() => priceEl.classList.remove(
+        'price-flash--up', 'price-flash--down'), 600);
+    }
+    if (rawPx != null) _bookPrevPrices[r.symbol] = rawPx;
+    if (priceEl.textContent !== px) priceEl.textContent = px;
+    // Steady day-change colour (same chg-pos / chg-neg as Momentum CHG%).
+    const chgMod = _bookChgClass(r.pct_change);
+    priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
+    priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
+  }
   _setText(el.querySelector('.cell-zone'), zone);
   _setText(el.querySelector('.cell-score'), score);
   _setText(el.querySelector('.cell-qty'), qty);
@@ -594,9 +636,13 @@ function _updateBookRow(el, r, owner) {
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
   el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'in zone');
+  const chgTitle = r.pct_change != null && Number.isFinite(Number(r.pct_change))
+    ? `day ${Number(r.pct_change) >= 0 ? '+' : ''}${Number(r.pct_change).toFixed(2)}%`
+    : null;
   const title = [
     isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
     src ? `src ${src}` : null,
+    chgTitle,
     zone !== '—' ? `zone ${zone}` : null,
     r.reason || null,
     r.block_code && r.block_code !== statusLabel ? `code ${r.block_code}` : null,
@@ -613,10 +659,15 @@ function _bookRowHtml(r, owner) {
   const statusLabel = _bookBlockerLabel(r);
   const statusCls = _bookBlockerClass(r);
   const src = _bookSourceLabel(r.source);
-  const px = r.price != null && Number.isFinite(Number(r.price))
-    ? `$${Number(r.price).toFixed(2)}`
+  const rawPx = r.price != null && Number.isFinite(Number(r.price))
+    ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
-      ? `$${Number(r.last_ask).toFixed(2)}` : '—');
+      ? Number(r.last_ask) : null);
+  const px = rawPx != null ? `$${rawPx.toFixed(2)}` : '—';
+  if (rawPx != null && _bookPrevPrices[sym] === undefined) {
+    _bookPrevPrices[sym] = rawPx;
+  }
+  const chgMod = _bookChgClass(r.pct_change);
   const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
   const score = r.score != null && Number.isFinite(Number(r.score))
     ? Number(r.score).toFixed(1) : '—';
@@ -628,9 +679,13 @@ function _bookRowHtml(r, owner) {
     : ((phase === 'ready' || statusLabel === 'in zone')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
+  const chgTitle = r.pct_change != null && Number.isFinite(Number(r.pct_change))
+    ? `day ${Number(r.pct_change) >= 0 ? '+' : ''}${Number(r.pct_change).toFixed(2)}%`
+    : null;
   const title = [
     isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
     src ? `src ${src}` : null,
+    chgTitle,
     zone !== '—' ? `zone ${zone}` : null,
     r.reason || null,
     r.block_code && r.block_code !== statusLabel ? `code ${r.block_code}` : null,
@@ -642,7 +697,7 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-ticker">${_esc(sym)}</div>`
     + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
     + `<div class="cell-src">${_esc(src)}</div>`
-    + `<div class="cell-price">${_esc(px)}</div>`
+    + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
     + `<div class="cell-score">${_esc(score)}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`

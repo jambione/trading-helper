@@ -2617,6 +2617,10 @@ body.mobile .icon-btn {
 .cell-chg.chg-pos { color: var(--buy); }
 .cell-chg.chg-neg { color: var(--danger); }
 
+/* AI Watch PRICE — day direction colour (same tokens as Momentum CHG%). */
+.feed-cols--ai-book .cell-price.chg-pos { color: var(--buy); }
+.feed-cols--ai-book .cell-price.chg-neg { color: var(--danger); }
+
 .cell-vol,
 .cell-rvol,
 .cell-size {
