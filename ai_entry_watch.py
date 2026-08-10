@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -1052,6 +1053,13 @@ _RESEARCH_SOURCES = frozenset({
     "research", "xai", "anthropic", "grok", "claude", "a", "x", "ax", "ai",
 })
 _DESK_SOURCES = frozenset({"momentum", "trending", "mom", "st", "stocktwits"})
+# "Bullish Bob LIVE" call-outs. Its own bucket, not a desk source: _merge_source
+# lets research keep thesis ownership over desk heat, and a bro call should not
+# be able to take a name away from a research thesis either.
+_BB_LIVE_SOURCES = frozenset({"bb_live", "bro", "bb"})
+# Every label the four source panels can put on a row. _sync_watch_locked drops
+# anything else, so a new seed that is not listed here contributes nothing.
+_PANEL_SOURCES = _DESK_SOURCES | _RESEARCH_SOURCES | _BB_LIVE_SOURCES
 
 
 def _merge_source(prev_src: str, new_src: str) -> str:
@@ -1280,17 +1288,171 @@ def _big_mover_from_dashboard(
     return scored
 
 
+# The call-out stream is a running commentary, not a buy list. One symbol gets
+# narrated the whole way through — "JWEL + AUUD on watch" → "retest hod" →
+# "sold lotto flat" — and the dashboard keeps only the newest call per symbol
+# (ingest_discord_alerts replaces same-ticker records), so the latest line IS
+# the caller's current stance on the name.
+#
+# That makes filtering mandatory rather than a refinement. Recency is the rank
+# key, and the last thing said about a symbol is usually how the trade ended,
+# so unfiltered the shortlist selects *for* exits: on 2026-08-10 both live
+# bb_live candidates were "sold" calls, and 12 of that morning's 34 archived
+# call-outs were an exit or an explicit pass.
+
+# Past tense = he is out. "was a"/"were" catch the post-mortems ("AUUD was a
+# fun one to get us started"), which read as praise but describe a closed trade.
+_BB_EXIT_PAT = re.compile(
+    r"\b(?:sold|sell|selling|out|stopped|closed|trimmed|was\s+a|were)\b",
+    re.I,
+)
+# Explicit passes. "will adjust OR avoid" is his standard disclaimer on a
+# sub-$1 or into-resistance name; "not for me" and float complaints are the
+# same verdict in other words.
+_BB_AVOID_PAT = re.compile(
+    r"(?:not\s+for\s+me|avoid|\blg\s+float\b|larger\s+float)",
+    re.I,
+)
+
+
+def _bb_call_is_actionable(text: str) -> bool:
+    """False when the caller's latest line says he is out of, or passing on, it.
+
+    Deliberately conservative in one direction only: an unrecognised line is
+    treated as actionable, because the shortlist is not an admission —
+    passes_inclusion still has to clear the name on price, liquidity and
+    trend. A missed filter costs one gated candidate; a missed exit would put
+    the desk on the wrong side of the only person whose opinion this seed is.
+    """
+    t = str(text or "").strip()
+    if not t:
+        return True
+    return not (_BB_EXIT_PAT.search(t) or _BB_AVOID_PAT.search(t))
+
+
+def _bb_live_from_dashboard(
+    max_price: Any,
+    fresh_sec: float,
+    now: float | None = None,
+) -> list[tuple[float, dict]]:
+    """Recent "Bullish Bob LIVE" call-outs as watch candidates.
+
+    A call-out is (symbol, free text, timestamp) and nothing more — the caller
+    naming what he is on. There is no score to rank by and no volume to gate
+    on, so recency is the only thing the source itself can say: rank is seconds
+    of freshness remaining, newest call first.
+
+    Every number the inclusion gate needs is read off the desk row for the same
+    symbol, never invented here. A called name the desk has no row for yields
+    price=None, which passes_inclusion rejects as ``no_price`` — and that is the
+    correct outcome for one tick only: the symbol still ships to the engine via
+    push_candidates_to_engine, so it is quoted by the next sync and gets judged
+    on real numbers instead of on the call alone.
+
+    Freshness is measured from ``at`` (when the call was *said*, per Discord's
+    own stamp) and not from ``unix`` (when OCR happened to read it). On a fresh
+    start the source re-posts a whole screen at once; capture time would make an
+    hour of stale calls all look current.
+    """
+    now = float(now if now is not None else time.time())
+    try:
+        fresh = float(fresh_sec or 0)
+    except (TypeError, ValueError):
+        fresh = 0.0
+    if fresh <= 0:
+        return []
+
+    bb = dashboard_state().get("bb_live")
+    history = bb.get("history") if isinstance(bb, dict) else None
+    if not isinstance(history, list) or not history:
+        return []
+
+    # Desk rows carry the price/pct/rvol a call-out cannot.
+    desk: dict[str, dict] = {}
+    for r in _dashboard_tickers():
+        if isinstance(r, dict):
+            s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+            if s:
+                desk[s] = r
+
+    scored: list[tuple[float, dict]] = []
+    seen: set[str] = set()
+    for c in history:
+        if not isinstance(c, dict):
+            continue
+        s = str(c.get("ticker") or c.get("symbol") or "").upper().strip()
+        if not s or not s[0].isalpha() or s in seen:
+            continue
+        try:
+            at = float(c.get("at") or c.get("unix") or 0)
+        except (TypeError, ValueError):
+            continue
+        if at <= 0:
+            continue
+        age = now - at
+        # Negative age means a clock skew between the OCR box and this one, not
+        # a call from the future. Treat it as brand new rather than dropping it.
+        if age > fresh:
+            continue
+        # Mark it seen either way: a symbol whose newest call is an exit is
+        # settled, and an older bullish line for the same name must not
+        # resurrect it. "AUUD sold lotto - loss" ends AUUD for this session,
+        # even though "AUUD retest hod with vol" is still in the history.
+        seen.add(s)
+        if not _bb_call_is_actionable(c.get("text")):
+            continue
+
+        row = desk.get(s) or {}
+        if not _price_under_cap(row.get("price"), max_price):
+            continue
+        try:
+            px = float(row.get("price")) if row.get("price") is not None else None
+        except (TypeError, ValueError):
+            px = None
+        try:
+            dvol = float(row.get("day_vol")) if row.get("day_vol") is not None else None
+        except (TypeError, ValueError):
+            dvol = None
+
+        said = str(c.get("said") or "").strip()
+        rank = max(0.0, fresh - max(0.0, age))
+        scored.append((rank, {
+            "symbol": s,
+            "trending_score": round(rank, 2),
+            "score": round(rank, 2),
+            "reason": (f"bro call {said}".strip() if said else "bro call")[:40],
+            "agreement": True,
+            "source": "bb_live",
+            "price": px,
+            "pct_change": _pct_change_value(row.get("pct_change")),
+            "rvol": row.get("rvol"),
+            "dollar_volume": (dvol * px) if (dvol and px) else None,
+            "criteria": ["bro_call"],
+        }))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return scored
+
+
 def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
-    """Restrictive momentum + trending candidates for AI Watch.
+    """Momentum + trending + research + Trader Bro candidates for AI Watch.
 
     Rules (operator):
-      • No AI Research names (handled by sync — research seed off).
       • Trending: score **> min** (default 10), **or** |day chg %| > min (50),
         **or** relative volume **> min** (default 1.0 = 100% of avg).
       • Momentum: FIRST / NEW / BURST flag on the desk,
         **or** |day pct_change| above min (default 50).
+      • Research: whatever is on the Grok / Anthropic boards right now.
+      • Trader Bro: call-outs said within ai_watch_bb_live_fresh_sec.
 
-    Structure poller still defines zone/stop before arming a buy.
+    Each seed is a *shortlist*, not an admission. passes_inclusion() is
+    conjunctive and still has to clear every name, and the structure poller
+    still defines zone/stop before arming a buy.
+
+    Order matters: seeds run strongest-claim first and `seen` makes the first
+    one to name a symbol own its row. Momentum and trending come first because
+    their rows carry price, pct_change and rvol measured off the desk — the
+    numbers the gate actually judges. Research and a bro call are reasons to
+    look, and neither should overwrite a row that already has evidence in it.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     rows: list[dict] = []
@@ -1413,6 +1575,71 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     })
                     if len([x for x in rows if x.get("source") == "trending"]) >= max(1, n):
                         break
+        except Exception:
+            pass
+
+    # AI Research boards. No numeric gate here on purpose: a research row is a
+    # thesis, and the board has already been through the research pass's own
+    # filters. What it does NOT carry is price or pct_change, so every research
+    # name is judged on the desk row for its symbol — same enrichment the bro
+    # calls get below, same "no row yet means no_price for one tick" behaviour.
+    if cfg.get("ai_watch_seed_research", True):
+        try:
+            n = max(1, int(cfg.get("ai_watch_seed_research_n", 12) or 12))
+            desk_rows: dict[str, dict] = {}
+            for r in _dashboard_tickers():
+                if isinstance(r, dict):
+                    k = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+                    if k:
+                        desk_rows[k] = r
+            added = 0
+            for r in research_candidate_rows():
+                if added >= n:
+                    break
+                s = str(r.get("symbol") or "").upper().strip()
+                if not s or s in seen:
+                    continue
+                live = desk_rows.get(s) or {}
+                if not _price_under_cap(live.get("price"), max_price):
+                    continue
+                try:
+                    px = float(live.get("price")) if live.get("price") is not None else None
+                except (TypeError, ValueError):
+                    px = None
+                try:
+                    dvol = float(live.get("day_vol")) if live.get("day_vol") is not None else None
+                except (TypeError, ValueError):
+                    dvol = None
+                seen.add(s)
+                added += 1
+                row = dict(r)
+                row.update({
+                    "price": px,
+                    "pct_change": _pct_change_value(live.get("pct_change")),
+                    "rvol": live.get("rvol"),
+                    "dollar_volume": (dvol * px) if (dvol and px) else None,
+                    "criteria": ["research"],
+                })
+                rows.append(row)
+        except Exception:
+            pass
+
+    # Trader Bro call-outs. Last seed: a call is the weakest evidence on this
+    # list, so it only ever contributes symbols nothing else already named.
+    if cfg.get("ai_watch_seed_bb_live", True):
+        try:
+            n = max(1, int(cfg.get("ai_watch_seed_bb_live_n", 6) or 6))
+            fresh = float(cfg.get("ai_watch_bb_live_fresh_sec", 900.0) or 0.0)
+            added = 0
+            for _, r in _bb_live_from_dashboard(max_price, fresh):
+                if added >= n:
+                    break
+                s = str(r.get("symbol") or "").upper().strip()
+                if not s or s in seen:
+                    continue
+                seen.add(s)
+                added += 1
+                rows.append(r)
         except Exception:
             pass
 
@@ -1846,7 +2073,7 @@ def research_universe_symbols() -> set[str]:
 
 
 def live_panel_universe(cfg: dict | None = None) -> set[str]:
-    """Symbols allowed on AI Watch (flagged momentum + high trending only)."""
+    """Symbols allowed on AI Watch — the union of the four enabled seeds."""
     cfg = cfg if isinstance(cfg, dict) else {}
     live: set[str] = set()
     for r in desk_candidate_rows(cfg):
@@ -1861,12 +2088,16 @@ def sync_watch_from_source_panels(
     cfg: dict | None = None,
     now: float | None = None,
 ) -> dict:
-    """Rebuild AI Watch from restrictive Momentum + Trending only.
+    """Rebuild AI Watch from the four source panels.
 
     Operator rules:
-      • **No AI Research** names on the watch book.
       • Trending only if score > ``ai_watch_trending_min_score`` (default 10).
       • Momentum only if the desk row has FIRST / NEW / BURST.
+      • Research: whatever the Grok / Anthropic boards currently list.
+      • Trader Bro: call-outs inside ``ai_watch_bb_live_fresh_sec``.
+
+    Each seed has its own on/off flag (``ai_watch_seed_*``); turning one off
+    removes that panel from the book without touching the others.
 
     Structure / in-flight submitted-filled state is preserved when the symbol
     remains. Everything else is dropped from the book file.
@@ -1910,7 +2141,10 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
     if not isinstance(old, dict):
         old = {}
 
-    # Momentum (flagged) + trending (score>min) only — research excluded.
+    # All four panels: momentum (flagged), trending (score>min), research and
+    # Trader Bro call-outs. The filter stays because `candidates` is whatever
+    # desk_candidate_rows produced — an unlabelled or unknown source has no
+    # panel behind it and must not reach the book.
     merged: dict[str, dict] = {}
     for r in candidates:
         if not isinstance(r, dict):
@@ -1919,7 +2153,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
         if not sym:
             continue
         src = str(r.get("source") or "").lower()
-        if src not in ("momentum", "mom", "trending", "st", "stocktwits"):
+        if src not in _PANEL_SOURCES:
             continue
         merged[sym] = r
 
@@ -1988,10 +2222,11 @@ def rebuild_watch_from_book(
     cfg: dict,
     now: float,
 ) -> dict:
-    """After research/open-bell: re-mirror Momentum + Trending + Research.
+    """After research/open-bell: re-mirror all four source panels.
 
-    ``rows`` is accepted for API compatibility; the live board files and desk
-    heat are the source of truth (see ``sync_watch_from_source_panels``).
+    ``rows`` is accepted for API compatibility; the live board files, desk heat
+    and the dashboard's bb_live history are the source of truth (see
+    ``sync_watch_from_source_panels``).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     # Optional: ensure latest research rows hit the wire before sync

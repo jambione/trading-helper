@@ -156,8 +156,9 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
          "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False},
         now=100.0,
     )
+    # Orphans go regardless of source: OLD_AI is research-sourced and is dropped
+    # because no panel still lists it, not because research is excluded.
     assert "GONE" not in state and "OLD_AI" not in state
-    assert "RESEARCH" not in state  # research never on book
     assert state["KEEP"]["status"] == "watching"
     assert state["KEEP"]["structure"]["entry_low"] == 1.0  # structure preserved
     assert state["STAY_TR"]["source"] == "trending"
@@ -212,6 +213,10 @@ def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
     rows = ew.desk_candidate_rows({
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": True,
+        # Off: this test covers the momentum/trending filters, and both of these
+        # seeds reach the live dashboard over HTTP when left at their default.
+        "ai_watch_seed_research": False,
+        "ai_watch_seed_bb_live": False,
         "ai_watch_seed_momentum_n": 12,
         "ai_watch_seed_trending_n": 20,
         "ai_watch_trending_min_score": 10.0,
@@ -229,6 +234,228 @@ def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
     assert "LOWRV" not in by  # rvol 0.5x
     assert "RVOL2" not in by  # rvol 2.0x < 3.0x
     assert "BTC" not in by
+
+
+def _seed_cfg(**over):
+    """desk_candidate_rows cfg with every seed off — switch on what you test."""
+    cfg = {
+        "ai_watch_seed_momentum": False,
+        "ai_watch_seed_trending": False,
+        "ai_watch_seed_research": False,
+        "ai_watch_seed_bb_live": False,
+        "ai_max_price": 100.0,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_research_seed_puts_board_names_on_the_shortlist(tmp_path, monkeypatch):
+    """AI Research is a source panel, enriched with the desk row's numbers."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    (tmp_path / "grok_suggestions.json").write_text(json.dumps({
+        "source": "xai",
+        "rows": [{"symbol": "THESIS", "score": 8.0, "reason": "catalyst next week"},
+                 {"symbol": "NOROW", "score": 7.0, "reason": "no desk row yet"}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "THESIS", "price": 12.0, "pct_change": 6.5,
+         "rvol": 2.2, "day_vol": 1_000_000},
+    ])
+
+    rows = ew.desk_candidate_rows(_seed_cfg(ai_watch_seed_research=True))
+    by = {r["symbol"]: r for r in rows}
+
+    assert by["THESIS"]["source"] == "xai"
+    assert by["THESIS"]["reason"] == "catalyst next week"
+    # Numbers come off the desk row, not off the board.
+    assert by["THESIS"]["price"] == 12.0
+    assert by["THESIS"]["pct_change"] == 6.5
+    assert by["THESIS"]["dollar_volume"] == 12_000_000.0
+    # A board name the desk has no row for still ships (so the engine starts
+    # quoting it); passes_inclusion rejects it as no_price until it does.
+    assert by["NOROW"]["price"] is None
+
+
+def test_research_seed_respects_cap_and_flag(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    (tmp_path / "grok_suggestions.json").write_text(json.dumps({
+        "source": "xai",
+        "rows": [{"symbol": f"S{i}", "score": 9.0} for i in range(5)],
+    }), encoding="utf-8")
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [])
+
+    assert ew.desk_candidate_rows(_seed_cfg()) == []          # flag off
+    rows = ew.desk_candidate_rows(
+        _seed_cfg(ai_watch_seed_research=True, ai_watch_seed_research_n=2))
+    assert len(rows) == 2
+
+
+def test_bb_live_seed_admits_fresh_calls_only(monkeypatch):
+    """A bro call is a candidate while it is fresh, ranked newest first."""
+    import ai_entry_watch as ew
+
+    now = 10_000.0
+    monkeypatch.setattr(ew, "dashboard_state", lambda force=False: {
+        "bb_live": {"history": [
+            {"ticker": "FRESH", "at": now - 60,   "said": "9:31 AM", "text": "on it"},
+            {"ticker": "AGING", "at": now - 800,  "said": "9:20 AM", "text": "watch"},
+            {"ticker": "STALE", "at": now - 5000, "said": "8:10 AM", "text": "old"},
+        ]},
+    })
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "FRESH", "price": 4.0, "pct_change": 9.0, "day_vol": 500_000},
+        {"ticker": "AGING", "price": 6.0, "pct_change": 2.0},
+        {"ticker": "STALE", "price": 3.0, "pct_change": 1.0},
+    ])
+
+    scored = ew._bb_live_from_dashboard(100.0, 900.0, now=now)
+    syms = [r["symbol"] for _, r in scored]
+    assert syms == ["FRESH", "AGING"]          # STALE aged out, newest ranks first
+    row = dict(scored[0][1])
+    assert row["source"] == "bb_live"
+    assert row["criteria"] == ["bro_call"]
+    assert row["price"] == 4.0 and row["pct_change"] == 9.0
+    assert row["dollar_volume"] == 2_000_000.0
+
+
+def test_bb_call_actionable_classification():
+    """The call stream is commentary, not a buy list — exits and passes are out.
+
+    Every string here is a real line from ai_reports/bb_live.jsonl (2026-08-10).
+    """
+    import ai_entry_watch as ew
+
+    for bullish in [
+        "AUUD retest hod with vol", "JWEL low vol curl", "HUDI pop",
+        "AUUD currently has the vol", "JWEL + AUUD on watch", "AUUD test res",
+        "PPBT vol", "STKH test res 5-5.50", "AUUD more",
+    ]:
+        assert ew._bb_call_is_actionable(bullish), bullish
+
+    for exit_or_pass in [
+        "AUUD sold lotto - loss",                  # exit
+        "JWEL sold lotto flat",                    # exit
+        "HUDI all out lotto - flat (red side)",    # exit
+        "AUUD was a fun one to get us started",    # post-mortem, reads as praise
+        "JWEL + AUUD were good ones to get us",    # post-mortem
+        "ABCL lg float - not for me",              # explicit pass
+        "SLN larger float",                        # explicit pass
+        "KWM recent res - will adjust OR avoid",   # standard disclaimer
+    ]:
+        assert not ew._bb_call_is_actionable(exit_or_pass), exit_or_pass
+
+    # Unrecognised lines stay actionable: the shortlist is not an admission.
+    assert ew._bb_call_is_actionable("SOME brand new phrasing")
+    assert ew._bb_call_is_actionable("")
+
+
+def test_bb_live_seed_drops_exit_calls(monkeypatch):
+    """Recency ranks the newest call, which is usually how the trade ENDED.
+
+    Unfiltered this selects for exits — the live shortlist on 2026-08-10 was
+    two "sold" calls. A settled symbol must also stay settled: an older bullish
+    line for the same name must not resurrect it.
+    """
+    import ai_entry_watch as ew
+
+    now = 10_000.0
+    monkeypatch.setattr(ew, "dashboard_state", lambda force=False: {
+        "bb_live": {"history": [
+            {"ticker": "SOLD",  "at": now - 30,  "text": "SOLD sold lotto flat"},
+            {"ticker": "SOLD",  "at": now - 300, "text": "SOLD retest hod"},
+            {"ticker": "ONIT",  "at": now - 60,  "text": "ONIT test res"},
+            {"ticker": "PASS",  "at": now - 90,  "text": "PASS lg float - not for me"},
+        ]},
+    })
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": s, "price": 4.0, "pct_change": 5.0} for s in ("SOLD", "ONIT", "PASS")
+    ])
+
+    syms = [r["symbol"] for _, r in ew._bb_live_from_dashboard(100.0, 900.0, now=now)]
+    assert syms == ["ONIT"]
+
+
+def test_bb_live_seed_measures_from_said_not_capture(monkeypatch):
+    """Freshness uses `at` (when it was said), never `unix` (when OCR read it).
+
+    The OCR source re-posts a whole screen on restart, so capture time would
+    make an hour of stale call-outs all look current.
+    """
+    import ai_entry_watch as ew
+
+    now = 10_000.0
+    monkeypatch.setattr(ew, "dashboard_state", lambda force=False: {
+        "bb_live": {"history": [
+            {"ticker": "OLDCALL", "at": now - 4000, "unix": now - 5},
+        ]},
+    })
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "OLDCALL", "price": 5.0, "pct_change": 3.0},
+    ])
+    assert ew._bb_live_from_dashboard(100.0, 900.0, now=now) == []
+
+
+def test_bb_live_seed_yields_to_stronger_panels(tmp_path, monkeypatch):
+    """A call-out only contributes symbols no other panel already named."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    monkeypatch.setattr(ew, "_momentum_flagged_from_dashboard", lambda max_price=None: [
+        (10.0, {"symbol": "BOTH", "score": 10.0, "trending_score": 10.0,
+                "reason": "momentum FIRST", "agreement": True, "source": "momentum",
+                "price": 7.0, "pct_change": 40.0, "rvol": 4.0}),
+    ])
+    monkeypatch.setattr(ew, "_big_mover_from_dashboard",
+                        lambda max_price=None, min_pct=50.0: [])
+    monkeypatch.setattr(ew, "_bb_live_from_dashboard", lambda mp, fresh, now=None: [
+        (900.0, {"symbol": "BOTH", "source": "bb_live", "score": 900.0,
+                 "reason": "bro call", "agreement": True, "criteria": ["bro_call"]}),
+        (800.0, {"symbol": "ONLYBRO", "source": "bb_live", "score": 800.0,
+                 "reason": "bro call", "agreement": True, "criteria": ["bro_call"]}),
+    ])
+
+    rows = ew.desk_candidate_rows(
+        _seed_cfg(ai_watch_seed_momentum=True, ai_watch_seed_bb_live=True))
+    by = {r["symbol"]: r for r in rows}
+    # Momentum measured BOTH; the call must not overwrite a row with evidence.
+    assert by["BOTH"]["source"] == "momentum"
+    assert by["BOTH"]["rvol"] == 4.0
+    assert by["ONLYBRO"]["source"] == "bb_live"
+
+
+def test_sync_keeps_research_and_bb_live_sources(tmp_path, monkeypatch):
+    """The sync source filter no longer drops research / bro-call rows."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    ew.save_watch({})
+    monkeypatch.setattr(ew, "desk_candidate_rows", lambda cfg=None: [
+        {"symbol": "MOM", "source": "momentum", "agreement": True, "score": 7,
+         "reason": "mom"},
+        {"symbol": "RSCH", "source": "xai", "agreement": True, "score": 8,
+         "reason": "thesis"},
+        {"symbol": "BRO", "source": "bb_live", "agreement": True, "score": 900,
+         "reason": "bro call"},
+        {"symbol": "JUNK", "source": "somewhere_else", "agreement": True, "score": 9,
+         "reason": "no panel"},
+    ])
+    monkeypatch.setattr(ew, "push_candidates_to_engine", lambda syms: {"pushed": 0})
+
+    state = ew.sync_watch_from_source_panels(
+        {"ai_watch_require_uptrend": False, "ai_watch_require_indicators": False,
+         "ai_watch_admit_ticks": 1, "ai_watch_min_price": 0.0,
+         "ai_watch_min_rvol": 0.0, "ai_watch_require_look_ext": False},
+        now=100.0,
+    )
+    assert set(state) == {"MOM", "RSCH", "BRO"}
+    assert state["RSCH"]["source"] == "xai"
+    assert state["BRO"]["source"] == "bb_live"
+    assert "JUNK" not in state   # unknown source has no panel behind it
 
 
 def test_upsert_desk_does_not_steal_research_source(tmp_path, monkeypatch):

@@ -266,6 +266,24 @@ DEFAULT_CONFIG = {
     "ai_watch_seed_momentum_n":           12,
     "ai_watch_seed_trending":           True,
     "ai_watch_seed_trending_n":           20,
+    # AI Research boards (grok_suggestions.json / claude_suggestions.json) as a
+    # third seed. research_candidate_rows() has always existed; nothing called
+    # it, so the boards fed the watch book only through the side door that keeps
+    # submitted/filled names and duel champions across a sync.
+    "ai_watch_seed_research":           True,
+    "ai_watch_seed_research_n":           12,
+    # "Bullish Bob LIVE" call-outs (dashboard /api/state -> bb_live.history) as a
+    # fourth seed. A call-out carries a symbol, free text and a timestamp and
+    # nothing else — no score, no rvol, no price — so freshness is the only
+    # signal it can offer on its own. Everything numeric comes off the desk row
+    # for the same symbol, and passes_inclusion still has to clear it.
+    "ai_watch_seed_bb_live":            True,
+    "ai_watch_seed_bb_live_n":             6,
+    # How long a call-out stays a candidate. Deliberately longer than the
+    # header chip's own freshness window (_BB_LIVE_FRESH_SEC, 5 min): the chip
+    # answers "what is he on right now", this answers "is this still worth
+    # watching", and a called name needs time to reach its entry.
+    "ai_watch_bb_live_fresh_sec":      900.0,
     # Restrictive AI Watch filters
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
     "ai_watch_min_pct_change":         50.0,  # day chg % above this also qualifies
@@ -693,6 +711,11 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_seed_momentum_n",
     "ai_watch_seed_trending",
     "ai_watch_seed_trending_n",
+    "ai_watch_seed_research",
+    "ai_watch_seed_research_n",
+    "ai_watch_seed_bb_live",
+    "ai_watch_seed_bb_live_n",
+    "ai_watch_bb_live_fresh_sec",
     "ai_watch_trending_min_score",
     "ai_watch_min_pct_change",
     "ai_watch_min_rvol",
