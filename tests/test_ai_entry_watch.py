@@ -240,6 +240,7 @@ def _seed_cfg(**over):
     """desk_candidate_rows cfg with every seed off — switch on what you test."""
     cfg = {
         "ai_watch_seed_momentum": False,
+        "ai_watch_seed_momentum_open": False,
         "ai_watch_seed_trending": False,
         "ai_watch_seed_research": False,
         "ai_watch_seed_bb_live": False,
