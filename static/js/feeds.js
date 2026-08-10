@@ -9,7 +9,7 @@
 
 import { subscribe, get } from './store.js?v=107';
 import { api }       from './api.js?v=107';
-import { copyTicker } from './tickers.js?v=107';
+import { copyTicker } from './tickers.js?v=112';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=107';
 
 export function init(panelEl, kind) {
@@ -603,23 +603,27 @@ function _updateBookRow(el, r, owner) {
       ? Number(r.last_ask) : null);
   const px = rawPx != null ? `$${rawPx.toFixed(2)}` : '—';
   const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
-  const score = r.score != null && Number.isFinite(Number(r.score))
-    ? Number(r.score).toFixed(1) : '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
   _setText(el.querySelector('.cell-src'), src);
   const priceEl = el.querySelector('.cell-price');
   if (priceEl) {
-    const prev = _bookPrevPrices[r.symbol];
+    // Same key the row HTML seeds under (upper), or the first tick after a row
+    // is created reads an undefined prev and swallows its flash.
+    const symKey = String(r.symbol || '').toUpperCase();
+    const prev = _bookPrevPrices[symKey];
     if (rawPx != null && prev !== undefined && prev !== rawPx) {
+      // Drop the opposite direction first — successive ticks can flip inside one
+      // flash window (mirrors Momentum in tickers.js).
       const dir = rawPx > prev ? 'up' : 'down';
       priceEl.classList.remove('price-flash--up', 'price-flash--down');
       priceEl.classList.add(`price-flash--${dir}`);
       clearTimeout(priceEl._flashTimer);
+      // 140ms rise + 600ms hold + 900ms decay from the base rule.
       priceEl._flashTimer = setTimeout(() => priceEl.classList.remove(
         'price-flash--up', 'price-flash--down'), 600);
     }
-    if (rawPx != null) _bookPrevPrices[r.symbol] = rawPx;
+    if (rawPx != null) _bookPrevPrices[symKey] = rawPx;
     if (priceEl.textContent !== px) priceEl.textContent = px;
     // Steady day-change colour (same chg-pos / chg-neg as Momentum CHG%).
     const chgMod = _bookChgClass(r.pct_change);
@@ -627,7 +631,16 @@ function _updateBookRow(el, r, owner) {
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
   _setText(el.querySelector('.cell-zone'), zone);
-  _setText(el.querySelector('.cell-score'), score);
+  // RVOL replaces Score here. Score is a per-source blend — momentum rows come
+  // in near 1000, Stocktwits rows near 10-20 — so the column could not be read
+  // down its own length. RVOL is one unit for every source, and formatted the
+  // same as the Research/Trending panels so it means the same thing across the
+  // dashboard.
+  const rvolEl = el.querySelector('.cell-rvol');
+  if (rvolEl) {
+    _setText(rvolEl, _fmtRvol(r.rvol));
+    rvolEl.classList.toggle('vol-high', Number(r.rvol ?? 0) >= 1.5);
+  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -669,8 +682,6 @@ function _bookRowHtml(r, owner) {
   }
   const chgMod = _bookChgClass(r.pct_change);
   const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
-  const score = r.score != null && Number.isFinite(Number(r.score))
-    ? Number(r.score).toFixed(1) : '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
   const plCls = isOpen ? _plClass(r) : '';
@@ -699,7 +710,7 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-src">${_esc(src)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
-    + `<div class="cell-score">${_esc(score)}</div>`
+    + `<div class="cell-rvol${Number(r.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}">${_esc(_fmtRvol(r.rvol))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -715,6 +726,12 @@ function _bookSourceLabel(source) {
   if (s === 'position') return 'Pos';
   if (!s) return '—';
   return s.slice(0, 4);
+}
+
+/** RVOL as "1.92×" — same shape the Research/Trending columns use. */
+function _fmtRvol(v) {
+  const n = Number(v);
+  return v != null && Number.isFinite(n) ? `${n.toFixed(2)}×` : '—';
 }
 
 function _fmtZone(lo, hi) {

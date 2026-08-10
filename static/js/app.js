@@ -7,8 +7,8 @@
 
 import { connect, on, api }                      from './api.js?v=107';
 import { subscribe, set, selectTicker }          from './store.js?v=107';
-import { init as initFeeds }                     from './feeds.js?v=109';
-import { init as initTickers }                   from './tickers.js?v=107';
+import { init as initFeeds }                     from './feeds.js?v=111';
+import { init as initTickers }                   from './tickers.js?v=112';
 import { init as initTradingView }               from './tradingview.js?v=107';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=107';
 import { init as initResizer }                   from './resizer.js?v=107';

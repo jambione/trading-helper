@@ -2149,14 +2149,14 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | Status | Src | Price | Zone | Score | Qty | P&L */
+  /* Ticker | Status | Src | Price | Zone | RVOL | Qty | P&L */
   grid-template-columns:
     minmax(48px, 1.05fr)
     minmax(48px, 0.7fr)
     minmax(28px, 0.4fr)
     minmax(52px, 0.75fr)
     minmax(64px, 1fr)
-    minmax(36px, 0.45fr)
+    minmax(44px, 0.5fr)
     minmax(32px, 0.45fr)
     minmax(52px, 0.75fr);
   width: 100%;
@@ -2173,7 +2173,7 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-src { text-align: center; }
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-zone,
-.panel-ai-watch .feed-cols--ai-book .cell-score,
+.panel-ai-watch .feed-cols--ai-book .cell-rvol,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
@@ -2620,6 +2620,29 @@ body.mobile .icon-btn {
 /* AI Watch PRICE — day direction colour (same tokens as Momentum CHG%). */
 .feed-cols--ai-book .cell-price.chg-pos { color: var(--buy); }
 .feed-cols--ai-book .cell-price.chg-neg { color: var(--danger); }
+
+/* …but the tick flash has to win while it is on. The day-direction rules above
+   out-specify the shared .cell-price.price-flash--* rules, which left a green
+   up-on-day name still reading green as it ticked down — the flash carried no
+   direction, only a faint wash. Re-assert the flash at the same specificity,
+   after those rules, so the tick owns the colour for its 600ms and then decays
+   back to the day tint. Keep these below the .chg-* pair. */
+.feed-cols--ai-book .cell-price.price-flash--up,
+.feed-cols--ai-book .cell-price.price-flash--down {
+  transition: color 140ms ease-out, background-color 140ms ease-out;
+}
+.feed-cols--ai-book .cell-price.price-flash--up {
+  color: var(--buy);
+  background-color: rgba(74, 222, 128, 0.13);
+}
+.feed-cols--ai-book .cell-price.price-flash--down {
+  color: var(--danger);
+  background-color: rgba(251, 113, 133, 0.13);
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-cols--ai-book .cell-price.price-flash--up,
+  .feed-cols--ai-book .cell-price.price-flash--down { transition: none; }
+}
 
 .cell-vol,
 .cell-rvol,
