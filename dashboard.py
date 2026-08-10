@@ -1280,6 +1280,21 @@ try:
 except (TypeError, ValueError):
     TICKER_MAX_COUNT = 8
 
+# Absolute ceiling on the list, candidates and desk-covered names together.
+# This is a real external limit, not a taste knob: Finnhub's free tier allows
+# ~50 concurrent WebSocket subscriptions across the whole desk, and
+# finnhub_stream.request_subscribe does not enforce it. Past the ceiling a
+# symbol silently receives no trades — no forming bars, no indicator state — so
+# overflow is invisible rather than loud. Kept below 50 to leave the engine its
+# own headroom.
+try:
+    _SUB_BUDGET = max(
+        TICKER_MAX_COUNT,
+        int(_cfg_at_import.get("realtime_symbol_budget", 40) or 40),
+    )
+except (TypeError, ValueError):
+    _SUB_BUDGET = 40
+
 _ticker_cache: dict = {"mtime": -1.0, "tickers": [], "entries": []}
 _ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/writes
 
@@ -1296,9 +1311,32 @@ _ticker_lock  = threading.RLock()   # guards _ticker_cache + TICKER_LOG reads/wr
 _HELD_TTL_SEC = 5.0
 _held_cache: tuple[float, frozenset] = (0.0, frozenset())
 
+# Watch-book statuses that mean "the book is done with this name". Everything
+# else in ai_entry_watch's vocabulary — watching, armed, submitted, filled — is
+# a row the book still polls, and therefore a row that needs live data.
+# Expressed as the DONE set rather than the live set so a status added later
+# defaults to keeping its data on, which is the safe direction: the failure
+# mode of guessing wrong here is a silent fallback to REST quotes.
+_WATCH_DONE_STATUSES = frozenset({"invalidated", "expired"})
+
 
 def _committed_symbols() -> frozenset:
-    """Symbols with an open position or a live order — never evict these.
+    """Symbols the desk needs live data for — never evict these.
+
+    Two populations, one rule. A name with an open position or a live order
+    obviously has to stay. So does a name the AI Watch book is *watching*: the
+    book decides "is price in the entry zone" from the real-time tape this list
+    feeds (ai_entry_watch.stream_quote reads it off /api/state), and when the
+    tape has nothing it falls back to a REST ask+bid per symbol per 20s poll.
+    Evicting a watched name therefore does not save quote cost, it MOVES it to
+    a more expensive path — the opposite of what the cap is for.
+
+    That inversion was live on 2026-08-10: the book pushed 15 names into a
+    10-slot list, so the list evicted the oldest, the book re-pushed it, and the
+    cycle repeated — 305 evictions in ~40 minutes, hitting every book symbol
+    ~18 times each. No name kept coverage long enough for the tape prefilter to
+    fire, so all of them fell through to REST and drew 882 "too many requests"
+    errors in one session.
 
     Read off the desk's own state files rather than the broker: this is
     consulted from load_tickers(), which runs at the price loop's poll rate,
@@ -1326,12 +1364,16 @@ def _committed_symbols() -> frozenset:
                 t = str(sym or "").strip().upper()
                 if not (2 <= len(t) <= 5 and t.isalpha()):
                     continue
-                # The watch book holds candidates too. Only names the desk has
-                # actually committed to are protected — "watching" is still
-                # just a candidate and stays subject to the normal churn.
+                # Every live row of the watch book counts, not just the
+                # committed ones. "watching" used to be treated as ordinary
+                # churn, on the reasoning that a candidate nobody acted on is
+                # cheap to drop — true for display, false for quotes, because
+                # dropping it is what forces the REST fallback described above.
+                # Rows the book has finished with (closed//expired/cancelled)
+                # are not on it any more and get no protection.
                 if name == "entry_watch_state.json":
                     status = str((rec or {}).get("status") or "").lower()
-                    if status not in ("armed", "submitted", "filled"):
+                    if status in _WATCH_DONE_STATUSES:
                         continue
                 out.add(t)
     except Exception:
@@ -1397,31 +1439,43 @@ def load_tickers() -> list:
                 # get out", and that question cannot be answered without live
                 # indicators. Evicting a position is how a name goes dark.
                 if added_ts >= cutoff or t in held:
-                    kept.append({"ticker": t, "added": added, "_ts": added_ts,
-                                 "_held": t in held})
+                    row = {"ticker": t, "added": added, "_ts": added_ts,
+                           "_held": t in held}
+                    if e.get("src"):
+                        row["src"] = e["src"]
+                    kept.append(row)
                 else:
                     changed = True
                     log.debug(f"[TICKER] Purged stale {t}")
 
             # Cap after purging, newest first. Sorted on the parsed timestamp
             # rather than the ISO string so a mixed-offset file cannot order
-            # entries by text and silently evict the wrong ones. Held names
+            # entries by text and silently evict the wrong ones. Exempt names
             # sort ahead of everything and are never in the dropped tail — the
             # cap exists to bound quote cost, and a position has to be quoted
             # regardless.
-            if len(kept) > TICKER_MAX_COUNT:
-                kept.sort(key=lambda e: (e["_held"], e["_ts"]), reverse=True)
-                n_held = sum(1 for e in kept if e["_held"])
-                limit = max(TICKER_MAX_COUNT, n_held)
+            #
+            # The cap counts CANDIDATE slots, not total rows. It used to be
+            # max(cap, n_exempt), which silently reduced the candidate budget
+            # as the desk got busier: 11 watched names against a cap of 10 left
+            # room for zero momentum candidates, so the panel the book feeds
+            # from would go empty exactly when the desk was most active. Exempt
+            # names are additive — they are already paid for by not being
+            # REST-quoted — and the total is bounded below.
+            kept.sort(key=lambda e: (e["_held"], e["_ts"]), reverse=True)
+            n_held = sum(1 for e in kept if e["_held"])
+            limit = min(n_held + TICKER_MAX_COUNT, _SUB_BUDGET)
+            limit = max(limit, n_held)   # never drop an exempt name
+            if len(kept) > limit:
                 dropped = kept[limit:]
                 kept = kept[:limit]
                 changed = True
                 if dropped:
                     log.info(
-                        "[TICKER] Over cap (%d) — retired %d oldest: %s%s",
-                        TICKER_MAX_COUNT, len(dropped),
-                        ", ".join(e["ticker"] for e in dropped),
-                        f" (held {n_held} exempt)" if n_held else "")
+                        "[TICKER] Over cap (%d candidate slots + %d desk-covered,"
+                        " budget %d) — retired %d oldest: %s",
+                        TICKER_MAX_COUNT, n_held, _SUB_BUDGET, len(dropped),
+                        ", ".join(e["ticker"] for e in dropped))
             # Re-admit a held name that is not on the list at all. Exempting
             # them from eviction is only half the rule: a position opened after
             # its symbol had already aged out would otherwise stay dark for as
@@ -1429,7 +1483,7 @@ def load_tickers() -> list:
             present = {e["ticker"] for e in kept}
             for t in sorted(held - present):
                 kept.append({"ticker": t, "added": now_iso, "_ts": now_ts,
-                             "_held": True})
+                             "_held": True, "src": "book"})
                 changed = True
                 log.info("[TICKER] Re-admitted held position %s", t)
 
@@ -1462,8 +1516,14 @@ def clear_ticker_log():
         STATE.find_it_first_ts.clear()
 
 
-def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
-    """Add a single ticker. Returns (ok, is_new) — is_new is False when already present."""
+def add_ticker_to_log(ticker: str, src: str = "") -> tuple[bool, bool]:
+    """Add a single ticker. Returns (ok, is_new) — is_new is False when already present.
+
+    ``src`` records WHY the symbol is here. "book" means the AI Watch book
+    pushed it purely so it carries live tape; those rows are real subscriptions
+    but not momentum candidates, and the Momentum panel filters them out. Any
+    other value (or none) is an ordinary candidate from Discord/scanner/manual.
+    """
     ticker = ticker.upper()
     with _ticker_lock:
         try:
@@ -1471,13 +1531,38 @@ def add_ticker_to_log(ticker: str) -> tuple[bool, bool]:
             if ticker in _ticker_cache["tickers"]:
                 return True, False
             now_iso = datetime.now(ET).isoformat(timespec="seconds")
-            entries = list(_ticker_cache["entries"]) + [{"ticker": ticker, "added": now_iso}]
+            entry = {"ticker": ticker, "added": now_iso}
+            if src:
+                entry["src"] = str(src)[:16]
+            entries = list(_ticker_cache["entries"]) + [entry]
             _atomic_write_json(TICKER_LOG, entries)
             _ticker_cache["mtime"] = -1.0   # force re-read on next load
             return True, True
         except Exception as e:
             log.error(f"[TICKER] Add {ticker} failed: {e}")
             return False, False
+
+
+def _ticker_src(ticker: str) -> str:
+    """The recorded ``src`` for a watchlist entry ('' when plain candidate).
+
+    Falls back to "book" for an unstamped entry that is currently on the AI
+    Watch book. Entries written before src existed have no tag, and
+    push_candidates_to_engine only pushes symbols MISSING from the list — so a
+    book symbol already present would never be re-pushed, never get stamped,
+    and never be filtered. The client still un-hides any of these that carry
+    momentum activity of their own, so the fallback cannot hide a real
+    candidate that happens to also be on the book.
+    """
+    t = str(ticker or "").upper()
+    with _ticker_lock:
+        for e in _ticker_cache.get("entries") or []:
+            if str(e.get("ticker") or "").upper() == t:
+                src = str(e.get("src") or "")
+                if src:
+                    return src
+                break
+    return "book" if t in _committed_symbols() else ""
 
 
 def remove_ticker_from_log(ticker: str) -> bool:
@@ -2345,6 +2430,12 @@ def _snapshot() -> dict:
             d = dict(STATE.tickers.get(t, {}))
             d["ticker"] = t
             d["mentioned"] = t in mention_rank
+            # Why this symbol holds a data subscription. The Momentum panel
+            # hides src="book" rows that have no momentum activity of their own
+            # — they are here for the AI Watch book's tape, not as candidates.
+            src_tag = _ticker_src(t)
+            if src_tag:
+                d["src"] = src_tag
             price    = d.get("price")
             day_open = d.get("day_open")
             # Scanner snapshot age, so the UI can grey it out by staleness and
@@ -3474,13 +3565,17 @@ async def api_add_bulk(request: Request):
         raw  = body.get("tickers", [])
         if not isinstance(raw, list):
             return JSONResponse({"ok": False, "error": "tickers must be a list"}, status_code=400)
+        # Callers that are subscribing for data rather than nominating a
+        # candidate say so; the AI Watch book sends src="book".
+        src = str(body.get("src") or "")[:16]
         loop  = asyncio.get_running_loop()
         added = []
         for item in raw[:100]:          # safety cap
             t = str(item).strip().upper()
             if not t or not t.isalpha() or not (2 <= len(t) <= 5):
                 continue
-            ok, is_new = await loop.run_in_executor(None, lambda t=t: add_ticker_to_log(t))
+            ok, is_new = await loop.run_in_executor(
+                None, lambda t=t: add_ticker_to_log(t, src=src))
             if ok and is_new:
                 added.append(t)
         return JSONResponse({"ok": True, "added": len(added), "tickers": added})

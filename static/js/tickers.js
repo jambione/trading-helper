@@ -129,8 +129,23 @@ function _updateSortHeaders() {
 
 // ── Table rendering ────────────────────────────────────────────
 
-function _renderTable(rows) {
+/**
+ * Rows the AI Watch book pushed purely so they carry live tape. They are real
+ * data subscriptions — the book needs the quote — but they are not momentum
+ * candidates, and listing them buried the panel: the watchlist went to 23 rows
+ * of which 13 were book coverage. Hidden unless the name earns its own place
+ * here (a Discord mention, a burst, or a first-find), in which case it is a
+ * momentum candidate that happens to also be on the book.
+ */
+function _isBookOnly(r) {
+  return r && r.src === 'book'
+    && !r.mentioned && !r.mention_burst && !r.find_it_first
+    && !(r.mention_count > 0);
+}
+
+function _renderTable(allRows) {
   if (!_rowsEl) return;
+  const rows = (allRows || []).filter(r => !_isBookOnly(r));
   _lastRows = rows;
 
   // Update count badge
