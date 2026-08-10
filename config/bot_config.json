@@ -148,7 +148,7 @@
   "stocktwits_max_price": 35.0,
   "alpaca_max_rps": 0.6,
   "alpaca_poll_sec": 0.5,
-  "momentum_max_tickers": 5,
+  "momentum_max_tickers": 10,
   "push_vapid_public_key": "BBBpLEr4aZrwHQ_w1EKvalTAhbAo9QhVJaJB72BHAvYHjG2Jgf0spxW9ebWHOBnDWNrrpsUEQJJkDfscD5dfh9g",
   "rvol_time_adjusted": true,
   "ai_trader_enabled": true,
