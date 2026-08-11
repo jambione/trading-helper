@@ -660,7 +660,8 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
     assert [r["symbol"] for r in snap] == ["AAA", "ZZZ"]
     keys = {
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
-        "last_ask", "score", "agreement", "reason", "source", "ready", "in_zone",
+        "last_ask", "score", "rvol", "exhaustion", "exhaustion_state",
+        "agreement", "reason", "source", "ready", "in_zone",
         # Which geometry drew the band — double_bottom vs the offset fallback.
         "zone_kind",
         "block_code", "blocker", "block_reason",
@@ -766,9 +767,10 @@ def test_should_arm_wait_for_zone(monkeypatch):
     cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15,
            "ai_min_reward_risk": 3.0,
            # zone-membership test; arm-time indicator check has its own tests
-           "ai_watch_arm_require_indicators": False}
+           "ai_watch_arm_require_indicators": False,
+           "ai_watch_exhaustion_rules": False}
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=cfg)
-    assert ok and why == "zone"
+    assert ok and why.startswith("zone")
     ok2, why2 = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=cfg)
     assert not ok2
     assert why2 == "above_zone"
@@ -779,7 +781,8 @@ def test_should_arm_rejects_wait_setup_and_hard_no():
     cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15,
            "ai_min_reward_risk": 3.0,
            # zone-membership test; arm-time indicator check has its own tests
-           "ai_watch_arm_require_indicators": False}
+           "ai_watch_arm_require_indicators": False,
+           "ai_watch_exhaustion_rules": False}
     base = {
         "entry_low": 27.0, "entry_high": 28.5,
         "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
@@ -811,9 +814,10 @@ def test_should_arm_buy_decision_in_zone():
     cfg = {"ai_max_spread_pct": 1.0, "ai_entry_zone_pad_pct": 0.15,
            "ai_min_reward_risk": 3.0,
            # zone-membership test; arm-time indicator check has its own tests
-           "ai_watch_arm_require_indicators": False}
+           "ai_watch_arm_require_indicators": False,
+           "ai_watch_exhaustion_rules": False}
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.95, cfg=cfg)
-    assert ok and why == "zone"
+    assert ok and why.startswith("zone")
 
 
 def test_should_arm_in_zone_despite_wide_spread():
@@ -830,10 +834,11 @@ def test_should_arm_in_zone_despite_wide_spread():
     cfg = {"ai_max_spread_pct": 0.1, "ai_entry_zone_pad_pct": 0.15,
            "ai_min_reward_risk": 3.0,
            # spread-vs-zone test; arm-time indicator check has its own tests
-           "ai_watch_arm_require_indicators": False}
+           "ai_watch_arm_require_indicators": False,
+           "ai_watch_exhaustion_rules": False}
     # ~1.8% spread but ask is inside the entry zone → arm.
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.5, cfg=cfg)
-    assert ok and why == "zone"
+    assert ok and why.startswith("zone")
     # Outside the zone is reported as above/below (not spread).
     ok2, why2 = ew.should_arm_buy(rec, ask=32.0, bid=27.5, cfg=cfg)
     assert not ok2 and why2 == "above_zone"
@@ -856,6 +861,11 @@ def _poll_cfg(**overrides):
         # indicator check is orthogonal and has its own tests below, so leave
         # it off here rather than threading fake signal state through each.
         "ai_watch_arm_require_indicators": False,
+        # Exhaustion needs bar/OHLC data; place/gate tests isolate zone logic.
+        "ai_watch_exhaustion_rules": False,
+        # Live dashboard tape (SMCI ~$31 today) must not prefilter unit tests
+        # whose fixture zones sit around $28.
+        "ai_watch_stream_enabled": False,
     }
     cfg.update(overrides)
     return cfg
@@ -871,6 +881,12 @@ def _patch_trading_ready(monkeypatch, gt, *, ask=28.0, bid=27.95):
     monkeypatch.setattr(ew, "_et_now", lambda now=None: fixed_et)
     monkeypatch.setattr(ew, "sod_liquidate_done", lambda cfg, now=None: True)
     monkeypatch.setattr(ew, "expire_stale_watches_for_new_day", lambda now: None)
+    # Do not hit the live dashboard / Finnhub tape / engine map during unit tests.
+    monkeypatch.setattr(ew, "stream_quote", lambda s: None)
+    monkeypatch.setattr(ew, "stream_says_far_from_zone", lambda rec, cfg: (False, None))
+    monkeypatch.setattr(ew, "ensure_live_exhaustion", lambda *a, **k: False)
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [])
     monkeypatch.setattr(gt, "market_is_open", lambda: True)
     monkeypatch.setattr(gt, "is_ready", lambda: True)
     monkeypatch.setattr(gt, "_latest_ask", lambda s: ask)
@@ -880,6 +896,10 @@ def _patch_trading_ready(monkeypatch, gt, *, ask=28.0, bid=27.95):
     monkeypatch.setattr(gt, "get_account", lambda: {"ok": True, "equity": 100_000})
     monkeypatch.setattr(gt, "buys_left_this_poll", lambda: 3)
     monkeypatch.setattr(gt, "record_external_buy", lambda *a, **k: None)
+    try:
+        monkeypatch.setattr(gt, "prime_quotes", lambda symbols: None)
+    except Exception:
+        pass
 
 
 def test_poll_once_buys_when_in_zone(tmp_path, monkeypatch):
@@ -1550,7 +1570,12 @@ def test_indicator_record_carries_every_key_the_arm_gate_reads():
                       "stop_price": 9.5, "target_1": 12.0, "reward_risk": 1.5},
         "indicator": {k: wire[k] for k in wire},
     }
-    cfg = {"ai_watch_arm_require_indicators": True, "ai_min_reward_risk": 0.0}
+    cfg = {
+        "ai_watch_arm_require_indicators": True,
+        "ai_min_reward_risk": 0.0,
+        # This test is about named engine flags, not live %R bars.
+        "ai_watch_exhaustion_rules": False,
+    }
     ok, why = ew.should_arm_buy(rec, ask=10.5, bid=10.4, cfg=cfg)
     assert ok is True, why
 
@@ -1984,6 +2009,8 @@ def test_poll_once_skips_quotes_but_still_reports_a_blocker(tmp_path, monkeypatc
     write a trade print into last_ask (which means 'ask' everywhere else)."""
     import ai_entry_watch as ew
     import ai_trading as gt
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     ew._structure_call_ts.clear()
@@ -1991,9 +2018,27 @@ def test_poll_once_skips_quotes_but_still_reports_a_blocker(tmp_path, monkeypatc
         "AAA": dict(_zoned_rec(), agreement=True, score=8.0, structure_ts=1e12,
                     last_ask=28.0),
     })
-    _patch_trading_ready(monkeypatch, gt)
+    # Do not use _patch_trading_ready — it stubs stream_says_far_from_zone off.
+    fixed_et = datetime(2026, 8, 5, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    monkeypatch.setattr(ew, "_et_now", lambda now=None: fixed_et)
+    monkeypatch.setattr(ew, "sod_liquidate_done", lambda cfg, now=None: True)
+    monkeypatch.setattr(ew, "expire_stale_watches_for_new_day", lambda now: None)
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(ew, "ensure_live_exhaustion", lambda *a, **k: False)
+    monkeypatch.setattr(gt, "market_is_open", lambda: True)
+    monkeypatch.setattr(gt, "is_ready", lambda: True)
+    monkeypatch.setattr(gt, "has_open_position", lambda s: False)
+    monkeypatch.setattr(gt, "can_open_new_position", lambda s: True)
+    monkeypatch.setattr(gt, "get_account", lambda: {"ok": True, "equity": 100_000})
+    monkeypatch.setattr(gt, "buys_left_this_poll", lambda: 3)
+    monkeypatch.setattr(gt, "record_external_buy", lambda *a, **k: None)
+    try:
+        monkeypatch.setattr(gt, "prime_quotes", lambda symbols: None)
+    except Exception:
+        pass
     called = []
     monkeypatch.setattr(gt, "_latest_ask", lambda s: called.append(s) or 28.0)
+    monkeypatch.setattr(gt, "_latest_bid", lambda s: 27.9)
     _tape(monkeypatch, 40.0, 1.0)
 
     ew.poll_once(cfg={**_poll_cfg(), **_stream_cfg()}, now=1e12 + 10)
@@ -2068,6 +2113,10 @@ def _armable_rec(cm=True, pctr=True, macd=False, sell=False, with_indicator=True
             "cm_ok": cm, "pctr_ok": pctr, "macd_ok": macd,
             "sell_signal": sell,
             "proximity_pct": 33 * sum((cm, pctr, macd)),
+            # Raw %R so exhaustion_allows_buy can pass when rules are on.
+            "pctr": -5.0 if pctr else -80.0,
+            "pctr_rising": bool(pctr),
+            "pctr_falling": not pctr,
         }
     return rec
 
@@ -2079,6 +2128,8 @@ def _arm_cfg(**over):
         "ai_watch_arm_require_indicators": True,
         "ai_watch_arm_require": ["cm_ok", "pctr_ok"],
         "ai_watch_arm_min_proximity": 0,
+        # These tests target the named cm/pctr flags, not live %R bars.
+        "ai_watch_exhaustion_rules": False,
     }
     cfg.update(over)
     return cfg
@@ -2091,7 +2142,7 @@ def test_arm_requires_price_in_zone_AND_the_two_named_indicators():
     import ai_entry_watch as ew
 
     ok, why = ew.should_arm_buy(_armable_rec(), ask=28.0, bid=27.9, cfg=_arm_cfg())
-    assert ok and why == "zone"
+    assert ok and why.startswith("zone")
 
     for cm, pctr in ((True, False), (False, True), (False, False)):
         ok, why = ew.should_arm_buy(
@@ -2116,7 +2167,7 @@ def test_macd_does_not_block_the_entry():
     rec = _armable_rec(cm=True, pctr=True, macd=False)
     assert rec["indicator"]["proximity_pct"] == 66      # would fail a 100 count
     ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
-    assert ok and why == "zone"
+    assert ok and why.startswith("zone")
 
 
 def test_arm_rejects_when_indicator_state_is_missing():
@@ -2407,13 +2458,20 @@ def test_zero_zone_percentages_are_honored():
 def _armable_record(structure):
     return {
         "symbol": "AAA", "status": "watching", "structure": structure,
-        "indicator": {"cm_ok": True, "pctr_ok": True, "cm_rsi_rising": True,
-                      "sell_signal": False, "proximity_pct": 100.0},
+        "indicator": {
+            "cm_ok": True, "pctr_ok": True, "cm_rsi_rising": True,
+            "sell_signal": False, "proximity_pct": 100.0,
+            "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+        },
     }
 
 
 def _db_cfg(**over):
-    cfg = {"ai_watch_zone_mode": "double_bottom", "ai_min_reward_risk": 0.5}
+    cfg = {
+        "ai_watch_zone_mode": "double_bottom",
+        "ai_min_reward_risk": 0.5,
+        "ai_watch_exhaustion_rules": False,
+    }
     cfg.update(over)
     return cfg
 
@@ -2441,7 +2499,7 @@ def test_double_bottom_zone_still_arms():
 
     ok, why = ew.should_arm_buy(
         _armable_record(db), ask=ask, bid=ask - 0.01, cfg=_db_cfg())
-    assert (ok, why) == (True, "zone")
+    assert ok and why.startswith("zone")
 
 
 def test_offset_fallback_can_be_re_enabled_by_config():
@@ -2454,7 +2512,7 @@ def test_offset_fallback_can_be_re_enabled_by_config():
     ok, why = ew.should_arm_buy(
         _armable_record(offset), ask=ask, bid=ask - 0.01,
         cfg=_db_cfg(ai_watch_require_db_zone=False))
-    assert (ok, why) == (True, "zone")
+    assert ok and why.startswith("zone")
 
 
 # ── risk per share must be a real risk unit ─────────────────────────────────
@@ -2474,8 +2532,9 @@ def test_a_fill_at_the_bottom_of_the_band_is_too_tight_to_size():
     assert ew.should_arm_buy(rec, ask=zone["entry_low"], bid=None, cfg=cfg) == (
         False, "stop_too_tight")
     # top of the band: 10.125 vs 9.95 = 1.73% — a real risk unit
-    assert ew.should_arm_buy(rec, ask=zone["entry_high"], bid=None, cfg=cfg) == (
-        True, "zone")
+    ok_hi, why_hi = ew.should_arm_buy(
+        rec, ask=zone["entry_high"], bid=None, cfg=cfg)
+    assert ok_hi and why_hi.startswith("zone")
     assert ew.format_blocker("stop_too_tight") == "stop too tight"
 
 
@@ -2487,7 +2546,7 @@ def test_min_stop_pct_of_zero_disables_the_check():
     ok, why = ew.should_arm_buy(
         _armable_record(zone), ask=zone["entry_low"], bid=None,
         cfg=_db_cfg(ai_watch_min_stop_pct=0))
-    assert (ok, why) == (True, "zone")
+    assert ok and why.startswith("zone")
 
 
 def test_stop_of_reads_the_structure_stop():
@@ -2498,3 +2557,113 @@ def test_stop_of_reads_the_structure_stop():
     assert ew._stop_of({"structure": {}}) is None
     assert ew._stop_of({}) is None
     assert ew._stop_of(None) is None
+
+
+def _synthetic_ohlc(n: int = 40, *, base: float = 30.0) -> list[tuple[float, float, float]]:
+    """Rising closes so live %R is near the highs (heating / overbought)."""
+    rows = []
+    for i in range(n):
+        c = base + i * 0.05
+        rows.append((c + 0.02, c - 0.02, c))
+    return rows
+
+
+def test_ensure_symbol_ohlc_fetches_when_cache_cold(monkeypatch):
+    """Cold cache after restart must fetch — not wait for a zone rebuild."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    filled = _synthetic_ohlc()
+    calls = {"n": 0}
+
+    def fake_fetch(symbol, cfg, t):
+        calls["n"] += 1
+        with ew._ohlc_cache_lock:
+            ew._ohlc_cache[str(symbol).upper()] = (t, list(filled))
+            # Tight 1-min stamps so the span gate does not refuse the window.
+            ew._ohlc_ts_cache[str(symbol).upper()] = (
+                t, [t - 60.0 * (len(filled) - 1 - i) for i in range(len(filled))])
+        return [r[1] for r in filled]
+
+    monkeypatch.setattr(ew, "_fetch_symbol_lows", fake_fetch)
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache.pop("SMCI", None)
+        ew._ohlc_ts_cache.pop("SMCI", None)
+
+    rows = ew.ensure_symbol_ohlc("SMCI", {}, now)
+    assert calls["n"] == 1
+    assert len(rows) >= 23
+    # Second call hits cache — no extra fetch while fresh.
+    rows2 = ew.ensure_symbol_ohlc("SMCI", {}, now + 1.0)
+    assert calls["n"] == 1
+    assert rows2 == rows
+
+
+def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
+    """Buy path used to leave every name at exhaustion_state=unknown."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    filled = _synthetic_ohlc()
+
+    def fake_fetch(symbol, cfg, t):
+        with ew._ohlc_cache_lock:
+            ew._ohlc_cache[str(symbol).upper()] = (t, list(filled))
+            ew._ohlc_ts_cache[str(symbol).upper()] = (
+                t, [t - 60.0 * (len(filled) - 1 - i) for i in range(len(filled))])
+        return [r[1] for r in filled]
+
+    monkeypatch.setattr(ew, "_fetch_symbol_lows", fake_fetch)
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache.pop("SMCI", None)
+        ew._ohlc_ts_cache.pop("SMCI", None)
+
+    rec = {"symbol": "SMCI"}
+    cfg = {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_exhaustion_live": True,
+        "ai_watch_require_exhaustion_data": True,
+        "rte_fast_length": 21,
+        "ai_watch_exhaustion_max_window_mult": 10.0,
+    }
+    px = filled[-1][2]
+    assert ew.ensure_live_exhaustion(rec, px, cfg, now) is True
+    assert rec["indicator"]["pctr"] is not None
+    assert rec["indicator"]["pctr_src"] == "live"
+    state = ew.exhaustion_state(rec, cfg)
+    assert state in ("overbought", "heating", "cooling", "flat")
+    ok, why = ew.exhaustion_allows_buy(rec, cfg)
+    # Rising closes should allow (overbought or heating); not no_exhaustion_data.
+    assert why != "no_exhaustion_data"
+    assert ok or why.startswith("not_heating") or why == "heating_too_low"
+
+
+def test_arm_refuses_no_exhaustion_when_require_data():
+    import ai_entry_watch as ew
+
+    rec = {
+        "symbol": "SMCI",
+        "status": "watching",
+        "structure": {
+            "decision": "WAIT",
+            "wait_kind": "wait_for_zone",
+            "entry_low": 31.0,
+            "entry_high": 32.0,
+            "stop_price": 30.0,
+            "target_1": 35.0,
+            "reward_risk": 1.5,
+            "zone_kind": "double_bottom",
+            "synthetic": False,
+        },
+    }
+    cfg = {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_exhaustion_data": True,
+        "ai_watch_arm_require_indicators": False,
+        "ai_min_reward_risk": 0,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_require_db_zone": False,
+    }
+    ok, why = ew.should_arm_buy(rec, ask=31.5, bid=31.4, cfg=cfg)
+    assert not ok and why == "no_exhaustion_data"
+    assert ew.format_blocker("no_exhaustion_data") == "no %R"

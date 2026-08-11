@@ -92,6 +92,15 @@ _BLOCKER_LABELS: dict[str, str] = {
     "in_zone": "in zone",
     "offset_zone": "no shelf",
     "stop_too_tight": "stop too tight",
+    # Exhaustion gate (ai_watch_exhaustion_rules) — UI must name these or
+    # in-zone names look "ready" while the poll refuses on missing %R.
+    "no_exhaustion_data": "no %R",
+    "heating_too_low": "not hot yet",
+    "not_heating_cooling": "cooling",
+    "not_heating_flat": "flat",
+    "not_heating_unknown": "no %R",
+    "overbought": "overbought",
+    "heating": "heating",
 }
 
 
@@ -2610,6 +2619,58 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
     return True
 
 
+def ensure_symbol_ohlc(
+    symbol: str, cfg: dict, now: float,
+) -> list[tuple[float, float, float]]:
+    """Return OHLC for *symbol*, fetching bars when the cache is cold.
+
+    ``symbol_ohlc`` deliberately does not fetch — the double-bottom / band
+    rebuild used to be the only warmer. After a process restart the watch file
+    still holds usable zones, so that path never runs, ``live_exhaustion`` sees
+    an empty window forever, and every name refuses with
+    ``no_exhaustion_data`` under ``ai_watch_require_exhaustion_data``.
+    """
+    rows = symbol_ohlc(symbol, cfg, now)
+    try:
+        length = int(cfg.get("rte_fast_length", 21) or 21)
+    except (TypeError, ValueError):
+        length = 21
+    length = max(2, length)
+    if len(rows) >= length + 2:
+        return rows
+    _fetch_symbol_lows(symbol, cfg, now)
+    return symbol_ohlc(symbol, cfg, now)
+
+
+def ensure_live_exhaustion(
+    rec: dict, price: float, cfg: dict, now: float,
+) -> bool:
+    """Warm bar cache if needed and stamp live %R onto the watch record.
+
+    Call this on every poll that has a usable price — not only when arming.
+    The buy gate and the AI Watch exhaustion column both read
+    ``rec['indicator']['pctr']``; without a warmer the column stays blank and
+    the gate always sees ``unknown``.
+    """
+    if not isinstance(rec, dict):
+        return False
+    if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
+        return False
+    if not bool(cfg.get("ai_watch_exhaustion_live", True)):
+        return False
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return False
+    if px <= 0:
+        return False
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if not sym:
+        return False
+    ensure_symbol_ohlc(sym, cfg, now)
+    return apply_live_exhaustion(rec, px, cfg, now)
+
+
 def exhaustion_pct(record: dict) -> float | None:
     """0-100: how far this name has run toward overbought. None when unknown.
 
@@ -3473,6 +3534,9 @@ def symbol_ohlc(symbol: str, cfg: dict, now: float) -> list[tuple[float, float, 
     these bars on its own throttle; adding a second trigger here would double
     the bar requests for every watched name. Returns [] until that scan has
     run for the symbol, and callers fall back to a fixed zone.
+
+    For exhaustion (and any path that needs bars without rebuilding a zone)
+    call ``ensure_symbol_ohlc`` instead — that warms the cache once when cold.
     """
     sym = str(symbol or "").upper().strip()
     if not sym:
@@ -4213,6 +4277,12 @@ def should_arm_buy(
     if min_rr > 0 and rr + 1e-12 < min_rr:
         return False, "reward_risk"
 
+    # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
+    # sell_signal veto below can reference exh_why without UnboundLocalError.
+    # Operator rule 2026-08-10: overbought or heating is the only indicator
+    # gate when ai_watch_exhaustion_rules is on.
+    exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
+
     # Indicators: optional timing filter. Default off — book symbols often have
     # no engine indicator map, so requiring cm_ok/pctr_ok/cm_rsi_rising blocked
     # every in-zone arm. When present and enabled, still refuse sell_signal and
@@ -4301,12 +4371,6 @@ def should_arm_buy(
         if risk_pct_of_px < min_stop_pct:
             return False, "stop_too_tight"
 
-    # Exhaustion is the only indicator gating an entry (operator rule
-    # 2026-08-10): price in or below the zone AND the name is overbought or
-    # heading there. Checked before the zone tests so the refusal reason names
-    # the condition that actually failed rather than reporting "below_zone" for
-    # a price that was in the zone all along.
-    exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
     if not exh_ok:
         return False, exh_why
 
@@ -4866,6 +4930,12 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if far:
             rec["last_trade"] = stream_px
             rec["last_poll_ts"] = t0
+            # Still warm %R so the UI column and shadow log are honest —
+            # without this, far names never populate exhaustion either.
+            try:
+                ensure_live_exhaustion(rec, float(stream_px), cfg, t0)
+            except Exception:
+                pass
             zone = _structure_levels(rec.get("structure"))
             above = bool(zone and stream_px > max(zone[0], zone[1]))
             # last_ask is deliberately NOT updated from a trade print — it
@@ -4917,6 +4987,17 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     ask_f = float(px)
                     tape_only = True
         rec["last_poll_ts"] = t0
+
+        # Live %R for exhaustion rules. apply_live_exhaustion existed but was
+        # never called on the buy path; OHLC was only warmed when a zone was
+        # rebuilt. After restart, usable zones sit on disk with an empty bar
+        # cache → every name stayed exhaustion_state=unknown and refused with
+        # no_exhaustion_data under ai_watch_require_exhaustion_data.
+        if ask_f > 0:
+            try:
+                ensure_live_exhaustion(rec, ask_f, cfg, t0)
+            except Exception:
+                pass
 
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
 

@@ -252,6 +252,9 @@ function _bookRows(book) {
       phase,
       source: w.source || 'research',
       score: w.score,
+      // Wire field is rvol (admit-time); keep it so the AI Watch RVOL column
+      // is not permanently "—" while PRICE/ZONE paint fine.
+      rvol: w.rvol != null ? w.rvol : null,
       reason: w.reason,
       wait_kind: w.wait_kind,
       entry_low: w.entry_low,
@@ -267,6 +270,8 @@ function _bookRows(book) {
       block_code: w.block_code || null,
       blocker: w.blocker || w.block_reason || null,
       block_reason: w.block_reason || w.blocker || null,
+      exhaustion: w.exhaustion != null ? w.exhaustion : null,
+      exhaustion_state: w.exhaustion_state || null,
     };
   }
   // Live positions always win (P&L / qty).
