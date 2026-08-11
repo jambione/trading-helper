@@ -5,6 +5,8 @@ import logging
 
 import pandas as pd
 
+_SORT_WARNED = False
+
 
 def retry_with_backoff(max_retries: int = 3, base_wait: float = 1.0):
     """Decorator for Alpaca API calls — exponential backoff on 429/503."""
@@ -43,6 +45,34 @@ def _get_feed_arg(cfg: dict = None) -> dict:
         return {}
 
 
+def _get_sort_desc_arg() -> dict:
+    """Newest-first request ordering, when the SDK exposes it.
+
+    `limit` truncates from whichever end the sort starts at. Ascending — the
+    API default — therefore returns the OLDEST `limit` bars in the lookback
+    window, not the newest: with a 10-day start and limit=90, a 1Min request
+    for AAPL came back holding 90 bars from 2026-08-03, eight days stale, and
+    every caller consumed them as current. signal_engine.fetch_bars already
+    carries this fix; this path did not.
+
+    An SDK without Sort would silently resume serving week-old bars, which is
+    the exact failure this exists to stop — so say so, once, rather than
+    degrade quietly.
+    """
+    global _SORT_WARNED
+    try:
+        from alpaca.common.enums import Sort as _Sort
+        return {"sort": _Sort.DESC}
+    except Exception:
+        if not _SORT_WARNED:
+            _SORT_WARNED = True
+            logging.error(
+                "[ALPACA] SDK has no Sort enum — bar requests fall back to "
+                "ascending, which returns the OLDEST bars in the window. "
+                "Indicators and entry zones will be stale.")
+        return {}
+
+
 def fetch_bars(data_client, ticker: str, cfg: dict) -> Optional[pd.DataFrame]:
     @retry_with_backoff(max_retries=3, base_wait=1.0)
     def _fetch():
@@ -64,12 +94,16 @@ def fetch_bars(data_client, ticker: str, cfg: dict) -> Optional[pd.DataFrame]:
             limit=cfg.get("bar_count", 300),
             extended_hours=True,
             **_get_feed_arg(cfg),
+            **_get_sort_desc_arg(),
         )
         bars = data_client.get_stock_bars(req).df
         if bars is None or bars.empty:
             return None
         if isinstance(bars.index, pd.MultiIndex):
             bars = bars.xs(ticker, level="symbol")
+        # Flipped back to oldest-first: every consumer downstream (.tail(),
+        # rolling windows, indicator series) reads these chronologically.
+        bars = bars.sort_index()
         bars = bars[["open", "high", "low", "close", "volume"]].copy()
         bars["close"] = pd.to_numeric(bars["close"], errors="coerce")
         return bars.dropna(subset=["close"])
@@ -81,6 +115,11 @@ def fetch_bars(data_client, ticker: str, cfg: dict) -> Optional[pd.DataFrame]:
 
 
 def fetch_bars_batch(data_client, tickers: list, cfg: dict) -> dict:
+    """NOTE: `limit` on a multi-symbol request caps the WHOLE batch, not each
+    symbol — the SDK stops paginating once the total is reached, so the tail
+    of `tickers` comes back empty (see rs_fetch.py's header). Newest-first
+    ordering below at least makes the bars that do arrive current. Unused
+    today; fix the limit before adopting it."""
     if not tickers or data_client is None:
         return {}
 
@@ -104,6 +143,7 @@ def fetch_bars_batch(data_client, tickers: list, cfg: dict) -> dict:
             limit=cfg.get("bar_count", 300),
             extended_hours=True,
             **_get_feed_arg(cfg),
+            **_get_sort_desc_arg(),
         )
         bars = data_client.get_stock_bars(req).df
         if bars is None or bars.empty:
@@ -113,7 +153,8 @@ def fetch_bars_batch(data_client, tickers: list, cfg: dict) -> dict:
         if isinstance(bars.index, pd.MultiIndex):
             for t in tickers:
                 try:
-                    df = bars.xs(t, level="symbol")[["open", "high", "low", "close", "volume"]].copy()
+                    df = bars.xs(t, level="symbol").sort_index()[
+                        ["open", "high", "low", "close", "volume"]].copy()
                     df["close"] = pd.to_numeric(df["close"], errors="coerce")
                     df = df.dropna(subset=["close"])
                     if not df.empty:
@@ -121,7 +162,8 @@ def fetch_bars_batch(data_client, tickers: list, cfg: dict) -> dict:
                 except KeyError:
                     continue
         else:
-            bars = bars[["open", "high", "low", "close", "volume"]].copy()
+            bars = bars.sort_index()[
+                ["open", "high", "low", "close", "volume"]].copy()
             bars["close"] = pd.to_numeric(bars["close"], errors="coerce")
             bars = bars.dropna(subset=["close"])
             if not bars.empty:

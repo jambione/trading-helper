@@ -223,5 +223,7 @@
   "ai_watch_min_rvol": 1.0,
   "ai_watch_require_look_ext": false,
   "ai_watch_arm_require_indicators": false,
+  "ai_watch_require_exhaustion_data": true,
+  "ai_watch_exhaustion_fallback": true,
   "ai_trading_host": "Jonathans-Mac-mini.local"
 }

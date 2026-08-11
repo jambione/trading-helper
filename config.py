@@ -407,9 +407,29 @@ DEFAULT_CONFIG = {
     # "Heating" needs a level, not just a direction: without this a name pinned
     # at 5% exhaustion qualifies as "trending towards overbought" on one tick up.
     "ai_watch_exhaustion_heat_min_pct": 50.0,
-    # Names with NO %R reading (thin IEX coverage, ~1 in 5) fall back to the
-    # pre-exhaustion gates rather than being refused outright.
+    # SELL side only. A held name with no %R reading keeps the pre-exhaustion
+    # sell_signal stop defence — taking its only indicator defence away while
+    # giving it no replacement would leave it worse off than before. Never flip
+    # this to gate entries; that is what require_data below is for.
     "ai_watch_exhaustion_fallback":   True,
+    # BUY side. Refuse to arm a name that has no %R reading at all, instead of
+    # letting it through on the pre-exhaustion gates.
+    #
+    # "No reading" is a coverage test, not a preference: live_exhaustion needs
+    # rte_fast_length + 2 bars (23) to form the window, and on the free IEX feed
+    # a thin name simply does not print that many — AKAN managed 3 bars in ten
+    # days. A name IEX prints once a day is one we cannot see, and the fill
+    # would be poor even if the indicator liked it.
+    #
+    # The cost is small. Measured 2026-08-11 against all 96 names the desk
+    # actually watched on 08-10: 4 blind (HWH, VSA, LXEH, LIVE), 92 clear the
+    # window, most at the full 90 bars. Earlier estimates of ~1 in 5 were
+    # inflated by the ascending-sort bar bug, which served week-old bars and
+    # made coverage look far worse than it is.
+    #
+    # Watch the BLIND line in desk_report section 5. If it climbs toward the
+    # whole book the constraint is the data feed (SIP), not this gate.
+    "ai_watch_require_exhaustion_data": True,
     "rte_fast_ewm_span":                 7,   # matches signals.py smoothing
     "rte_direction_eps":              0.05,   # %R move below this is not a turn
     "ai_watch_arm_below_zone":        True,
@@ -837,6 +857,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_fallback",
+    "ai_watch_require_exhaustion_data",
     "rte_fast_ewm_span",
     "rte_direction_eps",
     "ai_watch_arm_below_zone",

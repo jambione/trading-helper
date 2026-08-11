@@ -457,6 +457,18 @@ def exhaustion_stats(shadow: list[dict], horizon_sec: float) -> dict:
     live = sum(1 for r in with_p if r.get("pctr_src") == "live")
     no_data = sorted({str(r["symbol"]) for r in rows
                       if r.get("exhaustion") is None})
+    # Names that NEVER got a reading all day, separated from names that merely
+    # had gaps. Under ai_watch_require_exhaustion_data these can never arm, so
+    # each one is a book slot that could not have traded whatever it did — the
+    # number that says whether the coverage gate is protecting the desk or
+    # starving it.
+    ever = {str(r["symbol"]) for r in rows if r.get("exhaustion") is not None}
+    blind = sorted({str(r["symbol"]) for r in rows} - ever)
+    # Rows written before the exhaustion fields existed have no key at all,
+    # which is not the same as a name we could not read. Without this the
+    # report says "100% blind" for every historical day and buries the real
+    # number the day it starts to matter.
+    instrumented = any("exhaustion" in r for r in rows)
     states = Counter(str(r.get("exhaustion_state") or "?") for r in rows)
     why = Counter(str(r.get("arm_why") or "") for r in rows
                   if r.get("arm_ok") is not None)
@@ -483,6 +495,9 @@ def exhaustion_stats(shadow: list[dict], horizon_sec: float) -> dict:
         "coverage": {"rows": len(rows), "with_pctr": len(with_p),
                      "live": live, "engine": len(with_p) - live},
         "no_data_symbols": no_data,
+        "blind_symbols": blind,
+        "symbols_seen": len(ever | set(blind)),
+        "instrumented": instrumented,
         "states": dict(states),
         "arm_why": why.most_common(10),
         "by_bucket": buckets,
@@ -671,14 +686,25 @@ def main() -> None:
         print("\n5. EXHAUSTION  (the rule that now gates entries)")
         cov = exh.get("coverage") or {}
         n = cov.get("rows", 0)
-        if n:
+        if n and not exh.get("instrumented"):
+            print("   (rows predate the exhaustion fields — no coverage to report)")
+        elif n:
             print(f"   %R reading present   {cov.get('with_pctr', 0)}/{n} "
                   f"({100.0 * cov.get('with_pctr', 0) / n:.0f}%)  "
                   f"live={cov.get('live', 0)} engine={cov.get('engine', 0)}")
             miss = exh.get("no_data_symbols") or []
             if miss:
-                print(f"   NO reading (fallback logic): {', '.join(miss[:14])}"
+                print(f"   NO reading (some rows): {', '.join(miss[:14])}"
                       + (f" +{len(miss) - 14} more" if len(miss) > 14 else ""))
+            blind = exh.get("blind_symbols") or []
+            seen = exh.get("symbols_seen") or 0
+            if seen:
+                pct = 100.0 * len(blind) / seen
+                print(f"   BLIND all day (cannot ever arm): {len(blind)}/{seen} "
+                      f"({pct:.0f}% of book slots)")
+                if blind:
+                    print(f"     {', '.join(blind[:14])}"
+                          + (f" +{len(blind) - 14} more" if len(blind) > 14 else ""))
         if exh.get("states"):
             print(f"   states seen          {exh['states']}")
         if exh.get("arm_why"):

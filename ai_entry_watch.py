@@ -2586,10 +2586,11 @@ def exhaustion_pct(record: dict) -> float | None:
     question here ("is it heading into overbought right now") is a trigger
     question, not a setup one.
 
-    None is a real answer and must not be coerced to 0. ~18% of decisions on
-    2026-08-10 had no indicator block at all — thin names without enough bars
-    to compute %R — and a missing reading scored as 0 would read as "deeply
-    oversold", the exact opposite of "we do not know".
+    None is a real answer and must not be coerced to 0: a missing reading
+    scored as 0 would read as "deeply oversold", the exact opposite of "we do
+    not know". (The ~18% no-indicator rate once cited here was inflated by the
+    ascending-sort bar bug fixed 2026-08-11; the true blind rate is nearer 4%.
+    The argument does not depend on the number.)
     """
     ind = record.get("indicator") if isinstance(record, dict) else None
     if not isinstance(ind, dict):
@@ -2653,16 +2654,28 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     trades left on the fade rather than the target: many entries were nowhere
     near overbought and rolled straight back over.
 
-    A missing reading does NOT refuse here — it defers. Roughly one name in
-    five has no %R at all (thin IEX coverage, no bars, no window), and refusing
-    them outright silently shrinks the desk to whatever Alpaca happens to print
-    a bar for. Those names fall back to the pre-exhaustion gates instead; the
-    caller distinguishes the two by the returned reason.
+    A missing reading REFUSES, under ai_watch_require_exhaustion_data.
+
+    That reverses the earlier call to let such names through on the old gates,
+    and the reason is that "no reading" turned out to mean "we cannot see this
+    name", not "the indicator is warming up" — so the deferral was not buying a
+    second opinion, it was trading blind on the illiquid tail where the fill is
+    worst. It is also far cheaper than the old docstring feared: measured
+    2026-08-11 across all 96 names watched on 08-10, only 4 lack the 23 bars
+    (HWH, VSA, LXEH, LIVE). The "1 in 5" figure came from a period when the bar
+    fetch was returning week-old bars. Turning the flag off restores the
+    fallback.
+
+    Note this is a BUY gate only. A name held through a loss of coverage still
+    keeps its pre-exhaustion sell defence (ai_watch_exhaustion_fallback) — a
+    position must never be left with fewer exits than it was opened with.
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return True, "exhaustion_off"
     state = exhaustion_state(record, cfg)
     if state == "unknown":
+        if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
+            return False, "no_exhaustion_data"
         if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
             return True, "no_exhaustion_fallback"
         return False, "no_exhaustion_data"
