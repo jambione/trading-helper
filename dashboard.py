@@ -598,22 +598,35 @@ def overlay_ai_book_live_prices(
                 if age is not None:
                     row["price_age_sec"] = age
                 # Live above/below from stream vs zone so BLOCKER is not stuck
-                # on a 20s poller verdict while PRICE ticks.
+                # on a 20s poller verdict while PRICE ticks. Armable overshoots
+                # (within max_r below the floor) count as in-zone — same rule
+                # as ai_entry_watch.ask_triggers_zone / should_arm_buy.
                 try:
                     lo = float(row.get("entry_low") or 0)
                     hi = float(row.get("entry_high") or 0)
                 except (TypeError, ValueError):
                     lo = hi = 0.0
+                try:
+                    stop = float(row.get("stop_price") or 0) or None
+                except (TypeError, ValueError):
+                    stop = None
                 if lo > 0 and hi > 0:
-                    pad = 0.0
-                    hi_b = max(lo, hi) * (1.0 + pad)
-                    lo_b = min(lo, hi) * (1.0 - pad)
-                    if lo_b <= px <= hi_b:
+                    try:
+                        from ai_entry_watch import ask_triggers_zone
+                        triggers = ask_triggers_zone(
+                            px, lo, hi,
+                            stop=stop,
+                            max_below_r=0.5,
+                            arm_below=True,
+                        )
+                    except Exception:
+                        triggers = min(lo, hi) <= px <= max(lo, hi)
+                    if triggers:
                         row["blocker"] = "in zone"
                         row["block_code"] = "in_zone"
                         row["in_zone"] = True
                         row["ready"] = True
-                    elif px > hi_b:
+                    elif px > max(lo, hi):
                         row["blocker"] = "above zone"
                         row["block_code"] = "above_zone"
                         row["in_zone"] = False

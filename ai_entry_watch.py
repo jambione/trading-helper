@@ -252,19 +252,44 @@ def _poller_blocked(rec: dict) -> bool:
     far away), and portfolio gates like daily_loss_limit block a name whose
     price genuinely is in the zone. Showing READY for either is the same class
     of lie as the zone-pad mismatch this file already had.
+
+    ``below_zone`` is *not* a hard poller block when the live print still sits
+    in the armable overshoot window — that geometry is a buy, same as in-zone.
     """
     code = str(rec.get("block_code") or "").strip()
-    return bool(code) and code not in ("in_zone", "placing")
+    if not code or code in ("in_zone", "placing"):
+        return False
+    if code == "below_zone":
+        # Stale below stamp while price is still an armable dip → not blocked.
+        try:
+            structure = rec.get("structure") if isinstance(
+                rec.get("structure"), dict) else {}
+            lo = float(structure.get("entry_low") or rec.get("entry_low") or 0)
+            hi = float(structure.get("entry_high") or rec.get("entry_high") or 0)
+            ask = float(rec.get("last_ask") or 0)
+            stop = float(structure.get("stop_price") or 0) or None
+        except (TypeError, ValueError):
+            return True
+        if lo > 0 and hi > 0 and ask > 0 and ask_triggers_zone(
+            ask, lo, hi, stop=stop, max_below_r=0.5, arm_below=True,
+        ):
+            return False
+        return True
+    return True
 
 
 def derive_blocker(
     rec: dict,
     *,
     pad_pct: float = 0.0,
+    max_below_r: float = 0.5,
+    arm_below: bool = True,
 ) -> tuple[str | None, str | None]:
     """Return (code, label) for why this watch is not an open buy.
 
     Prefers the last poll decision; falls back to live last_ask vs zone.
+    Armable pullback overshoots (within ``max_below_r`` of the floor) report
+    as ``in_zone`` so the book column matches the arm gate.
     """
     if not isinstance(rec, dict):
         return None, None
@@ -279,8 +304,14 @@ def derive_blocker(
     stored = rec.get("block_code") or rec.get("block_reason")
     if stored:
         code = str(rec.get("block_code") or stored)
-        label = str(rec.get("block_reason") or format_blocker(code) or code)
-        return code, label
+        # Poller may have stamped below_zone before the print recovered into
+        # the armable dip window; re-evaluate geometry so the column is not
+        # stuck on a stale below while price is still a valid buy.
+        if code in ("below_zone", "above_zone", "in_zone"):
+            pass  # fall through to live geometry below
+        else:
+            label = str(rec.get("block_reason") or format_blocker(code) or code)
+            return code, label
 
     structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else {}
     wk = str(structure.get("wait_kind") or "").lower().strip()
@@ -299,7 +330,17 @@ def derive_blocker(
         return "no_structure", format_blocker("no_structure")
     if ask <= 0:
         return "no_structure", "no quote"
-    if ask_in_zone(ask, lo, hi, pad_pct):
+    try:
+        stop = float(structure.get("stop_price") or 0) or None
+    except (TypeError, ValueError):
+        stop = None
+    if ask_triggers_zone(
+        ask, lo, hi,
+        pad_pct=pad_pct,
+        stop=stop,
+        max_below_r=max_below_r,
+        arm_below=arm_below,
+    ):
         return "in_zone", format_blocker("in_zone")
     frac = max(0.0, float(pad_pct or 0)) / 100.0
     high_bound = max(lo, hi) * (1.0 + frac)
@@ -427,6 +468,10 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             score_f = float(score) if score is not None else None
         except (TypeError, ValueError):
             score_f = None
+        try:
+            stop_f = float(structure.get("stop_price") or 0) or None
+        except (TypeError, ValueError):
+            stop_f = None
         in_zone = False
         if (
             last_ask_f is not None
@@ -435,8 +480,14 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             and entry_low_f > 0
             and entry_high_f > 0
         ):
-            in_zone = ask_in_zone(
-                last_ask_f, entry_low_f, entry_high_f, pad_pct)
+            # Include armable below-zone dips (same geometry as should_arm_buy).
+            in_zone = ask_triggers_zone(
+                last_ask_f, entry_low_f, entry_high_f,
+                pad_pct=pad_pct,
+                stop=stop_f,
+                max_below_r=0.5,
+                arm_below=True,
+            )
         ready = status == "armed" or (
             status == "watching" and in_zone and not _poller_blocked(rec))
         b_code, b_label = derive_blocker(rec, pad_pct=pad_pct)
@@ -446,6 +497,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "wait_kind": wait_kind,
             "entry_low": entry_low_f,
             "entry_high": entry_high_f,
+            "stop_price": stop_f,
             "last_ask": last_ask_f,
             "score": score_f,
             # RVOL as measured at admission. The score is a blend whose scale
@@ -505,6 +557,10 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
     except (TypeError, ValueError, KeyError):
         score_f = None
     status = str(rec.get("status") or "watching").lower().strip() or "watching"
+    try:
+        stop_f = float(structure.get("stop_price") or 0) or None
+    except (TypeError, ValueError):
+        stop_f = None
     in_zone = False
     if (
         last_ask_f is not None
@@ -513,7 +569,13 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         and entry_low_f > 0
         and entry_high_f > 0
     ):
-        in_zone = ask_in_zone(last_ask_f, entry_low_f, entry_high_f, pad_pct)
+        in_zone = ask_triggers_zone(
+            last_ask_f, entry_low_f, entry_high_f,
+            pad_pct=pad_pct,
+            stop=stop_f,
+            max_below_r=0.5,
+            arm_below=True,
+        )
     ready = status == "armed" or (
         status == "watching" and in_zone and not _poller_blocked(rec))
     if status == "armed" or ready:
@@ -541,6 +603,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "wait_kind": wait_kind,
         "entry_low": entry_low_f,
         "entry_high": entry_high_f,
+        "stop_price": stop_f,
         "last_ask": last_ask_f,
         "price": last_ask_f,
         # See public_snapshot: double_bottom (real shelf) vs offset (percentage
@@ -685,13 +748,21 @@ def book_table_rows(
                 r["price"] = px
                 r["last_ask"] = px
                 # Refresh above/below from live print so BLOCKER tracks the tape.
+                # Armable overshoots (within max_r below the floor) count as
+                # in-zone — same buy geometry as should_arm_buy.
                 try:
                     lo = float(r.get("entry_low") or 0)
                     hi = float(r.get("entry_high") or 0)
                 except (TypeError, ValueError):
                     lo = hi = 0.0
+                try:
+                    stop = float(r.get("stop_price") or 0) or None
+                except (TypeError, ValueError):
+                    stop = None
                 if lo > 0 and hi > 0:
-                    if ask_in_zone(px, lo, hi, 0.0):
+                    if ask_triggers_zone(
+                        px, lo, hi, stop=stop, max_below_r=0.5, arm_below=True,
+                    ):
                         r["blocker"] = format_blocker("in_zone")
                         r["block_code"] = "in_zone"
                         r["in_zone"] = True
@@ -2087,6 +2158,10 @@ def stream_says_far_from_zone(
     above the zone, so substituting last-trade for ask would arm on a price the
     order cannot actually get — the "price left the entry zone" failure class.
     The real ask is still fetched for anything near the band.
+
+    Below the band: do **not** treat an armable pullback overshoot as "far".
+    Skipping REST there used to stamp ``below_zone`` and never run the arm
+    gate on names that should still fire.
     """
     if not bool(cfg.get("ai_watch_stream_enabled", True)):
         return False, None
@@ -2094,7 +2169,7 @@ def stream_says_far_from_zone(
     levels = _structure_levels(structure) if structure else None
     if levels is None:
         return False, None          # no zone yet — we need a real quote
-    entry_low, entry_high, _stop, _t, _rr = levels
+    entry_low, entry_high, stop, _t, _rr = levels
 
     got = stream_quote(rec.get("symbol"))
     if got is None:
@@ -2114,7 +2189,21 @@ def stream_says_far_from_zone(
         margin = 0.01
     lo = min(entry_low, entry_high) * (1.0 - margin)
     hi = max(entry_low, entry_high) * (1.0 + margin)
-    return (px > hi or px < lo), px
+    if px > hi:
+        return True, px
+    if px >= lo:
+        return False, px
+    # Below the margin band: still near if inside the armable overshoot window.
+    if bool(cfg.get("ai_watch_arm_below_zone", True)):
+        try:
+            max_r = float(cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
+        except (TypeError, ValueError):
+            max_r = 0.5
+        floor = armable_below_floor(
+            entry_low, entry_high, stop, pad_pct=0.0, max_r=max_r)
+        if floor is not None and px >= floor:
+            return False, px
+    return True, px
 
 
 def _engine_indicator_map() -> dict[str, dict]:
@@ -3009,6 +3098,88 @@ def ask_in_zone(
     low_bound = lo * (1.0 - frac)
     high_bound = hi * (1.0 + frac)
     return low_bound <= a <= high_bound
+
+
+def armable_below_floor(
+    entry_low: float,
+    entry_high: float,
+    stop: float | None,
+    *,
+    pad_pct: float = 0.0,
+    max_r: float = 0.5,
+) -> float | None:
+    """Lowest ask that is still an armable pullback overshoot (not a breakdown).
+
+    R is ``zone_floor − stop``. The floor is ``zone_floor − max_r · R``.
+    Returns None when there is no valid dip window (missing/invalid stop,
+    stop at or above the zone, or max_r <= 0) — caller should treat any
+    print under the band as a hard below_zone.
+    """
+    try:
+        lo = float(entry_low)
+        hi = float(entry_high)
+        pad = max(0.0, float(pad_pct or 0.0))
+        mr = float(max_r or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if lo <= 0 or hi <= 0 or mr <= 0:
+        return None
+    if hi < lo:
+        lo, hi = hi, lo
+    try:
+        sp = float(stop) if stop is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    if sp <= 0:
+        return None
+    frac = pad / 100.0
+    low_bound = lo * (1.0 - frac)
+    r_unit = low_bound - sp
+    if r_unit <= 0:
+        return None
+    return low_bound - mr * r_unit
+
+
+def ask_triggers_zone(
+    ask: float,
+    entry_low: float,
+    entry_high: float,
+    *,
+    pad_pct: float = 0.0,
+    stop: float | None = None,
+    max_below_r: float = 0.5,
+    arm_below: bool = True,
+) -> bool:
+    """True when *ask* is inside the band or within the armable below-zone dip.
+
+    Operator rule: BUY geometry is price in *or below* the zone (bounded).
+    Above the band is never a trigger. A print through the floor still
+    triggers while it stays within ``max_below_r`` of the floor in R units.
+    """
+    if ask_in_zone(ask, entry_low, entry_high, pad_pct):
+        return True
+    if not arm_below:
+        return False
+    try:
+        a = float(ask)
+        lo = float(entry_low)
+        hi = float(entry_high)
+        pad = max(0.0, float(pad_pct or 0.0))
+    except (TypeError, ValueError):
+        return False
+    if a <= 0 or lo <= 0 or hi <= 0:
+        return False
+    if hi < lo:
+        lo, hi = hi, lo
+    frac = pad / 100.0
+    high_bound = hi * (1.0 + frac)
+    if a > high_bound:
+        return False
+    floor = armable_below_floor(
+        lo, hi, stop, pad_pct=pad, max_r=max_below_r)
+    if floor is None:
+        return False
+    return a >= floor
 
 
 def spread_ok(
@@ -3953,22 +4124,46 @@ def ensure_offset_zone_if_needed(
     # one. Bars come from the throttled cache (>=120s per symbol), so the
     # re-check costs nothing on most polls.
     force_rebuild = False
-    if _structure_usable(structure) and bool(
-            cfg.get("ai_watch_zone_variable", True)):
-        try:
-            rows = symbol_ohlc(sym_early, cfg, float(now))
-            if not rows:
-                _fetch_symbol_lows(sym_early, cfg, float(now))
+    if _structure_usable(structure):
+        # Price fell through the armable overshoot window → the band is a
+        # breakdown, not a dip. Rebuild under the new print so the book does
+        # not sit on a permanent "below zone" that can never arm. Without this,
+        # force_rebuild only fired when variable_zone_band had bars; a dark
+        # OHLC cache left UPST-class names skipped as below_zone all session.
+        lv_now = _structure_levels(structure)
+        if lv_now is not None:
+            z_lo, z_hi, z_stop = (
+                min(lv_now[0], lv_now[1]),
+                max(lv_now[0], lv_now[1]),
+                lv_now[2],
+            )
+            try:
+                max_r = float(
+                    cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
+            except (TypeError, ValueError):
+                max_r = 0.5
+            floor = armable_below_floor(
+                z_lo, z_hi, z_stop, pad_pct=0.0, max_r=max_r)
+            # No valid dip window (tight structural stop) → any print under
+            # the floor is already a breakdown.
+            if floor is None:
+                if ask_f < z_lo:
+                    force_rebuild = True
+            elif ask_f < floor:
+                force_rebuild = True
+        if not force_rebuild and bool(cfg.get("ai_watch_zone_variable", True)):
+            try:
                 rows = symbol_ohlc(sym_early, cfg, float(now))
-            reach = variable_zone_band(ask_f, rows, cfg, float(now))
-            if reach is not None:
-                lv = _structure_levels(structure)
-                if lv is not None:
-                    z_lo, z_hi = min(lv[0], lv[1]), max(lv[0], lv[1])
+                if not rows:
+                    _fetch_symbol_lows(sym_early, cfg, float(now))
+                    rows = symbol_ohlc(sym_early, cfg, float(now))
+                reach = variable_zone_band(ask_f, rows, cfg, float(now))
+                if reach is not None and lv_now is not None:
+                    z_lo, z_hi = min(lv_now[0], lv_now[1]), max(lv_now[0], lv_now[1])
                     if z_hi < reach[0] or z_lo > reach[1]:
                         force_rebuild = True
-        except Exception:
-            force_rebuild = False
+            except Exception:
+                pass
 
     # Keep a good *model* zone, but only while it is fresh — a stale model zone
     # describes a price that has moved on, so let the synth path replace it.
@@ -4514,17 +4709,13 @@ def should_arm_buy(
     # the stop, so this cannot arm a fill with no room left in it.
     if not bool(cfg.get("ai_watch_arm_below_zone", True)):
         return False, "below_zone"
-    low_bound = min(entry_low, entry_high) * (1.0 - frac)
-    r_unit = low_bound - _stop
-    if r_unit <= 0:
-        return False, "below_zone"      # stop at/above the zone: no room
     try:
         max_r = float(cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
     except (TypeError, ValueError):
         max_r = 0.5
-    if max_r <= 0:
-        return False, "below_zone"
-    if a < low_bound - max_r * r_unit:
+    floor = armable_below_floor(
+        entry_low, entry_high, _stop, pad_pct=pad, max_r=max_r)
+    if floor is None or a < floor:
         return False, "below_zone"
     return True, f"below_zone_dip_{exh_why}"
 
@@ -5072,21 +5263,43 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
             zone = _structure_levels(rec.get("structure"))
             above = bool(zone and stream_px > max(zone[0], zone[1]))
-            # last_ask is deliberately NOT updated from a trade print — it
-            # means "ask" everywhere else, including the UI's READY badge.
-            set_block_reason(
-                rec, "above_zone" if above else "below_zone", now=t0,
-                detail=f"tape {stream_px:g}",
-            )
-            if shadow_on:
+            # Breakdown (far below): rebuild the synth zone under the tape so
+            # the row does not sit on a permanent below_zone skip. Above stays
+            # a pure wait — no rebuild from a trade print.
+            if (
+                not above
+                and stream_px
+                and stream_px > 0
+                and _desk_source(rec)
+            ):
                 try:
-                    cp.log_shadow_sample(_shadow_row(
-                        rec, price=stream_px, price_src="tape",
-                        arm_ok=None, arm_why="prefilter_far", now=t0))
+                    sev = ensure_offset_zone_if_needed(
+                        rec, float(stream_px), cfg, t0)
+                    if sev:
+                        events.append(sev)
                 except Exception:
                     pass
-            touched[sym] = rec
-            continue
+                # Zone may now sit under the print → not far; fall through to
+                # REST quote / arm path instead of stamping below forever.
+                far2, _ = stream_says_far_from_zone(rec, cfg)
+                if not far2:
+                    far = False
+            if far:
+                # last_ask is deliberately NOT updated from a trade print — it
+                # means "ask" everywhere else, including the UI's READY badge.
+                set_block_reason(
+                    rec, "above_zone" if above else "below_zone", now=t0,
+                    detail=f"tape {stream_px:g}",
+                )
+                if shadow_on:
+                    try:
+                        cp.log_shadow_sample(_shadow_row(
+                            rec, price=stream_px, price_src="tape",
+                            arm_ok=None, arm_why="prefilter_far", now=t0))
+                    except Exception:
+                        pass
+                touched[sym] = rec
+                continue
 
         # Quotes — REST ask preferred; Finnhub tape from the dashboard as
         # fallback when IEX is dark. Tape fills last_ask for the UI and lets

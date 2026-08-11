@@ -666,6 +666,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
     assert [r["symbol"] for r in snap] == ["AAA", "ZZZ"]
     keys = {
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
+        "stop_price",
         "last_ask", "score", "rvol", "exhaustion", "exhaustion_state",
         "agreement", "reason", "source", "ready", "in_zone",
         # Which geometry drew the band — double_bottom vs the offset fallback.
@@ -2599,6 +2600,70 @@ def test_price_in_or_below_zone():
     assert ew._price_in_or_below_zone(rec, 9.5) is True   # through the floor
     assert ew._price_in_or_below_zone(rec, 12.0) is False  # above
     assert ew._price_in_or_below_zone({"structure": None}, 10.0) is False
+
+
+def test_ask_triggers_zone_includes_armable_below_dip():
+    """Pullback overshoot within max_r R of the floor is still a buy trigger."""
+    import ai_entry_watch as ew
+
+    lo, hi, stop = 10.0, 11.0, 9.0
+    # R = 10 - 9 = 1.0; 0.5R window → floor at 9.5
+    assert ew.ask_triggers_zone(10.5, lo, hi, stop=stop, max_below_r=0.5) is True
+    assert ew.ask_triggers_zone(9.6, lo, hi, stop=stop, max_below_r=0.5) is True
+    assert ew.ask_triggers_zone(9.5, lo, hi, stop=stop, max_below_r=0.5) is True
+    assert ew.ask_triggers_zone(9.4, lo, hi, stop=stop, max_below_r=0.5) is False
+    assert ew.ask_triggers_zone(12.0, lo, hi, stop=stop, max_below_r=0.5) is False
+    # No stop → no dip window (strict band only)
+    assert ew.ask_triggers_zone(9.6, lo, hi, stop=None, max_below_r=0.5) is False
+    assert abs(ew.armable_below_floor(lo, hi, stop, max_r=0.5) - 9.5) < 1e-9
+
+
+def test_derive_blocker_armable_below_is_in_zone():
+    import ai_entry_watch as ew
+
+    rec = {
+        "status": "watching",
+        "last_ask": 9.6,
+        "block_code": "below_zone",
+        "block_reason": "below zone",
+        "structure": {
+            "entry_low": 10.0, "entry_high": 11.0,
+            "stop_price": 9.0, "target_1": 12.0, "reward_risk": 1.5,
+            "wait_kind": "wait_for_zone", "decision": "WAIT",
+        },
+    }
+    code, label = ew.derive_blocker(rec, max_below_r=0.5, arm_below=True)
+    assert code == "in_zone"
+    assert label == "in zone"
+
+
+def test_stream_prefilter_not_far_inside_armable_dip(monkeypatch):
+    import ai_entry_watch as ew
+
+    rec = {
+        "symbol": "DIP",
+        "structure": {
+            "entry_low": 10.0, "entry_high": 11.0,
+            "stop_price": 9.0, "target_1": 12.0, "reward_risk": 1.5,
+        },
+    }
+    # 9.6 is 4% under the floor — outside the 1% stream margin, but inside
+    # the 0.5R armable window. Must still fetch a real ask.
+    monkeypatch.setattr(ew, "stream_quote", lambda _s: (9.6, 0.5))
+    cfg = {
+        "ai_watch_stream_enabled": True,
+        "ai_watch_stream_max_age_sec": 10.0,
+        "ai_watch_stream_skip_margin_pct": 1.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_arm_below_zone_max_r": 0.5,
+    }
+    far, px = ew.stream_says_far_from_zone(rec, cfg)
+    assert far is False
+    assert abs(px - 9.6) < 1e-9
+    # Truly through the floor past 0.5R → far
+    monkeypatch.setattr(ew, "stream_quote", lambda _s: (9.3, 0.5))
+    far2, _ = ew.stream_says_far_from_zone(rec, cfg)
+    assert far2 is True
 
 
 def test_release_orphaned_submits_returns_to_watching(tmp_path, monkeypatch):

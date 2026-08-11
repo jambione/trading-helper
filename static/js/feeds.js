@@ -259,6 +259,7 @@ function _bookRows(book) {
       wait_kind: w.wait_kind,
       entry_low: w.entry_low,
       entry_high: w.entry_high,
+      stop_price: w.stop_price != null ? w.stop_price : null,
       last_ask: w.last_ask,
       price: w.price != null ? w.price : w.last_ask,
       qty: w.qty != null ? w.qty : null,
