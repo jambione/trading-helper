@@ -375,6 +375,13 @@ def _normalize_positions_state(raw: Any) -> dict[str, Any]:
     return out
 
 
+# Serialize load→mutate→save. MLTX (2026-08-11) was entry_ok + filled but
+# immediately reconcile_unmanaged: RUM and MLTX saved two seconds apart and
+# the second write loaded a stale snapshot, dropping the first symbol — and
+# with it every mechanical exit (exhaustion, heal, dead-trade).
+_state_lock = threading.RLock()
+
+
 def _load_state() -> dict[str, Any]:
     """Load managed positions; prefer POSITIONS_STATE_PATH (monkeypatchable)."""
     from ai_paths import find_report_file, resolve_report_dir
@@ -428,13 +435,39 @@ def _save_state(state: dict[str, Any]) -> None:
     that path is owned by ``ai_trader._positions_payload`` (updated, entry_book,
     day_pl, …). Mirroring managed {SYM: fields} onto the wire clobbered the
     book every manage cycle and made the AI Watch stamp flip live/stale.
+
+    Atomic replace so a concurrent reader never sees a half-written file.
+    Callers that load→mutate→save must hold ``_state_lock`` (see
+    ``_update_state``).
     """
     try:
         POSITIONS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(state, indent=2)
-        POSITIONS_STATE_PATH.write_text(text, encoding="utf-8")
+        path = POSITIONS_STATE_PATH
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
     except Exception:
-        pass
+        try:
+            # Fallback if replace fails (some test FS stubs).
+            POSITIONS_STATE_PATH.write_text(
+                json.dumps(state, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _update_state(mutator) -> dict[str, Any]:
+    """Load → mutator(state) → save under the process-wide state lock.
+
+    ``mutator`` receives the live dict and may mutate it in place. Returns the
+    (same) state dict after save. Use this for every book change so two
+    near-simultaneous entry_ok paths cannot drop each other.
+    """
+    with _state_lock:
+        state = _load_state()
+        mutator(state)
+        _save_state(state)
+        return state
 
 
 def log_event(kind: str, **fields: Any) -> dict[str, Any]:
@@ -1067,13 +1100,12 @@ def place_scaled_entry(
             "rolled_back": True,
         }
 
-    state = _load_state()
     src = duel_source or decision.get("duel_source") or decision.get("source")
     strategy = (
         decision.get("strategy")
         or ("day_scalp_v0" if decision.get("synthetic") else "research")
     )
-    state[ticker] = {
+    row = {
         "qty_a": qty_a,
         "qty_b": qty_b,
         "total_qty": total_qty,
@@ -1140,7 +1172,11 @@ def place_scaled_entry(
         "mfe_r": None,
         "sell_signal_stop_done": False,
     }
-    _save_state(state)
+
+    def _put(st: dict[str, Any]) -> None:
+        st[ticker] = row
+
+    _update_state(_put)
     log_event(
         "entry_ok", symbol=ticker, qty_a=qty_a, qty_b=qty_b,
         stop_price=stop_price, target_1=target_1, entry_price=sizing_entry,
@@ -1647,16 +1683,154 @@ def _cfg_float(key: str, default: float) -> float:
         return float(default)
 
 
+def _latest_entry_ok_event(symbol: str) -> dict[str, Any] | None:
+    """Most recent full entry_ok row for *symbol* from events.jsonl, if any.
+
+    Used to re-home orphans that were filled at the broker after a lost
+    positions_state write (MLTX 2026-08-11). Prefers rows that carry
+    stop_price / qty so adoption can rebuild a mechanical book.
+    """
+    sym = str(symbol or "").upper()
+    if not sym or not EVENTS_PATH.exists():
+        return None
+    best: dict[str, Any] | None = None
+    try:
+        with EVENTS_PATH.open("r", encoding="utf-8") as f:
+            for line in f:
+                if "entry_ok" not in line or sym not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if e.get("kind") != "entry_ok":
+                    continue
+                if str(e.get("symbol") or "").upper() != sym:
+                    continue
+                # The dual-logged thin row (stop+target only) is not enough.
+                if e.get("stop_price") is None and e.get("qty_a") is None:
+                    continue
+                best = e
+    except Exception:
+        return best
+    return best
+
+
+def _resting_stop_price(symbol: str) -> float | None:
+    """Stop trigger price from a resting stop/stop_limit sell, if any."""
+    try:
+        import alpaca_trader
+        sym = str(symbol or "").upper()
+        for o in alpaca_trader.get_open_orders() or []:
+            if str(o.get("symbol") or "").upper() != sym:
+                continue
+            if not _is_protective_stop_order(o):
+                continue
+            px = _num(o.get("stop") or o.get("stop_price") or o.get("limit"))
+            if px and px > 0:
+                return px
+    except Exception:
+        pass
+    return None
+
+
+def _adopt_unmanaged(
+    unmanaged: list[str],
+    detail: dict[str, Any],
+    state: dict[str, Any],
+    now: float,
+) -> list[dict[str, Any]]:
+    """Pull broker-live orphans into the managed book when we can recover levels.
+
+    MLTX was entry_ok + filled and then immediately unmanaged because a concurrent
+    state save dropped it. Without a managed row, exhaustion and heal never run.
+    Prefer the last entry_ok event; fall back to a resting stop order's trigger.
+    Human/manual positions with no desk trail are left alone (still reported
+    unmanaged) unless they have a resting stop we can key off.
+    """
+    events: list[dict[str, Any]] = []
+    if not unmanaged or not _cfg_flag("ai_adopt_unmanaged", True):
+        return events
+    for sym in unmanaged:
+        s = str(sym or "").upper()
+        if not s or s in state:
+            continue
+        live = detail.get(s) or detail.get(sym) or {}
+        try:
+            qty = abs(float(live.get("qty") or 0))
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty <= 0:
+            continue
+        entry = _num(live.get("avg_entry_price") or live.get("avg_entry")
+                     or live.get("entry_price"))
+        ok = _latest_entry_ok_event(s)
+        stop = _num((ok or {}).get("stop_price")) if ok else None
+        if not stop:
+            stop = _resting_stop_price(s)
+        if not entry:
+            entry = _num((ok or {}).get("entry_price"))
+        if not entry or entry <= 0:
+            log_event("adopt_skipped", symbol=s, reason="no_entry_price")
+            continue
+        if not stop or stop <= 0 or stop >= entry:
+            # No recoverable stop — do not invent one. Heal/flatten path can
+            # still act once unprotected if policy wants; adoption needs R.
+            log_event("adopt_skipped", symbol=s, reason="no_stop_level",
+                      entry=entry)
+            continue
+        target = _num((ok or {}).get("target_1")) if ok else None
+        qty_a = int((ok or {}).get("qty_a") or qty) if ok else int(qty)
+        state[s] = {
+            "qty_a": qty_a,
+            "qty_b": 0,
+            "total_qty": int(qty),
+            "entry_price": entry,
+            "stop_price": stop,
+            "risk_per_share": max(0.0, entry - stop),
+            "target_1": target,
+            "entry_time": float((ok or {}).get("ts") or now),
+            "entry_confirmed": True,
+            "tranche_a_filled": False,
+            "breakeven_done": False,
+            "closing_reason": None,
+            "last_seen_price": _num(live.get("current") or live.get("price")),
+            "strategy": str((ok or {}).get("strategy") or "adopted"),
+            "duel_source": (ok or {}).get("duel_source"),
+            "adopted": True,
+            "adopted_ts": now,
+            # Desk entries are overbought-only; orphans recovered from entry_ok
+            # keep the latch so left_overbought can fire immediately.
+            "exh_was_overbought": True,
+            "entry_exhaustion_state": "overbought",
+            "mae_r": None,
+            "mfe_r": None,
+            "sell_signal_stop_done": False,
+        }
+        events.append({"ticker": s, "event": "position_adopted",
+                       "stop_price": stop, "entry_price": entry, "qty": qty})
+        log_event(
+            "position_adopted", symbol=s, stop_price=stop,
+            entry_price=entry, qty=qty,
+            from_entry_ok=bool(ok),
+        )
+    return events
+
+
 def _heal_unprotected(
     unprotected: list[dict[str, Any]], state: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Place a resting stop for managed longs that have no stop protection.
+    """Place a resting stop for longs that have no stop protection.
 
     Prefer a stop over a take-profit limit when only one sell can rest: a TP
     alone is not protection, and Alpaca will often refuse a second full-size
     sell while a limit sits on the book. Cancel non-stop sells first, then
     place the stop. Upside exit stays software-side (exhaustion left_overbought
     / close_out) — that path already cancels resting orders before selling.
+
+    Managed rows and rows we just adopted are healed. True orphans that were
+    never adopted (no stop level) are flattened when unprotected so they cannot
+    sit naked like CELH/MLTX.
 
     Never opens new risk — only attaches a stop (or flattens if we cannot).
     """
@@ -1667,7 +1841,24 @@ def _heal_unprotected(
         return events
     for u in unprotected:
         sym = str(u.get("symbol") or "").upper()
-        if not sym or not u.get("managed"):
+        if not sym:
+            continue
+        # After adoption, managed flag on the probe may still be stale; trust
+        # the state dict as source of truth.
+        if sym not in state:
+            # Unmanaged + unprotected + no adopt → flatten if enabled.
+            if not _cfg_flag("ai_flatten_unmanaged_unprotected", True):
+                continue
+            try:
+                alpaca_trader.cancel_open_orders(sym)
+            except Exception:  # noqa: BLE001
+                pass
+            out = alpaca_trader.close_out(sym) or {}
+            events.append({"ticker": sym, "event": "unmanaged_unprotected_flatten"})
+            log_event(
+                "unmanaged_unprotected_flatten", symbol=sym,
+                order_id=(out or {}).get("order_id"),
+            )
             continue
         pos = state.get(sym) or {}
         stop = _num(pos.get("stop_price"))
@@ -1803,90 +1994,103 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
     """Compare managed state to live Alpaca positions.
 
     - unmanaged: live positions not in local state (human/engine/other)
-    - stale_unconfirmed: managed but never confirmed and past TTL is handled
-      separately; here we only report confirmed-managed missing from broker
-      as already closed in pass 1 of manage_open_positions
+    - adoption: orphans with a recoverable stop (entry_ok / resting stop)
+      are re-homed into managed so exhaustion + heal apply
+    - unprotected: live longs without a resting stop → heal or flatten
     """
     global _last_reconcile
     import alpaca_trader
 
     now = time.time() if now is None else now
-    state = _load_state()
-    detail = alpaca_trader.get_positions_detail() or {}
-    managed = {str(k).upper() for k in state.keys()}
-    live = {str(k).upper() for k in detail.keys()}
-    unmanaged = sorted(live - managed)
-    confirmed = {
-        k for k, p in state.items()
-        if p.get("entry_confirmed") and not p.get("closing_reason")
-    }
-    missing_live = sorted(confirmed - live)  # should be rare mid-tick
-    unconfirmed = sorted(
-        k for k, p in state.items() if not p.get("entry_confirmed")
-    )
-    # ── Safety invariant: every open position must have a resting STOP ──────
-    # A take-profit LIMIT alone is not protection — it only works if price
-    # rises. Treating any SELL as protected left RIOT-style books with an
-    # upper limit and no stop, and heal never ran. Stop / stop_limit /
-    # trailing_stop count; plain limit does not.
-    unprotected: list[dict[str, Any]] = []
-    try:
-        open_orders = alpaca_trader.get_open_orders(limit=100) or []
-        protected = {
-            str(o.get("symbol") or "").upper()
-            for o in open_orders
-            if _is_protective_stop_order(o)
-        }
-        equity = alpaca_trader.get_equity() or 0.0
-        for sym, p in detail.items():
-            s = str(sym).upper()
-            if s in protected:
-                continue
-            try:
-                mv = abs(float(p.get("mkt_val") or 0.0))
-            except (TypeError, ValueError):
-                mv = 0.0
-            unprotected.append({
-                "symbol": s,
-                "mkt_val": round(mv, 2),
-                # Concentration is the reason this is urgent rather than
-                # untidy: an unstopped position at 83% of equity IS the
-                # account.
-                "pct_equity": (round(100.0 * mv / equity, 1)
-                               if equity > 0 else None),
-                "managed": s in managed,
-            })
-    except Exception:
-        pass
+    with _state_lock:
+        state = _load_state()
+        detail = alpaca_trader.get_positions_detail() or {}
+        # Normalize detail keys to upper for reliable lookups.
+        detail_u = {str(k).upper(): v for k, v in detail.items()}
+        managed = {str(k).upper() for k in state.keys()}
+        live = set(detail_u.keys())
+        unmanaged = sorted(live - managed)
 
-    report = {
-        "ts": now,
-        "unmanaged": unmanaged,
-        "unconfirmed": unconfirmed,
-        "missing_live_confirmed": missing_live,
-        "n_managed": len(managed),
-        "n_live": len(live),
-        "unprotected": unprotected,
-    }
-    # Both are steady state — an unmanaged position stays unmanaged until
-    # someone acts on it — so they log on transition, not per poll.
-    if unmanaged:
-        log_state_event("reconcile_unmanaged", sorted(unmanaged),
-                        symbols=unmanaged)
-    else:
-        clear_state_event("reconcile_unmanaged")
-    if unprotected:
-        log_state_event("position_unprotected",
-                        sorted(p["symbol"] for p in unprotected),
-                        positions=unprotected)
-        heal_events = _heal_unprotected(unprotected, state)
-        if heal_events:
+        adopt_events = _adopt_unmanaged(unmanaged, detail_u, state, now)
+        if adopt_events:
+            managed = {str(k).upper() for k in state.keys()}
+            unmanaged = sorted(live - managed)
+
+        confirmed = {
+            k for k, p in state.items()
+            if p.get("entry_confirmed") and not p.get("closing_reason")
+        }
+        missing_live = sorted(confirmed - live)
+        unconfirmed = sorted(
+            k for k, p in state.items() if not p.get("entry_confirmed")
+        )
+        # ── Safety invariant: every open position must have a resting STOP ──
+        # A take-profit LIMIT alone is not protection — it only works if price
+        # rises. Treating any SELL as protected left RIOT-style books with an
+        # upper limit and no stop, and heal never ran. Stop / stop_limit /
+        # trailing_stop count; plain limit does not.
+        unprotected: list[dict[str, Any]] = []
+        try:
+            open_orders = alpaca_trader.get_open_orders(limit=100) or []
+            protected = {
+                str(o.get("symbol") or "").upper()
+                for o in open_orders
+                if _is_protective_stop_order(o)
+            }
+            equity = alpaca_trader.get_equity() or 0.0
+            for sym, p in detail_u.items():
+                s = str(sym).upper()
+                if s in protected:
+                    continue
+                try:
+                    mv = abs(float(p.get("mkt_val") or 0.0))
+                except (TypeError, ValueError):
+                    mv = 0.0
+                unprotected.append({
+                    "symbol": s,
+                    "mkt_val": round(mv, 2),
+                    "pct_equity": (round(100.0 * mv / equity, 1)
+                                   if equity > 0 else None),
+                    "managed": s in managed,
+                })
+        except Exception:
+            pass
+
+        heal_events: list[dict[str, Any]] = []
+        if unprotected:
+            heal_events = _heal_unprotected(unprotected, state)
+
+        changed = bool(adopt_events or heal_events)
+        if changed:
             _save_state(state)
+
+        report = {
+            "ts": now,
+            "unmanaged": unmanaged,
+            "unconfirmed": unconfirmed,
+            "missing_live_confirmed": missing_live,
+            "n_managed": len(managed),
+            "n_live": len(live),
+            "unprotected": unprotected,
+        }
+        if adopt_events:
+            report["adopt_events"] = adopt_events
+        if heal_events:
             report["heal_events"] = heal_events
-    else:
-        clear_state_event("position_unprotected")
-    _last_reconcile = report
-    return report
+
+        if unmanaged:
+            log_state_event("reconcile_unmanaged", sorted(unmanaged),
+                            symbols=unmanaged)
+        else:
+            clear_state_event("reconcile_unmanaged")
+        if unprotected:
+            log_state_event("position_unprotected",
+                            sorted(p["symbol"] for p in unprotected),
+                            positions=unprotected)
+        else:
+            clear_state_event("position_unprotected")
+        _last_reconcile = report
+        return report
 
 
 def manage_open_positions(
@@ -1896,6 +2100,9 @@ def manage_open_positions(
 ) -> list[dict[str, Any]]:
     """Desk-tick check, no LLM: closures, scale-out, dead-trade, defense.
 
+    Capital first, profit second: keep a stop and an exhaustion exit on every
+    long. Concurrent entry_ok must not drop a symbol (see _state_lock).
+
     Cheap enough to run every tick — everything it needs (position detail,
     order status, a breakeven/trailing-stop replacement, a time-boxed close)
     is a plain Alpaca call, not a model call.
@@ -1903,18 +2110,23 @@ def manage_open_positions(
     import alpaca_trader
 
     now = time.time() if now is None else now
-    state = _load_state()
     events: list[dict[str, Any]] = []
     changed = False
     ttl = max(60.0, float(unconfirmed_ttl_sec))
+
+    detail_raw = alpaca_trader.get_positions_detail() or {}
+    detail = {str(k).upper(): v for k, v in detail_raw.items()}
+
+    with _state_lock:
+        state = _load_state()
+        snapshot_keys = set(state.keys())
 
     # Pass 1: has anything gone fully flat since the last tick? Catches every
     # closing mechanism at once — hard stop, first target then a later
     # trailing/breakeven stop, or an explicit close_out from time-stop or
     # thesis-break above — without needing to track each order leg by hand.
-    detail = alpaca_trader.get_positions_detail() or {}
     for ticker, pos in list(state.items()):
-        live = detail.get(ticker)
+        live = detail.get(str(ticker).upper())
         if live is not None:
             if not pos.get("entry_confirmed"):
                 # First sighting: replace the submit-time ask with what the
@@ -2319,7 +2531,19 @@ def manage_open_positions(
             changed = True     # excursions moved
 
     if changed:
-        _save_state(state)
+        with _state_lock:
+            # Merge concurrent entry_ok symbols in; our tick wins on keys we
+            # still hold or deleted (capital book integrity).
+            concurrent = _load_state()
+            out = dict(concurrent)
+            for k in snapshot_keys:
+                if k in state:
+                    out[k] = state[k]
+                else:
+                    out.pop(k, None)
+            for k, v in state.items():
+                out[k] = v
+            _save_state(out)
 
     try:
         reconcile_broker(now)

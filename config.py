@@ -552,9 +552,23 @@ DEFAULT_CONFIG = {
     "ai_position_shadow_enabled":     True,
     # On sell_signal while green, move stop to entry (never loosen).
     "ai_sell_signal_breakeven":       True,
+    # ── Capital first, profit second ────────────────────────────────────────
+    # Every live long must have a path to lose only the planned R (broker stop)
+    # and a path to bank the thesis (software exhaustion). A take-profit limit
+    # alone is not protection. An orphan fill with no managed row is a capital
+    # leak (MLTX 2026-08-11): no stop heal, no left_overbought.
+    #
     # If an open long has no resting sell STOP, place one from managed state.
     # Take-profit limits do not count as protection (prefer stop over target).
     "ai_heal_unprotected":            True,
+    # Re-home broker-live symbols missing from positions_state when we can
+    # recover stop/entry from entry_ok (or a resting stop). Enables heal +
+    # exhaustion on lost-update orphans.
+    "ai_adopt_unmanaged":             True,
+    # Unmanaged + unprotected + no recoverable stop → flatten. Missing the
+    # trade beats a naked long. Human positions with a resting stop are left
+    # alone (not adopted without entry_ok; not flattened if stop rests).
+    "ai_flatten_unmanaged_unprotected": True,
     # Rest a broker take-profit limit on entry. Default OFF: the one protective
     # sell is the stop; upside exit is software exhaustion (left_overbought).
     # Set True only when you want a full OTOCO bracket at the broker.
@@ -934,6 +948,8 @@ SAFE_CONFIG_KEYS = [
     "ai_position_shadow_enabled",
     "ai_sell_signal_breakeven",
     "ai_heal_unprotected",
+    "ai_adopt_unmanaged",
+    "ai_flatten_unmanaged_unprotected",
     "ai_entry_broker_target",
     "ai_watch_require_uptrend",
     "ai_watch_require_indicators",
