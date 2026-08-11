@@ -1092,6 +1092,11 @@ def place_scaled_entry(
         # geometry (double_bottom vs pullback_band). "strategy" is too coarse:
         # both are day_scalp_v0.
         "zone_kind": decision.get("zone_kind"),
+        # Exhaustion at the moment of entry. The rule that authorised the trade,
+        # recorded next to its result — otherwise "bought at 85%" and "bought at
+        # 55% and rising" average into one number and the heat floor stays a guess.
+        "entry_exhaustion": decision.get("entry_exhaustion"),
+        "entry_exhaustion_state": decision.get("entry_exhaustion_state"),
         "scale_out_pct": scale_out_pct,
         # Decision-time feature vector (ai_entry_watch._entry_features), held
         # so the outcome record can land denormalized — features and result on
@@ -1293,8 +1298,13 @@ def _sell_signal_defends(state: dict) -> bool:
     operator excluded back in charge of the exit — by a different door than
     the entry gate they were removed from.
     """
+    # Under the exhaustion rules this defence is off for names that HAVE a %R
+    # reading — sell_signal mixes MACD and CM RSI-2 with %R, and those were
+    # excluded deliberately. Names with no reading keep it: they are running on
+    # the pre-exhaustion logic, and taking their only indicator defence away
+    # while giving them no replacement would leave them worse off than before.
     if _cfg_flag("ai_watch_exhaustion_rules", True):
-        return False
+        return _cfg_flag("ai_watch_exhaustion_fallback", True)
     if not state:
         return False
     return _cfg_flag("ai_sell_signal_breakeven", True)
@@ -1691,6 +1701,9 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         # ai_entry_watch originally refused offset zones to prevent. Recorded
         # so performance_summary and the replay tooling can slice by it.
         "zone_kind": pos.get("zone_kind"),
+        "entry_exhaustion": pos.get("entry_exhaustion"),
+        "entry_exhaustion_state": pos.get("entry_exhaustion_state"),
+        "exit_exhaustion": pos.get("last_exhaustion"),
         "mae_r": pos.get("mae_r"),
         "mfe_r": pos.get("mfe_r"),
         # Cost of crossing on the way in, in R. None until a fill is observed
@@ -1946,11 +1959,17 @@ def manage_open_positions(
     exit_why: dict[str, str] = {t: "hold" for t in state}
 
     if _sell_signal_defends(state):
+        exh_on = _cfg_flag("ai_watch_exhaustion_rules", True)
         for ticker, pos in list(state.items()):
             if pos.get("sell_signal_stop_done") or pos.get("closing_reason"):
                 continue
             sig = indicators.get(ticker)
             if not isinstance(sig, dict) or not sig.get("sell_signal"):
+                continue
+            # Per symbol, not per desk: a name WITH a %R reading is governed by
+            # the exhaustion rules and must not have MACD/CM RSI-2 moving its
+            # stop. A name without one is on the old logic and keeps it.
+            if exh_on and sig.get("pctr") is not None:
                 continue
             entry = _num(pos.get("entry_price"))
             last = _num(pos.get("last_seen_price"))
@@ -2131,37 +2150,41 @@ def manage_open_positions(
                         sig["pctr_falling"] = bool(fall_l)
                 except Exception:
                     pass
-            need_sec = _cfg_float("ai_watch_exhaustion_exit_sec", 120.0)
             if sig.get("pctr") is not None:
-                if not sig.get("pctr_falling"):
-                    if pos.get("pctr_fall_since"):
-                        pos["pctr_fall_since"] = None
-                        changed = True
-                else:
-                    since = pos.get("pctr_fall_since")
-                    if not isinstance(since, (int, float)) or since <= 0:
-                        pos["pctr_fall_since"] = now
-                        changed = True
-                        since = now
-                    held_sec = now - float(since)
-                    if held_sec >= need_sec:
-                        alpaca_trader.cancel_open_orders(ticker)
-                        out = alpaca_trader.close_out(ticker) or {}
-                        if isinstance(out, dict) and out.get("order_id"):
-                            pos["close_order_id"] = str(out["order_id"])
-                        pos["closing_reason"] = "exhaustion_fade"
-                        exit_why[ticker] = "exhaustion_fade"
-                        events.append({
-                            "ticker": ticker, "event": "exhaustion_fade",
-                            "pctr": sig.get("pctr"), "falling_sec": round(held_sec, 1),
-                        })
-                        log_event("exhaustion_fade", symbol=ticker,
-                                  pctr=sig.get("pctr"), falling_sec=round(held_sec, 1))
-                        changed = True
-                        continue
-            elif pos.get("pctr_fall_since"):
-                pos["pctr_fall_since"] = None
-                changed = True
+                # Level crossing, evaluated on every position tick (5s) against
+                # a live-price %R. No persistence window: the operator wants
+                # the sell when the name leaves overbought, not two minutes
+                # after it left.
+                probe = {"symbol": ticker, "indicator": sig,
+                         "exh_was_overbought": bool(pos.get("exh_was_overbought"))}
+                try:
+                    import ai_entry_watch as _ew2
+                    hit, why = _ew2.exhaustion_exit_now(probe, _cfg_all())
+                except Exception:
+                    hit, why = False, "error"
+                if pos.get("last_exhaustion") != _num(sig.get("pctr")):
+                    pctr_v = _num(sig.get("pctr"))
+                    pos["last_exhaustion"] = (
+                        None if pctr_v is None else round(100.0 + pctr_v, 1))
+                    changed = True
+                if probe.get("exh_was_overbought") and not pos.get("exh_was_overbought"):
+                    pos["exh_was_overbought"] = True
+                    changed = True
+                if hit:
+                    alpaca_trader.cancel_open_orders(ticker)
+                    out = alpaca_trader.close_out(ticker) or {}
+                    if isinstance(out, dict) and out.get("order_id"):
+                        pos["close_order_id"] = str(out["order_id"])
+                    pos["closing_reason"] = "left_overbought"
+                    exit_why[ticker] = "left_overbought"
+                    events.append({
+                        "ticker": ticker, "event": "left_overbought",
+                        "pctr": sig.get("pctr"),
+                    })
+                    log_event("left_overbought", symbol=ticker,
+                              pctr=sig.get("pctr"))
+                    changed = True
+                    continue
 
         # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
         if (

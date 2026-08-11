@@ -2635,27 +2635,93 @@ def exhaustion_state(record: dict, cfg: dict) -> str:
     return "flat"
 
 
+def has_exhaustion(record: dict) -> bool:
+    """True when this name has a usable %R reading right now."""
+    return exhaustion_pct(record) is not None
+
+
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion rule: overbought, or heading there.
 
     Operator rule 2026-08-10: price in (or below) the zone AND the name is
-    either already overbought or trending toward it. No other indicator gates
-    the entry.
+    either already overbought or trending toward it.
 
-    A missing reading refuses. Under the old scheme indicators were an optional
-    timing filter, so absence could fall through to price alone; here the
-    reading IS the thesis, and buying without it is buying on half a rule.
+    "Heating" carries a LEVEL FLOOR. Direction alone made a name pinned at 5%
+    exhaustion — sitting on its lows — qualify as "trending towards overbought"
+    on the faintest upward flicker, which is a different trade from one at 70%
+    and climbing. In the 2026-08-10 replay that is a large part of why 46 of 52
+    trades left on the fade rather than the target: many entries were nowhere
+    near overbought and rolled straight back over.
+
+    A missing reading does NOT refuse here — it defers. Roughly one name in
+    five has no %R at all (thin IEX coverage, no bars, no window), and refusing
+    them outright silently shrinks the desk to whatever Alpaca happens to print
+    a bar for. Those names fall back to the pre-exhaustion gates instead; the
+    caller distinguishes the two by the returned reason.
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return True, "exhaustion_off"
     state = exhaustion_state(record, cfg)
     if state == "unknown":
+        if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
+            return True, "no_exhaustion_fallback"
         return False, "no_exhaustion_data"
     if state == "overbought":
         return True, "overbought"
     if state == "heating":
+        try:
+            floor = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 0.0)
+        except (TypeError, ValueError):
+            floor = 50.0
+        ex = exhaustion_pct(record) or 0.0
+        if ex < floor:
+            return False, "heating_too_low"
         return True, "heating"
     return False, f"not_heating_{state}"
+
+
+def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
+    """Sell the moment %R crosses back out of the overbought band.
+
+    A LEVEL test, not a derivative, and that is the whole point. "Falling"
+    compares the live price against a smoothed reference taken at the last
+    cached bar — which can be minutes old — so it answers "are we below where
+    we were a while ago", not "are we rolling over now". Stacking a 120s
+    persistence requirement on top of a stale baseline delays a sell the
+    operator wants immediate. A band crossing needs no reference and no clock:
+    the level is live, so the trigger is live.
+
+    Arms only after the position has actually been overbought. Until then
+    there is nothing to exit *out of* — and without that latch a name bought
+    while heating would sell instantly, since it is below the band by
+    definition at the moment it is bought.
+
+    Returns (exit_now, reason).
+    """
+    if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
+        return False, "exhaustion_off"
+    ex = exhaustion_pct(record)
+    if ex is None:
+        return False, "no_exhaustion_data"
+    try:
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    band = 100.0 - thr
+    if ex >= band:
+        record["exh_was_overbought"] = True
+        return False, "overbought_hold"
+    if not record.get("exh_was_overbought"):
+        return False, "never_overbought"
+    # Small give-back so a single print one tick under the band does not exit
+    # a position that is still pinned at the highs.
+    try:
+        give = float(cfg.get("ai_watch_exhaustion_exit_give_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        give = 0.0
+    if ex >= band - give:
+        return False, "overbought_hold"
+    return True, "left_overbought"
 
 
 def exhaustion_says_exit(record: dict, cfg: dict, now: float | None = None) -> bool:
@@ -3901,6 +3967,16 @@ def _shadow_row(
         "look_reason": rec.get("admit_look_reason"),
         "criteria": list(rec.get("admit_criteria") or []),
         "admit_ts": _f_or_none(rec.get("admit_ts")),
+        # Exhaustion state — the rule that now decides entries, so it has to be
+        # on the row that scores them. Without the LEVEL a slice can only ask
+        # "did the gate pass", never "did buying at 85% beat buying at 55%",
+        # which is the question the heat floor was guessed at.
+        "exhaustion": _f_or_none(exhaustion_pct(rec)),
+        "exhaustion_state": exhaustion_state(rec, _push_cfg()),
+        "pctr": _f_or_none(sig.get("pctr")) if sig else None,
+        # "live" = recomputed against the live price; "engine" = the 60-120s
+        # copy. A row scored without knowing which is scoring two rules at once.
+        "pctr_src": (sig.get("pctr_src") or "engine") if sig else None,
         # Timing state.
         "cm_ok": bool(sig.get("cm_ok")) if sig else None,
         "pctr_ok": bool(sig.get("pctr_ok")) if sig else None,
@@ -4043,7 +4119,8 @@ def should_arm_buy(
                 prox = 0.0
             if prox < arm_min:
                 return False, "indicators_faded"
-    elif not bool(cfg.get("ai_watch_exhaustion_rules", True)):
+    elif (not bool(cfg.get("ai_watch_exhaustion_rules", True))
+            or exh_why == "no_exhaustion_fallback"):
         # Soft sell-signal veto when the engine has published one, even if the
         # full arm triple is not required.
         #
@@ -5006,6 +5083,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
 
         place_decision = _decision_for_place(structure, ask=ask_f, cfg=cfg)
+        # Stamp the rule that authorised this entry onto the decision, so the
+        # outcome row can be sliced by it later. Read here rather than in
+        # _decision_for_place, which sees the structure but not the record.
+        place_decision["entry_exhaustion"] = exhaustion_pct(rec)
+        place_decision["entry_exhaustion_state"] = exhaustion_state(rec, cfg)
         if isinstance(place_decision, dict):
             place_decision = dict(place_decision)
             place_decision["source"] = rec.get("duel_source") or rec.get("source")

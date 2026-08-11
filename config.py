@@ -398,10 +398,18 @@ DEFAULT_CONFIG = {
     # Fade must persist this long before selling. SECONDS, not polls: the
     # position loop runs every 5s against a 60s engine refresh, so a poll count
     # measured the same stale reading repeatedly and fired ~12x early.
-    # 120s, not 60s: swept on 2026-08-10 bars, 60s gives -1.07R against -0.26R
-    # at 120s (n=52). A 60s leash exits at a 3-minute median and reaches the
-    # target twice in fifty-two trades — it cuts the fade and the trade both.
+    # Legacy sustained-fade exit. Superseded by the band crossing above, which
+    # is a level test and therefore immediate; kept only for the fallback path.
     "ai_watch_exhaustion_exit_sec":  120.0,
+    # Give-back below the band before the exit fires, in exhaustion points.
+    # 0 = sell the instant it leaves overbought (operator's stated rule).
+    "ai_watch_exhaustion_exit_give_pct": 0.0,
+    # "Heating" needs a level, not just a direction: without this a name pinned
+    # at 5% exhaustion qualifies as "trending towards overbought" on one tick up.
+    "ai_watch_exhaustion_heat_min_pct": 50.0,
+    # Names with NO %R reading (thin IEX coverage, ~1 in 5) fall back to the
+    # pre-exhaustion gates rather than being refused outright.
+    "ai_watch_exhaustion_fallback":   True,
     "rte_fast_ewm_span":                 7,   # matches signals.py smoothing
     "rte_direction_eps":              0.05,   # %R move below this is not a turn
     "ai_watch_arm_below_zone":        True,
@@ -826,6 +834,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_rules",
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_exit_sec",
+    "ai_watch_exhaustion_exit_give_pct",
+    "ai_watch_exhaustion_heat_min_pct",
+    "ai_watch_exhaustion_fallback",
     "rte_fast_ewm_span",
     "rte_direction_eps",
     "ai_watch_arm_below_zone",

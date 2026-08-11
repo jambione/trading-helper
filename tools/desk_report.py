@@ -441,6 +441,53 @@ def print_scorecard(now: dict, prev: dict, now_day: str, prev_day: str) -> None:
           "\n  claims need weeks, or tools/ab_bench.py.\n")
 
 
+
+def exhaustion_stats(shadow: list[dict], horizon_sec: float) -> dict:
+    """Coverage and behaviour of the %R exhaustion rule.
+
+    Coverage first, because it decides how much of the rest means anything:
+    a name with no %R reading is not being traded by this rule at all, it is
+    on the fallback path, and averaging the two produces a number describing
+    neither.
+    """
+    rows = [r for r in shadow if r.get("symbol")]
+    if not rows:
+        return {}
+    with_p = [r for r in rows if r.get("exhaustion") is not None]
+    live = sum(1 for r in with_p if r.get("pctr_src") == "live")
+    no_data = sorted({str(r["symbol"]) for r in rows
+                      if r.get("exhaustion") is None})
+    states = Counter(str(r.get("exhaustion_state") or "?") for r in rows)
+    why = Counter(str(r.get("arm_why") or "") for r in rows
+                  if r.get("arm_ok") is not None)
+
+    # Forward return bucketed by how exhausted the name was when we looked.
+    by_sym: dict[str, list[dict]] = defaultdict(list)
+    for r in with_p:
+        by_sym[str(r["symbol"])].append(r)
+    buckets: list[tuple[float, float, int, float]] = []
+    for lo, hi in ((0, 25), (25, 50), (50, 75), (75, 90), (90, 100)):
+        vals = []
+        for series in by_sym.values():
+            series.sort(key=lambda r: r.get("ts") or 0)
+            for i, r in enumerate(series):
+                e = r.get("exhaustion")
+                if e is None or not (lo <= float(e) < hi):
+                    continue
+                f = sr.forward_return(series, i, horizon_sec)
+                if f is not None:
+                    vals.append(f)
+        if vals:
+            buckets.append((lo, hi, len(vals), statistics.fmean(vals)))
+    return {
+        "coverage": {"rows": len(rows), "with_pctr": len(with_p),
+                     "live": live, "engine": len(with_p) - live},
+        "no_data_symbols": no_data,
+        "states": dict(states),
+        "arm_why": why.most_common(10),
+        "by_bucket": buckets,
+    }
+
 def build_report(day, hz: float) -> dict:
     """Assemble one day's report. Extracted so --compare can build two."""
     shadow_rows = _jsonl(SHADOW, day)
@@ -489,6 +536,7 @@ def build_report(day, hz: float) -> dict:
         "completeness_admitted": completeness(shadow_rows),
         "completeness_rejected": completeness(reject_rows),
         "execution": execution_stats(day),
+        "exhaustion": exhaustion_stats(shadow_rows, hz),
         "event_kinds": dict(kinds),
         "instrumented": _instrumented(day),
     }
@@ -617,6 +665,30 @@ def main() -> None:
                       f"= ${b['notional']:,.0f}  — NO STOP")
         else:
             print("   live unprotected     0  (broker check)")
+
+    exh = report.get("exhaustion") or {}
+    if exh:
+        print("\n5. EXHAUSTION  (the rule that now gates entries)")
+        cov = exh.get("coverage") or {}
+        n = cov.get("rows", 0)
+        if n:
+            print(f"   %R reading present   {cov.get('with_pctr', 0)}/{n} "
+                  f"({100.0 * cov.get('with_pctr', 0) / n:.0f}%)  "
+                  f"live={cov.get('live', 0)} engine={cov.get('engine', 0)}")
+            miss = exh.get("no_data_symbols") or []
+            if miss:
+                print(f"   NO reading (fallback logic): {', '.join(miss[:14])}"
+                      + (f" +{len(miss) - 14} more" if len(miss) > 14 else ""))
+        if exh.get("states"):
+            print(f"   states seen          {exh['states']}")
+        if exh.get("arm_why"):
+            print("   arm verdicts:")
+            for k, v in exh["arm_why"]:
+                print(f"     {v:>5}x  {k}")
+        if exh.get("by_bucket"):
+            print("   forward return by exhaustion at decision:")
+            for lo, hi, cnt, fwd in exh["by_bucket"]:
+                print(f"     {lo:>3.0f}-{hi:<3.0f}%  n={cnt:<4} fwd {fwd:+.3f}%")
 
     print("\nNone of this is randomized — the desk chose what it watched.")
     print("Anything promising is a hypothesis for tools/ab_bench.py, not a verdict.\n")
