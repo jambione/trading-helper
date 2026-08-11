@@ -169,18 +169,25 @@ def test_sync_watch_mirrors_source_panels_only(tmp_path, monkeypatch):
 
 
 def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
-    """Trending score>10 or |chg|>50; momentum flag or |chg|>50; no research."""
+    """Trending: score>min + chg up + LOOK=EXT (never WASH); momentum flags."""
     import ai_entry_watch as ew
 
     (tmp_path / "trending_stocks.json").write_text(json.dumps({
         "rows": [
-            {"symbol": "HOT", "trending_score": 12.5, "price": 18.0, "is_equity": True},
-            {"symbol": "LOW", "trending_score": 8.0, "price": 10.0, "is_equity": True},
-            {"symbol": "MOVER", "trending_score": 3.0, "pct_change": 80.0, "price": 5.0, "is_equity": True},
-            {"symbol": "RVOLY", "trending_score": 2.0, "rvol": 3.5, "price": 8.0, "is_equity": True},
-            {"symbol": "LOWRV", "trending_score": 2.0, "rvol": 0.5, "price": 8.0, "is_equity": True},
-            {"symbol": "RVOL2", "trending_score": 2.0, "rvol": 2.0, "price": 8.0, "is_equity": True},
-            {"symbol": "BTC", "trending_score": 99.0, "price": 1.0, "is_crypto": True},
+            {"symbol": "HOT", "trending_score": 12.5, "pct_change": 4.0,
+             "look_reason": "EXT", "rvol": 3.5, "price": 18.0, "is_equity": True},
+            {"symbol": "LOW", "trending_score": 8.0, "pct_change": 2.0,
+             "look_reason": "EXT", "rvol": 2.5, "price": 10.0, "is_equity": True},
+            {"symbol": "WASHY", "trending_score": 20.0, "pct_change": -5.0,
+             "look_reason": "WASH", "rvol": 4.0, "price": 9.0, "is_equity": True},
+            {"symbol": "NOLOOK", "trending_score": 15.0, "pct_change": 6.0,
+             "look_reason": "", "rvol": 3.0, "price": 11.0, "is_equity": True},
+            {"symbol": "DOWN", "trending_score": 15.0, "pct_change": -2.0,
+             "look_reason": "EXT", "rvol": 3.0, "price": 12.0, "is_equity": True},
+            {"symbol": "THIN", "trending_score": 12.0, "pct_change": 3.0,
+             "look_reason": "EXT", "rvol": 1.2, "price": 8.0, "is_equity": True},
+            {"symbol": "BTC", "trending_score": 99.0, "pct_change": 10.0,
+             "look_reason": "EXT", "price": 1.0, "is_crypto": True},
         ],
     }), encoding="utf-8")
     monkeypatch.setattr(ew, "ROOT", tmp_path)
@@ -213,26 +220,25 @@ def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
     rows = ew.desk_candidate_rows({
         "ai_watch_seed_momentum": True,
         "ai_watch_seed_trending": True,
-        # Off: this test covers the momentum/trending filters, and both of these
-        # seeds reach the live dashboard over HTTP when left at their default.
         "ai_watch_seed_research": False,
         "ai_watch_seed_bb_live": False,
         "ai_watch_seed_momentum_n": 12,
         "ai_watch_seed_trending_n": 20,
-        "ai_watch_trending_min_score": 10.0,
+        "ai_watch_trending_min_score": 5.0,
         "ai_watch_min_pct_change": 50.0,
-        "ai_watch_min_rvol": 3.0,
+        "ai_watch_min_rvol": 2.0,
         "ai_max_price": 100.0,
     })
     by = {r["symbol"]: r for r in rows}
     assert by["HOT"]["source"] == "trending"
+    assert by["HOT"]["look_reason"] == "EXT"
+    assert by["LOW"]["source"] == "trending"  # score 8 > 5, up, EXT
     assert by["FLAG"]["source"] == "momentum"
-    assert by["MOVER"]["source"] == "trending"  # score low but chg 80%
-    assert by["RVOLY"]["source"] == "trending"  # rvol 3.5x > 3.0x
-    assert by["AMIX"]["source"] == "momentum"   # big day move
-    assert "LOW" not in by  # score 8, no big chg
-    assert "LOWRV" not in by  # rvol 0.5x
-    assert "RVOL2" not in by  # rvol 2.0x < 3.0x
+    assert by["AMIX"]["source"] == "momentum"
+    assert "WASHY" not in by   # LOOK=WASH never seeds
+    assert "NOLOOK" not in by  # no EXT flag
+    assert "DOWN" not in by    # day change not up
+    assert "THIN" not in by    # known rvol < 2x
     assert "BTC" not in by
 
 
@@ -1737,17 +1743,10 @@ def test_inclusion_requires_rvol_for_momentum_and_trending():
 
 
 def test_unknown_rvol_and_missing_ext_abstain_rather_than_reject():
-    """The regression that emptied the book on 2026-08-06, market open.
+    """Unknown RVOL abstains; missing EXT is a reject when require_look_ext is on.
 
-    trending_screener writes `list(st.rows)` — raw rows. apply_look_highlights
-    runs inside snapshot(), which that loop never calls, so look_reason is
-    absent from trending_stocks.json entirely; and rvol is None on every row
-    until the volume refresh resolves. Failing closed on either turned 15
-    live candidates into 0 admitted and the desk could not trade at all.
-
-    Absence of evidence is not evidence of absence: unknown abstains, and the
-    remaining conjunctive gates still have to pass. A KNOWN-bad value still
-    rejects — that is covered by the sibling tests.
+    RVOL still: absence is not thin. LOOK: operator wants only EXT longs, so
+    a trending name with no look_reason (or WASH) does not admit.
     """
     import ai_entry_watch as ew
 
@@ -1760,12 +1759,16 @@ def test_unknown_rvol_and_missing_ext_abstain_rather_than_reject():
     assert ok is True, f"momentum row with unknown rvol was rejected: {why}"
     assert "rvol" not in met, "must not claim an rvol it never saw"
 
-    # Trending row as trending_stocks.json actually contains it: no look_reason.
+    # Trending without LOOK tag — not_ext under require_look_ext.
     tr = {"symbol": "BBB", "price": 20.0, "pct_change": 18.0, "rvol": None,
           "source": "trending", "criteria": ["score"]}
     ok, met, why = ew.passes_inclusion(tr, cfg, indicators={})
-    assert ok is True, f"trending row with no look_reason was rejected: {why}"
-    assert "ext" not in met, "must not claim an EXT tag it never saw"
+    assert ok is False and why == "not_ext"
+
+    # Unknown rvol + EXT still admits (rvol abstains).
+    tr_ext = dict(tr, look_reason="EXT")
+    ok, met, why = ew.passes_inclusion(tr_ext, cfg, indicators={})
+    assert ok is True and "ext" in met
 
 
 def test_inclusion_criteria_are_not_duplicated():
@@ -1784,9 +1787,7 @@ def test_inclusion_criteria_are_not_duplicated():
 
 
 def test_inclusion_trending_requires_score_and_ext_flag():
-    """Trending admission needs the raw score AND apply_look_highlights'
-    independent EXT tag (heat + move + volume + near the day's highs) —
-    either alone is not enough."""
+    """Trending admission needs score in criteria AND LOOK=EXT — never WASH."""
     import ai_entry_watch as ew
 
     cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
@@ -1797,7 +1798,11 @@ def test_inclusion_trending_requires_score_and_ext_flag():
     ok, _m, why = ew.passes_inclusion(no_score, cfg, indicators={})
     assert ok is False and why == "low_score"
 
-    no_ext = dict(base, criteria=["score"], look_reason="WASH")
+    wash = dict(base, criteria=["score"], look_reason="WASH")
+    ok, _m, why = ew.passes_inclusion(wash, cfg, indicators={})
+    assert ok is False and why == "look_wash"
+
+    no_ext = dict(base, criteria=["score"], look_reason="")
     ok, _m, why = ew.passes_inclusion(no_ext, cfg, indicators={})
     assert ok is False and why == "not_ext"
 

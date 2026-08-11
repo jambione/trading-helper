@@ -304,18 +304,17 @@ DEFAULT_CONFIG = {
     # watching", and a called name needs time to reach its entry.
     "ai_watch_bb_live_fresh_sec":      900.0,
     # Restrictive AI Watch filters
-    "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
-    "ai_watch_min_pct_change":         50.0,  # day chg % above this also qualifies
+    # Trending seed + admission: score must clear this AND day change > 0 AND
+    # look_reason == EXT. WASH (red washout) is never seeded or admitted.
+    "ai_watch_trending_min_score":      5.0,  # Stocktwits score must be > this
+    "ai_watch_min_pct_change":         50.0,  # day chg % for momentum big-mover seed
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
     "ai_watch_min_rvol":                2.0,
-    # Trending admission requires look_reason == "EXT" (apply_look_highlights in
-    # stocktwits_trending.py). That function defaults to tagging only the top 2
-    # names panel-wide — fine as a UI spotlight, too narrow to be an admission
-    # filter. Raise it so every qualifying name gets tagged, and reuse
-    # ai_watch_min_rvol as its RVOL floor rather than adding a duplicate knob.
-    "ai_watch_look_max":                  20,  # cap on EXT/WASH-tagged trending rows
-    "ai_watch_require_look_ext":        True,  # trending admission needs look_reason == EXT
+    # Cap how many LOOK tags apply_look_highlights may set panel-wide.
+    # Trending seed only admits look_reason == EXT; WASH is excluded.
+    "ai_watch_look_max":                  20,
+    "ai_watch_require_look_ext":        True,  # trending needs LOOK=EXT
     # ── Strict inclusion (conjunctive — every enabled gate must pass) ────────
     # The old rules OR'd four criteria and admitted on any one. Three could
     # never fire (rvol was None on every trending row, nothing hit the 50% bar,

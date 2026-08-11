@@ -1770,9 +1770,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
             raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
             tr_rows = raw.get("rows") or []
             try:
-                min_score = float(cfg.get("ai_watch_trending_min_score", 10.0) or 10.0)
+                min_score = float(cfg.get("ai_watch_trending_min_score", 5.0) or 5.0)
             except (TypeError, ValueError):
-                min_score = 10.0
+                min_score = 5.0
             if isinstance(tr_rows, list):
                 n = int(cfg.get("ai_watch_seed_trending_n", 20) or 20)
                 for r in tr_rows:
@@ -1792,9 +1792,17 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     except (TypeError, ValueError):
                         score = 0.0
                     pct = _pct_change_value(r.get("pct_change"))
-                    # Signed: long-only desk, so a name down 60% is not a
-                    # "big mover" worth buying. abs() ranked it top.
-                    big_move = pct is not None and pct > float(min_pct)
+                    look = str(r.get("look_reason") or "").strip().upper()
+                    # Trending seed (operator): score > min, day change up, and
+                    # LOOK flag EXT only. WASH is a red-day washout — never seed.
+                    if look == "WASH":
+                        continue
+                    if look != "EXT":
+                        continue
+                    if score <= min_score:
+                        continue
+                    if pct is None or pct <= 0:
+                        continue
                     rvol = None
                     for key in ("rvol", "rvol_raw"):
                         if r.get(key) is not None:
@@ -1807,40 +1815,24 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     if rvol is not None and rvol > 10.0:
                         # e.g. 150 meaning 150% → 1.5x
                         rvol = rvol / 100.0
-                    high_rvol = rvol is not None and rvol > float(min_rvol)
-                    # Score path OR big day-move OR elevated relative volume.
-                    # NOTE: this is only the *shortlist*. Admission to the book
-                    # is decided by passes_inclusion(), which is conjunctive —
-                    # trending_score alone can no longer put a name on the book.
-                    if score <= min_score and not big_move and not high_rvol:
+                    # Known-thin tape never seeds (same floor as admission).
+                    if rvol is not None and min_rvol > 0 and rvol < min_rvol:
                         continue
                     seen.add(s)
-                    crit: list[str] = []
-                    if score > min_score:
-                        crit.append("score")
-                    if big_move:
-                        crit.append("big_move")
-                    if high_rvol:
+                    crit = ["score", "uptrend", "ext"]
+                    if rvol is not None and min_rvol > 0 and rvol >= min_rvol:
                         crit.append("rvol")
-                    if high_rvol and score <= min_score and not big_move:
-                        reason = f"trending rvol {rvol:.2f}x"
-                        use_score = float(rvol) * 10.0  # rank key only
-                    elif big_move and score <= min_score:
-                        reason = f"trending chg {pct:+.0f}%"
-                        use_score = float(pct)
-                    else:
-                        reason = f"trending score {score:.1f}"
-                        use_score = score
+                    reason = f"trending EXT score {score:.1f} chg {pct:+.1f}%"
                     rows.append({
                         "symbol": s,
-                        "trending_score": round(use_score, 2),
-                        "score": round(use_score, 2),
-                        "reason": reason,
+                        "trending_score": round(score, 2),
+                        "score": round(score, 2),
+                        "reason": reason[:48],
                         "agreement": True,
                         "source": "trending",
                         "pct_change": pct,
                         "rvol": rvol,
-                        "look_reason": r.get("look_reason"),
+                        "look_reason": "EXT",
                         "price": r.get("price"),
                         "dollar_volume": (
                             float(r["vol_session"]) * float(r["price"])
@@ -2241,23 +2233,23 @@ def passes_inclusion(
         met = list(dict.fromkeys(met))
         return True, met, ""
 
-    # Trending admission also requires the raw Stocktwits score cleared the
-    # bar (not just big_move/rvol substituting for it — "score" in criteria
-    # reflects the shortlist's own correct computation, see desk_candidate_rows).
-    #
-    # EXT (apply_look_highlights: heat + move + volume + near the day's highs)
-    # is checked only when the field is actually present. trending_screener
-    # writes `list(st.rows)`, the raw rows — apply_look_highlights runs inside
-    # snapshot(), which that loop never calls, so look_reason is absent from
-    # trending_stocks.json entirely and demanding it closed the gate
-    # permanently. Wire the producer before treating absence as a rejection.
-    if source == "trending" and bool(cfg.get("ai_watch_require_look_ext", True)):
-        if "score" not in met:
-            return False, met, "low_score"
-        look = row.get("look_reason")
-        if look is not None and str(look).upper() != "EXT":
-            return False, met, "not_ext"
-        if look is not None:
+    # Trending admission: score cleared the shortlist bar, day is green
+    # (uptrend gate above), and LOOK is EXT — never WASH (red-day washout).
+    # Missing look abstains only when require_look_ext is off; default on
+    # demands EXT so washouts cannot ride a bare Stocktwits score onto the book.
+    if source == "trending":
+        look_raw = row.get("look_reason")
+        look = str(look_raw or "").strip().upper() if look_raw is not None else ""
+        if look == "WASH":
+            return False, met, "look_wash"
+        if bool(cfg.get("ai_watch_require_look_ext", True)):
+            if "score" not in met:
+                return False, met, "low_score"
+            if look != "EXT":
+                # Empty / missing / anything else: not an extension long.
+                return False, met, "not_ext"
+            met.append("ext")
+        elif look == "EXT":
             met.append("ext")
 
     if bool(cfg.get("ai_watch_require_indicators", True)):
@@ -2412,7 +2404,7 @@ def sync_watch_from_source_panels(
     """Rebuild AI Watch from the four source panels.
 
     Operator rules:
-      • Trending only if score > ``ai_watch_trending_min_score`` (default 10).
+      • Trending: score > min, day change up, LOOK=EXT (never WASH).
       • Momentum only if the desk row has FIRST / NEW / BURST.
       • Research: whatever the Grok / Anthropic boards currently list.
       • Trader Bro: call-outs inside ``ai_watch_bb_live_fresh_sec``.
