@@ -189,8 +189,10 @@ DEFAULT_CONFIG = {
     # resting while the zone re-anchors away from it. Distinct from
     # ai_entry_unconfirmed_ttl_sec, which covers a *filled* but unconfirmed fill.
     "ai_entry_limit_ttl_sec":     30.0,
-    "ai_stop_use_market":         True,
-    "ai_stop_limit_slip_pct":      1.0,     # only used when the above is False
+    # False → stop-LIMIT (default: one protective sell + software exhaustion).
+    # True → stop-MARKET (gap fill; more slippage).
+    "ai_stop_use_market":         False,
+    "ai_stop_limit_slip_pct":      1.0,     # room under trigger when stop-LIMIT
     "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
     "ai_daily_loss_limit_r":        3.0,    # stop new entries after -NR today
     "ai_max_open_risk_pct":         5.0,    # sum open stop-risk % equity
@@ -391,11 +393,11 @@ DEFAULT_CONFIG = {
     # trade's own risk unit (R = zone floor - stop), so the allowance scales
     # with the setup instead of meaning several R on a tight structural stop
     # and a fraction of one on a wide synthetic stop.
-    # Exhaustion rules (operator, 2026-08-10). BUY: price in/below zone AND
-    # overbought or heading there. HOLD: while overbought. SELL: when the fast
-    # %R line trends away from overbought for N consecutive reads. No other
-    # indicator gates entry. A missing %R reading refuses the buy — the reading
-    # IS the thesis here, unlike the old optional timing filter.
+    # Exhaustion rules (operator, 2026-08-11). BUY: price in/below zone AND
+    # already overbought (heating / "heading there" does NOT arm). HOLD: while
+    # overbought. SELL: when live %R leaves the overbought band (left_overbought
+    # latch). No other indicator gates entry. A missing %R reading refuses the
+    # buy — the reading IS the thesis here.
     "ai_watch_exhaustion_rules":      True,
     # Recompute %R against the live price instead of trusting the engine's
     # 60-120s-old copy. Closed bars give the window, the live quote gives the
@@ -410,8 +412,9 @@ DEFAULT_CONFIG = {
     # Give-back below the band before the exit fires, in exhaustion points.
     # 0 = sell the instant it leaves overbought (operator's stated rule).
     "ai_watch_exhaustion_exit_give_pct": 0.0,
-    # "Heating" needs a level, not just a direction: without this a name pinned
-    # at 5% exhaustion qualifies as "trending towards overbought" on one tick up.
+    # Legacy: heat-floor for the old "heating" buy path. Buy is overbought-only
+    # now; this key is ignored by exhaustion_allows_buy but kept for dashboards
+    # / old configs that still surface it.
     "ai_watch_exhaustion_heat_min_pct": 50.0,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
@@ -549,8 +552,13 @@ DEFAULT_CONFIG = {
     "ai_position_shadow_enabled":     True,
     # On sell_signal while green, move stop to entry (never loosen).
     "ai_sell_signal_breakeven":       True,
-    # If an open long has no resting sell stop, place one from managed state.
+    # If an open long has no resting sell STOP, place one from managed state.
+    # Take-profit limits do not count as protection (prefer stop over target).
     "ai_heal_unprotected":            True,
+    # Rest a broker take-profit limit on entry. Default OFF: the one protective
+    # sell is the stop; upside exit is software exhaustion (left_overbought).
+    # Set True only when you want a full OTOCO bracket at the broker.
+    "ai_entry_broker_target":         False,
     # Re-anchor frozen synth zone when last is this far above entry_high (%).
     # 0.0 = track the real-time price every poll (no deadband).
     "ai_watch_synth_reanchor_pct":     0.0,
@@ -926,6 +934,7 @@ SAFE_CONFIG_KEYS = [
     "ai_position_shadow_enabled",
     "ai_sell_signal_breakeven",
     "ai_heal_unprotected",
+    "ai_entry_broker_target",
     "ai_watch_require_uptrend",
     "ai_watch_require_indicators",
     "ai_watch_min_proximity",

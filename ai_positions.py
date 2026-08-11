@@ -941,8 +941,11 @@ def place_scaled_entry(
         return {"ok": False, "error": err}
 
     # Day scalp: dual tranche for synthetic (T1 bank + runner). Need ≥2 shares
-    # to split. scale_out ≥99 or dual disabled → single full bracket (still
-    # has stop + target — never a naked long).
+    # to split. scale_out ≥99 or dual disabled → single order (still has a
+    # stop — never a naked long). Broker take-profit is optional: default OFF
+    # so the one resting sell is the stop, and exhaustion (left_overbought)
+    # owns the upside via close_out. When a TP limit is the only sell that
+    # survives, the position is not protected on the downside.
     dual = bool(cfg.get("ai_day_scalp_dual_tranche", True))
     use_single = (
         scale_out_pct >= 99.0
@@ -960,15 +963,23 @@ def place_scaled_entry(
             qty_b = 0
 
     entry_limit = _entry_limit_price(current_ask, entry_high, entry_low)
+    # Plan still requires target_1 for R:R; whether it rests at the broker is
+    # a separate choice. Default: stop only.
+    broker_target = bool(cfg.get("ai_entry_broker_target", False))
+    place_target = target_1 if broker_target else None
+
+    # Protective shape: stop-LIMIT by default (ai_stop_use_market=False).
+    # stop-MARKET is opt-in when gap risk outweighs limit miss risk.
+    use_stop_mkt = bool(cfg.get("ai_stop_use_market", False))
 
     def _place_a():
         if entry_limit is not None:
             return alpaca_trader.buy_limit_bracket(
                 ticker, qty_a, limit_price=entry_limit,
-                stop_price=stop_price, target_price=target_1,
-                stop_market=True)
+                stop_price=stop_price, target_price=place_target,
+                stop_market=use_stop_mkt)
         return alpaca_trader.buy_bracket_exact(
-            ticker, qty_a, stop_price=stop_price, target_price=target_1)
+            ticker, qty_a, stop_price=stop_price, target_price=place_target)
 
     result_a = _place_a()
     if not result_a.get("ok"):
@@ -990,9 +1001,9 @@ def place_scaled_entry(
                 "tranche_a": result_a, "tranche_b": None,
             }
 
-    # Bracket submit included stop+target on A. Alpaca may not echo leg ids in
-    # the parent response (legs empty until refresh) — do not roll back a live
-    # OTOCO because of missing ids. Heal pass covers a truly naked long.
+    # Stop-only submit (default) or OTOCO. Alpaca may not echo leg ids in the
+    # parent response — do not roll back a live order because of missing ids.
+    # Heal pass covers a truly naked long (no stop).
     if not result_a.get("buy_order_id"):
         err = "refused: buy order id missing after place"
         log_event("entry_fail", symbol=ticker, reason=err, leg="A")
@@ -1000,11 +1011,17 @@ def place_scaled_entry(
             "ok": False, "error": err, "ticker": ticker,
             "tranche_a": result_a, "tranche_b": None,
         }
-    if not result_a.get("target_order_id"):
+    if broker_target and not result_a.get("target_order_id"):
         log_event(
             "entry_warn", symbol=ticker,
             reason="target_order_id_missing_from_response",
             note="OTOCO submitted with target; will reconcile/heal if naked",
+        )
+    if not result_a.get("stop_order_id"):
+        log_event(
+            "entry_warn", symbol=ticker,
+            reason="stop_order_id_missing_from_response",
+            note="heal will attach stop if still unprotected after fill",
         )
 
     if qty_b > 0:
@@ -1014,7 +1031,7 @@ def place_scaled_entry(
             result_b = alpaca_trader.buy_limit_bracket(
                 ticker, qty_b, limit_price=entry_limit,
                 stop_price=stop_price, target_price=None,
-                stop_market=True)
+                stop_market=use_stop_mkt)
         else:
             result_b = alpaca_trader.buy_bracket_exact(
                 ticker, qty_b, stop_price=stop_price)
@@ -1097,6 +1114,15 @@ def place_scaled_entry(
         # 55% and rising" average into one number and the heat floor stays a guess.
         "entry_exhaustion": decision.get("entry_exhaustion"),
         "entry_exhaustion_state": decision.get("entry_exhaustion_state"),
+        # Overbought-only entries: arm means we already tagged the band, so the
+        # left_overbought exit is armed from the first position tick. Without
+        # this latch a name that rolls under the band before the first poll
+        # would hit never_overbought and never sell on exhaustion.
+        "exh_was_overbought": (
+            str(decision.get("entry_exhaustion_state") or "").lower()
+            == "overbought"
+            or bool(decision.get("exh_was_overbought"))
+        ),
         "scale_out_pct": scale_out_pct,
         # Decision-time feature vector (ai_entry_watch._entry_features), held
         # so the outcome record can land denormalized — features and result on
@@ -1323,6 +1349,23 @@ def _engine_indicators() -> dict:
         return {}
 
 
+def _is_protective_stop_order(order: dict | None) -> bool:
+    """True when *order* is a resting SELL stop that can exit a long.
+
+    A take-profit LIMIT sell is not protection: it only works if price goes
+    up. RIOT-style books with an upper limit and no stop were treated as
+    protected because ANY sell counted — heal never fired and the position
+    sat naked on the downside.
+    """
+    if not isinstance(order, dict):
+        return False
+    if str(order.get("side") or "").lower() != "sell":
+        return False
+    otype = str(order.get("type") or "").lower().replace("-", "_")
+    # stop, stop_limit, trailing_stop, stop_loss — not plain "limit".
+    return "stop" in otype
+
+
 def _resting_stop_order_id(ticker: str) -> str | None:
     """The open protective STOP leg for *ticker*, if one is resting.
 
@@ -1334,9 +1377,8 @@ def _resting_stop_order_id(ticker: str) -> str | None:
         import alpaca_trader
         sym = str(ticker or "").upper()
         for o in alpaca_trader.get_open_orders() or []:
-            if (o.get("symbol") == sym
-                    and str(o.get("side", "")).lower() == "sell"
-                    and "stop" in str(o.get("type", "")).lower()):
+            if (str(o.get("symbol") or "").upper() == sym
+                    and _is_protective_stop_order(o)):
                 return o.get("id") or None
     except Exception:
         pass
@@ -1608,7 +1650,13 @@ def _cfg_float(key: str, default: float) -> float:
 def _heal_unprotected(
     unprotected: list[dict[str, Any]], state: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Place a resting stop for managed longs that have no sell protection.
+    """Place a resting stop for managed longs that have no stop protection.
+
+    Prefer a stop over a take-profit limit when only one sell can rest: a TP
+    alone is not protection, and Alpaca will often refuse a second full-size
+    sell while a limit sits on the book. Cancel non-stop sells first, then
+    place the stop. Upside exit stays software-side (exhaustion left_overbought
+    / close_out) — that path already cancels resting orders before selling.
 
     Never opens new risk — only attaches a stop (or flattens if we cannot).
     """
@@ -1638,10 +1686,38 @@ def _heal_unprotected(
             events.append({"ticker": sym, "event": "unprotected_flatten"})
             log_event("unprotected_flatten", symbol=sym)
             continue
+        # Drop take-profit limits (and any other non-stop sells) so a full-size
+        # protective stop can rest. If both were already live (OTOCO), this
+        # symbol would not be on the unprotected list. Prefer cancel-all for
+        # the symbol: one path, no per-id helper, and replace_stop re-places
+        # the stop immediately after.
+        had_non_stop_sell = False
+        try:
+            for o in alpaca_trader.get_open_orders() or []:
+                if str(o.get("symbol") or "").upper() != sym:
+                    continue
+                if str(o.get("side") or "").lower() != "sell":
+                    continue
+                if not _is_protective_stop_order(o):
+                    had_non_stop_sell = True
+                    break
+            if had_non_stop_sell:
+                alpaca_trader.cancel_open_orders(sym)
+                log_event(
+                    "unprotected_tp_cleared", symbol=sym,
+                    note="prefer_stop_over_target",
+                )
+        except Exception:  # noqa: BLE001
+            try:
+                alpaca_trader.cancel_open_orders(sym)
+            except Exception:  # noqa: BLE001
+                pass
         out = alpaca_trader.replace_stop(sym, None, stop_price=stop)
         if isinstance(out, dict) and out.get("ok"):
             pos["tranche_b_stop_order_id"] = out.get("order_id") or pos.get(
                 "tranche_b_stop_order_id")
+            # Target is no longer resting; software exhaustion owns the upside.
+            pos["tranche_a_target_order_id"] = None
             state[sym] = pos
             events.append({"ticker": sym, "event": "unprotected_healed",
                            "stop_price": stop})
@@ -1748,23 +1824,18 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
     unconfirmed = sorted(
         k for k, p in state.items() if not p.get("entry_confirmed")
     )
-    # ── Safety invariant: every open position must have a resting exit ──────
-    # Nothing watched for this before. On 2026-08-06 CELH's bracket was
-    # rejected, the caller fell back to a naked buy, and 353 shares — 83% of
-    # account equity — sat with no stop for 44 minutes. It was noticed by a
-    # human looking at the screen, not by the desk. reconcile_unmanaged fired
-    # 384 times that day and aggregated to nothing.
-    #
-    # Reported as state rather than acted on: placing or cancelling orders
-    # from a reconcile pass is how one bug becomes two. The operator (and the
-    # EOD flatten) decide.
+    # ── Safety invariant: every open position must have a resting STOP ──────
+    # A take-profit LIMIT alone is not protection — it only works if price
+    # rises. Treating any SELL as protected left RIOT-style books with an
+    # upper limit and no stop, and heal never ran. Stop / stop_limit /
+    # trailing_stop count; plain limit does not.
     unprotected: list[dict[str, Any]] = []
     try:
         open_orders = alpaca_trader.get_open_orders(limit=100) or []
         protected = {
             str(o.get("symbol") or "").upper()
             for o in open_orders
-            if str(o.get("side") or "").lower() == "sell"
+            if _is_protective_stop_order(o)
         }
         equity = alpaca_trader.get_equity() or 0.0
         for sym, p in detail.items():

@@ -95,10 +95,16 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion gate (ai_watch_exhaustion_rules) — UI must name these or
     # in-zone names look "ready" while the poll refuses on missing %R.
     "no_exhaustion_data": "no %R",
-    "heating_too_low": "not hot yet",
+    # Legacy heat-floor refusals (buy is overbought-only as of 2026-08-11).
+    "heating_too_low": "not overbought",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
+    "not_heating_heating": "heating",
     "not_heating_unknown": "no %R",
+    "not_overbought_cooling": "cooling",
+    "not_overbought_flat": "flat",
+    "not_overbought_heating": "heating",
+    "not_overbought_unknown": "no %R",
     "overbought": "overbought",
     "heating": "heating",
 }
@@ -2858,29 +2864,15 @@ def has_exhaustion(record: dict) -> bool:
 
 
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
-    """Buy side of the exhaustion rule: overbought, or heading there.
+    """Buy side of the exhaustion rule: overbought only.
 
-    Operator rule 2026-08-10: price in (or below) the zone AND the name is
-    either already overbought or trending toward it.
-
-    "Heating" carries a LEVEL FLOOR. Direction alone made a name pinned at 5%
-    exhaustion — sitting on its lows — qualify as "trending towards overbought"
-    on the faintest upward flicker, which is a different trade from one at 70%
-    and climbing. In the 2026-08-10 replay that is a large part of why 46 of 52
-    trades left on the fade rather than the target: many entries were nowhere
-    near overbought and rolled straight back over.
+    Operator rule 2026-08-11: price in (or below) the zone AND the name is
+    already in the overbought band. "Heating" / "trending toward overbought"
+    is no longer enough — those entries rolled over before tagging OB and had
+    no exhaustion exit (never_overbought), which is how the book filled with
+    positions that should never have opened.
 
     A missing reading REFUSES, under ai_watch_require_exhaustion_data.
-
-    That reverses the earlier call to let such names through on the old gates,
-    and the reason is that "no reading" turned out to mean "we cannot see this
-    name", not "the indicator is warming up" — so the deferral was not buying a
-    second opinion, it was trading blind on the illiquid tail where the fill is
-    worst. It is also far cheaper than the old docstring feared: measured
-    2026-08-11 across all 96 names watched on 08-10, only 4 lack the 23 bars
-    (HWH, VSA, LXEH, LIVE). The "1 in 5" figure came from a period when the bar
-    fetch was returning week-old bars. Turning the flag off restores the
-    fallback.
 
     Note this is a BUY gate only. A name held through a loss of coverage still
     keeps its pre-exhaustion sell defence (ai_watch_exhaustion_fallback) — a
@@ -2897,16 +2889,9 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, "no_exhaustion_data"
     if state == "overbought":
         return True, "overbought"
-    if state == "heating":
-        try:
-            floor = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 0.0)
-        except (TypeError, ValueError):
-            floor = 50.0
-        ex = exhaustion_pct(record) or 0.0
-        if ex < floor:
-            return False, "heating_too_low"
-        return True, "heating"
-    return False, f"not_heating_{state}"
+    # heating / cooling / flat — refuse. Reason keeps the state so the UI
+    # blocker can show "heating" vs "cooling" instead of a generic no.
+    return False, f"not_overbought_{state}"
 
 
 def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -4401,8 +4386,8 @@ def should_arm_buy(
 
     # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
     # sell_signal veto below can reference exh_why without UnboundLocalError.
-    # Operator rule 2026-08-10: overbought or heating is the only indicator
-    # gate when ai_watch_exhaustion_rules is on.
+    # Operator rule 2026-08-11: overbought is the only indicator gate when
+    # ai_watch_exhaustion_rules is on (heating no longer arms).
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
 
     # Indicators: optional timing filter. Default off — book symbols often have

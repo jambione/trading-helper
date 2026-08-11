@@ -129,6 +129,25 @@ def test_position_with_a_resting_sell_is_not_flagged(tmp_path, monkeypatch):
     assert rep["unprotected"] == []
 
 
+def test_take_profit_limit_alone_is_not_protection(tmp_path, monkeypatch):
+    """RIOT shape: upper limit resting, no stop — still unprotected."""
+    rep = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"RIOT": {"qty": 100.0, "mkt_val": 1200.0}},
+        orders=[{"symbol": "RIOT", "side": "sell", "type": "limit"}],
+    )
+    assert [u["symbol"] for u in rep["unprotected"]] == ["RIOT"]
+
+
+def test_stop_limit_sell_counts_as_protection(tmp_path, monkeypatch):
+    rep = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"RIOT": {"qty": 100.0, "mkt_val": 1200.0}},
+        orders=[{"symbol": "RIOT", "side": "sell", "type": "stop_limit"}],
+    )
+    assert rep["unprotected"] == []
+
+
 def test_a_resting_buy_does_not_count_as_protection(tmp_path, monkeypatch):
     """Only a SELL exits a long. An open buy is the opposite of protection."""
     rep = _reconcile(

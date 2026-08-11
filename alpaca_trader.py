@@ -146,12 +146,16 @@ def init(mode: str, api_key: str, secret_key: str, trade_amount: float = 500.0,
 
 
 def _stop_use_market() -> bool:
-    """True when protective stops are stop-MARKET (no limit_price)."""
+    """True when protective stops are stop-MARKET (no limit_price).
+
+    Default False: stop-LIMIT is the AI desk policy when a single protective
+    sell rests and software exhaustion owns the upside take-profit.
+    """
     try:
         from config import load_config
-        return bool(load_config().get("ai_stop_use_market", True))
+        return bool(load_config().get("ai_stop_use_market", False))
     except Exception:
-        return True
+        return False
 
 
 def _stop_limit_slip_pct() -> float:
@@ -1268,8 +1272,11 @@ def buy_limit_bracket(
             # No target — limit buy plus a standalone GTC stop, mirroring
             # buy_bracket_exact. Alpaca's BRACKET class demands both legs, so
             # inventing a take-profit here would put a real order on the book
-            # at a price nobody chose.
-            from alpaca.trading.requests import StopOrderRequest
+            # at a price nobody chose. Stop-LIMIT when use_mkt is false so the
+            # single protective sell matches the AI desk's stop-limit policy.
+            from alpaca.trading.requests import (
+                StopOrderRequest, StopLimitOrderRequest,
+            )
             buy_order = _client.submit_order(
                 LimitOrderRequest(
                     symbol=ticker, qty=int(qty), side=OrderSide.BUY,
@@ -1277,18 +1284,30 @@ def buy_limit_bracket(
                     extended_hours=ext_hours_now(),
                 )
             )
-            stop_order = _client.submit_order(
-                StopOrderRequest(
-                    symbol=ticker, qty=int(qty), side=OrderSide.SELL,
-                    time_in_force=TimeInForce.GTC, stop_price=sl,
+            if use_mkt:
+                stop_order = _client.submit_order(
+                    StopOrderRequest(
+                        symbol=ticker, qty=int(qty), side=OrderSide.SELL,
+                        time_in_force=TimeInForce.GTC, stop_price=sl,
+                    )
                 )
-            )
+            else:
+                stop_order = _client.submit_order(
+                    StopLimitOrderRequest(
+                        symbol=ticker, qty=int(qty), side=OrderSide.SELL,
+                        time_in_force=TimeInForce.GTC,
+                        stop_price=sl,
+                        limit_price=stop_kwargs["limit_price"],
+                    )
+                )
+            shape = "stop_mkt" if use_mkt else "stop_lmt"
             print(f"  [TRADER] 📐 limit+stop  {ticker}  qty={int(qty)}  "
-                  f"LMT=${lim:.2f}  SL=${sl:.2f}")
+                  f"LMT=${lim:.2f}  SL=${sl:.2f}  ({shape})")
             _log_action("BUY", ticker, lim, 0.0, 0.0,
                         order_id=str(buy_order.id),
                         order_status=str(buy_order.status),
-                        note=f"limit_plus_stop sl={sl} stop_order={stop_order.id}")
+                        note=f"limit_plus_stop sl={sl} {shape} "
+                             f"stop_order={stop_order.id}")
             return {
                 "ok": True, "buy_order_id": str(buy_order.id),
                 "target_order_id": None, "stop_order_id": str(stop_order.id),
@@ -1426,25 +1445,43 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
                     "stop_order_id": sl_id, "status": str(order.status)}
 
         # No target — plain buy, then a standalone stop sell for the same qty.
+        # Shape follows ai_stop_use_market (stop-LIMIT is the AI desk default
+        # when a single protective sell rests and exhaustion owns the upside).
+        from alpaca.trading.requests import StopLimitOrderRequest
         buy_order = _client.submit_order(
             MarketOrderRequest(
                 symbol=ticker, qty=qty,
                 side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
             )
         )
-        stop_order = _client.submit_order(
-            StopOrderRequest(
-                symbol=ticker, qty=qty,
-                side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
-                stop_price=sl,
+        if _stop_use_market():
+            stop_order = _client.submit_order(
+                StopOrderRequest(
+                    symbol=ticker, qty=qty,
+                    side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                    stop_price=sl,
+                )
             )
-        )
-        print(f"  [TRADER] 📐 buy+stop(exact)  {ticker}  qty={qty}  SL=${sl:.2f}")
+            shape = "stop_mkt"
+        else:
+            stop_order = _client.submit_order(
+                StopLimitOrderRequest(
+                    symbol=ticker, qty=qty,
+                    side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                    stop_price=sl,
+                    limit_price=stop_kwargs.get("limit_price")
+                    or round(sl * (1.0 - max(0.0, _stop_limit_slip_pct()) / 100.0), 2),
+                )
+            )
+            shape = "stop_lmt"
+        print(f"  [TRADER] 📐 buy+stop(exact)  {ticker}  qty={qty}  "
+              f"SL=${sl:.2f}  ({shape})")
         _log_action("BUY", ticker, sl, 0.0, 0.0,
                     order_id=str(buy_order.id), order_status=str(buy_order.status),
-                    note=f"buy_plus_stop sl={sl} stop_order={stop_order.id}")
+                    note=f"buy_plus_stop sl={sl} {shape} stop_order={stop_order.id}")
         return {"ok": True, "buy_order_id": str(buy_order.id),
                 "stop_order_id": str(stop_order.id),
+                "target_order_id": None,
                 "status": str(buy_order.status)}
     except Exception as e:
         print(f"  [TRADER] ❌  bracket(exact) failed: {e}")
@@ -1477,19 +1514,33 @@ def replace_stop(ticker: str, old_stop_order_id: Optional[str],
         return place_trailing_stop(ticker, float(trail_percent))
     if stop_price is not None and float(stop_price) > 0:
         try:
-            from alpaca.trading.requests import StopOrderRequest
+            from alpaca.trading.requests import StopOrderRequest, StopLimitOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
             pos = _client.get_open_position(ticker)
             qty = float(pos.qty)
             if qty <= 0:
                 return {"ok": False, "order_id": None, "status": "no_qty"}
-            order = _client.submit_order(
-                StopOrderRequest(
-                    symbol=ticker, qty=qty,
-                    side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
-                    stop_price=round(float(stop_price), 2),
+            sl = round(float(stop_price), 2)
+            # Match entry stops: market by default, stop-limit when configured
+            # (operator preference when a single protective sell rests).
+            if _stop_use_market():
+                order = _client.submit_order(
+                    StopOrderRequest(
+                        symbol=ticker, qty=qty,
+                        side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                        stop_price=sl,
+                    )
                 )
-            )
+            else:
+                slip = max(0.0, _stop_limit_slip_pct()) / 100.0
+                lim = round(sl * (1.0 - slip), 2)
+                order = _client.submit_order(
+                    StopLimitOrderRequest(
+                        symbol=ticker, qty=qty,
+                        side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                        stop_price=sl, limit_price=lim,
+                    )
+                )
             return {"ok": True, "order_id": str(order.id), "status": str(order.status)}
         except Exception as e:
             return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
