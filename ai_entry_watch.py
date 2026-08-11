@@ -2457,6 +2457,126 @@ def rebuild_watch_from_book(
     return sync_watch_from_source_panels(cfg=cfg, now=now)
 
 
+def live_exhaustion(
+    symbol: str,
+    price: float,
+    cfg: dict,
+    now: float,
+) -> tuple[float, float, bool, bool] | None:
+    """(%R, exhaustion_pct, rising, falling) recomputed against the LIVE price.
+
+    Returns None when there is not enough bar history to form the window.
+
+    The engine's reading is 60-120s behind the tape: a 1-minute bar has to
+    close, then scan_interval_sec has to come round, and signal_proximity
+    carries no timestamp so a consumer cannot even tell a fresh reading from a
+    repeat. Against 6-minute holds that is not a lag, it is a different market
+    — the price that triggers the zone is live while the exhaustion read
+    describes two minutes ago.
+
+    No new data is needed to fix it. Williams %R is
+    ``-100 * (hh - close) / (hh - ll)`` and only ``close`` moves tick to tick:
+    the window's high and low come from bars this module already caches for
+    zone sizing. So the closed bars supply the window, the live price supplies
+    the close, and the value updates as fast as quotes arrive.
+
+    Smoothing is carried forward incrementally rather than recomputed. The
+    engine applies EWM(span=7) to the raw series; one EWM step is
+    ``a*x + (1-a)*prev`` with ``a = 2/(span+1)``, so advancing the last closed
+    bar's smoothed value by the live raw reading reproduces what the engine
+    would publish at the next bar close, without waiting for it.
+    """
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0:
+        return None
+    rows = symbol_ohlc(symbol, cfg, now)
+    try:
+        length = int(cfg.get("rte_fast_length", 21) or 21)
+    except (TypeError, ValueError):
+        length = 21
+    length = max(2, length)
+    if len(rows) < length + 2:
+        return None
+
+    def _raw(hh: float, ll: float, close: float) -> float | None:
+        span = hh - ll
+        if span <= 0:
+            return None
+        return -100.0 * (hh - close) / span
+
+    # Raw %R for each closed bar, same window the engine uses.
+    series: list[float] = []
+    for i in range(length - 1, len(rows)):
+        win = rows[i - length + 1:i + 1]
+        hh = max(r[0] for r in win)
+        ll = min(r[1] for r in win)
+        v = _raw(hh, ll, win[-1][2])
+        if v is not None:
+            series.append(v)
+    if len(series) < 2:
+        return None
+
+    try:
+        span = float(cfg.get("rte_fast_ewm_span", 7) or 7)
+    except (TypeError, ValueError):
+        span = 7.0
+    alpha = 2.0 / (max(1.0, span) + 1.0)
+    sm = series[0]
+    for v in series[1:]:
+        sm = alpha * v + (1.0 - alpha) * sm
+    prev_sm = sm
+
+    # Live bar: the window rolls forward one, and the live price is both the
+    # close and a candidate for the window's high/low — a print above the
+    # window high IS a new high, which is exactly when %R pins toward 0.
+    win = rows[-(length - 1):] if length > 1 else []
+    hh = max([r[0] for r in win] + [px]) if win else px
+    ll = min([r[1] for r in win] + [px]) if win else px
+    live_raw = _raw(hh, ll, px)
+    if live_raw is None:
+        return None
+    live_sm = alpha * live_raw + (1.0 - alpha) * prev_sm
+
+    try:
+        eps = float(cfg.get("rte_direction_eps", 0.05) or 0.0)
+    except (TypeError, ValueError):
+        eps = 0.05
+    rising = live_sm > prev_sm + eps
+    falling = live_sm < prev_sm - eps
+    ex = max(0.0, min(100.0, 100.0 + live_sm))
+    return live_sm, ex, rising, falling
+
+
+def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> bool:
+    """Overwrite a record's indicator %R with a live-price reading.
+
+    True when a live value was written. Leaves the engine's other fields
+    (cm_rsi, macd, sell_signal) untouched — this replaces the stale part, it
+    does not invent the rest.
+    """
+    if not isinstance(rec, dict):
+        return False
+    if not bool(cfg.get("ai_watch_exhaustion_live", True)):
+        return False
+    got = live_exhaustion(rec.get("symbol") or "", price, cfg, now)
+    if got is None:
+        return False
+    pctr, _ex, rising, falling = got
+    ind = rec.get("indicator")
+    if not isinstance(ind, dict):
+        ind = {}
+        rec["indicator"] = ind
+    ind["pctr"] = round(pctr, 2)
+    ind["pctr_rising"] = bool(rising)
+    ind["pctr_falling"] = bool(falling)
+    ind["pctr_src"] = "live"
+    ind["pctr_ts"] = float(now)
+    return True
+
+
 def exhaustion_pct(record: dict) -> float | None:
     """0-100: how far this name has run toward overbought. None when unknown.
 
@@ -2538,32 +2658,41 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     return False, f"not_heating_{state}"
 
 
-def exhaustion_says_exit(record: dict, cfg: dict) -> bool:
-    """True once the fast line has been falling for N consecutive reads.
+def exhaustion_says_exit(record: dict, cfg: dict, now: float | None = None) -> bool:
+    """True once the fast line has been falling continuously for N seconds.
 
-    Confirmation rather than a single read: the fast line is EWM-smoothed but
-    still wiggles bar to bar, and a one-read test would routinely sell inside a
-    minute of buying. The counter lives on the record and is reset by any
-    non-falling read, so N means "N in a row", not "N times today".
+    Measured in TIME, not in polls. Counting polls was wrong in a way that
+    silently inverted the setting: the position loop runs every 5s against an
+    engine reading that refreshes every 60s, so "2 consecutive falling reads"
+    resolved to 10 seconds off a single computation — the same stale number
+    counted twice — and fired roughly 12x sooner than intended. Seconds are
+    poll-rate independent, so retuning ai_positions_poll_sec cannot quietly
+    change how long a fade must persist before it sells.
+
+    The clock resets on any non-falling reading, so the window means "falling
+    for this long without interruption".
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return False
+    t = float(now if now is not None else time.time())
     ind = record.get("indicator") if isinstance(record, dict) else None
     if not isinstance(ind, dict) or ind.get("pctr") is None:
         # No reading: do not manufacture an exit. Stop and target still apply.
-        record["pctr_fall_streak"] = 0
+        record["pctr_fall_since"] = None
         return False
     try:
-        need = int(cfg.get("ai_watch_exhaustion_exit_reads", 2) or 2)
+        need_sec = float(cfg.get("ai_watch_exhaustion_exit_sec", 120.0) or 0.0)
     except (TypeError, ValueError):
-        need = 2
-    need = max(1, need)
-    if ind.get("pctr_falling"):
-        streak = int(record.get("pctr_fall_streak") or 0) + 1
-    else:
-        streak = 0
-    record["pctr_fall_streak"] = streak
-    return streak >= need
+        need_sec = 120.0
+    need_sec = max(0.0, need_sec)
+    if not ind.get("pctr_falling"):
+        record["pctr_fall_since"] = None
+        return False
+    since = record.get("pctr_fall_since")
+    if not isinstance(since, (int, float)) or since <= 0:
+        record["pctr_fall_since"] = t
+        return need_sec <= 0.0
+    return (t - float(since)) >= need_sec
 
 
 def ask_in_zone(
@@ -3914,9 +4043,16 @@ def should_arm_buy(
                 prox = 0.0
             if prox < arm_min:
                 return False, "indicators_faded"
-    else:
+    elif not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         # Soft sell-signal veto when the engine has published one, even if the
         # full arm triple is not required.
+        #
+        # Skipped under the exhaustion rules, and that is the point of them.
+        # sell_signal is NOT a %R signal: strategy_three_indicator composes it
+        # from a MACD bearish cross OR CM RSI-2 rolling over OR %R rolling over
+        # (exit_signals defaults to cm+rte). Leaving it in place meant MACD and
+        # CM RSI-2 were still vetoing entries the operator had specified should
+        # depend on exhaustion alone.
         sig = record.get("indicator")
         if isinstance(sig, dict) and sig.get("sell_signal"):
             return False, "sell_signal"

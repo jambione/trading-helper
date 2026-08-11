@@ -1276,8 +1276,25 @@ def _cfg_flag(key: str, default: bool = True) -> bool:
         return bool(default)
 
 
+def _cfg_all() -> dict:
+    """Whole config, never raising — for helpers that take a cfg dict."""
+    try:
+        from config import load_config
+        return load_config() or {}
+    except Exception:
+        return {}
+
+
 def _sell_signal_defends(state: dict) -> bool:
-    """Whether to let a live sell_signal tighten stops. Off = old behaviour."""
+    """Whether to let a live sell_signal tighten stops. Off = old behaviour.
+
+    Also off under the exhaustion rules. sell_signal mixes MACD and CM RSI-2
+    with %R, so letting it ratchet stops would put two of the indicators the
+    operator excluded back in charge of the exit — by a different door than
+    the entry gate they were removed from.
+    """
+    if _cfg_flag("ai_watch_exhaustion_rules", True):
+        return False
     if not state:
         return False
     return _cfg_flag("ai_sell_signal_breakeven", True)
@@ -2098,37 +2115,53 @@ def manage_open_positions(
         # the position and resets on any non-falling read, so N means N in a
         # row. No reading at all never manufactures an exit.
         if _cfg_flag("ai_watch_exhaustion_rules", True) and pos.get("entry_confirmed"):
-            sig = indicators.get(ticker)
-            need = int(_cfg_float("ai_watch_exhaustion_exit_reads", 2.0) or 2)
-            need = max(1, need)
-            if isinstance(sig, dict) and sig.get("pctr") is not None:
-                if sig.get("pctr_falling"):
-                    streak = int(pos.get("pctr_fall_streak") or 0) + 1
+            sig = dict(indicators.get(ticker) or {})
+            # Recompute %R against the live price before judging the fade. The
+            # engine's copy is 60-120s old and carries no timestamp, so a stale
+            # falling flag would otherwise be re-read every 5s and counted as
+            # fresh confirmation of a fade that may already have reversed.
+            live_px = _num(pos.get("last_seen_price"))
+            if live_px:
+                try:
+                    import ai_entry_watch as _ew
+                    got = _ew.live_exhaustion(ticker, live_px, _cfg_all(), now)
+                    if got:
+                        pctr_l, _ex, _ris, fall_l = got
+                        sig["pctr"] = round(pctr_l, 2)
+                        sig["pctr_falling"] = bool(fall_l)
+                except Exception:
+                    pass
+            need_sec = _cfg_float("ai_watch_exhaustion_exit_sec", 120.0)
+            if sig.get("pctr") is not None:
+                if not sig.get("pctr_falling"):
+                    if pos.get("pctr_fall_since"):
+                        pos["pctr_fall_since"] = None
+                        changed = True
                 else:
-                    streak = 0
-                if streak != int(pos.get("pctr_fall_streak") or 0):
-                    pos["pctr_fall_streak"] = streak
-                    changed = True
-                if streak >= need:
-                    alpaca_trader.cancel_open_orders(ticker)
-                    out = alpaca_trader.close_out(ticker) or {}
-                    if isinstance(out, dict) and out.get("order_id"):
-                        pos["close_order_id"] = str(out["order_id"])
-                    pos["closing_reason"] = "exhaustion_fade"
-                    exit_why[ticker] = "exhaustion_fade"
-                    pctr = sig.get("pctr")
-                    events.append({
-                        "ticker": ticker, "event": "exhaustion_fade",
-                        "pctr": pctr, "reads": streak,
-                    })
-                    log_event("exhaustion_fade", symbol=ticker,
-                              pctr=pctr, reads=streak)
-                    changed = True
-                    continue
-            else:
-                if pos.get("pctr_fall_streak"):
-                    pos["pctr_fall_streak"] = 0
-                    changed = True
+                    since = pos.get("pctr_fall_since")
+                    if not isinstance(since, (int, float)) or since <= 0:
+                        pos["pctr_fall_since"] = now
+                        changed = True
+                        since = now
+                    held_sec = now - float(since)
+                    if held_sec >= need_sec:
+                        alpaca_trader.cancel_open_orders(ticker)
+                        out = alpaca_trader.close_out(ticker) or {}
+                        if isinstance(out, dict) and out.get("order_id"):
+                            pos["close_order_id"] = str(out["order_id"])
+                        pos["closing_reason"] = "exhaustion_fade"
+                        exit_why[ticker] = "exhaustion_fade"
+                        events.append({
+                            "ticker": ticker, "event": "exhaustion_fade",
+                            "pctr": sig.get("pctr"), "falling_sec": round(held_sec, 1),
+                        })
+                        log_event("exhaustion_fade", symbol=ticker,
+                                  pctr=sig.get("pctr"), falling_sec=round(held_sec, 1))
+                        changed = True
+                        continue
+            elif pos.get("pctr_fall_since"):
+                pos["pctr_fall_since"] = None
+                changed = True
 
         # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
         if (

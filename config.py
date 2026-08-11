@@ -391,7 +391,19 @@ DEFAULT_CONFIG = {
     # indicator gates entry. A missing %R reading refuses the buy — the reading
     # IS the thesis here, unlike the old optional timing filter.
     "ai_watch_exhaustion_rules":      True,
-    "ai_watch_exhaustion_exit_reads":    2,
+    # Recompute %R against the live price instead of trusting the engine's
+    # 60-120s-old copy. Closed bars give the window, the live quote gives the
+    # close — no new market data, just no waiting for a bar to close.
+    "ai_watch_exhaustion_live":       True,
+    # Fade must persist this long before selling. SECONDS, not polls: the
+    # position loop runs every 5s against a 60s engine refresh, so a poll count
+    # measured the same stale reading repeatedly and fired ~12x early.
+    # 120s, not 60s: swept on 2026-08-10 bars, 60s gives -1.07R against -0.26R
+    # at 120s (n=52). A 60s leash exits at a 3-minute median and reaches the
+    # target twice in fifty-two trades — it cuts the fade and the trade both.
+    "ai_watch_exhaustion_exit_sec":  120.0,
+    "rte_fast_ewm_span":                 7,   # matches signals.py smoothing
+    "rte_direction_eps":              0.05,   # %R move below this is not a turn
     "ai_watch_arm_below_zone":        True,
     "ai_watch_arm_below_zone_max_r":   0.5,
     "ai_watch_require_db_zone":       True,
@@ -812,7 +824,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_require_db_zone",
     "ai_watch_armable_zone_kinds",
     "ai_watch_exhaustion_rules",
-    "ai_watch_exhaustion_exit_reads",
+    "ai_watch_exhaustion_live",
+    "ai_watch_exhaustion_exit_sec",
+    "rte_fast_ewm_span",
+    "rte_direction_eps",
     "ai_watch_arm_below_zone",
     "ai_watch_arm_below_zone_max_r",
     "ai_watch_min_stop_pct",
