@@ -2583,6 +2583,42 @@ def test_price_in_or_below_zone():
     assert ew._price_in_or_below_zone({"structure": None}, 10.0) is False
 
 
+def test_release_orphaned_submits_returns_to_watching(tmp_path, monkeypatch):
+    import alpaca_trader as at
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    # HOLD still has a live position; BCRX is flat — only BCRX should free.
+    monkeypatch.setattr(at, "get_positions_detail", lambda: {
+        "HOLD": {"qty": 10, "avg_entry_price": 1.5},
+    })
+    monkeypatch.setattr(at, "get_open_orders", lambda: [])
+
+    ew.save_watch({
+        "BCRX": {
+            "symbol": "BCRX", "status": "submitted",
+            "block_code": "submitted", "block_reason": "sent",
+            "structure": {"entry_low": 10.0, "entry_high": 11.0},
+        },
+        "HOLD": {
+            "symbol": "HOLD", "status": "submitted",
+            "structure": {"entry_low": 1.0, "entry_high": 2.0},
+        },
+    })
+
+    freed = ew.release_orphaned_submits()
+    assert freed == ["BCRX"]
+    state = ew.load_watch()
+    assert state["BCRX"]["status"] == "watching"
+    assert "block_code" not in state["BCRX"]
+    assert state["HOLD"]["status"] == "submitted"
+
+    # Operator force releases even held names from the watch queue label.
+    freed2 = ew.release_orphaned_submits(["HOLD"], force=True)
+    assert freed2 == ["HOLD"]
+    assert ew.load_watch()["HOLD"]["status"] == "watching"
+
+
 def test_sync_preserves_poller_indicator_and_block(tmp_path, monkeypatch):
     """2s desk rebuild must not wipe live %R the poller just stamped."""
     import ai_entry_watch as ew

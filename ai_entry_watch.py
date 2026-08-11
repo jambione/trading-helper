@@ -160,6 +160,83 @@ def clear_block_reason(rec: dict) -> None:
         rec.pop(k, None)
 
 
+def release_orphaned_submits(
+    symbols: list[str] | None = None,
+    *,
+    force: bool = False,
+) -> list[str]:
+    """Return stuck ``submitted`` rows to ``watching`` so they can re-arm.
+
+    After a fill closes (or an entry never confirms), the watch row can stay
+    status=submitted forever: the 2s desk sync preserves that status, and the
+    poller will not arm non-``watching`` names. UI shows blocker \"sent\".
+
+    With *force* False (default), only symbols with no live broker position
+    and no open orders are released. With *force* True, every named
+    submitted/filled row is reset (operator recovery).
+    """
+    want: set[str] | None = None
+    if symbols is not None:
+        want = {
+            str(s or "").upper().strip()
+            for s in symbols
+            if str(s or "").upper().strip()
+        }
+        if not want:
+            return []
+
+    held: set[str] = set()
+    open_ord: set[str] = set()
+    if not force:
+        try:
+            import alpaca_trader as at
+            detail = at.get_positions_detail() or {}
+            if isinstance(detail, dict):
+                held = {
+                    str(k).upper().strip()
+                    for k, v in detail.items()
+                    if v and str(k).upper().strip()
+                }
+            for o in (at.get_open_orders() or []):
+                if not isinstance(o, dict):
+                    continue
+                s = str(o.get("symbol") or "").upper().strip()
+                if s:
+                    open_ord.add(s)
+        except Exception:
+            # Fail closed: do not release if we cannot see the broker book.
+            if not force:
+                return []
+
+    released: list[str] = []
+    with _WATCH_LOCK:
+        state = load_watch()
+        changed = False
+        for key, rec in list(state.items()):
+            if not isinstance(rec, dict):
+                continue
+            sym = str(rec.get("symbol") or key or "").upper().strip()
+            if not sym:
+                continue
+            if want is not None and sym not in want:
+                continue
+            status = str(rec.get("status") or "").lower().strip()
+            if status not in ("submitted", "filled"):
+                continue
+            if not force and (sym in held or sym in open_ord):
+                continue
+            rec = dict(rec)
+            rec["symbol"] = sym
+            rec["status"] = "watching"
+            clear_block_reason(rec)
+            state[sym] = rec
+            released.append(sym)
+            changed = True
+        if changed:
+            save_watch(state)
+    return released
+
+
 def _poller_blocked(rec: dict) -> bool:
     """True when the last poll recorded a real reason it would not buy.
 
@@ -4845,6 +4922,25 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         ready = False
     if not ready:
         return [{"kind": "watch_skip", "reason": "trader_not_ready"}]
+
+    # Free names stuck on status=submitted after the position is gone (UI
+    # "sent"). Without this they never re-enter _ARMABLE_STATUSES.
+    try:
+        freed = release_orphaned_submits()
+        for sym in freed:
+            events.append({
+                "kind": "submit_released",
+                "symbol": sym,
+                "reason": "no_position_no_orders",
+            })
+            try:
+                cp.log_event(
+                    "submit_released", symbol=sym,
+                    reason="no_position_no_orders")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     # ai_max_buys_per_poll is a *per poll* cap, so start each poll's budget
     # here. reset_poll_counters() was only ever called from the research path
