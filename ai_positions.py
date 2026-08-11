@@ -932,7 +932,25 @@ def place_scaled_entry(
                     reason=str(e)[:200],
                 )
 
+    def _held_qty(ticker_s: str) -> float:
+        try:
+            pos = alpaca_trader.get_open_positions() or {}
+            row = pos.get(ticker_s) or pos.get(ticker_s.upper())
+            if isinstance(row, dict):
+                return abs(float(row.get("qty") or 0))
+        except Exception:
+            pass
+        return 0.0
+
     _clear_open(ticker)
+    # Refuse a second long while shares (or a residual close) are still live.
+    # 2026-08-11: wash-fail path kept calling place while a prior fill sat open,
+    # then close_out + re-arm looped on QMCO ~15 times in five minutes.
+    held = _held_qty(ticker)
+    if held > 0:
+        err = f"refused: already holding {held:g} sh (clear before re-entry)"
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err, "ticker": ticker}
 
     total_qty = alpaca_trader.size_by_risk(
         account_equity, risk_pct, sizing_entry, stop_price)
@@ -1018,15 +1036,35 @@ def place_scaled_entry(
     if not result_a.get("ok"):
         err = str(result_a.get("note") or result_a.get("error")
                   or result_a.get("status") or "tranche_a_failed")
-        # Wash-trade / leftover legs: clear again and retry once.
-        if "wash" in err.lower() or "40310000" in err:
+        # Wash-trade / leftover legs: clear again and retry ONCE. On second
+        # wash fail, cancel/flatten residual buys and surface wash_trade so
+        # the poller can cool the symbol down (not re-arm every 20s).
+        wash = "wash" in err.lower() or "40310000" in err
+        if wash:
             _clear_open(ticker)
+            # If a naked buy filled between cancel and reject, close it.
+            if _held_qty(ticker) > 0:
+                try:
+                    alpaca_trader.close_out(ticker)
+                except Exception as e:  # noqa: BLE001
+                    log_event("entry_wash_close_warn", symbol=ticker,
+                              reason=str(e)[:200])
             result_a = _place_a()
             if result_a.get("ok"):
                 err = ""
+                wash = False
             else:
                 err = str(result_a.get("note") or result_a.get("error")
                           or result_a.get("status") or "tranche_a_failed")
+                wash = "wash" in err.lower() or "40310000" in err
+                if wash:
+                    _clear_open(ticker)
+                    if _held_qty(ticker) > 0:
+                        try:
+                            alpaca_trader.close_out(ticker)
+                        except Exception:
+                            pass
+                    err = "wash_trade"
         if err:
             log_event("entry_fail", symbol=ticker, reason=err, leg="A")
             return {
@@ -1980,6 +2018,14 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         # outcome is unsliceable: you know the result but not which gate,
         # indicator state, or time of day to attribute it to.
         "features": pos.get("features"),
+        # Book source (trending / momentum / research). 2026-08-11 outcomes
+        # lacked this so "did we trade trending?" needed a join against trades.
+        "source": (
+            pos.get("duel_source")
+            or (pos.get("features") or {}).get("source")
+            or pos.get("source")
+        ),
+        "duel_source": pos.get("duel_source"),
     }
     try:
         OUTCOMES_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -2405,17 +2451,10 @@ def manage_open_positions(
                               peak=pos.get("peak_price"))
                     exit_why[ticker] = "runner_stop_raised"
 
-        # Exhaustion exit — the operator's primary sell reason (2026-08-10):
-        # hold while the name is overbought, sell when it trends away from
-        # overbought. The stop and the T1 limit still work underneath; this is
-        # the discretionary exit they were never a substitute for, because a
-        # name that rolls over from the highs usually reaches neither.
-        #
-        # Confirmation, not a single read: the fast %R line is EWM-smoothed and
-        # still wiggles bar to bar, so one falling read would routinely close a
-        # position within a minute of opening it. The streak counter lives on
-        # the position and resets on any non-falling read, so N means N in a
-        # row. No reading at all never manufactures an exit.
+        # Exhaustion exit (left_overbought) — used only in exhaustion_scalp
+        # mode. Under continuation (Option A / default after 2026-08-11) this
+        # path is off: hold through overbought and bank via broker T1, runner
+        # trail, dead_trade, or stop. See ai_entry_watch.left_overbought_exit_enabled.
         if _cfg_flag("ai_watch_exhaustion_rules", True) and pos.get("entry_confirmed"):
             sig = dict(indicators.get(ticker) or {})
             # Recompute %R against the live price before judging the fade. The

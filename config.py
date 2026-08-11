@@ -156,7 +156,9 @@ DEFAULT_CONFIG = {
     "ai_avg_days":                10,
     "ai_rvol_time_adjusted":    True,
     "ai_trade_amount":        1000.0,
-    "ai_max_positions":            3,
+    # Slightly higher so trending heat can share slots with momentum (3 left
+    # only 4 pure-trending fills on 2026-08-11 under slot contention).
+    "ai_max_positions":            4,
     "ai_max_buys_per_poll":        2,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
@@ -173,6 +175,9 @@ DEFAULT_CONFIG = {
     # a tight stop implies a huge notional, and nothing checked buying power.
     "ai_max_position_pct":        25.0,     # max % of equity in one name
     "ai_reentry_cooldown_sec":    900.0,    # no re-arm this soon after an exit
+    # After a wash-trade broker reject, freeze the symbol this long so the
+    # poller does not re-place every 20s (2026-08-11 QMCO thrash).
+    "ai_wash_cooldown_sec":      1800.0,
     # ── Entry order shape ───────────────────────────────────────────────────
     # "limit" (default) or "market". A market entry fills at whatever the ask
     # is at execution, which breaks the premise of the zone: size_by_risk sizes
@@ -285,6 +290,10 @@ DEFAULT_CONFIG = {
     "ai_watch_seed_momentum_open_n":      10,
     "ai_watch_seed_trending":           True,
     "ai_watch_seed_trending_n":           20,
+    # Trending shortlist floors (looser than momentum's 50% day-move bar).
+    # Seed needs score > min OR day chg ≥ this OR rvol ≥ trending min rvol.
+    "ai_watch_trending_min_pct_change": 15.0,
+    "ai_watch_trending_min_rvol":        1.5,
     # AI Research boards (grok_suggestions.json / claude_suggestions.json) as a
     # third seed. research_candidate_rows() has always existed; nothing called
     # it, so the boards fed the watch book only through the side door that keeps
@@ -304,17 +313,19 @@ DEFAULT_CONFIG = {
     # watching", and a called name needs time to reach its entry.
     "ai_watch_bb_live_fresh_sec":      900.0,
     # Restrictive AI Watch filters
-    # Trending seed + admission: score must clear this AND day change > 0 AND
-    # look_reason == EXT. WASH (red washout) is never seeded or admitted.
+    # Trending: score > min OR day chg / rvol claim; WASH never seeded.
+    # EXT is optional unless ai_watch_require_look_ext is true.
     "ai_watch_trending_min_score":      5.0,  # Stocktwits score must be > this
     "ai_watch_min_pct_change":         50.0,  # day chg % for momentum big-mover seed
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
+    # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
     "ai_watch_min_rvol":                2.0,
     # Cap how many LOOK tags apply_look_highlights may set panel-wide.
-    # Trending seed only admits look_reason == EXT; WASH is excluded.
     "ai_watch_look_max":                  20,
-    "ai_watch_require_look_ext":        True,  # trending needs LOOK=EXT
+    # False (default after 2026-08-11): allow non-EXT trending heat onto the
+    # book; WASH still blocked. True: legacy EXT-only trending path.
+    "ai_watch_require_look_ext":       False,
     # ── Strict inclusion (conjunctive — every enabled gate must pass) ────────
     # The old rules OR'd four criteria and admitted on any one. Three could
     # never fire (rvol was None on every trending row, nothing hit the 50% bar,
@@ -394,11 +405,19 @@ DEFAULT_CONFIG = {
     # trade's own risk unit (R = zone floor - stop), so the allowance scales
     # with the setup instead of meaning several R on a tight structural stop
     # and a fraction of one on a wide synthetic stop.
-    # Exhaustion rules (operator, 2026-08-11). BUY: price in/below zone AND
-    # already overbought (heating / "heading there" does NOT arm). HOLD: while
-    # overbought. SELL: when live %R leaves the overbought band (left_overbought
-    # latch). No other indicator gates entry. A missing %R reading refuses the
-    # buy — the reading IS the thesis here.
+    # Edge mode (2026-08-11 postmortem → Option A default).
+    #   continuation     — arm on heating|overbought in zone; hold through OB;
+    #                      exit via stop / broker T1 / trail / dead_trade.
+    #                      left_overbought is OFF (it was the small-loss factory).
+    #   exhaustion_scalp — arm overbought-only; sell when %R leaves the band.
+    "ai_edge_mode":              "continuation",
+    # Explicit override for left_overbought software exit. None/absent → follow
+    # edge mode (on only for exhaustion_scalp). Set false to force off.
+    # "ai_exit_left_overbought": False,
+    # Exhaustion / %R rules for arm geometry (still used under continuation).
+    # BUY (continuation): heating above heat_min OR overbought.
+    # BUY (exhaustion_scalp): overbought only.
+    # A missing %R reading refuses the buy when require_data is true.
     "ai_watch_exhaustion_rules":      True,
     # Recompute %R against the live price instead of trusting the engine's
     # 60-120s-old copy. Closed bars give the window, the live quote gives the
@@ -413,9 +432,8 @@ DEFAULT_CONFIG = {
     # Give-back below the band before the exit fires, in exhaustion points.
     # 0 = sell the instant it leaves overbought (operator's stated rule).
     "ai_watch_exhaustion_exit_give_pct": 0.0,
-    # Legacy: heat-floor for the old "heating" buy path. Buy is overbought-only
-    # now; this key is ignored by exhaustion_allows_buy but kept for dashboards
-    # / old configs that still surface it.
+    # Under continuation: minimum exhaustion % for a *heating* arm (0–100).
+    # Overbought band still arms regardless. Under exhaustion_scalp: unused.
     "ai_watch_exhaustion_heat_min_pct": 50.0,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
@@ -547,7 +565,10 @@ DEFAULT_CONFIG = {
     # carry protection under that rule.
     "ai_day_scalp_dual_tranche":     False,
     # Dead trade: still flat/red with tiny MFE after N minutes → market out.
-    "ai_dead_trade_min":               90.0,
+    # Dead trade: no scale-out, MFE never reached, still flat/red → flatten.
+    # Continuation wants this tighter so positions do not sit 90m for −0.3R
+    # (S/CRCL on 2026-08-11) waiting for an exhaustion exit that is now off.
+    "ai_dead_trade_min":               20.0,
     "ai_dead_trade_mfe_r":            0.25,
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
@@ -570,10 +591,10 @@ DEFAULT_CONFIG = {
     # trade beats a naked long. Human positions with a resting stop are left
     # alone (not adopted without entry_ok; not flattened if stop rests).
     "ai_flatten_unmanaged_unprotected": True,
-    # Rest a broker take-profit limit on entry. Default OFF: the one protective
-    # sell is the stop; upside exit is software exhaustion (left_overbought).
-    # Set True only when you want a full OTOCO bracket at the broker.
-    "ai_entry_broker_target":         False,
+    # Rest a broker take-profit limit on entry. Default ON under continuation
+    # so upside is banked at T1 without left_overbought. exhaustion_scalp can
+    # set False (stop + software band exit). OTOCO requires RTH for multi-leg.
+    "ai_entry_broker_target":          True,
     # Re-anchor frozen synth zone when last is this far above entry_high (%).
     # 0.0 = track the real-time price every poll (no deadband).
     "ai_watch_synth_reanchor_pct":     0.0,
@@ -884,6 +905,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_seed_momentum_open_n",
     "ai_watch_seed_trending",
     "ai_watch_seed_trending_n",
+    "ai_watch_trending_min_pct_change",
+    "ai_watch_trending_min_rvol",
     "ai_watch_seed_research",
     "ai_watch_seed_research_n",
     "ai_watch_seed_bb_live",
@@ -898,6 +921,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_zone_mode",
     "ai_watch_require_db_zone",
     "ai_watch_armable_zone_kinds",
+    "ai_edge_mode",
+    "ai_exit_left_overbought",
     "ai_watch_exhaustion_rules",
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_exit_sec",
@@ -967,6 +992,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stream_skip_margin_pct",
     "ai_max_position_pct",
     "ai_reentry_cooldown_sec",
+    "ai_wash_cooldown_sec",
     "ai_entry_order_style",
     "ai_entry_limit_pad_pct",
     "ai_entry_limit_ttl_sec",

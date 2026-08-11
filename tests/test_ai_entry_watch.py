@@ -1760,16 +1760,21 @@ def test_unknown_rvol_and_missing_ext_abstain_rather_than_reject():
     assert ok is True, f"momentum row with unknown rvol was rejected: {why}"
     assert "rvol" not in met, "must not claim an rvol it never saw"
 
-    # Trending without LOOK tag — not_ext under require_look_ext.
+    # Trending without LOOK tag — not_ext when require_look_ext is on.
+    cfg_ext = dict(cfg, ai_watch_require_look_ext=True)
     tr = {"symbol": "BBB", "price": 20.0, "pct_change": 18.0, "rvol": None,
           "source": "trending", "criteria": ["score"]}
-    ok, met, why = ew.passes_inclusion(tr, cfg, indicators={})
+    ok, met, why = ew.passes_inclusion(tr, cfg_ext, indicators={})
     assert ok is False and why == "not_ext"
 
     # Unknown rvol + EXT still admits (rvol abstains).
     tr_ext = dict(tr, look_reason="EXT")
-    ok, met, why = ew.passes_inclusion(tr_ext, cfg, indicators={})
+    ok, met, why = ew.passes_inclusion(tr_ext, cfg_ext, indicators={})
     assert ok is True and "ext" in met
+
+    # Default/post-2026-08-11: non-EXT trending heat may admit (WASH still no).
+    ok, met, why = ew.passes_inclusion(tr, cfg, indicators={})
+    assert ok is True
 
 
 def test_inclusion_criteria_are_not_duplicated():
@@ -1788,16 +1793,16 @@ def test_inclusion_criteria_are_not_duplicated():
 
 
 def test_inclusion_trending_requires_score_and_ext_flag():
-    """Trending admission needs score in criteria AND LOOK=EXT — never WASH."""
+    """Legacy EXT path: require_look_ext refuses non-EXT; WASH always refused."""
     import ai_entry_watch as ew
 
-    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
+    cfg = _incl_cfg(
+        ai_watch_require_indicators=False,
+        ai_watch_min_rvol=1.5,
+        ai_watch_require_look_ext=True,
+    )
     base = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0, "rvol": 2.0,
             "source": "trending"}
-
-    no_score = dict(base, criteria=["rvol"], look_reason="EXT")
-    ok, _m, why = ew.passes_inclusion(no_score, cfg, indicators={})
-    assert ok is False and why == "low_score"
 
     wash = dict(base, criteria=["score"], look_reason="WASH")
     ok, _m, why = ew.passes_inclusion(wash, cfg, indicators={})
@@ -1810,6 +1815,11 @@ def test_inclusion_trending_requires_score_and_ext_flag():
     both = dict(base, criteria=["score"], look_reason="EXT")
     ok, met, why = ew.passes_inclusion(both, cfg, indicators={})
     assert ok is True and "ext" in met
+
+    # Conversion path: require_look_ext off → score/rvol heat without EXT.
+    loose = dict(cfg, ai_watch_require_look_ext=False)
+    ok, met, why = ew.passes_inclusion(no_ext, loose, indicators={})
+    assert ok is True
 
 
 def test_admission_dwell_requires_consecutive_qualifying_polls():
@@ -2823,10 +2833,11 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
 
 
 def test_exhaustion_allows_buy_overbought_only():
-    """Heating (even hot) no longer arms; only the overbought band does."""
+    """exhaustion_scalp: heating refuses; only the overbought band arms."""
     import ai_entry_watch as ew
 
     cfg = {
+        "ai_edge_mode": "exhaustion_scalp",
         "ai_watch_exhaustion_rules": True,
         "ai_watch_require_exhaustion_data": True,
         "rte_threshold": 20,
@@ -2842,7 +2853,7 @@ def test_exhaustion_allows_buy_overbought_only():
     ok, why = ew.exhaustion_allows_buy(ob, cfg)
     assert ok is True and why == "overbought"
 
-    # Heating at 70% — old path would arm; overbought-only refuses.
+    # Heating at 70% — scalp mode refuses.
     heat = {
         "symbol": "BBB",
         "indicator": {
@@ -2870,6 +2881,52 @@ def test_exhaustion_allows_buy_overbought_only():
     }
     ok, why = ew.exhaustion_allows_buy(cool_low, cfg)
     assert ok is False and why == "not_overbought_cooling"
+
+
+def test_continuation_arms_heating_and_disables_left_overbought_exit():
+    """Option A: heating ≥ heat_min arms; left_overbought exit is off."""
+    import ai_entry_watch as ew
+
+    cfg = {
+        "ai_edge_mode": "continuation",
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_exhaustion_data": True,
+        "rte_threshold": 20,
+        "ai_watch_exhaustion_heat_min_pct": 50.0,
+    }
+    heat = {
+        "symbol": "BBB",
+        "indicator": {
+            "pctr": -30.0, "pctr_rising": True, "pctr_falling": False,
+        },
+        "exh_was_overbought": True,
+    }
+    ok, why = ew.exhaustion_allows_buy(heat, cfg)
+    assert ok is True and why == "heating"
+
+    heat_low = {
+        "symbol": "LOW",
+        "indicator": {
+            "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(heat_low, cfg)
+    assert ok is False and why == "heating_too_low"
+
+    # Was overbought, now below band — continuation must NOT sell on that alone.
+    left = {
+        "symbol": "OUT",
+        "indicator": {
+            "pctr": -40.0, "pctr_rising": False, "pctr_falling": True,
+        },
+        "exh_was_overbought": True,
+    }
+    hit, reason = ew.exhaustion_exit_now(left, cfg)
+    assert hit is False and reason == "left_overbought_off"
+
+    scalp_cfg = dict(cfg, ai_edge_mode="exhaustion_scalp")
+    hit2, reason2 = ew.exhaustion_exit_now(left, scalp_cfg)
+    assert hit2 is True and reason2 == "left_overbought"
 
 
 def test_arm_refuses_no_exhaustion_when_require_data():

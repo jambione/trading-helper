@@ -226,3 +226,47 @@ def test_dedupe_keeps_both_bracket_legs():
     assert "tp" not in canceled, "take-profit leg must survive"
     assert "sl" not in canceled, "stop-loss leg must survive"
     assert canceled == ["buy_old"], "only the stacked buy is a duplicate"
+
+
+def test_buy_limit_bracket_without_target_uses_oto_not_two_orders(monkeypatch):
+    """Stop-only limit entries must be OTO, not buy-then-stop.
+
+    Submitting a free-standing stop while the limit buy is still resting is a
+    wash-trade reject (40310000) — 39 of them on 2026-08-11.
+    """
+    import alpaca_trader as at
+
+    captured = []
+
+    class _Leg:
+        id = "sl-1"
+        type = "stop"
+
+    class _Order:
+        id = "oto-1"
+        status = "accepted"
+        legs = [_Leg()]
+
+    class _Client:
+        def submit_order(self, req):
+            captured.append(req)
+            return _Order()
+
+    monkeypatch.setattr(at, "_client", _Client())
+    monkeypatch.setattr(at, "_can_mutate", lambda: True)
+    monkeypatch.setattr(at, "symbol_tradable", lambda t: True)
+    monkeypatch.setattr(at, "ext_hours_now", lambda: False)
+    monkeypatch.setattr(at, "_stop_limit_slip_pct", lambda: 1.0)
+    monkeypatch.setattr(at, "_log_action", lambda *a, **k: None)
+
+    out = at.buy_limit_bracket(
+        "QMCO", 50, limit_price=19.55, stop_price=18.92,
+        target_price=None, stop_market=False,
+    )
+    assert out["ok"] is True
+    assert len(captured) == 1, "must be one OTO submit, not buy+stop pair"
+    req = captured[0]
+    assert str(req.order_class).lower().endswith("oto")
+    assert req.stop_loss is not None
+    assert float(req.stop_loss.stop_price) == 18.92
+    assert out["stop_order_id"] == "sl-1"

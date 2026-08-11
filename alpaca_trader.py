@@ -1269,48 +1269,41 @@ def buy_limit_bracket(
             slip = max(0.0, _stop_limit_slip_pct()) / 100.0
             stop_kwargs["limit_price"] = round(sl * (1.0 - slip), 2)
         if target_price is None or float(target_price) <= 0:
-            # No target — limit buy plus a standalone GTC stop, mirroring
-            # buy_bracket_exact. Alpaca's BRACKET class demands both legs, so
-            # inventing a take-profit here would put a real order on the book
-            # at a price nobody chose. Stop-LIMIT when use_mkt is false so the
-            # single protective sell matches the AI desk's stop-limit policy.
-            from alpaca.trading.requests import (
-                StopOrderRequest, StopLimitOrderRequest,
-            )
+            # No take-profit — OTO limit buy that arms a stop only AFTER fill.
+            #
+            # DO NOT submit a free-standing stop while the buy is still resting.
+            # That is a wash-trade reject on Alpaca (40310000: "buy order exists,
+            # sell limit price should be greater than existing buy limit price")
+            # and was the 2026-08-11 death spiral: 39 BUY_ERROR + 27 close_outs
+            # on QMCO/AIFA/SOUN while the desk kept re-arming the same name.
+            # OrderClass.OTO holds the stop contingent on the parent fill.
+            shape = "stop_mkt" if use_mkt else "stop_lmt"
             buy_order = _client.submit_order(
                 LimitOrderRequest(
                     symbol=ticker, qty=int(qty), side=OrderSide.BUY,
                     time_in_force=TimeInForce.DAY, limit_price=lim,
-                    extended_hours=ext_hours_now(),
+                    order_class=OrderClass.OTO,
+                    stop_loss=StopLossRequest(**stop_kwargs),
+                    # Multi-leg OTO does not support extended hours.
+                    extended_hours=False,
                 )
             )
-            if use_mkt:
-                stop_order = _client.submit_order(
-                    StopOrderRequest(
-                        symbol=ticker, qty=int(qty), side=OrderSide.SELL,
-                        time_in_force=TimeInForce.GTC, stop_price=sl,
-                    )
-                )
-            else:
-                stop_order = _client.submit_order(
-                    StopLimitOrderRequest(
-                        symbol=ticker, qty=int(qty), side=OrderSide.SELL,
-                        time_in_force=TimeInForce.GTC,
-                        stop_price=sl,
-                        limit_price=stop_kwargs["limit_price"],
-                    )
-                )
-            shape = "stop_mkt" if use_mkt else "stop_lmt"
-            print(f"  [TRADER] 📐 limit+stop  {ticker}  qty={int(qty)}  "
+            print(f"  [TRADER] 📐 limit+OTO-stop  {ticker}  qty={int(qty)}  "
                   f"LMT=${lim:.2f}  SL=${sl:.2f}  ({shape})")
+            stop_id = None
+            for leg in (getattr(buy_order, "legs", None) or []):
+                lt = str(getattr(leg, "type", "") or "").lower()
+                if "stop" in lt:
+                    stop_id = str(leg.id)
+                    break
             _log_action("BUY", ticker, lim, 0.0, 0.0,
                         order_id=str(buy_order.id),
                         order_status=str(buy_order.status),
-                        note=f"limit_plus_stop sl={sl} {shape} "
-                             f"stop_order={stop_order.id}")
+                        note=f"limit_oto_stop sl={sl} {shape} "
+                             f"stop_order={stop_id or '?'}")
             return {
                 "ok": True, "buy_order_id": str(buy_order.id),
-                "target_order_id": None, "stop_order_id": str(stop_order.id),
+                "target_order_id": None, "stop_order_id": stop_id,
                 "status": str(buy_order.status), "qty": int(qty),
                 "limit_px": lim, "stop_px": sl, "target_px": None, "note": None,
             }

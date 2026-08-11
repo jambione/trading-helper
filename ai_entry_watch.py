@@ -56,6 +56,12 @@ _WATCH_LOCK = threading.RLock()
 _structure_call_ts: list[float] = []
 _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 
+# Per-symbol "do not re-arm until" stamps after wash-trade rejects.
+# 2026-08-11: without this, entry_fail → status=watching → re-place every poll
+# produced 39 BUY_ERRORs and a close_out thrash on QMCO/AIFA.
+_wash_cooldown_until: dict[str, float] = {}
+_WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
+
 # Machine code → short operator label for the AI Watch "Blocker" column.
 _BLOCKER_LABELS: dict[str, str] = {
     "above_zone": "above zone",
@@ -84,6 +90,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "dollar_volume": "too thin",
     "already_managed": "managed",
     "reentry_cooldown": "cooldown",
+    "wash_trade": "wash trade",
+    "wash_cooldown": "wash cool",
+    "already_holding": "held",
     "no_buying_power": "no BP",
     "risk_gate": "risk gate",
     "trader_not_ready": "trader off",
@@ -95,8 +104,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion gate (ai_watch_exhaustion_rules) — UI must name these or
     # in-zone names look "ready" while the poll refuses on missing %R.
     "no_exhaustion_data": "no %R",
-    # Legacy heat-floor refusals (buy is overbought-only as of 2026-08-11).
-    "heating_too_low": "not overbought",
+    # Exhaustion / continuation arm refusals.
+    "heating_too_low": "heat low",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
     "not_heating_heating": "heating",
@@ -105,6 +114,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_overbought_flat": "flat",
     "not_overbought_heating": "heating",
     "not_overbought_unknown": "no %R",
+    "not_continuation_cooling": "cooling",
+    "not_continuation_flat": "flat",
+    "not_continuation_unknown": "no %R",
     "overbought": "overbought",
     "heating": "heating",
 }
@@ -1864,16 +1876,33 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         score = 0.0
                     pct = _pct_change_value(r.get("pct_change"))
                     look = str(r.get("look_reason") or "").strip().upper()
-                    # Trending seed (operator): score > min, day change up, and
-                    # LOOK flag EXT only. WASH is a red-day washout — never seed.
+                    # Trending seed: shortlist heat for the book — not a buy.
+                    # WASH is always refused (red-day washout).
+                    # EXT is preferred but not required unless
+                    # ai_watch_require_look_ext is true (2026-08-11: hard EXT
+                    # only left ~10 trending names on the book and 4 fills).
                     if look == "WASH":
                         continue
-                    if look != "EXT":
+                    require_ext = bool(cfg.get("ai_watch_require_look_ext", False))
+                    if require_ext and look != "EXT":
                         continue
-                    if score <= min_score:
-                        continue
-                    if pct is None or pct <= 0:
-                        continue
+                    # Source-specific day-change floor (default below the 50%
+                    # momentum big-mover bar so real Stocktwits heat can seed).
+                    try:
+                        tr_min_pct = float(
+                            cfg.get("ai_watch_trending_min_pct_change", 15.0)
+                            or 15.0
+                        )
+                    except (TypeError, ValueError):
+                        tr_min_pct = 15.0
+                    try:
+                        tr_min_rvol = float(
+                            cfg.get("ai_watch_trending_min_rvol", min_rvol)
+                            or min_rvol
+                            or 0.0
+                        )
+                    except (TypeError, ValueError):
+                        tr_min_rvol = min_rvol
                     rvol = None
                     for key in ("rvol", "rvol_raw"):
                         if r.get(key) is not None:
@@ -1886,14 +1915,37 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     if rvol is not None and rvol > 10.0:
                         # e.g. 150 meaning 150% → 1.5x
                         rvol = rvol / 100.0
-                    # Known-thin tape never seeds (same floor as admission).
-                    if rvol is not None and min_rvol > 0 and rvol < min_rvol:
+                    # Known-thin tape never seeds.
+                    if rvol is not None and tr_min_rvol > 0 and rvol < tr_min_rvol:
+                        continue
+                    # Need at least one claim: score, day move, or elevated rvol.
+                    score_ok = score > min_score
+                    pct_ok = pct is not None and pct >= tr_min_pct
+                    rvol_ok = (
+                        rvol is not None
+                        and tr_min_rvol > 0
+                        and rvol >= tr_min_rvol
+                    )
+                    if not (score_ok or pct_ok or rvol_ok):
+                        continue
+                    # Long-only: refuse red days when we know the change.
+                    if pct is not None and pct <= 0:
                         continue
                     seen.add(s)
-                    crit = ["score", "uptrend", "ext"]
-                    if rvol is not None and min_rvol > 0 and rvol >= min_rvol:
+                    crit: list[str] = []
+                    if score_ok:
+                        crit.append("score")
+                    if pct is not None and pct > 0:
+                        crit.append("uptrend")
+                    if look == "EXT":
+                        crit.append("ext")
+                    if rvol_ok:
                         crit.append("rvol")
-                    reason = f"trending EXT score {score:.1f} chg {pct:+.1f}%"
+                    if not crit:
+                        crit.append("trending")
+                    chg_s = f" chg {pct:+.1f}%" if pct is not None else ""
+                    ext_s = " EXT" if look == "EXT" else ""
+                    reason = f"trending{ext_s} score {score:.1f}{chg_s}"
                     rows.append({
                         "symbol": s,
                         "trending_score": round(score, 2),
@@ -1903,7 +1955,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         "source": "trending",
                         "pct_change": pct,
                         "rvol": rvol,
-                        "look_reason": "EXT",
+                        "look_reason": look or None,
                         "price": r.get("price"),
                         "dollar_volume": (
                             float(r["vol_session"]) * float(r["price"])
@@ -2308,7 +2360,14 @@ def passes_inclusion(
     # passes nor blocks." Absence of evidence is not evidence of absence; the
     # remaining conjunctive gates still have to pass.
     if source in ("momentum", "trending") or mom_soft:
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0)
+        if source == "trending":
+            min_rvol = float(
+                cfg.get("ai_watch_trending_min_rvol",
+                        cfg.get("ai_watch_min_rvol", 2.0))
+                or 0.0
+            )
+        else:
+            min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0)
         if min_rvol > 0:
             rvol_f = _f_or_none(row.get("rvol"))
             if rvol_f is not None:
@@ -2322,22 +2381,20 @@ def passes_inclusion(
         met = list(dict.fromkeys(met))
         return True, met, ""
 
-    # Trending admission: score cleared the shortlist bar, day is green
-    # (uptrend gate above), and LOOK is EXT — never WASH (red-day washout).
-    # Missing look abstains only when require_look_ext is off; default on
-    # demands EXT so washouts cannot ride a bare Stocktwits score onto the book.
+    # Trending admission: day green (uptrend above), never WASH. EXT is
+    # optional unless ai_watch_require_look_ext is true. Score is not required
+    # when the seed came in via rvol / day-move (2026-08-11 conversion gap).
     if source == "trending":
         look_raw = row.get("look_reason")
         look = str(look_raw or "").strip().upper() if look_raw is not None else ""
         if look == "WASH":
             return False, met, "look_wash"
-        if bool(cfg.get("ai_watch_require_look_ext", True)):
-            if "score" not in met:
-                return False, met, "low_score"
+        if bool(cfg.get("ai_watch_require_look_ext", False)):
             if look != "EXT":
-                # Empty / missing / anything else: not an extension long.
                 return False, met, "not_ext"
             met.append("ext")
+            if "score" not in met and "rvol" not in met and "uptrend" not in met:
+                return False, met, "low_score"
         elif look == "EXT":
             met.append("ext")
 
@@ -2960,20 +3017,41 @@ def has_exhaustion(record: dict) -> bool:
     return exhaustion_pct(record) is not None
 
 
+def edge_mode(cfg: dict) -> str:
+    """``continuation`` (default) or ``exhaustion_scalp``.
+
+    continuation — Option A (2026-08-11 postmortem): arm earlier on heating,
+    hold through overbought, bank via stop/T1/trail/dead-trade — not
+    left_overbought. exhaustion_scalp — prior overbought-only arm + sell when
+    %R leaves the band.
+    """
+    raw = str(cfg.get("ai_edge_mode") or "continuation").strip().lower()
+    if raw in ("exhaustion", "exhaustion_scalp", "scalp", "ob", "overbought"):
+        return "exhaustion_scalp"
+    return "continuation"
+
+
+def left_overbought_exit_enabled(cfg: dict) -> bool:
+    """Whether software left_overbought may flatten a long.
+
+    Default follows edge mode: off in continuation, on in exhaustion_scalp.
+    Explicit ``ai_exit_left_overbought`` overrides when set.
+    """
+    if "ai_exit_left_overbought" in (cfg or {}):
+        return bool(cfg.get("ai_exit_left_overbought"))
+    return edge_mode(cfg) == "exhaustion_scalp"
+
+
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
-    """Buy side of the exhaustion rule: overbought only.
+    """Buy side of the exhaustion / momentum gate.
 
-    Operator rule 2026-08-11: price in (or below) the zone AND the name is
-    already in the overbought band. "Heating" / "trending toward overbought"
-    is no longer enough — those entries rolled over before tagging OB and had
-    no exhaustion exit (never_overbought), which is how the book filled with
-    positions that should never have opened.
+    **continuation** (default, Option A): arm when overbought **or** heating
+    with %R at/above ``ai_watch_exhaustion_heat_min_pct``. Enter earlier so
+    MFE can exist; refuse cooling/flat (fade, not continuation).
 
-    A missing reading REFUSES, under ai_watch_require_exhaustion_data.
+    **exhaustion_scalp**: overbought only (2026-08-11 operator rule).
 
-    Note this is a BUY gate only. A name held through a loss of coverage still
-    keeps its pre-exhaustion sell defence (ai_watch_exhaustion_fallback) — a
-    position must never be left with fewer exits than it was opened with.
+    A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return True, "exhaustion_off"
@@ -2986,29 +3064,38 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, "no_exhaustion_data"
     if state == "overbought":
         return True, "overbought"
-    # heating / cooling / flat — refuse. Reason keeps the state so the UI
-    # blocker can show "heating" vs "cooling" instead of a generic no.
-    return False, f"not_overbought_{state}"
+
+    mode = edge_mode(cfg)
+    if mode == "continuation" and state == "heating":
+        ex = exhaustion_pct(record)
+        try:
+            heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 50.0)
+        except (TypeError, ValueError):
+            heat_min = 50.0
+        if ex is not None and ex + 1e-9 >= heat_min:
+            return True, "heating"
+        return False, "heating_too_low"
+
+    # cooling / flat (and heating under exhaustion_scalp) — refuse.
+    if mode == "exhaustion_scalp":
+        return False, f"not_overbought_{state}"
+    return False, f"not_continuation_{state}"
 
 
 def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
-    """Sell the moment %R crosses back out of the overbought band.
+    """Sell when %R leaves the overbought band (exhaustion_scalp only).
 
-    A LEVEL test, not a derivative, and that is the whole point. "Falling"
-    compares the live price against a smoothed reference taken at the last
-    cached bar — which can be minutes old — so it answers "are we below where
-    we were a while ago", not "are we rolling over now". Stacking a 120s
-    persistence requirement on top of a stale baseline delays a sell the
-    operator wants immediate. A band crossing needs no reference and no clock:
-    the level is live, so the trigger is live.
+    Disabled under **continuation** (Option A): left_overbought was the
+    2026-08-11 small-loss factory (median MFE +0.06R, 8/12 exits). Upside is
+    broker T1 / runner trail / dead_trade / stop instead.
 
     Arms only after the position has actually been overbought. Until then
-    there is nothing to exit *out of* — and without that latch a name bought
-    while heating would sell instantly, since it is below the band by
-    definition at the moment it is bought.
+    there is nothing to exit *out of*.
 
     Returns (exit_now, reason).
     """
+    if not left_overbought_exit_enabled(cfg):
+        return False, "left_overbought_off"
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return False, "exhaustion_off"
     ex = exhaustion_pct(record)
@@ -5605,6 +5692,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                       detail=f"{int(cool - (t0 - last_exit))}s left")
                 continue
 
+        # Wash-trade cooldown (broker reject thrash — independent of exits).
+        wash_until = float(_wash_cooldown_until.get(sym) or 0.0)
+        if wash_until > t0:
+            _skip("wash_cooldown",
+                  detail=f"{int(wash_until - t0)}s left")
+            continue
+
         if not allow_buys:
             # Structure/zone ready, but no paper entry until RTH (market hours).
             _skip("not_trading_hours")
@@ -5695,37 +5789,39 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 })
             except Exception:
                 pass
-            try:
-                events.append(cp.log_event(
-                    "entry_ok",
-                    symbol=sym,
-                    stop_price=result.get("stop_price"),
-                    target_1=result.get("target_1"),
-                    ask=ask_f,
-                ))
-            except Exception:
-                events.append({
-                    "kind": "entry_ok",
-                    "symbol": sym,
-                    "ask": ask_f,
-                })
+            # place_scaled_entry already logs entry_ok — do not double-log
+            # (2026-08-11 had every fill appear twice in events.jsonl).
         else:
             err = ""
             if isinstance(result, dict):
                 err = str(result.get("error") or "place_failed")[:200]
             else:
                 err = "place_failed"
-            set_block_reason(rec, err, now=t0, detail=err)
+            wash_hit = (
+                "wash" in err.lower()
+                or "40310000" in err
+                or err.strip().lower() == "wash_trade"
+            )
+            if wash_hit:
+                cool_s = float(
+                    cfg.get("ai_wash_cooldown_sec", _WASH_COOLDOWN_SEC)
+                    or _WASH_COOLDOWN_SEC
+                )
+                _wash_cooldown_until[sym] = t0 + max(60.0, cool_s)
+                set_block_reason(rec, "wash_trade", now=t0, detail=err)
+            else:
+                set_block_reason(rec, err, now=t0, detail=err)
             try:
                 events.append(cp.log_event(
-                    "entry_fail", symbol=sym, reason=err))
+                    "entry_fail", symbol=sym, reason=err,
+                    wash_cooldown=wash_hit))
             except Exception:
                 events.append({
                     "kind": "entry_fail",
                     "symbol": sym,
                     "reason": err,
                 })
-            # Stay armed/watching for retry next poll
+            # Stay watching for non-wash retries; wash cools via _wash_cooldown_until
             if str(rec.get("status") or "") == "armed":
                 rec["status"] = "watching"
 
