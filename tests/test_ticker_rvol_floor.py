@@ -35,6 +35,7 @@ def _entry(sym, *, minutes_ago, src=""):
 def _set_rvol(sym, rvol):
     with d.STATE.lock:
         d.STATE.tickers.setdefault(sym, {})["rvol"] = rvol
+    d._rvol_cache_update({sym: {"rvol": rvol}})
 
 
 def _clear_rvol(sym):
@@ -42,6 +43,7 @@ def _clear_rvol(sym):
         row = d.STATE.tickers.get(sym)
         if row:
             row.pop("rvol", None)
+    d._rvol_cache_update({}, stale=[sym])
 
 
 def test_purges_known_low_rvol_candidates(tmp_path, monkeypatch):

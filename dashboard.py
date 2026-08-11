@@ -1400,25 +1400,41 @@ def _committed_symbols() -> frozenset:
     return val
 
 
-def _known_rvol(ticker: str) -> float | None:
-    """Live time-adjusted rvol from STATE, or None when not yet measured.
+# Parallel rvol index for the watchlist floor. Written by _vol_loop alongside
+# STATE.tickers; read by load_tickers under _ticker_lock. A separate lock avoids
+# the deadlock STATE.lock ↔ _ticker_lock ( _snapshot holds STATE then calls
+# _ticker_src → _ticker_lock; load_tickers used to take STATE for rvol while
+# holding _ticker_lock — /api/state hung and Discord heartbeats timed out).
+_rvol_cache: dict[str, float] = {}
+_rvol_cache_lock = threading.Lock()
 
-    Volume is published by _vol_loop every ~60s into STATE.tickers[sym].rvol.
-    A missing value is not a fail — Discord can land a name before the first
-    sample, and we keep it provisionally until rvol is known.
-    """
+
+def _rvol_cache_update(vol_data: dict, stale: list[str] | None = None) -> None:
+    """Publish known rvol into the lock-safe cache; drop *stale* symbols."""
+    with _rvol_cache_lock:
+        for sym, vd in (vol_data or {}).items():
+            t = str(sym or "").upper()
+            if not t:
+                continue
+            v = (vd or {}).get("rvol")
+            if v is None:
+                _rvol_cache.pop(t, None)
+                continue
+            try:
+                _rvol_cache[t] = float(v)
+            except (TypeError, ValueError):
+                _rvol_cache.pop(t, None)
+        for sym in stale or []:
+            _rvol_cache.pop(str(sym or "").upper(), None)
+
+
+def _known_rvol(ticker: str) -> float | None:
+    """Live time-adjusted rvol from the vol-loop cache, or None if unknown."""
     t = str(ticker or "").strip().upper()
     if not t:
         return None
-    try:
-        with STATE.lock:
-            row = STATE.tickers.get(t) or {}
-            v = row.get("rvol")
-        if v is None:
-            return None
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    with _rvol_cache_lock:
+        return _rvol_cache.get(t)
 
 
 def _rvol_floor_exempt(ticker: str, src: str, held: frozenset | set) -> bool:
@@ -1433,7 +1449,8 @@ def _passes_rvol_floor(ticker: str, src: str = "",
     """True if this name may stay / enter as a momentum candidate.
 
     Floor disabled (TICKER_MIN_RVOL <= 0), exempt rows, or unknown rvol → pass.
-    Known rvol below the floor → fail.
+    Known rvol below the floor → fail. Safe under ``_ticker_lock`` (uses the
+    rvol cache, never STATE.lock).
     """
     if TICKER_MIN_RVOL <= 0:
         return True
@@ -1620,16 +1637,17 @@ def add_ticker_to_log(ticker: str, src: str = "") -> tuple[bool, bool]:
     sample will purge if still cold. Book rows skip the floor.
     """
     ticker = ticker.upper()
+    src_tag = str(src)[:16] if src else ""
+    # RVOL gate before any ticker lock (and load_tickers snapshots rvol itself).
+    if not _passes_rvol_floor(ticker, src_tag):
+        log.info(
+            "[TICKER] Refused %s — rvol=%s < %.2f",
+            ticker, _known_rvol(ticker), TICKER_MIN_RVOL)
+        return True, False
     with _ticker_lock:
         try:
             load_tickers()   # refresh cache + purge stale
             if ticker in _ticker_cache["tickers"]:
-                return True, False
-            src_tag = str(src)[:16] if src else ""
-            if not _passes_rvol_floor(ticker, src_tag):
-                log.info(
-                    "[TICKER] Refused %s — rvol=%s < %.2f",
-                    ticker, _known_rvol(ticker), TICKER_MIN_RVOL)
                 return True, False
             now_iso = datetime.now(ET).isoformat(timespec="seconds")
             entry = {"ticker": ticker, "added": now_iso}
@@ -2421,6 +2439,8 @@ def _vol_loop():
                     if row:
                         for k in ("day_vol", "rvol", "rvol_raw"):
                             row.pop(k, None)
+            # Lock-safe index for the watchlist RVOL floor (see _rvol_cache).
+            _rvol_cache_update(vol_data, stale)
             log.debug("[VOL] %d/%d tickers  mins_open=%d  adj=%s",
                       len(vol_data), len(tickers), mins_open, time_adj)
         except Exception as e:                             # noqa: BLE001
