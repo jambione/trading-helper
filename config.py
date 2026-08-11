@@ -430,6 +430,24 @@ DEFAULT_CONFIG = {
     # Watch the BLIND line in desk_report section 5. If it climbs toward the
     # whole book the constraint is the data feed (SIP), not this gate.
     "ai_watch_require_exhaustion_data": True,
+    # Widest the %R window may stretch, as a multiple of its nominal duration
+    # (21 bars x 60s = 21 min, so 3.0 allows ~63 min). 0 disables the check.
+    #
+    # The bar-count gate above catches names with no data. This catches the
+    # more dangerous case: enough bars, spread over far too long. IEX prints a
+    # thin name a few times an hour, so 23 bars can span days while %R happily
+    # returns a clean number for what it thinks is a 21-minute window.
+    # Measured 2026-08-11 over the 96-name book, of the 92 that pass the bar
+    # count: 62% span under 40 min, 17% 40min-2h, 12% 2h-1d, and 9% span MORE
+    # THAN A DAY — NEGG's "21-minute" window covered 7,120 minutes.
+    #
+    # 3.0 is a judgment call, not a measured optimum, same status as
+    # heat_min_pct. It refuses roughly a quarter of the book. Sweep it against
+    # the window_span column in shadow before trusting the number.
+    "ai_watch_exhaustion_max_window_mult": 3.0,
+    # Nominal seconds per bar for the span check above. Tracks
+    # ai_watch_db_bar_timeframe, which is 1Min.
+    "ai_watch_db_bar_seconds":        60.0,
     "rte_fast_ewm_span":                 7,   # matches signals.py smoothing
     "rte_direction_eps":              0.05,   # %R move below this is not a turn
     "ai_watch_arm_below_zone":        True,
@@ -858,6 +876,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_fallback",
     "ai_watch_require_exhaustion_data",
+    "ai_watch_exhaustion_max_window_mult",
+    "ai_watch_db_bar_seconds",
     "rte_fast_ewm_span",
     "rte_direction_eps",
     "ai_watch_arm_below_zone",

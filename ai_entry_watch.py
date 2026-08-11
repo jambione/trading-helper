@@ -695,6 +695,18 @@ def _f_or_none(v: Any) -> float | None:
         return None
 
 
+def _window_span_min(rec: dict) -> float | None:
+    """Minutes covered by this name's %R window, for the shadow row. None when
+    the bars are not cached — a diagnostic, so it must never raise."""
+    try:
+        cfg = _push_cfg()
+        length = max(2, int(cfg.get("rte_fast_length", 21) or 21))
+        span = window_span_sec(rec.get("symbol") or "", length, cfg, time.time())
+        return None if span is None else round(span / 60.0, 1)
+    except Exception:
+        return None
+
+
 def _positive_price(v: Any) -> float | None:
     """Strict positive price, or None. Used to seed last_ask / reject blanks."""
     p = _f_or_none(v)
@@ -2501,6 +2513,27 @@ def live_exhaustion(
     if len(rows) < length + 2:
         return None
 
+    # Bar count is not coverage. Refuse a window that is stitched together
+    # from prints spread across hours or days: %R still computes, and the
+    # number still looks like a valid reading, but it describes a range the
+    # name traded over a week rather than the last 21 minutes. A wrong reading
+    # passes every downstream gate; a missing one is caught by the coverage
+    # rule and falls to a refusal. Measured 2026-08-11, 21% of the names that
+    # clear the bar count have a window over two hours wide.
+    try:
+        mult = float(cfg.get("ai_watch_exhaustion_max_window_mult", 3.0) or 0.0)
+    except (TypeError, ValueError):
+        mult = 3.0
+    if mult > 0:
+        span = window_span_sec(symbol, length, cfg, now)
+        if span is not None:
+            try:
+                bar_sec = float(cfg.get("ai_watch_db_bar_seconds", 60.0) or 60.0)
+            except (TypeError, ValueError):
+                bar_sec = 60.0
+            if span > (length - 1) * bar_sec * mult:
+                return None
+
     def _raw(hh: float, ll: float, close: float) -> float | None:
         span = hh - ll
         if span <= 0:
@@ -2879,6 +2912,16 @@ _bar_cache_lock = threading.Lock()
 # symbol -> (ts, [(high, low, close), ...]) filled by the same fetch as above.
 _ohlc_cache: dict[str, tuple[float, list[tuple[float, float, float]]]] = {}
 _ohlc_cache_lock = threading.Lock()
+# symbol -> (ts, [bar epoch seconds, ...]) parallel to _ohlc_cache.
+#
+# Bar COUNT is not bar COVERAGE. On the free IEX feed a thin name still returns
+# 23 rows, but they are the 23 minutes it happened to print across five days —
+# so %R computes cleanly over a "21-minute" window that actually spans a week.
+# Measured 2026-08-11 across the 96-name book: 9% of the names that pass the
+# 23-bar gate have a window spanning more than a day (NEGG's spanned 7,120
+# minutes). Those readings are not missing, they are wrong, which is worse.
+# Timestamps are the only way to tell the two apart.
+_ohlc_ts_cache: dict[str, tuple[float, list[float]]] = {}
 
 
 def find_double_bottom_support(
@@ -3084,6 +3127,68 @@ def _extract_ohlc_from_bars(bars: Any, lookback: int) -> list[tuple[float, float
                 out.append((hf, lf, cf))
         return out
     return []
+
+
+def _extract_ohlc_ts_from_bars(bars: Any, lookback: int) -> list[float]:
+    """Bar timestamps as epoch seconds, aligned 1:1 with _extract_ohlc_from_bars.
+
+    Kept in step with that function's row filter on purpose — a timestamp list
+    that drifts out of alignment would mis-date the window it is meant to
+    police, which is a worse failure than not checking at all. Returns [] when
+    alignment cannot be guaranteed, and the span check then skips.
+    """
+    if bars is None:
+        return []
+    try:
+        import pandas as pd
+        if not isinstance(bars, pd.DataFrame):
+            return []
+        cols = {"high", "low", "close"}
+        if not cols.issubset(set(bars.columns)):
+            return []
+        tail = bars[["high", "low", "close"]].tail(int(lookback))
+        out: list[float] = []
+        for idx, (h, lo, c) in zip(tail.index, tail.itertuples(index=False, name=None)):
+            try:
+                hf, lf, _cf = float(h), float(lo), float(c)
+            except (TypeError, ValueError):
+                continue
+            if not (hf > 0 and lf > 0 and hf >= lf):
+                continue
+            stamp = idx[-1] if isinstance(idx, tuple) else idx
+            try:
+                out.append(float(pd.Timestamp(stamp).timestamp()))
+            except Exception:
+                return []
+        return out
+    except Exception:
+        return []
+
+
+def window_span_sec(symbol: str, length: int, cfg: dict, now: float) -> float | None:
+    """Wall-clock seconds covered by the newest *length* cached bars.
+
+    None when unknown. For 1-minute bars over a 21-bar window the honest
+    answer is ~21 minutes; anything far above that means the feed skipped
+    minutes and the "window" is stitched from whenever the name last printed.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym or length < 2:
+        return None
+    try:
+        refresh = float(cfg.get("ai_watch_db_bar_refresh_sec", 120.0) or 120.0)
+    except (TypeError, ValueError):
+        refresh = 120.0
+    max_age = max(60.0, refresh * 3.0)
+    with _ohlc_cache_lock:
+        hit = _ohlc_ts_cache.get(sym)
+        if not hit or (now - hit[0]) >= max_age:
+            return None
+        stamps = list(hit[1])
+    if len(stamps) < length:
+        return None
+    win = stamps[-length:]
+    return float(win[-1] - win[0])
 
 
 def pullback_depths(
@@ -3341,8 +3446,15 @@ def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
             lows = _extract_lows_from_bars(df, lookback)
             ohlc = _extract_ohlc_from_bars(df, lookback)
             if ohlc:
+                stamps = _extract_ohlc_ts_from_bars(df, lookback)
                 with _ohlc_cache_lock:
                     _ohlc_cache[sym] = (now, ohlc)
+                    # Only stored when it lines up row-for-row; a short list
+                    # would silently shift the window it is checking.
+                    if len(stamps) == len(ohlc):
+                        _ohlc_ts_cache[sym] = (now, stamps)
+                    else:
+                        _ohlc_ts_cache.pop(sym, None)
     except Exception:
         lows = []
 
@@ -3990,6 +4102,11 @@ def _shadow_row(
         # "live" = recomputed against the live price; "engine" = the 60-120s
         # copy. A row scored without knowing which is scoring two rules at once.
         "pctr_src": (sig.get("pctr_src") or "engine") if sig else None,
+        # Minutes the %R window actually spans. Logged even when the reading
+        # was refused for being too wide, because the threshold that refused it
+        # is a guess (3x) and this column is the only way to sweep it: bucket
+        # forward return by span and the cutoff stops being an opinion.
+        "window_span_min": _window_span_min(rec),
         # Timing state.
         "cm_ok": bool(sig.get("cm_ok")) if sig else None,
         "pctr_ok": bool(sig.get("pctr_ok")) if sig else None,
