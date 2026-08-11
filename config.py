@@ -261,6 +261,12 @@ DEFAULT_CONFIG = {
     # retires — so it drifted to 26+, each entry costing a quote on a desk
     # already past Alpaca's rate limit. Read once at dashboard import.
     "momentum_max_tickers":                8,
+    # Minimum time-adjusted relative volume for a momentum *candidate* to stay
+    # on the dashboard watchlist (dashboard.TICKER_MIN_RVOL). Once rvol is
+    # known, below this → refuse add + purge on load. Unknown rvol is allowed
+    # until the first volume sample. Held positions and src=book rows are
+    # exempt. 0 disables. Read once at dashboard import.
+    "momentum_min_rvol":                  2.0,
     # Ceiling on symbols carrying real-time data at once — momentum candidates
     # plus every name the AI Watch book is on. Bounded by Finnhub's free tier
     # (~50 concurrent WS subscriptions desk-wide, unenforced by the client), so
@@ -948,6 +954,7 @@ SAFE_CONFIG_KEYS = [
     "ai_shadow_log_enabled",
     "ai_reject_log_enabled",
     "momentum_max_tickers",
+    "momentum_min_rvol",
     "realtime_symbol_budget",
     "claude_research_enabled",
     "claude_backend",

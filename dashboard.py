@@ -1274,11 +1274,27 @@ TICKER_MAX_AGE = 15 * 60  # seconds — entries older than this are auto-purged
 # model and is honest about knowing nothing yet. Once shadow.jsonl has enough
 # forward-return history per symbol (tools/shadow_report.py) this can retire
 # on measured performance instead.
+#
+# RVOL floor is the one measured quality gate we trust today: desk volume is
+# already published on STATE.tickers by _vol_loop (same time-adjusted figure as
+# the morning funnel). Candidates must show ≥ this multiple of session average
+# once rvol is known; below it they are refused at add and purged on refresh.
+# Unknown rvol is allowed provisionally (Discord firehose often lands a name
+# before the first 60s volume sample). Held positions and src=book rows skip
+# the floor — they need tape for exit/entry logic, not a heat filter.
+# 0 disables the gate.
 _cfg_at_import = load_config()
 try:
     TICKER_MAX_COUNT = max(1, int(_cfg_at_import.get("momentum_max_tickers", 8) or 8))
 except (TypeError, ValueError):
     TICKER_MAX_COUNT = 8
+
+try:
+    TICKER_MIN_RVOL = float(_cfg_at_import.get("momentum_min_rvol", 2.0) or 0.0)
+except (TypeError, ValueError):
+    TICKER_MIN_RVOL = 2.0
+if TICKER_MIN_RVOL < 0:
+    TICKER_MIN_RVOL = 0.0
 
 # Absolute ceiling on the list, candidates and desk-covered names together.
 # This is a real external limit, not a taste knob: Finnhub's free tier allows
@@ -1384,12 +1400,60 @@ def _committed_symbols() -> frozenset:
     return val
 
 
+def _known_rvol(ticker: str) -> float | None:
+    """Live time-adjusted rvol from STATE, or None when not yet measured.
+
+    Volume is published by _vol_loop every ~60s into STATE.tickers[sym].rvol.
+    A missing value is not a fail — Discord can land a name before the first
+    sample, and we keep it provisionally until rvol is known.
+    """
+    t = str(ticker or "").strip().upper()
+    if not t:
+        return None
+    try:
+        with STATE.lock:
+            row = STATE.tickers.get(t) or {}
+            v = row.get("rvol")
+        if v is None:
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rvol_floor_exempt(ticker: str, src: str, held: frozenset | set) -> bool:
+    """Held / book rows skip the RVOL floor (they need tape, not a heat filter)."""
+    if ticker in held:
+        return True
+    return str(src or "").strip().lower() == "book"
+
+
+def _passes_rvol_floor(ticker: str, src: str = "",
+                       held: frozenset | set | None = None) -> bool:
+    """True if this name may stay / enter as a momentum candidate.
+
+    Floor disabled (TICKER_MIN_RVOL <= 0), exempt rows, or unknown rvol → pass.
+    Known rvol below the floor → fail.
+    """
+    if TICKER_MIN_RVOL <= 0:
+        return True
+    if held is None:
+        held = _committed_symbols()
+    if _rvol_floor_exempt(ticker, src, held):
+        return True
+    rv = _known_rvol(ticker)
+    if rv is None:
+        return True
+    return rv >= TICKER_MIN_RVOL
+
+
 def load_tickers() -> list:
-    """Read watchlist, purge entries ≥ 15 min old, return list of ticker strings.
+    """Read watchlist, purge by age + RVOL floor, cap, return ticker strings.
 
     Writes the file back whenever entries are purged or the format is migrated,
-    so the on-disk file is always up-to-date. Caches by mtime to keep I/O cheap
-    at the 10 Hz poll rate used by the price loop.
+    so the on-disk file is always up-to-date. Caches by mtime for I/O, but
+    always re-applies time- and volume-dependent filters on the cached rows so
+    age/RVOL can retire names even when nothing else has rewritten the file.
     """
     with _ticker_lock:
         if not TICKER_LOG.exists():
@@ -1398,10 +1462,12 @@ def load_tickers() -> list:
         try:
             import json as _json
             mtime = TICKER_LOG.stat().st_mtime
-            if mtime == _ticker_cache["mtime"]:
-                return list(_ticker_cache["tickers"])
-
-            raw = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
+            if mtime == _ticker_cache["mtime"] and _ticker_cache["entries"] is not None:
+                raw = list(_ticker_cache["entries"])
+                from_cache = True
+            else:
+                raw = _json.loads(TICKER_LOG.read_text(encoding="utf-8"))
+                from_cache = False
             if not isinstance(raw, list):
                 return []
 
@@ -1441,15 +1507,24 @@ def load_tickers() -> list:
                 # question changes from "is this worth watching" to "when do I
                 # get out", and that question cannot be answered without live
                 # indicators. Evicting a position is how a name goes dark.
-                if added_ts >= cutoff or t in held:
-                    row = {"ticker": t, "added": added, "_ts": added_ts,
-                           "_held": t in held}
-                    if src_tag:
-                        row["src"] = src_tag
-                    kept.append(row)
-                else:
+                if not (added_ts >= cutoff or t in held):
                     changed = True
                     log.debug(f"[TICKER] Purged stale {t}")
+                    continue
+
+                if not _passes_rvol_floor(t, src_tag, held):
+                    changed = True
+                    rv = _known_rvol(t)
+                    log.info(
+                        "[TICKER] Purged low-rvol %s (rvol=%s < %.2f)",
+                        t, rv, TICKER_MIN_RVOL)
+                    continue
+
+                row = {"ticker": t, "added": added, "_ts": added_ts,
+                       "_held": t in held}
+                if src_tag:
+                    row["src"] = src_tag
+                kept.append(row)
 
             # Cap after purging, newest first. Sorted on the parsed timestamp
             # rather than the ISO string so a mixed-offset file cannot order
@@ -1497,6 +1572,8 @@ def load_tickers() -> list:
             if changed:
                 _atomic_write_json(TICKER_LOG, kept)
                 mtime = TICKER_LOG.stat().st_mtime
+            elif from_cache:
+                mtime = _ticker_cache["mtime"]
 
             tickers = [e["ticker"] for e in kept]
             _ticker_cache.update(mtime=mtime, tickers=tickers, entries=kept)
@@ -1537,6 +1614,10 @@ def add_ticker_to_log(ticker: str, src: str = "") -> tuple[bool, bool]:
     pushed it purely so it carries live tape; those rows are real subscriptions
     but not momentum candidates, and the Momentum panel filters them out. Any
     other value (or none) is an ordinary candidate from Discord/scanner/manual.
+
+    Momentum candidates are refused when live rvol is known and below
+    TICKER_MIN_RVOL. Unknown rvol is allowed (provisional); the next volume
+    sample will purge if still cold. Book rows skip the floor.
     """
     ticker = ticker.upper()
     with _ticker_lock:
@@ -1544,10 +1625,16 @@ def add_ticker_to_log(ticker: str, src: str = "") -> tuple[bool, bool]:
             load_tickers()   # refresh cache + purge stale
             if ticker in _ticker_cache["tickers"]:
                 return True, False
+            src_tag = str(src)[:16] if src else ""
+            if not _passes_rvol_floor(ticker, src_tag):
+                log.info(
+                    "[TICKER] Refused %s — rvol=%s < %.2f",
+                    ticker, _known_rvol(ticker), TICKER_MIN_RVOL)
+                return True, False
             now_iso = datetime.now(ET).isoformat(timespec="seconds")
             entry = {"ticker": ticker, "added": now_iso}
-            if src:
-                entry["src"] = str(src)[:16]
+            if src_tag:
+                entry["src"] = src_tag
             entries = list(_ticker_cache["entries"]) + [entry]
             _atomic_write_json(TICKER_LOG, entries)
             _ticker_cache["mtime"] = -1.0   # force re-read on next load

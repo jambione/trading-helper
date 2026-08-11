@@ -96,9 +96,9 @@ def test_nothing_changes_when_flat(monkeypatch, tmp_path):
     assert out == ["CCC", "BBB"]
 
 
-def test_committed_symbols_counts_positions_not_mere_candidates(
+def test_committed_symbols_includes_live_watch_book_rows(
         monkeypatch, tmp_path):
-    """"watching" is still just a candidate and stays subject to churn."""
+    """Live book rows (including watching) need tape; only done statuses drop."""
     monkeypatch.setattr(dash, "_held_cache", (0.0, frozenset()))
     rd = tmp_path / "reports"
     rd.mkdir()
@@ -106,14 +106,15 @@ def test_committed_symbols_counts_positions_not_mere_candidates(
     (rd / "entry_watch_state.json").write_text(json.dumps({
         "SUBM": {"status": "submitted"},
         "WATCH": {"status": "watching"},
+        "DONE": {"status": "expired"},
     }))
     import ai_paths
     monkeypatch.setattr(ai_paths, "resolve_report_dir", lambda: rd)
 
     out = dash._committed_symbols()
 
-    assert "POS" in out and "SUBM" in out
-    assert "WATCH" not in out
+    assert "POS" in out and "SUBM" in out and "WATCH" in out
+    assert "DONE" not in out
 
 
 def test_committed_symbols_fails_open_on_a_missing_file(monkeypatch, tmp_path):
