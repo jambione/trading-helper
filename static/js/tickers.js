@@ -76,7 +76,12 @@ export function init(panelEl) {
   _updateSortHeaders();
 
   subscribe('tickers',        rows   => _renderTable(rows));
-  subscribe('funnel',         f      => _renderFunnel(f));
+  // Funnel banner (EXITS ONLY / Point monitors) removed from the Momentum
+  // panel — session labels and one-click send were noise next to the book.
+  if (_suggestEl) {
+    _suggestEl.classList.add('hidden');
+    _suggestEl.innerHTML = '';
+  }
   // AI book open/close should refresh chips on momentum rows.
   subscribe('ai_positions',   ()     => { if (_lastRows.length) _renderTable(_lastRows); });
 
@@ -661,54 +666,12 @@ function _fmtMins(m) {
   return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m`;
 }
 
-function _renderFunnel(f) {
+function _renderFunnel(_f) {
+  // Banner retired — keep the mount point empty if present.
   if (!_suggestEl) return;
-  if (!f || (!f.session && !f.top && !f.waiting)) {
-    _suggestEl.classList.add('hidden');
-    _suggestEl.innerHTML = '';
-    _lastFunnelKey = null;
-    return;
-  }
-
-  const key = JSON.stringify({ t: f.top, s: f.session, w: f.waiting, st: f.stale });
-  if (key === _lastFunnelKey) return;   // no meaningful change — keep DOM as-is
-  _lastFunnelKey = key;
-
-  const sess = f.session || {};
-  const shot = sess.next_shot;
-  const shotTxt = shot ? ` · next ${shot.label} in ${_fmtMins(shot.mins)}` : '';
-  const sessLine = `<div class="funnel-session">${sess.label || 'FUNNEL'}${shotTxt}</div>`;
-
-  // Only show the banner when there is a real pick. Empty / waiting states
-  // used to render "No tradeable candidate right now" — that block is removed.
-  const top = f.top;
-  if (!top) {
-    _suggestEl.classList.add('hidden');
-    _suggestEl.innerHTML = '';
-    return;
-  }
-
-  const cls   = _FUNNEL_STATE_CLS[top.state] || '';
-  const chg   = top.chg_pct != null ? `${top.chg_pct >= 0 ? '+' : ''}${top.chg_pct}%` : '';
-  const rvol  = top.rvol != null ? `${top.rvol}x` : '';
-  const meta  = [top.state, chg, rvol].filter(Boolean).join(' · ');
-  const stale = f.stale ? ' funnel-pick--stale' : '';
-  const body = `<div class="funnel-pick${stale}">
-      <div class="funnel-pick-main">
-        <span class="funnel-pick-label">${top.suggest ? '▶ Point monitors at' : 'Leading'}</span>
-        <span class="funnel-pick-sym">${top.sym}</span>
-        <span class="funnel-badge ${cls}" title="Funnel score">${top.score}</span>
-      </div>
-      <div class="funnel-pick-meta">${meta}${f.stale ? ' · stale' : ''}</div>
-      ${top.suggest
-        ? `<button class="btn btn--sm funnel-send" data-funnel-send="${top.sym}">Send to monitors</button>`
-        : ''}
-    </div>`;
-
-  _suggestEl.innerHTML = sessLine + body;
-  _suggestEl.classList.remove('hidden');
-  const btn = _suggestEl.querySelector('[data-funnel-send]');
-  if (btn) btn.addEventListener('click', () => _sendToMonitors(btn));
+  _suggestEl.classList.add('hidden');
+  _suggestEl.innerHTML = '';
+  _lastFunnelKey = null;
 }
 
 async function _sendToMonitors(btn) {
