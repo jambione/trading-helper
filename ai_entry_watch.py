@@ -2412,14 +2412,31 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             "updated_ts": t0,
             **_admission_fields(row, prev, float(t0)),
         }
+        # Poller timing state must survive this rebuild. Without it the 2s desk
+        # sync wiped live %R (and the last block reason) every cycle, so the
+        # wire stayed exhaustion_state=unknown even though poll_once had just
+        # stamped pctr — and in-zone names refused under require_exhaustion_data.
+        if isinstance(prev.get("indicator"), dict) and prev["indicator"]:
+            rec["indicator"] = dict(prev["indicator"])
+        for k in (
+            "block_code", "block_reason", "block_ts", "block_detail",
+            "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
+        ):
+            if prev.get(k) is not None:
+                rec[k] = prev[k]
         # Attach a zone immediately on admission — do not wait up to 20s for
         # poll_once REST. Mom/ST names were stuck on "no zone" until then.
         try:
+            from config import load_config as _lc
+            cfg_z = _lc() or {}
             ask_for_zone = _positive_price(seeded_ask)
             if ask_for_zone and not _structure_usable(rec.get("structure")):
-                from config import load_config as _lc
-                cfg_z = _lc() or {}
                 ensure_offset_zone_if_needed(rec, ask_for_zone, cfg_z, t0)
+            # In-zone / below-zone names are the ones that can arm — keep their
+            # live %R fresh here so the book is not blind between 20s polls.
+            # Above-zone can wait for the next poll (cheaper bar budget).
+            if ask_for_zone and _price_in_or_below_zone(rec, ask_for_zone):
+                ensure_live_exhaustion(rec, ask_for_zone, cfg_z, t0)
         except Exception:
             pass
         new_state[sym] = rec
@@ -2669,6 +2686,34 @@ def ensure_live_exhaustion(
         return False
     ensure_symbol_ohlc(sym, cfg, now)
     return apply_live_exhaustion(rec, px, cfg, now)
+
+
+def _price_in_or_below_zone(rec: dict, price: float, *, pad_pct: float = 0.0) -> bool:
+    """True when *price* is inside the entry band or has fallen through it.
+
+    These are the only geometries that can arm (in-zone) or still be a
+    pullback-overshoot entry (below). Above-zone names do not need a fresh
+    %R every 2s rebuild — the poller still stamps them on its cycle.
+    """
+    structure = rec.get("structure") if isinstance(rec, dict) else None
+    levels = _structure_levels(structure) if isinstance(structure, dict) else None
+    if levels is None:
+        return False
+    lo, hi = float(levels[0]), float(levels[1])
+    if lo > hi:
+        lo, hi = hi, lo
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return False
+    if px <= 0 or lo <= 0 or hi <= 0:
+        return False
+    try:
+        frac = max(0.0, float(pad_pct or 0.0)) / 100.0
+    except (TypeError, ValueError):
+        frac = 0.0
+    high_bound = hi * (1.0 + frac)
+    return px <= high_bound
 
 
 def exhaustion_pct(record: dict) -> float | None:
@@ -4988,17 +5033,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     tape_only = True
         rec["last_poll_ts"] = t0
 
-        # Live %R for exhaustion rules. apply_live_exhaustion existed but was
-        # never called on the buy path; OHLC was only warmed when a zone was
-        # rebuilt. After restart, usable zones sit on disk with an empty bar
-        # cache → every name stayed exhaustion_state=unknown and refused with
-        # no_exhaustion_data under ai_watch_require_exhaustion_data.
-        if ask_f > 0:
-            try:
-                ensure_live_exhaustion(rec, ask_f, cfg, t0)
-            except Exception:
-                pass
-
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
 
         # Mom/ST: attach or re-anchor a mechanical pullback zone (missing levels,
@@ -5027,6 +5061,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 except Exception:
                     pass
             structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+
+        # Live %R for exhaustion rules. Prefer after zone work so the double-
+        # bottom / band fetch has just warmed _ohlc_cache. In-zone and below
+        # are required for arming; above-zone still gets a stamp when cheap
+        # (cache hit) so the column is not blank on the rest of the book.
+        if ask_f > 0:
+            try:
+                near = _price_in_or_below_zone(rec, ask_f)
+                if near or bool(cfg.get("ai_watch_exhaustion_all_rows", True)):
+                    ensure_live_exhaustion(rec, ask_f, cfg, t0)
+            except Exception:
+                pass
 
         # hard_no only kills non-desk (or desk when synth disabled / failed)
         if structure is not None:

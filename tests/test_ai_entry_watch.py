@@ -2568,6 +2568,68 @@ def _synthetic_ohlc(n: int = 40, *, base: float = 30.0) -> list[tuple[float, flo
     return rows
 
 
+def test_price_in_or_below_zone():
+    import ai_entry_watch as ew
+
+    rec = {
+        "structure": {
+            "entry_low": 10.0, "entry_high": 11.0,
+            "stop_price": 9.0, "target_1": 12.0, "reward_risk": 1.5,
+        },
+    }
+    assert ew._price_in_or_below_zone(rec, 10.5) is True
+    assert ew._price_in_or_below_zone(rec, 9.5) is True   # through the floor
+    assert ew._price_in_or_below_zone(rec, 12.0) is False  # above
+    assert ew._price_in_or_below_zone({"structure": None}, 10.0) is False
+
+
+def test_sync_preserves_poller_indicator_and_block(tmp_path, monkeypatch):
+    """2s desk rebuild must not wipe live %R the poller just stamped."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "push_candidates_to_engine", lambda *a, **k: {})
+    monkeypatch.setattr(
+        ew, "desk_candidate_rows",
+        lambda cfg: [{
+            "symbol": "SMCI", "source": "trending", "score": 12.0,
+            "reason": "test", "price": 31.5, "rvol": 1.6,
+        }],
+    )
+    # No live bar fetch in this unit test.
+    monkeypatch.setattr(ew, "ensure_live_exhaustion", lambda *a, **k: False)
+    monkeypatch.setattr(ew, "ensure_offset_zone_if_needed", lambda *a, **k: None)
+
+    prev_ind = {
+        "pctr": -12.0, "pctr_rising": True, "pctr_falling": False,
+        "pctr_src": "live", "pctr_ts": 1e12,
+    }
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "source": "trending",
+            "score": 11.0, "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 31.0, "entry_high": 32.0,
+                "stop_price": 30.0, "target_1": 35.0, "reward_risk": 1.5,
+                "zone_kind": "double_bottom",
+            },
+            "structure_ts": 1e12,
+            "last_ask": 31.5,
+            "last_poll_ts": 1e12,
+            "indicator": prev_ind,
+            "block_code": "in_zone",
+            "block_reason": "in zone",
+            "block_ts": 1e12,
+        },
+    })
+    out = ew.sync_watch_from_source_panels(cfg={}, now=1e12 + 5)
+    rec = out["SMCI"]
+    assert rec["indicator"]["pctr"] == -12.0
+    assert rec["indicator"]["pctr_src"] == "live"
+    assert rec["block_code"] == "in_zone"
+    assert rec["structure"]["entry_low"] == 31.0
+
+
 def test_ensure_symbol_ohlc_fetches_when_cache_cold(monkeypatch):
     """Cold cache after restart must fetch — not wait for a zone rebuild."""
     import ai_entry_watch as ew
