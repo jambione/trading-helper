@@ -1647,9 +1647,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         min_pct = 50.0
     try:
         # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 1.5) or 1.5)
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 2.0)
     except (TypeError, ValueError):
-        min_rvol = 1.5
+        min_rvol = 2.0
 
     if cfg.get("ai_watch_seed_momentum", True):
         try:
@@ -1671,10 +1671,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         except Exception:
             pass
 
-    # Momentum Stocks panel → AI Watch without flag / uptrend / rvol gates.
-    # Operator: "suggestions from Momentum that are hot/trending on the desk"
-    # should land on the book even when strict inclusion would reject them.
-    # Only min_price (and max_price) still apply so we can zone and size.
+    # Momentum Stocks panel → AI Watch with a soft path (no score/indicators),
+    # but RVOL still applies when known — capital-quality heat, not a free pass.
+    # min_price / max_price still apply so we can zone and size.
     if cfg.get("ai_watch_seed_momentum_open", True):
         try:
             n = int(cfg.get("ai_watch_seed_momentum_open_n", 10) or 10)
@@ -1710,6 +1709,13 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     continue
                 if not _price_under_cap(r.get("price"), max_price):
                     continue
+                # Known-thin tape never seeds: same floor as passes_inclusion.
+                try:
+                    rv = float(r.get("rvol")) if r.get("rvol") is not None else None
+                except (TypeError, ValueError):
+                    rv = None
+                if rv is not None and min_rvol > 0 and rv < min_rvol:
+                    continue
                 try:
                     px = float(r.get("price")) if r.get("price") is not None else None
                 except (TypeError, ValueError):
@@ -1740,8 +1746,10 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     "pct_change": pct,
                     "rvol": r.get("rvol"),
                     "dollar_volume": (dvol * px) if (dvol and px) else None,
+                    # Soft seed: skip score/indicators only — not RVOL.
                     "criteria": ["mom_open", "mom_trending"] if on_tr else ["mom_open"],
-                    "bypass_inclusion": True,
+                    "bypass_inclusion": False,
+                    "mom_open_soft": True,
                 }))
             open_scored.sort(key=lambda t: t[0], reverse=True)
             added = 0
@@ -2177,13 +2185,15 @@ def passes_inclusion(
         if price_f < min_price:
             return False, met, "below_min_price"
 
-    # Open Momentum desk suggestions: skip uptrend / rvol / score / indicators.
-    # Still require a usable price above (for zone + sizing).
-    if bool(row.get("bypass_inclusion")) or "mom_open" in met:
-        if "mom_open" not in met:
-            met.append("mom_open")
-        met = list(dict.fromkeys(met))
-        return True, met, ""
+    # Soft Momentum-open seed: skip score/indicators only. RVOL (when known)
+    # and uptrend still apply — thin tape must not occupy the book.
+    mom_soft = (
+        bool(row.get("mom_open_soft"))
+        or "mom_open" in met
+        or bool(row.get("bypass_inclusion"))  # legacy flag: no longer free pass
+    )
+    if mom_soft and "mom_open" not in met:
+        met.append("mom_open")
 
     min_dv = float(cfg.get("ai_min_dollar_volume", 0.0) or 0.0)
     if min_dv > 0:
@@ -2216,14 +2226,20 @@ def passes_inclusion(
     # Same rule apply_look_highlights already uses: "unknown rvol neither
     # passes nor blocks." Absence of evidence is not evidence of absence; the
     # remaining conjunctive gates still have to pass.
-    if source in ("momentum", "trending"):
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 1.5) or 0.0)
+    if source in ("momentum", "trending") or mom_soft:
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0)
         if min_rvol > 0:
             rvol_f = _f_or_none(row.get("rvol"))
             if rvol_f is not None:
                 if rvol_f < min_rvol:
                     return False, met, "thin_rvol"
                 met.append("rvol")
+
+    # Soft mom_open path: after price + rvol (+ uptrend above), admit without
+    # score / EXT / indicator gates.
+    if mom_soft:
+        met = list(dict.fromkeys(met))
+        return True, met, ""
 
     # Trending admission also requires the raw Stocktwits score cleared the
     # bar (not just big_move/rvol substituting for it — "score" in criteria

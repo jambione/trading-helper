@@ -279,8 +279,8 @@ DEFAULT_CONFIG = {
     # Seed entry-watch from live desk heat (structure poller still defines levels).
     "ai_watch_seed_momentum":           True,
     "ai_watch_seed_momentum_n":           12,
-    # All Momentum Stocks panel names → AI Watch without uptrend/rvol/score
-    # gates (min_price only). Prefers names also on Stocktwits trending.
+    # Momentum Stocks panel → AI Watch with a soft path (no score/indicators).
+    # RVOL + uptrend still apply when known. Prefers Stocktwits overlap.
     "ai_watch_seed_momentum_open":      True,
     "ai_watch_seed_momentum_open_n":      10,
     "ai_watch_seed_trending":           True,
@@ -306,7 +306,9 @@ DEFAULT_CONFIG = {
     # Restrictive AI Watch filters
     "ai_watch_trending_min_score":     10.0,  # Stocktwits score must be > this
     "ai_watch_min_pct_change":         50.0,  # day chg % above this also qualifies
-    "ai_watch_min_rvol":                1.0,  # relative volume ratio; 1.0 = 100% of avg
+    # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
+    # this refuses AI Watch admission; unknown abstains (provisional).
+    "ai_watch_min_rvol":                2.0,
     # Trending admission requires look_reason == "EXT" (apply_look_highlights in
     # stocktwits_trending.py). That function defaults to tagging only the top 2
     # names panel-wide — fine as a UI spotlight, too narrow to be an admission

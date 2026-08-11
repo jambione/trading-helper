@@ -1704,7 +1704,7 @@ def test_inclusion_requires_rvol_for_momentum_and_trending():
     volume has to back it up, for both sources. Research rows are exempt."""
     import ai_entry_watch as ew
 
-    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=1.5)
+    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=2.0)
 
     thin = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0, "rvol": 1.2,
             "source": "trending", "criteria": ["score"], "look_reason": "EXT"}
@@ -1715,6 +1715,19 @@ def test_inclusion_requires_rvol_for_momentum_and_trending():
               "source": "momentum"}
     ok, met, why = ew.passes_inclusion(strong, cfg, indicators={})
     assert ok is True and "rvol" in met
+
+    # Soft mom_open seed used to skip RVOL entirely — thin Mom names on the
+    # book (ACHR 1.72x, CMG 0.66x). Known-thin still refuses.
+    mom_soft = {
+        "symbol": "BBB", "price": 10.0, "pct_change": 5.0, "rvol": 1.76,
+        "source": "momentum", "criteria": ["mom_open"], "mom_open_soft": True,
+    }
+    ok, _m, why = ew.passes_inclusion(mom_soft, cfg, indicators={})
+    assert ok is False and why == "thin_rvol"
+
+    mom_ok = dict(mom_soft, rvol=2.5)
+    ok, met, why = ew.passes_inclusion(mom_ok, cfg, indicators={})
+    assert ok is True and "rvol" in met and "mom_open" in met
 
     # Research-sourced rows carry no rvol at all — must not be gated on it.
     research = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0,
