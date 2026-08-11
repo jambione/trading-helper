@@ -1184,6 +1184,12 @@ def place_scaled_entry(
         # 55% and rising" average into one number and the heat floor stays a guess.
         "entry_exhaustion": decision.get("entry_exhaustion"),
         "entry_exhaustion_state": decision.get("entry_exhaustion_state"),
+        # Which desk opened this. ai_entry_watch runs the exhaustion gate;
+        # ai_suggest does not (it has its own pre-entry / reward-risk stack)
+        # and stamps no %R. Both land in one outcomes.jsonl, where they were
+        # indistinguishable — so a slice by entry_exhaustion_state silently
+        # mixed gated and ungated rows. Named at the source instead.
+        "entry_path": decision.get("entry_path") or "unknown",
         # Overbought-only entries: arm means we already tagged the band, so the
         # left_overbought exit is armed from the first position tick. Without
         # this latch a name that rolls under the band before the first poll
@@ -1837,10 +1843,17 @@ def _adopt_unmanaged(
             "duel_source": (ok or {}).get("duel_source"),
             "adopted": True,
             "adopted_ts": now,
-            # Desk entries are overbought-only; orphans recovered from entry_ok
-            # keep the latch so left_overbought can fire immediately.
+            "entry_path": "adopted",
+            # Keep the latch so left_overbought can fire immediately: an orphan
+            # is a position the desk did not open and has no continuation
+            # thesis for, so the fade out of overbought is a real exit for it.
+            # evaluate_positions re-enables that exit for adopted rows even
+            # when the edge mode disables it globally.
             "exh_was_overbought": True,
-            "entry_exhaustion_state": "overbought",
+            # NOT "overbought" — no %R was ever read here. Asserting a reading
+            # we never took poisons every later slice by entry state, and the
+            # 2026-08-11 analysis tripped over exactly this row.
+            "entry_exhaustion_state": "adopted",
             "mae_r": None,
             "mfe_r": None,
             "sell_signal_stop_done": False,
@@ -2008,6 +2021,9 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         "zone_kind": pos.get("zone_kind"),
         "entry_exhaustion": pos.get("entry_exhaustion"),
         "entry_exhaustion_state": pos.get("entry_exhaustion_state"),
+        # watch | suggest | adopted — see place_scaled_entry. Without it the
+        # ledger cannot say which rows the exhaustion gate ever governed.
+        "entry_path": pos.get("entry_path") or "unknown",
         "exit_exhaustion": pos.get("last_exhaustion"),
         "mae_r": pos.get("mae_r"),
         "mfe_r": pos.get("mfe_r"),
@@ -2481,7 +2497,18 @@ def manage_open_positions(
                          "exh_was_overbought": bool(pos.get("exh_was_overbought"))}
                 try:
                     import ai_entry_watch as _ew2
-                    hit, why = _ew2.exhaustion_exit_now(probe, _cfg_all())
+                    cfg_exh = _cfg_all()
+                    if pos.get("adopted"):
+                        # An orphan has no continuation thesis — the desk did
+                        # not open it and cannot reason about riding it through
+                        # overbought. Under continuation / hybrid the global
+                        # flag turns left_overbought off, which would leave
+                        # adoption's exh_was_overbought latch arming an exit
+                        # that can never fire, and the position running on the
+                        # broker stop alone (dead_trade cannot catch it once
+                        # MFE clears ai_dead_trade_mfe_r). Keep the flatten.
+                        cfg_exh = {**cfg_exh, "ai_exit_left_overbought": True}
+                    hit, why = _ew2.exhaustion_exit_now(probe, cfg_exh)
                 except Exception:
                     hit, why = False, "error"
                 if pos.get("last_exhaustion") != _num(sig.get("pctr")):

@@ -59,8 +59,11 @@ def test_pinned_values_match_the_writeup():
     assert want["day_n_outcomes"] == 14
     assert "none" not in want["day_states"]
     assert want["day_live_usd"] == pytest.approx(-117.60, abs=0.01)
-    assert want["day_hybrid_usd"] == pytest.approx(92.96, abs=0.01)
-    assert want["day_swing_usd"] == pytest.approx(210.56, abs=0.01)
+    # Adopted orphans keep left_overbought under the hybrid, so they are not
+    # re-priced by the continuation exit — see _adopt_unmanaged and the
+    # adopted override in evaluate_positions.
+    assert want["day_hybrid_usd"] == pytest.approx(109.34, abs=0.01)
+    assert want["day_swing_usd"] == pytest.approx(226.94, abs=0.01)
 
     # The overbought core the heating tail is measured against.
     assert want["core_n"] == 148

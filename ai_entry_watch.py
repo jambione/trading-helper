@@ -5741,6 +5741,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # _decision_for_place, which sees the structure but not the record.
         place_decision["entry_exhaustion"] = exhaustion_pct(rec)
         place_decision["entry_exhaustion_state"] = exhaustion_state(rec, cfg)
+        # This desk runs the exhaustion gate; ai_suggest's does not. Name the
+        # path on the row so the two never average together again.
+        place_decision["entry_path"] = "watch"
         if isinstance(place_decision, dict):
             place_decision = dict(place_decision)
             place_decision["source"] = rec.get("duel_source") or rec.get("source")

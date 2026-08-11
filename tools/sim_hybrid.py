@@ -239,8 +239,13 @@ def section_daybook(
       heating entry            -> never taken (overbought-only arm gate)
       overbought + LOB close   -> taken, re-priced by the continuation exit
       overbought + other close -> unchanged (LOB was not what closed it)
-      no %R reading            -> adopted orphan; still adopted, but the
-                                  continuation exit re-prices it, usually worse
+      adopted orphan           -> unchanged. evaluate_positions keeps
+                                  left_overbought enabled for adopted rows even
+                                  when the edge mode turns it off globally, so
+                                  the hybrid does not re-price them.
+
+    Historical rows label adoption as state "overbought" with no %R value;
+    rows written after that fix say "adopted" outright. Both are recognised.
     """
     # Pair LOB outcomes with their counterfactual rows, in section_exit order.
     lob_rows = [r for r in bk_rows]
@@ -269,15 +274,16 @@ def section_daybook(
 
         R = float(R)
         pl = float(pl)
-        key = str(state or "none")
-        if state == "overbought" and ex is None:
-            key = "adopted (no %R)"
+        adopted = state == "adopted" or (state == "overbought" and ex is None)
+        key = "adopted (no %R)" if adopted else str(state or "none")
         live_by_state[key].append((R, pl))
         live_total += pl
 
         dpr = (pl / R) if abs(R) > 1e-9 else None
         if state == "heating":
             taken, h_usd, why = False, 0.0, "skipped: heating"
+        elif adopted:
+            taken, h_usd, why = True, pl, "unchanged: adopted keeps LOB"
         elif row is not None and dpr is not None:
             taken, h_usd = True, dpr * float(row["cont_r"])
             why = f"re-priced: {row['cont_exit']}"

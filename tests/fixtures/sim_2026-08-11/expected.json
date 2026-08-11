@@ -13,7 +13,7 @@
   "core_mean": 1.6925100843182252,
   "core_median": 0.42168674698795344,
   "core_n": 148,
-  "day_hybrid_usd": 92.9577923524047,
+  "day_hybrid_usd": 109.33779235240434,
   "day_live_usd": -117.59996300000077,
   "day_n_outcomes": 14,
   "day_states": {
@@ -21,7 +21,7 @@
     "heating": 6,
     "overbought": 5
   },
-  "day_swing_usd": 210.55775535240548,
+  "day_swing_usd": 226.9377553524051,
   "exit_n_scored": 8,
   "exit_sum_cont_r": 1.0596547385202428,
   "exit_sum_delta_r": 1.8142508554317887,

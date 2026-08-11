@@ -2567,6 +2567,10 @@ def _place_qualifying_entries(
                 decision = dict(decision)
                 decision["source"] = src_place
                 decision["duel_source"] = src_place
+                # This path never runs the exhaustion gate and stamps no %R —
+                # ai_watch_require_exhaustion_data does not reach it. Say so on
+                # the row rather than leaving it to be inferred from a null.
+                decision["entry_path"] = "suggest"
             result = cp.place_scaled_entry(
                 sym, decision, equity, risk_pct=risk_pct, current_ask=ask2,
                 duel_source=str(src_place),
