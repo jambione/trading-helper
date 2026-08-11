@@ -1,0 +1,67 @@
+"""The 2026-08-11 edge-mode numbers must reproduce from the frozen fixture.
+
+The write-up that recommended the hybrid edge mode is only as good as its
+inputs, and those inputs (ai_reports/*.jsonl) are gitignored append-only logs
+on the trading host — rotate them and the analysis becomes unfalsifiable.
+tools/sim_repro.py pins the load-bearing numbers against a committed slice;
+this drags that check into the normal test run so drift surfaces here.
+"""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent
+_FIXTURE = _ROOT / "tests" / "fixtures" / "sim_2026-08-11"
+
+
+@pytest.mark.skipif(
+    not (_FIXTURE / "expected.json").exists(),
+    reason="sim fixture not present",
+)
+def test_sim_numbers_reproduce_from_fixture():
+    p = subprocess.run(
+        [sys.executable, str(_ROOT / "tools" / "sim_repro.py")],
+        capture_output=True, text=True, cwd=_ROOT, check=False,
+    )
+    assert p.returncode == 0, f"sim numbers drifted:\n{p.stdout}\n{p.stderr}"
+
+
+def test_pinned_values_match_the_writeup():
+    """Guard the specific figures quoted in the edge-mode write-up.
+
+    Pinned separately from sim_repro's own compare so that re-pinning with
+    --update cannot silently rewrite a number the write-up still claims.
+    """
+    want = json.loads((_FIXTURE / "expected.json").read_text())
+
+    # Hybrid arm gate is exactly exhaustion_scalp.
+    assert want["hybrid_arms"] == 148
+    assert want["hybrid_scalp_mismatch"] == 0
+    assert want["in_zone_n"] == 1076
+
+    # Only half the left_overbought trades were overbought at entry.
+    assert want["exit_n_scored"] == 8
+    assert want["book_hybrid_n"] == 4
+    # Strict and loose admission agree — that agreement is the error bar.
+    assert want["book_hybrid_r"] == pytest.approx(want["book_hybrid_loose_r"])
+    assert want["book_hybrid_r"] == pytest.approx(1.783, abs=5e-3)
+
+    # Books over those trades.
+    assert want["book_live_usd"] == pytest.approx(-56.15, abs=0.01)
+    assert want["book_cont_usd"] == pytest.approx(70.73, abs=0.01)
+    assert want["book_hybrid_usd"] == pytest.approx(127.49, abs=0.01)
+
+    # Whole session, day-filtered. The unfiltered read mixed in other
+    # sessions and invented a cohort of blind entries; 08-11 has none.
+    assert want["day_n_outcomes"] == 14
+    assert "none" not in want["day_states"]
+    assert want["day_live_usd"] == pytest.approx(-117.60, abs=0.01)
+    assert want["day_hybrid_usd"] == pytest.approx(92.96, abs=0.01)
+    assert want["day_swing_usd"] == pytest.approx(210.56, abs=0.01)
+
+    # The overbought core the heating tail is measured against.
+    assert want["core_n"] == 148
+    assert want["core_mean"] == pytest.approx(1.693, abs=5e-3)
