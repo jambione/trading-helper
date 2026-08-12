@@ -327,6 +327,19 @@ class _StubBroker:
         })
         return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
 
+    def free_sell_capacity(self, ticker, settle_sec=0.0):
+        self.cancel_calls.append(f"free:{ticker}")
+        return {"ok": True, "canceled": 1}
+
+    def place_stop_sell(self, ticker, stop_price, qty=None):
+        oid = f"stop_{self._next_id}"
+        self._next_id += 1
+        self.calls.append({
+            "ticker": ticker, "qty": qty, "stop_price": stop_price,
+            "target_price": None, "kind": "stop_sell",
+        })
+        return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
+
 
 def test_place_scaled_entry_splits_into_two_tranches_by_scale_out_pct(
         tmp_path, monkeypatch):
@@ -844,12 +857,28 @@ class _StubBrokerManage:
             "qty": qty,
         }
 
+    def free_sell_capacity(self, ticker, settle_sec=0.0):
+        self.canceled.append(f"free:{ticker}")
+        return {"ok": True, "canceled": 1}
+
+    def place_stop_sell(self, ticker, stop_price, qty=None):
+        self.replace_calls.append({
+            "ticker": ticker, "old": None,
+            "trail_percent": None, "stop_price": stop_price, "qty": qty,
+        })
+        return {
+            "ok": True, "order_id": "stop_rearm_1", "status": "accepted",
+            "qty": qty, "stop": stop_price,
+        }
+
 
 def _seed_state(tmp_path, monkeypatch, **fields):
     _use_tmp_state(tmp_path, monkeypatch)
     base = {
         "qty_a": 100, "qty_b": 150, "total_qty": 250,
         "entry_price": 40.5,
+        "risk_per_share": 2.5,  # frozen entry−stop so raised stops keep R
+        "runner_trail_r": 1.0,
         "tranche_a_order_id": "order_a",
         "tranche_a_target_order_id": "target_a",
         "tranche_b_stop_order_id": "stop_b",

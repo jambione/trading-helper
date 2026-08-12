@@ -1615,6 +1615,20 @@ def _risk_basis(pos: dict[str, Any]) -> float:
     return max(0.0, entry - stop)
 
 
+def _freeze_risk_per_share(pos: dict[str, Any]) -> None:
+    """Stamp risk_per_share before any stop raise so R stays well-defined.
+
+    Raising the stop to breakeven/trail without this zeros entry−stop and
+    freezes peak/MFE updates (runner trail then never ratchets).
+    """
+    if _num(pos.get("risk_per_share")):
+        return
+    entry = _num(pos.get("entry_price"))
+    stop = _num(pos.get("stop_price"))
+    if entry and stop and entry > stop:
+        pos["risk_per_share"] = round(entry - stop, 6)
+
+
 def _update_excursions(pos: dict[str, Any], price: float | None) -> None:
     """Track worst/best R and the high-water price. Only recorded here."""
     entry = _num(pos.get("entry_price")) or 0.0
@@ -2381,9 +2395,10 @@ def manage_open_positions(
         # whether logging happens to be on.
         _update_excursions(pos, _num(pos.get("last_seen_price")))
 
-        # Dual: after parent fill, rest partial T1 limit for qty_a (never while
-        # the buy is still working — wash). Software market scale if last
-        # already cleared T1 before the limit was placed or filled.
+        # Dual profit bank: free shares held by the full-size stop, then either
+        # market-scale at/through T1 or rest a partial T1 + stop on the runner.
+        # Without free_sell_capacity, Alpaca rejects partials with available:0
+        # (held_for_orders = full qty) and winners never bank.
         if (
             pos.get("entry_confirmed")
             and not pos.get("tranche_a_filled")
@@ -2393,83 +2408,146 @@ def manage_open_positions(
             t1 = _num(pos.get("target_1"))
             last = _num(pos.get("last_seen_price"))
             qty_a = int(pos.get("qty_a") or 0)
-            # Attach resting partial T1 once.
+            qty_b = int(pos.get("qty_b") or 0)
+            stop_px = _num(pos.get("stop_price"))
+            through_t1 = (
+                t1 is not None and last is not None and last + 1e-9 >= t1
+            )
+
+            def _rearm_stop(qty_stop: int, level: float | None) -> dict:
+                if level is None or level <= 0 or qty_stop < 1:
+                    return {"ok": False, "error": "bad_stop"}
+                if last is not None and level >= last:
+                    # Never place a stop that would trigger immediately.
+                    return {"ok": False, "error": "stop_at_or_above_market"}
+                return alpaca_trader.place_stop_sell(
+                    ticker, level, qty=qty_stop) or {}
+
+            # Through T1 (or attach-pending market path): free → sell A → stop B.
             if (
+                qty_a > 0
+                and t1
+                and through_t1
+                and (
+                    pos.get("t1_attach_pending")
+                    or not pos.get("tranche_a_target_order_id")
+                )
+            ):
+                alpaca_trader.free_sell_capacity(ticker)
+                sold = alpaca_trader.sell_qty_market(ticker, qty_a) or {}
+                if sold.get("ok"):
+                    pos["tranche_a_filled"] = True
+                    pos["t1_attach_pending"] = False
+                    pos["tranche_a_target_order_id"] = sold.get("order_id")
+                    _freeze_risk_per_share(pos)
+                    want = _runner_stop_level(pos)
+                    if want is None:
+                        want = max(
+                            x for x in (
+                                _num(pos.get("entry_price")), stop_px
+                            ) if x is not None
+                        ) if (_num(pos.get("entry_price")) or stop_px) else stop_px
+                    rear = _rearm_stop(qty_b, want)
+                    if rear.get("ok"):
+                        pos["tranche_b_stop_order_id"] = rear.get("order_id")
+                        pos["tranche_a_stop_order_id"] = rear.get("order_id")
+                        pos["runner_stop_price"] = want
+                        pos["stop_price"] = want
+                        pos["breakeven_done"] = True
+                    log_event(
+                        "t1_market_scale", symbol=ticker,
+                        qty=qty_a, target=t1, last=last,
+                        runner_stop=want,
+                        stop_ok=bool(rear.get("ok")),
+                    )
+                    events.append({
+                        "ticker": ticker, "event": "t1_market_scale",
+                        "qty": qty_a, "target": t1, "last": last,
+                        "runner_stop": want,
+                    })
+                    exit_why[ticker] = "t1_market_scale"
+                    changed = True
+                else:
+                    # Re-arm original stop so we are never naked after free.
+                    if stop_px:
+                        rear = _rearm_stop(qty_a + qty_b, stop_px)
+                        if rear.get("ok"):
+                            pos["tranche_a_stop_order_id"] = rear.get("order_id")
+                            pos["tranche_b_stop_order_id"] = rear.get("order_id")
+                    log_event(
+                        "t1_market_scale_failed", symbol=ticker,
+                        error=str(sold.get("error") or sold.get("status"))[:160],
+                    )
+
+            # Not yet at T1: free → partial limit on A + stop on B only.
+            elif (
                 pos.get("t1_attach_pending")
                 and not pos.get("tranche_a_target_order_id")
                 and t1
                 and qty_a > 0
+                and not through_t1
             ):
-                if last is not None and last + 1e-9 >= t1:
-                    # Already through T1 — bank with market, skip limit.
-                    sold = alpaca_trader.sell_qty_market(ticker, qty_a) or {}
-                    if sold.get("ok"):
-                        pos["tranche_a_filled"] = True
-                        pos["t1_attach_pending"] = False
-                        pos["tranche_a_target_order_id"] = sold.get("order_id")
-                        log_event(
-                            "t1_market_scale", symbol=ticker,
-                            qty=qty_a, target=t1, last=last,
-                        )
-                        events.append({
-                            "ticker": ticker, "event": "t1_market_scale",
-                            "qty": qty_a, "target": t1, "last": last,
-                        })
-                        exit_why[ticker] = "t1_market_scale"
-                        changed = True
-                    else:
-                        log_event(
-                            "t1_market_scale_failed", symbol=ticker,
-                            error=str(sold.get("error") or sold.get("status"))[:160],
-                        )
+                alpaca_trader.free_sell_capacity(ticker)
+                att = alpaca_trader.place_limit_sell(ticker, qty_a, t1) or {}
+                if att.get("ok") and att.get("order_id"):
+                    pos["tranche_a_target_order_id"] = att["order_id"]
+                    pos["t1_attach_pending"] = False
+                    # Runner stop only (qty_b). A is protected by software:
+                    # if last <= stop, full close_out below.
+                    rear = _rearm_stop(qty_b, stop_px)
+                    if rear.get("ok"):
+                        pos["tranche_b_stop_order_id"] = rear.get("order_id")
+                        pos["tranche_a_stop_order_id"] = rear.get("order_id")
+                    log_event(
+                        "t1_limit_attached", symbol=ticker,
+                        qty=att.get("qty", qty_a), target=t1,
+                        order_id=att.get("order_id"),
+                        runner_stop_ok=bool(rear.get("ok")),
+                    )
+                    events.append({
+                        "ticker": ticker, "event": "t1_limit_attached",
+                        "qty": att.get("qty", qty_a), "target": t1,
+                        "order_id": att.get("order_id"),
+                    })
+                    exit_why[ticker] = "t1_limit_attached"
+                    changed = True
                 else:
-                    att = alpaca_trader.place_limit_sell(
-                        ticker, qty_a, t1) or {}
-                    if att.get("ok") and att.get("order_id"):
-                        pos["tranche_a_target_order_id"] = att["order_id"]
-                        pos["t1_attach_pending"] = False
-                        log_event(
-                            "t1_limit_attached", symbol=ticker,
-                            qty=att.get("qty", qty_a), target=t1,
-                            order_id=att.get("order_id"),
-                        )
-                        events.append({
-                            "ticker": ticker, "event": "t1_limit_attached",
-                            "qty": att.get("qty", qty_a), "target": t1,
-                            "order_id": att.get("order_id"),
-                        })
-                        exit_why[ticker] = "t1_limit_attached"
-                        changed = True
-                    else:
-                        log_event(
-                            "t1_limit_attach_failed", symbol=ticker,
-                            error=str(att.get("error") or att.get("status"))[:160],
-                        )
+                    if stop_px:
+                        rear = _rearm_stop(qty_a + qty_b, stop_px)
+                        if rear.get("ok"):
+                            pos["tranche_a_stop_order_id"] = rear.get("order_id")
+                            pos["tranche_b_stop_order_id"] = rear.get("order_id")
+                    log_event(
+                        "t1_limit_attach_failed", symbol=ticker,
+                        error=str(att.get("error") or att.get("status"))[:160],
+                    )
 
-            # Software T1 only when there is no working partial limit (attach
-            # failed / never armed). Do not cancel a resting T1 and market-sell
-            # just because last printed through — that races the broker leg.
+            # Soft protection for the A leg while only B has a broker stop:
+            # if price is at/under the planned stop, flatten everything.
             if (
                 not pos.get("tranche_a_filled")
-                and not pos.get("tranche_a_target_order_id")
-                and not pos.get("t1_attach_pending")
-                and t1
+                and pos.get("tranche_a_target_order_id")
+                and stop_px
                 and last is not None
-                and last + 1e-9 >= t1
-                and qty_a > 0
+                and last <= stop_px
             ):
-                sold = alpaca_trader.sell_qty_market(ticker, qty_a) or {}
-                if sold.get("ok"):
-                    pos["tranche_a_filled"] = True
-                    log_event(
-                        "t1_software_scale", symbol=ticker,
-                        qty=qty_a, target=t1, last=last,
-                    )
-                    exit_why[ticker] = "t1_software_scale"
-                    changed = True
+                alpaca_trader.free_sell_capacity(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = "stop_software_full"
+                exit_why[ticker] = "stop_software_full"
+                events.append({
+                    "ticker": ticker, "event": "stop_software_full",
+                    "last": last, "stop": stop_px,
+                })
+                log_event("stop_software_full", symbol=ticker,
+                          last=last, stop=stop_px)
+                changed = True
+                continue
 
         # Tranche A fill -> runner stop to max(breakeven, peak-nR).
-        # Key off the take-profit leg (or software scale flag above).
+        # Key off the take-profit leg (or market scale flag above).
         target_oid = pos.get("tranche_a_target_order_id")
         if not pos.get("breakeven_done") and (
             pos.get("tranche_a_filled")
@@ -2481,18 +2559,15 @@ def manage_open_positions(
                 if order and str(order.get("status") or "").lower() == "filled":
                     filled = True
                     pos["tranche_a_filled"] = True
-            if filled:
+            if filled and not pos.get("breakeven_done"):
                 if pos.get("qty_b", 0) > 0:
+                    _freeze_risk_per_share(pos)
                     want = _runner_stop_level(pos)
                     last = _num(pos.get("last_seen_price"))
-                    # Prefer the live parent stop id when dual shares one stop.
                     stop_oid = (
                         pos.get("tranche_b_stop_order_id")
                         or pos.get("tranche_a_stop_order_id")
                     )
-                    # A stop only works below the market. If price has already
-                    # collapsed back through entry between the target fill and
-                    # this tick, leave the original stop to do its job.
                     if want is None or (last is not None and want >= last):
                         events.append({
                             "ticker": ticker, "event": "runner_stop_skipped",
@@ -2501,14 +2576,20 @@ def manage_open_positions(
                         log_event("runner_stop_skipped", symbol=ticker,
                                   want=want, last=last)
                     else:
-                        out = alpaca_trader.replace_stop(
-                            ticker, stop_oid,
-                            stop_price=want,
+                        # Free any stale full stop, then arm runner size only.
+                        alpaca_trader.free_sell_capacity(ticker)
+                        out = alpaca_trader.place_stop_sell(
+                            ticker, want, qty=int(pos.get("qty_b") or 0),
                         ) or {}
+                        if not out.get("ok"):
+                            out = alpaca_trader.replace_stop(
+                                ticker, stop_oid, stop_price=want,
+                            ) or {}
                         if out.get("ok"):
                             pos["tranche_b_stop_order_id"] = out.get("order_id")
                             pos["tranche_a_stop_order_id"] = out.get("order_id")
                             pos["runner_stop_price"] = want
+                            pos["stop_price"] = want
                             events.append({
                                 "ticker": ticker, "event": "scaled_out",
                                 "target_1": pos.get("target_1"),
@@ -2523,8 +2604,6 @@ def manage_open_positions(
                             )
                             exit_why[ticker] = "scaled_out"
                         else:
-                            # Loud: the runner is now unprotected by anything
-                            # except the original entry stop.
                             log_event(
                                 "runner_stop_failed", symbol=ticker,
                                 want=want, error=str(out.get("error"))[:160],
@@ -2563,9 +2642,11 @@ def manage_open_positions(
                     stop_price=want,
                 ) or {}
                 if out.get("ok"):
+                    _freeze_risk_per_share(pos)
                     pos["tranche_b_stop_order_id"] = out.get("order_id")
                     pos["tranche_a_stop_order_id"] = out.get("order_id")
                     pos["runner_stop_price"] = want
+                    pos["stop_price"] = want
                     changed = True
                     events.append({
                         "ticker": ticker, "event": "runner_stop_raised",

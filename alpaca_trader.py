@@ -1496,6 +1496,87 @@ def cancel_order_id(order_id: str | None) -> bool:
         return False
 
 
+def free_sell_capacity(ticker: str, settle_sec: float = 0.5) -> dict:
+    """Cancel open sells for *ticker* so shares leave held_for_orders.
+
+    A full-size protective stop holds 100% of the position. Alpaca then
+    rejects any partial T1 (limit or market) with available:0 / 40310000.
+    Free capacity, wait briefly for the cancel to settle, then place the
+    partial exit and re-arm a stop on what remains.
+    """
+    if not _can_mutate():
+        return {"ok": False, "canceled": 0, "error": "trader off"}
+    ticker = ticker.upper()
+    co = cancel_open_orders(ticker)
+    canceled = int(co.get("canceled") or 0) if isinstance(co, dict) else 0
+    try:
+        settle = max(0.0, float(settle_sec or 0.0))
+    except (TypeError, ValueError):
+        settle = 0.5
+    # Only wait when something was canceled — empty free is free.
+    if settle > 0 and canceled > 0:
+        time.sleep(settle)
+    return {"ok": bool(co.get("ok", True)) if isinstance(co, dict) else True,
+            "canceled": canceled}
+
+
+def place_stop_sell(
+    ticker: str,
+    stop_price: float,
+    qty: float | None = None,
+) -> dict:
+    """Resting protective stop SELL for *qty* shares (default: full open qty)."""
+    if not _can_mutate():
+        return {"ok": False, "order_id": None, "status": None, "error": "trader off"}
+    ticker = ticker.upper()
+    try:
+        sl = round(float(stop_price), 2)
+    except (TypeError, ValueError):
+        return {"ok": False, "order_id": None, "status": "bad_params"}
+    if sl <= 0:
+        return {"ok": False, "order_id": None, "status": "bad_params"}
+    try:
+        from alpaca.trading.requests import StopOrderRequest, StopLimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        pos = _client.get_open_position(ticker)
+        held = float(pos.qty)
+        if held < 1:
+            return {"ok": False, "order_id": None, "status": "no_qty"}
+        if qty is None:
+            sell_qty = int(held)
+        else:
+            sell_qty = int(min(float(qty), held))
+        if sell_qty < 1:
+            return {"ok": False, "order_id": None, "status": "no_qty"}
+        if _stop_use_market():
+            order = _client.submit_order(
+                StopOrderRequest(
+                    symbol=ticker, qty=sell_qty,
+                    side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                    stop_price=sl,
+                )
+            )
+        else:
+            slip = max(0.0, _stop_limit_slip_pct()) / 100.0
+            lim = round(sl * (1.0 - slip), 2)
+            order = _client.submit_order(
+                StopLimitOrderRequest(
+                    symbol=ticker, qty=sell_qty,
+                    side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                    stop_price=sl, limit_price=lim,
+                )
+            )
+        print(f"  [TRADER] 🛑 stop SELL  {ticker}  qty={sell_qty}  "
+              f"SL=${sl:.2f}  id={order.id}")
+        return {
+            "ok": True, "order_id": str(order.id),
+            "status": str(order.status), "qty": sell_qty, "stop": sl,
+        }
+    except Exception as e:
+        print(f"  [TRADER] ❌  stop SELL {ticker} failed: {e}")
+        return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
+
+
 def place_limit_sell(
     ticker: str,
     qty: float,
