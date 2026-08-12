@@ -1485,6 +1485,132 @@ def buy_bracket_exact(ticker: str, qty: float, stop_price: float,
         }
 
 
+def cancel_order_id(order_id: str | None) -> bool:
+    """Cancel one order by id. True if cancel submitted or already gone."""
+    if not _can_mutate() or not order_id:
+        return False
+    try:
+        _client.cancel_order_by_id(str(order_id))
+        return True
+    except Exception:
+        return False
+
+
+def place_limit_sell(
+    ticker: str,
+    qty: float,
+    limit_price: float,
+    *,
+    time_in_force: str = "gtc",
+) -> dict:
+    """Resting limit SELL for a partial (or full) long — e.g. dual-tranche T1.
+
+    Call only after the parent BUY has filled (or there is no resting buy).
+    Submitting this while a buy limit is open is an Alpaca wash-trade reject.
+    """
+    if not _can_mutate():
+        return {"ok": False, "order_id": None, "status": None, "error": "trader off"}
+    ticker = ticker.upper()
+    try:
+        qty = float(qty)
+        lim = round(float(limit_price), 2)
+    except (TypeError, ValueError):
+        return {"ok": False, "order_id": None, "status": "bad_params",
+                "error": "qty/limit"}
+    if qty < 1 or lim <= 0:
+        return {"ok": False, "order_id": None, "status": "bad_params",
+                "error": "qty/limit"}
+    try:
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        tif = TimeInForce.DAY if str(time_in_force).lower() == "day" else TimeInForce.GTC
+        # Never sell more than we hold.
+        try:
+            held = float(_client.get_open_position(ticker).qty)
+        except Exception:
+            held = 0.0
+        if held < 1:
+            return {"ok": False, "order_id": None, "status": "no_qty",
+                    "error": "no open position"}
+        sell_qty = int(min(qty, held))
+        if sell_qty < 1:
+            return {"ok": False, "order_id": None, "status": "no_qty",
+                    "error": "qty<1 after clamp"}
+        order = _client.submit_order(
+            LimitOrderRequest(
+                symbol=ticker,
+                qty=sell_qty,
+                side=OrderSide.SELL,
+                time_in_force=tif,
+                limit_price=lim,
+            )
+        )
+        print(f"  [TRADER] 🎯 limit SELL  {ticker}  qty={sell_qty}  "
+              f"LMT=${lim:.2f}  id={order.id}")
+        _log_action(
+            "SELL_LIMIT", ticker, lim, 0.0, 0.0,
+            qty=sell_qty, order_id=str(order.id),
+            order_status=str(order.status),
+            note=f"partial_t1 lmt={lim}",
+        )
+        return {
+            "ok": True, "order_id": str(order.id),
+            "status": str(order.status), "qty": sell_qty, "limit": lim,
+        }
+    except Exception as e:
+        print(f"  [TRADER] ❌  limit SELL {ticker} failed: {e}")
+        _log_action("SELL_LIMIT_ERROR", ticker, float(limit_price or 0), 0.0, 0.0,
+                    error=str(e))
+        return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
+
+
+def sell_qty_market(ticker: str, qty: float) -> dict:
+    """Market SELL an exact share count (partial scale-out)."""
+    if not _can_mutate():
+        return {"ok": False, "order_id": None, "status": None, "error": "trader off"}
+    ticker = ticker.upper()
+    try:
+        qty = float(qty)
+    except (TypeError, ValueError):
+        return {"ok": False, "order_id": None, "status": "bad_params"}
+    if qty < 1:
+        return {"ok": False, "order_id": None, "status": "bad_params"}
+    try:
+        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        try:
+            held = float(_client.get_open_position(ticker).qty)
+        except Exception:
+            held = 0.0
+        if held < 1:
+            return {"ok": False, "order_id": None, "status": "no_qty"}
+        sell_qty = int(min(qty, held))
+        if sell_qty < 1:
+            return {"ok": False, "order_id": None, "status": "no_qty"}
+        order = _client.submit_order(
+            MarketOrderRequest(
+                symbol=ticker,
+                qty=sell_qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+            )
+        )
+        print(f"  [TRADER] 🔴 market SELL  {ticker}  qty={sell_qty}  id={order.id}")
+        _log_action(
+            "SELL_QTY", ticker, 0.0, 0.0, 0.0,
+            qty=sell_qty, order_id=str(order.id),
+            order_status=str(order.status),
+            note="partial_scale",
+        )
+        return {
+            "ok": True, "order_id": str(order.id),
+            "status": str(order.status), "qty": sell_qty,
+        }
+    except Exception as e:
+        print(f"  [TRADER] ❌  market SELL qty {ticker} failed: {e}")
+        return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
+
+
 def replace_stop(ticker: str, old_stop_order_id: Optional[str],
                  *, trail_percent: Optional[float] = None,
                  stop_price: Optional[float] = None) -> dict:

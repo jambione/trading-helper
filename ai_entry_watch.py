@@ -39,6 +39,22 @@ _TERMINAL_STATUSES = frozenset({
     "filled", "submitted", "invalidated", "expired",
 })
 
+# Below-zone arm window in R (zone floor − stop). 1.0 = all the way to the stop.
+DEFAULT_ARM_BELOW_MAX_R = 1.0
+
+
+def arm_below_max_r(cfg: dict | None = None) -> float:
+    """Configured max overshoot below the zone floor, in R (default 1.0 = to stop)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(
+            0.0,
+            float(cfg.get("ai_watch_arm_below_zone_max_r", DEFAULT_ARM_BELOW_MAX_R)
+                  or 0.0),
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_ARM_BELOW_MAX_R
+
 # Serializes every load -> mutate -> save of the watch file.
 #
 # Two threads in ai_trader touch it: the book thread runs
@@ -283,7 +299,8 @@ def _poller_blocked(rec: dict) -> bool:
         except (TypeError, ValueError):
             return True
         if lo > 0 and hi > 0 and ask > 0 and ask_triggers_zone(
-            ask, lo, hi, stop=stop, max_below_r=0.5, arm_below=True,
+            ask, lo, hi, stop=stop, max_below_r=DEFAULT_ARM_BELOW_MAX_R,
+            arm_below=True,
         ):
             return False
         return True
@@ -294,7 +311,7 @@ def derive_blocker(
     rec: dict,
     *,
     pad_pct: float = 0.0,
-    max_below_r: float = 0.5,
+    max_below_r: float = DEFAULT_ARM_BELOW_MAX_R,
     arm_below: bool = True,
 ) -> tuple[str | None, str | None]:
     """Return (code, label) for why this watch is not an open buy.
@@ -497,7 +514,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
                 last_ask_f, entry_low_f, entry_high_f,
                 pad_pct=pad_pct,
                 stop=stop_f,
-                max_below_r=0.5,
+                max_below_r=DEFAULT_ARM_BELOW_MAX_R,
                 arm_below=True,
             )
         ready = status == "armed" or (
@@ -585,7 +602,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
             last_ask_f, entry_low_f, entry_high_f,
             pad_pct=pad_pct,
             stop=stop_f,
-            max_below_r=0.5,
+            max_below_r=DEFAULT_ARM_BELOW_MAX_R,
             arm_below=True,
         )
     ready = status == "armed" or (
@@ -773,7 +790,8 @@ def book_table_rows(
                     stop = None
                 if lo > 0 and hi > 0:
                     if ask_triggers_zone(
-                        px, lo, hi, stop=stop, max_below_r=0.5, arm_below=True,
+                        px, lo, hi, stop=stop,
+                        max_below_r=DEFAULT_ARM_BELOW_MAX_R, arm_below=True,
                     ):
                         r["blocker"] = format_blocker("in_zone")
                         r["block_code"] = "in_zone"
@@ -2247,10 +2265,7 @@ def stream_says_far_from_zone(
         return False, px
     # Below the margin band: still near if inside the armable overshoot window.
     if bool(cfg.get("ai_watch_arm_below_zone", True)):
-        try:
-            max_r = float(cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
-        except (TypeError, ValueError):
-            max_r = 0.5
+        max_r = arm_below_max_r(cfg)
         floor = armable_below_floor(
             entry_low, entry_high, stop, pad_pct=0.0, max_r=max_r)
         if floor is not None and px >= floor:
@@ -3234,14 +3249,15 @@ def ask_triggers_zone(
     *,
     pad_pct: float = 0.0,
     stop: float | None = None,
-    max_below_r: float = 0.5,
+    max_below_r: float = DEFAULT_ARM_BELOW_MAX_R,
     arm_below: bool = True,
 ) -> bool:
     """True when *ask* is inside the band or within the armable below-zone dip.
 
     Operator rule: BUY geometry is price in *or below* the zone (bounded).
     Above the band is never a trigger. A print through the floor still
-    triggers while it stays within ``max_below_r`` of the floor in R units.
+    triggers while it stays within ``max_below_r`` of the floor in R units
+    (1.0R reaches the stop; UI labels that as in-zone / ready).
     """
     if ask_in_zone(ask, entry_low, entry_high, pad_pct):
         return True
@@ -4224,11 +4240,7 @@ def ensure_offset_zone_if_needed(
                 max(lv_now[0], lv_now[1]),
                 lv_now[2],
             )
-            try:
-                max_r = float(
-                    cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
-            except (TypeError, ValueError):
-                max_r = 0.5
+            max_r = arm_below_max_r(cfg)
             floor = armable_below_floor(
                 z_lo, z_hi, z_stop, pad_pct=0.0, max_r=max_r)
             # No valid dip window (tight structural stop) → any print under
@@ -4772,39 +4784,21 @@ def should_arm_buy(
         return False, exh_why
 
     # Zone membership is the primary arm signal (matches UI READY).
-    if ask_in_zone(a, entry_low, entry_high, pad):
+    # In *or below* the band (to the stop, default 1.0R) both count as in-zone
+    # for trading — above the band never does.
+    if ask_triggers_zone(
+        a, entry_low, entry_high,
+        pad_pct=pad, stop=_stop,
+        max_below_r=arm_below_max_r(cfg),
+        arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
+    ):
         return True, f"zone_{exh_why}"
 
     frac = max(0.0, pad) / 100.0
     high_bound = max(entry_low, entry_high) * (1.0 + frac)
     if a > high_bound:
         return False, "above_zone"
-
-    # Price has fallen THROUGH the zone. A pullback that overshoots is still a
-    # pullback — refusing it meant the book watched price trade past a level it
-    # had committed to and then bought nothing, which is the same missed-entry
-    # failure as an out-of-reach zone arriving from the other side.
-    #
-    # Bounded in the trade's own risk unit rather than a flat percentage, so
-    # the allowance scales with the setup: R here is (zone floor − stop), and
-    # the default lets price sit half an R below the zone before the dip is
-    # treated as a breakdown instead of an overshoot. A flat percentage would
-    # be several R on a tight structural stop and a fraction of one on a wide
-    # synthetic stop — the same number meaning two different trades.
-    #
-    # The min_stop_pct gate above still applies and bites first as price nears
-    # the stop, so this cannot arm a fill with no room left in it.
-    if not bool(cfg.get("ai_watch_arm_below_zone", True)):
-        return False, "below_zone"
-    try:
-        max_r = float(cfg.get("ai_watch_arm_below_zone_max_r", 0.5) or 0.0)
-    except (TypeError, ValueError):
-        max_r = 0.5
-    floor = armable_below_floor(
-        entry_low, entry_high, _stop, pad_pct=pad, max_r=max_r)
-    if floor is None or a < floor:
-        return False, "below_zone"
-    return True, f"below_zone_dip_{exh_why}"
+    return False, "below_zone"
 
 
 def _prune_structure_budget(now: float) -> None:

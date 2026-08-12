@@ -612,11 +612,20 @@ def overlay_ai_book_live_prices(
                     stop = None
                 if lo > 0 and hi > 0:
                     try:
-                        from ai_entry_watch import ask_triggers_zone
+                        from ai_entry_watch import (
+                            ask_triggers_zone,
+                            arm_below_max_r,
+                            DEFAULT_ARM_BELOW_MAX_R,
+                        )
+                        try:
+                            from config import load_config
+                            _max_r = arm_below_max_r(load_config())
+                        except Exception:
+                            _max_r = DEFAULT_ARM_BELOW_MAX_R
                         triggers = ask_triggers_zone(
                             px, lo, hi,
                             stop=stop,
-                            max_below_r=0.5,
+                            max_below_r=_max_r,
                             arm_below=True,
                         )
                     except Exception:

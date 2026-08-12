@@ -478,8 +478,12 @@ DEFAULT_CONFIG = {
     "ai_watch_db_bar_seconds":        60.0,
     "rte_fast_ewm_span":                 7,   # matches signals.py smoothing
     "rte_direction_eps":              0.05,   # %R move below this is not a turn
+    # Below the band still arms (operator: buy in *or below* the zone). Cap is
+    # in R units of (zone floor − stop). 1.0 = all the way to the stop; min_stop
+    # still refuses fills with no room left. 0.5 was too tight — dips through
+    # the floor looked "below zone" and never traded.
     "ai_watch_arm_below_zone":        True,
-    "ai_watch_arm_below_zone_max_r":   0.5,
+    "ai_watch_arm_below_zone_max_r":   1.0,
     "ai_watch_require_db_zone":       True,
     # Minimum risk per share, as % of the price paid, before an entry may arm.
     # The double-bottom band spans S*0.9975 to S*1.0125 against a stop fixed at
@@ -548,22 +552,12 @@ DEFAULT_CONFIG = {
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.
     "ai_watch_synth_trail_pct":        2.5,
-    # Dual tranche for synth: T1 bank half + runner with BE/trail. Single
-    # bracket (legacy) never set scaled_out and left all size on one target.
-    #
-    # OFF as of 2026-08-10. Tranche A is submitted as a bracket, so its
-    # protective SELL legs are live by the time tranche B's BUY goes in, and
-    # Alpaca refuses that as a wash trade:
-    #   40310000 "opposite side limit order exists. use complex/limit/stop_limit"
-    # The rollback then cancels A's stop, which is how AXTI ended the session
-    # holding 20 shares with no protective order. 2026-08-10 logged 468
-    # entry_fail against 16 entry_ok — 96% of buy attempts — and the funnel
-    # stopped at 2 fills from 13 armed.
-    #
-    # Re-enabling needs tranche B to join the SAME OTOCO order rather than
-    # being a second buy; two independent orders on one symbol cannot both
-    # carry protection under that rule.
-    "ai_day_scalp_dual_tranche":     False,
+    # Dual bookkeeping (Option A day scalp): ONE parent buy for full size with
+    # a hard stop, then after fill attach a partial T1 limit for scale_out_pct
+    # and trail the remainder. Never a second buy — two protected buys on the
+    # same symbol were Alpaca wash-trade rejects (40310000) and left naked
+    # longs after rollback (AXTI 2026-08-10).
+    "ai_day_scalp_dual_tranche":      True,
     # Dead trade: still flat/red with tiny MFE after N minutes → market out.
     # Dead trade: no scale-out, MFE never reached, still flat/red → flatten.
     # Continuation wants this tighter so positions do not sit 90m for −0.3R
@@ -591,9 +585,9 @@ DEFAULT_CONFIG = {
     # trade beats a naked long. Human positions with a resting stop are left
     # alone (not adopted without entry_ok; not flattened if stop rests).
     "ai_flatten_unmanaged_unprotected": True,
-    # Rest a broker take-profit limit on entry. Default ON under continuation
-    # so upside is banked at T1 without left_overbought. exhaustion_scalp can
-    # set False (stop + software band exit). OTOCO requires RTH for multi-leg.
+    # Rest a broker take-profit. With dual tranche this is a *partial* T1
+    # (scale_out_pct) attached after the parent fill so it does not wash the
+    # resting buy. Without dual, full-size OTOCO TP on the parent when possible.
     "ai_entry_broker_target":          True,
     # Re-anchor frozen synth zone when last is this far above entry_high (%).
     # 0.0 = track the real-time price every poll (no deadband).
@@ -786,6 +780,35 @@ def validate_ai_config(cfg: dict) -> list[str]:
         out.append(
             f"ai_watch_min_proximity ({prox:g}) exceeds 100 — nothing can ever "
             "be admitted to the watch book"
+        )
+
+    # Option A / exit coherence (BIVI 2026-08-12: scalp mode + no T1 bank +
+    # left_overbought forced off → winner only died on original stop / EOD).
+    edge = str(cfg.get("ai_edge_mode") or "continuation").strip().lower()
+    if edge in ("exhaustion", "exhaustion_scalp", "scalp", "ob", "overbought"):
+        edge = "exhaustion_scalp"
+    else:
+        edge = "continuation"
+    dual = bool(cfg.get("ai_day_scalp_dual_tranche", True))
+    broker_tp = bool(cfg.get("ai_entry_broker_target", True))
+    if "ai_exit_left_overbought" in cfg:
+        left_ob = bool(cfg.get("ai_exit_left_overbought"))
+    else:
+        left_ob = edge == "exhaustion_scalp"
+    if edge == "exhaustion_scalp" and not left_ob:
+        out.append(
+            "ai_edge_mode=exhaustion_scalp with ai_exit_left_overbought=false — "
+            "%R band exit is off; winners only leave on hard stop / T1 / EOD"
+        )
+    if not dual and not broker_tp and not left_ob:
+        out.append(
+            "no dual scale-out, no broker T1, and left_overbought off — "
+            "open longs have no upside bank path beyond the hard stop / EOD"
+        )
+    if dual and not broker_tp and not left_ob:
+        out.append(
+            "ai_day_scalp_dual_tranche on but neither broker T1 nor "
+            "left_overbought will bank the scale-out leg"
         )
 
     return out

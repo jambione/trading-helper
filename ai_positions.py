@@ -843,21 +843,16 @@ def place_scaled_entry(
     current_ask: float | None = None,
     duel_source: str | None = None,
 ) -> dict[str, Any]:
-    """Execute a qualifying BUY as two broker-side tranches (atomic).
+    """Execute a qualifying BUY with stop (+ dual scale-out bookkeeping).
 
-    Tranche A (``scale_out_pct``) carries both the stop and the first
-    target — it closes itself the moment either level trips, no code
-    involved. Tranche B carries the stop only and is meant to ride; once
-    tranche A's target fills, ``manage_open_positions`` moves tranche B's
-    stop to ``max(breakeven, peak − ai_runner_trail_r × R)`` and ratchets it
-    up from there — never below entry, so a trade that reached its target
-    cannot close red.
-
-    If tranche A succeeds and B fails, A is cancelled / flattened so the
-    book never sits half-armed.
+    Option A (day scalp dual): one parent buy for full size with a hard stop.
+    After fill, ``manage_open_positions`` rests a partial limit SELL for
+    ``scale_out_pct`` at T1; when that banks, the stop on the remainder moves
+    to ``max(breakeven, peak − ai_runner_trail_r × R)`` and ratchets up.
+    A second protected buy is never submitted (Alpaca wash-trade).
 
     Day Scalp rule: no entry without a hard stop *and* a sell strategy
-    (T1 take-profit on A; stop+optional trail on B). Bare longs are refused.
+    (T1 and/or left_overbought). Bare longs are refused.
     """
     import alpaca_trader
 
@@ -891,16 +886,34 @@ def place_scaled_entry(
     runner_trail_r = max(0.0, _opt_float(
         cfg.get("ai_runner_trail_r"), DEFAULT_RUNNER_TRAIL_R))
 
-    if current_ask is not None and not (entry_low <= current_ask <= max(entry_high, entry_low)):
-        err = (
-            f"price ${current_ask:.2f} left the entry zone "
-            f"${entry_low:.2f}-${entry_high:.2f} before the order could go in"
-        )
-        log_event("entry_fail", symbol=ticker, reason=err)
-        return {"ok": False, "error": err}
+    # Same geometry as should_arm_buy: in-band *or* armable below-zone dip
+    # (through the floor toward the stop). Strict [low, high] used to reject
+    # the fill a tick after the arm gate had already accepted the dip.
+    cfg_zone = _entry_cfg()
+    if current_ask is not None:
+        try:
+            from ai_entry_watch import ask_triggers_zone, arm_below_max_r
+            zone_ok = ask_triggers_zone(
+                float(current_ask), entry_low, entry_high,
+                stop=stop_price,
+                max_below_r=arm_below_max_r(cfg_zone),
+                arm_below=bool(cfg_zone.get("ai_watch_arm_below_zone", True)),
+            )
+        except Exception:
+            zone_ok = (
+                entry_low <= float(current_ask) <= max(entry_high, entry_low)
+            )
+        if not zone_ok:
+            err = (
+                f"price ${float(current_ask):.2f} left the entry zone "
+                f"${entry_low:.2f}-${entry_high:.2f} "
+                f"(stop ${stop_price:.2f}) before the order could go in"
+            )
+            log_event("entry_fail", symbol=ticker, reason=err)
+            return {"ok": False, "error": err}
 
     # Size against the price the order will actually fill at, not the zone
-    # bound — current_ask is already validated to fall inside that zone.
+    # bound — current_ask is already validated as armable (in or below zone).
     sizing_entry = current_ask or entry_high or entry_low
 
     # Capital protection: refuse any entry without a defined stop and sell plan.
@@ -997,48 +1010,48 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
 
-    # Day scalp: dual tranche for synthetic (T1 bank + runner). Need ≥2 shares
-    # to split. scale_out ≥99 or dual disabled → single order (still has a
-    # stop — never a naked long). Broker take-profit is optional: default OFF
-    # so the one resting sell is the stop, and exhaustion (left_overbought)
-    # owns the upside via close_out. When a TP limit is the only sell that
-    # survives, the position is not protected on the downside.
+    # Option A day scalp: dual *bookkeeping* on ONE parent buy (full size +
+    # stop). Partial T1 is attached after fill so we never submit a second
+    # protected buy (Alpaca wash 40310000). scale_out ≥99 or dual off → one
+    # leg; optional full-size broker TP when not splitting.
     dual = bool(cfg.get("ai_day_scalp_dual_tranche", True))
-    use_single = (
-        scale_out_pct >= 99.0
-        or total_qty < 2
-        or (bool(decision.get("synthetic")) and not dual)
+    logical_dual = (
+        dual
+        and scale_out_pct < 99.0
+        and total_qty >= 2
     )
-    if use_single:
-        qty_a = int(total_qty)
-        qty_b = 0
-    else:
+    if logical_dual:
         qty_a = max(1, int(total_qty * scale_out_pct / 100.0))
-        qty_b = total_qty - qty_a
+        qty_b = int(total_qty) - qty_a
         if qty_b <= 0:
             qty_a = int(total_qty)
             qty_b = 0
+            logical_dual = False
+    else:
+        qty_a = int(total_qty)
+        qty_b = 0
 
     entry_limit = _entry_limit_price(current_ask, entry_high, entry_low)
-    # Plan still requires target_1 for R:R; whether it rests at the broker is
-    # a separate choice. Default: stop only.
     broker_target = bool(cfg.get("ai_entry_broker_target", False))
-    place_target = target_1 if broker_target else None
+    # Dual: stop-only parent; partial T1 after fill. Single: optional full TP.
+    place_target = None if logical_dual else (target_1 if broker_target else None)
+    t1_attach_pending = bool(logical_dual and broker_target and qty_a > 0)
 
     # Protective shape: stop-LIMIT by default (ai_stop_use_market=False).
     # stop-MARKET is opt-in when gap risk outweighs limit miss risk.
     use_stop_mkt = bool(cfg.get("ai_stop_use_market", False))
+    parent_qty = int(total_qty)
 
-    def _place_a():
+    def _place_parent():
         if entry_limit is not None:
             return alpaca_trader.buy_limit_bracket(
-                ticker, qty_a, limit_price=entry_limit,
+                ticker, parent_qty, limit_price=entry_limit,
                 stop_price=stop_price, target_price=place_target,
                 stop_market=use_stop_mkt)
         return alpaca_trader.buy_bracket_exact(
-            ticker, qty_a, stop_price=stop_price, target_price=place_target)
+            ticker, parent_qty, stop_price=stop_price, target_price=place_target)
 
-    result_a = _place_a()
+    result_a = _place_parent()
     if not result_a.get("ok"):
         err = str(result_a.get("note") or result_a.get("error")
                   or result_a.get("status") or "tranche_a_failed")
@@ -1055,7 +1068,7 @@ def place_scaled_entry(
                 except Exception as e:  # noqa: BLE001
                     log_event("entry_wash_close_warn", symbol=ticker,
                               reason=str(e)[:200])
-            result_a = _place_a()
+            result_a = _place_parent()
             if result_a.get("ok"):
                 err = ""
                 wash = False
@@ -1078,9 +1091,8 @@ def place_scaled_entry(
                 "tranche_a": result_a, "tranche_b": None,
             }
 
-    # Stop-only submit (default) or OTOCO. Alpaca may not echo leg ids in the
-    # parent response — do not roll back a live order because of missing ids.
-    # Heal pass covers a truly naked long (no stop).
+    # Stop-only or OTOCO parent. Missing leg ids are healed after fill; do not
+    # roll back a live buy for an empty echo field.
     if not result_a.get("buy_order_id"):
         err = "refused: buy order id missing after place"
         log_event("entry_fail", symbol=ticker, reason=err, leg="A")
@@ -1088,7 +1100,7 @@ def place_scaled_entry(
             "ok": False, "error": err, "ticker": ticker,
             "tranche_a": result_a, "tranche_b": None,
         }
-    if broker_target and not result_a.get("target_order_id"):
+    if place_target and not result_a.get("target_order_id"):
         log_event(
             "entry_warn", symbol=ticker,
             reason="target_order_id_missing_from_response",
@@ -1101,48 +1113,12 @@ def place_scaled_entry(
             note="heal will attach stop if still unprotected after fill",
         )
 
-    if qty_b > 0:
-        if entry_limit is not None:
-            # No target on the runner leg — it rides until manage_open_positions
-            # replaces its stop with breakeven/trailing after A scales out.
-            result_b = alpaca_trader.buy_limit_bracket(
-                ticker, qty_b, limit_price=entry_limit,
-                stop_price=stop_price, target_price=None,
-                stop_market=use_stop_mkt)
-        else:
-            result_b = alpaca_trader.buy_bracket_exact(
-                ticker, qty_b, stop_price=stop_price)
-        if result_b.get("ok") and not result_b.get("stop_order_id"):
-            result_b = {
-                "ok": False, "error": "runner missing stop_order_id",
-                "status": "no_stop",
-            }
-    else:
-        result_b = {"ok": True, "buy_order_id": None, "stop_order_id": None}
-
-    if not result_b.get("ok"):
-        # Atomic rollback: do not leave a one-legged position in managed state.
-        try:
-            alpaca_trader.cancel_open_orders(ticker)
-        except Exception as e:  # noqa: BLE001
-            log_event("entry_rollback_warn", symbol=ticker,
-                      reason=f"cancel_failed:{e}")
-        try:
-            alpaca_trader.close_out(ticker)
-        except Exception as e:  # noqa: BLE001
-            log_event("entry_rollback_warn", symbol=ticker,
-                      reason=f"close_failed:{e}")
-        err = str(result_b.get("note") or result_b.get("error")
-                  or result_b.get("status") or "tranche_b_failed")
-        log_event(
-            "entry_fail", symbol=ticker, reason=err, leg="B",
-            rolled_back=True,
-        )
-        return {
-            "ok": False, "error": f"tranche_b_failed_rolled_back:{err}",
-            "ticker": ticker, "tranche_a": result_a, "tranche_b": result_b,
-            "rolled_back": True,
-        }
+    # Runner is bookkeeping only — same parent order / same resting stop.
+    result_b = {
+        "ok": True,
+        "buy_order_id": None,
+        "stop_order_id": result_a.get("stop_order_id") if qty_b > 0 else None,
+    }
 
     src = duel_source or decision.get("duel_source") or decision.get("source")
     strategy = (
@@ -1157,11 +1133,15 @@ def place_scaled_entry(
         "entry_limit_price": entry_limit,
         "tranche_a_order_id": result_a.get("buy_order_id"),
         # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
-        # must key off this; the parent fills at entry.
+        # must key off this; the parent fills at entry. Dual path attaches this
+        # after fill (t1_attach_pending).
         "tranche_a_target_order_id": result_a.get("target_order_id"),
         "tranche_a_stop_order_id": result_a.get("stop_order_id"),
         "tranche_b_order_id": result_b.get("buy_order_id"),
+        # Same resting stop as A until scale-out rewrites it for the runner.
         "tranche_b_stop_order_id": result_b.get("stop_order_id"),
+        "t1_attach_pending": t1_attach_pending,
+        "logical_dual": bool(qty_b > 0),
         "stop_price": stop_price,
         # The R basis, frozen at entry. Every later stop move (breakeven on a
         # sell_signal, the runner ratchet) rewrites stop_price, and R measured
@@ -1234,6 +1214,8 @@ def place_scaled_entry(
         "entry_ok", symbol=ticker, qty_a=qty_a, qty_b=qty_b,
         stop_price=stop_price, target_1=target_1, entry_price=sizing_entry,
         duel_source=src, strategy=strategy, dual=bool(qty_b > 0),
+        t1_attach_pending=t1_attach_pending,
+        parent_qty=parent_qty,
     )
     try:
         import ai_duel as duel
@@ -2399,17 +2381,107 @@ def manage_open_positions(
         # whether logging happens to be on.
         _update_excursions(pos, _num(pos.get("last_seen_price")))
 
-        # Tranche A fill -> tranche B's stop moves to max(breakeven, peak-nR).
-        # Key off the take-profit leg. Using the parent buy id here meant
-        # tranche_a_filled went True within one 5s tick of every entry.
+        # Dual: after parent fill, rest partial T1 limit for qty_a (never while
+        # the buy is still working — wash). Software market scale if last
+        # already cleared T1 before the limit was placed or filled.
+        if (
+            pos.get("entry_confirmed")
+            and not pos.get("tranche_a_filled")
+            and not pos.get("closing_reason")
+            and int(pos.get("qty_b") or 0) > 0
+        ):
+            t1 = _num(pos.get("target_1"))
+            last = _num(pos.get("last_seen_price"))
+            qty_a = int(pos.get("qty_a") or 0)
+            # Attach resting partial T1 once.
+            if (
+                pos.get("t1_attach_pending")
+                and not pos.get("tranche_a_target_order_id")
+                and t1
+                and qty_a > 0
+            ):
+                if last is not None and last + 1e-9 >= t1:
+                    # Already through T1 — bank with market, skip limit.
+                    sold = alpaca_trader.sell_qty_market(ticker, qty_a) or {}
+                    if sold.get("ok"):
+                        pos["tranche_a_filled"] = True
+                        pos["t1_attach_pending"] = False
+                        pos["tranche_a_target_order_id"] = sold.get("order_id")
+                        log_event(
+                            "t1_market_scale", symbol=ticker,
+                            qty=qty_a, target=t1, last=last,
+                        )
+                        exit_why[ticker] = "t1_market_scale"
+                        changed = True
+                    else:
+                        log_event(
+                            "t1_market_scale_failed", symbol=ticker,
+                            error=str(sold.get("error") or sold.get("status"))[:160],
+                        )
+                else:
+                    att = alpaca_trader.place_limit_sell(
+                        ticker, qty_a, t1) or {}
+                    if att.get("ok") and att.get("order_id"):
+                        pos["tranche_a_target_order_id"] = att["order_id"]
+                        pos["t1_attach_pending"] = False
+                        log_event(
+                            "t1_limit_attached", symbol=ticker,
+                            qty=att.get("qty", qty_a), target=t1,
+                            order_id=att.get("order_id"),
+                        )
+                        exit_why[ticker] = "t1_limit_attached"
+                        changed = True
+                    else:
+                        log_event(
+                            "t1_limit_attach_failed", symbol=ticker,
+                            error=str(att.get("error") or att.get("status"))[:160],
+                        )
+
+            # Software T1: last printed through target with no fill yet.
+            if (
+                not pos.get("tranche_a_filled")
+                and t1
+                and last is not None
+                and last + 1e-9 >= t1
+                and qty_a > 0
+            ):
+                # Cancel resting partial so we do not double-sell.
+                t_oid = pos.get("tranche_a_target_order_id")
+                if t_oid:
+                    alpaca_trader.cancel_order_id(t_oid)
+                sold = alpaca_trader.sell_qty_market(ticker, qty_a) or {}
+                if sold.get("ok"):
+                    pos["tranche_a_filled"] = True
+                    pos["t1_attach_pending"] = False
+                    log_event(
+                        "t1_software_scale", symbol=ticker,
+                        qty=qty_a, target=t1, last=last,
+                    )
+                    exit_why[ticker] = "t1_software_scale"
+                    changed = True
+
+        # Tranche A fill -> runner stop to max(breakeven, peak-nR).
+        # Key off the take-profit leg (or software scale flag above).
         target_oid = pos.get("tranche_a_target_order_id")
-        if not pos.get("breakeven_done") and target_oid:
-            order = alpaca_trader.get_order(target_oid)
-            if order and order.get("status") == "filled":
-                pos["tranche_a_filled"] = True
+        if not pos.get("breakeven_done") and (
+            pos.get("tranche_a_filled")
+            or target_oid
+        ):
+            filled = bool(pos.get("tranche_a_filled"))
+            if not filled and target_oid:
+                order = alpaca_trader.get_order(target_oid)
+                if order and str(order.get("status") or "").lower() == "filled":
+                    filled = True
+                    pos["tranche_a_filled"] = True
+            if filled:
                 if pos.get("qty_b", 0) > 0:
                     want = _runner_stop_level(pos)
                     last = _num(pos.get("last_seen_price"))
+                    # Prefer the live parent stop id when dual shares one stop.
+                    stop_oid = (
+                        pos.get("tranche_b_stop_order_id")
+                        or pos.get("tranche_a_stop_order_id")
+                    )
                     # A stop only works below the market. If price has already
                     # collapsed back through entry between the target fill and
                     # this tick, leave the original stop to do its job.
@@ -2422,11 +2494,12 @@ def manage_open_positions(
                                   want=want, last=last)
                     else:
                         out = alpaca_trader.replace_stop(
-                            ticker, pos.get("tranche_b_stop_order_id"),
+                            ticker, stop_oid,
                             stop_price=want,
                         ) or {}
                         if out.get("ok"):
                             pos["tranche_b_stop_order_id"] = out.get("order_id")
+                            pos["tranche_a_stop_order_id"] = out.get("order_id")
                             pos["runner_stop_price"] = want
                             events.append({
                                 "ticker": ticker, "event": "scaled_out",
@@ -2473,12 +2546,17 @@ def manage_open_positions(
                 and want >= cur + step
                 and (last is None or want < last)
             ):
+                stop_oid = (
+                    pos.get("tranche_b_stop_order_id")
+                    or pos.get("tranche_a_stop_order_id")
+                )
                 out = alpaca_trader.replace_stop(
-                    ticker, pos.get("tranche_b_stop_order_id"),
+                    ticker, stop_oid,
                     stop_price=want,
                 ) or {}
                 if out.get("ok"):
                     pos["tranche_b_stop_order_id"] = out.get("order_id")
+                    pos["tranche_a_stop_order_id"] = out.get("order_id")
                     pos["runner_stop_price"] = want
                     changed = True
                     events.append({
