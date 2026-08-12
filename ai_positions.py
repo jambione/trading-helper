@@ -106,6 +106,9 @@ _EVENT_RING_MAX = 80
 _event_lock = threading.Lock()
 _recent_events: list[dict[str, Any]] = []
 _last_reconcile: dict[str, Any] = {}
+# Throttle ratchet_invariant_fail so a stuck book does not write 12/min.
+_ratchet_fail_last: dict[str, float] = {}
+_RATCHET_FAIL_THROTTLE_SEC = 60.0
 
 _ENTRY_PROMPT_TEMPLATE = """\
 You are an elite quantitative trader whose single mandate is to MAXIMIZE PROFIT \
@@ -1669,6 +1672,89 @@ def _runner_stop_level(pos: dict[str, Any]) -> float | None:
     return max(float(entry), float(peak) - trail_r * risk)
 
 
+def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
+    """True when broker qty looks like tranche A already sold.
+
+    The T1 order id is lost when heal clears ``tranche_a_target_order_id``.
+    Without this, ``tranche_a_filled`` stays false and the runner stop never
+    moves to breakeven (ABCL/IONQ 2026-08-12: half gone, stop still original).
+    """
+    if pos.get("tranche_a_filled") or pos.get("closing_reason"):
+        return False
+    qty_a = int(pos.get("qty_a") or 0)
+    qty_b = int(pos.get("qty_b") or 0)
+    q = _num(live_qty)
+    if qty_a < 1 or qty_b < 1 or q is None or q <= 0:
+        return False
+    total = qty_a + qty_b
+    return q <= qty_b + 1 and q < total
+
+
+def evaluate_ratchet_invariants(
+    state: dict[str, Any],
+    detail: dict[str, Any],
+    open_orders: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Check dual-tranche books against the broker. Fail closed, one row each.
+
+    After T1 the runner stop must be at or above entry. Before T1 a name
+    that is confirmed open must have a resting T1 (or attach still pending
+    on this tick). Used by manage_open_positions and tools/ratchet_check.py.
+    """
+    orders = open_orders or []
+    out: list[dict[str, Any]] = []
+    for ticker, pos in state.items():
+        if not pos.get("entry_confirmed") or pos.get("closing_reason"):
+            continue
+        qty_a = int(pos.get("qty_a") or 0)
+        qty_b = int(pos.get("qty_b") or 0)
+        if qty_a < 1 or qty_b < 1:
+            continue
+        live = detail.get(str(ticker).upper()) or {}
+        live_qty = _num(live.get("qty"))
+        if live_qty is None:
+            continue
+        sells = [
+            o for o in orders
+            if str(o.get("symbol") or "").upper() == str(ticker).upper()
+            and str(o.get("side") or "").lower() == "sell"
+        ]
+        has_t1 = any(not _is_protective_stop_order(o) for o in sells)
+        stop_levels = [
+            _num(o.get("stop") or o.get("stop_price") or o.get("limit"))
+            for o in sells if _is_protective_stop_order(o)
+        ]
+        stop_levels = [x for x in stop_levels if x]
+        best_stop = max(stop_levels) if stop_levels else _num(
+            pos.get("runner_stop_price") or pos.get("stop_price"))
+        entry = _num(pos.get("entry_price"))
+        scaled = bool(pos.get("tranche_a_filled")) or _infer_t1_fill(pos, live_qty)
+        row: dict[str, Any] = {
+            "symbol": str(ticker).upper(),
+            "live_qty": live_qty,
+            "qty_a": qty_a,
+            "qty_b": qty_b,
+            "entry": entry,
+            "best_stop": best_stop,
+            "has_t1": has_t1,
+            "scaled": scaled,
+        }
+        if scaled:
+            if entry and best_stop is not None and best_stop + 1e-6 < entry:
+                row.update({"ok": False, "event": "ratchet_stop_below_entry"})
+            elif not stop_levels:
+                row.update({"ok": False, "event": "ratchet_missing_runner_stop"})
+            else:
+                row.update({"ok": True, "event": "ratchet_ok"})
+        else:
+            if has_t1 or pos.get("t1_attach_pending"):
+                row.update({"ok": True, "event": "ratchet_ok"})
+            else:
+                row.update({"ok": False, "event": "ratchet_missing_t1"})
+        out.append(row)
+    return out
+
+
 def _et_hour(now: float) -> float | None:
     try:
         from datetime import datetime
@@ -1939,11 +2025,56 @@ def _heal_unprotected(
             events.append({"ticker": sym, "event": "unprotected_flatten"})
             log_event("unprotected_flatten", symbol=sym)
             continue
-        # Drop take-profit limits (and any other non-stop sells) so a full-size
-        # protective stop can rest. If both were already live (OTOCO), this
-        # symbol would not be on the unprotected list. Prefer cancel-all for
-        # the symbol: one path, no per-id helper, and replace_stop re-places
-        # the stop immediately after.
+        # Dual tranche: never cancel T1 to slap a full-size original stop on.
+        # That undoes the scale-out book (ABCL 2026-08-12: unprotected_tp_cleared
+        # then heal at the entry stop). Place a runner-sized stop only.
+        qty_a = int(pos.get("qty_a") or 0)
+        qty_b = int(pos.get("qty_b") or 0)
+        dual = qty_a > 0 and qty_b > 0
+        scaled = bool(pos.get("tranche_a_filled"))
+        if dual:
+            if scaled:
+                want = _runner_stop_level(pos) or _num(pos.get("entry_price")) or stop
+            else:
+                want = stop
+            last = _num(pos.get("last_seen_price"))
+            if want and last is not None and want >= last:
+                if not pos.get("tranche_a_target_order_id") and not scaled:
+                    pos["t1_attach_pending"] = True
+                    state[sym] = pos
+                continue
+            qty_stop = qty_b
+            out: dict[str, Any] = {}
+            try:
+                out = alpaca_trader.place_stop_sell(sym, want, qty=qty_stop) or {}
+            except Exception:  # noqa: BLE001
+                out = {}
+            if not out.get("ok"):
+                out = alpaca_trader.replace_stop(sym, None, stop_price=want) or {}
+            if isinstance(out, dict) and out.get("ok"):
+                pos["tranche_b_stop_order_id"] = out.get("order_id") or pos.get(
+                    "tranche_b_stop_order_id")
+                pos["tranche_a_stop_order_id"] = pos["tranche_b_stop_order_id"]
+                if scaled:
+                    pos["runner_stop_price"] = want
+                    pos["stop_price"] = want
+                if not pos.get("tranche_a_target_order_id") and not scaled:
+                    pos["t1_attach_pending"] = True
+                state[sym] = pos
+                events.append({"ticker": sym, "event": "unprotected_healed",
+                               "stop_price": want, "qty": qty_stop,
+                               "kept_t1": True})
+                log_event("unprotected_healed", symbol=sym, stop_price=want,
+                          qty=qty_stop, kept_t1=True)
+            else:
+                log_event(
+                    "unprotected_heal_failed", symbol=sym,
+                    reason=str((out or {}).get("error") or (out or {}).get("status"))[:160],
+                )
+            continue
+
+        # Single-tranche / adopted: drop take-profit limits so a full-size
+        # protective stop can rest. Dual books never reach here.
         had_non_stop_sell = False
         try:
             for o in alpaca_trader.get_open_orders() or []:
@@ -2236,6 +2367,17 @@ def manage_open_positions(
             pos["entry_confirmed"] = True
             pos["last_seen_price"] = live.get("current")
             _update_excursions(pos, live.get("current"))
+            if _infer_t1_fill(pos, live.get("qty")):
+                pos["tranche_a_filled"] = True
+                log_event(
+                    "t1_fill_inferred", symbol=ticker,
+                    live_qty=live.get("qty"),
+                    qty_a=pos.get("qty_a"), qty_b=pos.get("qty_b"),
+                )
+                events.append({
+                    "ticker": ticker, "event": "t1_fill_inferred",
+                    "live_qty": live.get("qty"),
+                })
             changed = True
             continue
         if not pos.get("entry_confirmed"):
@@ -2480,9 +2622,9 @@ def manage_open_positions(
                     )
 
             # Not yet at T1: free → partial limit on A + stop on B only.
+            # Also retry when heal wiped the target oid (pending may be false).
             elif (
-                pos.get("t1_attach_pending")
-                and not pos.get("tranche_a_target_order_id")
+                not pos.get("tranche_a_target_order_id")
                 and t1
                 and qty_a > 0
                 and not through_t1
@@ -2806,6 +2948,44 @@ def manage_open_positions(
         reconcile_broker(now)
     except Exception as e:  # noqa: BLE001
         log_event("reconcile_error", reason=str(e)[:160])
+
+    try:
+        orders = alpaca_trader.get_open_orders(limit=100) or []
+        inv = evaluate_ratchet_invariants(state, detail, orders)
+        for row in inv:
+            ev = row.get("event")
+            sym = row.get("symbol")
+            if row.get("ok"):
+                if ev == "ratchet_ok" and row.get("scaled"):
+                    # One-shot when the runner is locked; not every tick.
+                    key = f"ok:{sym}"
+                    if _ratchet_fail_last.get(key) != -1:
+                        log_event("ratchet_ok", **{
+                            k: row[k] for k in row
+                            if k not in ("event",)
+                        })
+                        events.append({
+                            "ticker": sym, "event": "ratchet_ok",
+                            "best_stop": row.get("best_stop"),
+                            "entry": row.get("entry"),
+                        })
+                        _ratchet_fail_last[key] = -1
+                continue
+            key = f"{sym}:{ev}"
+            last_log = _ratchet_fail_last.get(key) or 0.0
+            if now - last_log < _RATCHET_FAIL_THROTTLE_SEC:
+                continue
+            _ratchet_fail_last[key] = now
+            _ratchet_fail_last.pop(f"ok:{sym}", None)
+            log_event(str(ev), **{k: row[k] for k in row if k != "event"})
+            events.append({
+                "ticker": sym, "event": ev,
+                "best_stop": row.get("best_stop"),
+                "entry": row.get("entry"),
+                "live_qty": row.get("live_qty"),
+            })
+    except Exception as e:  # noqa: BLE001
+        log_event("ratchet_check_error", reason=str(e)[:160])
 
     return events
 

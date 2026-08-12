@@ -791,10 +791,12 @@ def test_is_ai_positions_wire_rejects_managed_map():
 
 class _StubBrokerManage:
     def __init__(self, order_status="new", position_open=True, current_price=44.0,
-                 fills=None):
+                 fills=None, live_qty=None, open_orders=None):
         self.order_status = order_status
         self.position_open = position_open
         self.current_price = current_price
+        self.live_qty = live_qty
+        self._open_orders = open_orders
         self.replace_calls: list[dict] = []
         self.closed: list[str] = []
         self.canceled: list[str] = []
@@ -803,7 +805,12 @@ class _StubBrokerManage:
         self.fills = dict(fills or {})
 
     def get_positions_detail(self):
-        return {"NVDA": {"current": self.current_price}} if self.position_open else {}
+        if not self.position_open:
+            return {}
+        row = {"current": self.current_price}
+        if self.live_qty is not None:
+            row["qty"] = self.live_qty
+        return {"NVDA": row}
 
     def get_order(self, order_id):
         out = {"status": self.order_status}
@@ -812,12 +819,14 @@ class _StubBrokerManage:
         return out
 
     def get_open_orders(self, limit=100):
+        if self._open_orders is not None:
+            return list(self._open_orders)
         # Protected book: open long has a resting stop sell so heal does not fire.
         if not self.position_open:
             return []
         return [{
             "id": "stop_b", "symbol": "NVDA", "side": "sell",
-            "type": "stop", "status": "new",
+            "type": "stop", "status": "new", "stop": 38.0,
         }]
 
     def get_equity(self):
@@ -1859,6 +1868,119 @@ def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     assert stub.closed == ["NVDA"]
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["closing_reason"] == "dead_trade"
+
+
+def test_heal_dual_tranche_keeps_t1_and_places_runner_stop(tmp_path, monkeypatch):
+    """Heal must not prefer_stop_over_target on a dual book (ABCL 2026-08-12)."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=121, qty_b=121, total_qty=242,
+        t1_attach_pending=False,
+        tranche_a_target_order_id="t1_abcl",
+        tranche_a_filled=False,
+        last_seen_price=9.97,
+        entry_price=10.03,
+        stop_price=9.71,
+        target_1=10.22,
+        entry_confirmed=True,
+    )
+    state = json.loads(_state_path(tmp_path).read_text())
+
+    class _HealStub(_StubBrokerManage):
+        def place_stop_sell(self, ticker, stop_price, qty=None):
+            self.replace_calls.append({
+                "ticker": ticker, "stop_price": stop_price, "qty": qty,
+            })
+            return {"ok": True, "order_id": "runner_stop_heal", "qty": qty}
+
+    stub = _HealStub(current_price=9.97)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    ev = cp._heal_unprotected(
+        [{"symbol": "NVDA", "managed": True}], state)
+    assert ev and ev[0]["event"] == "unprotected_healed"
+    assert ev[0].get("kept_t1") is True
+    assert ev[0]["qty"] == 121
+    assert stub.canceled == []
+    assert state["NVDA"]["tranche_a_target_order_id"] == "t1_abcl"
+    assert any(c.get("qty") == 121 for c in stub.replace_calls)
+
+
+def test_qty_drop_infers_t1_and_raises_runner_to_breakeven(tmp_path, monkeypatch):
+    """Broker half-size with lost T1 order id still ratchets (IONQ/ABCL)."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=121, qty_b=121, total_qty=242,
+        entry_price=10.03, stop_price=9.71, target_1=10.22,
+        risk_per_share=0.32, runner_trail_r=1.0,
+        tranche_a_target_order_id=None,
+        t1_attach_pending=False,
+        tranche_a_filled=False,
+        breakeven_done=False,
+        last_seen_price=10.03,
+        entry_confirmed=True,
+        peak_price=10.23,
+    )
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_dead_trade_min": 0,
+    })
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+    stub = _StubBrokerManage(
+        order_status="new", current_price=10.23, live_qty=121,
+        open_orders=[{
+            "id": "stop_old", "symbol": "NVDA", "side": "sell",
+            "type": "stop", "status": "new", "stop": 9.71,
+        }],
+    )
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert any(e.get("event") == "t1_fill_inferred" for e in events)
+    assert any(e.get("event") == "scaled_out" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["tranche_a_filled"] is True
+    assert state["NVDA"]["runner_stop_price"] == 10.03
+    assert stub.replace_calls[-1]["stop_price"] == 10.03
+
+
+def test_ratchet_invariant_fails_when_scaled_stop_still_original():
+    state = {
+        "ABCL": {
+            "entry_confirmed": True, "qty_a": 121, "qty_b": 121,
+            "entry_price": 10.03, "stop_price": 9.71,
+            "tranche_a_filled": True,
+        },
+    }
+    detail = {"ABCL": {"qty": 121, "current": 10.22}}
+    orders = [{
+        "symbol": "ABCL", "side": "sell", "type": "stop_limit",
+        "stop": 9.71, "limit": 9.61,
+    }]
+    rows = cp.evaluate_ratchet_invariants(state, detail, orders)
+    assert len(rows) == 1
+    assert rows[0]["ok"] is False
+    assert rows[0]["event"] == "ratchet_stop_below_entry"
+
+
+def test_ratchet_invariant_passes_when_runner_locked_at_entry():
+    state = {
+        "ABCL": {
+            "entry_confirmed": True, "qty_a": 121, "qty_b": 121,
+            "entry_price": 10.03, "stop_price": 10.03,
+            "runner_stop_price": 10.03,
+            "tranche_a_filled": True,
+        },
+    }
+    detail = {"ABCL": {"qty": 121, "current": 10.22}}
+    orders = [{
+        "symbol": "ABCL", "side": "sell", "type": "stop",
+        "stop": 10.03,
+    }]
+    rows = cp.evaluate_ratchet_invariants(state, detail, orders)
+    assert rows[0]["ok"] is True
+    assert rows[0]["event"] == "ratchet_ok"
 
 
 def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):
