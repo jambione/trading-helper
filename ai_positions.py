@@ -2411,6 +2411,10 @@ def manage_open_positions(
                             "t1_market_scale", symbol=ticker,
                             qty=qty_a, target=t1, last=last,
                         )
+                        events.append({
+                            "ticker": ticker, "event": "t1_market_scale",
+                            "qty": qty_a, "target": t1, "last": last,
+                        })
                         exit_why[ticker] = "t1_market_scale"
                         changed = True
                     else:
@@ -2429,6 +2433,11 @@ def manage_open_positions(
                             qty=att.get("qty", qty_a), target=t1,
                             order_id=att.get("order_id"),
                         )
+                        events.append({
+                            "ticker": ticker, "event": "t1_limit_attached",
+                            "qty": att.get("qty", qty_a), "target": t1,
+                            "order_id": att.get("order_id"),
+                        })
                         exit_why[ticker] = "t1_limit_attached"
                         changed = True
                     else:
@@ -2437,22 +2446,21 @@ def manage_open_positions(
                             error=str(att.get("error") or att.get("status"))[:160],
                         )
 
-            # Software T1: last printed through target with no fill yet.
+            # Software T1 only when there is no working partial limit (attach
+            # failed / never armed). Do not cancel a resting T1 and market-sell
+            # just because last printed through — that races the broker leg.
             if (
                 not pos.get("tranche_a_filled")
+                and not pos.get("tranche_a_target_order_id")
+                and not pos.get("t1_attach_pending")
                 and t1
                 and last is not None
                 and last + 1e-9 >= t1
                 and qty_a > 0
             ):
-                # Cancel resting partial so we do not double-sell.
-                t_oid = pos.get("tranche_a_target_order_id")
-                if t_oid:
-                    alpaca_trader.cancel_order_id(t_oid)
                 sold = alpaca_trader.sell_qty_market(ticker, qty_a) or {}
                 if sold.get("ok"):
                     pos["tranche_a_filled"] = True
-                    pos["t1_attach_pending"] = False
                     log_event(
                         "t1_software_scale", symbol=ticker,
                         qty=qty_a, target=t1, last=last,

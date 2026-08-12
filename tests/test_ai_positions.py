@@ -305,10 +305,42 @@ class _StubBroker:
         self.close_calls.append(ticker)
         return {"ok": True, "order_id": "close_1"}
 
+    def cancel_order_id(self, order_id):
+        self.cancel_calls.append(str(order_id or ""))
+        return True
+
+    def place_limit_sell(self, ticker, qty, limit_price, **kwargs):
+        oid = f"tp_{self._next_id}"
+        self._next_id += 1
+        self.limit_calls.append({
+            "ticker": ticker, "qty": qty, "limit_price": limit_price,
+            "kind": "partial_t1",
+        })
+        return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
+
+    def sell_qty_market(self, ticker, qty):
+        oid = f"mkt_{self._next_id}"
+        self._next_id += 1
+        self.calls.append({
+            "ticker": ticker, "qty": qty, "stop_price": None,
+            "target_price": None, "kind": "partial_mkt",
+        })
+        return {"ok": True, "order_id": oid, "status": "accepted", "qty": qty}
+
 
 def test_place_scaled_entry_splits_into_two_tranches_by_scale_out_pct(
         tmp_path, monkeypatch):
+    """Option A dual: one parent buy for full size; qty_a/qty_b are bookkeeping.
+    Partial T1 attaches after fill (not a second protected buy)."""
     _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 40.0,
+        "ai_max_position_pct": 25.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_arm_below_zone_max_r": 1.0,
+    })
     stub = _StubBroker()
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
@@ -321,14 +353,19 @@ def test_place_scaled_entry_splits_into_two_tranches_by_scale_out_pct(
     assert result["ok"] is True
     assert result["qty_a"] == 80
     assert result["qty_b"] == 120
-    assert len(stub.calls) == 2
-    tranche_a, tranche_b = stub.calls
-    assert tranche_a["target_price"] == 46.0   # carries the first target
-    assert tranche_b["target_price"] is None   # rides with a stop only
+    # Single parent order for full size, stop only (T1 after fill).
+    assert len(stub.calls) == 1
+    parent = stub.calls[0]
+    assert parent["qty"] == 200
+    assert parent["target_price"] is None
+    assert parent["stop_price"] == 38.0
 
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["qty_a"] == 80
     assert state["NVDA"]["qty_b"] == 120
+    assert state["NVDA"]["total_qty"] == 200
+    assert state["NVDA"]["t1_attach_pending"] is True
+    assert state["NVDA"]["logical_dual"] is True
     assert state["NVDA"]["breakeven_done"] is False
 
 
@@ -364,27 +401,31 @@ def test_place_scaled_entry_refuses_price_outside_the_entry_zone(
     assert stub.calls == []
 
 
-def test_place_scaled_entry_rolls_back_when_tranche_b_fails(
+def test_place_scaled_entry_rolls_back_when_parent_buy_fails(
         tmp_path, monkeypatch):
-    """Half-armed books are forbidden — A success + B fail must cancel/close."""
+    """Single-parent dual: if the only buy fails, no managed state is kept."""
     _use_tmp_state(tmp_path, monkeypatch)
-    stub = _StubBroker(fail_on_call=2)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 40.0,
+        "ai_max_position_pct": 25.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_arm_below_zone_max_r": 1.0,
+    })
+    stub = _StubBroker(fail_on_call=1)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
     result = cp.place_scaled_entry(
         "nvda", _buy_decision(scale_out_pct=40),
         account_equity=50_000.0, risk_pct=1.0, current_ask=40.5)
     assert result["ok"] is False
-    assert result.get("rolled_back") is True
-    # Pre-place cancel (may retry) + rollback cancel after tranche B fails.
-    assert all(c == "NVDA" for c in stub.cancel_calls)
-    assert len(stub.cancel_calls) >= 2
-    assert stub.close_calls == ["NVDA"]
-    # Must not persist managed state for a rolled-back entry.
+    assert "NVDA" not in (result.get("ticker") and {})
     state_path = _state_path(tmp_path)
     if state_path.exists():
         state = json.loads(state_path.read_text() or "{}")
         assert "NVDA" not in state
+    assert stub.close_calls == []  # never opened
 
 
 def test_pre_entry_gate_blocks_daily_loss_limit(tmp_path, monkeypatch):
@@ -578,6 +619,8 @@ def test_liquidate_all_cancels_and_closes(monkeypatch):
     calls = {"cancel": 0, "close": []}
 
     monkeypatch.setattr(alpaca_trader, "is_active", lambda: True)
+    # Host guard blocks mutations off the trading host; force allow in unit test.
+    monkeypatch.setattr(alpaca_trader, "_can_mutate", lambda: True)
     monkeypatch.setattr(
         alpaca_trader, "cancel_open_orders",
         lambda ticker=None: calls.__setitem__("cancel", calls["cancel"] + 1)
@@ -782,6 +825,24 @@ class _StubBrokerManage:
     def close_out(self, ticker):
         self.closed.append(ticker)
         return {"ok": True, "order_id": "close_1"}
+
+    def cancel_order_id(self, order_id):
+        self.canceled.append(str(order_id or ""))
+        return True
+
+    def place_limit_sell(self, ticker, qty, limit_price, **kwargs):
+        self.canceled.append(f"limit_sell:{ticker}:{qty}:{limit_price}")
+        return {
+            "ok": True, "order_id": "tp_partial_1", "status": "accepted",
+            "qty": qty,
+        }
+
+    def sell_qty_market(self, ticker, qty):
+        self.closed.append(f"partial:{ticker}:{qty}")
+        return {
+            "ok": True, "order_id": "mkt_partial_1", "status": "accepted",
+            "qty": qty,
+        }
 
 
 def _seed_state(tmp_path, monkeypatch, **fields):
@@ -1659,36 +1720,90 @@ def test_place_scaled_entry_refuses_without_stop_or_target(
 
 
 def test_synthetic_dual_tranche_when_day_scalp_enabled(tmp_path, monkeypatch):
-    """Synth used to force a single full-size bracket (scaled_out always false).
-    Day scalp dual tranche banks T1 on half and leaves a stopped runner."""
+    """Day scalp dual: one parent buy, half/half bookkeeping, T1 after fill."""
     _use_tmp_state(tmp_path, monkeypatch)
     monkeypatch.setattr(cp, "_entry_cfg", lambda: {
         "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
         "ai_watch_synth_scale_out_pct": 50.0,
         "ai_watch_synth_trail_pct": 2.5,
         "ai_entry_order_style": "limit",
         "ai_entry_limit_pad_pct": 0.15,
         "ai_max_position_pct": 25.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_arm_below_zone_max_r": 1.0,
     })
     stub = _StubBroker()
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
     decision = _buy_decision(
         synthetic=True, scale_out_pct=50, trail_pct=2.5, target_1=42.0)
-    # 200 shares at 40.5 with $2.5 risk → dual 100/100
+    # 200 shares at 40.5 with $2.5 risk → dual 100/100 bookkeeping
     out = cp.place_scaled_entry(
         "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
         current_ask=40.5)
     assert out["ok"] is True
     assert out["qty_a"] == 100
     assert out["qty_b"] == 100
-    assert len(stub.calls) == 2
-    assert stub.calls[0]["target_price"] == 42.0
-    assert stub.calls[1]["target_price"] is None
+    assert len(stub.calls) == 1
+    assert stub.calls[0]["qty"] == 200
+    assert stub.calls[0]["target_price"] is None  # partial T1 after fill
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["qty_b"] == 100
+    assert state["NVDA"]["t1_attach_pending"] is True
     assert state["NVDA"]["strategy"] == "day_scalp_v0"
 
+
+def test_manage_attaches_partial_t1_after_fill(tmp_path, monkeypatch):
+    """After parent fill, dual book rests a partial limit sell for qty_a."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=100, qty_b=100, total_qty=200,
+        t1_attach_pending=True,
+        tranche_a_target_order_id=None,
+        tranche_a_filled=False,
+        last_seen_price=41.0,
+        target_1=42.0,
+        entry_confirmed=True,
+    )
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_dead_trade_min": 0,
+    })
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+    stub = _StubBrokerManage(current_price=41.0)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert any(e.get("event") == "t1_limit_attached" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["t1_attach_pending"] is False
+    assert state["NVDA"]["tranche_a_target_order_id"] == "tp_partial_1"
+
+
+def test_place_scaled_entry_allows_armable_below_zone(tmp_path, monkeypatch):
+    """Price under the band but above the stop still places (Option A geometry)."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_arm_below_zone_max_r": 1.0,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    # zone 40-41, stop 38; ask 39.5 is below floor but armable
+    decision = _buy_decision(entry_low=40.0, entry_high=41.0, stop_price=38.0,
+                             target_1=42.0)
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=39.5)
+    assert out["ok"] is True
+    assert stub.calls and stub.calls[0]["qty"] > 0
 
 def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     _seed_state(
