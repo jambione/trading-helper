@@ -1920,19 +1920,28 @@ def _adopt_unmanaged(
                       entry=entry)
             continue
         target = _num((ok or {}).get("target_1")) if ok else None
-        qty_a = int((ok or {}).get("qty_a") or qty) if ok else int(qty)
+        qty_a_ev = int((ok or {}).get("qty_a") or 0) if ok else 0
+        qty_b_ev = int((ok or {}).get("qty_b") or 0) if ok else 0
+        if qty_a_ev > 0 and qty_b_ev > 0:
+            qty_a, qty_b = qty_a_ev, qty_b_ev
+            scaled = qty <= qty_b + 1 and qty < (qty_a + qty_b)
+        else:
+            qty_a, qty_b = int(qty), 0
+            scaled = False
         state[s] = {
             "qty_a": qty_a,
-            "qty_b": 0,
-            "total_qty": int(qty),
+            "qty_b": qty_b,
+            "total_qty": int(qty_a + qty_b) if qty_b else int(qty),
             "entry_price": entry,
             "stop_price": stop,
             "risk_per_share": max(0.0, entry - stop),
             "target_1": target,
             "entry_time": float((ok or {}).get("ts") or now),
             "entry_confirmed": True,
-            "tranche_a_filled": False,
-            "breakeven_done": False,
+            "tranche_a_filled": bool(scaled),
+            "breakeven_done": bool(scaled),
+            "t1_attach_pending": bool(qty_b > 0 and not scaled),
+            "runner_trail_r": DEFAULT_RUNNER_TRAIL_R,
             "closing_reason": None,
             "last_seen_price": _num(live.get("current") or live.get("price")),
             "strategy": str((ok or {}).get("strategy") or "adopted"),
@@ -2616,9 +2625,11 @@ def manage_open_positions(
                         if rear.get("ok"):
                             pos["tranche_a_stop_order_id"] = rear.get("order_id")
                             pos["tranche_b_stop_order_id"] = rear.get("order_id")
+                    pos["t1_attach_cooldown_until"] = now + 90.0
                     log_event(
                         "t1_market_scale_failed", symbol=ticker,
                         error=str(sold.get("error") or sold.get("status"))[:160],
+                        retry_in_sec=90,
                     )
 
             # Not yet at T1: free → partial limit on A + stop on B only.
@@ -2628,12 +2639,14 @@ def manage_open_positions(
                 and t1
                 and qty_a > 0
                 and not through_t1
+                and float(pos.get("t1_attach_cooldown_until") or 0) <= now
             ):
                 alpaca_trader.free_sell_capacity(ticker)
                 att = alpaca_trader.place_limit_sell(ticker, qty_a, t1) or {}
                 if att.get("ok") and att.get("order_id"):
                     pos["tranche_a_target_order_id"] = att["order_id"]
                     pos["t1_attach_pending"] = False
+                    pos["t1_attach_cooldown_until"] = None
                     # Runner stop only (qty_b). A is protected by software:
                     # if last <= stop, full close_out below.
                     rear = _rearm_stop(qty_b, stop_px)
@@ -2659,9 +2672,12 @@ def manage_open_positions(
                         if rear.get("ok"):
                             pos["tranche_a_stop_order_id"] = rear.get("order_id")
                             pos["tranche_b_stop_order_id"] = rear.get("order_id")
+                    pos["t1_attach_pending"] = True
+                    pos["t1_attach_cooldown_until"] = now + 90.0
                     log_event(
                         "t1_limit_attach_failed", symbol=ticker,
                         error=str(att.get("error") or att.get("status"))[:160],
+                        retry_in_sec=90,
                     )
 
             # Soft protection for the A leg while only B has a broker stop:
@@ -2852,6 +2868,24 @@ def manage_open_positions(
                 if probe.get("exh_was_overbought") and not pos.get("exh_was_overbought"):
                     pos["exh_was_overbought"] = True
                     changed = True
+                dual = (
+                    int(pos.get("qty_a") or 0) > 0
+                    and int(pos.get("qty_b") or 0) > 0
+                )
+                if hit and dual:
+                    # Dual book banks via T1 + runner ratchet. Flattening here
+                    # was 13/19 closes on 2026-08-12 and killed the raise.
+                    log_event(
+                        "left_overbought_deferred", symbol=ticker,
+                        pctr=sig.get("pctr"),
+                        tranche_a_filled=bool(pos.get("tranche_a_filled")),
+                    )
+                    events.append({
+                        "ticker": ticker, "event": "left_overbought_deferred",
+                        "pctr": sig.get("pctr"),
+                    })
+                    exit_why[ticker] = "left_overbought_deferred"
+                    hit = False
                 if hit:
                     alpaca_trader.cancel_open_orders(ticker)
                     out = alpaca_trader.close_out(ticker) or {}

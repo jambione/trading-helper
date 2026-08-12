@@ -1870,6 +1870,116 @@ def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     assert state["NVDA"]["closing_reason"] == "dead_trade"
 
 
+def test_left_overbought_does_not_flatten_a_dual_book(tmp_path, monkeypatch):
+    """13/19 closes on 2026-08-12 were this path; T1/ratchet own the exit."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=21, qty_b=21, total_qty=42,
+        entry_confirmed=True, tranche_a_filled=False,
+        last_seen_price=58.3, target_1=59.08, stop_price=56.44,
+        entry_price=58.09,
+        tranche_a_target_order_id="t1",
+        t1_attach_pending=False,
+    )
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": True,
+        "ai_exit_left_overbought": True,
+    })
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {
+        "NVDA": {"pctr": -25.0, "pctr_falling": True},
+    })
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_watch_exhaustion_rules": True,
+        "ai_exit_left_overbought": True,
+        "ai_edge_mode": "exhaustion_scalp",
+    })
+
+    class _EW:
+        @staticmethod
+        def live_exhaustion(*a, **k):
+            return (-25.0, 20.0, False, True)
+
+        @staticmethod
+        def exhaustion_exit_now(probe, cfg):
+            return True, "left_overbought"
+
+    import sys
+    monkeypatch.setitem(sys.modules, "ai_entry_watch", _EW)
+    stub = _StubBrokerManage(current_price=58.3, live_qty=42)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert stub.closed == []
+    assert any(e.get("event") == "left_overbought_deferred" for e in events)
+    # close_out never ran; position still tracked
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert "NVDA" in state
+    assert state["NVDA"].get("closing_reason") is None
+
+
+def test_adopt_restores_dual_qty_from_entry_ok(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_latest_entry_ok_event", lambda s: {
+        "qty_a": 121, "qty_b": 121, "stop_price": 9.71,
+        "target_1": 10.22, "entry_price": 10.03, "ts": 1.0,
+        "strategy": "day_scalp_v0",
+    })
+    monkeypatch.setattr(cp, "_resting_stop_price", lambda s: 9.71)
+    monkeypatch.setattr(cp, "log_event", lambda *a, **k: {})
+    state: dict = {}
+    cp._adopt_unmanaged(
+        ["ABCL"],
+        {"ABCL": {"qty": 121, "avg_entry": 10.03, "current": 10.20}},
+        state,
+        2.0,
+    )
+    pos = state["ABCL"]
+    assert pos["qty_a"] == 121 and pos["qty_b"] == 121
+    assert pos["tranche_a_filled"] is True
+    assert pos["t1_attach_pending"] is False
+
+
+def test_t1_attach_failure_cools_down(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=100, qty_b=100, total_qty=200,
+        t1_attach_pending=True,
+        tranche_a_target_order_id=None,
+        tranche_a_filled=False,
+        last_seen_price=41.0,
+        target_1=42.0,
+        entry_confirmed=True,
+    )
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_dead_trade_min": 0,
+    })
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {})
+
+    class _FailT1(_StubBrokerManage):
+        def place_limit_sell(self, ticker, qty, limit_price, **kwargs):
+            self.canceled.append(f"limit_fail:{ticker}")
+            return {"ok": False, "error": "held_for_orders"}
+
+    stub = _FailT1(current_price=41.0, live_qty=200)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    cp.manage_open_positions(now=1_000_100.0)
+    n_free = stub.canceled.count("free:NVDA")
+    assert n_free >= 1
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["t1_attach_cooldown_until"] == 1_000_190.0
+    # Second tick inside the window must not free+retry.
+    stub.canceled.clear()
+    cp.manage_open_positions(now=1_000_120.0)
+    assert "free:NVDA" not in stub.canceled
+
+
 def test_heal_dual_tranche_keeps_t1_and_places_runner_stop(tmp_path, monkeypatch):
     """Heal must not prefer_stop_over_target on a dual book (ABCL 2026-08-12)."""
     _seed_state(
