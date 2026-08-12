@@ -80,6 +80,49 @@ def test_unreadable_or_garbage_pidfile_reads_as_empty(tmp_path):
     assert w.read_pidfile(junk) == []
 
 
+# ── Learn-loop schedules ─────────────────────────────────────────────────────
+
+def test_instrumentation_before_desk_start_is_skipped():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=et)
+    run, key = w.should_run_instrumentation(
+        now, start_hhmm="09:00", last_key=None)
+    assert run is False
+
+
+def test_instrumentation_once_per_hour():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    now = datetime(2026, 8, 12, 10, 15, tzinfo=et)
+    run, key = w.should_run_instrumentation(
+        now, start_hhmm="09:00", last_key=None)
+    assert run is True
+    assert key == "2026-08-12T10"
+    run2, key2 = w.should_run_instrumentation(
+        now, start_hhmm="09:00", last_key=key)
+    assert run2 is False
+    assert key2 == key
+
+
+def test_eod_once_per_day_after_cutoff():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    before = datetime(2026, 8, 12, 15, 50, tzinfo=et)
+    run, day = w.should_run_eod(before, eod_hhmm="16:05", last_day=None)
+    assert run is False
+    after = datetime(2026, 8, 12, 16, 10, tzinfo=et)
+    run, day = w.should_run_eod(after, eod_hhmm="16:05", last_day=None)
+    assert run is True
+    assert day == "2026-08-12"
+    run2, day2 = w.should_run_eod(after, eod_hhmm="16:05", last_day=day)
+    assert run2 is False
+
+
+
 def test_pid_alive_true_for_self_false_for_unused():
     assert w.pid_alive(os.getpid()) is True
     # PID 0 is the scheduler on macOS/Linux and is never a normal process;

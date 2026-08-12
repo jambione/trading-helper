@@ -138,6 +138,11 @@ def recent_trades(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def _append_log(entry: dict[str, Any]) -> None:
+    try:
+        from learn_stamps import merge_regime
+        entry = merge_regime(entry if isinstance(entry, dict) else {})
+    except Exception:
+        pass
     with _lock:
         _trade_log.append(entry)
         if len(_trade_log) > 200:

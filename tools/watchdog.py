@@ -15,6 +15,10 @@ What it does, every `--interval` seconds:
     `./trading stop` can still find everything.
   • Health-checks each service and restarts what is down, with exponential
     backoff so a process that crashes on startup cannot hot-loop.
+  • After the AI watch opens, runs tools/instrumentation_check.py about once
+    an hour so a silent logger is a same-day alarm, not a next-morning autopsy.
+  • After the cash session (default 16:05 ET), runs tools/daily_learn.py once
+    so the hybrid forward-test ledger always gets a line.
 
 The dashboard is checked over HTTP rather than by process liveness: a hung
 uvicorn still has a PID, and to the OCR source a hang and a crash are the same
@@ -41,18 +45,25 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, time as dtime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT     = Path(__file__).resolve().parent.parent
 PIDFILE  = ROOT / ".trading.pids"
 SELF_PID = ROOT / ".trading.watchdog.pid"
 LOGDIR   = ROOT / "logs"
+ET       = ZoneInfo("America/New_York")
 
 # Backoff bounds for a service that will not stay up. Capped rather than
 # abandoned: an unattended desk is worth more with a process that retries every
 # two minutes than one that gave up at 09:31 and told nobody.
 BACKOFF_BASE_SEC = 5.0
 BACKOFF_CAP_SEC  = 120.0
+
+# Learning-loop schedules (ET). Pure helpers below are unit-tested.
+DEFAULT_INSTR_START = "09:00"   # match ai_watch_start_time when config missing
+DEFAULT_EOD_HHMM = "16:05"      # after cash close; outcomes settled
 
 
 def log(msg: str) -> None:
@@ -267,6 +278,65 @@ def load_cfg() -> dict:
         return {}
 
 
+def _parse_hhmm(raw: str, default: str) -> dtime:
+    s = (raw or default).strip() or default
+    try:
+        hh, mm = s.split(":", 1)
+        return dtime(int(hh), int(mm))
+    except Exception:
+        hh, mm = default.split(":")
+        return dtime(int(hh), int(mm))
+
+
+def should_run_instrumentation(
+    now_et: datetime,
+    *,
+    start_hhmm: str,
+    last_key: str | None,
+) -> tuple[bool, str]:
+    """Once per ET hour after the desk is expected to record.
+
+    Returns (run?, key) where key is YYYY-MM-DDTHH for dedupe.
+    """
+    start = _parse_hhmm(start_hhmm, DEFAULT_INSTR_START)
+    if now_et.timetz().replace(tzinfo=None) < start:
+        return False, last_key or ""
+    key = now_et.strftime("%Y-%m-%dT%H")
+    if last_key == key:
+        return False, key
+    return True, key
+
+
+def should_run_eod(
+    now_et: datetime,
+    *,
+    eod_hhmm: str,
+    last_day: str | None,
+) -> tuple[bool, str]:
+    """Once per ET calendar day after *eod_hhmm*."""
+    eod = _parse_hhmm(eod_hhmm, DEFAULT_EOD_HHMM)
+    day = now_et.strftime("%Y-%m-%d")
+    if now_et.timetz().replace(tzinfo=None) < eod:
+        return False, last_day or ""
+    if last_day == day:
+        return False, day
+    return True, day
+
+
+def run_learn_job(py: str, *argv: str) -> int:
+    """Run a tools/*.py job; never raise into the supervisor loop."""
+    script = ROOT / "tools" / argv[0]
+    cmd = [py, str(script), *argv[1:]]
+    try:
+        return subprocess.call(
+            cmd, cwd=str(ROOT),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as e:
+        log(f"learn job failed to spawn: {e}")
+        return 127
+
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 def sync_pidfile(extra: list[int]) -> None:
@@ -283,6 +353,10 @@ def main() -> int:
                     help="dashboard port for the health check (default 8888)")
     ap.add_argument("--once", action="store_true",
                     help="run a single check and exit (for testing)")
+    ap.add_argument("--no-learn", action="store_true",
+                    help="skip instrumentation / EOD daily_learn jobs")
+    ap.add_argument("--eod-time", default=DEFAULT_EOD_HHMM,
+                    help="ET HH:MM for daily_learn (default 16:05)")
     args = ap.parse_args()
 
     py = str(ROOT / ".venv" / "bin" / "python")
@@ -299,10 +373,16 @@ def main() -> int:
     write_pidfile(SELF_PID, [os.getpid()])
     sync_pidfile([os.getpid()])
 
-    services = enabled_services(load_cfg(), args.port)
+    cfg = load_cfg()
+    services = enabled_services(cfg, args.port)
+    watch_start = str(cfg.get("ai_watch_start_time") or DEFAULT_INSTR_START)
     log(f"supervising {', '.join(s.name for s in services)} "
-        f"every {args.interval:g}s")
+        f"every {args.interval:g}s"
+        + ("" if args.no_learn else
+           f"; learn: instr≥{watch_start} eod≥{args.eod_time} ET"))
 
+    last_instr_key: str | None = None
+    last_eod_day: str | None = None
     stopping = False
 
     def _stop(_sig, _frm):
@@ -346,6 +426,24 @@ def main() -> int:
                     f"(attempt {svc.failures})")
 
             sync_pidfile(started)
+
+            if not args.no_learn:
+                now_et = datetime.now(tz=ET)
+                run_i, last_instr_key = should_run_instrumentation(
+                    now_et, start_hhmm=watch_start, last_key=last_instr_key)
+                if run_i:
+                    rc = run_learn_job(py, "instrumentation_check.py")
+                    log(f"instrumentation_check rc={rc} key={last_instr_key}")
+                    if rc != 0:
+                        log("instrumentation_check NONZERO — logging may be "
+                            "SILENT after desk start; check ai_reports/")
+
+                run_e, day_key = should_run_eod(
+                    now_et, eod_hhmm=args.eod_time, last_day=last_eod_day)
+                if run_e:
+                    rc = run_learn_job(py, "daily_learn.py", "--day", day_key)
+                    last_eod_day = day_key
+                    log(f"daily_learn rc={rc} day={day_key}")
 
             if args.once:
                 break

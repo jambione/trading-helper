@@ -47,6 +47,7 @@ from ai_suggest import (  # noqa: E402
     call_claude_cli,
     call_grok_cli,
 )
+from learn_stamps import merge_regime, regime_stamp  # noqa: E402
 
 REPORT_DIR = resolve_report_dir()
 POSITIONS_STATE_PATH = REPORT_DIR / "positions_state.json"
@@ -555,11 +556,15 @@ def log_shadow_sample(row: dict[str, Any]) -> None:
     and "what would the blocked trade have done" are all derived downstream by
     grouping these (tools/shadow_report.py) rather than tracked in the record,
     so this stays pure append-only logging with no lifecycle hooks to break.
+
+    Regime stamps (edge_mode, git, config_fp) are merged here so every writer
+    path is comparable day-over-day without each call site remembering them.
     """
     try:
+        payload = merge_regime(row if isinstance(row, dict) else {})
         SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
         with SHADOW_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, default=str) + "\n")
+            f.write(json.dumps(payload, default=str) + "\n")
     except Exception:
         pass
 
@@ -572,9 +577,10 @@ def log_reject_sample(row: dict[str, Any]) -> None:
     can trade must not lose quota to the ones that were turned away.
     """
     try:
+        payload = merge_regime(row if isinstance(row, dict) else {})
         REJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with REJECTS_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, default=str) + "\n")
+            f.write(json.dumps(payload, default=str) + "\n")
     except Exception:
         pass
 
@@ -1215,6 +1221,9 @@ def place_scaled_entry(
         "mae_r": None,
         "mfe_r": None,
         "sell_signal_stop_done": False,
+        # Frozen at open so the outcome row can slice hybrid vs continuation
+        # without guessing from calendar dates.
+        **regime_stamp(),
     }
 
     def _put(st: dict[str, Any]) -> None:
@@ -1595,7 +1604,12 @@ def _log_position_shadow(ticker: str, pos: dict[str, Any], price: float | None,
             "strategy": pos.get("strategy"),
             "source": (pos.get("features") or {}).get("source"),
             "entry_hour_et": _et_hour(now),
+            "entry_path": pos.get("entry_path"),
+            "edge_mode": pos.get("edge_mode"),
+            "git_version": pos.get("git_version"),
+            "config_fp": pos.get("config_fp"),
         }
+        row = merge_regime(row)
         POSITION_SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
         with POSITION_SHADOW_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
@@ -1857,6 +1871,7 @@ def _adopt_unmanaged(
             "mae_r": None,
             "mfe_r": None,
             "sell_signal_stop_done": False,
+            **regime_stamp(),
         }
         events.append({"ticker": s, "event": "position_adopted",
                        "stop_price": stop, "entry_price": entry, "qty": qty})
@@ -2042,7 +2057,16 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
             or pos.get("source")
         ),
         "duel_source": pos.get("duel_source"),
+        # Prefer stamps frozen on the position at entry; fall back to live
+        # regime so adopted/legacy rows still carry something.
+        "edge_mode": pos.get("edge_mode"),
+        "exit_left_overbought": pos.get("exit_left_overbought"),
+        "git_version": pos.get("git_version"),
+        "config_fp": pos.get("config_fp"),
+        "paper": pos.get("paper"),
+        "book_owner": pos.get("book_owner") or pos.get("duel_source"),
     }
+    outcome = merge_regime(outcome)
     try:
         OUTCOMES_PATH.parent.mkdir(parents=True, exist_ok=True)
         with OUTCOMES_PATH.open("a", encoding="utf-8") as f:

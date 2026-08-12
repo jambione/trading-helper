@@ -70,3 +70,24 @@ is consistent across 17 configs and both halves.
 - If catalyst-gated trades remain negative in paper after ≥30 trades, the
   small-consistent-profit mission is better served on liquid names (C4-style
   config) than on the alert pool
+
+---
+
+## 2026-08-11 — Hybrid edge mode (AI Watch) + learning-loop ops
+
+**Session postmortem (sim):** overbought-only arm + `left_overbought` off
+(`exhaustion_scalp` arm gate, continuation-style exit). Fixture:
+`tests/fixtures/sim_2026-08-11/`. Estimate: live −$117.60 → hybrid +$109.34.
+
+**Forward-test ops (shipped 2026-08-12):**
+
+1. Regime stamps on outcomes / trades / shadow / rejects:
+   `edge_mode`, `exit_left_overbought`, `git_version`, `config_fp`, `paper`
+   (`learn_stamps.py`).
+2. EOD roll-up: `tools/daily_learn.py` → `ai_reports/daily/YYYY-MM-DD.{md,json}`
+   + append `ai_reports/daily_ledger.jsonl`.
+3. Watchdog: hourly `instrumentation_check` after `ai_watch_start_time`;
+   once-daily `daily_learn` after 16:05 ET.
+
+Read the ledger each morning: `tail ai_reports/daily_ledger.jsonl`.
+One day remains a check, not a trend.
