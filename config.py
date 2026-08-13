@@ -158,7 +158,7 @@ DEFAULT_CONFIG = {
     "ai_trade_amount":        1000.0,
     # Slightly higher so trending heat can share slots with momentum (3 left
     # only 4 pure-trending fills on 2026-08-11 under slot contention).
-    "ai_max_positions":            4,
+    "ai_max_positions":            8,
     "ai_max_buys_per_poll":        2,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
