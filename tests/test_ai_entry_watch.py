@@ -668,6 +668,8 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
         "stop_price",
         "last_ask", "score", "rvol", "exhaustion", "exhaustion_state",
+        "pctr", "pctr_raw", "pctr_src", "exh_bars", "exh_window_min",
+        "exh_hh", "exh_ll",
         "agreement", "reason", "source", "ready", "in_zone",
         # Which geometry drew the band — double_bottom vs the offset fallback.
         "zone_kind",
@@ -2958,3 +2960,52 @@ def test_arm_refuses_no_exhaustion_when_require_data():
     ok, why = ew.should_arm_buy(rec, ask=31.5, bid=31.4, cfg=cfg)
     assert not ok and why == "no_exhaustion_data"
     assert ew.format_blocker("no_exhaustion_data") == "no %R"
+
+
+def _prime_ohlc(ew, symbol, rows, now, *, step_sec=60.0):
+    stamps = [now - step_sec * (len(rows) - 1 - i) for i in range(len(rows))]
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache[symbol] = (now, list(rows))
+        ew._ohlc_ts_cache[symbol] = (now, stamps)
+
+
+def test_live_exhaustion_refuses_sparse_clock_window():
+    """21 prints stretched over an hour is not a 1-minute %R(21)."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _synthetic_ohlc(40)
+    _prime_ohlc(ew, "OMER", rows, now, step_sec=180.0)  # 3 min between prints
+    cfg = {"rte_fast_length": 21, "ai_watch_db_bar_seconds": 60.0}
+    px = rows[-1][2]
+    assert ew.live_exhaustion("OMER", px, cfg, now) is None
+    rec = {
+        "symbol": "OMER",
+        "indicator": {"pctr": -2.0, "pctr_src": "live", "pctr_ok": True},
+    }
+    assert ew.apply_live_exhaustion(rec, px, cfg, now) is False
+    assert rec["indicator"]["pctr"] is None
+    assert rec["indicator"]["pctr_src"] == "sparse_window"
+
+
+def test_live_exhaustion_uses_dense_1m_clock_window():
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _synthetic_ohlc(40)
+    _prime_ohlc(ew, "SMCI", rows, now, step_sec=60.0)
+    cfg = {"rte_fast_length": 21, "ai_watch_db_bar_seconds": 60.0}
+    px = rows[-1][2] + 0.01
+    got = ew.live_exhaustion("SMCI", px, cfg, now)
+    assert got is not None
+    pctr, ex, _up, _dn = got
+    assert -100.5 <= pctr <= 0.5
+    rec = {"symbol": "SMCI"}
+    assert ew.apply_live_exhaustion(rec, px, cfg, now) is True
+    assert rec["indicator"]["pctr_src"] == "live"
+    assert rec["indicator"]["pctr_bars"] >= 23
+    assert rec["indicator"]["pctr_window_sec"] <= 23 * 60 + 1
+    wire = ew._exhaustion_wire_fields(rec)
+    assert wire["pctr"] is not None
+    assert wire["exh_window_min"] is not None
+    assert wire["exh_window_min"] <= 23.1

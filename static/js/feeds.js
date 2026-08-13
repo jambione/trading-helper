@@ -273,6 +273,13 @@ function _bookRows(book) {
       block_reason: w.block_reason || w.blocker || null,
       exhaustion: w.exhaustion != null ? w.exhaustion : null,
       exhaustion_state: w.exhaustion_state || null,
+      pctr: w.pctr != null ? w.pctr : null,
+      pctr_raw: w.pctr_raw != null ? w.pctr_raw : null,
+      pctr_src: w.pctr_src || null,
+      exh_bars: w.exh_bars != null ? w.exh_bars : null,
+      exh_window_min: w.exh_window_min != null ? w.exh_window_min : null,
+      exh_hh: w.exh_hh != null ? w.exh_hh : null,
+      exh_ll: w.exh_ll != null ? w.exh_ll : null,
     };
   }
   // Live positions always win (P&L / qty).
@@ -651,6 +658,8 @@ function _updateBookRow(el, r, owner) {
   if (exhEl) {
     _setText(exhEl, _fmtExh(r.exhaustion, r.exhaustion_state));
     exhEl.className = `cell-exh${_exhClass(r.exhaustion_state)}`;
+    const tip = _fmtExhTitle(r);
+    if (tip) exhEl.title = tip;
   }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
@@ -722,7 +731,7 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
     + `<div class="cell-rvol${Number(r.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}">${_esc(_fmtRvol(r.rvol))}</div>`
-    + `<div class="cell-exh${_exhClass(r.exhaustion_state)}">${_esc(_fmtExh(r.exhaustion, r.exhaustion_state))}</div>`
+    + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -750,6 +759,29 @@ function _fmtExh(v, state) {
     : state === 'heating' ? '\u2191'
     : state === 'cooling' ? '\u2193' : '';
   return `${n.toFixed(0)}%${mark}`;
+}
+
+/** Hover: Williams %R(21) on 1m, plus the window used. */
+function _fmtExhTitle(r) {
+  if (!r) return '';
+  const bits = ['Williams %R(21) × 1m live'];
+  if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
+    bits.push(`smoothed ${Number(r.pctr).toFixed(1)}`);
+  }
+  if (r.pctr_raw != null && Number.isFinite(Number(r.pctr_raw))) {
+    bits.push(`raw ${Number(r.pctr_raw).toFixed(1)}`);
+  }
+  if (r.exh_window_min != null && Number.isFinite(Number(r.exh_window_min))) {
+    bits.push(`window ${Number(r.exh_window_min).toFixed(1)}m`);
+  }
+  if (r.exh_bars != null) bits.push(`${r.exh_bars} bars`);
+  if (r.exh_hh != null && r.exh_ll != null) {
+    bits.push(`HH ${Number(r.exh_hh).toFixed(2)} LL ${Number(r.exh_ll).toFixed(2)}`);
+  }
+  if (r.pctr_src === 'sparse_window') {
+    return 'No 1m %R — fewer than 23 bars in the last ~22 minutes (not a TV 21-bar window)';
+  }
+  return bits.length > 1 ? bits.join(' · ') : '';
 }
 
 function _exhClass(state) {

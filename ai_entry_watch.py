@@ -538,6 +538,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             # highs and rolling over" from "climbing into them".
             "exhaustion": _f_or_none(exhaustion_pct(rec)),
             "exhaustion_state": exhaustion_state(rec, _push_cfg()),
+            **_exhaustion_wire_fields(rec),
             "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
             "reason": str(rec.get("reason") or "")[:80] or None,
             "source": str(rec.get("source") or "research")[:24] or "research",
@@ -628,6 +629,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "rvol": _f_or_none(rec.get("admit_rvol")),
         "exhaustion": _f_or_none(exhaustion_pct(rec)),
         "exhaustion_state": exhaustion_state(rec, _push_cfg()),
+        **_exhaustion_wire_fields(rec),
         "reason": str(rec.get("reason") or "")[:80] or None,
         "wait_kind": wait_kind,
         "entry_low": entry_low_f,
@@ -2747,6 +2749,97 @@ def rebuild_watch_from_book(
     return sync_watch_from_source_panels(cfg=cfg, now=now)
 
 
+def _bar_seconds(cfg: dict) -> float:
+    try:
+        bar_sec = float(cfg.get("ai_watch_db_bar_seconds", 60.0) or 60.0)
+    except (TypeError, ValueError):
+        bar_sec = 60.0
+    return bar_sec if bar_sec > 0 else 60.0
+
+
+def _rte_fast_length(cfg: dict) -> int:
+    try:
+        length = int(cfg.get("rte_fast_length", 21) or 21)
+    except (TypeError, ValueError):
+        length = 21
+    return max(2, length)
+
+
+def _cached_ohlc_stamps(symbol: str, cfg: dict, now: float) -> list[float] | None:
+    """Bar timestamps aligned with ``symbol_ohlc``, or None if unknown."""
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    try:
+        refresh = float(cfg.get("ai_watch_db_bar_refresh_sec", 120.0) or 120.0)
+    except (TypeError, ValueError):
+        refresh = 120.0
+    max_age = max(60.0, refresh * 3.0)
+    with _ohlc_cache_lock:
+        hit = _ohlc_ts_cache.get(sym)
+        rows = _ohlc_cache.get(sym)
+        if not hit or (now - hit[0]) >= max_age:
+            return None
+        stamps = list(hit[1])
+        ohlc = list(rows[1]) if rows and (now - rows[0]) < max_age else []
+    if not stamps or (ohlc and len(stamps) != len(ohlc)):
+        return None
+    return stamps
+
+
+def clock_window_rows(
+    symbol: str,
+    cfg: dict,
+    now: float,
+    *,
+    rows: list[tuple[float, float, float]] | None = None,
+) -> tuple[list[tuple[float, float, float]], float | None]:
+    """Bars that actually sit in the last N minutes of the 1m window.
+
+    Last-N-*prints* is not a 21-minute %R: on IEX a thin name's 21 prints can
+    span an hour, and Williams %R then reports position in that hour's range.
+    That is what produced OMER-class ``98% OB`` readings that do not match a
+    1-minute %R(21) chart.
+
+    When timestamps exist, keep only bars whose stamp is within
+    ``(length+1) * bar_seconds`` of the newest bar. Need ``length+2`` rows or
+    return ``([], span)`` so the caller refuses instead of inventing a number.
+    """
+    if rows is None:
+        rows = symbol_ohlc(symbol, cfg, now)
+    length = _rte_fast_length(cfg)
+    bar_sec = _bar_seconds(cfg)
+    stamps = _cached_ohlc_stamps(symbol, cfg, now)
+    if stamps and len(stamps) == len(rows) and rows:
+        horizon = (length + 1) * bar_sec
+        newest = float(stamps[-1])
+        cutoff = newest - horizon
+        paired = [
+            (r, float(ts)) for r, ts in zip(rows, stamps)
+            if ts is not None and float(ts) + 1e-9 >= cutoff
+        ]
+        span = (
+            paired[-1][1] - paired[0][1]
+            if len(paired) >= 2 else None
+        )
+        if len(paired) < length + 2:
+            return [], span
+        return [r for r, _ts in paired], span
+
+    # No stamps: last-N-prints plus the existing stretch cap.
+    if len(rows) < length + 2:
+        return [], None
+    try:
+        mult = float(cfg.get("ai_watch_exhaustion_max_window_mult", 3.0) or 0.0)
+    except (TypeError, ValueError):
+        mult = 3.0
+    if mult > 0:
+        span = window_span_sec(symbol, length, cfg, now)
+        if span is not None and span > (length - 1) * bar_sec * mult:
+            return [], span
+    return list(rows), window_span_sec(symbol, length, cfg, now)
+
+
 def live_exhaustion(
     symbol: str,
     price: float,
@@ -2782,35 +2875,10 @@ def live_exhaustion(
         return None
     if px <= 0:
         return None
-    rows = symbol_ohlc(symbol, cfg, now)
-    try:
-        length = int(cfg.get("rte_fast_length", 21) or 21)
-    except (TypeError, ValueError):
-        length = 21
-    length = max(2, length)
+    length = _rte_fast_length(cfg)
+    rows, _span = clock_window_rows(symbol, cfg, now)
     if len(rows) < length + 2:
         return None
-
-    # Bar count is not coverage. Refuse a window that is stitched together
-    # from prints spread across hours or days: %R still computes, and the
-    # number still looks like a valid reading, but it describes a range the
-    # name traded over a week rather than the last 21 minutes. A wrong reading
-    # passes every downstream gate; a missing one is caught by the coverage
-    # rule and falls to a refusal. Measured 2026-08-11, 21% of the names that
-    # clear the bar count have a window over two hours wide.
-    try:
-        mult = float(cfg.get("ai_watch_exhaustion_max_window_mult", 3.0) or 0.0)
-    except (TypeError, ValueError):
-        mult = 3.0
-    if mult > 0:
-        span = window_span_sec(symbol, length, cfg, now)
-        if span is not None:
-            try:
-                bar_sec = float(cfg.get("ai_watch_db_bar_seconds", 60.0) or 60.0)
-            except (TypeError, ValueError):
-                bar_sec = 60.0
-            if span > (length - 1) * bar_sec * mult:
-                return None
 
     def _raw(hh: float, ll: float, close: float) -> float | None:
         span = hh - ll
@@ -2861,6 +2929,27 @@ def live_exhaustion(
     return live_sm, ex, rising, falling
 
 
+def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
+    """Drop a published %R that we can no longer stand behind.
+
+    Leaving the last good print up after the clock window goes sparse is how
+    a 98% OB reading outlives the 21-minute chart it was supposed to describe.
+    """
+    ind = rec.get("indicator")
+    if not isinstance(ind, dict):
+        return
+    if ind.get("pctr") is None and ind.get("pctr_src") == reason:
+        return
+    ind["pctr"] = None
+    ind["pctr_ok"] = False
+    ind["pctr_rising"] = False
+    ind["pctr_falling"] = False
+    ind["pctr_src"] = reason
+    ind["pctr_ts"] = float(now)
+    for k in ("pctr_raw", "pctr_hh", "pctr_ll", "pctr_bars", "pctr_window_sec"):
+        ind.pop(k, None)
+
+
 def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> bool:
     """Overwrite a record's indicator %R with a live-price reading.
 
@@ -2872,8 +2961,14 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
         return False
     if not bool(cfg.get("ai_watch_exhaustion_live", True)):
         return False
-    got = live_exhaustion(rec.get("symbol") or "", price, cfg, now)
+    sym = rec.get("symbol") or ""
+    got = live_exhaustion(sym, price, cfg, now)
     if got is None:
+        rows, span = clock_window_rows(sym, cfg, now)
+        # Only blank when we *saw* bars and they failed the clock window.
+        # A cold cache (no rows yet) keeps whatever the engine last published.
+        if rows or span is not None:
+            _clear_stale_pctr(rec, reason="sparse_window", now=now)
         return False
     pctr, _ex, rising, falling = got
     ind = rec.get("indicator")
@@ -2885,6 +2980,23 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
     ind["pctr_falling"] = bool(falling)
     ind["pctr_src"] = "live"
     ind["pctr_ts"] = float(now)
+    rows, span = clock_window_rows(sym, cfg, now)
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        px = None
+    length = _rte_fast_length(cfg)
+    win = rows[-(length - 1):] if rows and length > 1 else []
+    if win and px is not None and px > 0:
+        ind["pctr_hh"] = round(max([r[0] for r in win] + [px]), 4)
+        ind["pctr_ll"] = round(min([r[1] for r in win] + [px]), 4)
+        raw_span = ind["pctr_hh"] - ind["pctr_ll"]
+        if raw_span > 0:
+            ind["pctr_raw"] = round(-100.0 * (ind["pctr_hh"] - px) / raw_span, 2)
+    if rows:
+        ind["pctr_bars"] = len(rows)
+    if span is not None:
+        ind["pctr_window_sec"] = round(float(span), 1)
     return True
 
 
@@ -2966,6 +3078,31 @@ def _price_in_or_below_zone(rec: dict, price: float, *, pad_pct: float = 0.0) ->
         frac = 0.0
     high_bound = hi * (1.0 + frac)
     return px <= high_bound
+
+
+def _exhaustion_wire_fields(rec: dict) -> dict:
+    """Williams %R diagnostics for the EXH column tooltip."""
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    if not isinstance(ind, dict):
+        return {
+            "pctr": None, "pctr_raw": None, "pctr_src": None,
+            "exh_bars": None, "exh_window_min": None,
+            "exh_hh": None, "exh_ll": None,
+        }
+    span = _f_or_none(ind.get("pctr_window_sec"))
+    return {
+        "pctr": _f_or_none(ind.get("pctr")),
+        "pctr_raw": _f_or_none(ind.get("pctr_raw")),
+        "pctr_src": str(ind.get("pctr_src") or "") or None,
+        "exh_bars": (
+            int(ind["pctr_bars"])
+            if isinstance(ind.get("pctr_bars"), (int, float))
+            else None
+        ),
+        "exh_window_min": None if span is None else round(span / 60.0, 1),
+        "exh_hh": _f_or_none(ind.get("pctr_hh")),
+        "exh_ll": _f_or_none(ind.get("pctr_ll")),
+    }
 
 
 def exhaustion_pct(record: dict) -> float | None:
