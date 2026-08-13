@@ -2573,6 +2573,32 @@ def test_a_fill_at_the_bottom_of_the_band_is_too_tight_to_size():
     assert ew.format_blocker("stop_too_tight") == "stop too tight"
 
 
+def test_cheap_pullback_band_overbought_is_refused():
+    import ai_entry_watch as ew
+
+    rec = _armable_record({
+        "decision": "WAIT", "wait_kind": "wait_for_zone",
+        "entry_low": 1.90, "entry_high": 2.10, "stop_price": 1.80,
+        "target_1": 2.30, "reward_risk": 1.5,
+        "zone_kind": "pullback_band", "synthetic": True,
+    })
+    rec["indicator"] = {
+        "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+    }
+    cfg = _db_cfg(
+        ai_watch_exhaustion_rules=True,
+        ai_edge_mode="exhaustion_scalp",
+        ai_watch_cheap_price=5.0,
+        ai_watch_min_stop_pct=0,
+        ai_min_reward_risk=0.5,
+    )
+    ok, why = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
+    assert (ok, why) == (False, "cheap_ob_band")
+    rec["structure"]["zone_kind"] = "double_bottom"
+    ok2, why2 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
+    assert ok2 and why2.startswith("zone")
+
+
 def test_min_stop_pct_of_zero_disables_the_check():
     import ai_entry_watch as ew
 

@@ -117,6 +117,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "in_zone": "in zone",
     "offset_zone": "no shelf",
     "stop_too_tight": "stop too tight",
+    "cheap_ob_band": "cheap OB band",
     # Exhaustion gate (ai_watch_exhaustion_rules) — UI must name these or
     # in-zone names look "ready" while the poll refuses on missing %R.
     "no_exhaustion_data": "no %R",
@@ -649,6 +650,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "pl": None,
         "plpc": None,
         "mkt_val": None,
+        "local_stop": None,
         "is_position": False,
     }
 
@@ -757,7 +759,33 @@ def book_table_rows(
             "pl": p.get("pl"),
             "plpc": p.get("plpc"),
             "mkt_val": p.get("mkt_val"),
+            "local_stop": prev.get("local_stop"),
         }
+
+    # Stamp the software trail so the book can show the lock level.
+    try:
+        import ai_positions as _cp
+        managed = _cp._load_state()
+    except Exception:
+        managed = {}
+    if isinstance(managed, dict):
+        for msym, mpos in managed.items():
+            if not isinstance(mpos, dict):
+                continue
+            key = str(msym or "").upper().strip()
+            if not key or key not in by_sym:
+                continue
+            loc = mpos.get("local_stop_price")
+            if loc is None:
+                try:
+                    loc = _cp.local_profit_stop(mpos, _push_cfg())
+                except Exception:
+                    loc = None
+            try:
+                by_sym[key]["local_stop"] = (
+                    float(loc) if loc is not None else None)
+            except (TypeError, ValueError):
+                by_sym[key]["local_stop"] = None
 
     # Membership is owned by sync_watch_from_source_panels (watch file). Do NOT
     # re-filter against the pre-gate shortlist here: Stocktwits score/rvol
@@ -5029,6 +5057,21 @@ def should_arm_buy(
 
     if not exh_ok:
         return False, exh_why
+
+    # Cheap pullback-band + overbought is the HCTI/BYSI dump: 20% of
+    # equity in a $2 spike. Real shelves under $5 can still arm.
+    try:
+        cheap_px = float(cfg.get("ai_watch_cheap_price", 5.0) or 0.0)
+    except (TypeError, ValueError):
+        cheap_px = 5.0
+    zk = str(structure.get("zone_kind") or "").lower().strip()
+    if (
+        cheap_px > 0
+        and a < cheap_px
+        and zk in ("pullback_band", "offset", "")
+        and is_overbought(record, cfg) is True
+    ):
+        return False, "cheap_ob_band"
 
     # Zone membership is the primary arm signal (matches UI READY).
     # In *or below* the band (to the stop, default 1.0R) both count as in-zone

@@ -173,7 +173,10 @@ DEFAULT_CONFIG = {
     # form can miss entirely on a gap and leave the position naked long.
     # Concentration cap. Risk sizing alone says nothing about position size:
     # a tight stop implies a huge notional, and nothing checked buying power.
-    "ai_max_position_pct":        25.0,     # max % of equity in one name
+    "ai_max_position_pct":         8.0,     # max % of equity in one name
+    # Names under ai_watch_cheap_price (HCTI/BYSI): tighter notional.
+    "ai_max_position_pct_cheap":   5.0,
+    "ai_watch_cheap_price":        5.0,
     "ai_reentry_cooldown_sec":    900.0,    # no re-arm this soon after an exit
     # After a wash-trade broker reject, freeze the symbol this long so the
     # poller does not re-place every 20s (2026-08-11 QMCO thrash).
@@ -560,6 +563,11 @@ DEFAULT_CONFIG = {
     # let the runner lose more than tranche A had just banked. The stop is
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
+    # Local profit trail: software shelf under the high; market flatten if
+    # last prints through. Arms at MFE ≥ arm_r (lock entry), then peak − give.
+    "ai_local_trail_enabled":         True,
+    "ai_local_trail_arm_r":            0.20,
+    "ai_local_trail_give_r":           0.20,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.
@@ -839,6 +847,8 @@ _EFFECTIVE_KEYS = (
     "ai_max_open_risk_pct",
     "ai_max_positions",
     "ai_max_position_pct",
+    "ai_max_position_pct_cheap",
+    "ai_watch_cheap_price",
     "ai_risk_pct",
     "require_protective_exit",
     "ai_trading_source",
@@ -1052,6 +1062,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_synth_scale_out_pct",
     "ai_watch_synth_trail_pct",
     "ai_runner_trail_r",
+    "ai_local_trail_enabled",
+    "ai_local_trail_arm_r",
+    "ai_local_trail_give_r",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
@@ -1076,6 +1089,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stream_max_age_sec",
     "ai_watch_stream_skip_margin_pct",
     "ai_max_position_pct",
+    "ai_max_position_pct_cheap",
+    "ai_watch_cheap_price",
     "ai_reentry_cooldown_sec",
     "ai_wash_cooldown_sec",
     "ai_entry_order_style",

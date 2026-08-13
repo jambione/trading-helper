@@ -102,6 +102,10 @@ DEFAULT_RUNNER_TRAIL_R = 1.0
 # Only rewrite the resting stop when the ratchet gains at least this much R —
 # the position tick runs every 5s and each move is a cancel + submit.
 DEFAULT_RUNNER_STEP_R = 0.10
+# Local profit trail (software). Arm at this MFE, then sit peak − give_r
+# under the high. Flatten with close_out — no T1 fill required.
+DEFAULT_LOCAL_TRAIL_ARM_R = 0.20
+DEFAULT_LOCAL_TRAIL_GIVE_R = 0.20
 # Keep a small ring of recent events for /api/state.
 _EVENT_RING_MAX = 80
 _event_lock = threading.Lock()
@@ -1140,6 +1144,17 @@ def place_scaled_entry(
         max_pos_pct = float(cfg.get("ai_max_position_pct", 25.0) or 0.0)
     except (TypeError, ValueError):
         max_pos_pct = 25.0
+    try:
+        cheap_px = float(cfg.get("ai_watch_cheap_price", 5.0) or 0.0)
+    except (TypeError, ValueError):
+        cheap_px = 5.0
+    try:
+        cheap_pct = float(cfg.get("ai_max_position_pct_cheap", 5.0) or 0.0)
+    except (TypeError, ValueError):
+        cheap_pct = 5.0
+    if cheap_px > 0 and cheap_pct > 0 and sizing_entry < cheap_px:
+        if max_pos_pct <= 0 or cheap_pct < max_pos_pct:
+            max_pos_pct = cheap_pct
     if max_pos_pct > 0 and sizing_entry > 0:
         cap_qty = int((account_equity * max_pos_pct / 100.0) // sizing_entry)
         if cap_qty < total_qty:
@@ -1303,6 +1318,9 @@ def place_scaled_entry(
         # entry-stop zero, which silently dropped the trade out of realized_r
         # and therefore out of the daily-loss gate.
         "risk_per_share": max(0.0, sizing_entry - stop_price),
+        # Disaster floor — never overwritten when stop_price ratchets.
+        "entry_stop_price": stop_price,
+        "local_stop_price": stop_price,
         "target_1": target_1,
         "trail_pct": trail_pct,
         "runner_trail_r": runner_trail_r,
@@ -1823,12 +1841,64 @@ def _runner_stop_level(pos: dict[str, Any]) -> float | None:
     return max(float(entry), float(peak) - trail_r * risk)
 
 
-def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
-    """True when broker qty looks like tranche A already sold.
+def _orig_stop(pos: dict[str, Any]) -> float | None:
+    """Hard stop frozen at entry. Falls back to entry − risk."""
+    orig = _num(pos.get("entry_stop_price"))
+    if orig and orig > 0:
+        return orig
+    entry = _num(pos.get("entry_price"))
+    risk = _risk_basis(pos)
+    if entry and risk > 0:
+        return entry - risk
+    return _num(pos.get("stop_price"))
 
-    The T1 order id is lost when heal clears ``tranche_a_target_order_id``.
-    Without this, ``tranche_a_filled`` stays false and the runner stop never
-    moves to breakeven (ABCL/IONQ 2026-08-12: half gone, stop still original).
+
+def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
+    """Software trail: original stop until MFE arms, then BE, then peak − give.
+
+    Never lowers. Independent of T1. ``None`` when there is no R basis.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_local_trail_enabled", True)):
+        return None
+    entry = _num(pos.get("entry_price"))
+    risk = _risk_basis(pos)
+    floor = _orig_stop(pos)
+    if not entry or risk <= 0 or floor is None:
+        return None
+    try:
+        arm_r = float(cfg.get("ai_local_trail_arm_r", DEFAULT_LOCAL_TRAIL_ARM_R)
+                      or DEFAULT_LOCAL_TRAIL_ARM_R)
+    except (TypeError, ValueError):
+        arm_r = DEFAULT_LOCAL_TRAIL_ARM_R
+    try:
+        give_r = float(cfg.get("ai_local_trail_give_r", DEFAULT_LOCAL_TRAIL_GIVE_R)
+                       or DEFAULT_LOCAL_TRAIL_GIVE_R)
+    except (TypeError, ValueError):
+        give_r = DEFAULT_LOCAL_TRAIL_GIVE_R
+    arm_r = max(0.0, arm_r)
+    give_r = max(0.0, give_r)
+    mfe = _num(pos.get("mfe_r")) or 0.0
+    peak = _num(pos.get("peak_price")) or entry
+    if mfe + 1e-12 < arm_r:
+        want = float(floor)
+    else:
+        want = float(entry)
+        trail = float(peak) - give_r * risk
+        if trail > want:
+            want = trail
+    prev = _num(pos.get("local_stop_price"))
+    if prev is not None:
+        want = max(want, float(prev))
+    return round(want, 6)
+
+
+def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
+    """True when broker qty looks like tranche A sold AND price reached T1.
+
+    Qty-only inferred T1 on CRMD 2026-08-13: live half-size (partial entry)
+    while the T1 limit was still working below the high. That marked the
+    runner scaled, skipped BE, and left the remainder naked.
     """
     if pos.get("tranche_a_filled") or pos.get("closing_reason"):
         return False
@@ -1838,7 +1908,13 @@ def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
     if qty_a < 1 or qty_b < 1 or q is None or q <= 0:
         return False
     total = qty_a + qty_b
-    return q <= qty_b + 1 and q < total
+    if not (q <= qty_b + 1 and q < total):
+        return False
+    t1 = _num(pos.get("target_1"))
+    px = _num(pos.get("peak_price")) or _num(pos.get("last_seen_price"))
+    if t1 is None or px is None:
+        return False
+    return px + 1e-6 >= t1
 
 
 def evaluate_ratchet_invariants(
@@ -2717,6 +2793,66 @@ def manage_open_positions(
         # whether logging happens to be on.
         _update_excursions(pos, _num(pos.get("last_seen_price")))
 
+        # Local profit trail: raise a software shelf under the high and
+        # market-flatten if last prints through it. Does not wait for T1.
+        if (
+            pos.get("entry_confirmed")
+            and not pos.get("closing_reason")
+            and _cfg_flag("ai_local_trail_enabled", True)
+        ):
+            last = _num(pos.get("last_seen_price"))
+            want = local_profit_stop(pos, _cfg_all())
+            prev_local = _num(pos.get("local_stop_price"))
+            floor = _orig_stop(pos)
+            if want is not None and (
+                prev_local is None or want > prev_local + 1e-9
+            ):
+                pos["local_stop_price"] = want
+                changed = True
+                raised = floor is None or want > floor + 1e-9
+                if raised and prev_local is not None:
+                    events.append({
+                        "ticker": ticker, "event": "local_trail_raised",
+                        "from_stop": prev_local, "to_stop": want,
+                        "peak": pos.get("peak_price"),
+                        "mfe_r": pos.get("mfe_r"),
+                    })
+                    log_event(
+                        "local_trail_raised", symbol=ticker,
+                        from_stop=prev_local, to_stop=want,
+                        peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
+                    )
+            loc = _num(pos.get("local_stop_price"))
+            floor = _orig_stop(pos)
+            armed = (
+                loc is not None
+                and floor is not None
+                and loc > floor + 1e-9
+            )
+            if (
+                armed
+                and last is not None
+                and loc is not None
+                and last <= loc + 1e-9
+            ):
+                alpaca_trader.cancel_open_orders(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = "local_trail"
+                exit_why[ticker] = "local_trail"
+                events.append({
+                    "ticker": ticker, "event": "local_trail",
+                    "last": last, "stop": loc,
+                    "peak": pos.get("peak_price"),
+                })
+                log_event(
+                    "local_trail", symbol=ticker,
+                    last=last, stop=loc, peak=pos.get("peak_price"),
+                )
+                changed = True
+                continue
+
         # Dual profit bank: free shares held by the full-size stop, then either
         # market-scale at/through T1 or rest a partial T1 + stop on the runner.
         # Without free_sell_capacity, Alpaca rejects partials with available:0
@@ -3074,10 +3210,15 @@ def manage_open_positions(
                     continue
 
         # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
+        # Skip once the local trail has locked breakeven — the trade proved.
+        _loc = _num(pos.get("local_stop_price"))
+        _ent = _num(pos.get("entry_price"))
+        local_locked = _loc is not None and _ent is not None and _loc + 1e-9 >= _ent
         if (
             dead_min > 0
             and not pos.get("tranche_a_filled")
             and pos.get("entry_confirmed")
+            and not local_locked
         ):
             age_min = (now - float(pos.get("entry_time") or now)) / 60.0
             mfe = _num(pos.get("mfe_r"))

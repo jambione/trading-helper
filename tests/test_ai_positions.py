@@ -952,8 +952,7 @@ def test_tranche_a_fill_puts_the_runner_stop_one_r_behind_the_peak(
 
     events = cp.manage_open_positions(now=1_000_100.0)
 
-    assert len(events) == 1
-    assert events[0]["event"] == "scaled_out"
+    assert any(e.get("event") == "scaled_out" for e in events)
     # entry 40.5, stop 38.0 -> 1R = 2.50. Peak 44.0 -> 44.0 - 1R = 41.50,
     # which is above breakeven, so the trail (not the floor) sets the level.
     # A trailing PERCENT is never sent: it would be a different distance on
@@ -1080,8 +1079,7 @@ def test_time_stop_marks_closing_then_records_outcome_once_flat(
     # 11 days later — deadline passed with target 1 never hit.
     later = 1_000_000.0 + 11 * 86400
     events = cp.manage_open_positions(now=later)
-    assert len(events) == 1
-    assert events[0]["event"] == "time_stop"
+    assert any(e.get("event") == "time_stop" for e in events)
     assert stub.closed == ["NVDA"]
 
     # Exit order submitted but not necessarily filled yet — still tracked.
@@ -2138,7 +2136,7 @@ def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):
     _seed_state(
         tmp_path, monkeypatch,
         time_stop_days=None, entry_time=1_000_000.0,
-        last_seen_price=40.4, mfe_r=0.5, entry_confirmed=True,
+        last_seen_price=41.5, mfe_r=0.5, entry_confirmed=True, peak_price=41.8,
     )
     monkeypatch.setattr(cp, "_entry_cfg", lambda: {
         "ai_dead_trade_min": 90.0,
@@ -2147,7 +2145,7 @@ def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):
         "ai_sell_signal_breakeven": False,
         "ai_heal_unprotected": False,
     })
-    stub = _StubBrokerManage(position_open=True, current_price=40.4)
+    stub = _StubBrokerManage(position_open=True, current_price=41.5)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
     later = 1_000_000.0 + 91 * 60
@@ -2250,3 +2248,85 @@ def test_entry_slippage_is_measured_against_the_limit_in_r(
     # paid 40.75 against a 40.50 limit, on 2.50 of risk = 0.10R
     assert state["NVDA"]["entry_slippage_r"] == pytest.approx(0.10)
     assert state["NVDA"]["entry_price"] == 40.75
+
+
+def test_local_profit_stop_stays_at_floor_until_mfe_arms():
+    pos = {
+        "entry_price": 8.64, "entry_stop_price": 8.38,
+        "risk_per_share": 0.26, "mfe_r": 0.12, "peak_price": 8.67,
+    }
+    cfg = {"ai_local_trail_enabled": True,
+           "ai_local_trail_arm_r": 0.20, "ai_local_trail_give_r": 0.20}
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.38)
+
+
+def test_local_profit_stop_locks_entry_then_trails_under_peak():
+    pos = {
+        "entry_price": 8.64, "entry_stop_price": 8.38,
+        "risk_per_share": 0.26, "mfe_r": 0.23, "peak_price": 8.70,
+    }
+    cfg = {"ai_local_trail_enabled": True,
+           "ai_local_trail_arm_r": 0.20, "ai_local_trail_give_r": 0.20}
+    # 0.23R ≥ 0.20 → BE. Peak 8.69 − 0.2R is still under entry.
+    pos["peak_price"] = 8.69
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.64)
+    pos["peak_price"] = 8.76
+    pos["mfe_r"] = 0.46
+    # peak-0.2R = 8.708
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.708)
+
+
+def test_local_profit_stop_never_lowers():
+    pos = {
+        "entry_price": 8.64, "entry_stop_price": 8.38,
+        "risk_per_share": 0.26, "mfe_r": 0.46, "peak_price": 8.76,
+        "local_stop_price": 8.71,
+    }
+    cfg = {"ai_local_trail_enabled": True,
+           "ai_local_trail_arm_r": 0.20, "ai_local_trail_give_r": 0.20}
+    pos["peak_price"] = 8.70
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.71)
+
+
+def test_local_trail_flattens_when_last_breaks_the_shelf(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=8.64, entry_stop_price=8.38, stop_price=8.38,
+        risk_per_share=0.26, target_1=8.79,
+        last_seen_price=8.76, peak_price=8.76, mfe_r=0.46,
+        local_stop_price=8.71,
+        tranche_a_filled=False, entry_confirmed=True,
+    )
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_arm_r": 0.20,
+        "ai_local_trail_give_r": 0.20,
+        "ai_position_shadow_enabled": False,
+        "ai_dead_trade_min": 0,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+        "ai_sell_signal_breakeven": False,
+    }.get(key, default))
+    stub = _StubBrokerManage(order_status="new", current_price=8.70)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert any(e.get("event") == "local_trail" for e in events)
+    assert "NVDA" in stub.closed
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "local_trail"
+
+
+def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():
+    pos = {
+        "qty_a": 143, "qty_b": 143, "target_1": 8.499,
+        "peak_price": 8.40, "last_seen_price": 8.08,
+    }
+    assert cp._infer_t1_fill(pos, 143.0) is False
+    pos["peak_price"] = 8.50
+    assert cp._infer_t1_fill(pos, 143.0) is True

@@ -610,6 +610,7 @@ function _updateBookRow(el, r, owner) {
   const statusEl = el.querySelector('.ai-book-status');
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) statusEl.className = _bookBlockerClass(r);
+  const trail = _fmtTrail(r.local_stop);
   const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -619,7 +620,7 @@ function _updateBookRow(el, r, owner) {
   const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
-  _setText(el.querySelector('.cell-src'), src);
+  _setText(el.querySelector('.cell-trail'), trail);
   const priceEl = el.querySelector('.cell-price');
   if (priceEl) {
     // Same key the row HTML seeds under (upper), or the first tick after a row
@@ -692,6 +693,7 @@ function _updateBookRow(el, r, owner) {
   const title = [
     isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
     src ? `src ${src}` : null,
+    trail !== '—' ? `trail ${trail}` : null,
     chgTitle,
     zone !== '—' ? `zone ${zone}` : null,
     r.reason || null,
@@ -708,6 +710,7 @@ function _bookRowHtml(r, owner) {
   const isOpen = phase === 'open' || r.is_position;
   const statusLabel = _bookBlockerLabel(r);
   const statusCls = _bookBlockerClass(r);
+  const trail = _fmtTrail(r.local_stop);
   const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -733,6 +736,7 @@ function _bookRowHtml(r, owner) {
   const title = [
     isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
     src ? `src ${src}` : null,
+    trail !== '—' ? `trail ${trail}` : null,
     chgTitle,
     zone !== '—' ? `zone ${zone}` : null,
     r.reason || null,
@@ -744,7 +748,7 @@ function _bookRowHtml(r, owner) {
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}</div>`
     + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
-    + `<div class="cell-src">${_esc(src)}</div>`
+    + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
     + `<div class="cell-rvol${Number(r.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}">${_esc(_fmtRvol(r.rvol))}</div>`
@@ -752,6 +756,11 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
+}
+
+function _fmtTrail(v) {
+  const n = Number(v);
+  return v != null && Number.isFinite(n) && n > 0 ? `$${n.toFixed(2)}` : '—';
 }
 
 function _bookSourceLabel(source) {

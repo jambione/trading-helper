@@ -2108,7 +2108,7 @@ body.mobile .icon-btn {
 }
 .panel-ai-watch .ai-book-table-header .th:nth-child(1) { text-align: left; }   /* Ticker */
 .panel-ai-watch .ai-book-table-header .th:nth-child(2),
-.panel-ai-watch .ai-book-table-header .th:nth-child(3) { text-align: center; } /* Status, Src */
+.panel-ai-watch .ai-book-table-header .th:nth-child(3) { text-align: center; } /* Status, Trail */
 
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
@@ -2150,11 +2150,11 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | Status | Src | Price | Zone | RVOL | EXH | Qty | P&L */
+  /* Ticker | Status | Trail | Price | Zone | RVOL | EXH | Qty | P&L */
   grid-template-columns:
     minmax(48px, 1.05fr)
     minmax(48px, 0.7fr)
-    minmax(28px, 0.4fr)
+    minmax(48px, 0.65fr)
     minmax(52px, 0.75fr)
     minmax(64px, 1fr)
     minmax(44px, 0.5fr)
@@ -2172,7 +2172,7 @@ body.mobile .icon-btn {
 }
 .panel-ai-watch .feed-cols--ai-book .cell-ticker { text-align: left; }
 .panel-ai-watch .feed-cols--ai-book .ai-book-status,
-.panel-ai-watch .feed-cols--ai-book .cell-src { text-align: center; }
+.panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: center; }
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-zone,
 .panel-ai-watch .feed-cols--ai-book .cell-rvol,
