@@ -190,7 +190,7 @@ def test_auto_watch_sync(cfg):
 
 
 def test_order_cap_rejection(cfg):
-    """POST /api/broker/orders must reject orders above max_order_value."""
+    """POST /api/broker/orders must reject SELL notional above max_order_value."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import trade_bridge.routes as routes
@@ -205,16 +205,42 @@ def test_order_cap_rejection(cfg):
     try:
         with TestClient(app) as client:
             r = client.post("/api/broker/orders",
-                            json={"symbol": "SKYQ", "side": "BUY",
+                            json={"symbol": "SKYQ", "side": "SELL",
                                   "qty": 100000, "order_type": "MARKET"})
             assert r.status_code == 400
             assert "max_order_value" in r.json()["error"]
 
             r = client.post("/api/broker/orders",
-                            json={"symbol": "SKYQ", "side": "BUY", "qty": 1,
+                            json={"symbol": "SKYQ", "side": "SELL", "qty": 1,
                                   "order_type": "LIMIT", "limit_price": 5.0})
             assert r.status_code == 200
             assert r.json()["ok"] is True
+    finally:
+        bcfg.load_config = orig
+        routes.load_config = orig
+        routes._manager = None
+
+
+def test_bridge_refuses_unprotected_buy(cfg):
+    """Dashboard buys never attach a stop — refuse rather than route bare."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import trade_bridge.routes as routes
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    routes._manager = None
+    import trade_bridge.config as bcfg
+    orig = bcfg.load_config
+    bcfg.load_config = lambda: {**DEFAULTS}
+    routes.load_config = bcfg.load_config
+    try:
+        with TestClient(app) as client:
+            r = client.post("/api/broker/orders",
+                            json={"symbol": "CELH", "side": "BUY",
+                                  "qty": 1, "order_type": "MARKET"})
+            assert r.status_code == 403
+            assert "require_protective_exit" in r.json()["error"]
     finally:
         bcfg.load_config = orig
         routes.load_config = orig

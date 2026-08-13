@@ -36,6 +36,8 @@ _FINGERPRINT_KEYS = (
     "ai_max_position_pct",
     "ai_watch_min_stop_pct",
     "require_protective_exit",
+    "ai_stop_use_market",
+    "ai_pdt_protect",
     "ai_heal_unprotected",
     "paper",
     "ai_trading_source",

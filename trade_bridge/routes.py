@@ -176,6 +176,15 @@ class OrderBody(BaseModel):
 @router.post("/api/broker/orders")
 async def broker_place_order(body: OrderBody):
     m = get_manager()
+    if body.side == "BUY":
+        # Bare Market/Limit buys here never attach a stop and never call
+        # alpaca_trader — the CELH failure mode in a second module. Exits
+        # (SELL) still go through; entries belong on the AI desk brackets.
+        return JSONResponse(
+            {"ok": False,
+             "error": "require_protective_exit: bridge buys are disabled; "
+                      "use the AI desk bracket path (alpaca_trader)"},
+            status_code=403)
     if body.order_type == "LIMIT" and not body.limit_price:
         return JSONResponse({"ok": False,
                              "error": "limit_price required for LIMIT orders"},

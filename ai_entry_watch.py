@@ -4855,6 +4855,8 @@ def _blocker_for_gate(why: str) -> str:
     w = str(why or "").lower()
     if w.startswith("daily_loss_limit_r"):
         return "daily_loss_limit"
+    if w.startswith("pdt_"):
+        return "pdt"
     if w.startswith("open_risk_pct"):
         return "open_risk_cap"
     if w.startswith("spread_pct") or w in ("crossed_quote", "bad_mid"):

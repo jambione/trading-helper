@@ -53,7 +53,7 @@ from ai_suggest import (  # noqa: E402
     AiSuggestions,
     source_from_backend,
 )
-from config import load_config  # noqa: E402
+from config import format_config_effective, load_config  # noqa: E402
 
 # Per-source idea files. Dashboard merges both into ai_suggestions.
 CLAUDE_SUGGESTIONS_FILE = ROOT / "claude_suggestions.json"
@@ -971,6 +971,28 @@ def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
 
 def main() -> None:
     cfg = load_config()
+    print(f"[ai] config_effective {format_config_effective(cfg)}", flush=True)
+    try:
+        cov = ai_positions.outcomes_coverage()
+        if cov.get("n_uncovered"):
+            missing = ",".join(
+                str(r.get("symbol") or "?")
+                for r in (cov.get("uncovered") or [])[:12]
+            )
+            print(
+                f"[ai] outcomes_coverage MISSING {cov['n_uncovered']}/"
+                f"{cov['n_entries']} entry_ok "
+                f"(outcomes={cov['n_outcomes']}) {missing}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[ai] outcomes_coverage ok entries={cov['n_entries']} "
+                f"outcomes={cov['n_outcomes']}",
+                flush=True,
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] outcomes_coverage failed: {e}", flush=True)
 
     claude_on = bool(cfg.get("claude_research_enabled", False))
     grok_on = bool(cfg.get("grok_research_enabled", False))

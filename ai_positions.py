@@ -85,6 +85,7 @@ DEFAULT_MIN_REWARD_RISK = 0.5
 DEFAULT_UNCONFIRMED_TTL_SEC = 900.0
 # Stop new entries when today's realized R from closed AI trades <= -this.
 DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
+DEFAULT_PDT_PROTECT = "block"
 # Cap sum of open risk (entry-stop)*qty as % of equity.
 DEFAULT_MAX_OPEN_RISK_PCT = 5.0
 # Max bid/ask spread % of mid (0 = disabled).
@@ -130,7 +131,8 @@ Follow this exact process and never break the risk rules:
 
 2. Only recommend a BUY if ALL of these are true:
    - Clear edge (technical + fundamental or thematic)
-   - Minimum 1:3 reward-to-risk ratio (preferably 1:4 or better)
+   - First target at least the desk floor (ai_min_reward_risk; typically 0.5R).
+     Do not invent a 3:1 first target — the book scales at ~0.6R.
    - Defined entry zone with high probability of working quickly
    - Suggested position size so that if the stop is hit, I lose no more than \
 {risk_pct:g}% of my total account
@@ -668,6 +670,123 @@ def realized_r_today(now: float | None = None) -> float:
     return total
 
 
+_pdt_guard_inst = None
+
+
+def _pdt_guard():
+    """Restart-proof local day-trade counter. Dollar kill switch stays off."""
+    global _pdt_guard_inst
+    if _pdt_guard_inst is None:
+        from trade_guard import TradeGuard
+        _pdt_guard_inst = TradeGuard(
+            daily_loss_limit=0.0,
+            max_trades_per_day=0,
+            pdt_protect="block",
+        )
+    return _pdt_guard_inst
+
+
+def _note_day_trade(entry_time: float | None, pnl_dollars: float | None) -> None:
+    if entry_time is None:
+        return
+    try:
+        buy_iso = datetime.fromtimestamp(
+            float(entry_time), tz=timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _pdt_guard().record_close(float(pnl_dollars or 0.0), buy_iso)
+    except (OverflowError, OSError, TypeError, ValueError):
+        return
+
+
+def outcomes_coverage(
+    *,
+    now: float | None = None,
+    lookback_sec: float = 172800.0,
+) -> dict[str, Any]:
+    """Match recent ``entry_ok`` events to outcome rows.
+
+    An entry is covered when an outcome shares its symbol and an ``entry_time``
+    within 2s, or (legacy rows) an ``exit_time`` after that entry. Used at
+    trader start so a silent write failure cannot leave the daily-loss brake
+    reading an empty file.
+    """
+    now = time.time() if now is None else float(now)
+    cutoff = now - max(0.0, float(lookback_sec))
+    entries: list[dict[str, Any]] = []
+    try:
+        text = EVENTS_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or "entry_ok" not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(row.get("kind") or "") != "entry_ok":
+            continue
+        ts = float(row.get("ts") or 0)
+        if ts < cutoff:
+            continue
+        sym = str(row.get("symbol") or "").upper()
+        if not sym:
+            continue
+        entries.append({
+            "symbol": sym,
+            "ts": ts,
+            "entry_time": float(row.get("entry_time") or ts),
+        })
+
+    outcomes: list[dict[str, Any]] = []
+    try:
+        otext = OUTCOMES_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        otext = ""
+    for line in otext.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        outcomes.append(row)
+
+    uncovered: list[dict[str, Any]] = []
+    for e in entries:
+        et = e["entry_time"]
+        hit = False
+        for o in outcomes:
+            if str(o.get("symbol") or "").upper() != e["symbol"]:
+                continue
+            ot = o.get("entry_time")
+            if ot is not None:
+                try:
+                    if abs(float(ot) - et) <= 2.0:
+                        hit = True
+                        break
+                except (TypeError, ValueError):
+                    pass
+            xt = o.get("exit_time") or o.get("ts")
+            if xt is not None:
+                try:
+                    if float(xt) >= et:
+                        hit = True
+                        break
+                except (TypeError, ValueError):
+                    pass
+        if not hit:
+            uncovered.append(e)
+    return {
+        "n_entries": len(entries),
+        "n_outcomes": len(outcomes),
+        "n_uncovered": len(uncovered),
+        "uncovered": uncovered,
+    }
+
+
 def open_risk_pct(account_equity: float) -> float:
     """Open risk as % of equity from managed state (entry − stop) × qty."""
     if account_equity <= 0:
@@ -703,6 +822,8 @@ def pre_entry_gate(
     dollar_volume: float | None = None,
     stop_price: float | None = None,
     max_spread_r: float | None = None,
+    pdt_protect: str | None = None,
+    broker_daytrade_count: int | None = None,
 ) -> tuple[bool, str]:
     """Code-only portfolio/risk veto before spending an entry CLI call.
 
@@ -771,6 +892,36 @@ def pre_entry_gate(
     day_r = realized_r_today(now)
     if day_r <= -abs(float(daily_loss_limit_r)):
         return False, f"daily_loss_limit_r_{day_r:.2f}"
+
+    mode = pdt_protect
+    if mode is None:
+        try:
+            mode = str(_entry_cfg().get("ai_pdt_protect", DEFAULT_PDT_PROTECT)
+                       or DEFAULT_PDT_PROTECT)
+        except Exception:
+            mode = DEFAULT_PDT_PROTECT
+    broker_count = broker_daytrade_count
+    broker_eq = account_equity
+    if broker_count is None:
+        try:
+            import alpaca_trader as _at
+            st = _at.get_pdt_status()
+            if isinstance(st, dict):
+                if st.get("daytrade_count") is not None:
+                    broker_count = int(st["daytrade_count"])
+                if st.get("equity"):
+                    broker_eq = float(st["equity"])
+        except Exception:
+            pass
+    from trade_guard import pdt_gate
+    pdt_ok, pdt_why = pdt_gate(
+        mode=str(mode or "block"),
+        broker_daytrade_count=broker_count,
+        equity=broker_eq,
+        local_day_trades=_pdt_guard().day_trades_5d(),
+    )
+    if not pdt_ok:
+        return False, pdt_why
 
     open_r = open_risk_pct(account_equity)
     # Proposed trade risk ~ risk_pct of equity (by design of size_by_risk).
@@ -1040,9 +1191,9 @@ def place_scaled_entry(
     place_target = None if logical_dual else (target_1 if broker_target else None)
     t1_attach_pending = bool(logical_dual and broker_target and qty_a > 0)
 
-    # Protective shape: stop-LIMIT by default (ai_stop_use_market=False).
-    # stop-MARKET is opt-in when gap risk outweighs limit miss risk.
-    use_stop_mkt = bool(cfg.get("ai_stop_use_market", False))
+    # Protective shape: stop-MARKET by default (gap through the trigger
+    # still fills). stop-LIMIT is opt-in via ai_stop_use_market=False.
+    use_stop_mkt = bool(cfg.get("ai_stop_use_market", True))
     parent_qty = int(total_qty)
 
     def _place_parent():
@@ -2207,8 +2358,12 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         OUTCOMES_PATH.parent.mkdir(parents=True, exist_ok=True)
         with OUTCOMES_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(outcome) + "\n")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        log_event(
+            "outcome_write_failed", symbol=ticker,
+            reason=str(e)[:160], close_reason=close_reason,
+        )
+    _note_day_trade(entry_time, realized_pl)
     return outcome
 
 

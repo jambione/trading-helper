@@ -76,6 +76,26 @@ def test_corrupted_bot_config_falls_back_to_defaults(tmp_cfg):
     assert cfg["bar_count"] == cfg_mod.DEFAULT_CONFIG["bar_count"]
 
 
+def test_stop_market_and_pdt_defaults():
+    assert cfg_mod.DEFAULT_CONFIG["ai_stop_use_market"] is True
+    assert cfg_mod.DEFAULT_CONFIG["ai_pdt_protect"] == "block"
+    assert "ai_pdt_protect" in cfg_mod.SAFE_CONFIG_KEYS
+
+
+def test_config_effective_echoes_resolved_knobs(tmp_cfg):
+    (tmp_cfg / "bot_config.json").write_text(json.dumps({
+        "ai_edge_mode": "exhaustion_scalp",
+        "ai_stop_use_market": True,
+        "ai_watch_synth_rr": 0.6,
+    }))
+    cfg_mod.invalidate_cache()
+    line = cfg_mod.format_config_effective()
+    assert "ai_edge_mode=exhaustion_scalp" in line
+    assert "ai_stop_use_market=true" in line
+    assert "ai_watch_synth_rr=0.6" in line
+    assert "ai_pdt_protect=block" in line
+
+
 def test_corrupted_secrets_does_not_crash_and_loads_regular_config(tmp_cfg):
     (tmp_cfg / "bot_config.json").write_text(json.dumps({"bar_count": 7}))
     (tmp_cfg / "secrets.json").write_text("NOT VALID JSON {{{")

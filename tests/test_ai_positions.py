@@ -494,6 +494,47 @@ def test_pre_entry_gate_allows_tight_spread(tmp_path, monkeypatch):
     assert reason == ""
 
 
+def test_pre_entry_gate_blocks_pdt_when_broker_count_high(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.0, 10_000.0,
+        daily_loss_limit_r=99.0, max_open_risk_pct=99.0, max_spread_pct=0,
+        pdt_protect="block", broker_daytrade_count=3)
+    assert ok is False
+    assert reason.startswith("pdt_")
+
+
+def test_pre_entry_gate_skips_pdt_above_25k(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    ok, reason = cp.pre_entry_gate(
+        "NVDA", 40.0, 50_000.0,
+        daily_loss_limit_r=99.0, max_open_risk_pct=99.0, max_spread_pct=0,
+        pdt_protect="block", broker_daytrade_count=4)
+    assert ok is True
+    assert reason == ""
+
+
+def test_outcomes_coverage_flags_missing_close(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    ev = tmp_path / "events.jsonl"
+    monkeypatch.setattr(cp, "EVENTS_PATH", ev)
+    now = 1_800_000_000.0
+    ev.write_text(json.dumps({
+        "ts": now - 100, "kind": "entry_ok", "symbol": "GLXY",
+        "entry_time": now - 100,
+    }) + "\n")
+    cov = cp.outcomes_coverage(now=now, lookback_sec=1000)
+    assert cov["n_entries"] == 1
+    assert cov["n_uncovered"] == 1
+    assert cov["uncovered"][0]["symbol"] == "GLXY"
+    (tmp_path / "outcomes.jsonl").write_text(json.dumps({
+        "symbol": "GLXY", "entry_time": now - 100, "exit_time": now - 10,
+        "realized_r_multiple": -0.1,
+    }) + "\n")
+    cov2 = cp.outcomes_coverage(now=now, lookback_sec=1000)
+    assert cov2["n_uncovered"] == 0
+
+
 def test_pre_entry_gate_blocks_thin_dollar_volume(tmp_path, monkeypatch):
     _use_tmp_state(tmp_path, monkeypatch)
     ok, reason = cp.pre_entry_gate(

@@ -153,7 +153,7 @@ def _stop_use_market() -> bool:
     """
     try:
         from config import load_config
-        return bool(load_config().get("ai_stop_use_market", False))
+        return bool(load_config().get("ai_stop_use_market", True))
     except Exception:
         return False
 
@@ -1204,6 +1204,36 @@ def get_account_day_pl() -> dict | None:
         }
     except Exception as e:
         log.warning("[TRADER] get_account_day_pl failed: %s", e)
+        return None
+
+
+def get_pdt_status() -> dict | None:
+    """Broker PDT fields, or None if the trader is off / the call fails.
+
+    ``daytrade_count`` is Alpaca's rolling same-day round-trip count (source
+    of truth vs a local file). ``pattern_day_trader`` is the account flag.
+    """
+    if not is_active() or _client is None:
+        return None
+    try:
+        acct = _client.get_account()
+        count = getattr(acct, "daytrade_count", None)
+        try:
+            count_i = int(count) if count is not None else None
+        except (TypeError, ValueError):
+            count_i = None
+        eq_raw = getattr(acct, "equity", None)
+        try:
+            equity = float(eq_raw) if eq_raw is not None else None
+        except (TypeError, ValueError):
+            equity = None
+        return {
+            "daytrade_count": count_i,
+            "pattern_day_trader": bool(getattr(acct, "pattern_day_trader", False)),
+            "equity": equity,
+        }
+    except Exception as e:
+        log.warning("[TRADER] get_pdt_status failed: %s", e)
         return None
 
 

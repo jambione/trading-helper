@@ -34,7 +34,8 @@ HARD PRICE FILTER (non-negotiable):
 
 SESSION / TAPE (non-negotiable for this desk):
 - Favor RTH-tradable setups: liquid names, sane spreads, catalyst or tape heat NOW.
-- Prefer clear LONG entry zone + hard stop + first target with planned R:R ≥ 3:1.
+- Prefer a clear LONG entry zone + hard stop. The desk's first scale is ~0.6R
+  (ai_watch_synth_rr); do not invent 3:1 first targets the book will not take.
 - Invalidation must be price/level or thesis-break that can fire within hours, not quarters.
 - Skip "accumulate for months" ideas unless there is a same-day catalyst and a tradeable pullback zone.
 

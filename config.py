@@ -194,12 +194,18 @@ DEFAULT_CONFIG = {
     # resting while the zone re-anchors away from it. Distinct from
     # ai_entry_unconfirmed_ttl_sec, which covers a *filled* but unconfirmed fill.
     "ai_entry_limit_ttl_sec":     30.0,
-    # False → stop-LIMIT (default: one protective sell + software exhaustion).
-    # True → stop-MARKET (gap fill; more slippage).
-    "ai_stop_use_market":         False,
+    # True → stop-MARKET (default: gap through the trigger still fills).
+    # False → stop-LIMIT with ai_stop_limit_slip_pct room; can miss entirely
+    # on the high-RVOL names this book selects for.
+    "ai_stop_use_market":         True,
     "ai_stop_limit_slip_pct":      1.0,     # room under trigger when stop-LIMIT
     "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
     "ai_daily_loss_limit_r":        3.0,    # stop new entries after -NR today
+    # PDT on the AI entry path. "block" refuses a new buy at 3 same-day
+    # round-trips in 5 business days when equity is under $25k. Broker
+    # daytrade_count is preferred; TradeGuard is the restart-proof fallback.
+    # Does not replace ai_daily_loss_limit_r (R) with a dollar kill switch.
+    "ai_pdt_protect":            "block",   # block | warn | off
     "ai_max_open_risk_pct":         5.0,    # sum open stop-risk % equity
     "ai_open_bell_enabled":        True,    # act on overnight ideas after open
     "ai_open_bell_time":        "09:35",    # ET
@@ -814,6 +820,54 @@ def validate_ai_config(cfg: dict) -> list[str]:
     return out
 
 
+# Knobs an operator must be able to read off a log line. Defaults, bot_config,
+# and commit messages have disagreed (continuation vs exhaustion_scalp vs
+# "hybrid arm"); this is the resolved set the process is actually running.
+_EFFECTIVE_KEYS = (
+    "ai_edge_mode",
+    "ai_stop_use_market",
+    "ai_watch_synth_rr",
+    "ai_min_reward_risk",
+    "ai_daily_loss_limit_r",
+    "ai_pdt_protect",
+    "ai_max_open_risk_pct",
+    "ai_max_positions",
+    "ai_max_position_pct",
+    "ai_risk_pct",
+    "require_protective_exit",
+    "ai_trading_source",
+    "ai_trade_style",
+    "ai_watch_zone_mode",
+    "ai_eod_liquidate_time",
+    "ai_entry_order_style",
+)
+
+
+def config_effective(cfg: dict | None = None) -> dict:
+    """Resolved desk knobs: *cfg* if given, else load_config()."""
+    src = cfg if isinstance(cfg, dict) else load_config()
+    out = {}
+    for k in _EFFECTIVE_KEYS:
+        if k in src:
+            out[k] = src[k]
+        elif k in DEFAULT_CONFIG:
+            out[k] = DEFAULT_CONFIG[k]
+        else:
+            out[k] = None
+    return out
+
+
+def format_config_effective(cfg: dict | None = None) -> str:
+    """Single log line: ``k=v k=v ...`` in stable key order."""
+    parts = []
+    for k, v in config_effective(cfg).items():
+        if isinstance(v, bool):
+            parts.append(f"{k}={'true' if v else 'false'}")
+        else:
+            parts.append(f"{k}={v}")
+    return " ".join(parts)
+
+
 # Keys the dashboard API is allowed to update
 SAFE_CONFIG_KEYS = [
     "api_key", "secret_key", "finnhub_key",
@@ -902,6 +956,7 @@ SAFE_CONFIG_KEYS = [
     "ai_prompt_file",
     "ai_entry_unconfirmed_ttl_sec",
     "ai_daily_loss_limit_r",
+    "ai_pdt_protect",
     "ai_max_open_risk_pct",
     "ai_open_bell_enabled",
     "ai_open_bell_time",

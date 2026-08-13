@@ -117,6 +117,19 @@ def test_pdt_warn_mode_allows_buy(guard_file):
     assert g.allow_buy()[0]   # warns but allows
 
 
+def test_pdt_gate_prefers_broker_count():
+    from trade_guard import pdt_gate
+    ok, why = pdt_gate(mode="block", broker_daytrade_count=3, equity=8_000)
+    assert not ok and why.startswith("pdt_")
+    ok, _ = pdt_gate(mode="block", broker_daytrade_count=3, equity=25_000)
+    assert ok
+    ok, _ = pdt_gate(mode="off", broker_daytrade_count=5, equity=1_000)
+    assert ok
+    ok, _ = pdt_gate(mode="block", broker_daytrade_count=1,
+                     local_day_trades=5, equity=8_000)
+    assert ok  # broker count wins
+
+
 def test_pdt_off_mode(guard_file):
     g = TradeGuard(pdt_protect="off", state_file=guard_file)
     for _ in range(5):

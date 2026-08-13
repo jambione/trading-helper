@@ -40,6 +40,47 @@ _ET = ZoneInfo("America/New_York")
 # We gate at 3 used because the next scalp will close same-day and become the 4th.
 PDT_DAY_TRADE_LIMIT = 3
 PDT_WINDOW_DAYS = 5
+# Accounts at or above this equity are not restricted by the 4-in-5 rule.
+PDT_EQUITY_FLOOR = 25_000.0
+
+
+def pdt_gate(
+    *,
+    mode: str = "block",
+    broker_daytrade_count: int | None = None,
+    equity: float | None = None,
+    local_day_trades: int | None = None,
+) -> tuple[bool, str]:
+    """(ok, reason) for a new buy. Empty reason when ok.
+
+    Broker ``daytrade_count`` is preferred when provided. Equity at or above
+    ``PDT_EQUITY_FLOOR`` is exempt. Does not implement a dollar daily-loss
+    kill switch — that lives on the AI path as ``ai_daily_loss_limit_r``.
+    """
+    mode = mode if mode in ("warn", "block", "off") else "warn"
+    if mode == "off":
+        return True, ""
+    try:
+        eq = float(equity) if equity is not None else None
+    except (TypeError, ValueError):
+        eq = None
+    if eq is not None and eq >= PDT_EQUITY_FLOOR:
+        return True, ""
+    count = broker_daytrade_count
+    if count is None:
+        count = local_day_trades
+    if count is None:
+        return True, ""
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return True, ""
+    if n >= PDT_DAY_TRADE_LIMIT:
+        msg = f"pdt_{n}_day_trades"
+        if mode == "block":
+            return False, msg
+        return True, ""
+    return True, ""
 
 
 def _today_et() -> str:

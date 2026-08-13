@@ -79,13 +79,20 @@ Sizing is fixed dollars per trade (`TRADE_AMOUNT`). To compound: when
 `TRADE_AMOUNT` (and `MAX_TOTAL_EXPOSURE` proportionally), then keep watching
 the daily report at the new size.
 
-## Risk layer (trade_guard.py)
-| Control | Env key | Behavior |
-|---|---|---|
-| Daily loss kill switch | `DAILY_LOSS_LIMIT` | Realized loss ≥ limit → no new buys until next ET day |
-| Trades/day cap | `MAX_TRADES_PER_DAY` | Blocks buys past the cap |
-| PDT protection | `PDT_PROTECT` | warn/block at 3 day-trades per 5 business days |
-| Exposure cap | `MAX_TOTAL_EXPOSURE` | Max concurrent $ at risk |
+## Risk layer
 
-Guard state persists in `trade_guard_state.json` (restart-proof) and is
-surfaced in `signal_state.json` under `risk` for the dashboard.
+`signal_engine.py` no longer places orders. `trade_guard.py` is implemented
+and tested, but **nothing in the live order path imported it** until the AI
+desk wired PDT into `ai_positions.pre_entry_gate`. Dashboard chips that read
+`signal_state.json` → `risk` are not the live brake.
+
+| Control | Where it binds | Behavior |
+|---|---|---|
+| Daily loss (R) | `pre_entry_gate` / `ai_daily_loss_limit_r` | New entries stop after −NR realized today (from `outcomes.jsonl`) |
+| PDT | `pre_entry_gate` / `ai_pdt_protect` | Block at 3 day-trades / 5 business days when equity < $25k. Broker `daytrade_count` preferred; `TradeGuard` is the fallback |
+| Open risk | `pre_entry_gate` / `ai_max_open_risk_pct` | Sum of managed (entry − stop) × qty |
+| Protective exit | `alpaca_trader._require_protective_exit` | Bare buys refused. Dashboard `trade_bridge` buys are refused the same way |
+
+`TradeGuard` state still persists in `trade_guard_state.json` (restart-proof)
+for the PDT fallback counter. Dollar `DAILY_LOSS_LIMIT` / `MAX_TRADES_PER_DAY`
+env keys are **not** wired on the AI path — do not treat them as live.
