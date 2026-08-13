@@ -68,7 +68,7 @@ in config/bot_config.json — the panel prompts once and remembers it).
 ### Stage 3 — Go live (TRADER_MODE=live)
 Checklist before flipping:
 - [ ] N consecutive green paper days/weeks at the target size (your call on N)
-- [ ] `PDT_PROTECT=block` if the account is a margin account under $25k
+- [ ] **PDT is gone.** FINRA Rule 4210 pattern-day-trader designation and the $25k minimum were eliminated **2026-06-04** (Reg Notice 26-10). Alpaca implemented that day. `ai_pdt_protect=off` is fine on live under $25k — it is not a legal gate anymore. (Paper still sometimes reports a leftover `daytrade_count`; that is why we turned the software gate off on 2026-08-13.)
 - [ ] `DAILY_LOSS_LIMIT` set to a loss you can shrug off
 - [ ] `MAX_TOTAL_EXPOSURE` set
 - [ ] Alpaca LIVE keys in signal_engine.env (paper keys are different!)
@@ -89,7 +89,7 @@ desk wired PDT into `ai_positions.pre_entry_gate`. Dashboard chips that read
 | Control | Where it binds | Behavior |
 |---|---|---|
 | Daily loss (R) | `pre_entry_gate` / `ai_daily_loss_limit_r` | New entries stop after −NR realized today (from `outcomes.jsonl`) |
-| PDT | `pre_entry_gate` / `ai_pdt_protect` | Block at 3 day-trades / 5 business days when equity < $25k. Broker `daytrade_count` preferred; `TradeGuard` is the fallback |
+| PDT (legacy) | `pre_entry_gate` / `ai_pdt_protect` | Optional house throttle only. FINRA PDT / $25k min ended 2026-06-04. Default is `off`. Broker `daytrade_count` is stale on some paper books. |
 | Open risk | `pre_entry_gate` / `ai_max_open_risk_pct` | Sum of managed (entry − stop) × qty |
 | Protective exit | `alpaca_trader._require_protective_exit` | Bare buys refused. Dashboard `trade_bridge` buys are refused the same way |
 

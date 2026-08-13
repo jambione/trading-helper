@@ -78,8 +78,17 @@ def test_corrupted_bot_config_falls_back_to_defaults(tmp_cfg):
 
 def test_stop_market_and_pdt_defaults():
     assert cfg_mod.DEFAULT_CONFIG["ai_stop_use_market"] is True
-    assert cfg_mod.DEFAULT_CONFIG["ai_pdt_protect"] == "block"
+    assert cfg_mod.DEFAULT_CONFIG["ai_pdt_protect"] == "off"
     assert "ai_pdt_protect" in cfg_mod.SAFE_CONFIG_KEYS
+
+
+def test_live_pdt_off_is_not_a_finra_warning():
+    """PDT / $25k min ended 2026-06-04 — off on live is not a config fault."""
+    live = cfg_mod.validate_ai_config({
+        "paper": False,
+        "ai_pdt_protect": "off",
+    })
+    assert not any("PDT" in w or "pdt" in w for w in live)
 
 
 def test_config_effective_echoes_resolved_knobs(tmp_cfg):
@@ -93,7 +102,7 @@ def test_config_effective_echoes_resolved_knobs(tmp_cfg):
     assert "ai_edge_mode=exhaustion_scalp" in line
     assert "ai_stop_use_market=true" in line
     assert "ai_watch_synth_rr=0.6" in line
-    assert "ai_pdt_protect=block" in line
+    assert "ai_pdt_protect=off" in line
 
 
 def test_corrupted_secrets_does_not_crash_and_loads_regular_config(tmp_cfg):

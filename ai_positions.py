@@ -85,7 +85,7 @@ DEFAULT_MIN_REWARD_RISK = 0.5
 DEFAULT_UNCONFIRMED_TTL_SEC = 900.0
 # Stop new entries when today's realized R from closed AI trades <= -this.
 DEFAULT_DAILY_LOSS_LIMIT_R = 3.0
-DEFAULT_PDT_PROTECT = "block"
+DEFAULT_PDT_PROTECT = "off"  # FINRA PDT ended 2026-06-04; leftover paper counts
 # Cap sum of open risk (entry-stop)*qty as % of equity.
 DEFAULT_MAX_OPEN_RISK_PCT = 5.0
 # Max bid/ask spread % of mid (0 = disabled).

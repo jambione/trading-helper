@@ -201,11 +201,13 @@ DEFAULT_CONFIG = {
     "ai_stop_limit_slip_pct":      1.0,     # room under trigger when stop-LIMIT
     "ai_entry_unconfirmed_ttl_sec": 900.0,  # cancel unfilled managed entries
     "ai_daily_loss_limit_r":        3.0,    # stop new entries after -NR today
-    # PDT on the AI entry path. "block" refuses a new buy at 3 same-day
-    # round-trips in 5 business days when equity is under $25k. Broker
-    # daytrade_count is preferred; TradeGuard is the restart-proof fallback.
-    # Does not replace ai_daily_loss_limit_r (R) with a dollar kill switch.
-    "ai_pdt_protect":            "block",   # block | warn | off
+    # Optional house day-trade throttle (legacy name). FINRA Rule 4210 PDT
+    # designation and the $25k minimum were eliminated 2026-06-04 (Reg Notice
+    # 26-10). Alpaca implemented the same day and deprecated daytrade_count.
+    # "block" is NOT a legal requirement on live under $25k. Paper can still
+    # report a leftover daytrade_count (198 on 2026-08-13) that blocks every
+    # armed buy — leave this "off" unless you want a self-imposed cap.
+    "ai_pdt_protect":            "off",     # block | warn | off
     "ai_max_open_risk_pct":         5.0,    # sum open stop-risk % equity
     "ai_open_bell_enabled":        True,    # act on overnight ideas after open
     "ai_open_bell_time":        "09:35",    # ET

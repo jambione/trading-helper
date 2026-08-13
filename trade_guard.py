@@ -9,11 +9,10 @@ safe to run unattended:
     -DAILY_LOSS_LIMIT dollars, new buys are blocked for the rest of the ET day.
     Exits are never blocked.
   • Max round-trips per day — optional hard cap on trade count.
-  • PDT protection — counts same-day round trips over a rolling 5-business-day
-    window. A margin account under $25k is flagged as a pattern day trader at
-    4 day trades in 5 business days; "block" mode refuses new buys once 3 are
-    used (a scalp entry will almost certainly close the same day and become
-    the 4th).
+  • PDT protection — optional house throttle (legacy). FINRA eliminated the
+    pattern-day-trader designation and $25k minimum on 2026-06-04 (Rule 4210 /
+    Reg Notice 26-10). "block" still refuses new buys at 3 local/broker day
+    trades when equity is under $25k; that is not a legal requirement.
 
 State persists to trade_guard_state.json so a mid-day engine restart can't
 reset the kill switch. Daily counters roll over on the ET date change.
@@ -36,8 +35,8 @@ from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo("America/New_York")
 
-# FINRA pattern-day-trader threshold: 4+ day trades in 5 business days.
-# We gate at 3 used because the next scalp will close same-day and become the 4th.
+# Legacy house thresholds. FINRA PDT / $25k min ended 2026-06-04.
+# We still gate at 3 when the operator leaves mode=block.
 PDT_DAY_TRADE_LIMIT = 3
 PDT_WINDOW_DAYS = 5
 # Accounts at or above this equity are not restricted by the 4-in-5 rule.
