@@ -104,8 +104,8 @@ DEFAULT_RUNNER_TRAIL_R = 1.0
 DEFAULT_RUNNER_STEP_R = 0.10
 # Local profit trail (software). Arm at this MFE, then sit peak − give_r
 # under the high. Flatten with close_out — no T1 fill required.
-DEFAULT_LOCAL_TRAIL_ARM_R = 0.20
-DEFAULT_LOCAL_TRAIL_GIVE_R = 0.20
+DEFAULT_LOCAL_TRAIL_ARM_R = 0.05
+DEFAULT_LOCAL_TRAIL_GIVE_R = 0.08
 # Flatten longs if stream+REST stay dark this long during RTH.
 DEFAULT_STALE_DATA_MAX_AGE_SEC = 15.0
 # Keep a small ring of recent events for /api/state.
@@ -1212,8 +1212,22 @@ def place_scaled_entry(
     # still fills). stop-LIMIT is opt-in via ai_stop_use_market=False.
     use_stop_mkt = bool(cfg.get("ai_stop_use_market", True))
     parent_qty = int(total_qty)
+    broker_stop = bool(cfg.get("ai_broker_stop_enabled", True))
 
     def _place_parent():
+        if not broker_stop:
+            lim = entry_limit if entry_limit is not None else current_ask
+            if not lim or lim <= 0:
+                return {"ok": False, "status": "no_limit"}
+            out = alpaca_trader.buy_limit_at_price(
+                ticker, float(lim),
+                dollar_amount=float(parent_qty) * float(lim) + 0.01,
+                note="local_stop_only") or {}
+            if out.get("ok"):
+                out["buy_order_id"] = out.get("order_id")
+                out["stop_order_id"] = None
+                out["target_order_id"] = None
+            return out
         if entry_limit is not None:
             return alpaca_trader.buy_limit_bracket(
                 ticker, parent_qty, limit_price=entry_limit,
@@ -2270,6 +2284,8 @@ def _heal_unprotected(
     events: list[dict[str, Any]] = []
     if not unprotected or not _cfg_flag("ai_heal_unprotected", True):
         return events
+    if not _cfg_flag("ai_broker_stop_enabled", True):
+        return events
     for u in unprotected:
         sym = str(u.get("symbol") or "").upper()
         if not sym:
@@ -2911,15 +2927,8 @@ def manage_open_positions(
                         peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                     )
             loc = _num(pos.get("local_stop_price"))
-            floor = _orig_stop(pos)
-            armed = (
-                loc is not None
-                and floor is not None
-                and loc > floor + 1e-9
-            )
             if (
-                armed
-                and last is not None
+                last is not None
                 and loc is not None
                 and last <= loc + 1e-9
             ):
@@ -2961,6 +2970,8 @@ def manage_open_positions(
             )
 
             def _rearm_stop(qty_stop: int, level: float | None) -> dict:
+                if not _cfg_flag("ai_broker_stop_enabled", True):
+                    return {"ok": False, "error": "broker_stop_off"}
                 if level is None or level <= 0 or qty_stop < 1:
                     return {"ok": False, "error": "bad_stop"}
                 if last is not None and level >= last:

@@ -568,8 +568,8 @@ DEFAULT_CONFIG = {
     # Local profit trail: software shelf under the high; market flatten if
     # last prints through. Arms at MFE ≥ arm_r (lock entry), then peak − give.
     "ai_local_trail_enabled":         True,
-    "ai_local_trail_arm_r":            0.20,
-    "ai_local_trail_give_r":           0.20,
+    "ai_local_trail_arm_r":            0.05,
+    "ai_local_trail_give_r":           0.08,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.
