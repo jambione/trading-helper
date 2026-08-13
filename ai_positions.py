@@ -106,6 +106,8 @@ DEFAULT_RUNNER_STEP_R = 0.10
 # under the high. Flatten with close_out — no T1 fill required.
 DEFAULT_LOCAL_TRAIL_ARM_R = 0.20
 DEFAULT_LOCAL_TRAIL_GIVE_R = 0.20
+# Flatten longs if stream+REST stay dark this long during RTH.
+DEFAULT_STALE_DATA_MAX_AGE_SEC = 15.0
 # Keep a small ring of recent events for /api/state.
 _EVENT_RING_MAX = 80
 _event_lock = threading.Lock()
@@ -1893,6 +1895,51 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     return round(want, 6)
 
 
+def _rth_now(now: float) -> bool:
+    """Regular session (weekdays 09:30–16:00 ET). Broker clock if available."""
+    try:
+        import alpaca_trader as _at
+        if hasattr(_at, "is_market_open"):
+            got = _at.is_market_open()
+            if got is not None:
+                return bool(got)
+    except Exception:
+        pass
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromtimestamp(float(now), tz=ZoneInfo("America/New_York"))
+        if dt.weekday() >= 5:
+            return False
+        mins = dt.hour * 60 + dt.minute
+        return (9 * 60 + 30) <= mins < (16 * 60)
+    except Exception:
+        return False
+
+
+def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
+    """True when we have a stream print or a REST ask we can trade on."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        import ai_entry_watch as ew
+        _px, src, age = ew.decision_price(symbol, cfg)
+    except Exception:
+        return False, "error"
+    if src == "stream":
+        try:
+            max_age = float(cfg.get(
+                "ai_stale_data_max_age_sec", DEFAULT_STALE_DATA_MAX_AGE_SEC)
+                or DEFAULT_STALE_DATA_MAX_AGE_SEC)
+        except (TypeError, ValueError):
+            max_age = DEFAULT_STALE_DATA_MAX_AGE_SEC
+        if age is not None and age > max_age:
+            return False, "stream_old"
+        return True, "stream"
+    if src == "rest":
+        return True, "rest"
+    return False, src or "none"
+
+
 def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
     """True when broker qty looks like tranche A sold AND price reached T1.
 
@@ -2623,6 +2670,47 @@ def manage_open_positions(
             except Exception:
                 pass
             _update_excursions(pos, pos.get("last_seen_price") or live.get("current"))
+            # Blind book: no stream and no REST for ai_stale_data_max_age_sec
+            # during RTH → market flatten. Local trail cannot protect a ghost.
+            if (
+                pos.get("entry_confirmed")
+                and not pos.get("closing_reason")
+                and _cfg_flag("ai_stale_data_flatten", True)
+                and _rth_now(now)
+            ):
+                live_ok, live_src = quote_is_live(ticker, _cfg_all())
+                if live_ok:
+                    pos.pop("stale_since", None)
+                    pos["last_live_data_ts"] = now
+                else:
+                    started = _num(pos.get("stale_since"))
+                    if started is None:
+                        pos["stale_since"] = now
+                        started = now
+                    try:
+                        stale_max = float(_cfg_all().get(
+                            "ai_stale_data_max_age_sec",
+                            DEFAULT_STALE_DATA_MAX_AGE_SEC,
+                        ) or DEFAULT_STALE_DATA_MAX_AGE_SEC)
+                    except (TypeError, ValueError):
+                        stale_max = DEFAULT_STALE_DATA_MAX_AGE_SEC
+                    if float(now) - float(started) + 1e-9 >= stale_max:
+                        alpaca_trader.cancel_open_orders(ticker)
+                        out = alpaca_trader.close_out(ticker) or {}
+                        if isinstance(out, dict) and out.get("order_id"):
+                            pos["close_order_id"] = str(out["order_id"])
+                        pos["closing_reason"] = "stale_data"
+                        events.append({
+                            "ticker": ticker, "event": "stale_data",
+                            "src": live_src, "stale_sec": round(
+                                float(now) - float(started), 1),
+                        })
+                        log_event(
+                            "stale_data", symbol=ticker, src=live_src,
+                            stale_sec=round(float(now) - float(started), 1),
+                        )
+                        changed = True
+                        continue
             if _infer_t1_fill(pos, live.get("qty")):
                 pos["tranche_a_filled"] = True
                 log_event(

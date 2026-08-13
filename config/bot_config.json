@@ -219,6 +219,8 @@
   "ai_watch_synth_trail_pct": 2.5,
   "ai_runner_trail_r": 1.0,
   "ai_runner_step_r": 0.1,
+  "ai_stale_data_flatten": true,
+  "ai_stale_data_max_age_sec": 15.0,
   "ai_local_trail_enabled": true,
   "ai_local_trail_arm_r": 0.2,
   "ai_local_trail_give_r": 0.2,

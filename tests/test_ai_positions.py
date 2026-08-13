@@ -2322,6 +2322,48 @@ def test_local_trail_flattens_when_last_breaks_the_shelf(tmp_path, monkeypatch):
     assert state["NVDA"]["closing_reason"] == "local_trail"
 
 
+def test_stale_data_flattens_after_max_age(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_confirmed=True, last_seen_price=40.5,
+        stale_since=1_000_000.0,
+    )
+    monkeypatch.setattr(cp, "_cfg_flag", lambda k, d=True: True)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_stale_data_flatten": True, "ai_stale_data_max_age_sec": 15.0,
+        "ai_local_trail_enabled": False, "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": False,
+    })
+    monkeypatch.setattr(cp, "_rth_now", lambda now: True)
+    monkeypatch.setattr(cp, "quote_is_live", lambda *a, **k: (False, "none"))
+    stub = _StubBrokerManage(current_price=40.5)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_020.0)
+    assert any(e.get("event") == "stale_data" for e in events)
+    assert stub.closed == ["NVDA"]
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "stale_data"
+
+
+def test_stale_data_does_not_flatten_on_first_miss(tmp_path, monkeypatch):
+    _seed_state(tmp_path, monkeypatch, entry_confirmed=True)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda k, d=True: True)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_stale_data_flatten": True, "ai_stale_data_max_age_sec": 15.0,
+        "ai_local_trail_enabled": False, "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": False,
+    })
+    monkeypatch.setattr(cp, "_rth_now", lambda now: True)
+    monkeypatch.setattr(cp, "quote_is_live", lambda *a, **k: (False, "none"))
+    stub = _StubBrokerManage(current_price=40.5)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert not any(e.get("event") == "stale_data" for e in events)
+    assert stub.closed == []
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"].get("stale_since") == 1_000_100.0
+
+
 def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():
     pos = {
         "qty_a": 143, "qty_b": 143, "target_1": 8.499,

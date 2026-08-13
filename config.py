@@ -249,6 +249,9 @@ DEFAULT_CONFIG = {
     # on this poll. Older leftover last_ask values (FGI 11.69 vs tape 10.28)
     # must not arm or flatten.
     "ai_watch_decision_max_age_sec":     8.0,
+    # If stream and REST stay dark this long in RTH, flatten every open long.
+    "ai_stale_data_flatten":            True,
+    "ai_stale_data_max_age_sec":        15.0,
     "ai_structure_ttl_sec":           5400.0,   # structure plan TTL (seconds)
     "ai_watch_expire_at_close":         True,   # drop watches at session close
     "ai_entry_zone_pad_pct":             0.0,   # pad around entry zone (%); 0 = exact zone
@@ -992,6 +995,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_single_source",
     "ai_watch_poll_sec",
     "ai_watch_decision_max_age_sec",
+    "ai_stale_data_flatten",
+    "ai_stale_data_max_age_sec",
     "ai_structure_ttl_sec",
     "ai_watch_expire_at_close",
     "ai_watch_seed_momentum",
