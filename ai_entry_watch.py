@@ -131,6 +131,11 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_overbought_flat": "flat",
     "not_overbought_heating": "heating",
     "not_overbought_unknown": "no %R",
+    "not_rising_cooling": "cooling",
+    "not_rising_flat": "flat",
+    "not_rising_overbought": "OB fade",
+    "not_rising_heating": "not rising",
+    "not_rising_unknown": "no %R",
     "not_continuation_cooling": "cooling",
     "not_continuation_flat": "flat",
     "not_continuation_unknown": "no %R",
@@ -3335,11 +3340,10 @@ def left_overbought_exit_enabled(cfg: dict) -> bool:
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
-    **continuation** (default, Option A): arm when overbought **or** heating
-    with %R at/above ``ai_watch_exhaustion_heat_min_pct``. Enter earlier so
-    MFE can exist; refuse cooling/flat (fade, not continuation).
-
-    **exhaustion_scalp**: overbought only (2026-08-11 operator rule).
+    Arm when fast %R is **rising** and exhaustion is at/above
+    ``ai_watch_exhaustion_heat_min_pct`` (default 50). That is "trending up
+    past 50 EXH". Cooling/flat refuse — including overbought that has rolled
+    over. Local trail now locks the pop; we no longer wait for the 80 band.
 
     A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
@@ -3352,24 +3356,19 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
             return True, "no_exhaustion_fallback"
         return False, "no_exhaustion_data"
+    ex = exhaustion_pct(record)
+    try:
+        heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 50.0)
+    except (TypeError, ValueError):
+        heat_min = 50.0
+    if ex is None or ex + 1e-9 < heat_min:
+        return False, "heating_too_low"
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    if not ind.get("pctr_rising"):
+        return False, f"not_rising_{state}"
     if state == "overbought":
         return True, "overbought"
-
-    mode = edge_mode(cfg)
-    if mode == "continuation" and state == "heating":
-        ex = exhaustion_pct(record)
-        try:
-            heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 50.0)
-        except (TypeError, ValueError):
-            heat_min = 50.0
-        if ex is not None and ex + 1e-9 >= heat_min:
-            return True, "heating"
-        return False, "heating_too_low"
-
-    # cooling / flat (and heating under exhaustion_scalp) — refuse.
-    if mode == "exhaustion_scalp":
-        return False, f"not_overbought_{state}"
-    return False, f"not_continuation_{state}"
+    return True, "heating"
 
 
 def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -4963,8 +4962,8 @@ def should_arm_buy(
 
     # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
     # sell_signal veto below can reference exh_why without UnboundLocalError.
-    # Operator rule 2026-08-11: overbought is the only indicator gate when
-    # ai_watch_exhaustion_rules is on (heating no longer arms).
+    # Rising EXH ≥ heat_min (default 50). Overbought-only was the old scalp
+    # rule; local trail now locks the pop so we can arm earlier.
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
 
     # Indicators: optional timing filter. Default off — book symbols often have

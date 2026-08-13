@@ -433,8 +433,7 @@ DEFAULT_CONFIG = {
     # edge mode (on only for exhaustion_scalp). Set false to force off.
     # "ai_exit_left_overbought": False,
     # Exhaustion / %R rules for arm geometry (still used under continuation).
-    # BUY (continuation): heating above heat_min OR overbought.
-    # BUY (exhaustion_scalp): overbought only.
+    # BUY: rising EXH at/above heat_min (default 50). Fading/flat refuse.
     # A missing %R reading refuses the buy when require_data is true.
     "ai_watch_exhaustion_rules":      True,
     # Recompute %R against the live price instead of trusting the engine's

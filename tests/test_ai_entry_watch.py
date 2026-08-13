@@ -2856,16 +2856,19 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
     state = ew.exhaustion_state(rec, cfg)
     assert state in ("overbought", "heating", "cooling", "flat")
     ok, why = ew.exhaustion_allows_buy(rec, cfg)
-    # Overbought-only: rising series may pass if already in band, else refuse
-    # with not_overbought_*; never no_exhaustion_data once live %R is stamped.
+    # Rising ≥ 50 or refuse heating_too_low / not_rising_*; never no %R
+    # once live %R is stamped.
     assert why != "no_exhaustion_data"
-    assert ok is True and why == "overbought" or (
-        not ok and why.startswith("not_overbought_")
+    assert ok is True and why in ("overbought", "heating") or (
+        not ok and why in (
+            "heating_too_low", "not_rising_cooling", "not_rising_flat",
+            "not_rising_overbought", "not_rising_heating",
+        )
     )
 
 
-def test_exhaustion_allows_buy_overbought_only():
-    """exhaustion_scalp: heating refuses; only the overbought band arms."""
+def test_exhaustion_allows_buy_rising_past_heat_min():
+    """Arm on rising EXH ≥ 50; refuse fading OB and sub-50 heat."""
     import ai_entry_watch as ew
 
     cfg = {
@@ -2875,17 +2878,7 @@ def test_exhaustion_allows_buy_overbought_only():
         "rte_threshold": 20,
         "ai_watch_exhaustion_heat_min_pct": 50.0,
     }
-    # %R = -10 → exhaustion 90 → overbought (band is 80+).
-    ob = {
-        "symbol": "AAA",
-        "indicator": {
-            "pctr": -10.0, "pctr_rising": False, "pctr_falling": False,
-        },
-    }
-    ok, why = ew.exhaustion_allows_buy(ob, cfg)
-    assert ok is True and why == "overbought"
-
-    # Heating at 70% — scalp mode refuses.
+    # Rising through 70% — the new admission (was refused as not_overbought).
     heat = {
         "symbol": "BBB",
         "indicator": {
@@ -2893,8 +2886,19 @@ def test_exhaustion_allows_buy_overbought_only():
         },
     }
     ok, why = ew.exhaustion_allows_buy(heat, cfg)
-    assert ok is False and why == "not_overbought_heating"
+    assert ok is True and why == "heating"
 
+    # Rising overbought still arms.
+    ob_up = {
+        "symbol": "AAA",
+        "indicator": {
+            "pctr": -10.0, "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(ob_up, cfg)
+    assert ok is True and why == "overbought"
+
+    # Overbought but fading — do not buy the roll-over.
     cool = {
         "symbol": "CCC",
         "indicator": {
@@ -2902,17 +2906,16 @@ def test_exhaustion_allows_buy_overbought_only():
         },
     }
     ok, why = ew.exhaustion_allows_buy(cool, cfg)
-    # Still overbought level (85%) even while falling — band is the rule.
-    assert ok is True and why == "overbought"
+    assert ok is False and why == "not_rising_overbought"
 
-    cool_low = {
-        "symbol": "DDD",
+    heat_low = {
+        "symbol": "LOW",
         "indicator": {
-            "pctr": -40.0, "pctr_rising": False, "pctr_falling": True,
+            "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
         },
     }
-    ok, why = ew.exhaustion_allows_buy(cool_low, cfg)
-    assert ok is False and why == "not_overbought_cooling"
+    ok, why = ew.exhaustion_allows_buy(heat_low, cfg)
+    assert ok is False and why == "heating_too_low"
 
 
 def test_continuation_arms_heating_and_disables_left_overbought_exit():
