@@ -223,7 +223,7 @@
   "ai_stale_data_max_age_sec": 15.0,
   "ai_local_trail_enabled": true,
   "ai_local_trail_arm_r": 0.05,
-  "ai_local_trail_give_r": 0.08,
+  "ai_local_trail_give_r": 0.10,
   "ai_local_trail_give_px": 0.0,
   "ai_max_position_pct": 8.0,
   "ai_max_position_pct_cheap": 5.0,

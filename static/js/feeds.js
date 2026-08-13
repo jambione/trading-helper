@@ -348,7 +348,7 @@ function _liveLocalStop(r, last) {
   }
   let give = r.trail_give_px != null ? Number(r.trail_give_px) : NaN;
   if (!Number.isFinite(give) || give <= 0) {
-    const giveR = r.trail_give_r != null ? Number(r.trail_give_r) : 0.08;
+    const giveR = r.trail_give_r != null ? Number(r.trail_give_r) : 0.10;
     let risk = r.risk_per_share != null ? Number(r.risk_per_share) : NaN;
     if (!Number.isFinite(risk) || risk <= 0) {
       const lo = r.entry_low != null ? Number(r.entry_low) : NaN;

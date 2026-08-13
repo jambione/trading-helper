@@ -105,7 +105,7 @@ DEFAULT_RUNNER_STEP_R = 0.10
 # Local profit trail (software). Arm at this MFE, then sit peak − give_r
 # under the high. Flatten with close_out — no T1 fill required.
 DEFAULT_LOCAL_TRAIL_ARM_R = 0.05
-DEFAULT_LOCAL_TRAIL_GIVE_R = 0.08
+DEFAULT_LOCAL_TRAIL_GIVE_R = 0.10
 # Legacy fixed-dollar cushion. 0 = use give_r × R (preferred).
 DEFAULT_LOCAL_TRAIL_GIVE_PX = 0.0
 # Flatten longs if stream+REST stay dark this long during RTH.
@@ -1878,10 +1878,10 @@ def local_trail_give(
 ) -> float:
     """Dollar cushion under last for the local R-stop.
 
-    Default is ``give_r × R`` (``ai_local_trail_give_r``, 0.08R).
+    Default is ``give_r × R`` (``ai_local_trail_give_r``, 0.10R).
     ``ai_local_trail_give_px`` > 0 is a legacy fixed dollar and wins only
-    when set. With no usable R, give is ``give_r × last / 100`` (0.08R →
-    8 bps of last) so the cushion still scales with price.
+    when set. With no usable R, give is ``give_r × last / 100`` (0.10R →
+    10 bps of last) so the cushion still scales with price.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:

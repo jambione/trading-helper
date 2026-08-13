@@ -688,9 +688,9 @@ def _stamp_display_trail(rows: list) -> None:
 
     cfg = _push_cfg()
     try:
-        give_r = float(cfg.get("ai_local_trail_give_r") or 0.08)
+        give_r = float(cfg.get("ai_local_trail_give_r") or 0.10)
     except (TypeError, ValueError):
-        give_r = 0.08
+        give_r = 0.10
     for r in rows:
         if not isinstance(r, dict):
             continue
@@ -848,9 +848,9 @@ def book_table_rows(
                 continue
             cfg = _push_cfg()
             try:
-                give_r = float(cfg.get("ai_local_trail_give_r") or 0.08)
+                give_r = float(cfg.get("ai_local_trail_give_r") or 0.10)
             except (TypeError, ValueError):
-                give_r = 0.08
+                give_r = 0.10
             by_sym[key]["trail_give_r"] = give_r
             try:
                 give_px = float(cfg.get("ai_local_trail_give_px") or 0)
