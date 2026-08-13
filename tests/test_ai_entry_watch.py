@@ -2036,8 +2036,11 @@ def test_stream_prefilter_can_be_disabled(monkeypatch):
 
 
 def test_poll_once_skips_quotes_but_still_reports_a_blocker(tmp_path, monkeypatch):
-    """A skipped poll must still tell the operator where price is, and must not
-    write a trade print into last_ask (which means 'ask' everywhere else)."""
+    """A skipped poll must still tell the operator where price is.
+
+    last_ask follows the live tape so the book / EXH / arm share one print
+    (FGI leftover 11.69 vs tape 10.28). REST is still skipped when far.
+    """
     import ai_entry_watch as ew
     import ai_trading as gt
     from datetime import datetime
@@ -2078,7 +2081,8 @@ def test_poll_once_skips_quotes_but_still_reports_a_blocker(tmp_path, monkeypatc
     rec = ew.load_watch()["AAA"]
     assert rec["block_code"] == "above_zone"
     assert rec["last_trade"] == 40.0
-    assert rec["last_ask"] == 28.0, "last_ask must stay an ask, not a trade print"
+    assert rec["last_ask"] == 40.0
+    assert rec.get("last_ask_src") == "stream"
 
 
 def test_engine_push_respects_the_websocket_subscription_cap(monkeypatch):
@@ -3026,6 +3030,36 @@ def test_live_exhaustion_accepts_exact_21_one_minute_bars():
     px = rows[-1][2]
     got = ew.live_exhaustion("CRMD", px, cfg, now)
     assert got is not None
+
+
+def test_decision_price_prefers_fresh_stream(monkeypatch):
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "live_print", lambda s: (10.28, 1.5))
+    monkeypatch.setattr(gt, "_latest_ask", lambda s: 11.69)
+    px, src, age = ew.decision_price("FGI", {"ai_watch_decision_max_age_sec": 8.0})
+    assert px == 10.28 and src == "stream" and age == 1.5
+
+
+def test_decision_price_falls_back_to_rest_when_tape_unaged(monkeypatch):
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "live_print", lambda s: (10.28, None))
+    monkeypatch.setattr(gt, "_latest_ask", lambda s: 11.69)
+    px, src, age = ew.decision_price("FGI", {"ai_watch_decision_max_age_sec": 8.0})
+    assert px == 11.69 and src == "rest"
+
+
+def test_decision_price_stale_tape_when_no_rest(monkeypatch):
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "live_print", lambda s: (10.28, 40.0))
+    monkeypatch.setattr(gt, "_latest_ask", lambda s: None)
+    px, src, age = ew.decision_price("FGI", {"ai_watch_decision_max_age_sec": 8.0})
+    assert px == 10.28 and src == "stale_tape" and age == 40.0
 
 
 def test_live_exhaustion_range_fallback_for_thin_tape():

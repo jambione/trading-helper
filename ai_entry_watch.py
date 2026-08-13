@@ -135,6 +135,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_continuation_unknown": "no %R",
     "overbought": "overbought",
     "heating": "heating",
+    "stale_quote": "stale quote",
 }
 
 
@@ -2183,19 +2184,12 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         return {"pushed": 0, "known": len(known), "error": True}
 
 
-def stream_quote(symbol: str) -> tuple[float, float] | None:
-    """(last_trade_price, age_sec) from the real-time feed, or None.
+def live_print(symbol: str) -> tuple[float, float | None] | None:
+    """Dashboard tape print: ``(price, age_sec_or_None)``.
 
-    Source is the dashboard's ticker row, whose ``price`` is fed primarily by
-    the Finnhub WebSocket (``_price_loop``) with Alpaca as fallback. We read it
-    off the /api/state payload this module already fetches and caches rather
-    than opening a second WS from this process: FINNHUB_STATE is per-process,
-    and the free tier caps subscriptions at 50 symbols shared across the desk.
-    Candidates get subscribed automatically because we push them into the
-    engine's ticker list (see push_candidates_to_engine).
-
-    ``price_age_sec`` is the real observation age — ``price_ts`` is a write
-    time and always looks fresh, so never use that for staleness.
+    ``price_age_sec`` is the observation age. ``price_ts`` is a write clock
+    and must not be used for freshness. Age None means the desk has a number
+    but cannot prove it is live — callers must not treat that as fresh.
     """
     sym = str(symbol or "").upper().strip()
     if not sym:
@@ -2211,12 +2205,85 @@ def stream_quote(symbol: str) -> tuple[float, float] | None:
             return None
         if px <= 0:
             return None
+        age: float | None
         try:
             age = float(r.get("price_age_sec"))
         except (TypeError, ValueError):
-            return None  # unknown age is not "fresh"
+            age = None
         return px, age
     return None
+
+
+def stream_quote(symbol: str) -> tuple[float, float] | None:
+    """(last_trade_price, age_sec) from the real-time feed, or None.
+
+    Source is the dashboard's ticker row, whose ``price`` is fed primarily by
+    the Finnhub WebSocket (``_price_loop``) with Alpaca as fallback. We read it
+    off the /api/state payload this module already fetches and caches rather
+    than opening a second WS from this process: FINNHUB_STATE is per-process,
+    and the free tier caps subscriptions at 50 symbols shared across the desk.
+    Candidates get subscribed automatically because we push them into the
+    engine's ticker list (see push_candidates_to_engine).
+
+    Only returns when age is known. Unknown age is not "fresh".
+    """
+    got = live_print(symbol)
+    if got is None or got[1] is None:
+        return None
+    return got[0], float(got[1])
+
+
+def decision_max_age_sec(cfg: dict | None) -> float:
+    try:
+        v = float((cfg or {}).get("ai_watch_decision_max_age_sec", 8.0) or 8.0)
+    except (TypeError, ValueError):
+        v = 8.0
+    return v if v > 0 else 8.0
+
+
+def decision_price(
+    symbol: str,
+    cfg: dict | None,
+    now: float | None = None,
+) -> tuple[float | None, str, float | None]:
+    """Price used to arm or flatten — never a leftover ``last_ask``.
+
+    Returns ``(price, src, age_sec)`` where src is ``stream``, ``rest``,
+    ``stale_tape``, or ``none``.
+
+    Fresh dashboard tape (Finnhub/Alpaca stream, age ≤ max) wins: that is
+    the print the operator sees. Otherwise a just-fetched REST ask. A tape
+    print with unknown or old age is ``stale_tape`` and must not arm.
+    """
+    max_age = decision_max_age_sec(cfg)
+    tape = live_print(symbol)
+    if tape is not None:
+        px, age = tape
+        if age is not None and age <= max_age and px > 0:
+            return px, "stream", age
+    ask_f = 0.0
+    try:
+        import ai_trading as gt
+        ask = gt._latest_ask(symbol)
+        ask_f = float(ask) if ask is not None else 0.0
+    except Exception:
+        ask_f = 0.0
+    if ask_f > 0:
+        return ask_f, "rest", None
+    if tape is not None and tape[0] > 0:
+        return tape[0], "stale_tape", tape[1]
+    return None, "none", None
+
+
+def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float, str, float | None]:
+    """Stamp *rec* with a realtime decision print. ``(price, src, age)``."""
+    px, src, age = decision_price(rec.get("symbol") or "", cfg, now)
+    if px and px > 0:
+        rec["last_ask"] = float(px)
+        rec["last_ask_src"] = src
+        rec["last_ask_age_sec"] = age
+        rec["last_trade"] = float(px) if src in ("stream", "stale_tape") else rec.get("last_trade")
+    return (float(px) if px else 0.0), src, age
 
 
 def stream_says_far_from_zone(
@@ -2684,12 +2751,22 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
             from config import load_config as _lc
             cfg_z = _lc() or {}
             ask_for_zone = _positive_price(seeded_ask)
+            tape = live_print(sym)
+            max_age = decision_max_age_sec(cfg_z)
+            if (
+                tape is not None
+                and tape[1] is not None
+                and tape[1] <= max_age
+                and tape[0] > 0
+            ):
+                rec["last_ask"] = float(tape[0])
+                rec["last_ask_src"] = "stream"
+                rec["last_ask_age_sec"] = tape[1]
+                ask_for_zone = float(tape[0])
             if ask_for_zone and not _structure_usable(rec.get("structure")):
                 ensure_offset_zone_if_needed(rec, ask_for_zone, cfg_z, t0)
-            # In-zone / below-zone names are the ones that can arm — keep their
-            # live %R fresh here so the book is not blind between 20s polls.
-            # Above-zone can wait for the next poll (cheaper bar budget).
-            if ask_for_zone and _price_in_or_below_zone(rec, ask_for_zone):
+            # Refresh %R on the same print we would arm with, every 2s sync.
+            if ask_for_zone:
                 ensure_live_exhaustion(rec, ask_for_zone, cfg_z, t0)
         except Exception:
             pass
@@ -5508,6 +5585,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if far:
             rec["last_trade"] = stream_px
             rec["last_poll_ts"] = t0
+            # Keep last_ask on the tape so the book / EXH / arm all see the
+            # same print the dashboard is showing (FGI 11.69 leftover).
+            try:
+                if stream_px and float(stream_px) > 0:
+                    rec["last_ask"] = float(stream_px)
+                    rec["last_ask_src"] = "stream"
+            except (TypeError, ValueError):
+                pass
             # Still warm %R so the UI column and shadow log are honest —
             # without this, far names never populate exhaustion either.
             try:
@@ -5554,38 +5639,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 touched[sym] = rec
                 continue
 
-        # Quotes — REST ask preferred; Finnhub tape from the dashboard as
-        # fallback when IEX is dark. Tape fills last_ask for the UI and lets
-        # desk synth zones build, but never arms/places (see tape_only below).
-        try:
-            ask = gt._latest_ask(sym)
-        except Exception:
-            ask = None
+        # Decision print: fresh tape, else a REST ask fetched now. Never a
+        # leftover last_ask from a prior poll.
         try:
             bid = gt._latest_bid(sym)
         except Exception:
             bid = None
-        try:
-            ask_f = float(ask) if ask is not None else 0.0
-        except (TypeError, ValueError):
-            ask_f = 0.0
-        tape_only = False
-        if ask_f > 0:
-            rec["last_ask"] = ask_f
-            rec.pop("last_ask_src", None)
-        else:
-            got = stream_quote(sym)
-            if got is not None:
-                px, _age = got
-                if px and px > 0:
-                    rec["last_trade"] = px
-                    # Prefer a prior real ask for the READY badge; only seed
-                    # from tape when the book still has no price at all.
-                    if _positive_price(rec.get("last_ask")) is None:
-                        rec["last_ask"] = px
-                        rec["last_ask_src"] = "tape"
-                    ask_f = float(px)
-                    tape_only = True
+        ask_f, px_src, px_age = apply_decision_price(rec, cfg, t0)
+        tape_only = px_src == "stale_tape"
         rec["last_poll_ts"] = t0
 
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
@@ -5711,23 +5772,21 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip("above_max_price", max_price=max_price_f)
             continue
 
-        # Tape-only cycle: we have a print for zone/UI, but not a real ask.
-        # Do not arm — a trade can print through the bid while the offer sits
-        # outside the zone (same class of bug stream_says_far_from_zone guards).
-        if tape_only:
+        # Stale tape (unknown or old age, no REST). Show the print, do not arm.
+        if tape_only or px_src == "stale_tape":
             # Prefer a live zone blocker when we already have structure so the
             # column still says above/below rather than a blank "no quote".
             b_code, _b_label = derive_blocker(rec, pad_pct=0.0)
             if b_code in ("above_zone", "below_zone", "in_zone", "no_structure"):
                 if b_code == "in_zone":
                     set_block_reason(
-                        rec, "no_quote", now=t0, detail="tape only — need rest ask")
+                        rec, "stale_quote", now=t0, detail="tape age unknown or old")
                 else:
                     set_block_reason(
                         rec, b_code, now=t0, detail="tape")
             else:
                 set_block_reason(
-                    rec, "no_quote", now=t0, detail="tape only — need rest ask")
+                    rec, "stale_quote", now=t0, detail="tape age unknown or old")
             if shadow_on:
                 try:
                     cp.log_shadow_sample(_shadow_row(
@@ -5881,16 +5940,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         except Exception:
             pass
 
-        # Re-check live ask immediately before place (quotes can move during
-        # gate checks). Only fill if still in zone.
+        # Re-check the same realtime source immediately before place.
+        ask_f, px_src2, _age2 = apply_decision_price(rec, cfg, t0)
+        if ask_f <= 0 or px_src2 in ("none", "stale_tape"):
+            _skip("stale_quote", detail=px_src2)
+            continue
         try:
-            ask2 = gt._latest_ask(sym)
-            ask2_f = float(ask2) if ask2 is not None else 0.0
+            ensure_live_exhaustion(rec, ask_f, cfg, t0)
         except Exception:
-            ask2_f = 0.0
-        if ask2_f > 0:
-            ask_f = ask2_f
-            rec["last_ask"] = ask_f
+            pass
         try:
             bid2 = gt._latest_bid(sym)
             bid2_f = float(bid2) if bid2 is not None else None

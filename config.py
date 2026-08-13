@@ -240,6 +240,10 @@ DEFAULT_CONFIG = {
     "ai_watch_require_agreement":      False,   # only watch AX-agreed names
     "ai_watch_single_source":          False,   # allow single-source watch when True
     "ai_watch_poll_sec":                20.0,   # watch poll interval (seconds)
+    # Buy/sell may only use a stream print this young, or a REST ask fetched
+    # on this poll. Older leftover last_ask values (FGI 11.69 vs tape 10.28)
+    # must not arm or flatten.
+    "ai_watch_decision_max_age_sec":     8.0,
     "ai_structure_ttl_sec":           5400.0,   # structure plan TTL (seconds)
     "ai_watch_expire_at_close":         True,   # drop watches at session close
     "ai_entry_zone_pad_pct":             0.0,   # pad around entry zone (%); 0 = exact zone
@@ -975,6 +979,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_require_agreement",
     "ai_watch_single_source",
     "ai_watch_poll_sec",
+    "ai_watch_decision_max_age_sec",
     "ai_structure_ttl_sec",
     "ai_watch_expire_at_close",
     "ai_watch_seed_momentum",

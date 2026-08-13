@@ -2530,7 +2530,23 @@ def manage_open_positions(
                     pos["entry_price"] = fill
             pos["entry_confirmed"] = True
             pos["last_seen_price"] = live.get("current")
-            _update_excursions(pos, live.get("current"))
+            # Prefer a fresh dashboard tape print over the broker snapshot
+            # when we can prove it is younger than the decision max age.
+            try:
+                import ai_entry_watch as _ewq
+                tape = _ewq.live_print(ticker)
+                max_age = _ewq.decision_max_age_sec(_cfg_all())
+                if (
+                    tape is not None
+                    and tape[1] is not None
+                    and tape[1] <= max_age
+                    and tape[0]
+                    and float(tape[0]) > 0
+                ):
+                    pos["last_seen_price"] = float(tape[0])
+            except Exception:
+                pass
+            _update_excursions(pos, pos.get("last_seen_price") or live.get("current"))
             if _infer_t1_fill(pos, live.get("qty")):
                 pos["tranche_a_filled"] = True
                 log_event(
