@@ -340,14 +340,30 @@ function _bookRows(book) {
   return Object.values(by);
 }
 
-/** last − give_px (default $0.05), never below the plan floor. */
+/** last − give (give_r × R, else computed trail_give_px). Never below floor. */
 function _liveLocalStop(r, last) {
   if (!r || last == null || !Number.isFinite(last) || last <= 0) {
     const prev = r && r.local_stop != null ? Number(r.local_stop) : NaN;
     return Number.isFinite(prev) && prev > 0 ? prev : null;
   }
   let give = r.trail_give_px != null ? Number(r.trail_give_px) : NaN;
-  if (!Number.isFinite(give) || give <= 0) give = 0.05;
+  if (!Number.isFinite(give) || give <= 0) {
+    const giveR = r.trail_give_r != null ? Number(r.trail_give_r) : 0.08;
+    let risk = r.risk_per_share != null ? Number(r.risk_per_share) : NaN;
+    if (!Number.isFinite(risk) || risk <= 0) {
+      const lo = r.entry_low != null ? Number(r.entry_low) : NaN;
+      const st = r.entry_stop_price != null ? Number(r.entry_stop_price)
+        : (r.stop_price != null ? Number(r.stop_price) : NaN);
+      if (Number.isFinite(lo) && Number.isFinite(st) && lo > st) risk = lo - st;
+    }
+    if (Number.isFinite(risk) && risk > 0 && Number.isFinite(giveR)) {
+      give = Math.max(0.01, giveR * risk);
+    } else if (Number.isFinite(giveR) && giveR > 0) {
+      give = Math.max(0.01, giveR * last / 100);
+    } else {
+      give = 0.01;
+    }
+  }
   const floorRaw = r.entry_stop_price != null ? r.entry_stop_price : r.stop_price;
   const floor = floorRaw != null ? Number(floorRaw) : NaN;
   let want = last - give;

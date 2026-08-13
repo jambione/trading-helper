@@ -660,21 +660,40 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
     }
 
 
-def _stamp_display_trail(rows: list) -> None:
-    """RStop = last − give_px on every row so the column tracks PRICE.
-
-    Open longs are raise-only. Watches follow last down to the plan floor.
-    """
+def _row_risk_ps(r: dict) -> float:
+    """Structural R for a book row: frozen risk, else zone floor − stop."""
     try:
-        give_px = float(_push_cfg().get("ai_local_trail_give_px") or 0)
+        rps = float(r.get("risk_per_share") or 0)
     except (TypeError, ValueError):
-        give_px = 0.0
-    if give_px <= 0:
-        return
+        rps = 0.0
+    if rps > 0:
+        return rps
+    try:
+        lo = float(r.get("entry_low") or 0)
+        stop = float(r.get("entry_stop_price") or r.get("stop_price") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if lo > 0 and stop > 0 and lo > stop:
+        return lo - stop
+    return 0.0
+
+
+def _stamp_display_trail(rows: list) -> None:
+    """RStop = last − calculated give so the column tracks PRICE.
+
+    Give is ``give_r × R`` unless a legacy ``give_px`` is set. Open longs
+    are raise-only. Watches follow last down to the plan floor.
+    """
+    import ai_positions as cp
+
+    cfg = _push_cfg()
+    try:
+        give_r = float(cfg.get("ai_local_trail_give_r") or 0.08)
+    except (TypeError, ValueError):
+        give_r = 0.08
     for r in rows:
         if not isinstance(r, dict):
             continue
-        r["trail_give_px"] = give_px
         last = r.get("price")
         if last is None:
             last = r.get("last_ask")
@@ -684,11 +703,16 @@ def _stamp_display_trail(rows: list) -> None:
             last_f = 0.0
         if last_f <= 0:
             continue
+        risk = _row_risk_ps(r)
+        give = cp.local_trail_give(last_f, risk, cfg)
+        r["trail_give_r"] = give_r
+        r["trail_give_px"] = give
+        r["risk_per_share"] = risk if risk > 0 else r.get("risk_per_share")
         try:
             floor = float(r.get("entry_stop_price") or r.get("stop_price") or 0)
         except (TypeError, ValueError):
             floor = 0.0
-        want = last_f - give_px
+        want = last_f - give
         if floor > 0:
             want = max(floor, want)
         is_open = bool(r.get("is_position") or str(r.get("phase") or "") == "open")

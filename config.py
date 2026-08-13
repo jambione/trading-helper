@@ -566,12 +566,13 @@ DEFAULT_CONFIG = {
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
     # Local profit trail: stop = last − give, only ratchets up.
-    # give_px in dollars wins when > 0 (0.05 = five cents under last).
-    # Else give_r × R. Flatten if last prints through.
+    # Give is give_r × R (0.08R). give_px > 0 is a legacy fixed dollar
+    # (the old nickel) and overrides the calculation.
+    # Flatten if last prints through.
     "ai_local_trail_enabled":         True,
     "ai_local_trail_arm_r":            0.05,
     "ai_local_trail_give_r":           0.08,
-    "ai_local_trail_give_px":          0.05,
+    "ai_local_trail_give_px":          0.0,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.

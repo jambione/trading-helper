@@ -610,22 +610,34 @@ def overlay_ai_book_live_prices(
                     stop = float(row.get("stop_price") or 0) or None
                 except (TypeError, ValueError):
                     stop = None
-                # RStop = last − give_px ($0.05). Watches follow last;
-                # open longs are raise-only so the flatten shelf never drops.
+                # RStop = last − give (give_r × R, or legacy give_px).
+                # Watches follow last; open longs are raise-only.
                 try:
+                    from ai_positions import local_trail_give
                     from config import load_config
-                    give_px = float(
-                        load_config().get("ai_local_trail_give_px") or 0.05)
-                except (TypeError, ValueError):
-                    give_px = 0.05
-                if give_px > 0:
+                    _cfg = load_config()
+                    try:
+                        _risk = float(row.get("risk_per_share") or 0)
+                    except (TypeError, ValueError):
+                        _risk = 0.0
+                    if _risk <= 0:
+                        try:
+                            _lo = float(row.get("entry_low") or 0)
+                            _st = float(
+                                row.get("entry_stop_price")
+                                or row.get("stop_price") or 0)
+                        except (TypeError, ValueError):
+                            _lo = _st = 0.0
+                        if _lo > 0 and _st > 0 and _lo > _st:
+                            _risk = _lo - _st
+                    give = local_trail_give(float(px), _risk, _cfg)
                     try:
                         floor = float(
                             row.get("entry_stop_price")
                             or row.get("stop_price") or 0)
                     except (TypeError, ValueError):
                         floor = 0.0
-                    want = float(px) - give_px
+                    want = float(px) - give
                     if floor > 0:
                         want = max(floor, want)
                     is_open = bool(
@@ -639,7 +651,11 @@ def overlay_ai_book_live_prices(
                         if prev > 0:
                             want = max(want, prev)
                     row["local_stop"] = want
-                    row["trail_give_px"] = give_px
+                    row["trail_give_px"] = give
+                    if _risk > 0:
+                        row["risk_per_share"] = _risk
+                except Exception:
+                    pass
                 if lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import (

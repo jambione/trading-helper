@@ -2250,6 +2250,15 @@ def test_entry_slippage_is_measured_against_the_limit_in_r(
     assert state["NVDA"]["entry_price"] == 40.75
 
 
+def test_local_trail_give_is_give_r_times_risk():
+    cfg = {"ai_local_trail_give_r": 0.08, "ai_local_trail_give_px": 0}
+    # $1 of R → 8 cents. $0.54 of R → 4.32 cents (floored at a penny).
+    assert cp.local_trail_give(17.44, 1.00, cfg) == pytest.approx(0.08)
+    assert cp.local_trail_give(17.44, 0.54, cfg) == pytest.approx(0.0432)
+    # No R: 0.08% of last.
+    assert cp.local_trail_give(44.69, 0, cfg) == pytest.approx(0.035752)
+
+
 def test_local_profit_stop_uses_dollar_give_when_set():
     pos = {
         "entry_price": 17.00, "entry_stop_price": 16.46,
