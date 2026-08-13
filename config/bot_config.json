@@ -176,7 +176,7 @@
   "ai_entry_unconfirmed_ttl_sec": 900.0,
   "ai_daily_loss_limit_r": 3.0,
   "ai_stop_use_market": true,
-  "ai_pdt_protect": "block",
+  "ai_pdt_protect": "off",
   "ai_max_open_risk_pct": 5.0,
   "ai_open_bell_enabled": true,
   "ai_open_bell_time": "09:35",
