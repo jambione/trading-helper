@@ -1996,7 +1996,8 @@ body.mobile .icon-btn {
 }
 .panel-ai-watch .panel-title {
   color: #ede9fe;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 .panel-ai-watch .panel-subtitle {
   color: #c4b5fd;
