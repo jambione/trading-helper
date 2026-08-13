@@ -610,38 +610,36 @@ def overlay_ai_book_live_prices(
                     stop = float(row.get("stop_price") or 0) or None
                 except (TypeError, ValueError):
                     stop = None
-                # Software trail follows the live print (raise-only), same
-                # formula as ai_positions.local_profit_stop. PRICE already
-                # ticks here at WS rate; TRAIL used to sit on the last
-                # ai_trader book write.
-                if row.get("is_position") or str(row.get("phase") or "") == "open":
+                # RStop = last − give_px ($0.05). Watches follow last;
+                # open longs are raise-only so the flatten shelf never drops.
+                try:
+                    from config import load_config
+                    give_px = float(
+                        load_config().get("ai_local_trail_give_px") or 0.05)
+                except (TypeError, ValueError):
+                    give_px = 0.05
+                if give_px > 0:
                     try:
-                        from ai_positions import local_profit_stop
-                        from config import load_config
-                        risk = row.get("risk_per_share")
+                        floor = float(
+                            row.get("entry_stop_price")
+                            or row.get("stop_price") or 0)
+                    except (TypeError, ValueError):
+                        floor = 0.0
+                    want = float(px) - give_px
+                    if floor > 0:
+                        want = max(floor, want)
+                    is_open = bool(
+                        row.get("is_position")
+                        or str(row.get("phase") or "") == "open")
+                    if is_open:
                         try:
-                            if not (risk and float(risk) > 0):
-                                e = float(row.get("avg_entry") or 0)
-                                f = float(
-                                    row.get("entry_stop_price")
-                                    or row.get("stop_price") or 0)
-                                if e > f > 0:
-                                    risk = e - f
+                            prev = float(row.get("local_stop") or 0)
                         except (TypeError, ValueError):
-                            pass
-                        loc = local_profit_stop({
-                            "last_seen_price": px,
-                            "risk_per_share": risk,
-                            "entry_stop_price": row.get("entry_stop_price")
-                            or row.get("stop_price"),
-                            "stop_price": row.get("stop_price"),
-                            "local_stop_price": row.get("local_stop"),
-                            "entry_price": row.get("avg_entry"),
-                        }, load_config())
-                        if loc is not None and float(loc) > 0:
-                            row["local_stop"] = float(loc)
-                    except Exception:
-                        pass
+                            prev = 0.0
+                        if prev > 0:
+                            want = max(want, prev)
+                    row["local_stop"] = want
+                    row["trail_give_px"] = give_px
                 if lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import (

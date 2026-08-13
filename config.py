@@ -565,11 +565,13 @@ DEFAULT_CONFIG = {
     # let the runner lose more than tranche A had just banked. The stop is
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
-    # Local profit trail: stop = last − give_r×R, only ratchets up.
-    # Each higher print sets a new baseline; flatten if last prints through.
+    # Local profit trail: stop = last − give, only ratchets up.
+    # give_px in dollars wins when > 0 (0.05 = five cents under last).
+    # Else give_r × R. Flatten if last prints through.
     "ai_local_trail_enabled":         True,
     "ai_local_trail_arm_r":            0.05,
     "ai_local_trail_give_r":           0.08,
+    "ai_local_trail_give_px":          0.05,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.
@@ -1069,6 +1071,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_enabled",
     "ai_local_trail_arm_r",
     "ai_local_trail_give_r",
+    "ai_local_trail_give_px",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",

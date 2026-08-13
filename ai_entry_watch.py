@@ -660,6 +660,48 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
     }
 
 
+def _stamp_display_trail(rows: list) -> None:
+    """RStop = last − give_px on every row so the column tracks PRICE.
+
+    Open longs are raise-only. Watches follow last down to the plan floor.
+    """
+    try:
+        give_px = float(_push_cfg().get("ai_local_trail_give_px") or 0)
+    except (TypeError, ValueError):
+        give_px = 0.0
+    if give_px <= 0:
+        return
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        r["trail_give_px"] = give_px
+        last = r.get("price")
+        if last is None:
+            last = r.get("last_ask")
+        try:
+            last_f = float(last) if last is not None else 0.0
+        except (TypeError, ValueError):
+            last_f = 0.0
+        if last_f <= 0:
+            continue
+        try:
+            floor = float(r.get("entry_stop_price") or r.get("stop_price") or 0)
+        except (TypeError, ValueError):
+            floor = 0.0
+        want = last_f - give_px
+        if floor > 0:
+            want = max(floor, want)
+        is_open = bool(r.get("is_position") or str(r.get("phase") or "") == "open")
+        if is_open:
+            try:
+                prev = float(r.get("local_stop") or 0)
+            except (TypeError, ValueError):
+                prev = 0.0
+            if prev > 0:
+                want = max(want, prev)
+        r["local_stop"] = round(want, 6)
+
+
 def book_table_rows(
     *,
     positions: dict | None = None,
@@ -787,6 +829,11 @@ def book_table_rows(
                 give_r = 0.08
             by_sym[key]["trail_give_r"] = give_r
             try:
+                give_px = float(cfg.get("ai_local_trail_give_px") or 0)
+            except (TypeError, ValueError):
+                give_px = 0.0
+            by_sym[key]["trail_give_px"] = give_px if give_px > 0 else None
+            try:
                 risk = float(mpos.get("risk_per_share") or 0) or None
             except (TypeError, ValueError):
                 risk = None
@@ -832,7 +879,7 @@ def book_table_rows(
     # Open/submitted positions already land in by_sym above.
     rows = list(by_sym.values())
 
-    # Prefer live desk tape for PRICE on every paint (same Finnhub/Alpaca path
+    # Prefer live desk tape for PRICE on every paint (same Finnhub/Alpaca path))
     # as Momentum Stocks). Zone levels stay from structure; only the print moves.
     for r in rows:
         if r.get("is_position") or str(r.get("phase") or "") == "open":
@@ -880,6 +927,8 @@ def book_table_rows(
                 continue
         if _positive_price(r.get("price")) is None and _positive_price(r.get("last_ask")) is not None:
             r["price"] = r["last_ask"]
+
+    _stamp_display_trail(rows)
 
     def _sort_key(r: dict) -> tuple:
         phase = str(r.get("phase") or "")

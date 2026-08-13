@@ -106,6 +106,9 @@ DEFAULT_RUNNER_STEP_R = 0.10
 # under the high. Flatten with close_out — no T1 fill required.
 DEFAULT_LOCAL_TRAIL_ARM_R = 0.05
 DEFAULT_LOCAL_TRAIL_GIVE_R = 0.08
+# Dollar cushion under last when set (>0). 0.05 = five cents — the board
+# gap, not 0.08R (which was ~$0.60 on a $17 name with a 3.5% zone stop).
+DEFAULT_LOCAL_TRAIL_GIVE_PX = 0.05
 # Flatten longs if stream+REST stay dark this long during RTH.
 DEFAULT_STALE_DATA_MAX_AGE_SEC = 15.0
 # Keep a small ring of recent events for /api/state.
@@ -1872,9 +1875,9 @@ def _orig_stop(pos: dict[str, Any]) -> float | None:
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
     """Trail just under *last*: rises as price grows, never lowers.
 
-    ``local_stop = max(prev, last − give_r × R, original floor)``.
-    Each uptick that clears the cushion sets a new baseline. A print
-    through that baseline market-flattens. Independent of T1.
+    ``local_stop = max(prev, last − give, original floor)``.
+    ``ai_local_trail_give_px`` (dollars, default $0.05) wins when > 0;
+    otherwise give is ``give_r × R``.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_local_trail_enabled", True)):
@@ -1882,19 +1885,30 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     last = _num(pos.get("last_seen_price"))
     risk = _risk_basis(pos)
     floor = _orig_stop(pos)
-    if last is None or last <= 0 or risk <= 0 or floor is None:
-        return _num(pos.get("local_stop_price")) or floor
+    prev = _num(pos.get("local_stop_price"))
+    if last is None or last <= 0:
+        return prev or floor
     try:
-        give_r = float(cfg.get("ai_local_trail_give_r", DEFAULT_LOCAL_TRAIL_GIVE_R)
-                       or DEFAULT_LOCAL_TRAIL_GIVE_R)
+        give_px = float(cfg.get("ai_local_trail_give_px") or 0)
     except (TypeError, ValueError):
-        give_r = DEFAULT_LOCAL_TRAIL_GIVE_R
-    give = max(0.01, float(give_r) * risk)
+        give_px = 0.0
+    if give_px > 0:
+        give = max(0.01, give_px)
+    else:
+        if risk <= 0:
+            return prev or floor
+        try:
+            give_r = float(
+                cfg.get("ai_local_trail_give_r", DEFAULT_LOCAL_TRAIL_GIVE_R)
+                or DEFAULT_LOCAL_TRAIL_GIVE_R)
+        except (TypeError, ValueError):
+            give_r = DEFAULT_LOCAL_TRAIL_GIVE_R
+        give = max(0.01, float(give_r) * risk)
     want = float(last) - give
     if want >= float(last):
         want = float(last) - 0.01
-    want = max(float(floor), want)
-    prev = _num(pos.get("local_stop_price"))
+    if floor is not None:
+        want = max(float(floor), want)
     if prev is not None:
         want = max(want, float(prev))
     return round(want, 6)

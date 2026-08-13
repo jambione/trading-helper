@@ -2250,6 +2250,16 @@ def test_entry_slippage_is_measured_against_the_limit_in_r(
     assert state["NVDA"]["entry_price"] == 40.75
 
 
+def test_local_profit_stop_uses_dollar_give_when_set():
+    pos = {
+        "entry_price": 17.00, "entry_stop_price": 16.46,
+        "risk_per_share": 0.54, "last_seen_price": 17.12,
+        "local_stop_price": 16.46,
+    }
+    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_px": 0.05}
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(17.07)
+
+
 def test_local_profit_stop_tracks_last_minus_give():
     pos = {
         "entry_price": 8.64, "entry_stop_price": 8.38,

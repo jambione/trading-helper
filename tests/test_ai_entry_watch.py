@@ -597,6 +597,32 @@ def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
     assert by["SMCI"]["trail_give_r"] == pytest.approx(0.20)
 
 
+def test_book_rstop_follows_last_minus_five_cents_on_watches(tmp_path, monkeypatch):
+    """Watch RStop is last − $0.05, not the frozen zone stop."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "live_panel_universe", lambda cfg=None: {"FGI"})
+    monkeypatch.setattr(ew, "live_print", lambda _sym: None)
+    monkeypatch.setattr(ew, "stream_quote", lambda _sym: (15.32, 0.1))
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {"ai_local_trail_give_px": 0.05})
+    ew.save_watch({
+        "FGI": {
+            "symbol": "FGI",
+            "status": "watching",
+            "source": "momentum",
+            "last_ask": 15.32,
+            "structure": {
+                "entry_low": 14.42, "entry_high": 15.40, "stop_price": 14.15,
+            },
+        },
+    })
+    rows = ew.book_table_rows()
+    by = {r["symbol"]: r for r in rows}
+    assert by["FGI"]["local_stop"] == pytest.approx(15.27)
+    assert by["FGI"]["trail_give_px"] == pytest.approx(0.05)
+
+
 def test_book_table_rows_uses_tape_when_last_seen_missing(tmp_path, monkeypatch):
     """RStop must not sit on the entry floor just because last_seen was blank."""
     import ai_entry_watch as ew

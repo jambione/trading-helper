@@ -339,7 +339,7 @@
                     <div class="feed-cols feed-cols--ai-book">
                         <div class="th">Ticker</div>
                         <div class="th">Blocker</div>
-                        <div class="th" title="Local ratchet stop once long; zone stop while watching. Flatten if last prints through.">RStop</div>
+                        <div class="th" title="last − $0.05. Open longs raise-only (flatten if last prints through). Watches follow last down to the zone stop.">RStop</div>
                         <div class="th">Price</div>
                         <div class="th">Zone</div>
                         <div class="th" title="Relative volume at admission — today's pace vs its own average">RVOL</div>
@@ -750,7 +750,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=116"></script>
+        <script type="module" src="/static/js/app.js?v=117"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

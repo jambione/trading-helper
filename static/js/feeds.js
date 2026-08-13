@@ -264,6 +264,7 @@ function _bookRows(book) {
       risk_per_share: w.risk_per_share != null ? w.risk_per_share : null,
       entry_stop_price: w.entry_stop_price != null ? w.entry_stop_price : null,
       trail_give_r: w.trail_give_r != null ? w.trail_give_r : null,
+      trail_give_px: w.trail_give_px != null ? w.trail_give_px : null,
       last_ask: w.last_ask,
       price: w.price != null ? w.price : w.last_ask,
       qty: w.qty != null ? w.qty : null,
@@ -306,6 +307,7 @@ function _bookRows(book) {
       risk_per_share: p.risk_per_share != null ? p.risk_per_share : prev.risk_per_share,
       entry_stop_price: p.entry_stop_price != null ? p.entry_stop_price : prev.entry_stop_price,
       trail_give_r: p.trail_give_r != null ? p.trail_give_r : prev.trail_give_r,
+      trail_give_px: p.trail_give_px != null ? p.trail_give_px : prev.trail_give_px,
     };
   }
 
@@ -326,50 +328,36 @@ function _bookRows(book) {
         r.pct_change = q.pct_change;
       }
     }
-    // Trail follows the last print the same way the engine does: last − give×R,
-    // never below the original floor, never down. PRICE already ticks from the
-    // tape; TRAIL used to wait for the next ai_positions write.
-    if (r.is_position || r.phase === 'open') {
-      const last = (q && q.price != null && Number.isFinite(q.price) && q.price > 0)
-        ? Number(q.price)
-        : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
-      const raised = _liveLocalStop(r, last);
-      if (raised != null) r.local_stop = raised;
-    }
+    // RStop tracks last − $0.05 on every row so the column moves with PRICE.
+    // Open longs are raise-only (liquidation shelf). Watches may follow last
+    // down to the planned floor — they are not a live stop.
+    const last = (q && q.price != null && Number.isFinite(q.price) && q.price > 0)
+      ? Number(q.price)
+      : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
+    const raised = _liveLocalStop(r, last);
+    if (raised != null) r.local_stop = raised;
   }
   return Object.values(by);
 }
 
-/** Raise-only software shelf: max(prev, last − give_r×R, original floor). */
+/** last − give_px (default $0.05), never below the plan floor. */
 function _liveLocalStop(r, last) {
   if (!r || last == null || !Number.isFinite(last) || last <= 0) {
     const prev = r && r.local_stop != null ? Number(r.local_stop) : NaN;
     return Number.isFinite(prev) && prev > 0 ? prev : null;
   }
-  const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
+  let give = r.trail_give_px != null ? Number(r.trail_give_px) : NaN;
+  if (!Number.isFinite(give) || give <= 0) give = 0.05;
   const floorRaw = r.entry_stop_price != null ? r.entry_stop_price : r.stop_price;
   const floor = floorRaw != null ? Number(floorRaw) : NaN;
-  const entry = r.avg_entry != null ? Number(r.avg_entry) : NaN;
-  let risk = r.risk_per_share != null ? Number(r.risk_per_share) : NaN;
-  if (!Number.isFinite(risk) || risk <= 0) {
-    if (Number.isFinite(entry) && Number.isFinite(floor) && entry > floor) {
-      risk = entry - floor;
-    }
-  }
-  let giveR = r.trail_give_r != null ? Number(r.trail_give_r) : NaN;
-  if (!Number.isFinite(giveR) || giveR <= 0) giveR = 0.08;
-  if (!Number.isFinite(risk) || risk <= 0) {
-    // No R basis — still sit a tiny cushion under last so RStop tracks price.
-    let want = last - 0.01;
-    if (Number.isFinite(floor) && floor > 0) want = Math.max(floor, want);
-    if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
-    return want;
-  }
-  const give = Math.max(0.01, giveR * risk);
   let want = last - give;
   if (want >= last) want = last - 0.01;
   if (Number.isFinite(floor) && floor > 0) want = Math.max(floor, want);
-  if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
+  const isOpen = !!(r.is_position || r.phase === 'open');
+  if (isOpen) {
+    const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
+    if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
+  }
   return want;
 }
 
