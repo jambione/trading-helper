@@ -782,7 +782,10 @@ function _fmtExhTitle(r) {
     bits.push(`HH ${Number(r.exh_hh).toFixed(2)} LL ${Number(r.exh_ll).toFixed(2)}`);
   }
   if (r.pctr_src === 'sparse_window') {
-    return 'No 1m %R — fewer than 23 bars in the last ~22 minutes (not a TV 21-bar window)';
+    return 'No 1m %R — not enough prints in the last ~25 minutes to trust a reading';
+  }
+  if (r.pctr_src === 'clock_range') {
+    bits[0] = 'Range %R on 1m prints in the last ~25m (not a full 21-bar window)';
   }
   return bits.length > 1 ? bits.join(' · ') : '';
 }

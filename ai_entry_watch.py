@@ -2802,11 +2802,10 @@ def clock_window_rows(
     1-minute %R(21) chart.
 
     When timestamps exist, keep only bars whose stamp is within
-    ``(length-1) * bar_seconds * slack`` of the newest bar. Need ``length``
-    rows (a real %R(21) window) or return ``([], span)``. Slack default 1.25
-    allows a couple of missing minutes; requiring length+2 bars in
-    (length+1) minutes was an off-by-two that blanked liquid names (CRMD/ZIM)
-    that actually had 21–22 prints in 22 minutes.
+    ``(length-1) * bar_seconds * slack`` of the newest bar. Slack default 1.25
+    allows a couple of missing minutes. The list may be shorter than
+    ``length`` — ``live_exhaustion`` then uses a range %R instead of inventing
+    a 21-bar window from older prints.
     """
     if rows is None:
         rows = symbol_ohlc(symbol, cfg, now)
@@ -2830,13 +2829,11 @@ def clock_window_rows(
             paired[-1][1] - paired[0][1]
             if len(paired) >= 2 else None
         )
-        if len(paired) < length:
-            return [], span
         return [r for r, _ts in paired], span
 
     # No stamps: last-N-prints plus the existing stretch cap.
     if len(rows) < length:
-        return [], None
+        return list(rows), None
     try:
         mult = float(cfg.get("ai_watch_exhaustion_max_window_mult", 3.0) or 0.0)
     except (TypeError, ValueError):
@@ -2885,7 +2882,12 @@ def live_exhaustion(
         return None
     length = _rte_fast_length(cfg)
     rows, _span = clock_window_rows(symbol, cfg, now)
-    if len(rows) < length:
+    try:
+        min_range = int(cfg.get("ai_watch_exhaustion_min_range_bars", 6) or 6)
+    except (TypeError, ValueError):
+        min_range = 6
+    min_range = max(2, min_range)
+    if len(rows) < min_range:
         return None
 
     def _raw(hh: float, ll: float, close: float) -> float | None:
@@ -2893,6 +2895,30 @@ def live_exhaustion(
         if span <= 0:
             return None
         return -100.0 * (hh - close) / span
+
+    try:
+        eps = float(cfg.get("rte_direction_eps", 0.05) or 0.0)
+    except (TypeError, ValueError):
+        eps = 0.05
+
+    # Thin tape: not enough 1m bars for %R(21). Use Williams %R against the
+    # high/low of the prints that *did* occur in the clock window. MOBX/PSFE
+    # class names print ~10 times in 25 minutes — a blank EXH is worse than
+    # "where is the last print in the last 25 minutes' range".
+    if len(rows) < length:
+        hh = max([r[0] for r in rows] + [px])
+        ll = min([r[1] for r in rows] + [px])
+        live_raw = _raw(hh, ll, px)
+        if live_raw is None:
+            return None
+        prev_close = rows[-1][2]
+        prev_raw = _raw(hh, ll, prev_close)
+        if prev_raw is None:
+            prev_raw = live_raw
+        rising = live_raw > prev_raw + eps
+        falling = live_raw < prev_raw - eps
+        ex = max(0.0, min(100.0, 100.0 + live_raw))
+        return live_raw, ex, rising, falling
 
     # Raw %R for each closed bar, same window the engine uses.
     series: list[float] = []
@@ -2927,10 +2953,6 @@ def live_exhaustion(
         return None
     live_sm = alpha * live_raw + (1.0 - alpha) * prev_sm
 
-    try:
-        eps = float(cfg.get("rte_direction_eps", 0.05) or 0.0)
-    except (TypeError, ValueError):
-        eps = 0.05
     rising = live_sm > prev_sm + eps
     falling = live_sm < prev_sm - eps
     ex = max(0.0, min(100.0, 100.0 + live_sm))
@@ -2986,15 +3008,18 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
     ind["pctr"] = round(pctr, 2)
     ind["pctr_rising"] = bool(rising)
     ind["pctr_falling"] = bool(falling)
-    ind["pctr_src"] = "live"
-    ind["pctr_ts"] = float(now)
     rows, span = clock_window_rows(sym, cfg, now)
+    length = _rte_fast_length(cfg)
+    ind["pctr_src"] = "live" if len(rows) >= length else "clock_range"
+    ind["pctr_ts"] = float(now)
     try:
         px = float(price)
     except (TypeError, ValueError):
         px = None
-    length = _rte_fast_length(cfg)
-    win = rows[-(length - 1):] if rows and length > 1 else []
+    win = (
+        rows if len(rows) < length
+        else (rows[-(length - 1):] if rows and length > 1 else [])
+    )
     if win and px is not None and px > 0:
         ind["pctr_hh"] = round(max([r[0] for r in win] + [px]), 4)
         ind["pctr_ll"] = round(min([r[1] for r in win] + [px]), 4)

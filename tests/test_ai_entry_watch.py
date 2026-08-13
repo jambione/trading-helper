@@ -2975,7 +2975,7 @@ def test_live_exhaustion_refuses_sparse_clock_window():
 
     now = 1_700_000_000.0
     rows = _synthetic_ohlc(40)
-    _prime_ohlc(ew, "OMER", rows, now, step_sec=180.0)  # 3 min between prints
+    _prime_ohlc(ew, "OMER", rows, now, step_sec=600.0)  # 10 min between prints
     cfg = {"rte_fast_length": 21, "ai_watch_db_bar_seconds": 60.0}
     px = rows[-1][2]
     assert ew.live_exhaustion("OMER", px, cfg, now) is None
@@ -3026,3 +3026,25 @@ def test_live_exhaustion_accepts_exact_21_one_minute_bars():
     px = rows[-1][2]
     got = ew.live_exhaustion("CRMD", px, cfg, now)
     assert got is not None
+
+
+def test_live_exhaustion_range_fallback_for_thin_tape():
+    """~10 prints in 25 minutes still get a range %R, not a blank EXH."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _synthetic_ohlc(10)
+    _prime_ohlc(ew, "MOBX", rows, now, step_sec=150.0)
+    cfg = {
+        "rte_fast_length": 21,
+        "ai_watch_db_bar_seconds": 60.0,
+        "ai_watch_exhaustion_clock_slack": 1.25,
+        "ai_watch_exhaustion_min_range_bars": 6,
+    }
+    px = rows[-1][2]
+    got = ew.live_exhaustion("MOBX", px, cfg, now)
+    assert got is not None
+    rec = {"symbol": "MOBX"}
+    assert ew.apply_live_exhaustion(rec, px, cfg, now) is True
+    assert rec["indicator"]["pctr_src"] == "clock_range"
+    assert rec["indicator"]["pctr"] is not None
