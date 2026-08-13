@@ -261,6 +261,9 @@ function _bookRows(book) {
       entry_high: w.entry_high,
       stop_price: w.stop_price != null ? w.stop_price : null,
       local_stop: w.local_stop != null ? w.local_stop : null,
+      risk_per_share: w.risk_per_share != null ? w.risk_per_share : null,
+      entry_stop_price: w.entry_stop_price != null ? w.entry_stop_price : null,
+      trail_give_r: w.trail_give_r != null ? w.trail_give_r : null,
       last_ask: w.last_ask,
       price: w.price != null ? w.price : w.last_ask,
       qty: w.qty != null ? w.qty : null,
@@ -300,6 +303,9 @@ function _bookRows(book) {
       plpc: p.plpc,
       local_stop: p.local_stop != null ? p.local_stop : prev.local_stop,
       stop_price: p.stop_price != null ? p.stop_price : prev.stop_price,
+      risk_per_share: p.risk_per_share != null ? p.risk_per_share : prev.risk_per_share,
+      entry_stop_price: p.entry_stop_price != null ? p.entry_stop_price : prev.entry_stop_price,
+      trail_give_r: p.trail_give_r != null ? p.trail_give_r : prev.trail_give_r,
     };
   }
 
@@ -309,18 +315,51 @@ function _bookRows(book) {
   for (const r of Object.values(by)) {
     if (!r) continue;
     const q = live[r.symbol];
-    if (!q) continue;
-    if (!(r.is_position || r.phase === 'open')) {
-      if (q.price != null && Number.isFinite(q.price) && q.price > 0) {
-        r.price = q.price;
-        r.last_ask = q.price;
+    if (q) {
+      if (!(r.is_position || r.phase === 'open')) {
+        if (q.price != null && Number.isFinite(q.price) && q.price > 0) {
+          r.price = q.price;
+          r.last_ask = q.price;
+        }
+      }
+      if (q.pct_change != null && Number.isFinite(q.pct_change)) {
+        r.pct_change = q.pct_change;
       }
     }
-    if (q.pct_change != null && Number.isFinite(q.pct_change)) {
-      r.pct_change = q.pct_change;
+    // Trail follows the last print the same way the engine does: last − give×R,
+    // never below the original floor, never down. PRICE already ticks from the
+    // tape; TRAIL used to wait for the next ai_positions write.
+    if (r.is_position || r.phase === 'open') {
+      const last = (q && q.price != null && Number.isFinite(q.price) && q.price > 0)
+        ? Number(q.price)
+        : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
+      const raised = _liveLocalStop(r, last);
+      if (raised != null) r.local_stop = raised;
     }
   }
   return Object.values(by);
+}
+
+/** Raise-only software shelf: max(prev, last − give_r×R, original floor). */
+function _liveLocalStop(r, last) {
+  if (!r || last == null || !Number.isFinite(last) || last <= 0) {
+    const prev = r && r.local_stop != null ? Number(r.local_stop) : NaN;
+    return Number.isFinite(prev) && prev > 0 ? prev : null;
+  }
+  const risk = r.risk_per_share != null ? Number(r.risk_per_share) : NaN;
+  const giveR = r.trail_give_r != null ? Number(r.trail_give_r) : NaN;
+  const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
+  const floorRaw = r.entry_stop_price != null ? r.entry_stop_price : r.stop_price;
+  const floor = floorRaw != null ? Number(floorRaw) : NaN;
+  if (!Number.isFinite(risk) || risk <= 0 || !Number.isFinite(giveR)) {
+    return Number.isFinite(prev) && prev > 0 ? prev : null;
+  }
+  const give = Math.max(0.01, giveR * risk);
+  let want = last - give;
+  if (want >= last) want = last - 0.01;
+  if (Number.isFinite(floor) && floor > 0) want = Math.max(floor, want);
+  if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
+  return want;
 }
 
 /** symbol → { price, pct_change } from the Momentum tickers store slice. */

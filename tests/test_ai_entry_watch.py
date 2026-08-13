@@ -1,6 +1,7 @@
 # tests/test_ai_entry_watch.py
 import json
 import os, sys
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config import DEFAULT_CONFIG, load_config
 
@@ -551,6 +552,48 @@ def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
     assert by["SOFI"]["source"] == "trending"
     # Open first
     assert rows[0]["symbol"] == "SMCI"
+
+
+def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
+    """TRAIL uses the software shelf (last − give×R), not the frozen plan stop."""
+    import ai_entry_watch as ew
+    import ai_positions as cp
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "live_panel_universe", lambda cfg=None: {"SMCI"})
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI",
+            "status": "filled",
+            "source": "momentum",
+            "last_ask": 9.0,
+            "structure": {
+                "entry_low": 8.5, "entry_high": 8.7, "stop_price": 8.38,
+            },
+        },
+    })
+    monkeypatch.setattr(cp, "_load_state", lambda: {
+        "SMCI": {
+            "entry_price": 8.64,
+            "entry_stop_price": 8.38,
+            "stop_price": 8.38,
+            "risk_per_share": 0.26,
+            "last_seen_price": 8.80,
+            "local_stop_price": 8.38,
+        },
+    })
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.20,
+    })
+    rows = ew.book_table_rows(positions={
+        "SMCI": {"qty": 10, "avg_entry": 8.64, "current": 8.80, "pl": 1.6},
+    })
+    by = {r["symbol"]: r for r in rows}
+    assert by["SMCI"]["local_stop"] == pytest.approx(8.748)
+    assert by["SMCI"]["risk_per_share"] == pytest.approx(0.26)
+    assert by["SMCI"]["entry_stop_price"] == pytest.approx(8.38)
+    assert by["SMCI"]["trail_give_r"] == pytest.approx(0.20)
 
 
 def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):

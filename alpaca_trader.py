@@ -181,7 +181,11 @@ def _require_protective_exit() -> bool:
     """
     try:
         from config import load_config
-        return bool(load_config().get("require_protective_exit", True))
+        cfg = load_config()
+        # Software-only stop desk: local trail market-flattens; no broker SL.
+        if cfg.get("ai_broker_stop_enabled") is False:
+            return False
+        return bool(cfg.get("require_protective_exit", True))
     except Exception:
         return True
 

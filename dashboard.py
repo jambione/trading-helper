@@ -610,6 +610,27 @@ def overlay_ai_book_live_prices(
                     stop = float(row.get("stop_price") or 0) or None
                 except (TypeError, ValueError):
                     stop = None
+                # Software trail follows the live print (raise-only), same
+                # formula as ai_positions.local_profit_stop. PRICE already
+                # ticks here at WS rate; TRAIL used to sit on the last
+                # ai_trader book write.
+                if row.get("is_position") or str(row.get("phase") or "") == "open":
+                    try:
+                        from ai_positions import local_profit_stop
+                        from config import load_config
+                        loc = local_profit_stop({
+                            "last_seen_price": px,
+                            "risk_per_share": row.get("risk_per_share"),
+                            "entry_stop_price": row.get("entry_stop_price")
+                            or row.get("stop_price"),
+                            "stop_price": row.get("stop_price"),
+                            "local_stop_price": row.get("local_stop"),
+                            "entry_price": row.get("avg_entry"),
+                        }, load_config())
+                        if loc is not None and float(loc) > 0:
+                            row["local_stop"] = float(loc)
+                    except Exception:
+                        pass
                 if lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import (

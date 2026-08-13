@@ -780,12 +780,31 @@ def book_table_rows(
             key = str(msym or "").upper().strip()
             if not key or key not in by_sym:
                 continue
-            loc = mpos.get("local_stop_price")
-            if loc is None:
+            cfg = _push_cfg()
+            try:
+                give_r = float(cfg.get("ai_local_trail_give_r") or 0.08)
+            except (TypeError, ValueError):
+                give_r = 0.08
+            by_sym[key]["trail_give_r"] = give_r
+            try:
+                risk = float(mpos.get("risk_per_share") or 0) or None
+            except (TypeError, ValueError):
+                risk = None
+            by_sym[key]["risk_per_share"] = risk
+            try:
+                floor = float(mpos.get("entry_stop_price") or 0) or None
+            except (TypeError, ValueError):
+                floor = None
+            if floor is None:
                 try:
-                    loc = _cp.local_profit_stop(mpos, _push_cfg())
-                except Exception:
-                    loc = None
+                    floor = float(mpos.get("stop_price") or 0) or None
+                except (TypeError, ValueError):
+                    floor = None
+            by_sym[key]["entry_stop_price"] = floor
+            try:
+                loc = _cp.local_profit_stop(mpos, cfg)
+            except Exception:
+                loc = mpos.get("local_stop_price")
             try:
                 by_sym[key]["local_stop"] = (
                     float(loc) if loc is not None else None)
