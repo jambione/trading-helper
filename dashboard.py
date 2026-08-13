@@ -618,9 +618,20 @@ def overlay_ai_book_live_prices(
                     try:
                         from ai_positions import local_profit_stop
                         from config import load_config
+                        risk = row.get("risk_per_share")
+                        try:
+                            if not (risk and float(risk) > 0):
+                                e = float(row.get("avg_entry") or 0)
+                                f = float(
+                                    row.get("entry_stop_price")
+                                    or row.get("stop_price") or 0)
+                                if e > f > 0:
+                                    risk = e - f
+                        except (TypeError, ValueError):
+                            pass
                         loc = local_profit_stop({
                             "last_seen_price": px,
-                            "risk_per_share": row.get("risk_per_share"),
+                            "risk_per_share": risk,
                             "entry_stop_price": row.get("entry_stop_price")
                             or row.get("stop_price"),
                             "stop_price": row.get("stop_price"),

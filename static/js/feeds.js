@@ -346,13 +346,24 @@ function _liveLocalStop(r, last) {
     const prev = r && r.local_stop != null ? Number(r.local_stop) : NaN;
     return Number.isFinite(prev) && prev > 0 ? prev : null;
   }
-  const risk = r.risk_per_share != null ? Number(r.risk_per_share) : NaN;
-  const giveR = r.trail_give_r != null ? Number(r.trail_give_r) : NaN;
   const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
   const floorRaw = r.entry_stop_price != null ? r.entry_stop_price : r.stop_price;
   const floor = floorRaw != null ? Number(floorRaw) : NaN;
-  if (!Number.isFinite(risk) || risk <= 0 || !Number.isFinite(giveR)) {
-    return Number.isFinite(prev) && prev > 0 ? prev : null;
+  const entry = r.avg_entry != null ? Number(r.avg_entry) : NaN;
+  let risk = r.risk_per_share != null ? Number(r.risk_per_share) : NaN;
+  if (!Number.isFinite(risk) || risk <= 0) {
+    if (Number.isFinite(entry) && Number.isFinite(floor) && entry > floor) {
+      risk = entry - floor;
+    }
+  }
+  let giveR = r.trail_give_r != null ? Number(r.trail_give_r) : NaN;
+  if (!Number.isFinite(giveR) || giveR <= 0) giveR = 0.08;
+  if (!Number.isFinite(risk) || risk <= 0) {
+    // No R basis — still sit a tiny cushion under last so RStop tracks price.
+    let want = last - 0.01;
+    if (Number.isFinite(floor) && floor > 0) want = Math.max(floor, want);
+    if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
+    return want;
   }
   const give = Math.max(0.01, giveR * risk);
   let want = last - give;

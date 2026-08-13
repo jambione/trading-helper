@@ -561,6 +561,7 @@ def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     monkeypatch.setattr(ew, "live_panel_universe", lambda cfg=None: {"SMCI"})
+    monkeypatch.setattr(ew, "live_print", lambda _sym: None)
     ew.save_watch({
         "SMCI": {
             "symbol": "SMCI",
@@ -594,6 +595,37 @@ def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
     assert by["SMCI"]["risk_per_share"] == pytest.approx(0.26)
     assert by["SMCI"]["entry_stop_price"] == pytest.approx(8.38)
     assert by["SMCI"]["trail_give_r"] == pytest.approx(0.20)
+
+
+def test_book_table_rows_uses_tape_when_last_seen_missing(tmp_path, monkeypatch):
+    """RStop must not sit on the entry floor just because last_seen was blank."""
+    import ai_entry_watch as ew
+    import ai_positions as cp
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "live_panel_universe", lambda cfg=None: {"SMCI"})
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (8.80, 0.1))
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "filled", "source": "momentum",
+            "last_ask": 8.80,
+            "structure": {"entry_low": 8.5, "entry_high": 8.7, "stop_price": 8.38},
+        },
+    })
+    monkeypatch.setattr(cp, "_load_state", lambda: {
+        "SMCI": {
+            "entry_price": 8.64, "entry_stop_price": 8.38, "stop_price": 8.38,
+            "risk_per_share": 0.26, "local_stop_price": 8.38,
+        },
+    })
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20,
+    })
+    rows = ew.book_table_rows(positions={
+        "SMCI": {"qty": 10, "avg_entry": 8.64, "current": 8.80, "pl": 1.6},
+    })
+    by = {r["symbol"]: r for r in rows}
+    assert by["SMCI"]["local_stop"] == pytest.approx(8.748)
 
 
 def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):

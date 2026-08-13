@@ -801,8 +801,23 @@ def book_table_rows(
                 except (TypeError, ValueError):
                     floor = None
             by_sym[key]["entry_stop_price"] = floor
+            tmp = dict(mpos)
             try:
-                loc = _cp.local_profit_stop(mpos, cfg)
+                tape = live_print(key)
+                if tape is not None and tape[0] and float(tape[0]) > 0:
+                    tmp["last_seen_price"] = float(tape[0])
+            except Exception:
+                pass
+            if not tmp.get("last_seen_price"):
+                try:
+                    ask = float((by_sym[key] or {}).get("last_ask")
+                                or (by_sym[key] or {}).get("price") or 0)
+                    if ask > 0:
+                        tmp["last_seen_price"] = ask
+                except (TypeError, ValueError):
+                    pass
+            try:
+                loc = _cp.local_profit_stop(tmp, cfg)
             except Exception:
                 loc = mpos.get("local_stop_price")
             try:
