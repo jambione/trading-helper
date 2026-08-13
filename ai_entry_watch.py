@@ -2802,16 +2802,24 @@ def clock_window_rows(
     1-minute %R(21) chart.
 
     When timestamps exist, keep only bars whose stamp is within
-    ``(length+1) * bar_seconds`` of the newest bar. Need ``length+2`` rows or
-    return ``([], span)`` so the caller refuses instead of inventing a number.
+    ``(length-1) * bar_seconds * slack`` of the newest bar. Need ``length``
+    rows (a real %R(21) window) or return ``([], span)``. Slack default 1.25
+    allows a couple of missing minutes; requiring length+2 bars in
+    (length+1) minutes was an off-by-two that blanked liquid names (CRMD/ZIM)
+    that actually had 21–22 prints in 22 minutes.
     """
     if rows is None:
         rows = symbol_ohlc(symbol, cfg, now)
     length = _rte_fast_length(cfg)
     bar_sec = _bar_seconds(cfg)
+    try:
+        slack = float(cfg.get("ai_watch_exhaustion_clock_slack", 1.25) or 1.25)
+    except (TypeError, ValueError):
+        slack = 1.25
+    slack = max(1.0, slack)
     stamps = _cached_ohlc_stamps(symbol, cfg, now)
     if stamps and len(stamps) == len(rows) and rows:
-        horizon = (length + 1) * bar_sec
+        horizon = (length - 1) * bar_sec * slack
         newest = float(stamps[-1])
         cutoff = newest - horizon
         paired = [
@@ -2822,12 +2830,12 @@ def clock_window_rows(
             paired[-1][1] - paired[0][1]
             if len(paired) >= 2 else None
         )
-        if len(paired) < length + 2:
+        if len(paired) < length:
             return [], span
         return [r for r, _ts in paired], span
 
     # No stamps: last-N-prints plus the existing stretch cap.
-    if len(rows) < length + 2:
+    if len(rows) < length:
         return [], None
     try:
         mult = float(cfg.get("ai_watch_exhaustion_max_window_mult", 3.0) or 0.0)
@@ -2877,7 +2885,7 @@ def live_exhaustion(
         return None
     length = _rte_fast_length(cfg)
     rows, _span = clock_window_rows(symbol, cfg, now)
-    if len(rows) < length + 2:
+    if len(rows) < length:
         return None
 
     def _raw(hh: float, ll: float, close: float) -> float | None:
@@ -2895,7 +2903,7 @@ def live_exhaustion(
         v = _raw(hh, ll, win[-1][2])
         if v is not None:
             series.append(v)
-    if len(series) < 2:
+    if not series:
         return None
 
     try:

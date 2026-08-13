@@ -3003,9 +3003,26 @@ def test_live_exhaustion_uses_dense_1m_clock_window():
     rec = {"symbol": "SMCI"}
     assert ew.apply_live_exhaustion(rec, px, cfg, now) is True
     assert rec["indicator"]["pctr_src"] == "live"
-    assert rec["indicator"]["pctr_bars"] >= 23
-    assert rec["indicator"]["pctr_window_sec"] <= 23 * 60 + 1
+    assert rec["indicator"]["pctr_bars"] >= 21
+    assert rec["indicator"]["pctr_window_sec"] <= 26 * 60 + 1
     wire = ew._exhaustion_wire_fields(rec)
     assert wire["pctr"] is not None
     assert wire["exh_window_min"] is not None
-    assert wire["exh_window_min"] <= 23.1
+    assert wire["exh_window_min"] <= 26.1
+
+
+def test_live_exhaustion_accepts_exact_21_one_minute_bars():
+    """A complete 21×1m window is enough — do not demand 23 bars in 22 min."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _synthetic_ohlc(21)
+    _prime_ohlc(ew, "CRMD", rows, now, step_sec=60.0)
+    cfg = {
+        "rte_fast_length": 21,
+        "ai_watch_db_bar_seconds": 60.0,
+        "ai_watch_exhaustion_clock_slack": 1.25,
+    }
+    px = rows[-1][2]
+    got = ew.live_exhaustion("CRMD", px, cfg, now)
+    assert got is not None

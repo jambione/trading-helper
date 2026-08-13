@@ -656,7 +656,7 @@ function _updateBookRow(el, r, owner) {
   }
   const exhEl = el.querySelector('.cell-exh');
   if (exhEl) {
-    _setText(exhEl, _fmtExh(r.exhaustion, r.exhaustion_state));
+    _setText(exhEl, _fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src));
     exhEl.className = `cell-exh${_exhClass(r.exhaustion_state)}`;
     const tip = _fmtExhTitle(r);
     if (tip) exhEl.title = tip;
@@ -731,7 +731,7 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
     + `<div class="cell-rvol${Number(r.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}">${_esc(_fmtRvol(r.rvol))}</div>`
-    + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state))}</div>`
+    + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -752,7 +752,10 @@ function _bookSourceLabel(source) {
 /** Exhaustion as "72%↑" — level and direction together, because the level
  *  alone cannot tell "pinned at the highs and rolling over" from "climbing
  *  into them". OB marks the overbought band. */
-function _fmtExh(v, state) {
+function _fmtExh(v, state, src) {
+  if (src === 'sparse_window' && (v == null || !Number.isFinite(Number(v)))) {
+    return 'thin';
+  }
   const n = Number(v);
   if (v == null || !Number.isFinite(n)) return '—';
   const mark = state === 'overbought' ? ' OB'
