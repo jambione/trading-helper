@@ -2154,7 +2154,7 @@ body.mobile .icon-btn {
   grid-template-columns:
     minmax(48px, 1.05fr)
     minmax(48px, 0.7fr)
-    minmax(48px, 0.65fr)
+    minmax(56px, 0.75fr)
     minmax(52px, 0.75fr)
     minmax(64px, 1fr)
     minmax(44px, 0.5fr)

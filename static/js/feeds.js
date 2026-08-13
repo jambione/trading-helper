@@ -610,7 +610,7 @@ function _updateBookRow(el, r, owner) {
   const statusEl = el.querySelector('.ai-book-status');
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) statusEl.className = _bookBlockerClass(r);
-  const trail = _fmtTrail(r.local_stop);
+  const trail = _fmtTrail(_bookStopPx(r));
   const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -620,7 +620,12 @@ function _updateBookRow(el, r, owner) {
   const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
-  _setText(el.querySelector('.cell-trail'), trail);
+  const trailEl = el.querySelector('.cell-trail') || el.querySelector('.cell-src');
+  if (trailEl) {
+    trailEl.classList.remove('cell-src');
+    trailEl.classList.add('cell-trail');
+    _setText(trailEl, trail);
+  }
   const priceEl = el.querySelector('.cell-price');
   if (priceEl) {
     // Same key the row HTML seeds under (upper), or the first tick after a row
@@ -710,7 +715,7 @@ function _bookRowHtml(r, owner) {
   const isOpen = phase === 'open' || r.is_position;
   const statusLabel = _bookBlockerLabel(r);
   const statusCls = _bookBlockerClass(r);
-  const trail = _fmtTrail(r.local_stop);
+  const trail = _fmtTrail(_bookStopPx(r));
   const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -756,6 +761,14 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
+}
+
+function _bookStopPx(r) {
+  if (!r) return null;
+  const a = r.local_stop != null ? Number(r.local_stop) : NaN;
+  if (Number.isFinite(a) && a > 0) return a;
+  const b = r.stop_price != null ? Number(r.stop_price) : NaN;
+  return Number.isFinite(b) && b > 0 ? b : null;
 }
 
 function _fmtTrail(v) {
