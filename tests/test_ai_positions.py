@@ -2250,41 +2250,26 @@ def test_entry_slippage_is_measured_against_the_limit_in_r(
     assert state["NVDA"]["entry_price"] == 40.75
 
 
-def test_local_profit_stop_stays_at_floor_until_mfe_arms():
+def test_local_profit_stop_tracks_last_minus_give():
     pos = {
         "entry_price": 8.64, "entry_stop_price": 8.38,
-        "risk_per_share": 0.26, "mfe_r": 0.12, "peak_price": 8.67,
+        "risk_per_share": 0.26, "last_seen_price": 8.50,
     }
-    cfg = {"ai_local_trail_enabled": True,
-           "ai_local_trail_arm_r": 0.20, "ai_local_trail_give_r": 0.20}
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.38)
-
-
-def test_local_profit_stop_locks_entry_then_trails_under_peak():
-    pos = {
-        "entry_price": 8.64, "entry_stop_price": 8.38,
-        "risk_per_share": 0.26, "mfe_r": 0.23, "peak_price": 8.70,
-    }
-    cfg = {"ai_local_trail_enabled": True,
-           "ai_local_trail_arm_r": 0.20, "ai_local_trail_give_r": 0.20}
-    # 0.23R ≥ 0.20 → BE. Peak 8.69 − 0.2R is still under entry.
-    pos["peak_price"] = 8.69
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.64)
-    pos["peak_price"] = 8.76
-    pos["mfe_r"] = 0.46
-    # peak-0.2R = 8.708
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.708)
+    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20}
+    # last 8.50 − 0.2R (0.052) = 8.448, still above the 8.38 floor.
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.448)
+    pos["last_seen_price"] = 8.80
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.748)
 
 
 def test_local_profit_stop_never_lowers():
     pos = {
         "entry_price": 8.64, "entry_stop_price": 8.38,
-        "risk_per_share": 0.26, "mfe_r": 0.46, "peak_price": 8.76,
+        "risk_per_share": 0.26, "last_seen_price": 8.70,
         "local_stop_price": 8.71,
     }
-    cfg = {"ai_local_trail_enabled": True,
-           "ai_local_trail_arm_r": 0.20, "ai_local_trail_give_r": 0.20}
-    pos["peak_price"] = 8.70
+    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20}
+    pos["last_seen_price"] = 8.60
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.71)
 
 

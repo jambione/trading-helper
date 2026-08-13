@@ -565,8 +565,8 @@ DEFAULT_CONFIG = {
     # let the runner lose more than tranche A had just banked. The stop is
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
-    # Local profit trail: software shelf under the high; market flatten if
-    # last prints through. Arms at MFE ≥ arm_r (lock entry), then peak − give.
+    # Local profit trail: stop = last − give_r×R, only ratchets up.
+    # Each higher print sets a new baseline; flatten if last prints through.
     "ai_local_trail_enabled":         True,
     "ai_local_trail_arm_r":            0.05,
     "ai_local_trail_give_r":           0.08,

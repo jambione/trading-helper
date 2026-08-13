@@ -1870,39 +1870,30 @@ def _orig_stop(pos: dict[str, Any]) -> float | None:
 
 
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
-    """Software trail: original stop until MFE arms, then BE, then peak − give.
+    """Trail just under *last*: rises as price grows, never lowers.
 
-    Never lowers. Independent of T1. ``None`` when there is no R basis.
+    ``local_stop = max(prev, last − give_r × R, original floor)``.
+    Each uptick that clears the cushion sets a new baseline. A print
+    through that baseline market-flattens. Independent of T1.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_local_trail_enabled", True)):
         return None
-    entry = _num(pos.get("entry_price"))
+    last = _num(pos.get("last_seen_price"))
     risk = _risk_basis(pos)
     floor = _orig_stop(pos)
-    if not entry or risk <= 0 or floor is None:
-        return None
-    try:
-        arm_r = float(cfg.get("ai_local_trail_arm_r", DEFAULT_LOCAL_TRAIL_ARM_R)
-                      or DEFAULT_LOCAL_TRAIL_ARM_R)
-    except (TypeError, ValueError):
-        arm_r = DEFAULT_LOCAL_TRAIL_ARM_R
+    if last is None or last <= 0 or risk <= 0 or floor is None:
+        return _num(pos.get("local_stop_price")) or floor
     try:
         give_r = float(cfg.get("ai_local_trail_give_r", DEFAULT_LOCAL_TRAIL_GIVE_R)
                        or DEFAULT_LOCAL_TRAIL_GIVE_R)
     except (TypeError, ValueError):
         give_r = DEFAULT_LOCAL_TRAIL_GIVE_R
-    arm_r = max(0.0, arm_r)
-    give_r = max(0.0, give_r)
-    mfe = _num(pos.get("mfe_r")) or 0.0
-    peak = _num(pos.get("peak_price")) or entry
-    if mfe + 1e-12 < arm_r:
-        want = float(floor)
-    else:
-        want = float(entry)
-        trail = float(peak) - give_r * risk
-        if trail > want:
-            want = trail
+    give = max(0.01, float(give_r) * risk)
+    want = float(last) - give
+    if want >= float(last):
+        want = float(last) - 0.01
+    want = max(float(floor), want)
     prev = _num(pos.get("local_stop_price"))
     if prev is not None:
         want = max(want, float(prev))
