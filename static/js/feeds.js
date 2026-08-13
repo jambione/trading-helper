@@ -260,6 +260,7 @@ function _bookRows(book) {
       entry_low: w.entry_low,
       entry_high: w.entry_high,
       stop_price: w.stop_price != null ? w.stop_price : null,
+      local_stop: w.local_stop != null ? w.local_stop : null,
       last_ask: w.last_ask,
       price: w.price != null ? w.price : w.last_ask,
       qty: w.qty != null ? w.qty : null,
@@ -297,6 +298,8 @@ function _bookRows(book) {
       avg_entry: p.avg_entry,
       pl: p.pl,
       plpc: p.plpc,
+      local_stop: p.local_stop != null ? p.local_stop : prev.local_stop,
+      stop_price: p.stop_price != null ? p.stop_price : prev.stop_price,
     };
   }
 
