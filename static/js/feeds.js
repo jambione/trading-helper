@@ -350,6 +350,7 @@ function _bookChgClass(pct) {
 
 /** Last painted price per book symbol — drives up/down flash like Momentum. */
 const _bookPrevPrices = Object.create(null);
+const _bookPrevExh = Object.create(null);
 
 /** Stable display order — phase groups, then symbol (no score shuffle). */
 function _sortBookRows(rows) {
@@ -656,8 +657,24 @@ function _updateBookRow(el, r, owner) {
   }
   const exhEl = el.querySelector('.cell-exh');
   if (exhEl) {
+    const symKey = String(r.symbol || '').toUpperCase();
+    const exhN = r.exhaustion != null && Number.isFinite(Number(r.exhaustion))
+      ? Number(r.exhaustion) : null;
+    const prevExh = _bookPrevExh[symKey];
+    if (exhN != null && prevExh !== undefined && prevExh !== exhN) {
+      const dir = exhN > prevExh ? 'up' : 'down';
+      exhEl.classList.remove('price-flash--up', 'price-flash--down');
+      exhEl.classList.add(`price-flash--${dir}`);
+      clearTimeout(exhEl._flashTimer);
+      exhEl._flashTimer = setTimeout(() => exhEl.classList.remove(
+        'price-flash--up', 'price-flash--down'), 600);
+    }
+    if (exhN != null) _bookPrevExh[symKey] = exhN;
     _setText(exhEl, _fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src));
-    exhEl.className = `cell-exh${_exhClass(r.exhaustion_state)}`;
+    exhEl.classList.add('cell-exh');
+    exhEl.classList.toggle('exh--ob', r.exhaustion_state === 'overbought');
+    exhEl.classList.toggle('exh--up', r.exhaustion_state === 'heating');
+    exhEl.classList.toggle('exh--down', r.exhaustion_state === 'cooling');
     const tip = _fmtExhTitle(r);
     if (tip) exhEl.title = tip;
   }
@@ -761,7 +778,7 @@ function _fmtExh(v, state, src) {
   const mark = state === 'overbought' ? ' OB'
     : state === 'heating' ? '\u2191'
     : state === 'cooling' ? '\u2193' : '';
-  return `${n.toFixed(0)}%${mark}`;
+  return `${n.toFixed(1)}%${mark}`;
 }
 
 /** Hover: Williams %R(21) on 1m, plus the window used. */
