@@ -1900,6 +1900,42 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     return round(want, 6)
 
 
+def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | None]:
+    """This-tick (high, low) from broker mark and dashboard tape.
+
+    High raises the shelf. Low is the flatten trigger — any print at or
+    below the shelf market-closes. Tape is used when its age is known and
+    inside the stale window (not only the tighter arming max-age).
+    """
+    vals: list[float] = []
+    broker = _num((live or {}).get("current"))
+    if broker is None:
+        broker = _num((live or {}).get("current_price"))
+    if broker is not None and broker > 0:
+        vals.append(float(broker))
+    try:
+        import ai_entry_watch as ew
+        tape = ew.live_print(ticker)
+        if tape is not None and tape[0] and float(tape[0]) > 0:
+            age = tape[1]
+            try:
+                stale = float(
+                    _cfg_all().get(
+                        "ai_stale_data_max_age_sec",
+                        DEFAULT_STALE_DATA_MAX_AGE_SEC,
+                    ) or DEFAULT_STALE_DATA_MAX_AGE_SEC
+                )
+            except (TypeError, ValueError):
+                stale = DEFAULT_STALE_DATA_MAX_AGE_SEC
+            if age is None or float(age) <= stale:
+                vals.append(float(tape[0]))
+    except Exception:
+        pass
+    if not vals:
+        return None, None
+    return max(vals), min(vals)
+
+
 def _rth_now(now: float) -> bool:
     """Regular session (weekdays 09:30–16:00 ET). Broker clock if available."""
     try:
@@ -2620,6 +2656,7 @@ def manage_open_positions(
     events: list[dict[str, Any]] = []
     changed = False
     ttl = max(60.0, float(unconfirmed_ttl_sec))
+    flatten_px: dict[str, float] = {}
 
     detail_raw = alpaca_trader.get_positions_detail() or {}
     detail = {str(k).upper(): v for k, v in detail_raw.items()}
@@ -2659,23 +2696,16 @@ def manage_open_positions(
                         pos["entry_slippage_r"] = round((fill - want) / risk, 4)
                     pos["entry_price"] = fill
             pos["entry_confirmed"] = True
-            pos["last_seen_price"] = live.get("current")
-            # Prefer a fresh dashboard tape print over the broker snapshot
-            # when we can prove it is younger than the decision max age.
-            try:
-                import ai_entry_watch as _ewq
-                tape = _ewq.live_print(ticker)
-                max_age = _ewq.decision_max_age_sec(_cfg_all())
-                if (
-                    tape is not None
-                    and tape[1] is not None
-                    and tape[1] <= max_age
-                    and tape[0]
-                    and float(tape[0]) > 0
-                ):
-                    pos["last_seen_price"] = float(tape[0])
-            except Exception:
-                pass
+            # High print ratchets the shelf; low print is the liquidation
+            # trigger so a tape dip through TRAIL sells even if the broker
+            # mark is still above.
+            hi, lo = _tick_prints(ticker, live)
+            if hi is not None:
+                pos["last_seen_price"] = hi
+            elif live.get("current") is not None:
+                pos["last_seen_price"] = live.get("current")
+            if lo is not None:
+                flatten_px[str(ticker).upper()] = lo
             _update_excursions(pos, pos.get("last_seen_price") or live.get("current"))
             # Blind book: no stream and no REST for ai_stale_data_max_age_sec
             # during RTH → market flatten. Local trail cannot protect a ghost.
@@ -2896,9 +2926,41 @@ def manage_open_positions(
             and _cfg_flag("ai_local_trail_enabled", True)
         ):
             last = _num(pos.get("last_seen_price"))
+            floor = _orig_stop(pos)
+            loc = _num(pos.get("local_stop_price"))
+            if loc is None:
+                loc = floor
+            trigger = flatten_px.get(str(ticker).upper())
+            if trigger is None:
+                trigger = last
+            # Hit the *existing* board stop first. Raising on this tick's high
+            # and then testing the low would skip a sale through the old shelf.
+            if (
+                trigger is not None
+                and loc is not None
+                and trigger <= loc + 1e-9
+            ):
+                last = trigger
+                alpaca_trader.cancel_open_orders(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = "local_trail"
+                exit_why[ticker] = "local_trail"
+                events.append({
+                    "ticker": ticker, "event": "local_trail",
+                    "last": last, "stop": loc,
+                    "peak": pos.get("peak_price"),
+                })
+                log_event(
+                    "local_trail", symbol=ticker,
+                    last=last, stop=loc, peak=pos.get("peak_price"),
+                )
+                changed = True
+                continue
+
             want = local_profit_stop(pos, _cfg_all())
             prev_local = _num(pos.get("local_stop_price"))
-            floor = _orig_stop(pos)
             if want is not None and (
                 prev_local is None or want > prev_local + 1e-9
             ):
@@ -2917,29 +2979,6 @@ def manage_open_positions(
                         from_stop=prev_local, to_stop=want,
                         peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                     )
-            loc = _num(pos.get("local_stop_price"))
-            if (
-                last is not None
-                and loc is not None
-                and last <= loc + 1e-9
-            ):
-                alpaca_trader.cancel_open_orders(ticker)
-                out = alpaca_trader.close_out(ticker) or {}
-                if isinstance(out, dict) and out.get("order_id"):
-                    pos["close_order_id"] = str(out["order_id"])
-                pos["closing_reason"] = "local_trail"
-                exit_why[ticker] = "local_trail"
-                events.append({
-                    "ticker": ticker, "event": "local_trail",
-                    "last": last, "stop": loc,
-                    "peak": pos.get("peak_price"),
-                })
-                log_event(
-                    "local_trail", symbol=ticker,
-                    last=last, stop=loc, peak=pos.get("peak_price"),
-                )
-                changed = True
-                continue
 
         # Dual profit bank: free shares held by the full-size stop, then either
         # market-scale at/through T1 or rest a partial T1 + stop on the runner.

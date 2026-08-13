@@ -2273,6 +2273,45 @@ def test_local_profit_stop_never_lowers():
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.71)
 
 
+def test_local_trail_flattens_when_tape_prints_through_even_if_broker_is_above(
+        tmp_path, monkeypatch):
+    """Board stop is the liquidation line: any this-tick print at/under sells."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=8.64, entry_stop_price=8.38, stop_price=8.38,
+        risk_per_share=0.26, target_1=8.79,
+        last_seen_price=8.90, peak_price=8.90, mfe_r=1.0,
+        local_stop_price=8.71,
+        tranche_a_filled=False, entry_confirmed=True,
+    )
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.20,
+        "ai_stale_data_max_age_sec": 15.0,
+        "ai_position_shadow_enabled": False,
+        "ai_dead_trade_min": 0,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+        "ai_sell_signal_breakeven": False,
+    }.get(key, default))
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (8.70, 0.2))
+    stub = _StubBrokerManage(order_status="new", current_price=8.95)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert any(e.get("event") == "local_trail" for e in events)
+    assert "NVDA" in stub.closed
+    trail = next(e for e in events if e.get("event") == "local_trail")
+    assert trail["last"] == pytest.approx(8.70)
+    assert trail["stop"] == pytest.approx(8.71)
+
+
 def test_local_trail_flattens_when_last_breaks_the_shelf(tmp_path, monkeypatch):
     _seed_state(
         tmp_path, monkeypatch,

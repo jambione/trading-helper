@@ -1209,14 +1209,16 @@ def main() -> None:
                 # Fast path: seed/prune/publish so UI never goes stale.
                 _publish_book(t0)
 
-                if (t0 - book_state["last_positions_tick"]) >= pps:
-                    book_state["last_positions_tick"] = t0
-                    try:
-                        ai_positions.manage_open_positions(
-                            t0, unconfirmed_ttl_sec=unconfirmed_ttl)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[ai] manage_open_positions failed: {e}",
-                              flush=True)
+                # Every book tick (~2s): raise the software shelf and
+                # market-flatten if any print is at/under TRAIL. Do not wait
+                # for ai_positions_poll_sec — that lag is a gap through the stop.
+                book_state["last_positions_tick"] = t0
+                try:
+                    ai_positions.manage_open_positions(
+                        t0, unconfirmed_ttl_sec=unconfirmed_ttl)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[ai] manage_open_positions failed: {e}",
+                          flush=True)
 
                 # 15:50 ET (configurable): cancel open orders + flatten positions.
                 try:
