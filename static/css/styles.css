@@ -2121,7 +2121,9 @@ body.mobile .icon-btn {
   background: rgba(30, 20, 50, 0.45);
   border: 1px solid rgba(139, 92, 246, 0.14);
   margin-bottom: 3px;
-  padding: 0;
+  padding: 0 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .panel-ai-watch .feed-row--ai-book .feed-cols--ai-book {
   padding: 8px 0;
@@ -2133,14 +2135,14 @@ body.mobile .icon-btn {
   background: rgba(76, 29, 149, 0.28);
 }
 .panel-ai-watch .feed-row--ai-open {
-  border-color: rgba(167, 139, 250, 0.5);
-  background: rgba(109, 40, 217, 0.22);
-  box-shadow: inset 3px 0 0 #a78bfa;
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(109, 40, 217, 0.38);
+  box-shadow: none;
 }
 .panel-ai-watch .feed-row--ai-ready {
-  border-color: rgba(52, 211, 153, 0.4);
-  background: rgba(6, 78, 59, 0.28);
-  box-shadow: inset 3px 0 0 #34d399;
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(6, 78, 59, 0.48);
+  box-shadow: none;
 }
 .panel-ai-watch .tx-placeholder {
   color: #8b7ab8;
@@ -2150,17 +2152,16 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | Status | Trail | Price | Zone | RVOL | EXH | Qty | P&L */
+  /* Ticker | Status | Trail | Price | Zone | EXH | Qty | P&L */
   grid-template-columns:
-    minmax(48px, 1.05fr)
-    minmax(48px, 0.7fr)
-    minmax(56px, 0.75fr)
-    minmax(52px, 0.75fr)
-    minmax(64px, 1fr)
-    minmax(44px, 0.5fr)
-    minmax(46px, 0.5fr)
-    minmax(32px, 0.45fr)
-    minmax(52px, 0.75fr);
+    minmax(52px, 1.1fr)
+    minmax(52px, 0.8fr)
+    minmax(58px, 0.8fr)
+    minmax(56px, 0.8fr)
+    minmax(72px, 1.15fr)
+    minmax(48px, 0.6fr)
+    minmax(36px, 0.5fr)
+    minmax(56px, 0.85fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2175,7 +2176,6 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: center; }
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-zone,
-.panel-ai-watch .feed-cols--ai-book .cell-rvol,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }

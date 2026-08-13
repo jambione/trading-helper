@@ -692,16 +692,6 @@ function _updateBookRow(el, r, owner) {
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
   _setText(el.querySelector('.cell-zone'), zone);
-  // RVOL replaces Score here. Score is a per-source blend — momentum rows come
-  // in near 1000, Stocktwits rows near 10-20 — so the column could not be read
-  // down its own length. RVOL is one unit for every source, and formatted the
-  // same as the Research/Trending panels so it means the same thing across the
-  // dashboard.
-  const rvolEl = el.querySelector('.cell-rvol');
-  if (rvolEl) {
-    _setText(rvolEl, _fmtRvol(r.rvol));
-    rvolEl.classList.toggle('vol-high', Number(r.rvol ?? 0) >= 1.5);
-  }
   const exhEl = el.querySelector('.cell-exh');
   if (exhEl) {
     const symKey = String(r.symbol || '').toUpperCase();
@@ -797,7 +787,6 @@ function _bookRowHtml(r, owner) {
     + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
-    + `<div class="cell-rvol${Number(r.rvol ?? 0) >= 1.5 ? ' vol-high' : ''}">${_esc(_fmtRvol(r.rvol))}</div>`
     + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
