@@ -273,6 +273,17 @@ class _StubBroker:
     def size_by_risk(self, equity, risk_pct, entry, stop):
         return alpaca_trader.size_by_risk(equity, risk_pct, entry, stop)
 
+    def buy_limit_at_price(self, ticker, price, dollar_amount, **kwargs):
+        oid = f"naked_{self._next_id}"
+        self._next_id += 1
+        qty = int(float(dollar_amount) / float(price)) if price else 0
+        self.limit_calls.append({
+            "ticker": ticker, "price": price, "dollar_amount": dollar_amount,
+            "kind": "naked_limit",
+        })
+        self.calls.append({"ticker": ticker, "qty": qty, "naked": True})
+        return {"ok": True, "order_id": oid, "status": "accepted"}
+
     def buy_limit_bracket(self, ticker, qty, limit_price, stop_price,
                           target_price=None, **kwargs):
         self.limit_calls.append({
@@ -1882,6 +1893,29 @@ def test_place_scaled_entry_allows_armable_below_zone(tmp_path, monkeypatch):
     assert out["ok"] is True
     assert stub.calls and stub.calls[0]["qty"] > 0
 
+
+def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypatch):
+    """Local ratchet owns the stop — parent buy is a bare limit."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_broker_stop_enabled": False,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(entry_low=40.0, entry_high=41.0, stop_price=38.0,
+                             target_1=42.0)
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=40.5)
+    assert out["ok"] is True
+    assert stub.calls and stub.calls[0].get("naked") is True
+    assert not stub.limit_calls or stub.limit_calls[0].get("kind") == "naked_limit"
+
+
 def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     _seed_state(
         tmp_path, monkeypatch,
@@ -2044,6 +2078,13 @@ def test_heal_dual_tranche_keeps_t1_and_places_runner_stop(tmp_path, monkeypatch
 
     stub = _HealStub(current_price=9.97)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    def _flag(key, default=True):
+        if key in ("ai_heal_unprotected", "ai_broker_stop_enabled"):
+            return True
+        return default
+
+    monkeypatch.setattr(cp, "_cfg_flag", _flag)
     ev = cp._heal_unprotected(
         [{"symbol": "NVDA", "managed": True}], state)
     assert ev and ev[0]["event"] == "unprotected_healed"

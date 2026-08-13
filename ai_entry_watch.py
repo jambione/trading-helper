@@ -123,6 +123,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "no_exhaustion_data": "no %R",
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
+    "already_extended": "extended",
+    "dead_reentry": "dead once",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
     "not_heating_heating": "heating",
@@ -3448,9 +3450,11 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
     Arm when fast %R is **rising** and exhaustion is at/above
-    ``ai_watch_exhaustion_heat_min_pct`` (default 50). That is "trending up
-    past 50 EXH". Cooling/flat refuse — including overbought that has rolled
-    over. Local trail now locks the pop; we no longer wait for the 80 band.
+    ``ai_watch_exhaustion_heat_min_pct`` (default 50) and below
+    ``ai_watch_exhaustion_heat_max_pct`` (default 90). That is "trending up
+    past 50 EXH" but not already in the 90–100 fade bucket. Cooling/flat
+    refuse — including overbought that has rolled over. Local trail locks
+    the pop; we do not chase names already pinned at the highs.
 
     A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
@@ -3468,8 +3472,14 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 50.0)
     except (TypeError, ValueError):
         heat_min = 50.0
+    try:
+        heat_max = float(cfg.get("ai_watch_exhaustion_heat_max_pct", 90.0) or 0.0)
+    except (TypeError, ValueError):
+        heat_max = 90.0
     if ex is None or ex + 1e-9 < heat_min:
         return False, "heating_too_low"
+    if heat_max > 0 and ex + 1e-9 >= heat_max:
+        return False, "already_extended"
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
     if not ind.get("pctr_rising"):
         return False, f"not_rising_{state}"
@@ -5268,28 +5278,32 @@ def _blocker_for_gate(why: str) -> str:
     return "risk_gate"
 
 
-# (mtime, size) -> {symbol: last exit ts}. outcomes.jsonl only ever grows, so
-# a stat is enough to know the parse is still valid.
-_exit_cache: tuple[tuple[float, int] | None, dict[str, float]] = (None, {})
+# (mtime, size) -> {symbol: last exit ts} and last dead_trade ts.
+# outcomes.jsonl only ever grows, so a stat is enough to know the parse is
+# still valid.
+_exit_cache: tuple[tuple[float, int] | None, dict[str, float], dict[str, float]] = (
+    None, {}, {},
+)
 
 
-def _exit_ts_map() -> dict[str, float]:
-    """symbol -> most recent exit timestamp, parsed at most once per write."""
+def _exit_maps() -> tuple[dict[str, float], dict[str, float]]:
+    """symbol -> last exit ts, and symbol -> last dead_trade ts."""
     global _exit_cache
     try:
         import ai_positions as cp
         st = cp.OUTCOMES_PATH.stat()
         key = (st.st_mtime, st.st_size)
     except Exception:
-        return {}
-    cached_key, cached = _exit_cache
+        return {}, {}
+    cached_key, cached, cached_dead = _exit_cache
     if cached_key == key:
-        return cached
+        return cached, cached_dead
     out: dict[str, float] = {}
+    dead: dict[str, float] = {}
     try:
         text = cp.OUTCOMES_PATH.read_text(encoding="utf-8")
     except Exception:
-        return {}
+        return {}, {}
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -5307,13 +5321,44 @@ def _exit_ts_map() -> dict[str, float]:
             continue
         if ts and ts > out.get(sym, 0.0):
             out[sym] = ts
-    _exit_cache = (key, out)
-    return out
+        reason = str(row.get("close_reason") or "").strip().lower()
+        if reason == "dead_trade" and ts and ts > dead.get(sym, 0.0):
+            dead[sym] = ts
+    _exit_cache = (key, out, dead)
+    return out, dead
+
+
+def _exit_ts_map() -> dict[str, float]:
+    """symbol -> most recent exit timestamp, parsed at most once per write."""
+    return _exit_maps()[0]
 
 
 def _recent_exit_ts(symbol: str) -> float | None:
     """When this symbol last closed (None if never)."""
     return _exit_ts_map().get(str(symbol or "").upper().strip())
+
+
+def _recent_dead_exit_ts(symbol: str) -> float | None:
+    """When this symbol last closed as a dead trade (None if never)."""
+    return _exit_maps()[1].get(str(symbol or "").upper().strip())
+
+
+def _dead_reentry_blocked(symbol: str, now: float, cfg: dict) -> bool:
+    """True when this name already died today and must not re-arm."""
+    if not bool(cfg.get("ai_dead_reentry_block", True)):
+        return False
+    ts = _recent_dead_exit_ts(symbol)
+    if not ts:
+        return False
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        now_d = datetime.fromtimestamp(float(now), tz=et).date()
+        then_d = datetime.fromtimestamp(float(ts), tz=et).date()
+    except Exception:
+        return False
+    return now_d == then_d
 
 
 def _decision_for_place(
@@ -6065,6 +6110,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 _skip("reentry_cooldown",
                       detail=f"{int(cool - (t0 - last_exit))}s left")
                 continue
+        if _dead_reentry_blocked(sym, t0, cfg):
+            _skip("dead_reentry", detail="already dead today")
+            continue
 
         # Wash-trade cooldown (broker reject thrash — independent of exits).
         wash_until = float(_wash_cooldown_until.get(sym) or 0.0)

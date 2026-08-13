@@ -2072,6 +2072,27 @@ def test_poll_once_blocks_re_entry_during_cooldown(tmp_path, monkeypatch):
     assert ew.load_watch()["SMCI"]["block_code"] == "reentry_cooldown"
 
 
+def test_dead_reentry_blocks_same_et_day():
+    import ai_entry_watch as ew
+
+    cfg = {"ai_dead_reentry_block": True}
+    # 2026-08-13 11:00 ET
+    now = 1_786_618_800.0
+    monkey_ts = now - 3600.0
+    assert ew._dead_reentry_blocked("OMER", now, cfg) is False
+
+    orig = ew._recent_dead_exit_ts
+    ew._recent_dead_exit_ts = lambda s: monkey_ts if s == "OMER" else None
+    try:
+        assert ew._dead_reentry_blocked("OMER", now, cfg) is True
+        # Next ET session is clear.
+        assert ew._dead_reentry_blocked("OMER", now + 86400.0, cfg) is False
+        off = dict(cfg, ai_dead_reentry_block=False)
+        assert ew._dead_reentry_blocked("OMER", now, off) is False
+    finally:
+        ew._recent_dead_exit_ts = orig
+
+
 def _stream_cfg(**over):
     cfg = {
         "ai_watch_stream_enabled": True,
@@ -2715,7 +2736,9 @@ def test_cheap_pullback_band_overbought_is_refused():
         "zone_kind": "pullback_band", "synthetic": True,
     })
     rec["indicator"] = {
-        "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+        # 85 exhaustion: overbought, under the 90 heat_max so cheap_ob_band
+        # (not already_extended) is the refusal we are testing.
+        "pctr": -15.0, "pctr_rising": True, "pctr_falling": False,
     }
     cfg = _db_cfg(
         ai_watch_exhaustion_rules=True,
@@ -2993,7 +3016,8 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
     assert why != "no_exhaustion_data"
     assert ok is True and why in ("overbought", "heating") or (
         not ok and why in (
-            "heating_too_low", "not_rising_cooling", "not_rising_flat",
+            "heating_too_low", "already_extended",
+            "not_rising_cooling", "not_rising_flat",
             "not_rising_overbought", "not_rising_heating",
         )
     )
@@ -3020,15 +3044,26 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     ok, why = ew.exhaustion_allows_buy(heat, cfg)
     assert ok is True and why == "heating"
 
-    # Rising overbought still arms.
+    # Rising overbought still arms if not yet in the 90–100 fade bucket.
+    # pctr -15 → exhaustion 85 (overbought, below heat_max 90).
     ob_up = {
         "symbol": "AAA",
         "indicator": {
-            "pctr": -10.0, "pctr_rising": True, "pctr_falling": False,
+            "pctr": -15.0, "pctr_rising": True, "pctr_falling": False,
         },
     }
     ok, why = ew.exhaustion_allows_buy(ob_up, cfg)
     assert ok is True and why == "overbought"
+
+    # Already 90+ — 08-13 forward print was −1.1% / 30m. Do not chase.
+    too_hot = {
+        "symbol": "HOT",
+        "indicator": {
+            "pctr": -5.0, "pctr_rising": True, "pctr_falling": False,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(too_hot, cfg)
+    assert ok is False and why == "already_extended"
 
     # Overbought but fading — do not buy the roll-over.
     cool = {

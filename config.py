@@ -452,6 +452,10 @@ DEFAULT_CONFIG = {
     # Under continuation: minimum exhaustion % for a *heating* arm (0–100).
     # Overbought band still arms regardless. Under exhaustion_scalp: unused.
     "ai_watch_exhaustion_heat_min_pct": 50.0,
+    # Refuse to arm once %R is already this extended (0–100). 08-13 forward
+    # print: 90–100 bucket −1.1% / 30m; HCTI/BYSI/CRMD were already there.
+    # 0 disables the cap.
+    "ai_watch_exhaustion_heat_max_pct": 90.0,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
     # giving it no replacement would leave it worse off than before. Never flip
@@ -568,7 +572,8 @@ DEFAULT_CONFIG = {
     # Local profit trail: stop = last − give, only ratchets up.
     # Give is give_r × R (0.10R). give_px > 0 is a legacy fixed dollar
     # (the old nickel) and overrides the calculation.
-    # Flatten if last prints through.
+    # Flatten if last prints through. This is the stop of record when
+    # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
     "ai_local_trail_arm_r":            0.05,
     "ai_local_trail_give_r":           0.10,
@@ -587,8 +592,11 @@ DEFAULT_CONFIG = {
     # Dead trade: no scale-out, MFE never reached, still flat/red → flatten.
     # Continuation wants this tighter so positions do not sit 90m for −0.3R
     # (S/CRCL on 2026-08-11) waiting for an exhaustion exit that is now off.
-    "ai_dead_trade_min":               20.0,
+    "ai_dead_trade_min":               12.0,
     "ai_dead_trade_mfe_r":            0.25,
+    # After a dead_trade close, do not re-arm that symbol for the rest of
+    # the ET session (08-13: second OMER after a dead name reused the slot).
+    "ai_dead_reentry_block":           True,
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
     # On sell_signal while green, move stop to entry (never loosen).
@@ -599,9 +607,12 @@ DEFAULT_CONFIG = {
     # alone is not protection. An orphan fill with no managed row is a capital
     # leak (MLTX 2026-08-11): no stop heal, no left_overbought.
     #
-    # If an open long has no resting sell STOP, place one from managed state.
-    # Take-profit limits do not count as protection (prefer stop over target).
-    "ai_heal_unprotected":            True,
+    # Local ratchet is the stop of record. Do not slap a broker stop onto a
+    # naked fill (08-13: 185 heal failures vs 3 heals). Set True to restore
+    # the old broker-heal loop.
+    "ai_heal_unprotected":           False,
+    # False = parent buy is a bare limit; local trail / dead_trade flatten.
+    "ai_broker_stop_enabled":        False,
     # Re-home broker-live symbols missing from positions_state when we can
     # recover stop/entry from entry_ok (or a resting stop). Enables heal +
     # exhaustion on lost-update orphans.
@@ -823,7 +834,7 @@ def validate_ai_config(cfg: dict) -> list[str]:
     if edge == "exhaustion_scalp" and not left_ob:
         out.append(
             "ai_edge_mode=exhaustion_scalp with ai_exit_left_overbought=false — "
-            "%R band exit is off; winners only leave on hard stop / T1 / EOD"
+            "%R band exit is off; winners leave on local trail / T1 / EOD"
         )
     if not dual and not broker_tp and not left_ob:
         out.append(
@@ -856,6 +867,10 @@ _EFFECTIVE_KEYS = (
     "ai_watch_cheap_price",
     "ai_risk_pct",
     "require_protective_exit",
+    "ai_broker_stop_enabled",
+    "ai_heal_unprotected",
+    "ai_local_trail_enabled",
+    "ai_watch_exhaustion_heat_max_pct",
     "ai_trading_source",
     "ai_trade_style",
     "ai_watch_zone_mode",
@@ -1030,6 +1045,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_exit_sec",
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
+    "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_exhaustion_fallback",
     "ai_watch_require_exhaustion_data",
     "ai_watch_exhaustion_max_window_mult",
@@ -1077,9 +1093,11 @@ SAFE_CONFIG_KEYS = [
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
+    "ai_dead_reentry_block",
     "ai_position_shadow_enabled",
     "ai_sell_signal_breakeven",
     "ai_heal_unprotected",
+    "ai_broker_stop_enabled",
     "ai_adopt_unmanaged",
     "ai_flatten_unmanaged_unprotected",
     "ai_entry_broker_target",

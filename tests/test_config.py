@@ -103,6 +103,7 @@ def test_config_effective_echoes_resolved_knobs(tmp_cfg):
     assert "ai_stop_use_market=true" in line
     assert "ai_watch_synth_rr=0.6" in line
     assert "ai_pdt_protect=off" in line
+    assert "ai_broker_stop_enabled=false" in line
 
 
 def test_corrupted_secrets_does_not_crash_and_loads_regular_config(tmp_cfg):
