@@ -168,7 +168,7 @@
   "ai_edge_mode": "exhaustion_scalp",
   "ai_exit_left_overbought": false,
   "ai_entry_broker_target": true,
-  "ai_watch_exhaustion_heat_min_pct": 20.0,
+  "ai_watch_exhaustion_heat_min_pct": 0.0,
   "ai_watch_exhaustion_heat_max_pct": 0.0,
   "ai_watch_ob_allow_hot": true,
   "ai_watch_in_zone_ignore_fade": true,
