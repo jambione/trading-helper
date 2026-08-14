@@ -631,39 +631,21 @@ def overlay_ai_book_live_prices(
                         pass
                 if lo > 0 and hi > 0:
                     try:
-                        from ai_entry_watch import (
-                            ask_triggers_zone,
-                            arm_below_max_r,
-                            DEFAULT_ARM_BELOW_MAX_R,
-                        )
-                        try:
-                            from config import load_config
-                            _max_r = arm_below_max_r(load_config())
-                        except Exception:
-                            _max_r = DEFAULT_ARM_BELOW_MAX_R
-                        triggers = ask_triggers_zone(
-                            px, lo, hi,
-                            stop=stop,
-                            max_below_r=_max_r,
-                            arm_below=True,
-                        )
+                        from ai_entry_watch import apply_tape_blocker
+                        apply_tape_blocker(row, px)
                     except Exception:
-                        triggers = min(lo, hi) <= px <= max(lo, hi)
-                    if triggers:
-                        row["blocker"] = "in zone"
-                        row["block_code"] = "in_zone"
-                        row["in_zone"] = True
-                        row["ready"] = True
-                    elif px > max(lo, hi):
-                        row["blocker"] = "above zone"
-                        row["block_code"] = "above_zone"
-                        row["in_zone"] = False
-                        row["ready"] = False
-                    else:
-                        row["blocker"] = "below zone"
-                        row["block_code"] = "below_zone"
-                        row["in_zone"] = False
-                        row["ready"] = False
+                        if px > max(lo, hi):
+                            row["blocker"] = "above zone"
+                            row["block_code"] = "above_zone"
+                            row["in_zone"] = False
+                            row["ready"] = False
+                        elif min(lo, hi) <= px <= max(lo, hi):
+                            pass
+                        else:
+                            row["blocker"] = "below zone"
+                            row["block_code"] = "below_zone"
+                            row["in_zone"] = False
+                            row["ready"] = False
             new_rows.append(row)
         out[key] = new_rows
     return out

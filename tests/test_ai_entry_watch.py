@@ -3309,6 +3309,63 @@ def test_arm_refuses_no_exhaustion_when_require_data():
     assert ew.format_blocker("no_exhaustion_data") == "no %R"
 
 
+def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
+    """UMAC/ONDS/RUM/SORA: in-band is not READY when the arm gate refuses."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+
+    umac = {
+        "symbol": "UMAC", "source": "momentum", "rvol": 3.8,
+        "entry_low": 32.74, "entry_high": 33.23, "stop_price": 32.0,
+        "zone_kind": "double_bottom", "exhaustion": 37.6,
+        "exhaustion_state": "heating", "pctr": -62.4,
+        "block_code": "in_zone", "blocker": "in zone",
+    }
+    ew.apply_tape_blocker(umac, 33.17)
+    assert umac["in_zone"] is True
+    assert umac["ready"] is False
+    assert umac["block_code"] == "heating_too_low"
+    assert "heat" in str(umac["blocker"]).lower()
+
+    onds = {
+        "symbol": "ONDS", "source": "momentum", "rvol": 1.8,
+        "entry_low": 9.03, "entry_high": 9.17, "stop_price": 8.80,
+        "zone_kind": "double_bottom", "exhaustion": 73.6,
+        "exhaustion_state": "heating", "pctr": -26.4,
+        "block_code": "in_zone", "blocker": "in zone",
+    }
+    ew.apply_tape_blocker(onds, 9.11)
+    assert onds["in_zone"] is True
+    assert onds["ready"] is False
+    assert onds["block_code"] == "thin_rvol"
+    assert "rvol" in str(onds["blocker"]).lower()
+
+    sora = {
+        "symbol": "SORA", "source": "momentum", "rvol": None,
+        "entry_low": 3.18, "entry_high": 3.31, "stop_price": 3.00,
+        "zone_kind": "pullback_band", "exhaustion": None,
+        "exhaustion_state": "unknown", "pctr_src": "thin",
+        "block_code": "in_zone", "blocker": "in zone",
+    }
+    ew.apply_tape_blocker(sora, 2.91)
+    assert sora["in_zone"] is False
+    assert sora["ready"] is False
+    assert sora["block_code"] == "below_zone"
+
+    rum = {
+        "symbol": "RUM", "source": "xai", "rvol": 0.6,
+        "entry_low": 7.54, "entry_high": 7.65, "stop_price": 7.20,
+        "zone_kind": "double_bottom",
+        "block_code": "dead_reentry", "blocker": "loser once",
+    }
+    ew.apply_tape_blocker(rum, 7.65)
+    assert rum["in_zone"] is True
+    assert rum["ready"] is False
+    assert rum["block_code"] == "dead_reentry"
+    assert "loser" in str(rum["blocker"]).lower()
+
+
 def _prime_ohlc(ew, symbol, rows, now, *, step_sec=60.0):
     stamps = [now - step_sec * (len(rows) - 1 - i) for i in range(len(rows))]
     with ew._ohlc_cache_lock:

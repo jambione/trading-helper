@@ -2155,7 +2155,7 @@ body.mobile .icon-btn {
   /* Ticker | Status | Trail | Price | Zone | EXH | Qty | P&L */
   grid-template-columns:
     minmax(52px, 1.1fr)
-    minmax(52px, 0.8fr)
+    minmax(88px, 1.15fr)
     minmax(58px, 0.8fr)
     minmax(56px, 0.8fr)
     minmax(72px, 1.15fr)
@@ -2195,7 +2195,7 @@ body.mobile .icon-btn {
   text-transform: none;
   color: var(--text-dim);
   align-self: center;
-  max-width: 7.5rem;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

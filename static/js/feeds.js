@@ -621,6 +621,11 @@ function _createBookRow(r, owner) {
   const el = /** @type {HTMLElement} */ (wrap.firstElementChild);
   const sym = String((r && r.symbol) || '').toUpperCase();
   el.addEventListener('click', () => _add(el, sym));
+  const statusEl0 = el.querySelector('.ai-book-status');
+  if (statusEl0) {
+    const label = _bookBlockerLabel(r);
+    statusEl0.title = label && label !== '—' ? label : '';
+  }
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
     tickerCell.title = `Copy ${sym}`;
@@ -639,10 +644,16 @@ function _bookBlockerLabel(r) {
   if (phase === 'open' || r.is_position) return 'open';
   if (phase === 'submitted') return 'sent';
   const b = String(r.blocker || r.block_reason || '').trim();
-  if (b) return b;
   const code = String(r.block_code || '').trim();
-  if (code) return code.replace(/_/g, ' ');
+  // A real refuse (heat low, rvol low, no %R) wins over a leftover "in zone".
+  if (b && !(r.ready) && !['in zone', 'in_zone'].includes(b.toLowerCase()) && code !== 'in_zone') {
+    return b;
+  }
+  if (code && !r.ready && !['in_zone', 'placing'].includes(code)) {
+    return b || code.replace(/_/g, ' ');
+  }
   if (r.ready || phase === 'ready') return 'in zone';
+  if (b) return b;
   return 'watching';
 }
 
@@ -650,11 +661,11 @@ function _bookBlockerClass(r) {
   const phase = String((r && r.phase) || '').toLowerCase();
   if (phase === 'open' || (r && r.is_position)) return 'ai-book-status ai-book-status--open';
   if (phase === 'submitted') return 'ai-book-status ai-book-status--sent';
-  const b = String((r && (r.blocker || r.block_reason || r.block_code)) || '').toLowerCase();
-  if (b === 'in zone' || b === 'in_zone' || b === 'placing' || b === 'placing…') {
+  const label = _bookBlockerLabel(r).toLowerCase();
+  if (r && r.ready && (label === 'in zone' || label === 'placing' || label === 'placing…')) {
     return 'ai-book-status ai-book-status--ready';
   }
-  if (b && b !== 'watching' && b !== '—') {
+  if (label && label !== 'watching' && label !== '—') {
     return 'ai-book-status ai-book-status--blocked';
   }
   return 'ai-book-status';
@@ -667,7 +678,10 @@ function _updateBookRow(el, r) {
   const statusLabel = _bookBlockerLabel(r);
   const statusEl = el.querySelector('.ai-book-status');
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
-  if (statusEl) statusEl.className = _bookBlockerClass(r);
+  if (statusEl) {
+    statusEl.className = _bookBlockerClass(r);
+    statusEl.title = statusLabel && statusLabel !== '—' ? statusLabel : '';
+  }
   const trail = _fmtTrail(_bookStopPx(r));
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)

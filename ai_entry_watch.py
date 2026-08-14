@@ -391,6 +391,127 @@ def derive_blocker(
     return "below_zone", format_blocker("below_zone")
 
 
+_GEOMETRY_BLOCK_CODES = frozenset({
+    "in_zone", "above_zone", "below_zone", "placing", "in_zone_fade_ok", "",
+})
+
+
+def _row_arm_refuse(row: dict, px: float) -> str | None:
+    """Live should_arm_buy why, reconstructed from a book row. None = would arm."""
+    rec = {
+        "symbol": str(row.get("symbol") or "").upper().strip(),
+        "status": "watching",
+        "source": row.get("source") or "momentum",
+        "rvol": row.get("rvol"),
+        "admit_rvol": row.get("rvol") if row.get("rvol") is not None
+        else row.get("admit_rvol"),
+        "structure": {
+            "decision": "WAIT",
+            "wait_kind": "wait_for_zone",
+            "entry_low": row.get("entry_low"),
+            "entry_high": row.get("entry_high"),
+            "stop_price": row.get("stop_price"),
+            "target_1": row.get("target_1") or (
+                float(row.get("entry_high") or 0) * 1.06 or 1.0
+            ),
+            "reward_risk": row.get("reward_risk") or 0.6,
+            "zone_kind": row.get("zone_kind") or "double_bottom",
+            "synthetic": str(row.get("zone_kind") or "").lower()
+            in ("pullback_band", "offset"),
+        },
+    }
+    live_rv = _desk_rvol(rec["symbol"]) if rec["symbol"] else None
+    if live_rv is not None:
+        rec["rvol"] = live_rv
+    pctr = _f_or_none(row.get("pctr"))
+    if pctr is None:
+        exh = _f_or_none(row.get("exhaustion"))
+        if exh is not None:
+            pctr = exh - 100.0
+    src = str(row.get("pctr_src") or "").lower()
+    state = str(row.get("exhaustion_state") or "").lower()
+    if src == "thin" or (pctr is None and state in ("", "unknown")):
+        rec["indicator"] = {}
+    else:
+        rec["indicator"] = {
+            "pctr": pctr,
+            "pctr_rising": state in ("heating", "overbought")
+            or bool(row.get("pctr_rising")),
+            "pctr_falling": state == "cooling" or bool(row.get("pctr_falling")),
+        }
+    try:
+        ok, why = should_arm_buy(rec, ask=float(px), bid=None, cfg=_push_cfg())
+    except Exception:
+        return None
+    if ok:
+        return None
+    return str(why or "").strip() or "blocked"
+
+
+def apply_tape_blocker(row: dict, px: float | None) -> None:
+    """Stamp blocker from the live print without hiding a real refuse.
+
+    Price above the band → above zone. Price under the printed band →
+    below zone (do not call a dip "in zone"). In-band keeps heat / rvol /
+    cheap-OB / no-%R / loser stamps, or computes should_arm_buy if the
+    poller only left a geometry code. That is why ONDS/RUM/UMAC/SORA
+    painted READY while nothing bought.
+    """
+    if not isinstance(row, dict):
+        return
+    try:
+        lo = float(row.get("entry_low") or 0)
+        hi = float(row.get("entry_high") or 0)
+        last = float(px or 0)
+    except (TypeError, ValueError):
+        return
+    if lo <= 0 or hi <= 0 or last <= 0:
+        return
+    stored = str(row.get("block_code") or "").strip()
+    keep = bool(stored) and stored not in _GEOMETRY_BLOCK_CODES
+
+    def _keep_stored() -> None:
+        row["ready"] = False
+        row["block_code"] = stored
+        row["blocker"] = (
+            row.get("blocker") or row.get("block_reason")
+            or format_blocker(stored)
+        )
+        row["block_reason"] = row.get("blocker")
+
+    if last > max(lo, hi):
+        row["in_zone"] = False
+        row["ready"] = False
+        row["block_code"] = "above_zone"
+        row["blocker"] = format_blocker("above_zone")
+        row["block_reason"] = row["blocker"]
+        return
+
+    if ask_in_zone(last, lo, hi, 0.0):
+        row["in_zone"] = True
+        if keep:
+            _keep_stored()
+            return
+        why = _row_arm_refuse(row, last)
+        if why and why not in ("above_zone", "below_zone", "zone"):
+            row["ready"] = False
+            row["block_code"] = why
+            row["blocker"] = format_blocker(why) or why.replace("_", " ")
+            row["block_reason"] = row["blocker"]
+            return
+        row["block_code"] = "in_zone"
+        row["blocker"] = format_blocker("in_zone")
+        row["block_reason"] = row["blocker"]
+        row["ready"] = True
+        return
+
+    row["in_zone"] = False
+    row["ready"] = False
+    row["block_code"] = "below_zone"
+    row["blocker"] = format_blocker("below_zone")
+    row["block_reason"] = row["blocker"]
+
+
 def load_watch() -> dict[str, dict]:
     """Load symbol -> watch record; empty dict if missing/corrupt."""
     path = WATCH_STATE_PATH
@@ -902,36 +1023,7 @@ def book_table_rows(
                 except (TypeError, ValueError):
                     stop = None
                 if lo > 0 and hi > 0:
-                    # Geometry only. Do not paint "in zone" for a dip under
-                    # the band, and do not hide heat/extended/loser stamps
-                    # the poller already set — that is why the book looked
-                    # armed while nothing bought.
-                    stored = str(r.get("block_code") or "").strip()
-                    keep = stored and stored not in (
-                        "in_zone", "above_zone", "below_zone", "placing",
-                    )
-                    if px > max(lo, hi):
-                        r["blocker"] = format_blocker("above_zone")
-                        r["block_code"] = "above_zone"
-                        r["in_zone"] = False
-                        r["ready"] = False
-                    elif ask_in_zone(px, lo, hi, 0.0):
-                        r["in_zone"] = True
-                        if keep:
-                            r["ready"] = False
-                            r["blocker"] = (
-                                r.get("blocker") or format_blocker(stored)
-                            )
-                            r["block_code"] = stored
-                        else:
-                            r["blocker"] = format_blocker("in_zone")
-                            r["block_code"] = "in_zone"
-                            r["ready"] = True
-                    else:
-                        r["blocker"] = format_blocker("below_zone")
-                        r["block_code"] = "below_zone"
-                        r["in_zone"] = False
-                        r["ready"] = False
+                    apply_tape_blocker(r, px)
                 continue
         if _positive_price(r.get("price")) is None and _positive_price(r.get("last_ask")) is not None:
             r["price"] = r["last_ask"]
