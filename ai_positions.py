@@ -1011,6 +1011,29 @@ def desk_click(symbol: str) -> dict[str, Any]:
     if not sym or not sym.replace(".", "").isalnum() or len(sym) > 8:
         return {"ok": False, "error": "invalid symbol", "action": None}
 
+    cfg = _entry_cfg()
+    # Dashboard process does not start the paper client. Auto-arms live in
+    # the suggest/poller process, so a book click used to see TRADER_MODE=off
+    # and report that as "not tradable".
+    if not gt.is_ready() or not alpaca_trader.is_active():
+        try:
+            amt = float(cfg.get("ai_trade_amount", 1000) or 1000)
+        except (TypeError, ValueError):
+            amt = 1000.0
+        try:
+            maxp = int(cfg.get("ai_max_positions", 8) or 8)
+        except (TypeError, ValueError):
+            maxp = 8
+        try:
+            mode = gt.init_for_ai(
+                trade_amount=amt, max_positions=maxp, extended_hours=True)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "action": None,
+                    "error": f"trader init failed: {str(e)[:160]}"}
+        if mode != "paper" or not alpaca_trader.is_active():
+            return {"ok": False, "action": None,
+                    "error": "paper trader not ready in this process"}
+
     if gt.has_open_position(sym):
         try:
             out = alpaca_trader.close_out(sym) or {}
@@ -1032,7 +1055,6 @@ def desk_click(symbol: str) -> dict[str, Any]:
     rec = (ew.load_watch() or {}).get(sym) or {
         "symbol": sym, "status": "watching", "source": "desk",
     }
-    cfg = _entry_cfg()
     px, _src, _age = ew.decision_price(sym, cfg)
     try:
         ask = float(px or rec.get("last_ask") or 0)

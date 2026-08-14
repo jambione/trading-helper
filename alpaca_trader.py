@@ -373,6 +373,8 @@ def buy(ticker: str, price: float, rsi: float, hist: float) -> dict:
     if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": "trader_off",
+                "note": "TRADER_MODE=off — no order placed"}
     # Alpaca must actually accept an order for this symbol. The momentum panel
     # feeds candidates off an OCR read of a Discord scanner, so names Alpaca
     # has never heard of and delisted names that still quote both reach here.
@@ -492,6 +494,8 @@ def buy_limit_at_price(
     if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, limit_px, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": "trader_off",
+                "note": "TRADER_MODE=off — no order placed"}
     # Alpaca must actually accept an order for this symbol. The momentum panel
     # feeds candidates off an OCR read of a Discord scanner, so names Alpaca
     # has never heard of and delisted names that still quote both reach here.
@@ -589,6 +593,8 @@ def buy_market_shares(ticker: str, price: float, dollar_amount: Optional[float] 
     if not _can_mutate():
         _log_action("BUY_LOGGED", ticker, price, rsi, hist,
                     note="TRADER_MODE=off — no order placed")
+        return {"ok": False, "order_id": None, "status": "trader_off",
+                "note": "TRADER_MODE=off — no order placed"}
     # Alpaca must actually accept an order for this symbol. The momentum panel
     # feeds candidates off an OCR read of a Discord scanner, so names Alpaca
     # has never heard of and delisted names that still quote both reach here.

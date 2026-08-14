@@ -267,6 +267,9 @@ class _StubBroker:
         self.close_calls: list[str] = []
         self.limit_calls: list[dict] = []
 
+    def is_active(self):
+        return True
+
     def market_is_open(self):
         return self._market_open
 
@@ -2560,6 +2563,7 @@ def test_desk_click_flattens_when_already_long(monkeypatch):
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     import ai_trading as gt
     monkeypatch.setattr(gt, "has_open_position", lambda _s: True)
+    monkeypatch.setattr(gt, "is_ready", lambda: True)
     out = cp.desk_click("umac")
     assert out["ok"] is True
     assert out["action"] == "flatten"
@@ -2572,6 +2576,7 @@ def test_desk_click_buys_when_not_open(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     import ai_trading as gt
     monkeypatch.setattr(gt, "has_open_position", lambda _s: False)
+    monkeypatch.setattr(gt, "is_ready", lambda: True)
     monkeypatch.setattr(gt, "get_account", lambda: {"equity": 10_000.0})
     monkeypatch.setattr(gt, "record_external_buy", lambda *a, **k: None)
     import ai_entry_watch as ew
@@ -2602,6 +2607,7 @@ def test_desk_click_still_buys_when_clock_says_closed(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     import ai_trading as gt
     monkeypatch.setattr(gt, "has_open_position", lambda _s: False)
+    monkeypatch.setattr(gt, "is_ready", lambda: True)
     monkeypatch.setattr(gt, "get_account", lambda: {"equity": 10_000.0})
     monkeypatch.setattr(gt, "record_external_buy", lambda *a, **k: None)
     import ai_entry_watch as ew
