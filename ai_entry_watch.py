@@ -3581,12 +3581,14 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
             return False, "not_rising_overbought"
         return True, "overbought_hot"
     ex = exhaustion_pct(record)
+    raw_min = cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0)
     try:
-        heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 50.0)
+        heat_min = 50.0 if raw_min is None else float(raw_min)
     except (TypeError, ValueError):
         heat_min = 50.0
+    raw_max = cfg.get("ai_watch_exhaustion_heat_max_pct", 90.0)
     try:
-        heat_max = float(cfg.get("ai_watch_exhaustion_heat_max_pct", 90.0) or 0.0)
+        heat_max = 0.0 if raw_max is None else float(raw_max)
     except (TypeError, ValueError):
         heat_max = 90.0
     if ex is None or ex + 1e-9 < heat_min:
@@ -5311,12 +5313,13 @@ def should_arm_buy(
         if risk_pct_of_px < min_stop_pct:
             return False, "stop_too_tight"
 
-    # Known-low RVOL refuses at arm for every source, including research
-    # (WEN/RUM 0.4–0.6x on 08-14). Unknown abstains — same as admission.
+    # Arm RVOL is separate from admission. Default 0: the ratchet owns the
+    # trade once price is in the zone. Set ai_watch_arm_min_rvol to restore
+    # the 08-14 veto (WEN/RUM 0.4–0.6x).
     try:
-        min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0)
+        min_rvol = float(cfg.get("ai_watch_arm_min_rvol", 0.0) or 0.0)
     except (TypeError, ValueError):
-        min_rvol = 2.0
+        min_rvol = 0.0
     if min_rvol > 0:
         rv = _arm_rvol(record)
         if rv is not None and rv + 1e-12 < min_rvol:

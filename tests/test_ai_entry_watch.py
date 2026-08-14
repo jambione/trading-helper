@@ -2353,29 +2353,29 @@ def _arm_cfg(**over):
 
 
 def test_arm_refuses_known_low_rvol_including_research():
-    """Admission still lets research on with rvol 0.5. Arm must not buy it."""
+    """Arm RVOL is opt-in (ai_watch_arm_min_rvol). Default 0 lets the ratchet work."""
     import ai_entry_watch as ew
 
     rec = _armable_rec()
     rec["source"] = "xai"
     rec["admit_rvol"] = 0.46
-    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    ok, why = ew.should_arm_buy(
+        rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
     assert ok is False and why == "thin_rvol"
 
     rec["admit_rvol"] = 2.1
-    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    ok, why = ew.should_arm_buy(
+        rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
     assert ok and why.startswith("zone")
 
-    # Unknown still abstains — a missing number is not thin.
     rec.pop("admit_rvol", None)
     rec.pop("rvol", None)
-    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    ok, why = ew.should_arm_buy(
+        rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_arm_min_rvol=2.0))
     assert ok and why.startswith("zone")
 
-    # Floor of 0 disables the gate.
     rec["admit_rvol"] = 0.4
-    ok, why = ew.should_arm_buy(
-        rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_min_rvol=0))
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
     assert ok and why.startswith("zone")
 
 
@@ -3324,9 +3324,9 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
     }
     ew.apply_tape_blocker(umac, 33.17)
     assert umac["in_zone"] is True
-    assert umac["ready"] is False
-    assert umac["block_code"] == "heating_too_low"
-    assert "heat" in str(umac["blocker"]).lower()
+    # Heat floor is off — 37% rising in-zone is a buy for the ratchet.
+    assert umac["ready"] is True
+    assert umac["block_code"] == "in_zone"
 
     onds = {
         "symbol": "ONDS", "source": "momentum", "rvol": 1.8,
@@ -3337,9 +3337,8 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
     }
     ew.apply_tape_blocker(onds, 9.11)
     assert onds["in_zone"] is True
-    assert onds["ready"] is False
-    assert onds["block_code"] == "thin_rvol"
-    assert "rvol" in str(onds["blocker"]).lower()
+    assert onds["ready"] is True
+    assert onds["block_code"] == "in_zone"
 
     sora = {
         "symbol": "SORA", "source": "momentum", "rvol": None,

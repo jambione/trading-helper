@@ -156,9 +156,10 @@ DEFAULT_CONFIG = {
     "ai_avg_days":                10,
     "ai_rvol_time_adjusted":    True,
     "ai_trade_amount":        1000.0,
-    # Tight book: 08-14 LFS was the only edge while 8 slots held CELC/LUNR/LPTH.
-    "ai_max_positions":            4,
-    "ai_max_buys_per_poll":        1,
+    # Ratchet-first: give the 0.10R shelf more names to work. Fill abort and
+    # cheap-OB still block dumps; selection is no longer the bottleneck.
+    "ai_max_positions":            8,
+    "ai_max_buys_per_poll":        2,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
     "ai_trade_style": "Day scalp",
@@ -337,9 +338,9 @@ DEFAULT_CONFIG = {
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
     # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
-    # Admission (mom/trending) AND arm (every source, including research).
-    # Known-low refuses; unknown abstains. 08-14 WEN/RUM bought at 0.4–0.6x.
+    # Admission floor only. Arm uses ai_watch_arm_min_rvol (0 = zone+ratchet).
     "ai_watch_min_rvol":                2.0,
+    "ai_watch_arm_min_rvol":            0.0,
     # Cap how many LOOK tags apply_look_highlights may set panel-wide.
     "ai_watch_look_max":                  20,
     # False (default after 2026-08-11): allow non-EXT trending heat onto the
@@ -452,17 +453,20 @@ DEFAULT_CONFIG = {
     "ai_watch_exhaustion_exit_give_pct": 0.0,
     # Under continuation: minimum exhaustion % for a *heating* arm (0–100).
     # Overbought band still arms regardless. Under exhaustion_scalp: unused.
-    "ai_watch_exhaustion_heat_min_pct": 50.0,
+    # 0 = any rising %R may arm. The 50 floor blocked UMAC at 37% in-zone.
+    "ai_watch_exhaustion_heat_min_pct": 0.0,
     # Refuse to arm once %R is already this extended (0–100). 08-13 forward
     # print: 90–100 bucket −1.1% / 30m; HCTI/BYSI/CRMD were already there.
     # 0 disables the cap.
-    "ai_watch_exhaustion_heat_max_pct": 90.0,
+    # 0 = no extended cap. Ratchet scratches a name already pinned at the highs.
+    "ai_watch_exhaustion_heat_max_pct": 0.0,
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          True,
     # TEMP ratchet-test: in/below zone may arm while EXH is cooling.
     # Set false to restore the rising-only rule.
-    "ai_watch_in_zone_ignore_fade":   False,
+    # In/below the zone may arm while EXH is cooling. Ratchet is the exit.
+    "ai_watch_in_zone_ignore_fade":   True,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
     # giving it no replacement would leave it worse off than before. Never flip
@@ -485,7 +489,8 @@ DEFAULT_CONFIG = {
     #
     # Watch the BLIND line in desk_report section 5. If it climbs toward the
     # whole book the constraint is the data feed (SIP), not this gate.
-    "ai_watch_require_exhaustion_data": True,
+    # False: thin tape may still arm on zone; the ratchet does not need %R.
+    "ai_watch_require_exhaustion_data": False,
     # Widest the %R window may stretch, as a multiple of its nominal duration
     # (21 bars x 60s = 21 min, so 3.0 allows ~63 min). 0 disables the check.
     #
@@ -609,7 +614,9 @@ DEFAULT_CONFIG = {
     "ai_dead_trade_mfe_r":            0.10,
     # After a losing exit that never printed 0.5R MFE, do not re-arm that
     # symbol for the rest of the ET session. Winners and 0.5R runners may.
-    "ai_dead_reentry_block":           True,
+    # Off: a scratch may re-arm after cooldown. The 0.10R shelf re-scratches
+    # a dead name; blocking the book all day left the ratchet with nothing.
+    "ai_dead_reentry_block":           False,
     "ai_reentry_min_mfe_r":            0.50,
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
@@ -1047,6 +1054,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_trending_min_score",
     "ai_watch_min_pct_change",
     "ai_watch_min_rvol",
+    "ai_watch_arm_min_rvol",
     "ai_watch_look_max",
     "ai_watch_require_look_ext",
     "ai_watch_synth_zone_enabled",
