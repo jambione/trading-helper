@@ -91,8 +91,13 @@ DEFAULT_MAX_OPEN_RISK_PCT = 5.0
 # Max bid/ask spread % of mid (0 = disabled).
 DEFAULT_MAX_SPREAD_PCT = 1.0
 # Day-scalp dead trade: minutes held with no meaningful MFE.
-DEFAULT_DEAD_TRADE_MIN = 90.0
-DEFAULT_DEAD_TRADE_MFE_R = 0.25
+DEFAULT_DEAD_TRADE_MIN = 22.0
+DEFAULT_DEAD_TRADE_MFE_R = 0.10
+# Abort a new fill if last is already through the stop or this far
+# under the intended entry (FGI/SPAI/TDIC −2R IEX slips).
+DEFAULT_FILL_ABORT_R = 0.30
+# Never trail tighter than this many dollars under last.
+DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX = 0.06
 # Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
 # is a different trade on every name: at 2.5% it is 2.5R behind a 1%-wide stop
 # and 0.5R behind a 5%-wide one, so on the tight double-bottom zones the runner
@@ -1212,6 +1217,18 @@ def place_scaled_entry(
     # bound — current_ask is already validated as armable (in or below zone).
     sizing_entry = current_ask or entry_high or entry_low
 
+    if current_ask is not None and fill_already_dead(
+        current_ask, sizing_entry, stop_price,
+        max(0.0, float(sizing_entry) - float(stop_price or 0)),
+        cfg=cfg,
+    ):
+        err = (
+            f"refused: last ${float(current_ask):.2f} already through "
+            f"stop ${float(stop_price):.2f} or ≥0.3R under entry"
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
+
     # Capital protection: refuse any entry without a defined stop and sell plan.
     if stop_price <= 0 or target_1 <= 0 or sizing_entry <= 0:
         err = "refused: stop and target_1 required (no naked long / no sell plan)"
@@ -2015,6 +2032,49 @@ def _orig_stop(pos: dict[str, Any]) -> float | None:
     return _num(pos.get("stop_price"))
 
 
+def fill_already_dead(
+    last: float | None,
+    entry: float | None,
+    stop: float | None,
+    risk: float | None,
+    cfg: dict | None = None,
+) -> bool:
+    """True when the tape is already through the stop or ≥ abort_r under entry.
+
+    FGI/SPAI/TDIC opened 2R through the planned stop on a stale ask.
+    """
+    try:
+        last_f = float(last or 0)
+    except (TypeError, ValueError):
+        last_f = 0.0
+    if last_f <= 0:
+        return False
+    try:
+        stop_f = float(stop or 0)
+    except (TypeError, ValueError):
+        stop_f = 0.0
+    if stop_f > 0 and last_f <= stop_f + 1e-9:
+        return True
+    try:
+        entry_f = float(entry or 0)
+    except (TypeError, ValueError):
+        entry_f = 0.0
+    try:
+        risk_f = float(risk or 0)
+    except (TypeError, ValueError):
+        risk_f = 0.0
+    try:
+        thru = float(
+            (cfg or {}).get("ai_fill_abort_r", DEFAULT_FILL_ABORT_R)
+            or DEFAULT_FILL_ABORT_R)
+    except (TypeError, ValueError):
+        thru = DEFAULT_FILL_ABORT_R
+    if entry_f > 0 and risk_f > 0 and thru > 0:
+        if last_f <= entry_f - thru * risk_f + 1e-9:
+            return True
+    return False
+
+
 def local_trail_give_r(mfe_r: float | None, cfg: dict | None = None) -> float:
     """Effective trail width in R: 0.20R at fill, 0.10R the moment we are green.
 
@@ -2056,6 +2116,27 @@ def local_trail_give_r(mfe_r: float | None, cfg: dict | None = None) -> float:
     return wide
 
 
+def _tight_give_clears_entry(
+    last: float | None,
+    entry: float | None,
+    risk: float | None,
+    cfg: dict | None,
+) -> bool:
+    """True when last − tight give is still above the fill."""
+    try:
+        last_f = float(last or 0)
+        entry_f = float(entry or 0)
+        risk_f = float(risk or 0)
+    except (TypeError, ValueError):
+        return False
+    if last_f <= 0 or entry_f <= 0 or risk_f <= 0:
+        return False
+    tight_cfg = dict(cfg or {})
+    tight_cfg["ai_local_trail_give_open_r"] = 0.0
+    give = local_trail_give(last_f, risk_f, tight_cfg, mfe_r=99.0)
+    return last_f - give > entry_f + 1e-9
+
+
 def local_trail_give(
     last: float | None,
     risk: float | None,
@@ -2081,14 +2162,25 @@ def local_trail_give(
     except (TypeError, ValueError):
         r = 0.0
     if r > 0:
-        return max(0.01, give_r * r)
+        give = give_r * r
+    else:
+        try:
+            last_f = float(last) if last is not None else 0.0
+        except (TypeError, ValueError):
+            last_f = 0.0
+        if last_f > 0 and give_r > 0:
+            give = give_r * last_f / 100.0
+        else:
+            give = 0.01
     try:
-        last_f = float(last) if last is not None else 0.0
+        floor = float(cfg.get(
+            "ai_local_trail_min_give_px", DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX)
+            or 0.0)
     except (TypeError, ValueError):
-        last_f = 0.0
-    if last_f > 0 and give_r > 0:
-        return max(0.01, give_r * last_f / 100.0)
-    return 0.01
+        floor = DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX
+    if floor > 0:
+        give = max(give, floor)
+    return max(0.01, give)
 
 
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
@@ -2121,7 +2213,10 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         arm_need = 0.0
     if arm_need > 0 and float(mfe) + 1e-9 < arm_need:
         return prev or floor
-    give = local_trail_give(last, risk, cfg, mfe_r=mfe)
+    give_mfe = mfe
+    if not _tight_give_clears_entry(last, entry, risk, cfg):
+        give_mfe = 0.0
+    give = local_trail_give(last, risk, cfg, mfe_r=give_mfe)
     want = float(last) - give
     if want >= float(last):
         want = float(last) - 0.01
@@ -2940,6 +3035,33 @@ def manage_open_positions(
                     if want and want > 0 and risk and risk > 0:
                         pos["entry_slippage_r"] = round((fill - want) / risk, 4)
                     pos["entry_price"] = fill
+                    tape = _num(live.get("current")) or fill
+                    planned = _num(pos.get("entry_stop_price")) or _num(
+                        pos.get("stop_price"))
+                    intended = _num(pos.get("entry_limit_price")) or fill
+                    risk = _num(pos.get("risk_per_share"))
+                    if (
+                        fill_already_dead(
+                            tape, fill, planned, risk, cfg=_cfg_all())
+                        or fill_already_dead(
+                            fill, intended, planned, risk, cfg=_cfg_all())
+                    ):
+                        alpaca_trader.cancel_open_orders(ticker)
+                        out = alpaca_trader.close_out(ticker) or {}
+                        if isinstance(out, dict) and out.get("order_id"):
+                            pos["close_order_id"] = str(out["order_id"])
+                        pos["entry_confirmed"] = True
+                        pos["closing_reason"] = "fill_through_stop"
+                        events.append({
+                            "ticker": ticker, "event": "fill_through_stop",
+                            "fill": fill, "last": tape, "stop": planned,
+                        })
+                        log_event(
+                            "fill_through_stop", symbol=ticker,
+                            fill=fill, last=tape, stop=planned,
+                        )
+                        changed = True
+                        continue
             pos["entry_confirmed"] = True
             # High print ratchets the shelf; low print is the liquidation
             # trigger so a tape dip through TRAIL sells even if the broker
@@ -3584,26 +3706,24 @@ def manage_open_positions(
                     changed = True
                     continue
 
-        # Day-scalp dead trade: no scale-out, tiny MFE, still flat/red.
-        # Skip once the local trail has locked breakeven — the trade proved.
+        # Day-scalp dead trade: no scale-out, never ran (MFE < 0.10R).
+        # A shelf already above entry means the trail locked profit — leave it.
+        # Sitting at breakeven is not a prove; flatten after the clock.
         _loc = _num(pos.get("local_stop_price"))
         _ent = _num(pos.get("entry_price"))
-        local_locked = _loc is not None and _ent is not None and _loc + 1e-9 >= _ent
+        profit_locked = (
+            _loc is not None and _ent is not None and _loc > _ent + 1e-9
+        )
         if (
             dead_min > 0
             and not pos.get("tranche_a_filled")
             and pos.get("entry_confirmed")
-            and not local_locked
+            and not profit_locked
         ):
             age_min = (now - float(pos.get("entry_time") or now)) / 60.0
             mfe = _num(pos.get("mfe_r"))
-            last = _num(pos.get("last_seen_price"))
-            entry = _num(pos.get("entry_price"))
             mfe_ok = mfe is None or mfe < dead_mfe
-            underwater_or_flat = (
-                last is None or entry is None or last <= entry * 1.001
-            )
-            if age_min >= dead_min and mfe_ok and underwater_or_flat:
+            if age_min >= dead_min and mfe_ok:
                 alpaca_trader.cancel_open_orders(ticker)
                 out = alpaca_trader.close_out(ticker) or {}
                 if isinstance(out, dict) and out.get("order_id"):

@@ -1902,17 +1902,15 @@ def test_place_scaled_entry_allows_armable_below_zone(tmp_path, monkeypatch):
     assert stub.calls and stub.calls[0]["qty"] > 0
 
 
-def test_place_scaled_entry_rebases_stop_when_fill_is_through_plan(tmp_path, monkeypatch):
-    """Stop is not live until open — a fill under the plan stop still places."""
+def test_place_scaled_entry_refuses_when_ask_is_through_the_stop(
+        tmp_path, monkeypatch):
+    """FGI/SPAI/TDIC: last already under the plan stop — do not open."""
     _use_tmp_state(tmp_path, monkeypatch)
     monkeypatch.setattr(cp, "_entry_cfg", lambda: {
         "ai_day_scalp_dual_tranche": True,
-        "ai_entry_broker_target": True,
-        "ai_watch_synth_scale_out_pct": 50.0,
         "ai_max_position_pct": 25.0,
         "ai_watch_arm_below_zone": True,
-        "ai_watch_min_stop_pct": 1.5,
-        "ai_broker_stop_enabled": False,
+        "ai_fill_abort_r": 0.30,
     })
     stub = _StubBroker()
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
@@ -1921,11 +1919,9 @@ def test_place_scaled_entry_rebases_stop_when_fill_is_through_plan(tmp_path, mon
     out = cp.place_scaled_entry(
         "ipwr", decision, account_equity=50_000.0, risk_pct=1.0,
         current_ask=5.10)
-    assert out["ok"] is True
-    state = json.loads(_state_path(tmp_path).read_text())
-    stop = float(state["IPWR"]["stop_price"])
-    assert stop < 5.10
-    assert stop == pytest.approx(5.10 * 0.985, rel=1e-4)
+    assert out["ok"] is False
+    assert "through" in str(out.get("error") or "").lower()
+    assert stub.calls == []
 
 
 def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypatch):
@@ -1954,22 +1950,30 @@ def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     _seed_state(
         tmp_path, monkeypatch,
         time_stop_days=None, entry_time=1_000_000.0,
-        last_seen_price=40.4, mfe_r=0.05, mae_r=-0.1,
+        last_seen_price=40.55, mfe_r=0.02, mae_r=-0.1,
         entry_confirmed=True, tranche_a_filled=False,
+        local_stop_price=40.5,
     )
-    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
-        "ai_dead_trade_min": 90.0,
-        "ai_dead_trade_mfe_r": 0.25,
+    cfg = {
+        "ai_dead_trade_min": 22.0,
+        "ai_dead_trade_mfe_r": 0.10,
+        "ai_local_trail_enabled": False,
         "ai_position_shadow_enabled": False,
         "ai_sell_signal_breakeven": False,
         "ai_heal_unprotected": False,
         "ai_entry_limit_ttl_sec": 30.0,
-    })
+    }
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+    }.get(key, default))
     stub = _StubBrokerManage(order_status="new", position_open=True,
-                             current_price=40.4)
+                             current_price=40.55)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
-    later = 1_000_000.0 + 91 * 60
+    later = 1_000_000.0 + 23 * 60
     events = cp.manage_open_positions(now=later)
     assert any(e["event"] == "dead_trade" for e in events)
     assert stub.closed == ["NVDA"]
@@ -2332,7 +2336,10 @@ def test_never_lower_rstop_keeps_the_high_water():
 
 
 def test_local_trail_give_is_give_r_times_risk():
-    cfg = {"ai_local_trail_give_r": 0.08, "ai_local_trail_give_px": 0}
+    cfg = {
+        "ai_local_trail_give_r": 0.08, "ai_local_trail_give_px": 0,
+        "ai_local_trail_min_give_px": 0,
+    }
     # $1 of R → 8 cents. $0.54 of R → 4.32 cents (floored at a penny).
     assert cp.local_trail_give(17.44, 1.00, cfg) == pytest.approx(0.08)
     assert cp.local_trail_give(17.44, 0.54, cfg) == pytest.approx(0.0432)
@@ -2345,6 +2352,7 @@ def test_local_trail_give_r_stays_wide_until_025r_then_snaps():
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_tighten_mfe_r": 0.25,
+        "ai_local_trail_min_give_px": 0,
     }
     assert cp.local_trail_give_r(0.0, cfg) == pytest.approx(0.20)
     assert cp.local_trail_give_r(0.08, cfg) == pytest.approx(0.20)
@@ -2363,6 +2371,7 @@ def test_local_profit_stop_uses_wide_give_at_open():
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_tighten_mfe_r": 0.25,
+        "ai_local_trail_min_give_px": 0,
     }
     # Open RSTOP is the fill, not last − 0.20R (9.96).
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
@@ -2388,6 +2397,7 @@ def test_local_profit_stop_trails_last_immediately_when_arm_r_zero():
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_tighten_mfe_r": 0.25,
+        "ai_local_trail_min_give_px": 0,
     }
     # last − 0.20R is 19.324; open floor is entry 19.41
     want = cp.local_profit_stop(pos, cfg)
@@ -2405,6 +2415,7 @@ def test_local_profit_stop_holds_plan_stop_until_arm_r():
         "ai_local_trail_arm_r": 0.20,
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_min_give_px": 0,
     }
     # Unarmed: hold current shelf or entry, not a drop to plan.
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.80)
@@ -2430,7 +2441,10 @@ def test_local_profit_stop_tracks_last_minus_give():
         "entry_price": 8.64, "entry_stop_price": 8.38,
         "risk_per_share": 0.26, "last_seen_price": 8.50,
     }
-    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20}
+    cfg = {
+        "ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20,
+        "ai_local_trail_min_give_px": 0,
+    }
     # Underwater: RSTOP is entry, not last − give.
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.64)
     pos["last_seen_price"] = 8.80
@@ -2443,7 +2457,10 @@ def test_local_profit_stop_never_lowers():
         "risk_per_share": 0.26, "last_seen_price": 8.70,
         "local_stop_price": 8.71,
     }
-    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20}
+    cfg = {
+        "ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20,
+        "ai_local_trail_min_give_px": 0,
+    }
     pos["last_seen_price"] = 8.60
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.71)
 
@@ -2635,6 +2652,40 @@ def test_desk_click_still_buys_when_clock_says_closed(tmp_path, monkeypatch):
     assert out["ok"] is True, out
     assert out["action"] == "buy"
     assert stub.calls
+
+
+def test_fill_already_dead_flags_last_through_stop():
+    assert cp.fill_already_dead(11.1, 12.78, 12.14, 0.64) is True
+    assert cp.fill_already_dead(12.78, 12.78, 12.14, 0.64) is False
+    assert cp.fill_already_dead(12.50, 12.78, 12.14, 0.64) is True  # 0.44R under
+
+
+def test_local_trail_give_floors_at_min_dollar():
+    cfg = {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0.06,
+    }
+    # 0.10R * $0.11 risk is a penny; floor wins.
+    assert cp.local_trail_give(2.25, 0.11, cfg, mfe_r=1.0) == pytest.approx(0.06)
+
+
+def test_tight_give_waits_until_last_minus_give_clears_entry():
+    pos = {
+        "entry_price": 10.00, "entry_stop_price": 9.50,
+        "risk_per_share": 0.50, "last_seen_price": 10.12, "mfe_r": 0.40,
+    }
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_tighten_mfe_r": 0.25,
+        "ai_local_trail_min_give_px": 0,
+    }
+    # last − 0.10R = 10.07 > entry, snap allowed
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.07)
+    pos["last_seen_price"] = 10.04
+    # last − 0.10R = 9.99 ≤ entry — stay 0.20R, floored at entry
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
 
 
 def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():

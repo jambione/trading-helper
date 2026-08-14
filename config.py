@@ -588,6 +588,8 @@ DEFAULT_CONFIG = {
     "ai_local_trail_give_open_r":      0.20,
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
+    "ai_local_trail_min_give_px":      0.06,
+    "ai_fill_abort_r":                 0.30,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.
@@ -602,11 +604,12 @@ DEFAULT_CONFIG = {
     # Dead trade: no scale-out, MFE never reached, still flat/red → flatten.
     # Continuation wants this tighter so positions do not sit 90m for −0.3R
     # (S/CRCL on 2026-08-11) waiting for an exhaustion exit that is now off.
-    "ai_dead_trade_min":               12.0,
-    "ai_dead_trade_mfe_r":            0.25,
-    # After a dead_trade close, do not re-arm that symbol for the rest of
-    # the ET session (08-13: second OMER after a dead name reused the slot).
+    "ai_dead_trade_min":               22.0,
+    "ai_dead_trade_mfe_r":            0.10,
+    # After a losing exit that never printed 0.5R MFE, do not re-arm that
+    # symbol for the rest of the ET session. Winners and 0.5R runners may.
     "ai_dead_reentry_block":           True,
+    "ai_reentry_min_mfe_r":            0.50,
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
     # On sell_signal while green, move stop to entry (never loosen).
@@ -1104,11 +1107,14 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_give_open_r",
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",
+    "ai_local_trail_min_give_px",
+    "ai_fill_abort_r",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
     "ai_dead_reentry_block",
+    "ai_reentry_min_mfe_r",
     "ai_position_shadow_enabled",
     "ai_sell_signal_breakeven",
     "ai_heal_unprotected",

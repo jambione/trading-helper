@@ -126,7 +126,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "already_extended": "extended",
     "in_zone_fade_ok": "in zone",
     "overbought_hot": "OB hot",
-    "dead_reentry": "dead once",
+    "dead_reentry": "loser once",
+    "loser_reentry": "loser once",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
     "not_heating_heating": "heating",
@@ -5294,32 +5295,43 @@ def _blocker_for_gate(why: str) -> str:
     return "risk_gate"
 
 
-# (mtime, size) -> {symbol: last exit ts} and last dead_trade ts.
+# (mtime, size) -> last exit ts, last dead_trade ts, last outcome row.
 # outcomes.jsonl only ever grows, so a stat is enough to know the parse is
 # still valid.
-_exit_cache: tuple[tuple[float, int] | None, dict[str, float], dict[str, float]] = (
-    None, {}, {},
+_exit_cache: tuple[
+    tuple[float, int] | None,
+    dict[str, float],
+    dict[str, float],
+    dict[str, dict],
+] = (
+    None, {}, {}, {},
 )
 
 
 def _exit_maps() -> tuple[dict[str, float], dict[str, float]]:
     """symbol -> last exit ts, and symbol -> last dead_trade ts."""
+    ts_map, dead_map, _rows = _exit_maps_full()
+    return ts_map, dead_map
+
+
+def _exit_maps_full() -> tuple[dict[str, float], dict[str, float], dict[str, dict]]:
     global _exit_cache
     try:
         import ai_positions as cp
         st = cp.OUTCOMES_PATH.stat()
         key = (st.st_mtime, st.st_size)
     except Exception:
-        return {}, {}
-    cached_key, cached, cached_dead = _exit_cache
+        return {}, {}, {}
+    cached_key, cached, cached_dead, cached_rows = _exit_cache
     if cached_key == key:
-        return cached, cached_dead
+        return cached, cached_dead, cached_rows
     out: dict[str, float] = {}
     dead: dict[str, float] = {}
+    rows: dict[str, dict] = {}
     try:
         text = cp.OUTCOMES_PATH.read_text(encoding="utf-8")
     except Exception:
-        return {}, {}
+        return {}, {}, {}
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -5337,11 +5349,22 @@ def _exit_maps() -> tuple[dict[str, float], dict[str, float]]:
             continue
         if ts and ts > out.get(sym, 0.0):
             out[sym] = ts
+            rec: dict = {"ts": ts}
+            try:
+                rec["realized_r"] = float(row.get("realized_r_multiple"))
+            except (TypeError, ValueError):
+                rec["realized_r"] = None
+            try:
+                rec["mfe_r"] = float(row.get("mfe_r"))
+            except (TypeError, ValueError):
+                rec["mfe_r"] = None
+            rec["close_reason"] = str(row.get("close_reason") or "")
+            rows[sym] = rec
         reason = str(row.get("close_reason") or "").strip().lower()
         if reason == "dead_trade" and ts and ts > dead.get(sym, 0.0):
             dead[sym] = ts
-    _exit_cache = (key, out, dead)
-    return out, dead
+    _exit_cache = (key, out, dead, rows)
+    return out, dead, rows
 
 
 def _exit_ts_map() -> dict[str, float]:
@@ -5359,22 +5382,59 @@ def _recent_dead_exit_ts(symbol: str) -> float | None:
     return _exit_maps()[1].get(str(symbol or "").upper().strip())
 
 
-def _dead_reentry_blocked(symbol: str, now: float, cfg: dict) -> bool:
-    """True when this name already died today and must not re-arm."""
-    if not bool(cfg.get("ai_dead_reentry_block", True)):
-        return False
-    ts = _recent_dead_exit_ts(symbol)
-    if not ts:
-        return False
+def _last_exit_row(symbol: str) -> dict | None:
+    """Most recent outcome row for *symbol*, or None."""
+    rows = _exit_maps_full()[2]
+    return rows.get(str(symbol or "").upper().strip())
+
+
+def _same_et_day(ts: float, now: float) -> bool:
     try:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         et = ZoneInfo("America/New_York")
-        now_d = datetime.fromtimestamp(float(now), tz=et).date()
-        then_d = datetime.fromtimestamp(float(ts), tz=et).date()
+        return (
+            datetime.fromtimestamp(float(now), tz=et).date()
+            == datetime.fromtimestamp(float(ts), tz=et).date()
+        )
     except Exception:
         return False
-    return now_d == then_d
+
+
+def _dead_reentry_blocked(symbol: str, now: float, cfg: dict) -> bool:
+    """True when today's last exit was a loser that never ran 0.5R.
+
+    Green exits and names that printed MFE ≥ ``ai_reentry_min_mfe_r``
+    may re-arm (LFS). Dead/scratch losers may not (LUNR/CELC/LPTH).
+    """
+    if not bool(cfg.get("ai_dead_reentry_block", True)):
+        return False
+    row = _last_exit_row(symbol)
+    if not row or not row.get("ts"):
+        # Fall back to the old dead-only clock if outcomes are missing.
+        ts = _recent_dead_exit_ts(symbol)
+        if not ts:
+            return False
+        return _same_et_day(ts, now)
+    if not _same_et_day(float(row["ts"]), now):
+        return False
+    try:
+        realized = row.get("realized_r")
+        if realized is not None and float(realized) > 0:
+            return False
+    except (TypeError, ValueError):
+        pass
+    try:
+        need = float(cfg.get("ai_reentry_min_mfe_r", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        need = 0.5
+    try:
+        mfe = row.get("mfe_r")
+        if mfe is not None and float(mfe) + 1e-12 >= need:
+            return False
+    except (TypeError, ValueError):
+        pass
+    return True
 
 
 def _decision_for_place(

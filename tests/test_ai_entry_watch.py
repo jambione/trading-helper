@@ -2046,22 +2046,44 @@ def test_poll_once_blocks_re_entry_during_cooldown(tmp_path, monkeypatch):
 def test_dead_reentry_blocks_same_et_day():
     import ai_entry_watch as ew
 
-    cfg = {"ai_dead_reentry_block": True}
-    # 2026-08-13 11:00 ET
+    cfg = {"ai_dead_reentry_block": True, "ai_reentry_min_mfe_r": 0.50}
     now = 1_786_618_800.0
     monkey_ts = now - 3600.0
     assert ew._dead_reentry_blocked("OMER", now, cfg) is False
 
-    orig = ew._recent_dead_exit_ts
+    orig_row = ew._last_exit_row
+    orig_dead = ew._recent_dead_exit_ts
+    ew._last_exit_row = lambda s: (
+        {"ts": monkey_ts, "realized_r": -0.2, "mfe_r": 0.05}
+        if s == "OMER" else None)
     ew._recent_dead_exit_ts = lambda s: monkey_ts if s == "OMER" else None
     try:
         assert ew._dead_reentry_blocked("OMER", now, cfg) is True
-        # Next ET session is clear.
         assert ew._dead_reentry_blocked("OMER", now + 86400.0, cfg) is False
         off = dict(cfg, ai_dead_reentry_block=False)
         assert ew._dead_reentry_blocked("OMER", now, off) is False
     finally:
-        ew._recent_dead_exit_ts = orig
+        ew._last_exit_row = orig_row
+        ew._recent_dead_exit_ts = orig_dead
+
+
+def test_reentry_allows_winner_or_half_r_mfe():
+    import ai_entry_watch as ew
+
+    cfg = {"ai_dead_reentry_block": True, "ai_reentry_min_mfe_r": 0.50}
+    now = 1_786_618_800.0
+    orig = ew._last_exit_row
+    ew._last_exit_row = lambda s: {
+        "LFS": {"ts": now - 60, "realized_r": 0.35, "mfe_r": 0.70},
+        "UMAC": {"ts": now - 60, "realized_r": -0.12, "mfe_r": 0.75},
+        "LUNR": {"ts": now - 60, "realized_r": -0.20, "mfe_r": 0.04},
+    }.get(s)
+    try:
+        assert ew._dead_reentry_blocked("LFS", now, cfg) is False
+        assert ew._dead_reentry_blocked("UMAC", now, cfg) is False
+        assert ew._dead_reentry_blocked("LUNR", now, cfg) is True
+    finally:
+        ew._last_exit_row = orig
 
 
 def _stream_cfg(**over):
