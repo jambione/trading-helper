@@ -591,7 +591,7 @@ def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
         "SMCI": {"qty": 10, "avg_entry": 8.64, "current": 8.80, "pl": 1.6},
     })
     by = {r["symbol"]: r for r in rows}
-    assert by["SMCI"]["local_stop"] == pytest.approx(8.748)
+    assert by["SMCI"]["local_stop"] == pytest.approx(8.38)
     assert by["SMCI"]["risk_per_share"] == pytest.approx(0.26)
     assert by["SMCI"]["entry_stop_price"] == pytest.approx(8.38)
     assert by["SMCI"]["trail_give_r"] == pytest.approx(0.20)
@@ -626,7 +626,7 @@ def test_book_rstop_not_previewed_on_watches(tmp_path, monkeypatch):
 
 
 def test_book_table_rows_uses_tape_when_last_seen_missing(tmp_path, monkeypatch):
-    """RStop must not sit on the entry floor just because last_seen was blank."""
+    """Book TRAIL is the stored engine shelf, not a tape last−give."""
     import ai_entry_watch as ew
     import ai_positions as cp
 
@@ -653,7 +653,7 @@ def test_book_table_rows_uses_tape_when_last_seen_missing(tmp_path, monkeypatch)
         "SMCI": {"qty": 10, "avg_entry": 8.64, "current": 8.80, "pl": 1.6},
     })
     by = {r["symbol"]: r for r in rows}
-    assert by["SMCI"]["local_stop"] == pytest.approx(8.748)
+    assert by["SMCI"]["local_stop"] == pytest.approx(8.38)
 
 
 def test_rebuild_seeds_momentum_into_active(tmp_path, monkeypatch):
