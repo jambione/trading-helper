@@ -2785,17 +2785,9 @@ def test_in_zone_ignore_fade_is_temporary_and_not_above_zone():
     )
     ok, why = ew.should_arm_buy(rec, ask=6.50, bid=6.49, cfg=cfg)
     assert ok and why == "zone_in_zone_fade_ok"
-    rec["indicator"] = {}
-    rec["exhaustion"] = 10.0
-    rec["exhaustion_state"] = "heating"
-    ok, why = ew.should_arm_buy(rec, ask=6.50, bid=6.49, cfg=cfg)
-    assert ok and why == "zone_in_zone_fade_ok"
     ok, why = ew.should_arm_buy(rec, ask=6.70, bid=6.69, cfg=cfg)
     assert ok is False
-    assert why in (
-        "above_zone", "not_rising_cooling", "heating_too_low",
-        "no_exhaustion_data",
-    )
+    assert why in ("above_zone", "not_rising_cooling")
 
 
 def test_min_stop_pct_of_zero_disables_the_check():

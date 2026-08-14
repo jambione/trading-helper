@@ -5129,11 +5129,7 @@ def should_arm_buy(
         # CM RSI-2 were still vetoing entries the operator had specified should
         # depend on exhaustion alone.
         sig = record.get("indicator")
-        if (
-            isinstance(sig, dict)
-            and sig.get("sell_signal")
-            and not bool(cfg.get("ai_watch_in_zone_ignore_fade", False))
-        ):
+        if isinstance(sig, dict) and sig.get("sell_signal"):
             return False, "sell_signal"
 
     try:
@@ -5174,11 +5170,11 @@ def should_arm_buy(
             return False, "stop_too_tight"
 
     if not exh_ok:
-        # Test window: anything in or below the band may fill. The book
-        # paints those rows "in zone"; heat/fade/missing %R must not
-        # contradict that. Above the band still refuses.
+        # Optional: in/below the zone may still fill when EXH is cooling.
+        # Above-zone and heating_too_low stay refused. Default off.
         if (
             bool(cfg.get("ai_watch_in_zone_ignore_fade", False))
+            and str(exh_why).startswith("not_rising")
             and ask_triggers_zone(
                 a, entry_low, entry_high,
                 pad_pct=pad, stop=_stop,
@@ -5860,30 +5856,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         except Exception:
             bid = None
         ask_f, px_src, px_age = apply_decision_price(rec, cfg, t0)
-        # Book PRICE is the dashboard tape. If that print is in/below the
-        # band and REST ask is above it, arm on the tape or the row stays
-        # green and never buys (UMAC 33.31 tape vs 34.73 leftover ask).
-        try:
-            tape = live_print(sym)
-        except Exception:
-            tape = None
-        if tape and tape[0] and float(tape[0]) > 0:
-            lv = _structure_levels(rec.get("structure"))
-            if lv is not None:
-                try:
-                    pad_now = float(cfg.get("ai_entry_zone_pad_pct", 0.0) or 0.0)
-                except (TypeError, ValueError):
-                    pad_now = 0.0
-                if ask_triggers_zone(
-                    float(tape[0]), lv[0], lv[1],
-                    pad_pct=pad_now, stop=lv[2],
-                    max_below_r=arm_below_max_r(cfg),
-                    arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
-                ):
-                    ask_f = float(tape[0])
-                    px_src = "stream"
-                    rec["last_ask"] = ask_f
-                    rec["last_ask_src"] = "stream"
         tape_only = px_src == "stale_tape"
         rec["last_poll_ts"] = t0
 
@@ -6183,26 +6155,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         # Re-check the same realtime source immediately before place.
         ask_f, px_src2, _age2 = apply_decision_price(rec, cfg, t0)
-        try:
-            tape2 = live_print(sym)
-        except Exception:
-            tape2 = None
-        if tape2 and tape2[0] and float(tape2[0]) > 0:
-            lv2 = _structure_levels(rec.get("structure"))
-            if lv2 is not None:
-                try:
-                    pad2 = float(cfg.get("ai_entry_zone_pad_pct", 0.0) or 0.0)
-                except (TypeError, ValueError):
-                    pad2 = 0.0
-                if ask_triggers_zone(
-                    float(tape2[0]), lv2[0], lv2[1],
-                    pad_pct=pad2, stop=lv2[2],
-                    max_below_r=arm_below_max_r(cfg),
-                    arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
-                ):
-                    ask_f = float(tape2[0])
-                    px_src2 = "stream"
-                    rec["last_ask"] = ask_f
         if ask_f <= 0 or px_src2 in ("none", "stale_tape"):
             _skip("stale_quote", detail=px_src2)
             continue
