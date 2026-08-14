@@ -2373,12 +2373,12 @@ def test_local_profit_stop_uses_wide_give_at_open():
         "ai_local_trail_tighten_mfe_r": 0.25,
         "ai_local_trail_min_give_px": 0,
     }
-    # Open RSTOP is the fill, not last − 0.20R (9.96).
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
+    # last − 0.20R = 10.00 − 0.04 = 9.96
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.96)
     pos["last_seen_price"] = 10.02
     pos["mfe_r"] = 0.10
-    # first green still 0.20R under last, floored at entry
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
+    # first green still 0.20R: last − 0.04 = 9.98
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.98)
     pos["last_seen_price"] = 10.06
     pos["mfe_r"] = 0.30
     # past +0.25R: last − 0.10R = 10.04
@@ -2399,9 +2399,9 @@ def test_local_profit_stop_trails_last_immediately_when_arm_r_zero():
         "ai_local_trail_tighten_mfe_r": 0.25,
         "ai_local_trail_min_give_px": 0,
     }
-    # last − 0.20R is 19.324; open floor is entry 19.41
+    # last − 0.20R = 19.324, above the 18.88 plan floor
     want = cp.local_profit_stop(pos, cfg)
-    assert want == pytest.approx(19.41)
+    assert want == pytest.approx(19.43 - 0.20 * 0.53, abs=0.01)
 
 
 def test_local_profit_stop_holds_plan_stop_until_arm_r():
@@ -2417,7 +2417,7 @@ def test_local_profit_stop_holds_plan_stop_until_arm_r():
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_min_give_px": 0,
     }
-    # Unarmed: hold current shelf or entry, not a drop to plan.
+    # Unarmed: hold the plan / stored shelf.
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.80)
     pos["last_seen_price"] = 10.06
     pos["mfe_r"] = 0.30
@@ -2445,8 +2445,8 @@ def test_local_profit_stop_tracks_last_minus_give():
         "ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20,
         "ai_local_trail_min_give_px": 0,
     }
-    # Underwater: RSTOP is entry, not last − give.
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.64)
+    # last 8.50 − 0.2R (0.052) = 8.448, above the 8.38 plan floor.
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.448)
     pos["last_seen_price"] = 8.80
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.748)
 
@@ -2684,8 +2684,8 @@ def test_tight_give_waits_until_last_minus_give_clears_entry():
     # last − 0.10R = 10.07 > entry, snap allowed
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.07)
     pos["last_seen_price"] = 10.04
-    # last − 0.10R = 9.99 ≤ entry — stay 0.20R, floored at entry
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
+    # last − 0.10R = 9.99 ≤ entry — stay 0.20R → 9.94
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.94)
 
 
 def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():
