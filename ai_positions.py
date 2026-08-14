@@ -1977,6 +1977,14 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
             mfe = max(0.0, (float(last) - float(entry)) / float(risk))
         else:
             mfe = 0.0
+    try:
+        arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
+    except (TypeError, ValueError):
+        arm_need = 0.0
+    if arm_need > 0 and float(mfe) + 1e-9 < arm_need:
+        # Plan stop only until the trade proves. Tick-1 last − give was
+        # flattening NMAX/FGI/SPAI in under 30s.
+        return prev or floor
     give = local_trail_give(last, risk, cfg, mfe_r=mfe)
     want = float(last) - give
     if want >= float(last):

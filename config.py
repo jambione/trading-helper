@@ -459,6 +459,9 @@ DEFAULT_CONFIG = {
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          True,
+    # TEMP ratchet-test: in/below zone may arm while EXH is cooling.
+    # Set false to restore the rising-only rule.
+    "ai_watch_in_zone_ignore_fade":   False,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
     # giving it no replacement would leave it worse off than before. Never flip
@@ -579,7 +582,7 @@ DEFAULT_CONFIG = {
     # Flatten if last prints through. This is the stop of record when
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
-    "ai_local_trail_arm_r":            0.05,
+    "ai_local_trail_arm_r":            0.20,
     "ai_local_trail_give_r":           0.10,
     "ai_local_trail_give_open_r":      0.20,
     "ai_local_trail_tighten_mfe_r":    0.50,
@@ -1054,6 +1057,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_ob_allow_hot",
+    "ai_watch_in_zone_ignore_fade",
     "ai_watch_exhaustion_fallback",
     "ai_watch_require_exhaustion_data",
     "ai_watch_exhaustion_max_window_mult",

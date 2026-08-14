@@ -124,6 +124,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
     "already_extended": "extended",
+    "in_zone_fade_ok": "in zone",
     "overbought_hot": "OB hot",
     "dead_reentry": "dead once",
     "not_heating_cooling": "cooling",
@@ -5203,7 +5204,21 @@ def should_arm_buy(
             return False, "stop_too_tight"
 
     if not exh_ok:
-        return False, exh_why
+        # Temporary ratchet-test: in/below the zone may still fill when EXH
+        # is cooling. Above-zone and heating_too_low stay refused.
+        if (
+            bool(cfg.get("ai_watch_in_zone_ignore_fade", False))
+            and str(exh_why).startswith("not_rising")
+            and ask_triggers_zone(
+                a, entry_low, entry_high,
+                pad_pct=pad, stop=_stop,
+                max_below_r=arm_below_max_r(cfg),
+                arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
+            )
+        ):
+            exh_ok, exh_why = True, "in_zone_fade_ok"
+        else:
+            return False, exh_why
 
     # Cheap pullback-band + overbought is the HCTI/BYSI dump: 20% of
     # equity in a $2 spike. Real shelves under $5 can still arm.

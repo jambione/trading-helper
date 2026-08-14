@@ -2763,6 +2763,33 @@ def test_hot_overbought_arms_in_and_below_zone_not_above():
     assert (ok, why) == (False, "above_zone")
 
 
+def test_in_zone_ignore_fade_is_temporary_and_not_above_zone():
+    import ai_entry_watch as ew
+
+    rec = _armable_record({
+        "decision": "WAIT", "wait_kind": "wait_for_zone",
+        "entry_low": 6.44, "entry_high": 6.54, "stop_price": 6.20,
+        "target_1": 6.80, "reward_risk": 0.6,
+        "zone_kind": "pullback_band", "synthetic": True,
+    })
+    rec["source"] = "trending"
+    rec["indicator"] = {
+        "pctr": -50.0, "pctr_rising": False, "pctr_falling": True,
+    }
+    cfg = _db_cfg(
+        ai_watch_exhaustion_rules=True,
+        ai_watch_in_zone_ignore_fade=True,
+        ai_watch_min_stop_pct=0,
+        ai_min_reward_risk=0.5,
+        ai_watch_cheap_price=0,
+    )
+    ok, why = ew.should_arm_buy(rec, ask=6.50, bid=6.49, cfg=cfg)
+    assert ok and why == "zone_in_zone_fade_ok"
+    ok, why = ew.should_arm_buy(rec, ask=6.70, bid=6.69, cfg=cfg)
+    assert ok is False
+    assert why in ("above_zone", "not_rising_cooling")
+
+
 def test_min_stop_pct_of_zero_disables_the_check():
     import ai_entry_watch as ew
 

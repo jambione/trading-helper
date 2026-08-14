@@ -2357,6 +2357,27 @@ def test_local_profit_stop_uses_wide_give_at_open():
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.08)
 
 
+def test_local_profit_stop_holds_plan_stop_until_arm_r():
+    pos = {
+        "entry_price": 10.00, "entry_stop_price": 9.80,
+        "risk_per_share": 0.20, "last_seen_price": 10.02, "mfe_r": 0.10,
+        "local_stop_price": 9.80,
+    }
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_arm_r": 0.20,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_give_open_r": 0.20,
+    }
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.80)
+    pos["last_seen_price"] = 10.06
+    pos["mfe_r"] = 0.30
+    # Armed: last − 0.20R + interpolate… mfe 0.30 of 0.50 span → give 0.14R
+    # last 10.06 − 0.028 = 10.032, max floor 9.80 / prev 9.80
+    want = cp.local_profit_stop(pos, cfg)
+    assert want is not None and want > 9.80
+
+
 def test_local_profit_stop_uses_dollar_give_when_set():
     pos = {
         "entry_price": 17.00, "entry_stop_price": 16.46,
