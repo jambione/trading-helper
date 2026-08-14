@@ -387,7 +387,7 @@ DEFAULT_CONFIG = {
     # there?" had no data behind it at all. Writes position_shadow.jsonl.
     "ai_position_shadow_enabled":      True,
     "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
-    "ai_watch_min_price":               1.0,  # no sub-$1 names
+    "ai_watch_min_price":               2.0,  # no sub-$2 names
     "ai_watch_admit_ticks":               1,  # consecutive qualifying polls to admit
     # ── Real-time tape pre-filter ───────────────────────────────────────────
     # The Finnhub WebSocket price (via the dashboard's ticker rows) is used to
