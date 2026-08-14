@@ -2195,66 +2195,14 @@ def header_panel(feed: Feed, now: float, hz: float,
                  subtitle=readout, subtitle_align="right")
 
 
-def _fetch_open_orders() -> list[dict]:
-    """Open Alpaca orders as simple dicts. Empty list when off / error."""
-    try:
-        import alpaca_trader
-        if not alpaca_trader.is_active():
-            return []
-        client = getattr(alpaca_trader, "_client", None)
-        if client is None:
-            return []
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-            from alpaca.trading.enums import QueryOrderStatus
-            raw = client.get_orders(
-                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=50))
-        except Exception:
-            raw = client.get_orders() or []
-            raw = [o for o in raw
-                   if str(getattr(o, "status", "")).lower()
-                   in ("new", "accepted", "pending_new", "partially_filled",
-                       "orderstatus.accepted", "orderstatus.new")]
-        out = []
-        seen: set[tuple] = set()
-        for o in raw or []:
-            try:
-                row = {
-                    "symbol": str(getattr(o, "symbol", "") or "").upper(),
-                    "side": str(getattr(o, "side", "") or "").split(".")[-1].lower(),
-                    "qty": float(getattr(o, "qty", 0) or 0),
-                    "filled": float(getattr(o, "filled_qty", 0) or 0),
-                    "type": str(getattr(o, "type", "") or "").split(".")[-1].lower(),
-                    "status": str(getattr(o, "status", "") or "").split(".")[-1].lower(),
-                    "limit": float(getattr(o, "limit_price", 0) or 0) or None,
-                }
-                key = (row["symbol"], row["side"], row["qty"], row["limit"],
-                       row["status"])
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(row)
-            except Exception:
-                continue
-        return out
-    except Exception:
-        return []
-
-
 def positions_panel(positions: dict | None,
                     focus: str | None = None,
                     *,
-                    open_orders: list[dict] | None = None,
                     mode: str = "paper",
                     error: str = "",
                     label: str = "POSITIONS") -> Panel:
-    """Live P&L for open Alpaca positions + resting open orders.
-
-    Claude paper buys often sit as ACCEPTED limits when the market is closed —
-    those are not positions yet, so we show them under OPEN ORDERS.
-    """
+    """Live P&L for open Alpaca positions. Resting orders stay off this panel."""
     positions = positions or {}
-    open_orders = open_orders or []
     total_pl = sum(float(p.get("pl") or 0) for p in positions.values())
     tcol = ("green" if total_pl >= 0 else "red") if positions else "yellow"
     mode_tag = "PAPER" if str(mode).lower() == "paper" else str(mode).upper()
@@ -2288,50 +2236,11 @@ def positions_panel(positions: dict | None,
         body.add_row("[dim]—[/dim]", "[dim]flat[/dim]",
                      "", "", "", "", "")
 
-    # Resting orders (accepted limits waiting for fill)
-    orders_table = None
-    if open_orders:
-        orders_table = Table(expand=False, box=None, padding=(0, 1))
-        orders_table.add_column("Side", justify="right")
-        orders_table.add_column("Symbol", style="bold")
-        orders_table.add_column("Qty", justify="right")
-        orders_table.add_column("Type")
-        orders_table.add_column("Limit", justify="right")
-        orders_table.add_column("Status")
-        for o in open_orders:
-            side = (o.get("side") or "").upper()
-            sc = "green" if side == "BUY" else "red"
-            lim = o.get("limit")
-            lim_s = f"${lim:.2f}" if lim else "—"
-            orders_table.add_row(
-                f"[{sc}]{side or '—'}[/{sc}]",
-                str(o.get("symbol") or "—"),
-                f"{float(o.get('qty') or 0):g}",
-                str(o.get("type") or "—"),
-                lim_s,
-                str(o.get("status") or "—"),
-            )
-
-    if error:
-        content = Text.from_markup(f"[dim]{error}[/dim]")
-    elif orders_table is not None:
-        content = _VStack([
-            body,
-            Text(""),
-            Text.from_markup(
-                "[bold]OPEN ORDERS[/bold]  [dim](not filled yet)[/dim]"
-            ),
-            orders_table,
-        ])
-    else:
-        content = body
-
+    content = Text.from_markup(f"[dim]{error}[/dim]") if error else body
     n_pos = len(positions)
-    n_ord = len(open_orders)
     pl_s = (f"  total P&L [{tcol}]{'+' if total_pl >= 0 else ''}"
             f"${total_pl:,.2f}[/{tcol}]" if n_pos else "")
-    ord_s = f"  ·  {n_ord} resting" if n_ord else ""
-    title = f"{mode_tag} {label} ({n_pos}){pl_s}{ord_s}"
+    title = f"{mode_tag} {label} ({n_pos}){pl_s}"
     return Panel(content, title=title, title_align="left",
                  border_style=tcol if n_pos else "yellow", padding=(0, 1))
 
@@ -2537,7 +2446,6 @@ def main():
     # Cached Alpaca holdings — refreshed on a slower clock than the 2s UI loop.
     _pos_cache: dict = {
         "positions": {},
-        "orders": [],
         "error": "",
         "last": 0.0,
         "mode": pos_mode,
@@ -2553,12 +2461,10 @@ def main():
         try:
             detail = desk.positions_detail()
             _pos_cache["positions"] = detail if isinstance(detail, dict) else {}
-            _pos_cache["orders"] = _fetch_open_orders()
             _pos_cache["error"] = ""
         except Exception as e:  # noqa: BLE001
             _pos_cache["error"] = str(e)[:80]
             _pos_cache["positions"] = {}
-            _pos_cache["orders"] = []
 
     with Live(console=console, refresh_per_second=2, screen=False) as live:
         while True:
@@ -2838,11 +2744,10 @@ def main():
             claude_pos = ((state or {}).get("ai_positions")
                           or (state or {}).get("claude_positions")
                           or {})
-            if claude_pos.get("positions") or claude_pos.get("open_orders"):
+            if claude_pos.get("positions"):
                 panels.append(positions_panel(
                     claude_pos.get("positions"),
                     hotkeys.focus_symbol(),
-                    open_orders=claude_pos.get("open_orders"),
                     mode=claude_pos.get("mode", "paper"),
                     error=claude_pos.get("error", ""),
                     label="AI POSITIONS",
@@ -2851,7 +2756,6 @@ def main():
                 panels.append(positions_panel(
                     _pos_cache["positions"],
                     hotkeys.focus_symbol(),
-                    open_orders=_pos_cache["orders"],
                     mode=_pos_cache["mode"],
                     error=_pos_cache["error"],
                     label="DESK POSITIONS",
