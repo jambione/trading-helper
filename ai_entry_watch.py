@@ -124,6 +124,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
     "already_extended": "extended",
+    "overbought_hot": "OB hot",
     "dead_reentry": "dead once",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
@@ -3447,6 +3448,31 @@ def left_overbought_exit_enabled(cfg: dict) -> bool:
     return edge_mode(cfg) == "exhaustion_scalp"
 
 
+def _hot_ob_source(record: dict) -> bool:
+    """True when this name is desk-hot (trending / momentum), not a research sit.
+
+    Already-overbought arms are allowed on these sources so a running name
+    can still fill in or below the zone. Research / unknown stay on the
+    90-cap (08-13 HCTI/BYSI were cheap spikes, not this path).
+    """
+    src = str((record or {}).get("source") or "").strip().lower()
+    if src in ("trending", "stocktwits", "st", "momentum", "mom", "mom_open"):
+        return True
+    look = str(
+        (record or {}).get("admit_look_reason")
+        or (record or {}).get("look_reason")
+        or ""
+    ).strip().upper()
+    if look == "EXT":
+        return True
+    crit = (record or {}).get("criteria") or (record or {}).get("admit_criteria") or []
+    if isinstance(crit, (list, tuple)) and any(
+        str(c).lower() in ("ext", "trending", "momentum") for c in crit
+    ):
+        return True
+    return False
+
+
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
@@ -3456,6 +3482,11 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     past 50 EXH" but not already in the 90–100 fade bucket. Cooling/flat
     refuse — including overbought that has rolled over. Local trail locks
     the pop; we do not chase names already pinned at the highs.
+
+    Exception: trending / momentum names that are *already overbought* may
+    still arm (``overbought_hot``), including through the 90 cap. Zone
+    geometry still refuses *above* the band; in-zone and below-zone (to
+    the stop) can fill.
 
     A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
@@ -3468,6 +3499,13 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
             return True, "no_exhaustion_fallback"
         return False, "no_exhaustion_data"
+    hot_ob = (
+        state == "overbought"
+        and bool(cfg.get("ai_watch_ob_allow_hot", True))
+        and _hot_ob_source(record)
+    )
+    if hot_ob:
+        return True, "overbought_hot"
     ex = exhaustion_pct(record)
     try:
         heat_min = float(cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0) or 50.0)

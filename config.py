@@ -456,6 +456,9 @@ DEFAULT_CONFIG = {
     # print: 90–100 bucket −1.1% / 30m; HCTI/BYSI/CRMD were already there.
     # 0 disables the cap.
     "ai_watch_exhaustion_heat_max_pct": 90.0,
+    # Trending / momentum names already in the overbought band may still arm
+    # (in or below the zone). Research stays on the 90-cap.
+    "ai_watch_ob_allow_hot":          True,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
     # giving it no replacement would leave it worse off than before. Never flip
@@ -874,6 +877,7 @@ _EFFECTIVE_KEYS = (
     "ai_heal_unprotected",
     "ai_local_trail_enabled",
     "ai_watch_exhaustion_heat_max_pct",
+    "ai_watch_ob_allow_hot",
     "ai_trading_source",
     "ai_trade_style",
     "ai_watch_zone_mode",
@@ -1049,6 +1053,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_heat_max_pct",
+    "ai_watch_ob_allow_hot",
     "ai_watch_exhaustion_fallback",
     "ai_watch_require_exhaustion_data",
     "ai_watch_exhaustion_max_window_mult",

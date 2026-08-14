@@ -2754,6 +2754,40 @@ def test_cheap_pullback_band_overbought_is_refused():
     assert ok2 and why2.startswith("zone")
 
 
+def test_hot_overbought_arms_in_and_below_zone_not_above():
+    """Trending/momentum already in OB: fill the dip, do not chase the high."""
+    import ai_entry_watch as ew
+
+    rec = _armable_record({
+        "decision": "WAIT", "wait_kind": "wait_for_zone",
+        "entry_low": 11.184, "entry_high": 11.229, "stop_price": 10.646,
+        "target_1": 11.55, "reward_risk": 0.6,
+        "zone_kind": "pullback_band", "synthetic": True,
+    })
+    rec["source"] = "momentum"
+    rec["indicator"] = {
+        "pctr": -3.72, "pctr_rising": False, "pctr_falling": True,
+    }
+    cfg = _db_cfg(
+        ai_watch_exhaustion_rules=True,
+        ai_watch_ob_allow_hot=True,
+        ai_watch_arm_below_zone=True,
+        ai_watch_arm_below_zone_max_r=1.0,
+        ai_watch_min_stop_pct=0,
+        ai_min_reward_risk=0.5,
+        ai_watch_cheap_price=5.0,
+    )
+    # In the band.
+    ok, why = ew.should_arm_buy(rec, ask=11.20, bid=11.19, cfg=cfg)
+    assert ok and why == "zone_overbought_hot"
+    # Below the band, still above the stop (armable dip).
+    ok, why = ew.should_arm_buy(rec, ask=10.90, bid=10.89, cfg=cfg)
+    assert ok and why == "zone_overbought_hot"
+    # Above the band — NMAX 11.32 vs 11.229 — still refuse.
+    ok, why = ew.should_arm_buy(rec, ask=11.32, bid=11.31, cfg=cfg)
+    assert (ok, why) == (False, "above_zone")
+
+
 def test_min_stop_pct_of_zero_disables_the_check():
     import ai_entry_watch as ew
 
@@ -3064,6 +3098,20 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     }
     ok, why = ew.exhaustion_allows_buy(too_hot, cfg)
     assert ok is False and why == "already_extended"
+
+    # Desk-hot (trending / momentum) already in OB may still arm.
+    hot_tr = dict(too_hot, source="trending")
+    ok, why = ew.exhaustion_allows_buy(hot_tr, cfg)
+    assert ok is True and why == "overbought_hot"
+    hot_mom = {
+        "symbol": "NMAX",
+        "source": "momentum",
+        "indicator": {
+            "pctr": -3.72, "pctr_rising": False, "pctr_falling": True,
+        },
+    }
+    ok, why = ew.exhaustion_allows_buy(hot_mom, cfg)
+    assert ok is True and why == "overbought_hot"
 
     # Overbought but fading — do not buy the roll-over.
     cool = {
