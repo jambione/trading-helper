@@ -2356,12 +2356,12 @@ def test_local_profit_stop_uses_wide_give_at_open():
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_tighten_mfe_r": 0.25,
     }
-    # last − 0.20R = 10.00 − 0.04 = 9.96
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.96)
+    # Open RSTOP is the fill, not last − 0.20R (9.96).
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
     pos["last_seen_price"] = 10.02
     pos["mfe_r"] = 0.10
-    # first green still 0.20R: last − 0.04 = 9.98
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.98)
+    # first green still 0.20R under last, floored at entry
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.00)
     pos["last_seen_price"] = 10.06
     pos["mfe_r"] = 0.30
     # past +0.25R: last − 0.10R = 10.04
@@ -2381,11 +2381,9 @@ def test_local_profit_stop_trails_last_immediately_when_arm_r_zero():
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_tighten_mfe_r": 0.25,
     }
-    # +0.038R still on 0.20R; last − 0.106 = 19.324
+    # last − 0.20R is 19.324; open floor is entry 19.41
     want = cp.local_profit_stop(pos, cfg)
-    assert want is not None
-    assert want > 18.88
-    assert want == pytest.approx(19.43 - 0.20 * 0.53, abs=0.01)
+    assert want == pytest.approx(19.41)
 
 
 def test_local_profit_stop_holds_plan_stop_until_arm_r():
@@ -2400,6 +2398,7 @@ def test_local_profit_stop_holds_plan_stop_until_arm_r():
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_give_open_r": 0.20,
     }
+    # Unarmed: hold current shelf or entry, not a drop to plan.
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.80)
     pos["last_seen_price"] = 10.06
     pos["mfe_r"] = 0.30
@@ -2424,8 +2423,8 @@ def test_local_profit_stop_tracks_last_minus_give():
         "risk_per_share": 0.26, "last_seen_price": 8.50,
     }
     cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20}
-    # last 8.50 − 0.2R (0.052) = 8.448, still above the 8.38 floor.
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.448)
+    # Underwater: RSTOP is entry, not last − give.
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.64)
     pos["last_seen_price"] = 8.80
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.748)
 

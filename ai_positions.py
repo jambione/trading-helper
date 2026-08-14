@@ -1455,7 +1455,9 @@ def place_scaled_entry(
         "risk_per_share": max(0.0, sizing_entry - stop_price),
         # Disaster floor — never overwritten when stop_price ratchets.
         "entry_stop_price": stop_price,
-        "local_stop_price": stop_price,
+        # Working RSTOP starts at the fill. Plan stop is the disaster
+        # floor only; we do not sit $1R under last on an open book.
+        "local_stop_price": sizing_entry,
         "target_1": target_1,
         "trail_pct": trail_pct,
         "runner_trail_r": runner_trail_r,
@@ -2067,24 +2069,22 @@ def local_trail_give(
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
     """Trail just under *last*: rises as price grows, never lowers.
 
-    ``local_stop = max(prev, last − give, original floor)``.
-    Give is ``give_open_r`` until MFE > ``tighten_mfe_r``, then ``give_r``.
-    ``ai_local_trail_give_px`` > 0 still wins as a fixed dollar.
-    Default ``arm_r`` is 0: trail from the first tick so a green print
-    is not given back to the plan stop. A positive ``arm_r`` still holds
-    the plan floor until MFE proves (legacy scratch guard).
+    ``local_stop = max(prev, last − give, entry)``.
+    Open shelf is the fill. Give is ``give_open_r`` until MFE >
+    ``tighten_mfe_r``, then ``give_r``. Plan stop is not the working
+    RSTOP. ``ai_local_trail_give_px`` > 0 still wins as a fixed dollar.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_local_trail_enabled", True)):
         return None
     last = _num(pos.get("last_seen_price"))
     risk = _risk_basis(pos)
-    floor = _orig_stop(pos)
+    entry = _num(pos.get("entry_price"))
+    floor = entry if entry and entry > 0 else _orig_stop(pos)
     prev = _num(pos.get("local_stop_price"))
     if last is None or last <= 0:
         return prev or floor
     mfe = _num(pos.get("mfe_r"))
-    entry = _num(pos.get("entry_price"))
     if last is not None and entry and risk and risk > 0:
         from_last = max(0.0, (float(last) - float(entry)) / float(risk))
         mfe = max(float(mfe or 0.0), from_last)
@@ -2095,7 +2095,6 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     except (TypeError, ValueError):
         arm_need = 0.0
     if arm_need > 0 and float(mfe) + 1e-9 < arm_need:
-        # Optional: plan stop only until MFE proves.
         return prev or floor
     give = local_trail_give(last, risk, cfg, mfe_r=mfe)
     want = float(last) - give
