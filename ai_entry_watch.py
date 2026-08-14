@@ -3488,9 +3488,10 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     the pop; we do not chase names already pinned at the highs.
 
     Exception: trending / momentum names that are *already overbought* may
-    still arm (``overbought_hot``), including through the 90 cap. Zone
-    geometry still refuses *above* the band; in-zone and below-zone (to
-    the stop) can fill.
+    still arm (``overbought_hot``) through the 90 cap **if %R is still
+    rising**. A falling OB (FGI 08-14) is a fade, not a dip: refuse
+    ``not_rising_overbought``. Zone geometry still refuses *above* the
+    band; in-zone and below-zone (to the stop) can fill.
 
     A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
@@ -3509,6 +3510,9 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         and _hot_ob_source(record)
     )
     if hot_ob:
+        ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+        if ind.get("pctr_falling") or not ind.get("pctr_rising"):
+            return False, "not_rising_overbought"
         return True, "overbought_hot"
     ex = exhaustion_pct(record)
     try:

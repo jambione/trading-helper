@@ -2770,7 +2770,7 @@ def test_hot_overbought_arms_in_and_below_zone_not_above():
     })
     rec["source"] = "momentum"
     rec["indicator"] = {
-        "pctr": -3.72, "pctr_rising": False, "pctr_falling": True,
+        "pctr": -3.72, "pctr_rising": True, "pctr_falling": False,
     }
     cfg = _db_cfg(
         ai_watch_exhaustion_rules=True,
@@ -3107,15 +3107,16 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     hot_tr = dict(too_hot, source="trending")
     ok, why = ew.exhaustion_allows_buy(hot_tr, cfg)
     assert ok is True and why == "overbought_hot"
-    hot_mom = {
-        "symbol": "NMAX",
+    # Falling OB — FGI 08-14. Hot source does not waive a rollover.
+    hot_fade = {
+        "symbol": "FGI",
         "source": "momentum",
         "indicator": {
-            "pctr": -3.72, "pctr_rising": False, "pctr_falling": True,
+            "pctr": -0.0, "pctr_rising": False, "pctr_falling": True,
         },
     }
-    ok, why = ew.exhaustion_allows_buy(hot_mom, cfg)
-    assert ok is True and why == "overbought_hot"
+    ok, why = ew.exhaustion_allows_buy(hot_fade, cfg)
+    assert ok is False and why == "not_rising_overbought"
     hot_bro = dict(too_hot, source="bb_live")
     ok, why = ew.exhaustion_allows_buy(hot_bro, cfg)
     assert ok is True and why == "overbought_hot"
