@@ -1402,6 +1402,11 @@ def test_entry_limit_is_marketable_but_capped_at_the_zone_top(monkeypatch):
     px = cp._entry_limit_price(current_ask=19.44, entry_high=18.66, entry_low=19.44)
     assert px == 19.44
 
+    # Desk click: bid last + pad even if that is above the zone.
+    px = cp._entry_limit_price(
+        current_ask=1.90, entry_high=1.82, entry_low=1.79, cap_at_zone=False)
+    assert px == 1.90
+
 
 def test_market_style_and_missing_quote_fall_back_to_market(monkeypatch):
     _lim_cfg(monkeypatch, ai_entry_order_style="market")

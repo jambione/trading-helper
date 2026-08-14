@@ -962,6 +962,8 @@ def _entry_limit_price(
     current_ask: float | None,
     entry_high: float,
     entry_low: float,
+    *,
+    cap_at_zone: bool = True,
 ) -> float | None:
     """Marketable limit for the entry, capped at the zone top. None = market.
 
@@ -973,7 +975,7 @@ def _entry_limit_price(
 
     Pad makes it marketable so it still fills in a normal book; the zone cap
     makes "we only ever fill inside the entry zone" structurally true rather
-    than best-effort.
+    than best-effort. Desk clicks skip the cap — the click is a chase.
     """
     cfg = _entry_cfg()
     if str(cfg.get("ai_entry_order_style", "limit")).lower().strip() != "limit":
@@ -990,7 +992,7 @@ def _entry_limit_price(
         pad = 0.0015
     top = max(float(entry_high or 0), float(entry_low or 0))
     px = ask * (1.0 + pad)
-    if top > 0:
+    if cap_at_zone and top > 0:
         px = min(px, top)
     px = round(px, 2)
     return px if px > 0 else None
@@ -1343,7 +1345,8 @@ def place_scaled_entry(
         qty_a = int(total_qty)
         qty_b = 0
 
-    entry_limit = _entry_limit_price(current_ask, entry_high, entry_low)
+    entry_limit = _entry_limit_price(
+        current_ask, entry_high, entry_low, cap_at_zone=not skip_zone)
     broker_target = bool(cfg.get("ai_entry_broker_target", False))
     # Dual: stop-only parent; partial T1 after fill. Single: optional full TP.
     place_target = None if logical_dual else (target_1 if broker_target else None)
