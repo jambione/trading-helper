@@ -901,19 +901,31 @@ def book_table_rows(
                 except (TypeError, ValueError):
                     stop = None
                 if lo > 0 and hi > 0:
-                    if ask_triggers_zone(
-                        px, lo, hi, stop=stop,
-                        max_below_r=DEFAULT_ARM_BELOW_MAX_R, arm_below=True,
-                    ):
-                        r["blocker"] = format_blocker("in_zone")
-                        r["block_code"] = "in_zone"
-                        r["in_zone"] = True
-                        r["ready"] = True
-                    elif px > max(lo, hi):
+                    # Geometry only. Do not paint "in zone" for a dip under
+                    # the band, and do not hide heat/extended/loser stamps
+                    # the poller already set — that is why the book looked
+                    # armed while nothing bought.
+                    stored = str(r.get("block_code") or "").strip()
+                    keep = stored and stored not in (
+                        "in_zone", "above_zone", "below_zone", "placing",
+                    )
+                    if px > max(lo, hi):
                         r["blocker"] = format_blocker("above_zone")
                         r["block_code"] = "above_zone"
                         r["in_zone"] = False
                         r["ready"] = False
+                    elif ask_in_zone(px, lo, hi, 0.0):
+                        r["in_zone"] = True
+                        if keep:
+                            r["ready"] = False
+                            r["blocker"] = (
+                                r.get("blocker") or format_blocker(stored)
+                            )
+                            r["block_code"] = stored
+                        else:
+                            r["blocker"] = format_blocker("in_zone")
+                            r["block_code"] = "in_zone"
+                            r["ready"] = True
                     else:
                         r["blocker"] = format_blocker("below_zone")
                         r["block_code"] = "below_zone"

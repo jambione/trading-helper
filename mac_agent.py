@@ -820,7 +820,7 @@ def _alert_listener():
                     _fire_desk_event(
                         "buy_zone",
                         sym,
-                        title=f"📈 BUY zone  {sym}",
+                        title=f"📈 Momentum BUY  {sym}",
                         body=f"{price_bit}click to focus + load TV",
                         subtitle="",
                         meta={

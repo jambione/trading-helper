@@ -597,6 +597,42 @@ def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
     assert by["SMCI"]["trail_give_r"] == pytest.approx(0.20)
 
 
+def test_book_does_not_paint_below_band_or_heat_as_in_zone(tmp_path, monkeypatch):
+    """BLOCKER must name the real refuse, not 'in zone' for a dip / 100 EXH."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    monkeypatch.setattr(ew, "live_panel_universe", lambda cfg=None: {"CELC", "RUM"})
+    monkeypatch.setattr(ew, "stream_quote", lambda sym: (
+        (91.82, 0.1) if sym == "CELC" else (7.59, 0.1)))
+    ew.save_watch({
+        "CELC": {
+            "symbol": "CELC", "status": "watching", "source": "momentum",
+            "last_ask": 91.82, "block_code": "already_extended",
+            "block_reason": "extended",
+            "structure": {
+                "entry_low": 103.4, "entry_high": 104.6, "stop_price": 99.0,
+            },
+        },
+        "RUM": {
+            "symbol": "RUM", "status": "watching", "source": "xai",
+            "last_ask": 7.59, "block_code": "heating_too_low",
+            "block_reason": "heat low",
+            "structure": {
+                "entry_low": 7.53, "entry_high": 7.64, "stop_price": 7.20,
+            },
+        },
+    })
+    by = {r["symbol"]: r for r in ew.book_table_rows()}
+    assert by["CELC"]["block_code"] == "below_zone"
+    assert by["CELC"]["in_zone"] is False
+    assert by["CELC"]["ready"] is False
+    assert by["RUM"]["block_code"] == "heating_too_low"
+    assert by["RUM"]["in_zone"] is True
+    assert by["RUM"]["ready"] is False
+    assert "heat" in str(by["RUM"]["blocker"]).lower()
+
+
 def test_book_rstop_not_previewed_on_watches(tmp_path, monkeypatch):
     """RStop must not trail last on a watch — that shelf sits above the zone."""
     import ai_entry_watch as ew

@@ -426,7 +426,7 @@ function _check(rows) {
       _notify(row, 'buy');
       _handleEvent('buy_zone', {
         symbol: row.ticker,
-        title: `BUY zone  ${row.ticker}`,
+        title: `Momentum BUY  ${row.ticker}`,
         sub: [
           row.price != null ? `$${row.price.toFixed(2)}`    : '',
           sp.cm_rsi != null ? `RSI ${sp.cm_rsi.toFixed(0)}` : '',
@@ -471,7 +471,7 @@ function _notify(row, type = 'buy') {
   if (!_enabled) return;
   try {
     const sp = row.signal_proximity || {};
-    const n = new Notification(`BUY zone  ${row.ticker}`, {
+    const n = new Notification(`Momentum BUY  ${row.ticker}`, {
       body: [
         row.price  != null ? `$${row.price.toFixed(2)}`      : '',
         sp.pctr    != null ? `%R ${sp.pctr.toFixed(0)}`      : '',
