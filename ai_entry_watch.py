@@ -695,7 +695,11 @@ def _stamp_display_trail(rows: list) -> None:
     for r in rows:
         if not isinstance(r, dict):
             continue
-        is_open = bool(r.get("is_position") or str(r.get("phase") or "") == "open")
+        phase = str(r.get("phase") or r.get("status") or "").lower()
+        is_open = bool(
+            r.get("is_position")
+            or phase in ("open", "submitted", "filled")
+        )
         if not is_open:
             r["local_stop"] = None
             continue

@@ -330,12 +330,14 @@ function _bookRows(book) {
     }
     // RStop is the live shelf on an OPEN long only. Watches must not show
     // last − give (that sits above the zone and looks like an exit).
-    const isOpen = !!(r.is_position || r.phase === 'open');
+    const isOpen = !!(r.is_position || r.phase === 'open' || r.phase === 'submitted'
+      || r.status === 'filled' || r.status === 'submitted');
     if (!isOpen) {
       r.local_stop = null;
+      const sk = String(r.symbol || '').toUpperCase();
+      if (sk) delete _rstopHigh[sk];
     }
-    // Open longs: keep the engine shelf. Recomputing last − give here
-    // makes RSTOP fall when PRICE dips (UMAC).
+    // Open longs: keep the engine shelf. Do not recompute last − give.
   }
   return Object.values(by);
 }
@@ -808,12 +810,26 @@ function _bookRowHtml(r, owner) {
     + `</div></div>`;
 }
 
+const _rstopHigh = Object.create(null);
+
 function _bookStopPx(r) {
   if (!r) return null;
+  const sym = String(r.symbol || '').toUpperCase();
+  const open = !!(r.is_position || r.phase === 'open' || r.phase === 'submitted'
+    || r.status === 'filled' || r.status === 'submitted');
+  if (!open) {
+    if (sym) delete _rstopHigh[sym];
+    return null;
+  }
   const a = r.local_stop != null ? Number(r.local_stop) : NaN;
-  if (Number.isFinite(a) && a > 0) return a;
-  const b = r.stop_price != null ? Number(r.stop_price) : NaN;
-  return Number.isFinite(b) && b > 0 ? b : null;
+  const live = Number.isFinite(a) && a > 0 ? a : null;
+  const prev = _rstopHigh[sym];
+  if (live != null) {
+    const v = (prev != null && live < prev) ? prev : live;
+    _rstopHigh[sym] = v;
+    return v;
+  }
+  return prev != null ? prev : null;
 }
 
 function _fmtTrail(v) {
