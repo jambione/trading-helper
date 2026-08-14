@@ -3426,7 +3426,8 @@ def _hot_ob_source(record: dict) -> bool:
 
     Already-overbought arms are allowed on these sources so a running name
     can still fill in or below the zone. Research / unknown stay on the
-    90-cap (08-13 HCTI/BYSI were cheap spikes, not this path).
+    90-cap. Cheap pullback/offset bands are refused separately
+    (``cheap_ob_band``) even on this path — HCTI/BYSI were momentum.
     """
     src = str((record or {}).get("source") or "").strip().lower()
     if src in (
@@ -5246,8 +5247,10 @@ def should_arm_buy(
         else:
             return False, exh_why
 
-    # Cheap pullback-band + overbought is the HCTI/BYSI dump: 20% of
-    # equity in a $2 spike. Real shelves under $5 can still arm.
+    # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
+    # 20% of equity, then −1R in under a minute. Hot-OB used to punch
+    # through this (momentum HCTI 08-13). A real double-bottom under $5
+    # can still arm. Heating (not yet OB) cheap pullbacks can too.
     try:
         cheap_px = float(cfg.get("ai_watch_cheap_price", 5.0) or 0.0)
     except (TypeError, ValueError):
@@ -5258,10 +5261,6 @@ def should_arm_buy(
         and a < cheap_px
         and zk in ("pullback_band", "offset", "")
         and is_overbought(record, cfg) is True
-        and not (
-            bool(cfg.get("ai_watch_ob_allow_hot", True))
-            and _hot_ob_source(record)
-        )
     ):
         return False, "cheap_ob_band"
 

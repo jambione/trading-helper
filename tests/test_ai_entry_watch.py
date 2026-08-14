@@ -2808,10 +2808,20 @@ def test_cheap_pullback_band_overbought_is_refused():
     rec["structure"]["zone_kind"] = "double_bottom"
     ok2, why2 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
     assert ok2 and why2.startswith("zone")
+    # Momentum / bb_live used to punch through as overbought_hot (HCTI).
     rec["structure"]["zone_kind"] = "pullback_band"
-    rec["source"] = "bb_live"
+    rec["source"] = "momentum"
     ok3, why3 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
-    assert ok3 and why3 == "zone_overbought_hot"
+    assert (ok3, why3) == (False, "cheap_ob_band")
+    rec["source"] = "bb_live"
+    ok4, why4 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
+    assert (ok4, why4) == (False, "cheap_ob_band")
+    # Heating (not yet OB) cheap pullback still arms — LFS-style.
+    rec["indicator"]["pctr"] = -40.0
+    rec["indicator"]["pctr_rising"] = True
+    rec["source"] = "momentum"
+    ok5, why5 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
+    assert ok5 and why5.startswith("zone")
 
 
 def test_hot_overbought_arms_in_and_below_zone_not_above():
