@@ -3270,6 +3270,35 @@ async def api_ai_positions():
     return JSONResponse(load_ai_positions())
 
 
+@app.post("/api/ai/desk-click")
+async def api_ai_desk_click(request: Request):
+    """Book click: flatten an open name, otherwise force a buy."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ticker = str((body or {}).get("ticker") or (body or {}).get("symbol") or "").strip().upper()
+    if not ticker:
+        return JSONResponse({"ok": False, "error": "ticker required"}, status_code=400)
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        import ai_positions as cp
+        return cp.desk_click(ticker)
+
+    try:
+        out = await loop.run_in_executor(None, _run)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            {"ok": False, "error": str(e)[:200], "ticker": ticker},
+            status_code=500,
+        )
+    if not isinstance(out, dict):
+        return JSONResponse({"ok": False, "error": "desk_click failed", "ticker": ticker}, status_code=500)
+    status = 200 if out.get("ok") else 400
+    return JSONResponse(out, status_code=status)
+
+
 @app.get("/api/claude/positions")
 async def api_claude_positions():
     """Legacy alias for /api/ai/positions."""

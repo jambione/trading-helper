@@ -996,6 +996,112 @@ def _entry_limit_price(
     return px if px > 0 else None
 
 
+def desk_click(symbol: str) -> dict[str, Any]:
+    """Operator click on the book: flatten if long, else force a buy.
+
+    Bypasses the arm/exhaustion gates. Uses the watch structure when it
+    exists; otherwise a synth band under the last print. Zone membership
+    is not a veto — the click is the decision.
+    """
+    import alpaca_trader
+    import ai_trading as gt
+    import ai_entry_watch as ew
+
+    sym = str(symbol or "").upper().strip()
+    if not sym or not sym.replace(".", "").isalnum() or len(sym) > 8:
+        return {"ok": False, "error": "invalid symbol", "action": None}
+
+    if gt.has_open_position(sym):
+        try:
+            out = alpaca_trader.close_out(sym) or {}
+        except Exception as e:  # noqa: BLE001
+            log_event("desk_flatten_fail", symbol=sym, reason=str(e)[:200])
+            return {"ok": False, "action": "flatten", "error": str(e)[:200]}
+        log_event("desk_flatten", symbol=sym, source="book_click")
+        ok = bool(out.get("ok", True))
+        return {
+            "ok": ok,
+            "action": "flatten",
+            "symbol": sym,
+            "error": None if ok else str(out.get("error") or out.get("note") or "flatten failed")[:200],
+        }
+
+    if not alpaca_trader.market_is_open():
+        return {"ok": False, "action": "buy", "error": "market is closed"}
+
+    rec = (ew.load_watch() or {}).get(sym) or {
+        "symbol": sym, "status": "watching", "source": "desk",
+    }
+    cfg = _entry_cfg()
+    px, _src, _age = ew.decision_price(sym, cfg)
+    try:
+        ask = float(px or rec.get("last_ask") or 0)
+    except (TypeError, ValueError):
+        ask = 0.0
+    if ask <= 0:
+        return {"ok": False, "action": "buy", "error": "no quote"}
+
+    structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+    if not ew._structure_usable(structure):
+        try:
+            sev = ew.ensure_offset_zone_if_needed(rec, ask, cfg, time.time())
+            if sev:
+                log_event("desk_synth_zone", symbol=sym, **{
+                    k: sev.get(k) for k in ("entry_low", "entry_high", "reason")
+                    if k in sev
+                })
+        except Exception:
+            pass
+        structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
+    if not ew._structure_usable(structure):
+        return {"ok": False, "action": "buy", "error": "no structure"}
+
+    decision = ew._decision_for_place(structure, ask=ask, cfg=cfg)
+    decision["entry_path"] = "desk_click"
+    decision["desk_force"] = True
+    decision["source"] = rec.get("duel_source") or rec.get("source") or "desk"
+
+    try:
+        acct = gt.get_account() or {}
+        equity = float(acct.get("equity") or acct.get("portfolio_value") or 0)
+    except Exception:
+        equity = 0.0
+    if equity <= 0:
+        equity = 10_000.0
+    try:
+        risk_pct = float(cfg.get("ai_risk_pct", DEFAULT_RISK_PCT) or DEFAULT_RISK_PCT)
+    except (TypeError, ValueError):
+        risk_pct = DEFAULT_RISK_PCT
+
+    result = place_scaled_entry(
+        sym, decision, equity,
+        risk_pct=risk_pct,
+        current_ask=ask,
+        duel_source=str(decision.get("source") or "") or None,
+    )
+    if isinstance(result, dict) and result.get("ok"):
+        log_event("desk_buy", symbol=sym, source="book_click",
+                  stop=result.get("stop_price"), ask=ask)
+        try:
+            gt.record_external_buy(sym, {
+                "reason": "desk_click",
+                "stop_price": result.get("stop_price"),
+                "target_1": result.get("target_1"),
+                "source": "desk_click",
+            })
+        except Exception:
+            pass
+        return {
+            "ok": True, "action": "buy", "symbol": sym,
+            "stop_price": result.get("stop_price"),
+            "qty": result.get("qty") or result.get("parent_qty"),
+        }
+    err = ""
+    if isinstance(result, dict):
+        err = str(result.get("error") or result.get("note") or "place failed")[:200]
+    return {"ok": False, "action": "buy", "symbol": sym, "error": err or "place failed"}
+
+
 def place_scaled_entry(
     ticker: str,
     decision: dict[str, Any],
@@ -1052,7 +1158,8 @@ def place_scaled_entry(
     # (through the floor toward the stop). Strict [low, high] used to reject
     # the fill a tick after the arm gate had already accepted the dip.
     cfg_zone = _entry_cfg()
-    if current_ask is not None:
+    skip_zone = bool(decision.get("desk_force") or decision.get("skip_zone"))
+    if current_ask is not None and not skip_zone:
         try:
             from ai_entry_watch import ask_triggers_zone, arm_below_max_r
             zone_ok = ask_triggers_zone(

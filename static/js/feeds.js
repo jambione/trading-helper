@@ -2,13 +2,13 @@
  * feeds.js — Trending (Stocktwits) and AI research panels
  *
  * Both render the same market columns — AI rows carry a thesis line and
- * optional source mark (A/X/AX). Click a row (not the symbol) to add it to
- * the watchlist. Click the symbol name to copy the ticker.
+ * optional source mark (A/X/AX). Book row click buys, or flattens when
+ * the blocker is open. Click the symbol name to copy the ticker.
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
 import { subscribe, get } from './store.js?v=107';
-import { api }       from './api.js?v=107';
+import { api }       from './api.js?v=120';
 import { copyTicker } from './tickers.js?v=112';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=107';
 
@@ -620,7 +620,7 @@ function _createBookRow(r, owner) {
   wrap.innerHTML = _bookRowHtml(r, owner).trim();
   const el = /** @type {HTMLElement} */ (wrap.firstElementChild);
   const sym = String((r && r.symbol) || '').toUpperCase();
-  el.addEventListener('click', () => _add(el, sym));
+  el.addEventListener('click', () => _deskClick(el, r));
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
     tickerCell.title = `Copy ${sym}`;
@@ -667,7 +667,12 @@ function _updateBookRow(el, r, owner) {
   const statusLabel = _bookBlockerLabel(r);
   const statusEl = el.querySelector('.ai-book-status');
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
-  if (statusEl) statusEl.className = _bookBlockerClass(r);
+  if (statusEl) {
+    statusEl.className = _bookBlockerClass(r);
+    statusEl.title = (phase === 'open' || r.is_position)
+      ? `Flatten ${String(r.symbol || '').toUpperCase()}`
+      : `Buy ${String(r.symbol || '').toUpperCase()}`;
+  }
   const trail = _fmtTrail(_bookStopPx(r));
   const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
@@ -800,7 +805,7 @@ function _bookRowHtml(r, owner) {
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}" title="${_esc(title)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}</div>`
-    + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
+    + `<div class="${statusCls}" title="${_esc(isOpen ? `Flatten ${sym}` : `Buy ${sym}`)}">${_esc(statusLabel)}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-zone">${_esc(zone)}</div>`
@@ -1322,6 +1327,34 @@ function _median(nums) {
   const s = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+async function _deskClick(el, r) {
+  const sym = String((r && r.symbol) || '').toUpperCase();
+  if (!sym) return;
+  const open = String((r && r.phase) || '').toLowerCase() === 'open' || !!(r && r.is_position);
+  const statusEl = el.querySelector('.ai-book-status');
+  el.classList.add('ticker-row--selected');
+  if (statusEl) statusEl.classList.add('cell-ticker--firing');
+  try {
+    const out = await api.deskClick(sym);
+    const action = (out && out.action) || (open ? 'flatten' : 'buy');
+    if (statusEl && out && out.ok) {
+      statusEl.textContent = action === 'flatten' ? 'flat' : 'sent';
+    }
+    if (out && !out.ok && statusEl) {
+      statusEl.title = String(out.error || 'failed');
+    }
+  } catch (err) {
+    console.error('[feeds] desk click failed', err);
+    const msg = (err && err.body && err.body.error) || (err && err.message) || 'failed';
+    if (statusEl) statusEl.title = String(msg);
+  } finally {
+    setTimeout(() => {
+      if (statusEl) statusEl.classList.remove('cell-ticker--firing');
+      el.classList.remove('ticker-row--selected');
+    }, 800);
+  }
 }
 
 async function _add(el, symbol) {
