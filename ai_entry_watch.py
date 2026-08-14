@@ -2473,16 +2473,9 @@ def stream_says_far_from_zone(
     hi = max(entry_low, entry_high) * (1.0 + margin)
     if px > hi:
         return True, px
-    if px >= lo:
-        return False, px
-    # Below the margin band: still near if inside the armable overshoot window.
-    if bool(cfg.get("ai_watch_arm_below_zone", True)):
-        max_r = arm_below_max_r(cfg)
-        floor = armable_below_floor(
-            entry_low, entry_high, stop, pad_pct=0.0, max_r=max_r)
-        if floor is not None and px >= floor:
-            return False, px
-    return True, px
+    # In or below the band: stay on the arm path. The planned stop is not
+    # a "far" floor — it only exists after the position is open.
+    return False, px
 
 
 def _engine_indicator_map() -> dict[str, dict]:
@@ -3689,12 +3682,11 @@ def ask_triggers_zone(
     max_below_r: float = DEFAULT_ARM_BELOW_MAX_R,
     arm_below: bool = True,
 ) -> bool:
-    """True when *ask* is inside the band or within the armable below-zone dip.
+    """True when *ask* is inside the band or anywhere below it.
 
-    Operator rule: BUY geometry is price in *or below* the zone (bounded).
-    Above the band is never a trigger. A print through the floor still
-    triggers while it stays within ``max_below_r`` of the floor in R units
-    (1.0R reaches the stop; UI labels that as in-zone / ready).
+    Above the band is never a trigger. The planned stop is not a veto —
+    it only binds after the fill. A dip through the old stop (IPWR $5.10
+    vs stop $5.22) is still a below-zone buy.
     """
     if ask_in_zone(ask, entry_low, entry_high, pad_pct):
         return True
@@ -3711,15 +3703,8 @@ def ask_triggers_zone(
         return False
     if hi < lo:
         lo, hi = hi, lo
-    frac = pad / 100.0
-    high_bound = hi * (1.0 + frac)
-    if a > high_bound:
-        return False
-    floor = armable_below_floor(
-        lo, hi, stop, pad_pct=pad, max_r=max_below_r)
-    if floor is None:
-        return False
-    return a >= floor
+    high_bound = hi * (1.0 + pad / 100.0)
+    return a <= high_bound
 
 
 def spread_ok(
@@ -5212,7 +5197,7 @@ def should_arm_buy(
         min_stop_pct = float(cfg.get("ai_watch_min_stop_pct", 0.5) or 0.0)
     except (TypeError, ValueError):
         min_stop_pct = 0.5
-    if min_stop_pct > 0 and a > 0 and _stop > 0:
+    if min_stop_pct > 0 and a > 0 and _stop > 0 and a > _stop:
         risk_pct_of_px = 100.0 * (a - _stop) / a
         if risk_pct_of_px < min_stop_pct:
             return False, "stop_too_tight"

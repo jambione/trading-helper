@@ -2102,9 +2102,9 @@ def test_stream_skips_the_rest_quote_when_price_is_far_from_the_zone(monkeypatch
     far, px = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
     assert far is True and px == 40.0
 
-    _tape(monkeypatch, 10.0, 1.0)                     # way below
+    _tape(monkeypatch, 10.0, 1.0)                     # below — still armable
     far, _ = ew.stream_says_far_from_zone(_zoned_rec(), _stream_cfg())
-    assert far is True
+    assert far is False
 
 
 def test_stream_never_skips_near_the_zone(monkeypatch):
@@ -2809,19 +2809,17 @@ def test_price_in_or_below_zone():
 
 
 def test_ask_triggers_zone_includes_armable_below_dip():
-    """Pullback overshoot within max_r R of the floor is still a buy trigger."""
+    """In or below the band is a buy. The planned stop is not a veto."""
     import ai_entry_watch as ew
 
     lo, hi, stop = 10.0, 11.0, 9.0
-    # R = 10 - 9 = 1.0; 0.5R window → floor at 9.5
     assert ew.ask_triggers_zone(10.5, lo, hi, stop=stop, max_below_r=0.5) is True
     assert ew.ask_triggers_zone(9.6, lo, hi, stop=stop, max_below_r=0.5) is True
     assert ew.ask_triggers_zone(9.5, lo, hi, stop=stop, max_below_r=0.5) is True
-    assert ew.ask_triggers_zone(9.4, lo, hi, stop=stop, max_below_r=0.5) is False
+    # Through the planned stop — still a buy (IPWR $5.10 vs stop $5.22).
+    assert ew.ask_triggers_zone(9.4, lo, hi, stop=stop, max_below_r=0.5) is True
+    assert ew.ask_triggers_zone(8.0, lo, hi, stop=None, max_below_r=0.5) is True
     assert ew.ask_triggers_zone(12.0, lo, hi, stop=stop, max_below_r=0.5) is False
-    # No stop → no dip window (strict band only)
-    assert ew.ask_triggers_zone(9.6, lo, hi, stop=None, max_below_r=0.5) is False
-    assert abs(ew.armable_below_floor(lo, hi, stop, max_r=0.5) - 9.5) < 1e-9
 
 
 def test_derive_blocker_armable_below_is_in_zone():
@@ -2866,10 +2864,10 @@ def test_stream_prefilter_not_far_inside_armable_dip(monkeypatch):
     far, px = ew.stream_says_far_from_zone(rec, cfg)
     assert far is False
     assert abs(px - 9.6) < 1e-9
-    # Truly through the floor past 0.5R → far
+    # Through the planned stop — still not far; stop is not live yet.
     monkeypatch.setattr(ew, "stream_quote", lambda _s: (9.3, 0.5))
     far2, _ = ew.stream_says_far_from_zone(rec, cfg)
-    assert far2 is True
+    assert far2 is False
 
 
 def test_release_orphaned_submits_returns_to_watching(tmp_path, monkeypatch):

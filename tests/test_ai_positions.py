@@ -1894,6 +1894,32 @@ def test_place_scaled_entry_allows_armable_below_zone(tmp_path, monkeypatch):
     assert stub.calls and stub.calls[0]["qty"] > 0
 
 
+def test_place_scaled_entry_rebases_stop_when_fill_is_through_plan(tmp_path, monkeypatch):
+    """Stop is not live until open — a fill under the plan stop still places."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_min_stop_pct": 1.5,
+        "ai_broker_stop_enabled": False,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(entry_low=5.31, entry_high=5.67, stop_price=5.22,
+                             target_1=6.00)
+    out = cp.place_scaled_entry(
+        "ipwr", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=5.10)
+    assert out["ok"] is True
+    state = json.loads(_state_path(tmp_path).read_text())
+    stop = float(state["IPWR"]["stop_price"])
+    assert stop < 5.10
+    assert stop == pytest.approx(5.10 * 0.985, rel=1e-4)
+
+
 def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypatch):
     """Local ratchet owns the stop — parent buy is a bare limit."""
     _use_tmp_state(tmp_path, monkeypatch)

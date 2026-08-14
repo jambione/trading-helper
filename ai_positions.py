@@ -1084,12 +1084,19 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
     if stop_price >= sizing_entry:
-        err = (
-            f"refused: stop ${stop_price:.4f} must be below entry "
-            f"${sizing_entry:.4f}"
+        # Fill came in through the planned stop. Rebuild the floor under
+        # the fill — the plan stop is not live until the position is open.
+        try:
+            min_pct = float(cfg.get("ai_watch_min_stop_pct", 1.5) or 1.5)
+        except (TypeError, ValueError):
+            min_pct = 1.5
+        min_pct = max(0.5, min_pct)
+        new_stop = float(sizing_entry) * (1.0 - min_pct / 100.0)
+        log_event(
+            "entry_stop_rebased", symbol=ticker,
+            from_stop=stop_price, to_stop=new_stop, fill=sizing_entry,
         )
-        log_event("entry_fail", symbol=ticker, reason=err)
-        return {"ok": False, "error": err}
+        stop_price = new_stop
     if target_1 <= sizing_entry:
         err = (
             f"refused: target_1 ${target_1:.4f} must be above entry "
