@@ -699,30 +699,9 @@ def _stamp_display_trail(rows: list) -> None:
         if not is_open:
             r["local_stop"] = None
             continue
-        last = r.get("price")
-        if last is None:
-            last = r.get("last_ask")
-        try:
-            last_f = float(last) if last is not None else 0.0
-        except (TypeError, ValueError):
-            last_f = 0.0
-        if last_f <= 0:
-            continue
-        risk = _row_risk_ps(r)
-        mfe = r.get("mfe_r")
-        give = cp.local_trail_give(last_f, risk, cfg, mfe_r=mfe)
-        r["trail_give_r"] = cp.local_trail_give_r(mfe, cfg)
-        r["trail_give_px"] = give
-        r["risk_per_share"] = risk if risk > 0 else r.get("risk_per_share")
-        try:
-            floor = float(r.get("entry_stop_price") or r.get("local_stop") or 0)
-        except (TypeError, ValueError):
-            floor = 0.0
-        want = last_f - give
-        if floor > 0:
-            want = max(floor, want)
+        # Do not recompute last − give here. That number falls when last
+        # dips (UMAC 33.98 → 33.80) while the engine shelf stays put.
         locked = cp.never_lower_rstop(
-            want,
             r.get("local_stop"),
             r.get("local_stop_price"),
             r.get("entry_stop_price"),

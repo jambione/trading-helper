@@ -331,19 +331,11 @@ function _bookRows(book) {
     // RStop is the live shelf on an OPEN long only. Watches must not show
     // last − give (that sits above the zone and looks like an exit).
     const isOpen = !!(r.is_position || r.phase === 'open');
-    if (isOpen) {
-      const last = (q && q.price != null && Number.isFinite(q.price) && q.price > 0)
-        ? Number(q.price)
-        : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
-      const raised = _liveLocalStop(r, last);
-      if (raised != null) {
-        const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
-        r.local_stop = (Number.isFinite(prev) && prev > 0)
-          ? Math.max(prev, raised) : raised;
-      }
-    } else {
+    if (!isOpen) {
       r.local_stop = null;
     }
+    // Open longs: keep the engine shelf. Recomputing last − give here
+    // makes RSTOP fall when PRICE dips (UMAC).
   }
   return Object.values(by);
 }

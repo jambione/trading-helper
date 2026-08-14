@@ -555,7 +555,7 @@ def test_book_table_rows_merges_position_and_sources(tmp_path, monkeypatch):
 
 
 def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
-    """TRAIL uses the software shelf (last − give×R), not the frozen plan stop."""
+    """TRAIL is the engine shelf (local_profit_stop), not a live last−give."""
     import ai_entry_watch as ew
     import ai_positions as cp
 
