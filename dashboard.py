@@ -654,11 +654,17 @@ def overlay_ai_book_live_prices(
                         if floor > 0:
                             want = max(floor, want)
                         try:
-                            prev = float(row.get("local_stop") or 0)
-                        except (TypeError, ValueError):
-                            prev = 0.0
-                        if prev > 0:
-                            want = max(want, prev)
+                            from ai_positions import never_lower_rstop
+                            locked = never_lower_rstop(
+                                want,
+                                row.get("local_stop"),
+                                row.get("local_stop_price"),
+                                row.get("entry_stop_price"),
+                            )
+                            if locked is not None:
+                                want = locked
+                        except Exception:
+                            pass
                         row["local_stop"] = want
                         row["trail_give_px"] = give
                         if _risk > 0:

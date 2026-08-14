@@ -1996,6 +1996,19 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     return round(want, 6)
 
 
+def never_lower_rstop(*levels: float | None) -> float | None:
+    """Highest positive stop among *levels*. RSTOP must not print lower."""
+    xs: list[float] = []
+    for x in levels:
+        try:
+            v = float(x) if x is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            xs.append(v)
+    return max(xs) if xs else None
+
+
 def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | None]:
     """This-tick (high, low) from broker mark and dashboard tape.
 

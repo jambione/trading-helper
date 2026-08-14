@@ -336,7 +336,11 @@ function _bookRows(book) {
         ? Number(q.price)
         : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
       const raised = _liveLocalStop(r, last);
-      if (raised != null) r.local_stop = raised;
+      if (raised != null) {
+        const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
+        r.local_stop = (Number.isFinite(prev) && prev > 0)
+          ? Math.max(prev, raised) : raised;
+      }
     } else {
       r.local_stop = null;
     }
@@ -368,16 +372,15 @@ function _liveLocalStop(r, last) {
       give = 0.01;
     }
   }
-  const floorRaw = r.entry_stop_price != null ? r.entry_stop_price : r.stop_price;
+  // Never use the watch-plan stop_price as floor — it sits under the
+  // live shelf and makes RSTOP look like it dropped (LFS 3.19 → 2.95).
+  const floorRaw = r.entry_stop_price != null ? r.entry_stop_price : null;
   const floor = floorRaw != null ? Number(floorRaw) : NaN;
   let want = last - give;
   if (want >= last) want = last - 0.01;
   if (Number.isFinite(floor) && floor > 0) want = Math.max(floor, want);
-  const isOpen = !!(r.is_position || r.phase === 'open');
-  if (isOpen) {
-    const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
-    if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
-  }
+  const prev = r.local_stop != null ? Number(r.local_stop) : NaN;
+  if (Number.isFinite(prev) && prev > 0) want = Math.max(want, prev);
   return want;
 }
 

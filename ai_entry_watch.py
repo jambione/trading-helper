@@ -715,19 +715,20 @@ def _stamp_display_trail(rows: list) -> None:
         r["trail_give_px"] = give
         r["risk_per_share"] = risk if risk > 0 else r.get("risk_per_share")
         try:
-            floor = float(r.get("entry_stop_price") or r.get("stop_price") or 0)
+            floor = float(r.get("entry_stop_price") or r.get("local_stop") or 0)
         except (TypeError, ValueError):
             floor = 0.0
         want = last_f - give
         if floor > 0:
             want = max(floor, want)
-        try:
-            prev = float(r.get("local_stop") or 0)
-        except (TypeError, ValueError):
-            prev = 0.0
-        if prev > 0:
-            want = max(want, prev)
-        r["local_stop"] = round(want, 6)
+        locked = cp.never_lower_rstop(
+            want,
+            r.get("local_stop"),
+            r.get("local_stop_price"),
+            r.get("entry_stop_price"),
+        )
+        if locked is not None:
+            r["local_stop"] = round(locked, 6)
 
 
 def book_table_rows(
