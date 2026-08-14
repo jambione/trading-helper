@@ -2597,6 +2597,36 @@ def test_desk_click_buys_when_not_open(tmp_path, monkeypatch):
     assert stub.calls
 
 
+def test_desk_click_still_buys_when_clock_says_closed(tmp_path, monkeypatch):
+    _use_tmp_state(tmp_path, monkeypatch)
+    stub = _StubBroker(market_open=False)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    import ai_trading as gt
+    monkeypatch.setattr(gt, "has_open_position", lambda _s: False)
+    monkeypatch.setattr(gt, "get_account", lambda: {"equity": 10_000.0})
+    monkeypatch.setattr(gt, "record_external_buy", lambda *a, **k: None)
+    import ai_entry_watch as ew
+    structure = _buy_decision()
+    monkeypatch.setattr(ew, "load_watch", lambda: {
+        "VWAV": {"symbol": "VWAV", "structure": structure, "source": "desk"},
+    })
+    monkeypatch.setattr(ew, "decision_price", lambda *a, **k: (40.5, "stream", 0.2))
+    monkeypatch.setattr(ew, "_structure_usable", lambda s: True)
+    monkeypatch.setattr(
+        ew, "_decision_for_place",
+        lambda s, **k: dict(s, desk_force=True, entry_path="desk_click"))
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_max_position_pct": 25.0,
+        "ai_risk_pct": 1.0,
+        "ai_broker_stop_enabled": False,
+    })
+    out = cp.desk_click("VWAV")
+    assert out["ok"] is True, out
+    assert out["action"] == "buy"
+    assert stub.calls
+
+
 def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():
     pos = {
         "qty_a": 143, "qty_b": 143, "target_1": 8.499,

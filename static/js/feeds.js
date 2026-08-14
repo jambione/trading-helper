@@ -11,6 +11,7 @@ import { subscribe, get } from './store.js?v=107';
 import { api }       from './api.js?v=120';
 import { copyTicker } from './tickers.js?v=112';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=107';
+import { showToast } from './notifications.js?v=107';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -1342,13 +1343,22 @@ async function _deskClick(el, r) {
     if (statusEl && out && out.ok) {
       statusEl.textContent = action === 'flatten' ? 'flat' : 'sent';
     }
-    if (out && !out.ok && statusEl) {
-      statusEl.title = String(out.error || 'failed');
+    if (out && out.ok) {
+      showToast(
+        action === 'flatten' ? `Flattened ${sym}` : `Buying ${sym}`,
+        action === 'flatten' ? '' : 'desk click',
+        action === 'flatten' ? 'sell' : 'buy',
+      );
+    } else {
+      const msg = String((out && out.error) || 'failed');
+      if (statusEl) statusEl.title = msg;
+      showToast(`${sym} not filled`, msg, 'info');
     }
   } catch (err) {
     console.error('[feeds] desk click failed', err);
     const msg = (err && err.body && err.body.error) || (err && err.message) || 'failed';
     if (statusEl) statusEl.title = String(msg);
+    showToast(`${sym} not filled`, String(msg), 'info');
   } finally {
     setTimeout(() => {
       if (statusEl) statusEl.classList.remove('cell-ticker--firing');

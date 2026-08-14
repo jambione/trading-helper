@@ -1026,8 +1026,8 @@ def desk_click(symbol: str) -> dict[str, Any]:
             "error": None if ok else str(out.get("error") or out.get("note") or "flatten failed")[:200],
         }
 
-    if not alpaca_trader.market_is_open():
-        return {"ok": False, "action": "buy", "error": "market is closed"}
+    # Desk click still tries a limit if the clock is dark / extended.
+    # Regular-session auto-arms stay gated in place_scaled_entry.
 
     rec = (ew.load_watch() or {}).get(sym) or {
         "symbol": sym, "status": "watching", "source": "desk",
@@ -1099,7 +1099,9 @@ def desk_click(symbol: str) -> dict[str, Any]:
     err = ""
     if isinstance(result, dict):
         err = str(result.get("error") or result.get("note") or "place failed")[:200]
-    return {"ok": False, "action": "buy", "symbol": sym, "error": err or "place failed"}
+    err = err or "place failed"
+    log_event("desk_buy_fail", symbol=sym, reason=err, ask=ask)
+    return {"ok": False, "action": "buy", "symbol": sym, "error": err}
 
 
 def place_scaled_entry(
@@ -1127,7 +1129,8 @@ def place_scaled_entry(
     # Alpaca rejects bracket orders (and plain market orders) outside regular
     # trading hours — both tranches need one or the other. A pre-market BUY
     # verdict is discarded rather than attempted and failing partway through.
-    if not alpaca_trader.market_is_open():
+    if not alpaca_trader.market_is_open() and not bool(
+            decision.get("desk_force") or decision.get("skip_zone")):
         err = (
             "market is closed — bracket orders aren't valid outside regular "
             "trading hours; this entry was not queued for the open"
