@@ -2300,6 +2300,37 @@ def test_local_trail_give_is_give_r_times_risk():
     assert cp.local_trail_give(44.69, 0, cfg) == pytest.approx(0.035752)
 
 
+def test_local_trail_give_r_opens_wide_and_tightens_with_mfe():
+    cfg = {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_tighten_mfe_r": 0.50,
+    }
+    assert cp.local_trail_give_r(0.0, cfg) == pytest.approx(0.20)
+    assert cp.local_trail_give_r(0.25, cfg) == pytest.approx(0.15)
+    assert cp.local_trail_give_r(0.50, cfg) == pytest.approx(0.10)
+    assert cp.local_trail_give_r(1.20, cfg) == pytest.approx(0.10)
+
+
+def test_local_profit_stop_uses_wide_give_at_open():
+    pos = {
+        "entry_price": 10.00, "entry_stop_price": 9.80,
+        "risk_per_share": 0.20, "last_seen_price": 10.00, "mfe_r": 0.0,
+    }
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_tighten_mfe_r": 0.50,
+    }
+    # last − 0.20R = 10.00 − 0.04 = 9.96
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.96)
+    pos["last_seen_price"] = 10.10
+    pos["mfe_r"] = 0.50
+    # last − 0.10R = 10.10 − 0.02 = 10.08
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.08)
+
+
 def test_local_profit_stop_uses_dollar_give_when_set():
     pos = {
         "entry_price": 17.00, "entry_stop_price": 16.46,

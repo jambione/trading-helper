@@ -1871,17 +1871,58 @@ def _orig_stop(pos: dict[str, Any]) -> float | None:
     return _num(pos.get("stop_price"))
 
 
+def local_trail_give_r(mfe_r: float | None, cfg: dict | None = None) -> float:
+    """Effective trail width in R: wide at the open, tight in profit.
+
+    ``ai_local_trail_give_open_r`` (default unused) starts the cushion
+    wider. It interpolates down to ``ai_local_trail_give_r`` as MFE
+    reaches ``ai_local_trail_tighten_mfe_r`` (default 0.5R). Absent or
+    non-positive open width → constant tight give (old behaviour).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        tight = float(
+            cfg.get("ai_local_trail_give_r", DEFAULT_LOCAL_TRAIL_GIVE_R)
+            or DEFAULT_LOCAL_TRAIL_GIVE_R)
+    except (TypeError, ValueError):
+        tight = DEFAULT_LOCAL_TRAIL_GIVE_R
+    tight = max(0.0, float(tight))
+    if "ai_local_trail_give_open_r" not in cfg:
+        return tight
+    try:
+        wide = float(cfg.get("ai_local_trail_give_open_r") or 0.0)
+    except (TypeError, ValueError):
+        wide = 0.0
+    if wide <= 0:
+        return tight
+    if wide < tight:
+        wide = tight
+    try:
+        span = float(cfg.get("ai_local_trail_tighten_mfe_r", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        span = 0.5
+    try:
+        mfe = float(mfe_r) if mfe_r is not None else 0.0
+    except (TypeError, ValueError):
+        mfe = 0.0
+    mfe = max(0.0, mfe)
+    if span <= 1e-12:
+        return tight
+    t = min(1.0, mfe / span)
+    return wide + (tight - wide) * t
+
+
 def local_trail_give(
     last: float | None,
     risk: float | None,
     cfg: dict | None = None,
+    mfe_r: float | None = None,
 ) -> float:
     """Dollar cushion under last for the local R-stop.
 
-    Default is ``give_r × R`` (``ai_local_trail_give_r``, 0.10R).
-    ``ai_local_trail_give_px`` > 0 is a legacy fixed dollar and wins only
-    when set. With no usable R, give is ``give_r × last / 100`` (0.10R →
-    10 bps of last) so the cushion still scales with price.
+    Width is ``local_trail_give_r(mfe) × R``. ``ai_local_trail_give_px`` > 0
+    is a legacy fixed dollar and wins only when set. With no usable R, give
+    is ``give_r × last / 100`` so the cushion still scales with price.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
@@ -1890,13 +1931,7 @@ def local_trail_give(
         give_px = 0.0
     if give_px > 0:
         return max(0.01, give_px)
-    try:
-        give_r = float(
-            cfg.get("ai_local_trail_give_r", DEFAULT_LOCAL_TRAIL_GIVE_R)
-            or DEFAULT_LOCAL_TRAIL_GIVE_R)
-    except (TypeError, ValueError):
-        give_r = DEFAULT_LOCAL_TRAIL_GIVE_R
-    give_r = max(0.0, float(give_r))
+    give_r = local_trail_give_r(mfe_r, cfg)
     try:
         r = float(risk) if risk is not None else 0.0
     except (TypeError, ValueError):
@@ -1916,7 +1951,8 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     """Trail just under *last*: rises as price grows, never lowers.
 
     ``local_stop = max(prev, last − give, original floor)``.
-    Give is ``give_r × R`` unless ``ai_local_trail_give_px`` is set (>0).
+    Give starts at ``give_open_r`` and tightens to ``give_r`` as MFE grows.
+    ``ai_local_trail_give_px`` > 0 still wins as a fixed dollar.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_local_trail_enabled", True)):
@@ -1927,7 +1963,14 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     prev = _num(pos.get("local_stop_price"))
     if last is None or last <= 0:
         return prev or floor
-    give = local_trail_give(last, risk, cfg)
+    mfe = _num(pos.get("mfe_r"))
+    if mfe is None:
+        entry = _num(pos.get("entry_price"))
+        if last is not None and entry and risk and risk > 0:
+            mfe = max(0.0, (float(last) - float(entry)) / float(risk))
+        else:
+            mfe = 0.0
+    give = local_trail_give(last, risk, cfg, mfe_r=mfe)
     want = float(last) - give
     if want >= float(last):
         want = float(last) - 0.01
@@ -3016,6 +3059,7 @@ def manage_open_positions(
                         "local_trail_raised", symbol=ticker,
                         from_stop=prev_local, to_stop=want,
                         peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
+                        give_r=local_trail_give_r(pos.get("mfe_r"), _cfg_all()),
                     )
 
         # Dual profit bank: free shares held by the full-size stop, then either

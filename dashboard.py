@@ -630,7 +630,11 @@ def overlay_ai_book_live_prices(
                             _lo = _st = 0.0
                         if _lo > 0 and _st > 0 and _lo > _st:
                             _risk = _lo - _st
-                    give = local_trail_give(float(px), _risk, _cfg)
+                    try:
+                        _mfe = float(row.get("mfe_r")) if row.get("mfe_r") is not None else None
+                    except (TypeError, ValueError):
+                        _mfe = None
+                    give = local_trail_give(float(px), _risk, _cfg, mfe_r=_mfe)
                     try:
                         floor = float(
                             row.get("entry_stop_price")

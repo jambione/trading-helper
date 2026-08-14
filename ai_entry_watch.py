@@ -706,8 +706,9 @@ def _stamp_display_trail(rows: list) -> None:
         if last_f <= 0:
             continue
         risk = _row_risk_ps(r)
-        give = cp.local_trail_give(last_f, risk, cfg)
-        r["trail_give_r"] = give_r
+        mfe = r.get("mfe_r")
+        give = cp.local_trail_give(last_f, risk, cfg, mfe_r=mfe)
+        r["trail_give_r"] = cp.local_trail_give_r(mfe, cfg)
         r["trail_give_px"] = give
         r["risk_per_share"] = risk if risk > 0 else r.get("risk_per_share")
         try:
