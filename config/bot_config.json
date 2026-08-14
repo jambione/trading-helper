@@ -229,7 +229,7 @@
   "ai_local_trail_enabled": true,
   "ai_local_trail_arm_r": 0.0,
   "ai_local_trail_give_r": 0.10,
-  "ai_local_trail_give_open_r": 0.20,
+  "ai_local_trail_give_open_r": 0.10,
   "ai_local_trail_tighten_mfe_r": 0.25,
   "ai_local_trail_give_px": 0.0,
   "ai_local_trail_min_give_px": 0.06,

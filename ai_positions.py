@@ -2074,13 +2074,11 @@ def fill_already_dead(
 
 
 def local_trail_give_r(mfe_r: float | None, cfg: dict | None = None) -> float:
-    """Effective trail width in R: 0.20R at fill, 0.10R the moment we are green.
+    """Trail width in R. Default is a constant ``give_r`` (0.10R).
 
-    ``ai_local_trail_give_open_r`` is the pre-profit cushion. Once MFE is
-    above ``ai_local_trail_tighten_mfe_r`` (default 0.25R), give snaps
-    to ``ai_local_trail_give_r``. No interpolation. First green tick
-    stays on the wide cushion so a nickel pullback cannot flatten.
-    Absent or non-positive open width → constant tight give.
+    A wider ``ai_local_trail_give_open_r`` still snaps down to ``give_r``
+    after ``tighten_mfe_r``. Absent or non-positive open width, or open
+    equal to tight → constant 0.10R.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
@@ -2185,10 +2183,8 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     """Trail just under *last*: rises as price grows, never lowers.
 
     ``local_stop = max(prev, last − give, plan floor)``.
-    Give is ``give_open_r`` until MFE > ``tighten_mfe_r`` *and* last −
-    tight give is above entry, then ``give_r``. Open shelf is last −
-    give, not the fill. ``ai_local_trail_give_px`` > 0 still wins as a
-    fixed dollar.
+    Give is a constant 0.10R unless a wider open width is configured.
+    ``ai_local_trail_give_px`` > 0 still wins as a fixed dollar.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_local_trail_enabled", True)):

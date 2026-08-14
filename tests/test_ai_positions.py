@@ -2347,17 +2347,15 @@ def test_local_trail_give_is_give_r_times_risk():
     assert cp.local_trail_give(44.69, 0, cfg) == pytest.approx(0.035752)
 
 
-def test_local_trail_give_r_stays_wide_until_025r_then_snaps():
+def test_local_trail_give_r_is_constant_when_open_equals_tight():
     cfg = {
         "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_give_open_r": 0.10,
         "ai_local_trail_tighten_mfe_r": 0.25,
         "ai_local_trail_min_give_px": 0,
     }
-    assert cp.local_trail_give_r(0.0, cfg) == pytest.approx(0.20)
-    assert cp.local_trail_give_r(0.08, cfg) == pytest.approx(0.20)
-    assert cp.local_trail_give_r(0.25, cfg) == pytest.approx(0.20)
-    assert cp.local_trail_give_r(0.26, cfg) == pytest.approx(0.10)
+    assert cp.local_trail_give_r(0.0, cfg) == pytest.approx(0.10)
+    assert cp.local_trail_give_r(0.08, cfg) == pytest.approx(0.10)
     assert cp.local_trail_give_r(1.20, cfg) == pytest.approx(0.10)
 
 
@@ -2369,19 +2367,14 @@ def test_local_profit_stop_uses_wide_give_at_open():
     cfg = {
         "ai_local_trail_enabled": True,
         "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_give_open_r": 0.10,
         "ai_local_trail_tighten_mfe_r": 0.25,
         "ai_local_trail_min_give_px": 0,
     }
-    # last − 0.20R = 10.00 − 0.04 = 9.96
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.96)
-    pos["last_seen_price"] = 10.02
-    pos["mfe_r"] = 0.10
-    # first green still 0.20R: last − 0.04 = 9.98
+    # last − 0.10R = 10.00 − 0.02 = 9.98
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.98)
     pos["last_seen_price"] = 10.06
     pos["mfe_r"] = 0.30
-    # past +0.25R: last − 0.10R = 10.04
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.04)
 
 
@@ -2395,13 +2388,12 @@ def test_local_profit_stop_trails_last_immediately_when_arm_r_zero():
         "ai_local_trail_enabled": True,
         "ai_local_trail_arm_r": 0.0,
         "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_give_open_r": 0.10,
         "ai_local_trail_tighten_mfe_r": 0.25,
         "ai_local_trail_min_give_px": 0,
     }
-    # last − 0.20R = 19.324, above the 18.88 plan floor
     want = cp.local_profit_stop(pos, cfg)
-    assert want == pytest.approx(19.43 - 0.20 * 0.53, abs=0.01)
+    assert want == pytest.approx(19.43 - 0.10 * 0.53, abs=0.01)
 
 
 def test_local_profit_stop_holds_plan_stop_until_arm_r():
@@ -2677,15 +2669,14 @@ def test_tight_give_waits_until_last_minus_give_clears_entry():
     cfg = {
         "ai_local_trail_enabled": True,
         "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_give_open_r": 0.20,
+        "ai_local_trail_give_open_r": 0.10,
         "ai_local_trail_tighten_mfe_r": 0.25,
         "ai_local_trail_min_give_px": 0,
     }
-    # last − 0.10R = 10.07 > entry, snap allowed
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.07)
     pos["last_seen_price"] = 10.04
-    # last − 0.10R = 9.99 ≤ entry — stay 0.20R → 9.94
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.94)
+    # still 0.10R: 10.04 − 0.05 = 9.99
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.99)
 
 
 def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():

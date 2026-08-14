@@ -576,16 +576,14 @@ DEFAULT_CONFIG = {
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
     # Local profit trail: stop = last − give, only ratchets up.
-    # Trails from the first tick (arm_r 0). Opening cushion is
-    # give_open_r (0.20R) until MFE exceeds tighten_mfe_r (0.25R), then
-    # give snaps to give_r (0.10R). First green tick is not enough.
-    # give_px > 0 is a legacy fixed dollar and overrides the calculation.
+    # Constant 0.10R from the first tick. give_open_r is unused unless
+    # set wider than give_r. give_px > 0 is a legacy fixed dollar.
     # Flatten if last prints through. This is the stop of record when
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
     "ai_local_trail_arm_r":            0.0,
     "ai_local_trail_give_r":           0.10,
-    "ai_local_trail_give_open_r":      0.20,
+    "ai_local_trail_give_open_r":      0.10,
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
     "ai_local_trail_min_give_px":      0.06,
