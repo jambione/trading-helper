@@ -328,14 +328,18 @@ function _bookRows(book) {
         r.pct_change = q.pct_change;
       }
     }
-    // RStop tracks last − $0.05 on every row so the column moves with PRICE.
-    // Open longs are raise-only (liquidation shelf). Watches may follow last
-    // down to the planned floor — they are not a live stop.
-    const last = (q && q.price != null && Number.isFinite(q.price) && q.price > 0)
-      ? Number(q.price)
-      : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
-    const raised = _liveLocalStop(r, last);
-    if (raised != null) r.local_stop = raised;
+    // RStop is the live shelf on an OPEN long only. Watches must not show
+    // last − give (that sits above the zone and looks like an exit).
+    const isOpen = !!(r.is_position || r.phase === 'open');
+    if (isOpen) {
+      const last = (q && q.price != null && Number.isFinite(q.price) && q.price > 0)
+        ? Number(q.price)
+        : (r.price != null && Number.isFinite(Number(r.price)) ? Number(r.price) : null);
+      const raised = _liveLocalStop(r, last);
+      if (raised != null) r.local_stop = raised;
+    } else {
+      r.local_stop = null;
+    }
   }
   return Object.values(by);
 }

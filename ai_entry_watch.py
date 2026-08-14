@@ -682,20 +682,21 @@ def _row_risk_ps(r: dict) -> float:
 
 
 def _stamp_display_trail(rows: list) -> None:
-    """RStop = last − calculated give so the column tracks PRICE.
+    """RStop only exists on an open long. Watches show the plan stop, not a trail.
 
-    Give is ``give_r × R`` unless a legacy ``give_px`` is set. Open longs
-    are raise-only. Watches follow last down to the plan floor.
+    Previewing last − give on a watch puts a shelf *above the zone* while we
+    are still waiting to buy. The ratchet starts at fill (local_stop_price
+    seeded from the entry stop), not on the book preview.
     """
     import ai_positions as cp
 
     cfg = _push_cfg()
-    try:
-        give_r = float(cfg.get("ai_local_trail_give_r") or 0.10)
-    except (TypeError, ValueError):
-        give_r = 0.10
     for r in rows:
         if not isinstance(r, dict):
+            continue
+        is_open = bool(r.get("is_position") or str(r.get("phase") or "") == "open")
+        if not is_open:
+            r["local_stop"] = None
             continue
         last = r.get("price")
         if last is None:
@@ -719,14 +720,12 @@ def _stamp_display_trail(rows: list) -> None:
         want = last_f - give
         if floor > 0:
             want = max(floor, want)
-        is_open = bool(r.get("is_position") or str(r.get("phase") or "") == "open")
-        if is_open:
-            try:
-                prev = float(r.get("local_stop") or 0)
-            except (TypeError, ValueError):
-                prev = 0.0
-            if prev > 0:
-                want = max(want, prev)
+        try:
+            prev = float(r.get("local_stop") or 0)
+        except (TypeError, ValueError):
+            prev = 0.0
+        if prev > 0:
+            want = max(want, prev)
         r["local_stop"] = round(want, 6)
 
 

@@ -610,56 +610,61 @@ def overlay_ai_book_live_prices(
                     stop = float(row.get("stop_price") or 0) or None
                 except (TypeError, ValueError):
                     stop = None
-                # RStop = last − give (give_r × R, or legacy give_px).
-                # Watches follow last; open longs are raise-only.
-                try:
-                    from ai_positions import local_trail_give
-                    from config import load_config
-                    _cfg = load_config()
+                # RStop only on an open long. Watch rows keep the plan stop
+                # in stop_price; do not preview last − give above the zone.
+                is_open = bool(
+                    row.get("is_position")
+                    or str(row.get("phase") or "") == "open")
+                if not is_open:
+                    row["local_stop"] = None
+                else:
                     try:
-                        _risk = float(row.get("risk_per_share") or 0)
-                    except (TypeError, ValueError):
-                        _risk = 0.0
-                    if _risk <= 0:
+                        from ai_positions import local_trail_give
+                        from config import load_config
+                        _cfg = load_config()
                         try:
-                            _lo = float(row.get("entry_low") or 0)
-                            _st = float(
+                            _risk = float(row.get("risk_per_share") or 0)
+                        except (TypeError, ValueError):
+                            _risk = 0.0
+                        if _risk <= 0:
+                            try:
+                                _lo = float(row.get("entry_low") or 0)
+                                _st = float(
+                                    row.get("entry_stop_price")
+                                    or row.get("stop_price") or 0)
+                            except (TypeError, ValueError):
+                                _lo = _st = 0.0
+                            if _lo > 0 and _st > 0 and _lo > _st:
+                                _risk = _lo - _st
+                        try:
+                            _mfe = (
+                                float(row.get("mfe_r"))
+                                if row.get("mfe_r") is not None else None)
+                        except (TypeError, ValueError):
+                            _mfe = None
+                        give = local_trail_give(
+                            float(px), _risk, _cfg, mfe_r=_mfe)
+                        try:
+                            floor = float(
                                 row.get("entry_stop_price")
                                 or row.get("stop_price") or 0)
                         except (TypeError, ValueError):
-                            _lo = _st = 0.0
-                        if _lo > 0 and _st > 0 and _lo > _st:
-                            _risk = _lo - _st
-                    try:
-                        _mfe = float(row.get("mfe_r")) if row.get("mfe_r") is not None else None
-                    except (TypeError, ValueError):
-                        _mfe = None
-                    give = local_trail_give(float(px), _risk, _cfg, mfe_r=_mfe)
-                    try:
-                        floor = float(
-                            row.get("entry_stop_price")
-                            or row.get("stop_price") or 0)
-                    except (TypeError, ValueError):
-                        floor = 0.0
-                    want = float(px) - give
-                    if floor > 0:
-                        want = max(floor, want)
-                    is_open = bool(
-                        row.get("is_position")
-                        or str(row.get("phase") or "") == "open")
-                    if is_open:
+                            floor = 0.0
+                        want = float(px) - give
+                        if floor > 0:
+                            want = max(floor, want)
                         try:
                             prev = float(row.get("local_stop") or 0)
                         except (TypeError, ValueError):
                             prev = 0.0
                         if prev > 0:
                             want = max(want, prev)
-                    row["local_stop"] = want
-                    row["trail_give_px"] = give
-                    if _risk > 0:
-                        row["risk_per_share"] = _risk
-                except Exception:
-                    pass
+                        row["local_stop"] = want
+                        row["trail_give_px"] = give
+                        if _risk > 0:
+                            row["risk_per_share"] = _risk
+                    except Exception:
+                        pass
                 if lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import (

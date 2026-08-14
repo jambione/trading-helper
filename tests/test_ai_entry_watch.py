@@ -597,34 +597,8 @@ def test_book_table_rows_stamps_live_local_stop(tmp_path, monkeypatch):
     assert by["SMCI"]["trail_give_r"] == pytest.approx(0.20)
 
 
-def test_book_rstop_follows_last_minus_five_cents_on_watches(tmp_path, monkeypatch):
-    """Legacy give_px still pins RStop at last − $0.05."""
-    import ai_entry_watch as ew
-
-    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
-    monkeypatch.setattr(ew, "live_panel_universe", lambda cfg=None: {"FGI"})
-    monkeypatch.setattr(ew, "live_print", lambda _sym: None)
-    monkeypatch.setattr(ew, "stream_quote", lambda _sym: (15.32, 0.1))
-    monkeypatch.setattr(ew, "_push_cfg", lambda: {"ai_local_trail_give_px": 0.05})
-    ew.save_watch({
-        "FGI": {
-            "symbol": "FGI",
-            "status": "watching",
-            "source": "momentum",
-            "last_ask": 15.32,
-            "structure": {
-                "entry_low": 14.42, "entry_high": 15.40, "stop_price": 14.15,
-            },
-        },
-    })
-    rows = ew.book_table_rows()
-    by = {r["symbol"]: r for r in rows}
-    assert by["FGI"]["local_stop"] == pytest.approx(15.27)
-    assert by["FGI"]["trail_give_px"] == pytest.approx(0.05)
-
-
-def test_book_rstop_uses_give_r_times_zone_risk(tmp_path, monkeypatch):
-    """Default RStop is last − give_r × (entry_low − stop), not a nickel."""
+def test_book_rstop_not_previewed_on_watches(tmp_path, monkeypatch):
+    """RStop must not trail last on a watch — that shelf sits above the zone."""
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
@@ -648,10 +622,7 @@ def test_book_rstop_uses_give_r_times_zone_risk(tmp_path, monkeypatch):
     })
     rows = ew.book_table_rows()
     by = {r["symbol"]: r for r in rows}
-    # R = 14.42 − 14.15 = 0.27; give = 0.20 × 0.27 = 0.054
-    assert by["FGI"]["local_stop"] == pytest.approx(15.266)
-    assert by["FGI"]["trail_give_px"] == pytest.approx(0.054)
-    assert by["FGI"]["risk_per_share"] == pytest.approx(0.27)
+    assert by["FGI"]["local_stop"] is None
 
 
 def test_book_table_rows_uses_tape_when_last_seen_missing(tmp_path, monkeypatch):
