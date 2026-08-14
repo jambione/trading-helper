@@ -2752,6 +2752,10 @@ def test_cheap_pullback_band_overbought_is_refused():
     rec["structure"]["zone_kind"] = "double_bottom"
     ok2, why2 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
     assert ok2 and why2.startswith("zone")
+    rec["structure"]["zone_kind"] = "pullback_band"
+    rec["source"] = "bb_live"
+    ok3, why3 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
+    assert ok3 and why3 == "zone_overbought_hot"
 
 
 def test_hot_overbought_arms_in_and_below_zone_not_above():
@@ -3111,6 +3115,9 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         },
     }
     ok, why = ew.exhaustion_allows_buy(hot_mom, cfg)
+    assert ok is True and why == "overbought_hot"
+    hot_bro = dict(too_hot, source="bb_live")
+    ok, why = ew.exhaustion_allows_buy(hot_bro, cfg)
     assert ok is True and why == "overbought_hot"
 
     # Overbought but fading — do not buy the roll-over.

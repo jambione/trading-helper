@@ -3456,7 +3456,11 @@ def _hot_ob_source(record: dict) -> bool:
     90-cap (08-13 HCTI/BYSI were cheap spikes, not this path).
     """
     src = str((record or {}).get("source") or "").strip().lower()
-    if src in ("trending", "stocktwits", "st", "momentum", "mom", "mom_open"):
+    if src in (
+        "trending", "stocktwits", "st",
+        "momentum", "mom", "mom_open",
+        "bb_live", "bro",
+    ):
         return True
     look = str(
         (record or {}).get("admit_look_reason")
@@ -5225,6 +5229,10 @@ def should_arm_buy(
         and a < cheap_px
         and zk in ("pullback_band", "offset", "")
         and is_overbought(record, cfg) is True
+        and not (
+            bool(cfg.get("ai_watch_ob_allow_hot", True))
+            and _hot_ob_source(record)
+        )
     ):
         return False, "cheap_ob_band"
 

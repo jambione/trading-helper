@@ -451,7 +451,7 @@ DEFAULT_CONFIG = {
     "ai_watch_exhaustion_exit_give_pct": 0.0,
     # Under continuation: minimum exhaustion % for a *heating* arm (0–100).
     # Overbought band still arms regardless. Under exhaustion_scalp: unused.
-    "ai_watch_exhaustion_heat_min_pct": 50.0,
+    "ai_watch_exhaustion_heat_min_pct": 35.0,
     # Refuse to arm once %R is already this extended (0–100). 08-13 forward
     # print: 90–100 bucket −1.1% / 30m; HCTI/BYSI/CRMD were already there.
     # 0 disables the cap.
