@@ -577,8 +577,8 @@ DEFAULT_CONFIG = {
     "ai_runner_trail_r":               1.0,
     # Local profit trail: stop = last − give, only ratchets up.
     # Trails from the first tick (arm_r 0). Opening cushion is
-    # give_open_r (0.20R); the first green print snaps to give_r (0.10R).
-    # tighten_mfe_r is the MFE that counts as profit (0 = any tick up).
+    # give_open_r (0.20R) until MFE exceeds tighten_mfe_r (0.25R), then
+    # give snaps to give_r (0.10R). First green tick is not enough.
     # give_px > 0 is a legacy fixed dollar and overrides the calculation.
     # Flatten if last prints through. This is the stop of record when
     # ai_broker_stop_enabled is False — broker buys may sit naked.
@@ -586,7 +586,7 @@ DEFAULT_CONFIG = {
     "ai_local_trail_arm_r":            0.0,
     "ai_local_trail_give_r":           0.10,
     "ai_local_trail_give_open_r":      0.20,
-    "ai_local_trail_tighten_mfe_r":    0.0,
+    "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone

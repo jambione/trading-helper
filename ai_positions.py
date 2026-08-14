@@ -1882,10 +1882,10 @@ def local_trail_give_r(mfe_r: float | None, cfg: dict | None = None) -> float:
     """Effective trail width in R: 0.20R at fill, 0.10R the moment we are green.
 
     ``ai_local_trail_give_open_r`` is the pre-profit cushion. Once MFE is
-    above ``ai_local_trail_tighten_mfe_r`` (default 0 = any profit), give
-    snaps to ``ai_local_trail_give_r``. No interpolation — profit must
-    not be given back on a wide open stop. Absent or non-positive open
-    width → constant tight give.
+    above ``ai_local_trail_tighten_mfe_r`` (default 0.25R), give snaps
+    to ``ai_local_trail_give_r``. No interpolation. First green tick
+    stays on the wide cushion so a nickel pullback cannot flatten.
+    Absent or non-positive open width → constant tight give.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
@@ -1906,7 +1906,7 @@ def local_trail_give_r(mfe_r: float | None, cfg: dict | None = None) -> float:
     if wide < tight:
         wide = tight
     try:
-        need = float(cfg.get("ai_local_trail_tighten_mfe_r", 0.0) or 0.0)
+        need = float(cfg.get("ai_local_trail_tighten_mfe_r", 0.25) or 0.0)
     except (TypeError, ValueError):
         need = 0.0
     try:
@@ -1958,7 +1958,7 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     """Trail just under *last*: rises as price grows, never lowers.
 
     ``local_stop = max(prev, last − give, original floor)``.
-    Give is ``give_open_r`` until the trade is green, then ``give_r``.
+    Give is ``give_open_r`` until MFE > ``tighten_mfe_r``, then ``give_r``.
     ``ai_local_trail_give_px`` > 0 still wins as a fixed dollar.
     Default ``arm_r`` is 0: trail from the first tick so a green print
     is not given back to the plan stop. A positive ``arm_r`` still holds
