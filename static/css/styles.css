@@ -2180,9 +2180,6 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
-.feed-row--ai-book {
-  cursor: pointer;
-}
 .feed-row--ai-open {
   border-color: rgba(139, 92, 246, 0.28);
   background: rgba(139, 92, 246, 0.06);
@@ -2202,7 +2199,6 @@ body.mobile .icon-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 .ai-book-status--open {
   color: #c4b5fd;
