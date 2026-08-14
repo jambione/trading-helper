@@ -95,7 +95,7 @@ DEFAULT_DEAD_TRADE_MIN = 22.0
 DEFAULT_DEAD_TRADE_MFE_R = 0.10
 # Abort a new fill if last is already through the stop or this far
 # under the intended entry (FGI/SPAI/TDIC −2R IEX slips).
-DEFAULT_FILL_ABORT_R = 0.30
+DEFAULT_FILL_ABORT_R = 0.15
 # Never trail tighter than this many dollars under last.
 DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX = 0.06
 # Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
@@ -1028,7 +1028,7 @@ def desk_click(symbol: str) -> dict[str, Any]:
         except (TypeError, ValueError):
             amt = 1000.0
         try:
-            maxp = int(cfg.get("ai_max_positions", 8) or 8)
+            maxp = int(cfg.get("ai_max_positions", 4) or 4)
         except (TypeError, ValueError):
             maxp = 8
         try:
@@ -1217,14 +1217,27 @@ def place_scaled_entry(
     # bound — current_ask is already validated as armable (in or below zone).
     sizing_entry = current_ask or entry_high or entry_low
 
+    risk_px = max(0.0, float(sizing_entry) - float(stop_price or 0))
     if current_ask is not None and fill_already_dead(
-        current_ask, sizing_entry, stop_price,
-        max(0.0, float(sizing_entry) - float(stop_price or 0)),
-        cfg=cfg,
+        current_ask, sizing_entry, stop_price, risk_px, cfg=cfg,
     ):
         err = (
             f"refused: last ${float(current_ask):.2f} already through "
-            f"stop ${float(stop_price):.2f} or ≥0.3R under entry"
+            f"stop ${float(stop_price):.2f} or ≥"
+            f"{_abort_r(cfg):.2f}R under entry"
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
+    # Tape can already be through while the REST ask we sized on is stale
+    # (FGI/SPAI/TDIC). Same abort, against the live print.
+    tape_px = _live_tape_px(ticker)
+    if tape_px is not None and fill_already_dead(
+        tape_px, sizing_entry, stop_price, risk_px, cfg=cfg,
+    ):
+        err = (
+            f"refused: tape ${float(tape_px):.2f} already through "
+            f"stop ${float(stop_price):.2f} or ≥"
+            f"{_abort_r(cfg):.2f}R under entry"
         )
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
@@ -2030,6 +2043,33 @@ def _orig_stop(pos: dict[str, Any]) -> float | None:
     return _num(pos.get("stop_price"))
 
 
+def _abort_r(cfg: dict | None = None) -> float:
+    """Fill-abort threshold in R. Default 0.15."""
+    try:
+        thru = float(
+            (cfg or {}).get("ai_fill_abort_r", DEFAULT_FILL_ABORT_R)
+            or DEFAULT_FILL_ABORT_R)
+    except (TypeError, ValueError):
+        thru = DEFAULT_FILL_ABORT_R
+    return max(0.0, float(thru))
+
+
+def _live_tape_px(symbol: str) -> float | None:
+    """Fresh dashboard last, or None. Never invents a print."""
+    try:
+        import ai_entry_watch as ew
+        tape = ew.live_print(symbol)
+    except Exception:
+        return None
+    if tape is None or not tape[0]:
+        return None
+    try:
+        px = float(tape[0])
+    except (TypeError, ValueError):
+        return None
+    return px if px > 0 else None
+
+
 def fill_already_dead(
     last: float | None,
     entry: float | None,
@@ -2037,9 +2077,10 @@ def fill_already_dead(
     risk: float | None,
     cfg: dict | None = None,
 ) -> bool:
-    """True when the tape is already through the stop or ≥ abort_r under entry.
+    """True when last is through the stop or ≥ abort_r under *entry*.
 
-    FGI/SPAI/TDIC opened 2R through the planned stop on a stale ask.
+    *entry* is the intended limit at confirm (fill vs limit) and the
+    sizing ask at place. FGI/SPAI/TDIC opened 2R through on a stale ask.
     """
     try:
         last_f = float(last or 0)
@@ -2061,12 +2102,7 @@ def fill_already_dead(
         risk_f = float(risk or 0)
     except (TypeError, ValueError):
         risk_f = 0.0
-    try:
-        thru = float(
-            (cfg or {}).get("ai_fill_abort_r", DEFAULT_FILL_ABORT_R)
-            or DEFAULT_FILL_ABORT_R)
-    except (TypeError, ValueError):
-        thru = DEFAULT_FILL_ABORT_R
+    thru = _abort_r(cfg)
     if entry_f > 0 and risk_f > 0 and thru > 0:
         if last_f <= entry_f - thru * risk_f + 1e-9:
             return True
@@ -2179,17 +2215,73 @@ def local_trail_give(
     return max(0.01, give)
 
 
+def _median_px(xs: list[float]) -> float | None:
+    ys = sorted(x for x in xs if x > 0)
+    if not ys:
+        return None
+    n = len(ys)
+    if n % 2:
+        return ys[n // 2]
+    return (ys[n // 2 - 1] + ys[n // 2]) / 2.0
+
+
+def note_trail_print(
+    pos: dict[str, Any],
+    px: float | None,
+    n: int = 3,
+) -> float | None:
+    """Record a raw print and return the damped last used to raise RSTOP.
+
+    A single IEX spike (SST 08-14) must not lift the shelf. Need two
+    prints; raise off the median of the last *n*.
+    """
+    try:
+        p = float(px) if px is not None else 0.0
+    except (TypeError, ValueError):
+        p = 0.0
+    ring: list[float] = []
+    for x in pos.get("trail_prints") or []:
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            ring.append(v)
+    if p > 0:
+        ring.append(p)
+        ring = ring[-max(2, int(n)) :]
+        pos["trail_prints"] = ring
+    if len(ring) < 2:
+        pos["trail_last"] = None
+        return None
+    med = _median_px(ring)
+    pos["trail_last"] = med
+    return med
+
+
+def _trail_last_for_stop(pos: dict[str, Any]) -> float | None:
+    """Price the shelf raises off. A 1-print ring is not enough to lift."""
+    ring = pos.get("trail_prints")
+    if isinstance(ring, list) and 0 < len(ring) < 2:
+        return None
+    last = _num(pos.get("trail_last"))
+    if last is not None and last > 0:
+        return last
+    return _num(pos.get("last_seen_price"))
+
+
 def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
-    """Trail just under *last*: rises as price grows, never lowers.
+    """Trail just under the damped last: rises as price grows, never lowers.
 
     ``local_stop = max(prev, last − give, plan floor)``.
+    Last is the median of recent prints when present, else ``last_seen_price``.
     Give is a constant 0.10R unless a wider open width is configured.
     ``ai_local_trail_give_px`` > 0 still wins as a fixed dollar.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get("ai_local_trail_enabled", True)):
         return None
-    last = _num(pos.get("last_seen_price"))
+    last = _trail_last_for_stop(pos)
     risk = _risk_basis(pos)
     entry = _num(pos.get("entry_price"))
     floor = _orig_stop(pos)
@@ -2238,9 +2330,10 @@ def never_lower_rstop(*levels: float | None) -> float | None:
 def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | None]:
     """This-tick (high, low) from broker mark and dashboard tape.
 
-    High raises the shelf. Low is the flatten trigger — any print at or
-    below the shelf market-closes. Tape is used when its age is known and
-    inside the stale window (not only the tighter arming max-age).
+    High is excursion (MFE). Low is the flatten trigger — any print at
+    or below the shelf market-closes. The shelf itself raises off the
+    damped last (``note_trail_print``), not this high. Tape is used when
+    its age is known and inside the stale window.
     """
     vals: list[float] = []
     broker = _num((live or {}).get("current"))
@@ -3062,6 +3155,12 @@ def manage_open_positions(
             # trigger so a tape dip through TRAIL sells even if the broker
             # mark is still above.
             hi, lo = _tick_prints(ticker, live)
+            raw = _num((live or {}).get("current"))
+            if raw is None:
+                raw = _num((live or {}).get("current_price"))
+            if raw is None:
+                raw = lo or hi
+            note_trail_print(pos, raw)
             if hi is not None:
                 pos["last_seen_price"] = hi
             elif live.get("current") is not None:

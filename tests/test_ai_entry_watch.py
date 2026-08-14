@@ -2352,6 +2352,33 @@ def _arm_cfg(**over):
     return cfg
 
 
+def test_arm_refuses_known_low_rvol_including_research():
+    """Admission still lets research on with rvol 0.5. Arm must not buy it."""
+    import ai_entry_watch as ew
+
+    rec = _armable_rec()
+    rec["source"] = "xai"
+    rec["admit_rvol"] = 0.46
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert ok is False and why == "thin_rvol"
+
+    rec["admit_rvol"] = 2.1
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert ok and why.startswith("zone")
+
+    # Unknown still abstains — a missing number is not thin.
+    rec.pop("admit_rvol", None)
+    rec.pop("rvol", None)
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_arm_cfg())
+    assert ok and why.startswith("zone")
+
+    # Floor of 0 disables the gate.
+    rec["admit_rvol"] = 0.4
+    ok, why = ew.should_arm_buy(
+        rec, ask=28.0, bid=27.9, cfg=_arm_cfg(ai_watch_min_rvol=0))
+    assert ok and why.startswith("zone")
+
+
 def test_arm_requires_price_in_zone_AND_the_two_named_indicators():
     """CM RSI-2 and %R exhaustion are the buy signals. The zone answers "is this
     a good price"; those two answer "is this a good moment". Both must hold at

@@ -2609,6 +2609,7 @@ def test_desk_click_buys_when_not_open(tmp_path, monkeypatch):
         "ai_risk_pct": 1.0,
         "ai_watch_arm_below_zone": True,
     })
+    monkeypatch.setattr(cp, "_live_tape_px", lambda _s: None)
     out = cp.desk_click("LUNR")
     assert out["ok"] is True
     assert out["action"] == "buy"
@@ -2640,6 +2641,7 @@ def test_desk_click_still_buys_when_clock_says_closed(tmp_path, monkeypatch):
         "ai_risk_pct": 1.0,
         "ai_broker_stop_enabled": False,
     })
+    monkeypatch.setattr(cp, "_live_tape_px", lambda _s: None)
     out = cp.desk_click("VWAV")
     assert out["ok"] is True, out
     assert out["action"] == "buy"
@@ -2650,6 +2652,72 @@ def test_fill_already_dead_flags_last_through_stop():
     assert cp.fill_already_dead(11.1, 12.78, 12.14, 0.64) is True
     assert cp.fill_already_dead(12.78, 12.78, 12.14, 0.64) is False
     assert cp.fill_already_dead(12.50, 12.78, 12.14, 0.64) is True  # 0.44R under
+
+
+def test_fill_already_dead_aborts_at_015R_under_limit():
+    """0.15R is the shipped abort. Fill vs the limit, not vs a later last."""
+    cfg = {"ai_fill_abort_r": 0.15}
+    # limit 12.78, risk 0.64 → 0.15R = $0.096. 12.68 is 0.156R under.
+    assert cp.fill_already_dead(12.68, 12.78, 12.14, 0.64, cfg) is True
+    # 12.70 is 0.125R under — still inside the cushion.
+    assert cp.fill_already_dead(12.70, 12.78, 12.14, 0.64, cfg) is False
+
+
+def test_confirm_flattens_when_fill_is_015R_under_the_limit(
+        tmp_path, monkeypatch):
+    """FGI-style: sized on a stale limit, filled 0.20R cheaper already dead."""
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {"ai_fill_abort_r": 0.15})
+    _seed_state(
+        tmp_path, monkeypatch, entry_confirmed=False,
+        entry_limit_price=40.50, entry_price=40.50,
+        entry_stop_price=38.00, risk_per_share=2.5,
+        tranche_a_order_id="order_a",
+    )
+    # 40.00 vs 40.50 limit = 0.20R under on $2.50 risk.
+    stub = _StubBrokerManage(
+        order_status="new", current_price=40.00,
+        fills={"order_a": 40.00})
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert any(e.get("event") == "fill_through_stop" for e in events)
+    assert "NVDA" in stub.closed
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "fill_through_stop"
+
+
+def test_note_trail_print_needs_two_prints_and_uses_median():
+    pos: dict = {}
+    assert cp.note_trail_print(pos, 11.00) is None
+    assert pos.get("trail_last") is None
+    med = cp.note_trail_print(pos, 10.00)
+    assert med == pytest.approx(10.50)
+    # Third print is a spike; median of 11 / 10 / 10.01 stays near 10.
+    med = cp.note_trail_print(pos, 10.01)
+    assert med == pytest.approx(10.01)
+
+
+def test_local_profit_stop_raises_off_damped_last_not_a_spike():
+    pos = {
+        "entry_price": 10.00, "entry_stop_price": 9.50,
+        "risk_per_share": 0.50, "last_seen_price": 11.00,
+        "local_stop_price": 9.50,
+        "trail_prints": [10.00, 10.01, 11.00],
+        "trail_last": 10.01,
+        "mfe_r": 2.0,
+    }
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_give_open_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+    }
+    # 10.01 − 0.10R (0.05) = 9.96, not 11.00 − 0.05.
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.96)
+    # A lone spike in the ring must not lift off last_seen_price either.
+    pos["trail_prints"] = [11.00]
+    pos["trail_last"] = None
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.50)
 
 
 def test_local_trail_give_floors_at_min_dollar():

@@ -156,10 +156,9 @@ DEFAULT_CONFIG = {
     "ai_avg_days":                10,
     "ai_rvol_time_adjusted":    True,
     "ai_trade_amount":        1000.0,
-    # Slightly higher so trending heat can share slots with momentum (3 left
-    # only 4 pure-trending fills on 2026-08-11 under slot contention).
-    "ai_max_positions":            8,
-    "ai_max_buys_per_poll":        2,
+    # Tight book: 08-14 LFS was the only edge while 8 slots held CELC/LUNR/LPTH.
+    "ai_max_positions":            4,
+    "ai_max_buys_per_poll":        1,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
     "ai_trade_style": "Day scalp",
@@ -338,6 +337,8 @@ DEFAULT_CONFIG = {
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
     # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
+    # Admission (mom/trending) AND arm (every source, including research).
+    # Known-low refuses; unknown abstains. 08-14 WEN/RUM bought at 0.4–0.6x.
     "ai_watch_min_rvol":                2.0,
     # Cap how many LOOK tags apply_look_highlights may set panel-wide.
     "ai_watch_look_max":                  20,
@@ -587,7 +588,9 @@ DEFAULT_CONFIG = {
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
     "ai_local_trail_min_give_px":      0.06,
-    "ai_fill_abort_r":                 0.30,
+    # Abort a confirm when fill or tape is this far (R) through the limit/stop.
+    # 0.30 let FGI/SPAI/TDIC open 2R in the hole on a stale ask (08-14).
+    "ai_fill_abort_r":                 0.15,
     "ai_runner_step_r":                0.1,  # min ratchet gain before re-placing
     # Display/telemetry only since the runner moved to R. Kept so the zone
     # payload and UI keep their field.

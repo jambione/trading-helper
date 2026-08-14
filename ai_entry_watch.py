@@ -128,6 +128,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "overbought_hot": "OB hot",
     "dead_reentry": "loser once",
     "loser_reentry": "loser once",
+    "thin_rvol": "rvol low",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
     "not_heating_heating": "heating",
@@ -4992,6 +4993,41 @@ def _shadow_row(
     }
 
 
+def _arm_rvol(record: dict) -> float | None:
+    """RVOL the arm gate sees. Live stamp on the record, else admit.
+
+    Poll stamps a fresh desk rvol onto ``record['rvol']`` before this
+    runs. Known-low refuses; missing everywhere → None (abstain).
+    """
+    rec = record if isinstance(record, dict) else {}
+    for key in ("rvol", "admit_rvol"):
+        got = _f_or_none(rec.get(key))
+        if got is not None:
+            return got
+    feat = rec.get("features")
+    if isinstance(feat, dict):
+        return _f_or_none(feat.get("rvol"))
+    return None
+
+
+def _desk_rvol(symbol: str) -> float | None:
+    """Live RVOL off the dashboard row, if the desk has one."""
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    try:
+        for r in _dashboard_tickers():
+            if not isinstance(r, dict):
+                continue
+            key = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+            if key != sym:
+                continue
+            return _f_or_none(r.get("rvol"))
+    except Exception:
+        return None
+    return None
+
+
 def should_arm_buy(
     record: dict,
     *,
@@ -5181,6 +5217,17 @@ def should_arm_buy(
         risk_pct_of_px = 100.0 * (a - _stop) / a
         if risk_pct_of_px < min_stop_pct:
             return False, "stop_too_tight"
+
+    # Known-low RVOL refuses at arm for every source, including research
+    # (WEN/RUM 0.4–0.6x on 08-14). Unknown abstains — same as admission.
+    try:
+        min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0)
+    except (TypeError, ValueError):
+        min_rvol = 2.0
+    if min_rvol > 0:
+        rv = _arm_rvol(record)
+        if rv is not None and rv + 1e-12 < min_rvol:
+            return False, "thin_rvol"
 
     if not exh_ok:
         # Optional: in/below the zone may still fill when EXH is cooling.
@@ -5820,6 +5867,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         status = str(rec.get("status") or "").lower().strip()
         if status in _TERMINAL_STATUSES:
             continue
+
+        live_rv = _desk_rvol(sym)
+        if live_rv is not None:
+            rec["rvol"] = live_rv
 
         sig = indicators.get(sym)
         if isinstance(sig, dict):
