@@ -114,7 +114,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "trader_not_ready": "trader off",
     "not_watching": "not watching",
     "placing": "placing…",
-    "in_zone": "in zone",
+    "in_zone": "buy",
     "offset_zone": "no shelf",
     "stop_too_tight": "stop too tight",
     "cheap_ob_band": "cheap OB band",
@@ -394,6 +394,17 @@ def derive_blocker(
 _GEOMETRY_BLOCK_CODES = frozenset({
     "in_zone", "above_zone", "below_zone", "placing", "in_zone_fade_ok", "",
 })
+# Poller stamps should_arm_buy does not know about. Keep these.
+# Do NOT keep stale arm vetoes (thin_rvol, heating_too_low) after knobs change.
+_POST_ARM_BLOCK_CODES = frozenset({
+    "dead_reentry", "loser_reentry", "reentry_cooldown",
+    "buy_cap", "max_positions", "not_trading_hours",
+    "already_held", "already_holding", "already_managed",
+    "wash_trade", "wash_cooldown",
+    "daily_loss_limit", "open_risk_cap",
+    "trader_not_ready", "no_equity", "no_buying_power",
+    "placing", "stale_quote",
+})
 
 
 def _row_arm_refuse(row: dict, px: float) -> str | None:
@@ -468,7 +479,7 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
     if lo <= 0 or hi <= 0 or last <= 0:
         return
     stored = str(row.get("block_code") or "").strip()
-    keep = bool(stored) and stored not in _GEOMETRY_BLOCK_CODES
+    keep = stored in _POST_ARM_BLOCK_CODES
 
     def _keep_stored() -> None:
         row["ready"] = False

@@ -652,7 +652,7 @@ function _bookBlockerLabel(r) {
   if (code && !r.ready && !['in_zone', 'placing'].includes(code)) {
     return b || code.replace(/_/g, ' ');
   }
-  if (r.ready || phase === 'ready') return 'in zone';
+  if (r.ready || phase === 'ready') return 'buy';
   if (b) return b;
   return 'watching';
 }
@@ -662,7 +662,7 @@ function _bookBlockerClass(r) {
   if (phase === 'open' || (r && r.is_position)) return 'ai-book-status ai-book-status--open';
   if (phase === 'submitted') return 'ai-book-status ai-book-status--sent';
   const label = _bookBlockerLabel(r).toLowerCase();
-  if (r && r.ready && (label === 'in zone' || label === 'placing' || label === 'placing…')) {
+  if (r && r.ready && (label === 'buy' || label === 'in zone' || label === 'placing' || label === 'placing…')) {
     return 'ai-book-status ai-book-status--ready';
   }
   if (label && label !== 'watching' && label !== '—') {

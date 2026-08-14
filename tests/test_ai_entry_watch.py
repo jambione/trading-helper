@@ -627,10 +627,10 @@ def test_book_does_not_paint_below_band_or_heat_as_in_zone(tmp_path, monkeypatch
     assert by["CELC"]["block_code"] == "below_zone"
     assert by["CELC"]["in_zone"] is False
     assert by["CELC"]["ready"] is False
-    assert by["RUM"]["block_code"] == "heating_too_low"
+    # Stale heat-low stamp is recomputed. Heat floor is off → buy.
     assert by["RUM"]["in_zone"] is True
-    assert by["RUM"]["ready"] is False
-    assert "heat" in str(by["RUM"]["blocker"]).lower()
+    assert by["RUM"]["ready"] is True
+    assert by["RUM"]["block_code"] == "in_zone"
 
 
 def test_book_rstop_not_previewed_on_watches(tmp_path, monkeypatch):
@@ -1239,7 +1239,7 @@ def test_format_blocker_and_derive():
     }
     c3, l3 = ew.derive_blocker(rec_in)
     assert c3 == "in_zone"
-    assert l3 == "in zone"
+    assert l3 == "buy"
 
 
 def test_find_double_bottom_support_matches_two_swing_lows():
@@ -2960,7 +2960,7 @@ def test_derive_blocker_armable_below_is_in_zone():
     }
     code, label = ew.derive_blocker(rec, max_below_r=0.5, arm_below=True)
     assert code == "in_zone"
-    assert label == "in zone"
+    assert label == "buy"
 
 
 def test_stream_prefilter_not_far_inside_armable_dip(monkeypatch):
@@ -3327,6 +3327,7 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
     # Heat floor is off — 37% rising in-zone is a buy for the ratchet.
     assert umac["ready"] is True
     assert umac["block_code"] == "in_zone"
+    assert umac["blocker"] == "buy"
 
     onds = {
         "symbol": "ONDS", "source": "momentum", "rvol": 1.8,
@@ -3339,6 +3340,12 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
     assert onds["in_zone"] is True
     assert onds["ready"] is True
     assert onds["block_code"] == "in_zone"
+    assert onds["blocker"] == "buy"
+
+    stale_rvol = dict(onds, block_code="thin_rvol", blocker="rvol low")
+    ew.apply_tape_blocker(stale_rvol, 9.11)
+    assert stale_rvol["ready"] is True
+    assert stale_rvol["blocker"] == "buy"
 
     sora = {
         "symbol": "SORA", "source": "momentum", "rvol": None,
