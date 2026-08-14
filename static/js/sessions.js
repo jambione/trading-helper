@@ -9,7 +9,7 @@
  *   - #login-log-panel
  */
 
-import { api } from './api.js?v=120';
+import { api } from './api.js?v=124';
 
 const POLL_INTERVAL = 30_000; // 30 seconds
 let _pollTimer = null;

@@ -11,7 +11,7 @@
  * Cache is versioned — bump CACHE_VERSION when static assets change.
  */
 
-const CACHE_VERSION = 'v34';
+const CACHE_VERSION = 'v35';
 const CACHE_NAME    = `trading-${CACHE_VERSION}`;
 
 const APP_SHELL = [

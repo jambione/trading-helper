@@ -8,7 +8,7 @@
  */
 
 import { subscribe, get } from './store.js?v=107';
-import { api }       from './api.js?v=120';
+import { api }       from './api.js?v=124';
 import { copyTicker } from './tickers.js?v=112';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=107';
 
@@ -660,7 +660,7 @@ function _bookBlockerClass(r) {
   return 'ai-book-status';
 }
 
-function _updateBookRow(el, r, owner) {
+function _updateBookRow(el, r) {
   if (!el || !r) return;
   const phase = String((r && r.phase) || 'watching').toLowerCase();
   const isOpen = phase === 'open' || r.is_position;
@@ -669,7 +669,6 @@ function _updateBookRow(el, r, owner) {
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) statusEl.className = _bookBlockerClass(r);
   const trail = _fmtTrail(_bookStopPx(r));
-  const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -740,23 +739,11 @@ function _updateBookRow(el, r, owner) {
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
   el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'in zone');
-  const chgTitle = r.pct_change != null && Number.isFinite(Number(r.pct_change))
-    ? `day ${Number(r.pct_change) >= 0 ? '+' : ''}${Number(r.pct_change).toFixed(2)}%`
-    : null;
-  const title = [
-    isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
-    src ? `src ${src}` : null,
-    trail !== '—' ? `trail ${trail}` : null,
-    chgTitle,
-    zone !== '—' ? `zone ${zone}` : null,
-    r.reason || null,
-    r.block_code && r.block_code !== statusLabel ? `code ${r.block_code}` : null,
-    isOpen && r.avg_entry != null ? `entry $${Number(r.avg_entry).toFixed(2)}` : null,
-  ].filter(Boolean).join(' · ');
-  if (el.title !== title) el.title = title;
+  if (el.title) el.title = '';
+  if (statusEl && statusEl.title) statusEl.title = '';
 }
 
-function _bookRowHtml(r, owner) {
+function _bookRowHtml(r) {
   const sym = String((r && r.symbol) || '').toUpperCase();
   if (!sym) return '';
   const phase = String((r && r.phase) || 'watching').toLowerCase();
@@ -764,7 +751,6 @@ function _bookRowHtml(r, owner) {
   const statusLabel = _bookBlockerLabel(r);
   const statusCls = _bookBlockerClass(r);
   const trail = _fmtTrail(_bookStopPx(r));
-  const src = _bookSourceLabel(r.source);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -783,21 +769,7 @@ function _bookRowHtml(r, owner) {
     : ((phase === 'ready' || statusLabel === 'in zone')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
-  const chgTitle = r.pct_change != null && Number.isFinite(Number(r.pct_change))
-    ? `day ${Number(r.pct_change) >= 0 ? '+' : ''}${Number(r.pct_change).toFixed(2)}%`
-    : null;
-  const title = [
-    isOpen ? `${owner} open position` : `Watch · ${statusLabel}`,
-    src ? `src ${src}` : null,
-    trail !== '—' ? `trail ${trail}` : null,
-    chgTitle,
-    zone !== '—' ? `zone ${zone}` : null,
-    r.reason || null,
-    r.block_code && r.block_code !== statusLabel ? `code ${r.block_code}` : null,
-    isOpen && r.avg_entry != null ? `entry $${Number(r.avg_entry).toFixed(2)}` : null,
-  ].filter(Boolean).join(' · ');
-
-  return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}" title="${_esc(title)}">`
+  return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}</div>`
     + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
