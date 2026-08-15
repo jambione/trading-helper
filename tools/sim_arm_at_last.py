@@ -52,14 +52,15 @@ def zone_cfg(**over) -> dict[str, Any]:
 
 
 def last_cfg(**over) -> dict[str, Any]:
-    """Phase 0 on feat/rstop-arm-at-last."""
+    """Last-mode + EXH direction (rising or OB, not cooling)."""
     cfg = zone_cfg()
     cfg.update({
         "ai_watch_arm_mode": "last",
-        "ai_watch_exhaustion_rules": False,
+        "ai_watch_exhaustion_rules": True,
         "ai_watch_exhaustion_heat_min_pct": 0.0,
         "ai_watch_exhaustion_heat_max_pct": 0.0,
-        "ai_watch_in_zone_ignore_fade": True,
+        "ai_watch_in_zone_ignore_fade": False,
+        "ai_watch_require_exhaustion_data": False,
     })
     cfg.update(over)
     return cfg
@@ -167,8 +168,8 @@ SCENARIOS: list[tuple[str, dict[str, Any], float]] = [
 def print_scenarios() -> None:
     z, last = zone_cfg(), last_cfg()
     print("=" * 78)
-    print("  ARM SIM  zone (old pullback)  vs  last (Phase 0 on this branch)")
-    print("  RSTOP give = 0.10 × (5% of last). WASH is refused on both.")
+    print("  ARM SIM  zone (old pullback)  vs  last + EXH direction")
+    print("  last buys rising or OB-not-falling. Cooling and WASH refuse.")
     print("=" * 78)
     for title, row, ask in SCENARIOS:
         ok_z, why_z = ew.should_arm_buy(row, ask=ask, bid=ask - 0.01, cfg=z)

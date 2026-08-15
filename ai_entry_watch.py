@@ -3627,18 +3627,9 @@ def _hot_ob_source(record: dict) -> bool:
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
-    Arm when fast %R is **rising** and exhaustion is at/above
-    ``ai_watch_exhaustion_heat_min_pct`` (default 50) and below
-    ``ai_watch_exhaustion_heat_max_pct`` (default 90). That is "trending up
-    past 50 EXH" but not already in the 90–100 fade bucket. Cooling/flat
-    refuse — including overbought that has rolled over. Local trail locks
-    the pop; we do not chase names already pinned at the highs.
-
-    Exception: trending / momentum names that are *already overbought* may
-    still arm (``overbought_hot``) through the 90 cap **if %R is still
-    rising**. A falling OB (FGI 08-14) is a fade, not a dip: refuse
-    ``not_rising_overbought``. Zone geometry still refuses *above* the
-    band; in-zone and below-zone (to the stop) can fill.
+    Direction filter: buy when fast %R is **rising**, or the name is
+    already **overbought and not falling**. Cooling / rolling-over OB
+    refuse. Heat min/max still apply to the non-OB path (both 0 = off).
 
     A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
@@ -3651,16 +3642,12 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
             return True, "no_exhaustion_fallback"
         return False, "no_exhaustion_data"
-    hot_ob = (
-        state == "overbought"
-        and bool(cfg.get("ai_watch_ob_allow_hot", True))
-        and _hot_ob_source(record)
-    )
-    if hot_ob:
-        ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-        if ind.get("pctr_falling") or not ind.get("pctr_rising"):
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    if state == "overbought":
+        if ind.get("pctr_falling"):
             return False, "not_rising_overbought"
-        return True, "overbought_hot"
+        if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
+            return True, "overbought_hot"
     ex = exhaustion_pct(record)
     raw_min = cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0)
     try:

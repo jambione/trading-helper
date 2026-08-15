@@ -438,11 +438,11 @@ DEFAULT_CONFIG = {
     # Explicit override for left_overbought software exit. None/absent → follow
     # edge mode (on only for exhaustion_scalp). Set false to force off.
     # "ai_exit_left_overbought": False,
-    # Exhaustion / %R rules for arm geometry (still used under continuation).
-    # BUY: rising EXH at/above heat_min (default 50). Fading/flat refuse.
-    # A missing %R reading refuses the buy when require_data is true.
-    # Phase 0 (arm-at-last): off. First add-back is rising EXH for direction.
-    "ai_watch_exhaustion_rules":     False,
+    # Exhaustion / %R is a *direction* filter, not a heat floor.
+    # BUY: %R rising, or already overbought and not falling.
+    # Refuse cooling / rolling-over OB. Missing %R still passes when
+    # require_data is false (thin tape).
+    "ai_watch_exhaustion_rules":      True,
     # Recompute %R against the live price instead of trusting the engine's
     # 60-120s-old copy. Closed bars give the window, the live quote gives the
     # close — no new market data, just no waiting for a bar to close.
@@ -468,10 +468,9 @@ DEFAULT_CONFIG = {
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          True,
-    # TEMP ratchet-test: in/below zone may arm while EXH is cooling.
-    # Set false to restore the rising-only rule.
-    # In/below the zone may arm while EXH is cooling. Ratchet is the exit.
-    "ai_watch_in_zone_ignore_fade":   True,
+    # False: cooling EXH refuses even at last / in-zone. Last-mode still
+    # buys rising or pinned-OB names above the old pullback band.
+    "ai_watch_in_zone_ignore_fade":  False,
     # SELL side only. A held name with no %R reading keeps the pre-exhaustion
     # sell_signal stop defence — taking its only indicator defence away while
     # giving it no replacement would leave it worse off than before. Never flip

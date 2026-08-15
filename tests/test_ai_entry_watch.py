@@ -3511,7 +3511,12 @@ def test_live_exhaustion_range_fallback_for_thin_tape():
 def _last_cfg(**over):
     cfg = {
         "ai_watch_arm_mode": "last",
-        "ai_watch_exhaustion_rules": False,
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_in_zone_ignore_fade": False,
+        "ai_watch_require_exhaustion_data": False,
+        "ai_watch_exhaustion_heat_min_pct": 0.0,
+        "ai_watch_exhaustion_heat_max_pct": 0.0,
+        "ai_watch_ob_allow_hot": True,
         "ai_watch_arm_require_indicators": False,
         "ai_min_reward_risk": 0.5,
         "ai_watch_min_stop_pct": 0,
@@ -3562,16 +3567,34 @@ def test_arm_at_last_still_refuses_look_wash():
     assert ok_in is False and why_in == "look_wash"
 
 
-def test_arm_at_last_does_not_need_rising_exh_in_phase_0():
+def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
+    """Last-mode still needs upward tape. Cooling is a fade, not a dip."""
     import ai_entry_watch as ew
 
     rec = _armable_rec()
+    rec["source"] = "trending"
+    rec["structure"]["reward_risk"] = 0.6
+    rec["indicator"]["pctr"] = -80.0
     rec["indicator"]["pctr_rising"] = False
     rec["indicator"]["pctr_falling"] = True
-    rec["indicator"]["pctr"] = -80.0
-    rec["source"] = "trending"
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
-    assert ok and why == "last_exhaustion_off"
+    assert ok is False and why == "not_rising_cooling"
+
+    rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_falling"] = False
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok and why == "last_heating"
+
+    rec["indicator"]["pctr"] = -5.0
+    rec["indicator"]["pctr_rising"] = False
+    rec["indicator"]["pctr_falling"] = True
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok is False and why == "not_rising_overbought"
+
+    rec["indicator"]["pctr_falling"] = False
+    rec["indicator"]["pctr_rising"] = True
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok and why.startswith("last_overbought")
 
 
 def test_build_last_zone_stop_is_synth_pct_under_the_tape():
