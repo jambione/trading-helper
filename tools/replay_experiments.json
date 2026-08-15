@@ -1,0 +1,38 @@
+{
+  "min_n": 30,
+  "delta_r_for_power": 0.1,
+  "search": {
+    "ai_edge_mode": ["exhaustion_scalp", "continuation"],
+    "ai_exit_left_overbought": [false, true],
+    "ai_watch_exhaustion_heat_min_pct": [50, 55, 60, 65, 70],
+    "flatten": ["clock", "hold"],
+    "dead_min": [15, 20, 30]
+  },
+  "experiments": [
+    {
+      "name": "hybrid-exit",
+      "kind": "hybrid",
+      "enabled": true,
+      "description": "Overbought-only arm, left_overbought off. The 2026-08-11 hypothesis."
+    },
+    {
+      "name": "continuation",
+      "kind": "continuation",
+      "enabled": true,
+      "description": "Heating|overbought arm, left_overbought off. Wider book than hybrid."
+    },
+    {
+      "name": "heat-floor",
+      "kind": "heat_min",
+      "enabled": true,
+      "grid": [50, 55, 60, 65, 70],
+      "description": "Raise ai_watch_exhaustion_heat_min_pct. Signal quality only — not session $."
+    },
+    {
+      "name": "flatten-vs-hold",
+      "kind": "flatten_hold",
+      "enabled": true,
+      "description": "Clock flatten vs hold to T1 / stop / dead_trade on remaining same-day shadow."
+    }
+  ]
+}

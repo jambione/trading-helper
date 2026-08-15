@@ -18,7 +18,8 @@ What it does, every `--interval` seconds:
   • After the AI watch opens, runs tools/instrumentation_check.py about once
     an hour so a silent logger is a same-day alarm, not a next-morning autopsy.
   • After the cash session (default 16:05 ET), runs tools/daily_learn.py once
-    so the hybrid forward-test ledger always gets a line.
+    so the hybrid forward-test ledger always gets a line. daily_learn then
+    runs tools/replay_ab.py on that day's tape and records the overlay ranking.
 
 The dashboard is checked over HTTP rather than by process liveness: a hung
 uvicorn still has a PID, and to the OCR source a hang and a crash are the same
@@ -444,6 +445,13 @@ def main() -> int:
                     rc = run_learn_job(py, "daily_learn.py", "--day", day_key)
                     last_eod_day = day_key
                     log(f"daily_learn rc={rc} day={day_key}")
+                    # Freeze the last 10 sessions and rank the declared
+                    # settings grid. Incremental jsonl so a killed run
+                    # still leaves a morning brief.
+                    rc_p = run_learn_job(py, "desk_tape.py", "pack", "--days", "10")
+                    rc_s = run_learn_job(
+                        py, "replay_ab.py", "--search", "--days", "10")
+                    log(f"desk_tape pack rc={rc_p}; replay_ab --search rc={rc_s}")
 
             if args.once:
                 break

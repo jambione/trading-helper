@@ -11,9 +11,10 @@ hand after the close:
     venv/bin/python tools/daily_learn.py --json
 
 Artifacts (under AI_REPORT_DIR / ai_reports/):
-  daily/YYYY-MM-DD.md      human EOD note
+  daily/YYYY-MM-DD.md      human EOD note (includes replay tuner brief)
   daily/YYYY-MM-DD.json    machine roll-up
   daily_ledger.jsonl       one line per day (hybrid forward-test board)
+  replay_ab/YYYY-MM-DD.*   counterfactual overlay ranking (tools/replay_ab.py)
 """
 from __future__ import annotations
 
@@ -146,6 +147,18 @@ def _fill_truth(day: date) -> dict[str, Any]:
         return {"ok": False, "error": str(e), "offline": True}
 
 
+def _replay_tune(day: date) -> dict[str, Any]:
+    """Pack today's tape and score registered overlays. Never raises."""
+    try:
+        import desk_tape
+        import replay_ab
+        desk_tape.pack([day.isoformat()])
+        payload = replay_ab.run_days([day.isoformat()], write=True)
+        return replay_ab.brief_for_daily(payload)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+
+
 def build_payload(day: date) -> dict[str, Any]:
     rd = _report_dir()
     outcomes = _jsonl(rd / "outcomes.jsonl", day)
@@ -155,6 +168,8 @@ def build_payload(day: date) -> dict[str, Any]:
     fills = _fill_truth(day)
     osum = outcomes_summary(outcomes)
     funnel = (desk or {}).get("funnel") if isinstance(desk, dict) else None
+    replay = _replay_tune(day)
+    best = (replay or {}).get("best_candidate") or (replay or {}).get("best_hypothesis") or {}
     ledger = {
         "day": day.isoformat(),
         "ts": datetime.now(timezone.utc).timestamp(),
@@ -176,6 +191,10 @@ def build_payload(day: date) -> dict[str, Any]:
         "fill_truth_ok": bool(fills.get("ok")),
         "fill_truth_trades": (fills.get("stats") or {}).get("trades"),
         "fill_truth_avg_pnl_pct": (fills.get("stats") or {}).get("avg_pnl_pct"),
+        "replay_ok": bool((replay or {}).get("ok")),
+        "replay_best": best.get("name"),
+        "replay_best_delta_usd": best.get("delta_usd"),
+        "replay_verdict": best.get("verdict"),
     }
     return {
         "day": day.isoformat(),
@@ -185,6 +204,7 @@ def build_payload(day: date) -> dict[str, Any]:
         "n_trades_log": len(trades),
         "desk": desk,
         "fill_truth": fills,
+        "replay": replay,
         "ledger": ledger,
     }
 
@@ -230,11 +250,29 @@ def _md(payload: dict[str, Any]) -> str:
         )
     else:
         lines.append(f"- unavailable: {ft.get('error') or 'offline'}")
+    replay = payload.get("replay") or {}
+    lines.extend(["", "## Replay tuner"])
+    if replay.get("ok") and not replay.get("skipped"):
+        bc, bh = replay.get("best_candidate"), replay.get("best_hypothesis")
+        lines.append(f"- {replay.get('action')}")
+        if bc:
+            lines.append(f"- candidate: `{bc.get('name')}` Δ${bc.get('delta_usd')}")
+        if bh:
+            lines.append(f"- hypothesis: `{bh.get('name')}` Δ${bh.get('delta_usd')}")
+        if not bc:
+            lines.append("- no overlay cleared min_n + both halves — do not change config")
+    elif replay.get("skipped"):
+        lines.append(f"- skipped: {replay.get('skipped')}")
+    else:
+        lines.append(f"- unavailable: {replay.get('error') or 'not run'}")
     lines.extend([
         "",
         "## How to re-run",
         "```",
         f"venv/bin/python tools/daily_learn.py --day {day}",
+        f"venv/bin/python tools/desk_tape.py pack --day {day}",
+        f"venv/bin/python tools/replay_ab.py --day {day}",
+        f"venv/bin/python tools/replay_ab.py --search --days 10",
         f"venv/bin/python tools/desk_report.py --day {day}",
         f"venv/bin/python tools/outcome_slice.py  # filter by day in post",
         "```",

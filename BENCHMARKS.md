@@ -91,3 +91,39 @@ is consistent across 17 configs and both halves.
 
 Read the ledger each morning: `tail ai_reports/daily_ledger.jsonl`.
 One day remains a check, not a trend.
+
+---
+
+## 2026-08-15 — Replay tuner (`tools/replay_ab.py`)
+
+Nightly (via `daily_learn` / watchdog) ranks a *declared* set of overlays on
+the same shadow + outcome tape, by counterfactual session $:
+
+| overlay | what it changes |
+|---|---|
+| `hybrid-exit` | overbought-only arm, `left_overbought` off (08-11 hypothesis) |
+| `continuation` | heating\|overbought arm, `left_overbought` off |
+| `flatten-vs-hold` | clock flatten vs hold to T1/stop/dead on remaining shadow |
+| `heat-floor` | `heat_min` sweep — signal quality only, never a $ candidate |
+
+Promote nothing automatically. `candidate` requires `min_n` (30) **and** the
+same sign on both chronological halves. Anything smaller is a `hypothesis`.
+The tool never writes `bot_config.json`.
+
+Pinned 08-11 fixture still has to reproduce through `tools/sim_repro.py`.
+On that tape the tuner must report hybrid-exit ≈ +$226.94 vs live and mark
+it underpowered (n=14).
+
+**Tape pack + overnight search:** `tools/desk_tape.py pack` freezes
+shadow/outcomes/rejects (and optional trades / position_shadow) into
+`ai_reports/tapes/<label>/`. Point `AI_REPORT_DIR` at that folder and every
+existing sim can reuse the same rows. `replay_ab.py --search` walks the
+declared grid in `tools/replay_experiments.json` (`search` key), writes one
+jsonl line per cell, and ranks by held-out session $ when more than one day
+is packed. Watchdog runs `pack --days 10` then `--search --days 10` after
+`daily_learn`.
+
+    venv/bin/python tools/desk_tape.py pack --days 10
+    venv/bin/python tools/replay_ab.py --search --days 10
+    venv/bin/python tools/replay_ab.py --day 2026-08-11
+    venv/bin/python tools/sim_repro.py

@@ -30,6 +30,8 @@ HONESTY
     count if shadow printed those prices, shadow is ask-like, and wash thrash
     and re-entry are not modelled.
   • n=8 trades. This is one day. A hypothesis, not a verdict.
+
+Nightly ranking of this overlay (and the others) is tools/replay_ab.py.
 """
 
 from __future__ import annotations

@@ -29,6 +29,8 @@ USAGE
     venv/bin/python tools/sim_edge_mode_ab.py
     venv/bin/python tools/sim_edge_mode_ab.py --day 2026-08-11
     venv/bin/python tools/sim_edge_mode_ab.py --day 2026-08-11 --json
+
+Nightly ranking of this overlay (and the others) is tools/replay_ab.py.
 """
 
 from __future__ import annotations

@@ -78,3 +78,32 @@ def test_write_artifacts(tmp_path, monkeypatch):
     assert Path(paths["json"]).exists()
     assert Path(paths["ledger"]).exists()
     assert "exhaustion_scalp" in Path(paths["md"]).read_text()
+    assert "Replay tuner" in Path(paths["md"]).read_text()
+    assert "not run" in Path(paths["md"]).read_text()
+
+
+def test_md_includes_replay_hypothesis():
+    payload = {
+        "day": "2026-08-11",
+        "generated_at": "2026-08-12T00:00:00+00:00",
+        "regime": {},
+        "outcomes": {"n": 14, "n_scored": 14, "win_rate": 0.4, "avg_r": 0.0,
+                     "sum_r": 0.0, "sum_pl_usd": -117.6,
+                     "by_close_reason": {}, "by_entry_path": {},
+                     "by_edge_mode": {}, "by_entry_exhaustion_state": {}},
+        "desk": {"funnel": {}},
+        "fill_truth": {"ok": False, "error": "test"},
+        "replay": {
+            "ok": True,
+            "action": "no candidate. best hypothesis is hybrid-exit "
+                      "(Δ$+226.94) — do not change config",
+            "best_candidate": None,
+            "best_hypothesis": {"name": "hybrid-exit", "delta_usd": 226.94,
+                                "verdict": "hypothesis"},
+        },
+        "ledger": {},
+    }
+    text = dl._md(payload)
+    assert "hybrid-exit" in text
+    assert "do not change config" in text
+    assert "Replay tuner" in text
