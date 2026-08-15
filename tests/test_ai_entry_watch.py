@@ -13,6 +13,7 @@ def test_watch_config_defaults_present():
         "ai_watch_poll_sec",
         "ai_structure_ttl_sec",
         "ai_watch_expire_at_close",
+        "ai_watch_arm_mode",
         "ai_entry_zone_pad_pct",
         "ai_max_structure_calls_per_hour",
         "ai_persist_entry_decisions",
@@ -229,6 +230,7 @@ def test_desk_candidates_restrictive_filters(tmp_path, monkeypatch):
         "ai_watch_min_pct_change": 50.0,
         "ai_watch_min_rvol": 2.0,
         "ai_max_price": 100.0,
+        "ai_watch_require_look_ext": True,
     })
     by = {r["symbol"]: r for r in rows}
     assert by["HOT"]["source"] == "trending"
@@ -622,6 +624,14 @@ def test_book_does_not_paint_below_band_or_heat_as_in_zone(tmp_path, monkeypatch
                 "entry_low": 7.53, "entry_high": 7.64, "stop_price": 7.20,
             },
         },
+    })
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_arm_mode": "zone",
+        "ai_watch_exhaustion_rules": False,
+        "ai_watch_arm_require_indicators": False,
+        "ai_min_reward_risk": 0,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_require_db_zone": False,
     })
     by = {r["symbol"]: r for r in ew.book_table_rows()}
     assert by["CELC"]["block_code"] == "below_zone"
@@ -1830,7 +1840,7 @@ def test_live_sync_path_records_admission_provenance(tmp_path, monkeypatch):
     rec = state["SOUN"]
     assert rec["admit_rvol"] == 2.1, "live path lost admission rvol"
     assert rec["admit_look_reason"] == "EXT"
-    assert rec["admit_criteria"] == ["score", "rvol"]
+    assert rec["admit_criteria"] == ["score", "rvol", "ext"]
     assert rec["admit_ts"] == 500.0
 
     # And it survives the 2s rebuild that arrives without the numbers.
@@ -3314,6 +3324,14 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_arm_mode": "zone",
+        "ai_watch_exhaustion_rules": False,
+        "ai_watch_arm_require_indicators": False,
+        "ai_min_reward_risk": 0,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_require_db_zone": False,
+    })
 
     umac = {
         "symbol": "UMAC", "source": "momentum", "rvol": 3.8,
@@ -3488,3 +3506,143 @@ def test_live_exhaustion_range_fallback_for_thin_tape():
     assert ew.apply_live_exhaustion(rec, px, cfg, now) is True
     assert rec["indicator"]["pctr_src"] == "clock_range"
     assert rec["indicator"]["pctr"] is not None
+
+
+def _last_cfg(**over):
+    cfg = {
+        "ai_watch_arm_mode": "last",
+        "ai_watch_exhaustion_rules": False,
+        "ai_watch_arm_require_indicators": False,
+        "ai_min_reward_risk": 0.5,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_require_db_zone": True,
+        "ai_watch_synth_stop_pct": 5.0,
+        "ai_watch_synth_rr": 0.6,
+        "ai_entry_limit_pad_pct": 0.15,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_arm_at_last_buys_above_the_pullback_band():
+    """Trending names sit above the old zone. Last-mode still buys them."""
+    import ai_entry_watch as ew
+
+    rec = _armable_rec()
+    rec["source"] = "momentum"
+    rec["structure"]["zone_kind"] = "pullback_band"
+    rec["structure"]["synthetic"] = True
+    rec["structure"]["reward_risk"] = 0.6
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok and why.startswith("last_")
+
+    ok_z, why_z = ew.should_arm_buy(
+        rec, ask=32.0, bid=31.9, cfg=_last_cfg(ai_watch_arm_mode="zone"))
+    assert ok_z is False and why_z == "above_zone"
+
+
+def test_arm_at_last_still_refuses_look_wash():
+    """LOOK=WASH is a tanking name. Last-mode does not buy it."""
+    import ai_entry_watch as ew
+
+    rec = _armable_rec()
+    rec["source"] = "trending"
+    rec["look_reason"] = "WASH"
+    rec["admit_look_reason"] = "WASH"
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok is False and why == "look_wash"
+    assert ew.format_blocker("look_wash") == "WASH"
+
+    ok_in, _met, why_in = ew.passes_inclusion(
+        {"symbol": "DUMP", "source": "momentum", "look_reason": "WASH",
+         "price": 12.0, "pct_change": 4.0, "rvol": 3.0},
+        _last_cfg(ai_watch_require_uptrend=False, ai_watch_require_indicators=False,
+                  ai_watch_min_price=1.0),
+    )
+    assert ok_in is False and why_in == "look_wash"
+
+
+def test_arm_at_last_does_not_need_rising_exh_in_phase_0():
+    import ai_entry_watch as ew
+
+    rec = _armable_rec()
+    rec["indicator"]["pctr_rising"] = False
+    rec["indicator"]["pctr_falling"] = True
+    rec["indicator"]["pctr"] = -80.0
+    rec["source"] = "trending"
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
+    assert ok and why == "last_exhaustion_off"
+
+
+def test_build_last_zone_stop_is_synth_pct_under_the_tape():
+    import ai_entry_watch as ew
+
+    z = ew.build_last_zone_structure(20.0, _last_cfg())
+    assert z["zone_kind"] == "at_last"
+    assert z["stop_price"] == 19.0          # 5% under last
+    assert z["target_1"] == pytest.approx(20.0 + 0.6 * 1.0)
+    assert z["entry_low"] < 20.0 < z["entry_high"]
+
+
+def test_decision_for_place_rebases_r_from_last(monkeypatch):
+    import ai_entry_watch as ew
+
+    structure = {
+        "decision": "WAIT", "wait_kind": "wait_for_zone",
+        "entry_low": 18.0, "entry_high": 18.4,
+        "stop_price": 17.0, "target_1": 19.0, "reward_risk": 0.6,
+        "zone_kind": "double_bottom", "synthetic": False,
+    }
+    d = ew._decision_for_place(structure, ask=20.0, cfg=_last_cfg())
+    assert d["zone_kind"] == "at_last"
+    assert d["stop_price"] == 19.0
+    assert d.get("skip_zone") in (None, False)
+    assert d["target_1"] == pytest.approx(20.0 + 0.6 * 1.0)
+
+
+def test_stream_does_not_skip_rest_when_arm_at_last(monkeypatch):
+    import ai_entry_watch as ew
+
+    rec = {
+        "symbol": "AAA",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 27.0, "entry_high": 28.5,
+            "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+        },
+    }
+    monkeypatch.setattr(ew, "stream_quote", lambda _s: (40.0, 1.0))
+    far, px = ew.stream_says_far_from_zone(rec, _last_cfg(ai_watch_stream_enabled=True))
+    assert far is False
+    far_z, _ = ew.stream_says_far_from_zone(
+        rec, _last_cfg(ai_watch_arm_mode="zone", ai_watch_stream_enabled=True))
+    assert far_z is True
+
+
+def test_apply_tape_blocker_last_mode_ready_above_band(monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    row = {
+        "symbol": "UMAC", "source": "momentum", "rvol": 3.8,
+        "entry_low": 32.74, "entry_high": 33.23, "stop_price": 32.0,
+        "target_1": 34.0, "reward_risk": 0.6,
+        "zone_kind": "double_bottom",
+        "block_code": "above_zone", "blocker": "above zone",
+    }
+    ew.apply_tape_blocker(row, 34.50)
+    assert row["ready"] is True
+    assert row["block_code"] == "in_zone"
+
+
+def test_ensure_offset_last_mode_tracks_the_tape():
+    import ai_entry_watch as ew
+
+    rec = {"symbol": "AAA", "source": "momentum", "status": "watching"}
+    ev = ew.ensure_offset_zone_if_needed(rec, 12.0, _last_cfg(), now=1.0)
+    assert ev and ev["zone_kind"] == "at_last"
+    assert rec["structure"]["stop_price"] == pytest.approx(11.4)
+    ev2 = ew.ensure_offset_zone_if_needed(rec, 13.0, _last_cfg(), now=2.0)
+    assert rec["structure"]["anchor_price"] == pytest.approx(13.0)
+    assert rec["structure"]["stop_price"] == pytest.approx(12.35)

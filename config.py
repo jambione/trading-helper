@@ -411,6 +411,10 @@ DEFAULT_CONFIG = {
     #                     "offset" when bars/pattern unavailable.
     #   "offset"        — % under the live print (legacy).
     "ai_watch_zone_mode":     "double_bottom",
+    # How the book arms a buy.
+    #   "last" — buy the tape; RSTOP is the trade. Zone is display/R only.
+    #   "zone" — wait for a pullback into the band (legacy).
+    "ai_watch_arm_mode":              "last",
     # In double_bottom mode, refuse to arm on the offset fallback. Without this
     # a name with no detectable shelf quietly becomes a different trade — a
     # percentage band with a 5% stop, the regime the 90-day replay measured at
@@ -437,7 +441,8 @@ DEFAULT_CONFIG = {
     # Exhaustion / %R rules for arm geometry (still used under continuation).
     # BUY: rising EXH at/above heat_min (default 50). Fading/flat refuse.
     # A missing %R reading refuses the buy when require_data is true.
-    "ai_watch_exhaustion_rules":      True,
+    # Phase 0 (arm-at-last): off. First add-back is rising EXH for direction.
+    "ai_watch_exhaustion_rules":     False,
     # Recompute %R against the live price instead of trusting the engine's
     # 60-120s-old copy. Closed bars give the window, the live quote gives the
     # close — no new market data, just no waiting for a bar to close.
@@ -1059,6 +1064,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_require_look_ext",
     "ai_watch_synth_zone_enabled",
     "ai_watch_zone_mode",
+    "ai_watch_arm_mode",
     "ai_watch_require_db_zone",
     "ai_watch_armable_zone_kinds",
     "ai_edge_mode",

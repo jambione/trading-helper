@@ -203,6 +203,8 @@
   "ai_watch_min_pct_change": 50.0,
   "ai_watch_synth_zone_enabled": true,
   "ai_watch_zone_mode": "double_bottom",
+  "ai_watch_arm_mode": "last",
+  "ai_watch_exhaustion_rules": false,
   "ai_watch_require_db_zone": true,
   "ai_watch_armable_zone_kinds": ["double_bottom", "pullback_band"],
   "ai_reentry_cooldown_sec": 900.0,

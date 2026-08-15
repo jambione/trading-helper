@@ -1191,6 +1191,12 @@ def place_scaled_entry(
     # the fill a tick after the arm gate had already accepted the dip.
     cfg_zone = _entry_cfg()
     skip_zone = bool(decision.get("desk_force") or decision.get("skip_zone"))
+    if not skip_zone:
+        try:
+            from ai_entry_watch import arm_at_last
+            skip_zone = arm_at_last(cfg_zone)
+        except Exception:
+            pass
     if current_ask is not None and not skip_zone:
         try:
             from ai_entry_watch import ask_triggers_zone, arm_below_max_r

@@ -417,6 +417,13 @@ def test_place_scaled_entry_refuses_price_outside_the_entry_zone(
     """Prefer missing a move over taking a low-quality setup — if price left
     the zone before the order could go in, don't chase it."""
     _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_watch_arm_mode": "zone",
+        "ai_watch_arm_below_zone": True,
+        "ai_watch_arm_below_zone_max_r": 1.0,
+        "ai_broker_stop_enabled": True,
+        "ai_day_scalp_dual_tranche": False,
+    })
     stub = _StubBroker()
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
@@ -426,6 +433,35 @@ def test_place_scaled_entry_refuses_price_outside_the_entry_zone(
     assert result["ok"] is False
     assert "entry zone" in result["error"]
     assert stub.calls == []
+
+
+def test_place_scaled_entry_last_mode_buys_above_the_band(
+        tmp_path, monkeypatch):
+    """Arm-at-last: the tape is the entry. Do not refuse a runner."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_watch_arm_mode": "last",
+        "ai_watch_synth_stop_pct": 5.0,
+        "ai_watch_synth_rr": 0.6,
+        "ai_entry_order_style": "limit",
+        "ai_entry_limit_pad_pct": 0.15,
+        "ai_broker_stop_enabled": True,
+        "ai_day_scalp_dual_tranche": False,
+        "ai_entry_broker_target": False,
+        "ai_max_position_pct": 25.0,
+        "ai_watch_min_stop_pct": 0.5,
+        "ai_fill_abort_r": 0.15,
+    })
+    stub = _StubBroker(market_open=True)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    decision = _buy_decision()
+    result = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, current_ask=44.0)
+    assert result.get("ok") is True, result
+    assert stub.limit_calls, "expected a limit above the leftover zone"
+    lim = stub.limit_calls[0]["limit_price"]
+    assert lim == pytest.approx(44.0 * 1.0015, abs=0.01)
 
 
 def test_place_scaled_entry_rolls_back_when_parent_buy_fails(
@@ -2008,6 +2044,11 @@ def test_left_overbought_does_not_flatten_a_dual_book(tmp_path, monkeypatch):
         "ai_exit_left_overbought": True,
         "ai_edge_mode": "exhaustion_scalp",
     })
+    monkeypatch.setattr(
+        cp, "_cfg_flag",
+        lambda key, default=True: True if key == "ai_watch_exhaustion_rules"
+        else bool(default) if key != "ai_exit_left_overbought" else True,
+    )
 
     class _EW:
         @staticmethod

@@ -55,6 +55,17 @@ def arm_below_max_r(cfg: dict | None = None) -> float:
     except (TypeError, ValueError):
         return DEFAULT_ARM_BELOW_MAX_R
 
+
+def arm_at_last(cfg: dict | None = None) -> bool:
+    """True when the book buys the tape instead of waiting for a pullback.
+
+    Missing / unknown ``ai_watch_arm_mode`` stays on the zone path so unit
+    tests that omit the key keep their old geometry. Live config sets
+    ``last``.
+    """
+    mode = str((cfg or {}).get("ai_watch_arm_mode") or "").lower().strip()
+    return mode in ("last", "at_last", "tape", "market", "no_zone")
+
 # Serializes every load -> mutate -> save of the watch file.
 #
 # Two threads in ai_trader touch it: the book thread runs
@@ -115,6 +126,13 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_watching": "not watching",
     "placing": "placing…",
     "in_zone": "buy",
+    "at_last": "buy",
+    "last_exhaustion_off": "buy",
+    "last_no_exhaustion_fallback": "buy",
+    "last_overbought_hot": "buy",
+    "last_overbought": "buy",
+    "last_heating": "buy",
+    "last_in_zone_fade_ok": "buy",
     "offset_zone": "no shelf",
     "stop_too_tight": "stop too tight",
     "cheap_ob_band": "cheap OB band",
@@ -129,6 +147,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "dead_reentry": "loser once",
     "loser_reentry": "loser once",
     "thin_rvol": "rvol low",
+    "look_wash": "WASH",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
     "not_heating_heating": "heating",
@@ -156,6 +175,8 @@ def format_blocker(code: str | None, *, detail: str | None = None) -> str | None
     if not code and not detail:
         return None
     detail_s = str(detail or "").strip()
+    if str(code or "").strip().lower() == "look_wash":
+        return "WASH"
     if "wash" in detail_s.lower() or "wash" in str(code or "").lower():
         return "wash trade"
     raw = str(code or "").strip()
@@ -298,7 +319,9 @@ def _poller_blocked(rec: dict) -> bool:
     in the armable overshoot window — that geometry is a buy, same as in-zone.
     """
     code = str(rec.get("block_code") or "").strip()
-    if not code or code in ("in_zone", "placing"):
+    if not code or code in ("in_zone", "placing", "at_last"):
+        return False
+    if code.startswith("last_") or code.startswith("zone_"):
         return False
     if code == "below_zone":
         # Stale below stamp while price is still an armable dip → not blocked.
@@ -413,6 +436,8 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
         "symbol": str(row.get("symbol") or "").upper().strip(),
         "status": "watching",
         "source": row.get("source") or "momentum",
+        "look_reason": row.get("look_reason") or row.get("admit_look_reason"),
+        "admit_look_reason": row.get("admit_look_reason") or row.get("look_reason"),
         "rvol": row.get("rvol"),
         "admit_rvol": row.get("rvol") if row.get("rvol") is not None
         else row.get("admit_rvol"),
@@ -467,6 +492,9 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
     cheap-OB / no-%R / loser stamps, or computes should_arm_buy if the
     poller only left a geometry code. That is why ONDS/RUM/UMAC/SORA
     painted READY while nothing bought.
+
+    Arm-at-last: last is the entry. Above/below the printed band is not a
+    refuse — only a real post-arm or should_arm_buy veto is.
     """
     if not isinstance(row, dict):
         return
@@ -489,6 +517,27 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
             or format_blocker(stored)
         )
         row["block_reason"] = row.get("blocker")
+
+    if arm_at_last(_push_cfg()):
+        if keep:
+            _keep_stored()
+            return
+        why = _row_arm_refuse(row, last)
+        if why and why not in (
+            "above_zone", "below_zone", "zone",
+        ) and not str(why).startswith("last_") and not str(why).startswith("zone_"):
+            row["in_zone"] = True
+            row["ready"] = False
+            row["block_code"] = why
+            row["blocker"] = format_blocker(why) or why.replace("_", " ")
+            row["block_reason"] = row["blocker"]
+            return
+        row["in_zone"] = True
+        row["block_code"] = "in_zone"
+        row["blocker"] = format_blocker("in_zone")
+        row["block_reason"] = row["blocker"]
+        row["ready"] = True
+        return
 
     if last > max(lo, hi):
         row["in_zone"] = False
@@ -662,6 +711,8 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
                 max_below_r=DEFAULT_ARM_BELOW_MAX_R,
                 arm_below=True,
             )
+            if not in_zone and arm_at_last(_push_cfg()) and last_ask_f > 0:
+                in_zone = True
         ready = status == "armed" or (
             status == "watching" and in_zone and not _poller_blocked(rec))
         b_code, b_label = derive_blocker(rec, pad_pct=pad_pct)
@@ -751,6 +802,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
             max_below_r=DEFAULT_ARM_BELOW_MAX_R,
             arm_below=True,
         )
+        if not in_zone and arm_at_last(_push_cfg()) and last_ask_f > 0:
+            in_zone = True
     ready = status == "armed" or (
         status == "watching" and in_zone and not _poller_blocked(rec))
     if status == "armed" or ready:
@@ -1194,6 +1247,15 @@ def _look_reason_value(row: dict, prev_val: Any = None) -> str | None:
     if prior and prior != "NONE":
         return prior
     return "NONE" if "look_reason" in row else None
+
+
+def _is_wash_look(row: dict | None) -> bool:
+    """LOOK=WASH is a near-low washout. Never seed or buy it."""
+    rec = row if isinstance(row, dict) else {}
+    for key in ("look_reason", "admit_look_reason"):
+        if str(rec.get(key) or "").strip().upper() == "WASH":
+            return True
+    return False
 
 
 def upsert_from_rows(
@@ -2047,6 +2109,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     rv = None
                 if rv is not None and min_rvol > 0 and rv < min_rvol:
                     continue
+                if _is_wash_look(r):
+                    continue
                 try:
                     px = float(r.get("price")) if r.get("price") is not None else None
                 except (TypeError, ValueError):
@@ -2531,6 +2595,10 @@ def stream_says_far_from_zone(
     """
     if not bool(cfg.get("ai_watch_stream_enabled", True)):
         return False, None
+    if arm_at_last(cfg):
+        # Tape is the entry. Never skip the quote because last is above a
+        # leftover pullback band.
+        return False, None
     structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
     levels = _structure_levels(structure) if structure else None
     if levels is None:
@@ -2594,6 +2662,8 @@ def passes_inclusion(
     """
     if not isinstance(row, dict):
         return False, [], "bad_row"
+    if _is_wash_look(row):
+        return False, list(row.get("criteria") or []), "look_wash"
     sym = str(row.get("symbol") or "").upper().strip()
     met = list(row.get("criteria") or [])
 
@@ -4496,6 +4566,83 @@ def build_double_bottom_zone_for_symbol(
     )
 
 
+def build_last_zone_structure(
+    price: float,
+    cfg: dict | None = None,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Entry at the tape. Stop/target from fill so RSTOP has a real R.
+
+    Not a pullback. ``entry_low``/``entry_high`` sit a tiny pad around last
+    so the book still has a band to paint; the arm gate does not use it.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0:
+        return {
+            "decision": "WAIT",
+            "wait_kind": "hard_no",
+            "entry_low": 0.0,
+            "entry_high": 0.0,
+            "stop_price": 0.0,
+            "target_1": 0.0,
+            "reward_risk": 0.0,
+            "synthetic": True,
+            "zone_kind": "at_last",
+            "summary": "at last: invalid price",
+        }
+
+    stop_pct = max(0.0, _opt_float(cfg.get("ai_watch_synth_stop_pct", 5.0), 5.0)) / 100.0
+    rr = max(0.25, _opt_float(cfg.get("ai_watch_synth_rr"), 0.6))
+    scale_out = max(1.0, min(99.0, _opt_float(
+        cfg.get("ai_watch_synth_scale_out_pct"), 50.0)))
+    trail_pct = max(0.0, _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5))
+    pad = max(0.0, _opt_float(cfg.get("ai_entry_limit_pad_pct"), 0.15)) / 100.0
+
+    entry_high = px * (1.0 + pad)
+    entry_low = px * (1.0 - pad)
+    if entry_low <= 0 or entry_high <= entry_low:
+        entry_low = px
+        entry_high = px
+    stop = px * (1.0 - stop_pct)
+    if stop <= 0 or stop >= px:
+        stop = px * 0.95
+    risk = px - stop
+    target = px + rr * risk
+
+    def _r(x: float) -> float:
+        if x >= 100:
+            return round(x, 2)
+        if x >= 1:
+            return round(x, 3)
+        return round(x, 4)
+
+    return {
+        "decision": "WAIT",
+        "wait_kind": "wait_for_zone",
+        "entry_low": _r(entry_low),
+        "entry_high": _r(entry_high),
+        "stop_price": _r(stop),
+        "target_1": _r(target),
+        "reward_risk": round(rr, 2),
+        "scale_out_pct": scale_out,
+        "trail_pct": trail_pct,
+        "trail_method": "pct",
+        "synthetic": True,
+        "strategy": "day_scalp_v0",
+        "anchor_price": _r(px),
+        "zone_kind": "at_last",
+        "summary": (
+            f"at last {_r(px)} stop {_r(stop)} t1 {_r(target)}"
+            + (f" · {reason}" if reason else "")
+        ),
+    }
+
+
 def build_offset_zone_structure(
     price: float,
     cfg: dict | None = None,
@@ -4701,7 +4848,33 @@ def ensure_offset_zone_if_needed(
 
     Freezes the zone at first apply (anchor = live ask) so we wait for a dip
     rather than chasing. Returns an event dict when a zone is created/replaced.
+
+    Arm-at-last rebuilds a tape-centered band every call so stop/target track
+    the print the order will actually pay.
     """
+    try:
+        ask_f = float(ask)
+    except (TypeError, ValueError):
+        ask_f = 0.0
+    if ask_f > 0 and arm_at_last(cfg):
+        reason = str(rec.get("reason") or rec.get("source") or "")
+        synth = build_last_zone_structure(ask_f, cfg, reason=reason)
+        rec["structure"] = synth
+        rec["structure_ts"] = float(now)
+        if str(rec.get("status") or "").lower() in ("invalidated", "expired"):
+            rec["status"] = "watching"
+        return {
+            "kind": "synth_zone",
+            "symbol": str(rec.get("symbol") or "").upper(),
+            "entry_low": synth.get("entry_low"),
+            "entry_high": synth.get("entry_high"),
+            "stop_price": synth.get("stop_price"),
+            "target_1": synth.get("target_1"),
+            "anchor": synth.get("anchor_price"),
+            "support": synth.get("support"),
+            "zone_kind": "at_last",
+            "reason": "at_last",
+        }
     # Applies to every source, not just momentum/trending. Research records
     # used to be excluded here, and the LLM refresh below only fires when a
     # structure is *unusable* — so a stale-but-parseable research zone was
@@ -5149,6 +5322,8 @@ def should_arm_buy(
     """
     if not isinstance(record, dict):
         return False, "not_watching"
+    if _is_wash_look(record):
+        return False, "look_wash"
     status = str(record.get("status") or "").lower().strip()
     if status not in _ARMABLE_STATUSES:
         return False, "not_watching"
@@ -5211,12 +5386,14 @@ def should_arm_buy(
     # zone_kind (see _entry_zone_kind), so band trades and double-bottom trades
     # can be scored apart instead of averaging into one meaningless number.
     # Drop "pullback_band" from ai_watch_armable_zone_kinds to go back.
+    last_mode = arm_at_last(cfg)
     armable = cfg.get("ai_watch_armable_zone_kinds")
     if not isinstance(armable, (list, tuple)) or not armable:
-        armable = ("double_bottom", "pullback_band")
+        armable = ("double_bottom", "pullback_band", "at_last")
     armable = {str(k).lower().strip() for k in armable}
     if (
-        str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
+        not last_mode
+        and str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
         in ("double_bottom", "db", "structure")
         and bool(cfg.get("ai_watch_require_db_zone", True))
         and bool(structure.get("synthetic"))
@@ -5272,8 +5449,11 @@ def should_arm_buy(
                 prox = 0.0
             if prox < arm_min:
                 return False, "indicators_faded"
-    elif (not bool(cfg.get("ai_watch_exhaustion_rules", True))
-            or exh_why == "no_exhaustion_fallback"):
+    elif (
+        not last_mode
+        and (not bool(cfg.get("ai_watch_exhaustion_rules", True))
+             or exh_why == "no_exhaustion_fallback")
+    ):
         # Soft sell-signal veto when the engine has published one, even if the
         # full arm triple is not required.
         #
@@ -5283,6 +5463,7 @@ def should_arm_buy(
         # (exit_signals defaults to cm+rte). Leaving it in place meant MACD and
         # CM RSI-2 were still vetoing entries the operator had specified should
         # depend on exhaustion alone.
+        # Arm-at-last Phase 0 also skips this — RSTOP is the exit.
         sig = record.get("indicator")
         if isinstance(sig, dict) and sig.get("sell_signal"):
             return False, "sell_signal"
@@ -5337,11 +5518,16 @@ def should_arm_buy(
             return False, "thin_rvol"
 
     if not exh_ok:
-        # Optional: in/below the zone may still fill when EXH is cooling.
-        # Above-zone and heating_too_low stay refused. Default off.
-        if (
+        # Optional: cooling EXH may still fill. Last-mode does not also
+        # demand the leftover pullback band. Zone mode still does.
+        fade_ok = (
             bool(cfg.get("ai_watch_in_zone_ignore_fade", False))
             and str(exh_why).startswith("not_rising")
+        )
+        if last_mode and fade_ok:
+            exh_ok, exh_why = True, "in_zone_fade_ok"
+        elif (
+            fade_ok
             and ask_triggers_zone(
                 a, entry_low, entry_high,
                 pad_pct=pad, stop=_stop,
@@ -5363,12 +5549,17 @@ def should_arm_buy(
         cheap_px = 5.0
     zk = str(structure.get("zone_kind") or "").lower().strip()
     if (
-        cheap_px > 0
+        not last_mode
+        and cheap_px > 0
         and a < cheap_px
         and zk in ("pullback_band", "offset", "")
         and is_overbought(record, cfg) is True
     ):
         return False, "cheap_ob_band"
+
+    if last_mode:
+        # Last is the entry. Structure only supplies stop/target for R.
+        return True, f"last_{exh_why}"
 
     # Zone membership is the primary arm signal (matches UI READY).
     # In *or below* the band (to the stop, default 1.0R) both count as in-zone
@@ -5626,6 +5817,9 @@ def _decision_for_place(
     d["wait_kind"] = None
 
     cfg = cfg if isinstance(cfg, dict) else {}
+    if arm_at_last(cfg):
+        d["synthetic"] = True
+        d["zone_kind"] = "at_last"
     if not d.get("synthetic"):
         return d
     try:
@@ -5640,6 +5834,9 @@ def _decision_for_place(
         rr = 0.6
 
     zone_kind = str(d.get("zone_kind") or "").lower()
+    if arm_at_last(cfg):
+        d["zone_kind"] = "at_last"
+        zone_kind = "at_last"
     if zone_kind == "double_bottom":
         # Keep structural stop under the shelf; size risk from fill → stop.
         try:
@@ -6091,7 +6288,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         # Mom/ST: attach or re-anchor a mechanical pullback zone (missing levels,
         # hard_no, or price has run above a frozen synth top). Before invalidate.
-        if ask_f > 0 and _desk_source(rec):
+        # Arm-at-last: every watching name gets a tape-centered band.
+        if ask_f > 0 and (arm_at_last(cfg) or _desk_source(rec)):
             sev = ensure_offset_zone_if_needed(rec, ask_f, cfg, t0)
             if sev:
                 events.append(sev)
@@ -6401,6 +6599,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
 
         place_decision = _decision_for_place(structure, ask=ask_f, cfg=cfg)
+        if arm_at_last(cfg):
+            place_decision["skip_zone"] = True
+            if not place_decision.get("zone_kind"):
+                place_decision["zone_kind"] = "at_last"
         # Stamp the rule that authorised this entry onto the decision, so the
         # outcome row can be sliced by it later. Read here rather than in
         # _decision_for_place, which sees the structure but not the record.
