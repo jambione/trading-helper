@@ -2152,13 +2152,12 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | Status | Trail | Price | Zone | EXH | Qty | P&L */
+  /* Ticker | Blocker | RStop | Price | EXH | Qty | P&L */
   grid-template-columns:
     minmax(52px, 1.1fr)
     minmax(6.5rem, 1.35fr)
     minmax(58px, 0.8fr)
     minmax(56px, 0.8fr)
-    minmax(72px, 1.15fr)
     minmax(48px, 0.6fr)
     minmax(36px, 0.5fr)
     minmax(56px, 0.85fr);
@@ -2181,7 +2180,6 @@ body.mobile .icon-btn {
 }
 .panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: center; }
 .panel-ai-watch .feed-cols--ai-book .cell-price,
-.panel-ai-watch .feed-cols--ai-book .cell-zone,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
@@ -2223,12 +2221,6 @@ body.mobile .icon-btn {
 .ai-book-status--blocked {
   color: #fbbf24;
   font-weight: 600;
-}
-.cell-zone {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-  align-self: center;
 }
 .cell-qty {
   font-size: 11px;

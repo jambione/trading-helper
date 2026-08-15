@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=117" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=118" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -339,9 +339,8 @@
                     <div class="feed-cols feed-cols--ai-book">
                         <div class="th">Ticker</div>
                         <div class="th">Blocker</div>
-                        <div class="th" title="last − $0.05. Open longs raise-only (flatten if last prints through). Watches follow last down to the zone stop.">RStop</div>
+                        <div class="th" title="Open longs only. Raise-only shelf; flatten if last prints through.">RStop</div>
                         <div class="th">Price</div>
-                        <div class="th">Zone</div>
                         <div class="th" title="Williams %R(21) on 1-minute bars, shown as 100+%R. Hover a cell for the raw −xx number, HH/LL, and actual window minutes. OB = overbought (≥80). ↑ heating · ↓ cooling. thin = not enough 1m prints in the last ~25 minutes to trust %R.">EXH</div>
                         <div class="th">Qty</div>
                         <div class="th">P&amp;L</div>
@@ -749,7 +748,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=126"></script>
+        <script type="module" src="/static/js/app.js?v=127"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

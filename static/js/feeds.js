@@ -688,7 +688,6 @@ function _updateBookRow(el, r) {
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
       ? Number(r.last_ask) : null);
   const px = rawPx != null ? `$${rawPx.toFixed(2)}` : '—';
-  const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
   const trailEl = el.querySelector('.cell-trail') || el.querySelector('.cell-src');
@@ -721,7 +720,6 @@ function _updateBookRow(el, r) {
     priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
-  _setText(el.querySelector('.cell-zone'), zone);
   const exhEl = el.querySelector('.cell-exh');
   if (exhEl) {
     const symKey = String(r.symbol || '').toUpperCase();
@@ -774,7 +772,6 @@ function _bookRowHtml(r) {
     _bookPrevPrices[sym] = rawPx;
   }
   const chgMod = _bookChgClass(r.pct_change);
-  const zone = _fmtZone(r.entry_low, r.entry_high) || '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
   const pl = isOpen ? _fmtPl(r) : '—';
   const plCls = isOpen ? _plClass(r) : '';
@@ -789,7 +786,6 @@ function _bookRowHtml(r) {
     + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
-    + `<div class="cell-zone">${_esc(zone)}</div>`
     + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
@@ -887,19 +883,6 @@ function _exhClass(state) {
 function _fmtRvol(v) {
   const n = Number(v);
   return v != null && Number.isFinite(n) ? `${n.toFixed(2)}×` : '—';
-}
-
-function _fmtZone(lo, hi) {
-  const a = lo != null && Number.isFinite(Number(lo)) ? Number(lo) : null;
-  const b = hi != null && Number.isFinite(Number(hi)) ? Number(hi) : null;
-  if (a == null && b == null) return '';
-  if (a != null && b != null) {
-    const fa = a >= 100 ? a.toFixed(1) : a.toFixed(2);
-    const fb = b >= 100 ? b.toFixed(1) : b.toFixed(2);
-    return `${fa}–${fb}`;
-  }
-  const v = a != null ? a : b;
-  return v >= 100 ? v.toFixed(1) : v.toFixed(2);
 }
 
 /**
