@@ -597,6 +597,9 @@ DEFAULT_CONFIG = {
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
     "ai_local_trail_min_give_px":      0.06,
+    # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
+    # name is 0.4R; cap keeps the 0.10R identity.
+    "ai_local_trail_min_give_max_r":   0.20,
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
     # 0.30 let FGI/SPAI/TDIC open 2R in the hole on a stale ask (08-14).
     "ai_fill_abort_r":                 0.15,
@@ -1122,6 +1125,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",
     "ai_local_trail_min_give_px",
+    "ai_local_trail_min_give_max_r",
     "ai_fill_abort_r",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",

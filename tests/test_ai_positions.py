@@ -1980,6 +1980,12 @@ def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypat
     assert out["ok"] is True
     assert stub.calls and stub.calls[0].get("naked") is True
     assert not stub.limit_calls or stub.limit_calls[0].get("kind") == "naked_limit"
+    state = json.loads(_state_path(tmp_path).read_text())
+    pos = state["NVDA"]
+    # Working shelf is entry − 0.10R, not the 5% plan stop.
+    assert pos["entry_stop_price"] == pytest.approx(38.0)
+    assert pos["local_stop_price"] == pytest.approx(
+        40.5 - 0.10 * (40.5 - 38.0))
 
 
 def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
@@ -2498,6 +2504,45 @@ def test_local_profit_stop_never_lowers():
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.71)
 
 
+def test_local_trail_flattens_through_seeded_rstop_above_the_plan_floor(
+        tmp_path, monkeypatch):
+    """A 0.10R dip must sell even if the stored shelf is still the 5% plan."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=20.00, entry_stop_price=19.00, stop_price=19.00,
+        risk_per_share=1.00, target_1=20.60,
+        last_seen_price=20.00, peak_price=20.00, mfe_r=0.0,
+        local_stop_price=19.00,  # leftover plan floor
+        tranche_a_filled=False, entry_confirmed=True,
+        qty_a=10, qty_b=10, total_qty=20,
+    )
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+        "ai_stale_data_max_age_sec": 15.0,
+        "ai_position_shadow_enabled": False,
+        "ai_dead_trade_min": 0,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+        "ai_sell_signal_breakeven": False,
+    }.get(key, default))
+    import ai_entry_watch as ew
+    # Through 0.10R ($19.90), still a long way above the $19 plan stop.
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (19.85, 0.2))
+    stub = _StubBrokerManage(order_status="new", current_price=19.88)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert any(e.get("event") == "local_trail" for e in events)
+    assert "NVDA" in stub.closed
+
+
 def test_local_trail_flattens_when_tape_prints_through_even_if_broker_is_above(
         tmp_path, monkeypatch):
     """Board stop is the liquidation line: any this-tick print at/under sells."""
@@ -2765,9 +2810,30 @@ def test_local_trail_give_floors_at_min_dollar():
     cfg = {
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_min_give_px": 0.06,
+        "ai_local_trail_min_give_max_r": 0,
     }
     # 0.10R * $0.11 risk is a penny; floor wins.
     assert cp.local_trail_give(2.25, 0.11, cfg, mfe_r=1.0) == pytest.approx(0.06)
+
+
+def test_min_give_cannot_exceed_max_r_on_cheap_names():
+    """$0.06 on a $3 / 5% last-mode name is 0.4R. Cap at 0.20R."""
+    cfg = {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0.06,
+        "ai_local_trail_min_give_max_r": 0.20,
+    }
+    # R = 0.15, 0.10R = 0.015, $0.06 floor, 0.20R cap = 0.03.
+    assert cp.local_trail_give(3.00, 0.15, cfg, mfe_r=0.0) == pytest.approx(0.03)
+
+
+def test_initial_local_stop_is_entry_minus_give_not_the_plan_floor():
+    cfg = {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+    }
+    # $20 fill, 5% plan stop $19, 0.10R = $0.10 → shelf $19.90.
+    assert cp.initial_local_stop(20.0, 1.0, cfg) == pytest.approx(19.90)
 
 
 def test_tight_give_waits_until_last_minus_give_clears_entry():

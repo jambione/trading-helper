@@ -96,8 +96,10 @@ DEFAULT_DEAD_TRADE_MFE_R = 0.10
 # Abort a new fill if last is already through the stop or this far
 # under the intended entry (FGI/SPAI/TDIC −2R IEX slips).
 DEFAULT_FILL_ABORT_R = 0.15
-# Never trail tighter than this many dollars under last.
+# Never trail tighter than this many dollars under last — unless that
+# dollar floor is wider than min_give_max_r × R (cheap last-mode names).
 DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX = 0.06
+DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R = 0.20
 # Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
 # is a different trade on every name: at 2.5% it is 2.5R behind a 1%-wide stop
 # and 0.5R behind a 5%-wide one, so on the tight double-bottom zones the runner
@@ -1516,7 +1518,9 @@ def place_scaled_entry(
         "risk_per_share": max(0.0, sizing_entry - stop_price),
         # Disaster floor — never overwritten when stop_price ratchets.
         "entry_stop_price": stop_price,
-        "local_stop_price": stop_price,
+        "local_stop_price": (
+            initial_local_stop(sizing_entry, risk_px, cfg) or stop_price
+        ),
         "target_1": target_1,
         "trail_pct": trail_pct,
         "runner_trail_r": runner_trail_r,
@@ -2217,8 +2221,44 @@ def local_trail_give(
     except (TypeError, ValueError):
         floor = DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX
     if floor > 0:
-        give = max(give, floor)
+        cap = floor
+        if r > 0:
+            try:
+                max_r = float(cfg.get(
+                    "ai_local_trail_min_give_max_r",
+                    DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R,
+                ) or 0.0)
+            except (TypeError, ValueError):
+                max_r = DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R
+            if max_r > 0:
+                cap = min(floor, max_r * r)
+        give = max(give, cap)
     return max(0.01, give)
+
+
+def initial_local_stop(
+    entry: float | None,
+    risk: float | None,
+    cfg: dict | None = None,
+) -> float | None:
+    """Working RSTOP at fill: entry − 0.10R. Not the 5% disaster floor.
+
+    Flatten compares last to this shelf. Seeding the plan stop left a
+    5% hole for one or two polls and the 0.10R trail never fired.
+    """
+    try:
+        e = float(entry or 0)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0:
+        return None
+    give = local_trail_give(e, risk, cfg, mfe_r=0.0)
+    want = e - give
+    if want >= e:
+        want = e - 0.01
+    if want <= 0:
+        return None
+    return round(want, 6)
 
 
 def _median_px(xs: list[float]) -> float | None:
@@ -3395,8 +3435,13 @@ def manage_open_positions(
             last = _num(pos.get("last_seen_price"))
             floor = _orig_stop(pos)
             loc = _num(pos.get("local_stop_price"))
+            seed = initial_local_stop(
+                _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all())
             if loc is None:
                 loc = floor
+            elif seed is not None and loc + 1e-9 < seed:
+                # Plan-stop leftover (5% floor) is not the working shelf.
+                loc = seed
             trigger = flatten_px.get(str(ticker).upper())
             if trigger is None:
                 trigger = last
