@@ -1034,8 +1034,17 @@ def desk_click(symbol: str) -> dict[str, Any]:
         except (TypeError, ValueError):
             maxp = 8
         try:
+            slot_eq = float(cfg.get("ai_position_slot_equity", 250.0) or 250.0)
+        except (TypeError, ValueError):
+            slot_eq = 250.0
+        try:
+            max_pct = float(cfg.get("ai_max_position_pct", 8.0) or 8.0)
+        except (TypeError, ValueError):
+            max_pct = 8.0
+        try:
             mode = gt.init_for_ai(
-                trade_amount=amt, max_positions=maxp, extended_hours=True)
+                trade_amount=amt, max_positions=maxp, extended_hours=True,
+                slot_equity=slot_eq, max_position_pct=max_pct)
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "action": None,
                     "error": f"trader init failed: {str(e)[:160]}"}
@@ -1312,44 +1321,42 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err, "ticker": ticker}
 
-    total_qty = alpaca_trader.size_by_risk(
-        account_equity, risk_pct, sizing_entry, stop_price)
-    if total_qty <= 0:
-        err = "risk-sized qty rounded to 0 shares"
-        log_event("entry_fail", symbol=ticker, reason=err)
-        return {"ok": False, "error": err}
+    from desk_risk import cap_long_qty, limits_from_cfg
 
-    # Notional cap. Risk-based sizing says nothing about concentration: a tight
-    # stop implies a huge position, and with no cap five names could add up to
-    # well over 100% of equity. Belt-and-braces now that the synthetic stop is a
-    # fixed 5% of the fill (~20% of equity per name at 1% risk).
-    try:
-        max_pos_pct = float(cfg.get("ai_max_position_pct", 25.0) or 0.0)
-    except (TypeError, ValueError):
-        max_pos_pct = 25.0
+    limits = limits_from_cfg(account_equity, cfg)
+    max_pos_pct = float(limits.max_position_pct)
     try:
         cheap_px = float(cfg.get("ai_watch_cheap_price", 5.0) or 0.0)
     except (TypeError, ValueError):
         cheap_px = 5.0
-    try:
-        cheap_pct = float(cfg.get("ai_max_position_pct_cheap", 5.0) or 0.0)
-    except (TypeError, ValueError):
-        cheap_pct = 5.0
+    cheap_pct = float(limits.max_position_pct_cheap)
     if cheap_px > 0 and cheap_pct > 0 and sizing_entry < cheap_px:
         if max_pos_pct <= 0 or cheap_pct < max_pos_pct:
             max_pos_pct = cheap_pct
-    if max_pos_pct > 0 and sizing_entry > 0:
-        cap_qty = int((account_equity * max_pos_pct / 100.0) // sizing_entry)
-        if cap_qty < total_qty:
-            log_event(
-                "size_capped", symbol=ticker, risk_qty=total_qty,
-                capped_qty=cap_qty, max_position_pct=max_pos_pct,
-            )
-            total_qty = cap_qty
-        if total_qty <= 0:
-            err = f"position cap {max_pos_pct:g}% of equity rounds to 0 shares"
-            log_event("entry_fail", symbol=ticker, reason=err)
-            return {"ok": False, "error": err}
+
+    risk_qty = alpaca_trader.size_by_risk(
+        account_equity, risk_pct, sizing_entry, stop_price)
+    total_qty = cap_long_qty(
+        risk_qty,
+        equity=account_equity,
+        price=sizing_entry,
+        max_position_pct=max_pos_pct,
+    )
+    if total_qty != risk_qty:
+        log_event(
+            "size_capped", symbol=ticker, risk_qty=risk_qty,
+            capped_qty=total_qty, max_position_pct=max_pos_pct,
+            equity=round(float(account_equity), 2),
+            max_positions=limits.max_positions,
+        )
+    if total_qty <= 0:
+        err = (
+            f"risk-sized qty rounded to 0 shares"
+            if risk_qty <= 0
+            else f"position cap {max_pos_pct:g}% of equity rounds to 0 shares"
+        )
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
 
     # Buying power. Nothing checked this anywhere, so an over-sized order came
     # back as a raw Alpaca rejection string in the UI's blocker column.

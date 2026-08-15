@@ -3003,6 +3003,8 @@ class AiSuggestions:
         trading: bool = False,
         trade_amount: float = 1000.0,
         max_positions: int = 5,
+        slot_equity: float = 250.0,
+        max_position_pct: float = 8.0,
         max_buys_per_poll: int = 3,
         max_sells_per_poll: int = 5,
         max_turns: int = DEFAULT_MAX_TURNS,
@@ -3044,6 +3046,8 @@ class AiSuggestions:
         self.trading = bool(trading)
         self.trade_amount = float(trade_amount)
         self.max_positions = int(max_positions)
+        self.slot_equity = float(slot_equity)
+        self.max_position_pct = float(max_position_pct)
         self.max_buys_per_poll = int(max_buys_per_poll)
         self.max_sells_per_poll = int(max_sells_per_poll)
         self.max_turns = int(max_turns) if max_turns else DEFAULT_MAX_TURNS
@@ -3075,6 +3079,8 @@ class AiSuggestions:
                     max_positions=self.max_positions,
                     max_buys_per_poll=self.max_buys_per_poll,
                     max_sells_per_poll=self.max_sells_per_poll,
+                    slot_equity=self.slot_equity,
+                    max_position_pct=self.max_position_pct,
                 )
             except Exception:
                 self.trading_mode = "off"

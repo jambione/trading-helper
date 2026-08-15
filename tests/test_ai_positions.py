@@ -396,6 +396,37 @@ def test_place_scaled_entry_splits_into_two_tranches_by_scale_out_pct(
     assert state["NVDA"]["breakeven_done"] is False
 
 
+def test_place_scaled_entry_250_equity_does_not_round_to_zero(
+        tmp_path, monkeypatch):
+    """8% of $250 is $20 — a $40 name used to be 0 shares. Risk size grows."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_positions": 8,
+        "ai_max_position_pct": 8.0,
+        "ai_position_slot_equity": 250.0,
+        "ai_watch_arm_below_zone": True,
+        "ai_broker_stop_enabled": False,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(
+        entry_low=39.0, entry_high=41.0, stop_price=38.0, target_1=43.0)
+    small = cp.place_scaled_entry(
+        "aaa", decision, account_equity=250.0, risk_pct=1.0, current_ask=40.0)
+    assert small["ok"] is True, small
+    qty_250 = stub.calls[0]["qty"]
+    assert qty_250 >= 1
+
+    stub.calls.clear()
+    grown = cp.place_scaled_entry(
+        "bbb", decision, account_equity=2_500.0, risk_pct=1.0, current_ask=40.0)
+    assert grown["ok"] is True, grown
+    assert stub.calls[0]["qty"] > qty_250
+
+
 def test_place_scaled_entry_refuses_to_order_brackets_outside_market_hours(
         tmp_path, monkeypatch):
     """Alpaca rejects bracket (and plain market) orders outside RTH — two of

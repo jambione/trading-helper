@@ -84,5 +84,16 @@ def test_can_open_new_position_allows_under_cap_without_a_live_client():
     assert gt.can_open_new_position("NVDA") is True
 
 
+def test_effective_max_positions_scales_with_equity():
+    gt._max_positions = 8
+    gt._slot_equity = 250.0
+    gt._max_position_pct = 8.0
+    assert gt.effective_max_positions(250.0) == 1
+    assert gt.effective_max_positions(500.0) == 2
+    assert gt.effective_max_positions(10_000.0) == 8
+    # No live equity → configured ceiling (tests / trader-off).
+    assert gt.effective_max_positions(None) == 8
+
+
 def test_has_open_position_false_without_a_live_client():
     assert gt.has_open_position("NVDA") is False

@@ -32,6 +32,7 @@ _FINGERPRINT_KEYS = (
     "ai_daily_loss_limit_r",
     "ai_max_open_risk_pct",
     "ai_max_positions",
+    "ai_position_slot_equity",
     "ai_max_buys_per_poll",
     "ai_fill_abort_r",
     "ai_min_reward_risk",

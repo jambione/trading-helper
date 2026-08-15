@@ -4,10 +4,15 @@ from __future__ import annotations
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
 from desk_risk import (  # noqa: E402
+    cap_long_qty,
+    equity_book_limits,
+    limits_from_cfg,
     next_phase,
     plan_long,
     stop_for_phase,
@@ -108,3 +113,54 @@ def test_manage_ratchet_to_be():
 def test_trade_r():
     assert trade_r(-50, 100) == -0.5
     assert trade_r(200, 100) == 2.0
+
+
+def test_equity_book_limits_small_account_one_slot():
+    lim = equity_book_limits(250.0, max_positions=8, max_position_pct=8.0)
+    assert lim.max_positions == 1
+    assert lim.dollar_cap == 250.0
+    assert lim.max_position_pct == pytest.approx(100.0)
+
+
+def test_equity_book_limits_grows_slots_and_dollars():
+    a = equity_book_limits(250.0)
+    b = equity_book_limits(500.0)
+    c = equity_book_limits(10_000.0)
+    assert a.max_positions == 1
+    assert b.max_positions == 2
+    assert c.max_positions == 8
+    # Risk/notional room grows with equity once 8% exceeds one slot.
+    assert c.dollar_cap > a.dollar_cap
+    assert c.dollar_cap == pytest.approx(800.0)  # 8% of $10k
+    assert b.dollar_cap == pytest.approx(250.0)  # still the $250 floor
+
+
+def test_equity_book_limits_slot_equity_zero_disables_scale():
+    lim = equity_book_limits(
+        250.0, max_positions=8, max_position_pct=8.0, slot_equity=0.0)
+    assert lim.max_positions == 8
+    assert lim.max_position_pct == pytest.approx(8.0)
+
+
+def test_limits_from_cfg_reads_desk_keys():
+    lim = limits_from_cfg(250.0, {
+        "ai_max_positions": 8,
+        "ai_max_position_pct": 8.0,
+        "ai_position_slot_equity": 250.0,
+    })
+    assert lim.max_positions == 1
+    assert lim.dollar_cap == 250.0
+
+
+def test_cap_long_qty_promotes_zero_to_one_share_when_affordable():
+    # 1% of $250 cannot buy a $20 name with a $1 stop, but $20 < $250 cap.
+    assert cap_long_qty(0, equity=250.0, price=20.0, max_position_pct=100.0) == 1
+
+
+def test_cap_long_qty_lets_risk_size_grow():
+    # $10 stock, 100% cap on $250 → 25 sh ceiling; risk size 5 stays 5.
+    assert cap_long_qty(5, equity=250.0, price=10.0, max_position_pct=100.0) == 5
+    # Same name at $10k / 8% → $800 / $10 = 80 sh ceiling; 40 stays 40.
+    assert cap_long_qty(40, equity=10_000.0, price=10.0, max_position_pct=8.0) == 40
+    # Tight stop that wants 200 sh is clamped to 80.
+    assert cap_long_qty(200, equity=10_000.0, price=10.0, max_position_pct=8.0) == 80

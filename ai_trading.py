@@ -30,6 +30,8 @@ _ready = False
 _mode = "off"  # always "paper" when ready, else "off"
 _trade_amount = 1000.0
 _max_positions = 5
+_slot_equity = 250.0
+_max_position_pct = 8.0
 _max_buys_per_poll = 3
 _max_sells_per_poll = 5
 _min_score_to_buy = 7.0  # soft guidance only — model decides; hard caps below
@@ -56,9 +58,12 @@ def init_for_ai(
     max_sells_per_poll: int = 5,
     min_score_to_buy: float = 7.0,
     extended_hours: bool = True,
+    slot_equity: float = 250.0,
+    max_position_pct: float = 8.0,
 ) -> str:
     """Init Alpaca in PAPER only for the AI desk. Returns 'paper' or 'off'."""
     global _ready, _mode, _trade_amount, _max_positions
+    global _slot_equity, _max_position_pct
     global _max_buys_per_poll, _max_sells_per_poll, _min_score_to_buy
     global _buys_this_poll, _sells_this_poll, TRADE_LOG_PATH
 
@@ -69,6 +74,14 @@ def init_for_ai(
         pass
     _trade_amount = max(1.0, float(trade_amount))
     _max_positions = max(1, int(max_positions))
+    try:
+        _slot_equity = float(slot_equity)
+    except (TypeError, ValueError):
+        _slot_equity = 250.0
+    try:
+        _max_position_pct = max(0.0, float(max_position_pct))
+    except (TypeError, ValueError):
+        _max_position_pct = 8.0
     _max_buys_per_poll = max(0, int(max_buys_per_poll))
     _max_sells_per_poll = max(0, int(max_sells_per_poll))
     _min_score_to_buy = float(min_score_to_buy)
@@ -319,8 +332,38 @@ def open_position_count() -> int:
     return _open_position_count()
 
 
+def _live_equity() -> float | None:
+    try:
+        import alpaca_trader
+        if not alpaca_trader.is_active():
+            return None
+        eq = alpaca_trader.get_equity()
+        return float(eq) if eq is not None and float(eq) > 0 else None
+    except Exception:
+        return None
+
+
+def _book_limits(equity: float | None = None):
+    from desk_risk import equity_book_limits
+    eq = equity if equity is not None else _live_equity()
+    if eq is None:
+        return None
+    return equity_book_limits(
+        float(eq),
+        max_positions=_max_positions,
+        max_position_pct=_max_position_pct,
+        slot_equity=_slot_equity,
+    )
+
+
+def effective_max_positions(equity: float | None = None) -> int:
+    """Slot count from live equity; configured ceiling if equity is unknown."""
+    lim = _book_limits(equity)
+    return int(lim.max_positions) if lim is not None else _max_positions
+
+
 def can_open_new_position(symbol: str) -> bool:
-    return _open_position_count() < _max_positions or _has_open_position(symbol)
+    return _open_position_count() < effective_max_positions() or _has_open_position(symbol)
 
 
 def market_is_open() -> bool:
@@ -405,10 +448,11 @@ def buy_stock(
                 "error": f"buy cap for this research poll ({_max_buys_per_poll})",
             }
 
-    if _open_position_count() >= _max_positions and not _has_open_position(sym):
+    pos_cap = effective_max_positions()
+    if _open_position_count() >= pos_cap and not _has_open_position(sym):
         return {
             "ok": False,
-            "error": f"max open positions ({_max_positions}) already held",
+            "error": f"max open positions ({pos_cap}) already held",
         }
 
     import alpaca_trader
@@ -432,8 +476,16 @@ def buy_stock(
         _append_log(result)
         return result
 
-    amount = float(dollar_amount) if dollar_amount is not None else _trade_amount
-    amount = max(1.0, min(amount, _trade_amount * 2))  # hard ceiling 2× default
+    lim = _book_limits()
+    if dollar_amount is not None:
+        amount = float(dollar_amount)
+    elif lim is not None and lim.dollar_cap > 0:
+        amount = float(lim.dollar_cap)
+    else:
+        amount = _trade_amount
+    if lim is not None and lim.dollar_cap > 0:
+        amount = min(amount, float(lim.dollar_cap))
+    amount = max(1.0, amount)
 
     ask = _latest_ask(sym)
     if not ask or ask <= 0:
@@ -565,7 +617,8 @@ def get_account() -> dict[str, Any]:
             "portfolio_value": float(acct.portfolio_value),
             "status": str(acct.status),
             "trade_amount_default": _trade_amount,
-            "max_positions": _max_positions,
+            "max_positions": effective_max_positions(float(acct.equity)),
+            "max_positions_ceiling": _max_positions,
             "buys_left_this_poll": max(0, _max_buys_per_poll - _buys_this_poll),
         }
     except Exception as e:

@@ -159,6 +159,9 @@ DEFAULT_CONFIG = {
     # Ratchet-first: give the 0.10R shelf more names to work. Fill abort and
     # cheap-OB still block dumps; selection is no longer the bottleneck.
     "ai_max_positions":            8,
+    # One open slot per this much equity (floor 1, ceiling ai_max_positions).
+    # $250 → 1 name; $2,000 → 8. Set 0 to disable scaling.
+    "ai_position_slot_equity":   250.0,
     "ai_max_buys_per_poll":        2,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
@@ -890,6 +893,7 @@ _EFFECTIVE_KEYS = (
     "ai_pdt_protect",
     "ai_max_open_risk_pct",
     "ai_max_positions",
+    "ai_position_slot_equity",
     "ai_max_position_pct",
     "ai_max_position_pct_cheap",
     "ai_watch_cheap_price",
@@ -1012,6 +1016,7 @@ SAFE_CONFIG_KEYS = [
     "ai_rvol_time_adjusted",
     "ai_trade_amount",
     "ai_max_positions",
+    "ai_position_slot_equity",
     "ai_max_buys_per_poll",
     "ai_max_sells_per_poll",
     "ai_risk_pct",
@@ -1155,6 +1160,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stream_skip_margin_pct",
     "ai_max_position_pct",
     "ai_max_position_pct_cheap",
+    "ai_position_slot_equity",
     "ai_watch_cheap_price",
     "ai_reentry_cooldown_sec",
     "ai_wash_cooldown_sec",

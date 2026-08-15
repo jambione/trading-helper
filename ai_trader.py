@@ -555,6 +555,8 @@ def _build_suggestions(cfg: dict) -> AiSuggestions:
         trading=trading,
         trade_amount=float(_cfg(cfg, "ai_trade_amount", 1000.0)),
         max_positions=int(_cfg(cfg, "ai_max_positions", 5)),
+        slot_equity=float(_cfg(cfg, "ai_position_slot_equity", 250.0)),
+        max_position_pct=float(_cfg(cfg, "ai_max_position_pct", 8.0)),
         max_buys_per_poll=int(
             _cfg(cfg, "ai_max_buys_per_poll", 3)),
         max_sells_per_poll=int(
@@ -605,6 +607,8 @@ def _build_grok(cfg: dict) -> AiSuggestions:
         trading=trading,
         trade_amount=float(_cfg(cfg, "ai_trade_amount", 1000.0)),
         max_positions=int(_cfg(cfg, "ai_max_positions", 5)),
+        slot_equity=float(_cfg(cfg, "ai_position_slot_equity", 250.0)),
+        max_position_pct=float(_cfg(cfg, "ai_max_position_pct", 8.0)),
         max_buys_per_poll=int(
             _cfg(cfg, "ai_max_buys_per_poll", 3)),
         max_sells_per_poll=int(
