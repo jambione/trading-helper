@@ -618,40 +618,6 @@
                     <button data-admin-close class="btn btn--ghost btn--icon" title="Close">✕</button>
                 </div>
 
-                <!-- Tools row inside admin drawer -->
-                <div class="admin-tools-row">
-                    <div class="hotkey-anchor">
-                        <button id="hotkey-btn" class="btn btn--ghost btn--sm" title="Keyboard shortcuts">
-                            ⌨ Keys
-                        </button>
-                        <div id="hotkey-panel" class="hotkey-panel"></div>
-                    </div>
-                    <button
-                        class="btn btn--ghost btn--sm jmb-download"
-                        title="Download WB+TV agent package"
-                        onclick="
-                            (function () {
-                                const t = localStorage.getItem('ss:token') || '';
-                                const qp = new URLSearchParams(window.location.search);
-                                const user = (qp.get('user') || '').trim().toLowerCase();
-                                const p = new URLSearchParams();
-                                if (t) p.set('token', t);
-                                if (user) p.set('user', user);
-                                const q = p.toString();
-                                const u = '/api/download/wb-tv-agent' + (q ? ('?' + q) : '');
-                                const a = document.createElement('a');
-                                a.href = u;
-                                a.download = 'wb-tv-agent.zip';
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                            })()
-                        "
-                    >
-                        ⬇ WB+TV Agent
-                    </button>
-                </div>
-
                 <div class="drawer-body">
 
                     <!-- ── Tab: Online ─────────────────────────── -->
