@@ -1073,7 +1073,7 @@ body.mobile .icon-btn {
 }
 .scan-pane > .panel-header { display: none; }
 
-/* Slim columns: Ticker | Last | Chg  and  Ticker | Stop | Last | P&L */
+/* Slim columns: Scan is Ticker | Last | Chg. Book is Ticker | State | Stop | Last | EXH | P&L */
 .desk-col-extra,
 .cell-vol,
 .cell-flags,
@@ -1082,8 +1082,6 @@ body.mobile .icon-btn {
 .cell-score,
 .cell-size,
 .cell-look,
-.ai-book-status,
-.cell-exh,
 .cell-qty,
 .feed-why,
 .feed-invalid,
@@ -1100,7 +1098,7 @@ body.mobile .icon-btn {
   grid-template-columns: 1.4fr 1fr 0.8fr !important;
 }
 .feed-cols--ai-book {
-  grid-template-columns: 1.2fr 0.9fr 0.9fr 0.9fr !important;
+  grid-template-columns: 1fr 1.15fr 0.8fr 0.8fr 0.75fr 0.85fr !important;
 }
 
 /* Remove stays available on hover without a permanent column */
@@ -2172,8 +2170,10 @@ body.mobile .icon-btn {
   text-transform: uppercase;
 }
 .panel-ai-watch .ai-book-table-header .th:nth-child(1) { text-align: left; }
+.panel-ai-watch .ai-book-table-header .th:nth-child(2) { text-align: center; }
 .panel-ai-watch .ai-book-table-header .th:nth-child(3),
 .panel-ai-watch .ai-book-table-header .th:nth-child(4),
+.panel-ai-watch .ai-book-table-header .th:nth-child(5),
 .panel-ai-watch .ai-book-table-header .th:nth-child(7) { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
