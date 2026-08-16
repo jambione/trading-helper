@@ -5,7 +5,7 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=133';
+import { connect, on, api }                      from './api.js?v=134';
 import { subscribe, set, selectTicker }          from './store.js?v=133';
 import { init as initFeeds }                     from './feeds.js?v=133';
 import { init as initTickers }                   from './tickers.js?v=133';
@@ -19,7 +19,7 @@ import { init as initNews }                      from './news.js?v=133';
 import { init as initLeaderboard }               from './leaderboard.js?v=133';
 import { init as initPriceSpikes }               from './priceSpikes.js?v=133';
 import { init as initEngine }                    from './engine.js?v=133';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=133';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=134';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 import { init as initMobilePager }                from './mobilePager.js?v=133';
@@ -284,7 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=133');
+    const m = await import('./admin.js?v=134');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

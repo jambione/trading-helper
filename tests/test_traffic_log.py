@@ -87,3 +87,59 @@ def test_login_log_records_cf_country(tmp_path, monkeypatch):
     # geo thread may have filled city
     loc = rows[0].get("location") or {}
     assert loc.get("country_code") in ("US", "United States") or loc.get("city") == "Shelton"
+
+
+def test_user_login_stats_and_day_filter(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    log_file = tmp_path / "login_log.json"
+    monkeypatch.setattr(login_log, "LOGIN_LOG_FILE", log_file)
+    monkeypatch.setattr(login_log, "_geo_lookup", lambda ip: {})
+    ET = ZoneInfo("America/New_York")
+    now = datetime.now(ET)
+    rows = [
+        {
+            "username": "kara",
+            "timestamp": (now - timedelta(days=20)).isoformat(timespec="seconds"),
+            "success": True,
+            "ip": "3.3.3.3",
+            "location": {},
+        },
+        {
+            "username": "kara",
+            "timestamp": (now - timedelta(days=2)).isoformat(timespec="seconds"),
+            "success": False,
+            "ip": "2.2.2.2",
+            "location": {},
+        },
+        {
+            "username": "kara",
+            "timestamp": now.isoformat(timespec="seconds"),
+            "success": True,
+            "ip": "1.1.1.1",
+            "location": {"city": "Boston", "region": "MA", "country": "US"},
+        },
+        {
+            "username": "other",
+            "timestamp": now.isoformat(timespec="seconds"),
+            "success": True,
+            "ip": "9.9.9.9",
+            "location": {},
+        },
+    ]
+    log_file.write_text(json.dumps(rows), encoding="utf-8")
+
+    stats = login_log.user_login_stats("kara")
+    assert stats["last24h"]["ok"] == 1
+    assert stats["last24h"]["fail"] == 0
+    assert stats["week"]["ok"] == 1
+    assert stats["week"]["fail"] == 1
+    assert stats["week"]["days_active"] == 2
+    assert stats["last_ip"] == "1.1.1.1"
+
+    day = (now - timedelta(days=2)).date().isoformat()
+    day_rows = login_log.get_log_for_user_on_date("kara", day)
+    assert len(day_rows) == 1
+    assert day_rows[0]["success"] is False
+    assert login_log.get_log_for_user_on_date("kara", "1999-01-01") == []

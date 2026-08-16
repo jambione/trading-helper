@@ -61,7 +61,12 @@ from auth import (authenticate, create_token, verify_token, is_auth_required,
                    admin_update_user, admin_set_password,
                    COOKIE_NAME, first_valid_token, token_ttl_seconds,
                    set_session_cookie, clear_session_cookie, request_is_https)
-from login_log import record_login, get_log as get_login_log, get_log_for_user
+from login_log import (
+    record_login,
+    get_log as get_login_log,
+    get_log_for_user_on_date,
+    user_login_stats,
+)
 from traffic_log import (
     record_hit as record_traffic_hit,
     get_log as get_traffic_log,
@@ -3333,8 +3338,17 @@ async def api_admin_user_detail(username: str, request: Request):
     if not profile:
         return JSONResponse({"ok": False, "error": "User not found"}, status_code=404)
     loop = asyncio.get_running_loop()
-    logins = await loop.run_in_executor(None, lambda: get_log_for_user(username, 20))
-    return JSONResponse({"ok": True, "account": profile, "logins": logins})
+    day = (request.query_params.get("date") or "").strip()[:10]
+    if day:
+        logins = await loop.run_in_executor(
+            None, lambda: get_log_for_user_on_date(username, day))
+        return JSONResponse({
+            "ok": True, "account": profile, "date": day, "logins": logins,
+        })
+    stats = await loop.run_in_executor(None, lambda: user_login_stats(username))
+    return JSONResponse({
+        "ok": True, "account": profile, "stats": stats, "logins": [],
+    })
 
 
 @app.post("/api/admin/users/{username}")

@@ -3569,6 +3569,53 @@ body.mobile .lb-item:nth-child(n+4) { display: none; }
   background: rgba(8, 12, 28, 0.45);
 }
 .user-detail .form-group { margin-bottom: 10px; }
+.user-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.user-stat {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: rgba(255,255,255,0.02);
+}
+.user-stat--wide { grid-column: 1 / -1; }
+.user-stat-k {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.user-stat-v {
+  font-size: 12px;
+  color: var(--text-primary, #e2e8f0);
+}
+.user-history { margin-top: 4px; }
+.user-history summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent, #7dd3fc);
+  user-select: none;
+}
+.user-history-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.user-history-bar input[type="date"] {
+  background: rgba(8, 12, 28, 0.6);
+  border: 1px solid var(--border-hi);
+  color: var(--text-primary, #e2e8f0);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.user-history-list { max-height: 180px; overflow: auto; }
 .user-login-row {
   font-size: 11px;
   color: var(--text-dim);

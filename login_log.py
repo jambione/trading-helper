@@ -132,13 +132,91 @@ def get_log() -> list:
         return list(reversed(_load()))
 
 
-def get_log_for_user(username: str, limit: int = 25) -> list:
-    """Recent login attempts for one username, newest first."""
+def _parse_ts(raw) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _user_rows(username: str) -> list:
     want = (username or "").strip().lower()
     if not want:
         return []
-    rows = [
+    return [
         row for row in get_log()
         if (row.get("username") or "").strip().lower() == want
     ]
-    return rows[: max(1, int(limit))]
+
+
+def get_log_for_user(username: str, limit: int = 25) -> list:
+    """Recent login attempts for one username, newest first."""
+    rows = _user_rows(username)
+    n = max(1, int(limit))
+    return rows[:n]
+
+
+def get_log_for_user_on_date(username: str, day: str) -> list:
+    """Login attempts for one user on YYYY-MM-DD (America/New_York date)."""
+    want_day = (day or "").strip()[:10]
+    if not want_day:
+        return []
+    out = []
+    for row in _user_rows(username):
+        ts = _parse_ts(row.get("timestamp"))
+        if ts is None:
+            continue
+        local = ts.astimezone(ET) if ts.tzinfo else ts.replace(tzinfo=ET)
+        if local.date().isoformat() == want_day:
+            out.append(row)
+    return out
+
+
+def user_login_stats(username: str) -> dict:
+    """Compact 24h / 7-day login counts plus last successful sign-in."""
+    now = datetime.now(ET)
+    cutoff_24h = now.timestamp() - 24 * 3600
+    cutoff_7d = now.timestamp() - 7 * 24 * 3600
+    ok_24 = fail_24 = ok_7 = fail_7 = 0
+    days_7: set[str] = set()
+    last_ok = None
+    last_any = None
+    for row in _user_rows(username):
+        ts = _parse_ts(row.get("timestamp"))
+        if ts is None:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=ET)
+        else:
+            ts = ts.astimezone(ET)
+        epoch = ts.timestamp()
+        if last_any is None or epoch > (_parse_ts(last_any.get("timestamp")) or datetime.min.replace(tzinfo=ET)).timestamp():
+            last_any = row
+        if row.get("success") and (
+            last_ok is None
+            or epoch > (_parse_ts(last_ok.get("timestamp")) or datetime.min.replace(tzinfo=ET)).timestamp()
+        ):
+            last_ok = row
+        if epoch >= cutoff_24h:
+            if row.get("success"):
+                ok_24 += 1
+            else:
+                fail_24 += 1
+        if epoch >= cutoff_7d:
+            days_7.add(ts.date().isoformat())
+            if row.get("success"):
+                ok_7 += 1
+            else:
+                fail_7 += 1
+    last = last_ok or last_any
+    loc = (last or {}).get("location") or {}
+    return {
+        "last24h": {"ok": ok_24, "fail": fail_24},
+        "week": {"ok": ok_7, "fail": fail_7, "days_active": len(days_7)},
+        "last_login": (last or {}).get("timestamp"),
+        "last_success": bool((last_ok or {}).get("success")) if last_ok else None,
+        "last_ip": (last or {}).get("ip"),
+        "last_location": loc or None,
+    }

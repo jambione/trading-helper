@@ -7,7 +7,7 @@
  *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=133';
+import { api } from './api.js?v=134';
 import { refresh as refreshSessions } from './sessions.js?v=133';
 
 let _backdrop = null;
@@ -152,7 +152,7 @@ async function _openUser(username) {
   box.classList.remove('hidden');
   box.innerHTML = '<div class="suggestions-empty">Loading…</div>';
   try {
-    const { account: u, logins = [] } = await api.adminUser(username);
+    const { account: u, stats = {} } = await api.adminUser(username);
     const owner = u.username === 'jmb' || u.owner;
     const locked = owner ? ' disabled' : '';
     const statusBtns = [];
@@ -164,13 +164,14 @@ async function _openUser(username) {
     } else if (u.status === 'disabled' || u.status === 'rejected') {
       statusBtns.push(`<button class="btn btn--primary btn--sm" data-user-act="enable">Enable</button>`);
     }
-    const loginHtml = logins.length
-      ? logins.map(row => {
-          const ts = (row.timestamp || '').replace('T', ' ').slice(0, 19);
-          const ok = row.success ? 'ok' : 'fail';
-          return `<div class="user-login-row">${_esc(ts)} · ${ok} · ${_esc(row.ip || '')}</div>`;
-        }).join('')
-      : '<div class="suggestions-empty">No login attempts yet.</div>';
+    const h24 = stats.last24h || {};
+    const week = stats.week || {};
+    const lastTs = stats.last_login
+      ? String(stats.last_login).replace('T', ' ').slice(0, 16)
+      : '—';
+    const loc = stats.last_location || {};
+    const lastWhere = [loc.city, loc.region, loc.country].filter(Boolean).join(', ')
+      || stats.last_ip || '—';
     box.innerHTML = `
       <div class="form-section-label">${_esc(u.display_name || u.username)} · ${_esc(u.username)}</div>
       <div class="form-group">
@@ -192,8 +193,29 @@ async function _openUser(username) {
       <button class="btn btn--ghost btn--sm" id="adm-user-pass-btn" type="button">Set password</button>
       ${u.email ? '<button class="btn btn--ghost btn--sm" id="adm-user-reset" type="button" style="margin-left:6px">Email reset link</button>' : ''}
       <div id="adm-pass-msg" class="account-msg"></div>
-      <div class="form-section-label" style="margin-top:14px">Recent logins</div>
-      ${loginHtml}`;
+      <div class="form-section-label" style="margin-top:14px">Activity</div>
+      <div class="user-stat-grid">
+        <div class="user-stat">
+          <span class="user-stat-k">24h</span>
+          <span class="user-stat-v">${h24.ok ?? 0} ok · ${h24.fail ?? 0} fail</span>
+        </div>
+        <div class="user-stat">
+          <span class="user-stat-k">7 days</span>
+          <span class="user-stat-v">${week.ok ?? 0} ok · ${week.fail ?? 0} fail · ${week.days_active ?? 0} days</span>
+        </div>
+        <div class="user-stat user-stat--wide">
+          <span class="user-stat-k">Last</span>
+          <span class="user-stat-v">${_esc(lastTs)} · ${_esc(lastWhere)}</span>
+        </div>
+      </div>
+      <details class="user-history">
+        <summary>Look up a day</summary>
+        <div class="user-history-bar">
+          <input id="adm-user-day" type="date" />
+          <button class="btn btn--ghost btn--sm" id="adm-user-day-btn" type="button">Load</button>
+        </div>
+        <div id="adm-user-day-list" class="user-history-list"></div>
+      </details>`;
     box.querySelector('#adm-user-save')?.addEventListener('click', async () => {
       _adminMsg('adm-user-msg', '');
       try {
@@ -239,8 +261,42 @@ async function _openUser(username) {
         _adminMsg('adm-pass-msg', e.body?.error || 'Could not send reset', false);
       }
     });
+    box.querySelector('#adm-user-day-btn')?.addEventListener('click', () => {
+      _loadUserDay(username, box);
+    });
+    box.querySelector('#adm-user-day')?.addEventListener('change', () => {
+      _loadUserDay(username, box);
+    });
   } catch {
     box.innerHTML = '<div class="suggestions-empty">Failed to load this user.</div>';
+  }
+}
+
+async function _loadUserDay(username, box) {
+  const list = box.querySelector('#adm-user-day-list');
+  const day = box.querySelector('#adm-user-day')?.value || '';
+  if (!list) return;
+  if (!day) {
+    list.innerHTML = '<div class="suggestions-empty">Pick a date.</div>';
+    return;
+  }
+  list.innerHTML = '<div class="suggestions-empty">Loading…</div>';
+  try {
+    const { logins = [] } = await api.adminUser(username, day);
+    if (!logins.length) {
+      list.innerHTML = `<div class="suggestions-empty">No logins on ${ _esc(day) }.</div>`;
+      return;
+    }
+    list.innerHTML = logins.map(row => {
+      const ts = (row.timestamp || '').replace('T', ' ').slice(0, 19);
+      const ok = row.success ? 'ok' : 'fail';
+      const loc = row.location || {};
+      const where = [loc.city, loc.region, loc.country].filter(Boolean).join(', ')
+        || row.ip || '';
+      return `<div class="user-login-row">${_esc(ts)} · ${ok} · ${_esc(where)}</div>`;
+    }).join('');
+  } catch {
+    list.innerHTML = '<div class="suggestions-empty">Could not load that day.</div>';
   }
 }
 

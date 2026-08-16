@@ -161,8 +161,9 @@ export const api = {
   saveAccount:     body     => request('POST', '/api/account', body),
   changePassword:  body     => request('POST', '/api/account/password', body),
   adminUsers:      ()       => request('GET',  '/api/admin/users'),
-  adminUser:       (username) =>
-    request('GET',  `/api/admin/users/${encodeURIComponent(username)}`),
+  adminUser:       (username, date) =>
+    request('GET',  `/api/admin/users/${encodeURIComponent(username)}`
+      + (date ? `?date=${encodeURIComponent(date)}` : '')),
   adminUserUpdate: (username, body) =>
     request('POST', `/api/admin/users/${encodeURIComponent(username)}`, body),
   adminUserPassword: (username, password) =>
