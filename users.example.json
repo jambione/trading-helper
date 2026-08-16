@@ -1,0 +1,10 @@
+{
+  "jmb": {
+    "hash": "(local only — created on first run / existing machine)",
+    "admin": true,
+    "status": "active",
+    "display_name": "JMB",
+    "email": "you@example.com",
+    "billing": { "plan": "owner", "status": "none" }
+  }
+}

@@ -76,11 +76,17 @@ trending_stocks.json
 .trading.pids
 logs/
 
-# Visitor / auth audit trails (may contain IPs and user agents)
+# Account store — password hashes, emails, later broker keys. Never commit.
+users.json
+users.json.*
+!users.example.json
+
+# Visitor / auth audit trails (may contain IPs, user agents, emails)
 traffic_log.json
-traffic_log.json.tmp
+traffic_log.json.*
 login_log.json
-login_log.json.tmp
+login_log.json.*
+config/push_subscriptions.json
 
 # Spell-pipeline learned-correction runtime state (per-machine, regenerated)
 config/learned_corrections.json
