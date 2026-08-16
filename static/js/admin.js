@@ -7,8 +7,8 @@
  *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=131';
-import { refresh as refreshSessions } from './sessions.js?v=131';
+import { api } from './api.js?v=132';
+import { refresh as refreshSessions } from './sessions.js?v=132';
 
 let _backdrop = null;
 let _activeTab = 'online';

@@ -474,6 +474,9 @@ body.mobile .donate-label { display: none; }
 /* Auth UI: hide all auth-related elements when auth is disabled */
 .auth-ui { display: none !important; }
 body.auth-on .auth-ui { display: revert !important; }
+/* .btn { display:inline-flex } beats the hidden attribute — keep Sign In off when signed in */
+[data-signin-btn][hidden],
+body.signed-in [data-signin-btn] { display: none !important; }
 
 /* Admin button: only show when hosted (not localhost) */
 .hosted-only { display: none !important; }
