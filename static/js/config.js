@@ -5,8 +5,8 @@
  * Does not touch other parts of the UI.
  */
 
-import { api } from './api.js?v=124';
-import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=107';
+import { api } from './api.js?v=130';
+import { getBackendUrl, setBackendUrl, logout } from './auth.js?v=130';
 
 let _backdrop = null;
 let _saveBtn  = null;
@@ -51,6 +51,10 @@ export async function open() {
   _backdrop.classList.add('open');
   _set('cfg-backend-url', getBackendUrl());
   await _loadConfig();
+  if (document.body.classList.contains('auth-on')) {
+    _switchTab('account');
+  }
+  _wireAccount();
 }
 
 export function close() {
@@ -68,6 +72,12 @@ function _switchTab(tab) {
     panel.classList.toggle('hidden', panel.dataset.tabPanel !== tab)
   );
   if (tab === 'history') _loadSuggestions();
+  if (tab === 'account') {
+    if (_saveBtn) _saveBtn.style.display = 'none';
+    _loadAccount();
+  } else if (_saveBtn) {
+    _saveBtn.style.display = '';
+  }
 }
 
 // ── Load config ────────────────────────────────────────────────
@@ -153,6 +163,69 @@ function _pwdVal(id)    { const v = _val(id).trim(); return v || undefined; }
 
 function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Account ────────────────────────────────────────────────────
+
+let _acctWired = false;
+
+function _msg(id, text, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('account-msg--ok', !!ok && !!text);
+  el.classList.toggle('account-msg--err', !ok && !!text);
+}
+
+async function _loadAccount() {
+  try {
+    const { account: a } = await api.getAccount();
+    if (!a) return;
+    _set('acct-username', a.username || '');
+    _set('acct-name', a.display_name || '');
+    _set('acct-email', a.email || '');
+  } catch (e) {
+    console.error('[config] account load failed', e);
+  }
+}
+
+function _wireAccount() {
+  if (_acctWired) return;
+  _acctWired = true;
+  document.getElementById('acct-save-btn')?.addEventListener('click', async () => {
+    _msg('acct-profile-msg', '');
+    try {
+      const res = await api.saveAccount({
+        display_name: _val('acct-name'),
+        email: _val('acct-email'),
+      });
+      if (res?.account) {
+        _set('acct-name', res.account.display_name || '');
+        _set('acct-email', res.account.email || '');
+      }
+      _msg('acct-profile-msg', 'Profile saved', true);
+    } catch (e) {
+      _msg('acct-profile-msg', e.body?.error || 'Could not save profile', false);
+    }
+  });
+  document.getElementById('acct-pass-btn')?.addEventListener('click', async () => {
+    _msg('acct-pass-msg', '');
+    const next = _val('acct-new');
+    const next2 = _val('acct-new2');
+    if (next !== next2) {
+      _msg('acct-pass-msg', 'Passwords do not match', false);
+      return;
+    }
+    try {
+      await api.changePassword({ current: _val('acct-current'), new: next });
+      _set('acct-current', '');
+      _set('acct-new', '');
+      _set('acct-new2', '');
+      _msg('acct-pass-msg', 'Password updated', true);
+    } catch (e) {
+      _msg('acct-pass-msg', e.body?.error || 'Could not update password', false);
+    }
+  });
 }
 
 // ── Feedback / Suggestions ─────────────────────────────────────

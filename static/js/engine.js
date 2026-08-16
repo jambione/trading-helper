@@ -13,8 +13,8 @@
  *      "is it consistent enough to raise TRADE_AMOUNT?" view.
  */
 
-import { subscribe } from './store.js?v=107';
-import { api }       from './api.js?v=124';
+import { subscribe } from './store.js?v=130';
+import { api }       from './api.js?v=130';
 
 const SECRET_LS = 'ss:engine-secret'; // pragma: allowlist secret (localStorage key name)
 

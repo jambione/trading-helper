@@ -70,7 +70,12 @@ export function getQueryUser() {
   }
 }
 
-export function logout() {
+export async function logout() {
+  try {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+  } catch {
+    // Cookie clear is best-effort; local token still goes away below.
+  }
   clearToken();
-  window.location.href = '/';
+  window.location.href = '/login';
 }

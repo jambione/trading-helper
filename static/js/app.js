@@ -5,24 +5,24 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=124';
-import { subscribe, set, selectTicker }          from './store.js?v=107';
-import { init as initFeeds }                     from './feeds.js?v=127';
-import { init as initTickers }                   from './tickers.js?v=112';
-import { init as initTradingView }               from './tradingview.js?v=107';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=107';
-import { init as initResizer }                   from './resizer.js?v=107';
-import * as controls                             from './controls.js?v=107';
-import * as notifications                        from './notifications.js?v=123';
-import { isAuthenticated, logout, getQueryUser } from './auth.js?v=107';
-import { init as initNews }                      from './news.js?v=107';
-import { init as initLeaderboard }               from './leaderboard.js?v=107';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=107';
-import { init as initEngine }                    from './engine.js?v=107';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=107';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=107';
+import { connect, on, api }                      from './api.js?v=130';
+import { subscribe, set, selectTicker }          from './store.js?v=130';
+import { init as initFeeds }                     from './feeds.js?v=130';
+import { init as initTickers }                   from './tickers.js?v=130';
+import { init as initTradingView }               from './tradingview.js?v=130';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=130';
+import { init as initResizer }                   from './resizer.js?v=130';
+import * as controls                             from './controls.js?v=130';
+import * as notifications                        from './notifications.js?v=130';
+import { isAuthenticated, logout, getQueryUser, setToken } from './auth.js?v=130';
+import { init as initNews }                      from './news.js?v=130';
+import { init as initLeaderboard }               from './leaderboard.js?v=130';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=130';
+import { init as initEngine }                    from './engine.js?v=130';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=130';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=130';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=107';
+import { init as initMobilePager }                from './mobilePager.js?v=130';
 
 // Product badge — "Trader Bro v0.8", replacing the old WS·Discord·AI Grok
 // text row. The connectivity/trader-on dots stay (they're live status, not
@@ -157,23 +157,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   let _isAdmin     = _queryUser === 'jmb';
   let _tokenSent   = false;
   try {
-    const token = localStorage.getItem('ss:token') || '';
+    const token = isAuthenticated() ? (localStorage.getItem('ss:token') || '') : '';
     _tokenSent  = !!token;
     const url = '/api/meta' + (_queryUser ? ('?user=' + encodeURIComponent(_queryUser)) : '');
     const res   = await fetch(url, {
+      credentials: 'include',
       headers: token ? { 'Authorization': 'Bearer ' + token } : {},
     });
     const meta  = await res.json();
+    if (meta.token) {
+      setToken(meta.token);
+      _tokenSent = true;
+    }
     authRequired = _isLocal ? false : (meta.auth_required ?? false);
     _isAdmin     = meta.is_admin || _isAdmin;
     if (meta.auth_required) document.body.classList.add('auth-on');
+    if (meta.username) _tokenSent = true;
   } catch {
     // Backend unreachable — localhost is always open; remote requires a token
     authRequired = _isLocal ? false : !isAuthenticated();
   }
 
   if (authRequired && !isAuthenticated()) {
-    window.location.href = '/';
+    window.location.href = '/login';
     return;
   }
 
@@ -274,7 +280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=107');
+    const m = await import('./admin.js?v=130');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

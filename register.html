@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Signal Scanner — Create Account</title>
+  <title>Trader Bro — Request Access</title>
   <link rel="icon" type="image/png" href="/static/favicon.png" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=41" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=119" />
 </head>
 <body>
 
@@ -14,29 +14,37 @@
   <div class="login-card">
 
     <div class="login-brand">
-      <img src="/static/icons/logo.png" class="login-logo-img" alt="Brasfield Momentum">
-      <span>Brasfield Momentum</span>
+      <img src="/static/icons/logo.png" class="login-logo-img" alt="Trader Bro">
+      <span>Trader Bro</span>
     </div>
 
     <div class="login-fields">
 
       <div id="reg-error"   class="login-error"></div>
-      <div id="reg-success" class="login-error" style="display:none; background:rgba(0,200,100,.15); color:#4ade80; border-color:#4ade80;"></div>
+      <div id="reg-success" class="login-error login-ok"></div>
+
+      <p class="login-lead">Request a login. An admin approves new accounts before they can sign in.</p>
 
       <div class="form-group">
-        <label for="backend-url">Backend URL</label>
-        <input id="backend-url" type="url"
-               placeholder="http://localhost:8888"
-               autocomplete="url" spellcheck="false" />
-        <span class="hint">Your local server or Cloudflare tunnel URL</span>
+        <label for="reg-name">Full name</label>
+        <input id="reg-name" type="text"
+               placeholder="Your name"
+               autocomplete="name" />
+      </div>
+
+      <div class="form-group">
+        <label for="reg-email">Email</label>
+        <input id="reg-email" type="email"
+               placeholder="you@email.com"
+               autocomplete="email" />
       </div>
 
       <div class="form-group">
         <label for="reg-user">Username</label>
         <input id="reg-user" type="text"
-               placeholder="Choose a username"
+               placeholder="letters, numbers, _"
                autocomplete="username" />
-        <span class="hint">At least 3 characters</span>
+        <span class="hint">3–24 characters, start with a letter</span>
       </div>
 
       <div class="form-group">
@@ -44,22 +52,22 @@
         <input id="reg-pass" type="password"
                placeholder="••••••••"
                autocomplete="new-password" />
-        <span class="hint">At least 6 characters</span>
+        <span class="hint">At least 8 characters</span>
       </div>
 
       <div class="form-group">
-        <label for="reg-pass2">Confirm Password</label>
+        <label for="reg-pass2">Confirm password</label>
         <input id="reg-pass2" type="password"
                placeholder="••••••••"
                autocomplete="new-password" />
       </div>
 
-      <button id="reg-btn" class="btn btn--primary login-submit">Create Account</button>
+      <button id="reg-btn" class="btn btn--primary login-submit">Request access</button>
 
     </div>
 
     <p class="login-hint">
-      Already have an account? <a href="/login" style="color: var(--accent, #7dd3fc); text-decoration: none;">Sign in</a>
+      Already have an account? <a href="/login">Sign in</a>
     </p>
 
   </div>
@@ -67,17 +75,14 @@
 
 <script>
 (function () {
-  const BACKEND_KEY = 'ss:backend-url';
-
-  const urlInput  = document.getElementById('backend-url');
-  const userInput = document.getElementById('reg-user');
-  const passInput = document.getElementById('reg-pass');
+  const nameInput  = document.getElementById('reg-name');
+  const emailInput = document.getElementById('reg-email');
+  const userInput  = document.getElementById('reg-user');
+  const passInput  = document.getElementById('reg-pass');
   const pass2Input = document.getElementById('reg-pass2');
-  const btn       = document.getElementById('reg-btn');
-  const errEl     = document.getElementById('reg-error');
-  const okEl      = document.getElementById('reg-success');
-
-  urlInput.value = localStorage.getItem(BACKEND_KEY) || window.location.origin;
+  const btn        = document.getElementById('reg-btn');
+  const errEl      = document.getElementById('reg-error');
+  const okEl       = document.getElementById('reg-success');
 
   function showError(msg) {
     okEl.style.display  = 'none';
@@ -95,47 +100,51 @@
     errEl.style.display = 'none';
     okEl.style.display  = 'none';
 
-    const backendUrl = urlInput.value.trim().replace(/\/$/, '');
-    const username   = userInput.value.trim();
-    const password   = passInput.value;
-    const password2  = pass2Input.value;
+    const display_name = nameInput.value.trim();
+    const email        = emailInput.value.trim();
+    const username     = userInput.value.trim();
+    const password     = passInput.value;
+    const password2    = pass2Input.value;
 
-    if (!backendUrl)        { showError('Backend URL is required');           return; }
-    if (!username)          { showError('Username is required');              return; }
-    if (username.length < 3){ showError('Username must be at least 3 characters'); return; }
-    if (!password)          { showError('Password is required');              return; }
-    if (password.length < 6){ showError('Password must be at least 6 characters'); return; }
-    if (password !== password2) { showError('Passwords do not match');        return; }
+    if (!display_name) { showError('Name is required'); return; }
+    if (!email)        { showError('Email is required'); return; }
+    if (!username)     { showError('Username is required'); return; }
+    if (username.length < 3) { showError('Username must be at least 3 characters'); return; }
+    if (!password)     { showError('Password is required'); return; }
+    if (password.length < 8) { showError('Password must be at least 8 characters'); return; }
+    if (password !== password2) { showError('Passwords do not match'); return; }
 
     btn.disabled    = true;
-    btn.textContent = 'Creating account…';
+    btn.textContent = 'Sending request…';
 
     try {
-      const res  = await fetch(`${backendUrl}/auth/register`, {
+      const res  = await fetch('/auth/register', {
         method:  'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ username, password }),
+        body:    JSON.stringify({ username, password, email, display_name }),
       });
       const data = await res.json();
 
       if (!res.ok || !data.ok) {
-        showError(data.error || 'Could not create account');
+        showError(data.error || 'Could not send request');
         return;
       }
 
-      showSuccess('Account created! Redirecting to login…');
-      setTimeout(() => { window.location.href = '/login'; }, 1800);
-
+      showSuccess(data.message || 'Request received.');
+      btn.textContent = 'Request sent';
+      if (!data.pending) {
+        setTimeout(() => { window.location.href = '/login'; }, 1600);
+      }
     } catch (e) {
       showError('Connection failed: ' + e.message);
-    } finally {
       btn.disabled    = false;
-      btn.textContent = 'Create Account';
+      btn.textContent = 'Request access';
     }
   }
 
   btn.addEventListener('click', register);
-  [userInput, passInput, pass2Input].forEach(el =>
+  [nameInput, emailInput, userInput, passInput, pass2Input].forEach(el =>
     el.addEventListener('keydown', e => { if (e.key === 'Enter') register(); })
   );
 })();

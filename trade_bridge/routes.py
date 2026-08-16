@@ -11,7 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
-from auth import is_auth_required, verify_token
+from auth import COOKIE_NAME, first_valid_token, is_auth_required, verify_token
 from trade_bridge.config import load_config
 from trade_bridge.engine import BridgeManager
 
@@ -89,7 +89,8 @@ async def l2_state(symbol: str):
 @router.websocket("/ws/l2/{symbol}")
 async def l2_stream(ws: WebSocket, symbol: str, token: str = ""):
     await ws.accept()
-    if is_auth_required() and not verify_token(token):
+    tok = first_valid_token(token, ws.cookies.get(COOKIE_NAME, ""))
+    if is_auth_required() and not verify_token(tok):
         await ws.close(code=4001)
         return
     m = get_manager()

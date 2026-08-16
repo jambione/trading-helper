@@ -130,3 +130,15 @@ def get_log() -> list:
     """Return all entries, newest first."""
     with _lock:
         return list(reversed(_load()))
+
+
+def get_log_for_user(username: str, limit: int = 25) -> list:
+    """Recent login attempts for one username, newest first."""
+    want = (username or "").strip().lower()
+    if not want:
+        return []
+    rows = [
+        row for row in get_log()
+        if (row.get("username") or "").strip().lower() == want
+    ]
+    return rows[: max(1, int(limit))]

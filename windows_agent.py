@@ -81,7 +81,7 @@ POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "1.5"))  # seconds betwee
 # ── Token — managed automatically, do not edit ────────────────────────────────
 _token      = ""          # current JWT, refreshed automatically
 _token_lock = threading.Lock()
-TOKEN_TTL   = 86400       # server issues 24-hour tokens
+TOKEN_TTL   = 30 * 86400  # fallback if login response omits expires_in
 REFRESH_BEFORE = 300      # re-login 5 minutes before expiry
 
 # Browser-like User-Agent so Cloudflare doesn't block the requests with 403
@@ -317,10 +317,14 @@ def _login() -> bool:
         data = json.loads(resp.read().decode())
         tok  = data.get("token") or data.get("access_token", "")
         if tok:
+            try:
+                ttl = int(data.get("expires_in") or TOKEN_TTL)
+            except (TypeError, ValueError):
+                ttl = TOKEN_TTL
             with _token_lock:
                 _token            = tok
-                _token_expires_at = time.time() + TOKEN_TTL
-            print("  🔑 Logged in — token valid for 24 h")
+                _token_expires_at = time.time() + max(ttl, 60)
+            print(f"  🔑 Logged in — token valid for {max(ttl, 60) // 3600} h")
             return True
         print(f"  ⚠️  Login response had no token: {data}")
         return False

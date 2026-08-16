@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trader Bro — Forgot password</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=119" />
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-card">
+
+    <div class="login-brand">
+      <img src="/static/icons/logo.png" class="login-logo-img" alt="Trader Bro">
+      <span>Trader Bro</span>
+    </div>
+
+    <div class="login-fields">
+      <div id="fg-error" class="login-error"></div>
+      <div id="fg-ok" class="login-error login-ok"></div>
+
+      <p class="login-lead">Enter the email on your account. If we have it, we’ll send a reset link.</p>
+
+      <div class="form-group">
+        <label for="fg-email">Email</label>
+        <input id="fg-email" type="email" placeholder="you@email.com" autocomplete="email" />
+      </div>
+
+      <button id="fg-btn" class="btn btn--primary login-submit">Send reset link</button>
+    </div>
+
+    <p class="login-hint"><a href="/login">Back to sign in</a></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const emailInput = document.getElementById('fg-email');
+  const btn = document.getElementById('fg-btn');
+  const errEl = document.getElementById('fg-error');
+  const okEl = document.getElementById('fg-ok');
+
+  async function send() {
+    errEl.style.display = 'none';
+    okEl.style.display = 'none';
+    const email = emailInput.value.trim();
+    if (!email) {
+      errEl.textContent = 'Email is required';
+      errEl.style.display = 'block';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      await fetch('/auth/forgot', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      okEl.textContent = 'If that email is on file, we sent a reset link.';
+      okEl.style.display = 'block';
+    } catch (e) {
+      errEl.textContent = 'Connection failed: ' + e.message;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Send reset link';
+    }
+  }
+
+  btn.addEventListener('click', send);
+  emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+})();
+</script>
+</body>
+</html>

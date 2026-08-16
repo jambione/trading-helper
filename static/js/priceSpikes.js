@@ -5,7 +5,7 @@
  * Click a chip to select that ticker in the watchlist / chart.
  */
 
-import { subscribe, selectTicker } from './store.js?v=107';
+import { subscribe, selectTicker } from './store.js?v=130';
 
 let _barEl = null;
 let _lastKey = '';

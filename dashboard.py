@@ -48,14 +48,20 @@ _free_port(8888)
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _SJSONResponse
 
-from auth import (check_credentials, create_token, verify_token, is_auth_required,
-                   create_user, user_exists, get_token_username, is_admin_user)
-from login_log import record_login, get_log as get_login_log
+from auth import (authenticate, create_token, verify_token, is_auth_required,
+                   get_token_username, is_admin_user, user_is_active,
+                   request_account, public_profile, list_public_users,
+                   set_user_status, change_password, update_profile,
+                   create_reset_token, reset_password,
+                   admin_update_user, admin_set_password,
+                   COOKIE_NAME, first_valid_token, token_ttl_seconds,
+                   set_session_cookie, clear_session_cookie, request_is_https)
+from login_log import record_login, get_log as get_login_log, get_log_for_user
 from traffic_log import (
     record_hit as record_traffic_hit,
     get_log as get_traffic_log,
@@ -69,7 +75,11 @@ from session_clock import session_window, next_shot
 import engine_env
 import version
 
-from email_service import send_suggestion_email, send_login_email, smtp_status
+from email_service import (
+    send_suggestion_email, send_login_email, smtp_status,
+    send_access_request_email, send_access_received_email,
+    send_access_approved_email, send_password_reset_email,
+)
 import alpaca_api as _api
 
 sys.path.insert(0, str(Path(__file__).parent / "transcription"))
@@ -2785,15 +2795,28 @@ def get_active_sessions() -> list[dict]:
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
-_PUBLIC_PATHS   = {"/", "/login", "/register", "/auth/login", "/auth/register", "/api/meta", "/api/pnl", "/favicon.ico"}
+_PUBLIC_PATHS   = {"/", "/login", "/register", "/forgot", "/reset",
+                   "/auth/login", "/auth/register", "/auth/logout",
+                   "/auth/forgot", "/auth/reset",
+                   "/api/meta", "/api/pnl", "/favicon.ico"}
 _PUBLIC_PREFIX  = ("/static/", "/api/agent/")
 
 
+def _bearer_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        return auth.removeprefix("Bearer ").strip()
+    return ""
+
+
 def _request_identity(request: Request) -> tuple[str, str]:
-    auth  = request.headers.get("authorization", "")
-    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-    if not token:
-        token = request.query_params.get("token", "")
+    # Prefer a still-valid token. An expired Authorization header must not
+    # hide a good HttpOnly session cookie — that's how visits stay logged in.
+    token = first_valid_token(
+        _bearer_token(request),
+        request.query_params.get("token", ""),
+        request.cookies.get(COOKIE_NAME, ""),
+    )
 
     username = get_token_username(token) if token else ""
     if not username:
@@ -2802,6 +2825,50 @@ def _request_identity(request: Request) -> tuple[str, str]:
             username = "jmb"
 
     return token, username
+
+
+def _ws_token(ws: WebSocket, token: str = "") -> str:
+    return first_valid_token(token, ws.cookies.get(COOKIE_NAME, ""))
+
+
+_AUTH_HITS: dict[str, list[float]] = {}
+
+
+def _auth_rate_limited(key: str, limit: int, window: float) -> bool:
+    now = time.time()
+    hits = [t for t in _AUTH_HITS.get(key, []) if now - t < window]
+    _AUTH_HITS[key] = hits
+    return len(hits) >= limit
+
+
+def _auth_rate_hit(key: str) -> None:
+    _AUTH_HITS.setdefault(key, []).append(time.time())
+
+
+def _public_base_url(request: Request) -> str:
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    if not host:
+        host = request.url.netloc
+    proto = "https" if request_is_https(request) else (request.url.scheme or "http")
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _require_user(request: Request) -> tuple[str, JSONResponse | None]:
+    _token, username = _request_identity(request)
+    if not username:
+        return "", JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    if not user_is_active(username) and username != "jmb":
+        return "", JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    return username, None
+
+
+def _require_admin(request: Request) -> tuple[str, JSONResponse | None]:
+    username, err = _require_user(request)
+    if err:
+        return "", err
+    if not is_admin_user(username):
+        return "", JSONResponse({"ok": False, "error": "Admin access required"}, status_code=403)
+    return username, None
 
 
 class _AuthMiddleware(BaseHTTPMiddleware):
@@ -2826,6 +2893,8 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
         token, username = _request_identity(request)
         if not (verify_token(token) or username == "jmb"):
+            return _SJSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+        if username and username != "jmb" and not user_is_active(username):
             return _SJSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
         # Update last-seen for this user
@@ -2997,7 +3066,11 @@ async def _startup():
 
 
 @app.get("/")
-async def root():
+async def root(request: Request):
+    if is_auth_required():
+        token, username = _request_identity(request)
+        if not (verify_token(token) or username == "jmb"):
+            return RedirectResponse("/login", status_code=302)
     return FileResponse("dashboard.html")
 
 
@@ -3007,13 +3080,16 @@ async def favicon():
 
 
 @app.get("/login")
-async def login_page():
-    return FileResponse("dashboard.html")
+async def login_page(request: Request):
+    token, _username = _request_identity(request)
+    if verify_token(token):
+        return RedirectResponse("/", status_code=302)
+    return FileResponse("login.html")
 
 
 @app.get("/register")
 async def register_page():
-    return FileResponse("dashboard.html")
+    return FileResponse("register.html")
 
 
 @app.post("/auth/login")
@@ -3028,14 +3104,24 @@ async def auth_login(request: Request):
         ua = meta["user_agent"]
         cf_country = meta.get("cf_country") or ""
 
-        ok = check_credentials(username, password)
+        rate_key = f"login:{ip}"
+        if _auth_rate_limited(rate_key, 10, 900):
+            return JSONResponse({"ok": False, "error": "Too many attempts. Try again later."},
+                                status_code=429)
+
         loop = asyncio.get_running_loop()
+        user, auth_err = await loop.run_in_executor(
+            None, lambda: authenticate(username, password))
+        ok = bool(user) and not auth_err
+        logged_as = user or username
+        if not ok:
+            _auth_rate_hit(rate_key)
+
         await loop.run_in_executor(
             None,
-            lambda: record_login(username, ip, ua, success=ok, cf_country=cf_country),
+            lambda: record_login(logged_as, ip, ua, success=ok, cf_country=cf_country),
         )
-        await loop.run_in_executor(None, lambda: send_login_email(username, ok, ip=ip, ua=ua))
-        # Explicit traffic row (middleware also records POSTs; this tags username).
+        await loop.run_in_executor(None, lambda: send_login_email(logged_as, ok, ip=ip, ua=ua))
         await loop.run_in_executor(
             None,
             lambda: record_traffic_hit(
@@ -3045,48 +3131,301 @@ async def auth_login(request: Request):
                 ip=ip,
                 user_agent=ua,
                 cf_country=cf_country,
-                username=username if ok else "",
+                username=user if ok else "",
                 event="auth",
             ),
         )
 
         if not ok:
-            return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
-        _touch_session(username.lower())
-        return JSONResponse({"ok": True, "token": create_token(username)})
+            return JSONResponse({"ok": False, "error": auth_err or "Invalid credentials"},
+                                status_code=401)
+        _touch_session(user)
+        token = create_token(user)
+        profile = public_profile(user)
+        resp = JSONResponse({
+            "ok": True,
+            "token": token,
+            "expires_in": token_ttl_seconds(),
+            "account": profile,
+        })
+        set_session_cookie(resp, token, secure=request_is_https(request))
+        return resp
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @app.post("/auth/register")
 async def auth_register(request: Request):
-    """Create a new user account."""
+    """Request a login. First user is auto-approved; later users wait for an admin."""
     try:
-        body     = await request.json()
-        username = str(body.get("username", "")).strip()
-        password = str(body.get("password", ""))
+        ip = client_ip_from_request(request)
+        if _auth_rate_limited(f"register:{ip}", 5, 3600):
+            return JSONResponse({"ok": False, "error": "Too many requests. Try again later."},
+                                status_code=429)
 
-        if not username:
-            return JSONResponse({"ok": False, "error": "Username is required"}, status_code=400)
-        if len(username) < 3:
-            return JSONResponse({"ok": False, "error": "Username must be at least 3 characters"}, status_code=400)
-        if not password:
-            return JSONResponse({"ok": False, "error": "Password is required"}, status_code=400)
-        if len(password) < 6:
-            return JSONResponse({"ok": False, "error": "Password must be at least 6 characters"}, status_code=400)
-
-        if user_exists(username):
-            return JSONResponse({"ok": False, "error": "Username already taken"}, status_code=409)
+        body          = await request.json()
+        username      = str(body.get("username", "")).strip()
+        password      = str(body.get("password", ""))
+        email         = str(body.get("email", "")).strip()
+        display_name  = str(body.get("display_name") or body.get("name") or "").strip()
 
         loop = asyncio.get_running_loop()
-        ok = await loop.run_in_executor(None, lambda: create_user(username, password))
-        if not ok:
-            return JSONResponse({"ok": False, "error": "Could not create account"}, status_code=500)
+        profile, err = await loop.run_in_executor(
+            None,
+            lambda: request_account(username, password, email, display_name),
+        )
+        if err or not profile:
+            status = 409 if err in ("Username is taken", "Email is already in use") else 400
+            return JSONResponse({"ok": False, "error": err or "Could not create account"},
+                                status_code=status)
 
-        log.info("[AUTH] Account created: %s", username)
-        return JSONResponse({"ok": True, "message": "Account created successfully"})
+        _auth_rate_hit(f"register:{ip}")
+        await loop.run_in_executor(
+            None,
+            lambda: send_access_request_email(
+                profile["username"], profile.get("email") or email, profile.get("display_name") or display_name),
+        )
+        if profile.get("email"):
+            await loop.run_in_executor(
+                None,
+                lambda: send_access_received_email(profile["email"], profile.get("display_name") or ""),
+            )
+
+        pending = profile.get("status") == "pending"
+        message = (
+            "Request received. We'll email you when your account is approved."
+            if pending else
+            "Account created. You can sign in now."
+        )
+        return JSONResponse({
+            "ok": True,
+            "pending": pending,
+            "status": profile.get("status"),
+            "message": message,
+        })
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.get("/forgot")
+async def forgot_page():
+    return FileResponse("forgot.html")
+
+
+@app.get("/reset")
+async def reset_page():
+    return FileResponse("reset.html")
+
+
+@app.post("/auth/forgot")
+async def auth_forgot(request: Request):
+    """Always 200 — do not reveal whether the email exists."""
+    try:
+        ip = client_ip_from_request(request)
+        if _auth_rate_limited(f"forgot:{ip}", 5, 3600):
+            return JSONResponse({"ok": True})
+        body = await request.json()
+        email = str(body.get("email", "")).strip()
+        loop = asyncio.get_running_loop()
+        raw, _uname = await loop.run_in_executor(None, lambda: create_reset_token(email))
+        if raw:
+            url = f"{_public_base_url(request)}/reset?token={raw}"
+            await loop.run_in_executor(None, lambda: send_password_reset_email(email, url))
+        _auth_rate_hit(f"forgot:{ip}")
+        return JSONResponse({"ok": True})
+    except Exception:
+        return JSONResponse({"ok": True})
+
+
+@app.post("/auth/reset")
+async def auth_reset(request: Request):
+    try:
+        body = await request.json()
+        token = str(body.get("token", "")).strip()
+        password = str(body.get("password", ""))
+        loop = asyncio.get_running_loop()
+        ok, err = await loop.run_in_executor(None, lambda: reset_password(token, password))
+        if not ok:
+            return JSONResponse({"ok": False, "error": err}, status_code=400)
+        return JSONResponse({"ok": True, "message": "Password updated. You can sign in now."})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    resp = JSONResponse({"ok": True})
+    clear_session_cookie(resp, secure=request_is_https(request))
+    return resp
+
+
+@app.get("/api/account")
+async def api_account_get(request: Request):
+    username, err = _require_user(request)
+    if err:
+        return err
+    profile = public_profile(username)
+    return JSONResponse({"ok": True, "account": profile})
+
+
+@app.post("/api/account")
+async def api_account_update(request: Request):
+    username, err = _require_user(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    kwargs = {}
+    if "display_name" in body:
+        kwargs["display_name"] = str(body.get("display_name") or "")
+    if "email" in body:
+        kwargs["email"] = str(body.get("email") or "")
+    if not kwargs:
+        return JSONResponse({"ok": False, "error": "Nothing to update"}, status_code=400)
+    loop = asyncio.get_running_loop()
+    profile, uerr = await loop.run_in_executor(
+        None, lambda: update_profile(username, **kwargs))
+    if uerr or not profile:
+        return JSONResponse({"ok": False, "error": uerr or "Could not update"}, status_code=400)
+    return JSONResponse({"ok": True, "account": profile})
+
+
+@app.post("/api/account/password")
+async def api_account_password(request: Request):
+    username, err = _require_user(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    current = str(body.get("current") or body.get("current_password") or "")
+    new = str(body.get("new") or body.get("password") or "")
+    loop = asyncio.get_running_loop()
+    ok, perr = await loop.run_in_executor(
+        None, lambda: change_password(username, current, new))
+    if not ok:
+        return JSONResponse({"ok": False, "error": perr}, status_code=400)
+    # Re-issue the session so an old stolen token dies after a password change
+    # on the next sliding refresh; current cookie stays valid.
+    return JSONResponse({"ok": True, "message": "Password updated"})
+
+
+@app.get("/api/admin/users")
+async def api_admin_users(request: Request):
+    _admin, err = _require_admin(request)
+    if err:
+        return err
+    loop = asyncio.get_running_loop()
+    users = await loop.run_in_executor(None, lambda: list_public_users(admin_view=True))
+    pending = sum(1 for u in users if u.get("status") == "pending")
+    return JSONResponse({"ok": True, "users": users, "pending": pending})
+
+
+@app.get("/api/admin/users/{username}")
+async def api_admin_user_detail(username: str, request: Request):
+    _admin, err = _require_admin(request)
+    if err:
+        return err
+    profile = public_profile(username, admin_view=True)
+    if not profile:
+        return JSONResponse({"ok": False, "error": "User not found"}, status_code=404)
+    loop = asyncio.get_running_loop()
+    logins = await loop.run_in_executor(None, lambda: get_log_for_user(username, 20))
+    return JSONResponse({"ok": True, "account": profile, "logins": logins})
+
+
+@app.post("/api/admin/users/{username}")
+async def api_admin_user_update(username: str, request: Request):
+    admin, err = _require_admin(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    kwargs = {"by": admin}
+    if "display_name" in body:
+        kwargs["display_name"] = str(body.get("display_name") or "")
+    if "email" in body:
+        kwargs["email"] = str(body.get("email") or "")
+    if "status" in body:
+        kwargs["status"] = str(body.get("status") or "")
+    loop = asyncio.get_running_loop()
+    profile, uerr = await loop.run_in_executor(
+        None, lambda: admin_update_user(username, **kwargs))
+    if uerr or not profile:
+        return JSONResponse({"ok": False, "error": uerr or "Could not update"}, status_code=400)
+    return JSONResponse({"ok": True, "account": public_profile(username, admin_view=True)})
+
+
+@app.post("/api/admin/users/{username}/password")
+async def api_admin_user_password(username: str, request: Request):
+    _admin, err = _require_admin(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    new = str(body.get("password") or body.get("new") or "")
+    loop = asyncio.get_running_loop()
+    ok, perr = await loop.run_in_executor(None, lambda: admin_set_password(username, new))
+    if not ok:
+        return JSONResponse({"ok": False, "error": perr}, status_code=400)
+    return JSONResponse({"ok": True, "message": "Password updated"})
+
+
+@app.post("/api/admin/users/{username}/send-reset")
+async def api_admin_user_send_reset(username: str, request: Request):
+    _admin, err = _require_admin(request)
+    if err:
+        return err
+    profile = public_profile(username, admin_view=True)
+    if not profile:
+        return JSONResponse({"ok": False, "error": "User not found"}, status_code=404)
+    email = profile.get("email") or ""
+    if not email:
+        return JSONResponse({"ok": False, "error": "User has no email on file"}, status_code=400)
+    loop = asyncio.get_running_loop()
+    raw, _uname = await loop.run_in_executor(None, lambda: create_reset_token(email))
+    if not raw:
+        return JSONResponse({"ok": False, "error": "Could not create reset link"}, status_code=400)
+    url = f"{_public_base_url(request)}/reset?token={raw}"
+    await loop.run_in_executor(None, lambda: send_password_reset_email(email, url))
+    return JSONResponse({"ok": True, "message": "Reset email sent"})
+
+
+@app.post("/api/admin/users/{username}/{action}")
+async def api_admin_user_action(username: str, action: str, request: Request):
+    admin, err = _require_admin(request)
+    if err:
+        return err
+    action = (action or "").strip().lower()
+    status = {
+        "approve": "active",
+        "enable": "active",
+        "reject": "rejected",
+        "disable": "disabled",
+    }.get(action)
+    if not status:
+        return JSONResponse({"ok": False, "error": "Unknown action"}, status_code=400)
+    loop = asyncio.get_running_loop()
+    ok, serr = await loop.run_in_executor(
+        None, lambda: set_user_status(username, status, by=admin))
+    if not ok:
+        return JSONResponse({"ok": False, "error": serr}, status_code=400)
+    profile = public_profile(username, admin_view=True)
+    if action == "approve" and profile and profile.get("email"):
+        login_url = f"{_public_base_url(request)}/login"
+        await loop.run_in_executor(
+            None,
+            lambda: send_access_approved_email(
+                profile["email"], profile.get("display_name") or "", login_url),
+        )
+    return JSONResponse({"ok": True, "account": profile})
 
 
 @app.get("/api/state")
@@ -3834,12 +4173,22 @@ async def api_push_unsubscribe(request: Request):
 
 @app.get("/api/meta")
 async def api_meta(request: Request):
-    _token, username = _request_identity(request)
-    return JSONResponse({
+    token, username = _request_identity(request)
+    payload = {
         "auth_required": is_auth_required(),
         "is_admin":      is_admin_user(username),
         "username":      username,
-    })
+        "expires_in":    token_ttl_seconds(),
+        "account":       public_profile(username) if username else None,
+    }
+    # Slide the session forward on every visit so daily use never expires.
+    if username and verify_token(token):
+        fresh = create_token(username)
+        payload["token"] = fresh
+        resp = JSONResponse(payload)
+        set_session_cookie(resp, fresh, secure=request_is_https(request))
+        return resp
+    return JSONResponse(payload)
 
 
 @app.get("/api/active-sessions")
@@ -4093,7 +4442,7 @@ Note: auth is disabled by default. Leave USER/PASS blank until you enable it.
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, token: str = ""):
     await ws.accept()
-    if is_auth_required() and not verify_token(token):
+    if is_auth_required() and not verify_token(_ws_token(ws, token)):
         await ws.close(code=4001)
         return
     import json as _json

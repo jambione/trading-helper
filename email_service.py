@@ -267,3 +267,120 @@ def send_suggestion_email(message: str, ip: str = "", ua: str = "") -> bool:
     msg.attach(MIMEText(html,  "html"))
 
     return _send(msg, recipients, host, port, user, password, from_addr, "suggestion email")
+
+
+def _esc(s: str) -> str:
+    return (
+        str(s or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _compose(to_addr: str, subject: str, plain: str, html: str, label: str) -> bool:
+    if not _is_configured():
+        log.warning("[EMAIL] SMTP not configured — skipping %s", label)
+        return False
+    if not to_addr:
+        return False
+    host      = _cfg("smtp_host")
+    port      = int(_cfg("smtp_port", "587") or "587")
+    user      = _cfg("smtp_user")
+    password  = _cfg("smtp_pass")
+    from_addr = _cfg("smtp_from") or user
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{FROM_NAME} <{from_addr}>"
+    msg["To"]      = to_addr
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html,  "html"))
+    return _send(msg, [to_addr], host, port, user, password, from_addr, label)
+
+
+def _card_html(title: str, body_html: str) -> str:
+    return f"""<!doctype html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#0f172a;padding:24px;margin:0">
+  <div style="max-width:480px;margin:0 auto;background:#1e293b;border-radius:10px;
+              padding:28px 32px;box-shadow:0 4px 16px rgba(0,0,0,.4)">
+    <h2 style="margin:0 0 6px;color:#f1f5f9;font-size:17px;font-weight:700">{title}</h2>
+    <p style="margin:0 0 16px;color:#94a3b8;font-size:13px">Trader Bro / Brasfield Momentum</p>
+    {body_html}
+  </div>
+</body>
+</html>"""
+
+
+def send_access_request_email(username: str, email: str, display_name: str) -> bool:
+    """Notify the operator that someone asked for an account."""
+    to_addr = _notify_to()
+    subject = f"Access request — {username}"
+    plain = (
+        f"New access request\n\n"
+        f"Name:     {display_name}\n"
+        f"Username: {username}\n"
+        f"Email:    {email}\n\n"
+        f"Approve them from Admin → Users on the dashboard."
+    )
+    html = _card_html("New access request", f"""
+      <p style="color:#e2e8f0;font-size:14px;line-height:1.6">
+        <strong>{_esc(display_name)}</strong> asked for a login.<br>
+        Username: <strong>{_esc(username)}</strong><br>
+        Email: {_esc(email)}
+      </p>
+      <p style="color:#94a3b8;font-size:13px">Approve them from Admin → Users.</p>
+    """)
+    return _compose(to_addr, subject, plain, html, "access request")
+
+
+def send_access_received_email(to_addr: str, display_name: str) -> bool:
+    """Tell the applicant we have their request."""
+    subject = "We received your Trader Bro access request"
+    name = display_name or "there"
+    plain = (
+        f"Hi {name},\n\n"
+        f"We received your request for a Trader Bro login. "
+        f"You'll get another email when an admin approves it.\n"
+    )
+    html = _card_html("Request received", f"""
+      <p style="color:#e2e8f0;font-size:14px;line-height:1.6">
+        Hi {_esc(name)}, we have your request. You'll get another email
+        when an admin approves your login.
+      </p>
+    """)
+    return _compose(to_addr, subject, plain, html, "access received")
+
+
+def send_access_approved_email(to_addr: str, display_name: str, login_url: str) -> bool:
+    subject = "Your Trader Bro login is ready"
+    name = display_name or "there"
+    plain = (
+        f"Hi {name},\n\n"
+        f"Your account is approved. Sign in at:\n{login_url}\n"
+    )
+    html = _card_html("You're in", f"""
+      <p style="color:#e2e8f0;font-size:14px;line-height:1.6">
+        Hi {_esc(name)}, your account is approved.
+      </p>
+      <p><a href="{_esc(login_url)}" style="color:#7dd3fc">Sign in</a></p>
+    """)
+    return _compose(to_addr, subject, plain, html, "access approved")
+
+
+def send_password_reset_email(to_addr: str, reset_url: str) -> bool:
+    subject = "Reset your Trader Bro password"
+    plain = (
+        f"Reset your password using this link (expires in one hour):\n\n"
+        f"{reset_url}\n\n"
+        f"If you did not ask for this, you can ignore the email."
+    )
+    html = _card_html("Reset your password", f"""
+      <p style="color:#e2e8f0;font-size:14px;line-height:1.6">
+        Use this link within one hour to choose a new password.
+      </p>
+      <p><a href="{_esc(reset_url)}" style="color:#7dd3fc">Choose a new password</a></p>
+      <p style="color:#94a3b8;font-size:12px">If you did not ask for this, ignore the email.</p>
+    """)
+    return _compose(to_addr, subject, plain, html, "password reset")

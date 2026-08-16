@@ -9,7 +9,7 @@
  * Empty string → same origin (local dev).  Set string → remote backend.
  */
 
-import { getToken, getBackendUrl, clearToken, getQueryUser } from './auth.js?v=107';
+import { getToken, getBackendUrl, clearToken, getQueryUser, isAuthenticated } from './auth.js?v=130';
 
 const _handlers = /** @type {Map<string, Function[]>} */ (new Map());
 
@@ -38,7 +38,7 @@ function _wsUrl() {
   const base = getBackendUrl() || window.location.origin;
   const proto = base.startsWith('https') ? 'wss' : 'ws';
   const host = base.replace(/^https?:\/\//, '');
-  const token = encodeURIComponent(getToken());
+  const token = encodeURIComponent(isAuthenticated() ? getToken() : '');
   const user = getQueryUser();
   return `${proto}://${host}/ws?token=${token}${
     user ? `&user=${encodeURIComponent(user)}` : ''
@@ -76,7 +76,7 @@ export function connect() {
     if (e.code === 4001) {
       // Server rejected the token
       clearToken();
-      window.location.href = '/';
+      window.location.href = '/login';
       return;
     }
     _reconnectTimer = setTimeout(() => {
@@ -91,9 +91,10 @@ export function connect() {
 // ── REST helpers ──────────────────────────────────────────────
 
 async function request(method, path, body, extraHeaders) {
-  const token = getToken();
+  const token = isAuthenticated() ? getToken() : '';
   const opts  = {
     method,
+    credentials: 'include',
     headers: {
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...(extraHeaders || {}),
@@ -106,7 +107,7 @@ async function request(method, path, body, extraHeaders) {
   const res = await fetch(_apiUrl(path), opts);
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/';
+    window.location.href = '/login';
     return;
   }
   if (!res.ok) {
@@ -156,4 +157,18 @@ export const api = {
     request('POST', '/api/engine/restart', {},
             secret ? { 'X-Engine-Secret': secret } : undefined),
   getEngineReport: (days = 14) => request('GET', `/api/engine/report?days=${days}`),
+  getAccount:      ()       => request('GET',  '/api/account'),
+  saveAccount:     body     => request('POST', '/api/account', body),
+  changePassword:  body     => request('POST', '/api/account/password', body),
+  adminUsers:      ()       => request('GET',  '/api/admin/users'),
+  adminUser:       (username) =>
+    request('GET',  `/api/admin/users/${encodeURIComponent(username)}`),
+  adminUserUpdate: (username, body) =>
+    request('POST', `/api/admin/users/${encodeURIComponent(username)}`, body),
+  adminUserPassword: (username, password) =>
+    request('POST', `/api/admin/users/${encodeURIComponent(username)}/password`, { password }),
+  adminUserSendReset: (username) =>
+    request('POST', `/api/admin/users/${encodeURIComponent(username)}/send-reset`),
+  adminUserAction: (username, action) =>
+    request('POST', `/api/admin/users/${encodeURIComponent(username)}/${encodeURIComponent(action)}`),
 };

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trader Bro — Reset password</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=119" />
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-card">
+
+    <div class="login-brand">
+      <img src="/static/icons/logo.png" class="login-logo-img" alt="Trader Bro">
+      <span>Trader Bro</span>
+    </div>
+
+    <div class="login-fields">
+      <div id="rs-error" class="login-error"></div>
+      <div id="rs-ok" class="login-error login-ok"></div>
+
+      <p class="login-lead">Choose a new password for your account.</p>
+
+      <div class="form-group">
+        <label for="rs-pass">New password</label>
+        <input id="rs-pass" type="password" placeholder="••••••••" autocomplete="new-password" />
+        <span class="hint">At least 8 characters</span>
+      </div>
+      <div class="form-group">
+        <label for="rs-pass2">Confirm password</label>
+        <input id="rs-pass2" type="password" placeholder="••••••••" autocomplete="new-password" />
+      </div>
+
+      <button id="rs-btn" class="btn btn--primary login-submit">Update password</button>
+    </div>
+
+    <p class="login-hint"><a href="/login">Back to sign in</a></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token') || '';
+  const pass = document.getElementById('rs-pass');
+  const pass2 = document.getElementById('rs-pass2');
+  const btn = document.getElementById('rs-btn');
+  const errEl = document.getElementById('rs-error');
+  const okEl = document.getElementById('rs-ok');
+
+  if (!token) {
+    errEl.textContent = 'This reset link is missing or expired.';
+    errEl.style.display = 'block';
+    btn.disabled = true;
+  }
+
+  function showError(msg) {
+    okEl.style.display = 'none';
+    errEl.textContent = msg;
+    errEl.style.display = 'block';
+  }
+
+  async function save() {
+    errEl.style.display = 'none';
+    okEl.style.display = 'none';
+    if (!token) { showError('This reset link is missing or expired.'); return; }
+    if (pass.value.length < 8) { showError('Password must be at least 8 characters'); return; }
+    if (pass.value !== pass2.value) { showError('Passwords do not match'); return; }
+    btn.disabled = true;
+    btn.textContent = 'Updating…';
+    try {
+      const res = await fetch('/auth/reset', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password: pass.value }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        showError(data.error || 'Could not update password');
+        btn.disabled = false;
+        btn.textContent = 'Update password';
+        return;
+      }
+      okEl.textContent = 'Password updated. Redirecting to sign in…';
+      okEl.style.display = 'block';
+      setTimeout(() => { location.href = '/login'; }, 1400);
+    } catch (e) {
+      showError('Connection failed: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = 'Update password';
+    }
+  }
+
+  btn.addEventListener('click', save);
+  [pass, pass2].forEach(el => el.addEventListener('keydown', e => { if (e.key === 'Enter') save(); }));
+})();
+</script>
+</body>
+</html>

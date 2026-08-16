@@ -6,7 +6,7 @@
   <title>Signal Scanner — Login</title>
   <link rel="icon" type="image/png" href="/static/favicon.png" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=41" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=119" />
   <!-- All login styles live in styles.css under the Aurora Glass section. -->
 </head>
 <body>
@@ -24,9 +24,9 @@
       <div id="login-error" class="login-error"></div>
 
       <div class="form-group">
-        <label for="login-user">Username</label>
+        <label for="login-user">Username or email</label>
         <input id="login-user" type="text"
-               placeholder="Username"
+               placeholder="username or you@email.com"
                autocomplete="username" />
       </div>
 
@@ -42,7 +42,8 @@
     </div>
 
     <p class="login-hint">
-      Don't have an account? <a href="/register" style="color: var(--accent, #7dd3fc); text-decoration: none;">Create one</a>
+      Need an account? <a href="/register">Request access</a>
+      · <a href="/forgot">Forgot password</a>
     </p>
 
   </div>
@@ -56,6 +57,24 @@
   const passInput = document.getElementById('login-pass');
   const btn       = document.getElementById('login-btn');
   const errEl     = document.getElementById('login-error');
+
+  function tokenStillGood(token) {
+    if (!token) return false;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return false;
+      const p   = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const pad = p.length % 4 ? '='.repeat(4 - p.length % 4) : '';
+      const { exp } = JSON.parse(atob(p + pad));
+      return (exp || 0) > Date.now() / 1000;
+    } catch {
+      return false;
+    }
+  }
+
+  if (tokenStillGood(localStorage.getItem(TOKEN_KEY) || '')) {
+    window.location.href = '/';
+  }
 
   function showError(msg) {
     errEl.textContent   = msg;
@@ -77,6 +96,7 @@
     try {
       const res  = await fetch('/auth/login', {
         method:  'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ username, password }),
       });

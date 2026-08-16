@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=118" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=120" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -401,6 +401,9 @@
 
                 <!-- Tab bar -->
                 <div class="tab-bar">
+                    <button class="tab-btn auth-ui" data-tab-btn="account">
+                        Account
+                    </button>
                     <button class="tab-btn tab-btn--active" data-tab-btn="api">
                         API Keys
                     </button>
@@ -417,6 +420,42 @@
                 </div>
 
                 <div class="drawer-body">
+                    <!-- ── Tab: Account ──────────────────────────── -->
+                    <div class="tab-panel hidden auth-ui" data-tab-panel="account">
+                        <p class="account-note">Your login. Broker keys and billing will live here later.</p>
+                        <div class="form-group">
+                            <label for="acct-username">Username</label>
+                            <input id="acct-username" type="text" disabled autocomplete="username" />
+                        </div>
+                        <div class="form-group">
+                            <label for="acct-name">Name</label>
+                            <input id="acct-name" type="text" autocomplete="name" />
+                        </div>
+                        <div class="form-group">
+                            <label for="acct-email">Email</label>
+                            <input id="acct-email" type="email" autocomplete="email" />
+                        </div>
+                        <button id="acct-save-btn" class="btn btn--primary btn--sm" type="button">Save profile</button>
+                        <div id="acct-profile-msg" class="account-msg"></div>
+
+                        <div class="form-section-label" style="margin-top:18px">Change password</div>
+                        <div class="form-group">
+                            <label for="acct-current">Current password</label>
+                            <input id="acct-current" type="password" autocomplete="current-password" />
+                        </div>
+                        <div class="form-group">
+                            <label for="acct-new">New password</label>
+                            <input id="acct-new" type="password" autocomplete="new-password" />
+                            <span class="hint">At least 8 characters</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="acct-new2">Confirm new password</label>
+                            <input id="acct-new2" type="password" autocomplete="new-password" />
+                        </div>
+                        <button id="acct-pass-btn" class="btn btn--ghost btn--sm" type="button">Update password</button>
+                        <div id="acct-pass-msg" class="account-msg"></div>
+                    </div>
+
                     <!-- ── Tab: API Keys ─────────────────────────── -->
                     <div class="tab-panel" data-tab-panel="api">
                         <div class="form-group">
@@ -607,6 +646,7 @@
                     <span class="drawer-title">Admin</span>
                     <div class="tab-bar">
                         <button class="tab-btn tab-btn--active" data-admin-tab="feedback">Feedback</button>
+                        <button class="tab-btn" data-admin-tab="users">Users</button>
                         <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
                         <button class="tab-btn" data-admin-tab="news">News</button>
                     </div>
@@ -654,6 +694,15 @@
                         <div data-admin-feedback class="suggestions-list">
                             <div class="suggestions-empty">Loading…</div>
                         </div>
+                    </div>
+
+                    <!-- ── Tab: Users ─────────────────────────── -->
+                    <div data-admin-panel="users" class="hidden">
+                        <p class="account-note">JMB reviews requests and can fix any user’s name, email, status, or password.</p>
+                        <div data-admin-users class="suggestions-list">
+                            <div class="suggestions-empty">Loading…</div>
+                        </div>
+                        <div data-admin-user-detail class="user-detail hidden"></div>
                     </div>
 
                     <!-- ── Tab: Ticker Feed ───────────────────── -->
@@ -748,7 +797,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=127"></script>
+        <script type="module" src="/static/js/app.js?v=130"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

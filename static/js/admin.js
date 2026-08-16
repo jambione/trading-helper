@@ -7,7 +7,7 @@
  *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=124';
+import { api } from './api.js?v=130';
 
 let _backdrop = null;
 let _activeTab = 'feedback';
@@ -50,6 +50,7 @@ function _switchTab(tab) {
     panel.classList.toggle('hidden', panel.dataset.adminPanel !== tab)
   );
   if (tab === 'feedback')    _loadFeedback();
+  if (tab === 'users')       _loadUsers();
   if (tab === 'ticker-feed') _loadFeed();
   if (tab === 'news')        _loadNews();
 }
@@ -102,6 +103,151 @@ async function _loadFeedback() {
   } catch {
     el.innerHTML = '<div class="suggestions-empty">Failed to load.</div>';
   }
+}
+
+// ── Users tab ──────────────────────────────────────────────────
+
+let _selectedUser = '';
+
+async function _loadUsers() {
+  const el = _backdrop.querySelector('[data-admin-users]');
+  if (!el) return;
+  el.innerHTML = '<div class="suggestions-empty">Loading…</div>';
+  try {
+    const { users = [] } = await api.adminUsers();
+    if (!users.length) {
+      el.innerHTML = '<div class="suggestions-empty">No users yet.</div>';
+      return;
+    }
+    el.innerHTML = users.map(u => {
+      const status = u.status || 'active';
+      const owner = u.username === 'jmb' || u.owner;
+      const selected = u.username === _selectedUser ? ' is-selected' : '';
+      return `<div class="user-row${selected}" data-user-open="${_esc(u.username)}">
+        <div class="user-row-id">
+          <span class="user-row-name">${_esc(u.display_name || u.username)}${owner ? ' · owner admin' : (u.admin ? ' · admin' : '')}</span>
+          <span class="user-row-meta">${_esc(u.username)}${u.email ? ' · ' + _esc(u.email) : ''}</span>
+        </div>
+        <span class="user-status user-status--${_esc(status)}">${_esc(status)}</span>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('[data-user-open]').forEach(row => {
+      row.addEventListener('click', () => _openUser(row.dataset.userOpen));
+    });
+    if (_selectedUser) _openUser(_selectedUser);
+  } catch {
+    el.innerHTML = '<div class="suggestions-empty">Failed to load.</div>';
+  }
+}
+
+async function _openUser(username) {
+  const box = _backdrop.querySelector('[data-admin-user-detail]');
+  if (!box) return;
+  _selectedUser = username;
+  _backdrop.querySelectorAll('.user-row').forEach(row => {
+    row.classList.toggle('is-selected', row.dataset.userOpen === username);
+  });
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="suggestions-empty">Loading…</div>';
+  try {
+    const { account: u, logins = [] } = await api.adminUser(username);
+    const owner = u.username === 'jmb' || u.owner;
+    const locked = owner ? ' disabled' : '';
+    const statusBtns = [];
+    if (u.status === 'pending') {
+      statusBtns.push(`<button class="btn btn--primary btn--sm" data-user-act="approve">Approve</button>`);
+      statusBtns.push(`<button class="btn btn--ghost btn--sm" data-user-act="reject">Reject</button>`);
+    } else if (u.status === 'active' && !owner) {
+      statusBtns.push(`<button class="btn btn--ghost btn--sm" data-user-act="disable">Disable</button>`);
+    } else if (u.status === 'disabled' || u.status === 'rejected') {
+      statusBtns.push(`<button class="btn btn--primary btn--sm" data-user-act="enable">Enable</button>`);
+    }
+    const loginHtml = logins.length
+      ? logins.map(row => {
+          const ts = (row.timestamp || '').replace('T', ' ').slice(0, 19);
+          const ok = row.success ? 'ok' : 'fail';
+          return `<div class="user-login-row">${_esc(ts)} · ${ok} · ${_esc(row.ip || '')}</div>`;
+        }).join('')
+      : '<div class="suggestions-empty">No login attempts yet.</div>';
+    box.innerHTML = `
+      <div class="form-section-label">${_esc(u.display_name || u.username)} · ${_esc(u.username)}</div>
+      <div class="form-group">
+        <label>Name</label>
+        <input id="adm-user-name" type="text" value="${_esc(u.display_name || '')}"${locked} />
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input id="adm-user-email" type="email" value="${_esc(u.email || '')}"${locked} />
+      </div>
+      ${owner ? '' : '<button class="btn btn--primary btn--sm" id="adm-user-save" type="button">Save profile</button>'}
+      <div id="adm-user-msg" class="account-msg"></div>
+      <div class="form-section-label" style="margin-top:14px">Status · ${_esc(u.status)}</div>
+      <div class="user-row-actions">${statusBtns.join('')}</div>
+      <div class="form-section-label" style="margin-top:14px">Set a temporary password</div>
+      <div class="form-group">
+        <input id="adm-user-pass" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" />
+      </div>
+      <button class="btn btn--ghost btn--sm" id="adm-user-pass-btn" type="button">Set password</button>
+      ${u.email ? '<button class="btn btn--ghost btn--sm" id="adm-user-reset" type="button" style="margin-left:6px">Email reset link</button>' : ''}
+      <div id="adm-pass-msg" class="account-msg"></div>
+      <div class="form-section-label" style="margin-top:14px">Recent logins</div>
+      ${loginHtml}`;
+    box.querySelector('#adm-user-save')?.addEventListener('click', async () => {
+      _adminMsg('adm-user-msg', '');
+      try {
+        await api.adminUserUpdate(username, {
+          display_name: box.querySelector('#adm-user-name')?.value || '',
+          email: box.querySelector('#adm-user-email')?.value || '',
+        });
+        _adminMsg('adm-user-msg', 'Profile saved', true);
+        _loadUsers();
+      } catch (e) {
+        _adminMsg('adm-user-msg', e.body?.error || 'Could not save', false);
+      }
+    });
+    box.querySelectorAll('[data-user-act]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await api.adminUserAction(username, btn.dataset.userAct);
+          _loadUsers();
+        } catch (e) {
+          btn.disabled = false;
+          _adminMsg('adm-user-msg', e.body?.error || 'Could not update status', false);
+        }
+      });
+    });
+    box.querySelector('#adm-user-pass-btn')?.addEventListener('click', async () => {
+      _adminMsg('adm-pass-msg', '');
+      const password = box.querySelector('#adm-user-pass')?.value || '';
+      try {
+        await api.adminUserPassword(username, password);
+        box.querySelector('#adm-user-pass').value = '';
+        _adminMsg('adm-pass-msg', 'Password updated', true);
+      } catch (e) {
+        _adminMsg('adm-pass-msg', e.body?.error || 'Could not set password', false);
+      }
+    });
+    box.querySelector('#adm-user-reset')?.addEventListener('click', async () => {
+      _adminMsg('adm-pass-msg', '');
+      try {
+        await api.adminUserSendReset(username);
+        _adminMsg('adm-pass-msg', 'Reset email sent', true);
+      } catch (e) {
+        _adminMsg('adm-pass-msg', e.body?.error || 'Could not send reset', false);
+      }
+    });
+  } catch {
+    box.innerHTML = '<div class="suggestions-empty">Failed to load this user.</div>';
+  }
+}
+
+function _adminMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('account-msg--ok', !!ok && !!text);
+  el.classList.toggle('account-msg--err', !ok && !!text);
 }
 
 // ── Ticker Feed tab ────────────────────────────────────────────
