@@ -493,17 +493,11 @@ function _paintBookDayPl(dayPlEl, book) {
 
   const eqN = Number(equity);
   const eqTxt = Number.isFinite(eqN) && eqN > 0
-    ? `eq $${eqN >= 1000 ? Math.round(eqN).toLocaleString() : eqN.toFixed(2)}`
-    : '';
+    ? `$${eqN >= 1000 ? Math.round(eqN).toLocaleString() : eqN.toFixed(2)}`
+    : '—';
   if (eqEl && eqEl.textContent !== eqTxt) eqEl.textContent = eqTxt;
 
   const duelLine = _duelSummary(book);
-  if (eqEl && duelLine && !eqTxt) {
-    if (eqEl.textContent !== duelLine) eqEl.textContent = duelLine;
-  } else if (eqEl && duelLine && eqTxt) {
-    const combined = `${eqTxt} · ${duelLine}`;
-    if (eqEl.textContent !== combined) eqEl.textContent = combined;
-  }
 
   const title = [
     'Alpaca account day P&L (equity − last close equity)',
