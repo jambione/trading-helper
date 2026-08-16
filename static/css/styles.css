@@ -3232,7 +3232,7 @@ button.drawer-title {
 }
 .drawer--admin .drawer-header {
   align-items: stretch;
-  padding: 0 8px 0 16px;
+  padding: 0 16px 0 16px;
   gap: 6px;
 }
 .drawer--admin .drawer-title {
@@ -3240,10 +3240,6 @@ button.drawer-title {
   flex-shrink: 0;
   font-size: 13px;
   letter-spacing: 0.10em;
-}
-.drawer--admin .drawer-header > .btn--icon {
-  align-self: center;
-  flex-shrink: 0;
 }
 .drawer--admin .tab-bar {
   flex: 1;

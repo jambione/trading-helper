@@ -24,7 +24,7 @@ export function init(backdropEl) {
     btn.addEventListener('click', () => _switchTab(btn.dataset.adminTab))
   );
 
-  // Close via title, X, or backdrop
+  // Close via ADMIN title or backdrop
   backdropEl.querySelectorAll('[data-admin-close]')
     .forEach(btn => btn.addEventListener('click', close));
   backdropEl.addEventListener('click', e => { if (e.target === backdropEl) close(); });
