@@ -9,7 +9,7 @@
  *   - #login-log-panel
  */
 
-import { api } from './api.js?v=132';
+import { api } from './api.js?v=133';
 
 const POLL_INTERVAL = 30_000; // 30 seconds
 let _pollTimer = null;
@@ -153,7 +153,7 @@ function _updateBadge(count) {
   if (!badge || !counter) return;
 
   counter.textContent = count;
-  badge.style.display = count > 0 ? 'inline-flex' : 'none';
+  badge.hidden = count <= 0;
 }
 
 async function _poll() {

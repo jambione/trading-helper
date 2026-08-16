@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=121" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=122" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -115,9 +115,9 @@
 
             <div class="hdr-actions">
                 <!-- Active users count: JMB only -->
-                <span id="active-users-badge" class="jmb-only" title="Currently signed in" style="display:none; align-items:center; gap:4px; font-size:12px; color:var(--text-muted,#94a3b8); padding:0 4px;">
-                    👥 <span id="active-users-count">0</span>
-                </span>
+                <button type="button" id="active-users-badge" class="btn btn--ghost jmb-only" title="Who is signed in — opens Admin → Online" hidden>
+                    Online <span id="active-users-count">0</span>
+                </button>
 
                 <a href="/login" data-signin-btn class="btn btn--ghost" hidden>Sign In</a>
 
@@ -788,7 +788,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=132"></script>
+        <script type="module" src="/static/js/app.js?v=133"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

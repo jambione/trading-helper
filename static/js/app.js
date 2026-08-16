@@ -5,24 +5,24 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=132';
-import { subscribe, set, selectTicker }          from './store.js?v=132';
-import { init as initFeeds }                     from './feeds.js?v=132';
-import { init as initTickers }                   from './tickers.js?v=132';
-import { init as initTradingView }               from './tradingview.js?v=132';
-import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=132';
-import { init as initResizer }                   from './resizer.js?v=132';
-import * as controls                             from './controls.js?v=132';
-import * as notifications                        from './notifications.js?v=132';
-import { isAuthenticated, logout, getQueryUser, setToken } from './auth.js?v=132';
-import { init as initNews }                      from './news.js?v=132';
-import { init as initLeaderboard }               from './leaderboard.js?v=132';
-import { init as initPriceSpikes }               from './priceSpikes.js?v=132';
-import { init as initEngine }                    from './engine.js?v=132';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=132';
-import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=132';
+import { connect, on, api }                      from './api.js?v=133';
+import { subscribe, set, selectTicker }          from './store.js?v=133';
+import { init as initFeeds }                     from './feeds.js?v=133';
+import { init as initTickers }                   from './tickers.js?v=133';
+import { init as initTradingView }               from './tradingview.js?v=133';
+import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=133';
+import { init as initResizer }                   from './resizer.js?v=133';
+import * as controls                             from './controls.js?v=133';
+import * as notifications                        from './notifications.js?v=133';
+import { isAuthenticated, logout, getQueryUser, setToken } from './auth.js?v=133';
+import { init as initNews }                      from './news.js?v=133';
+import { init as initLeaderboard }               from './leaderboard.js?v=133';
+import { init as initPriceSpikes }               from './priceSpikes.js?v=133';
+import { init as initEngine }                    from './engine.js?v=133';
+import { init as initAdmin, open as openAdmin }  from './admin.js?v=133';
+import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
-import { init as initMobilePager }                from './mobilePager.js?v=132';
+import { init as initMobilePager }                from './mobilePager.js?v=133';
 
 // Product badge — "Trader Bro v0.8", replacing the old WS·Discord·AI Grok
 // text row. The connectivity/trader-on dots stay (they're live status, not
@@ -261,6 +261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   settBtn  ?.addEventListener('click', openConfig);
   adminBtn ?.addEventListener('click', openAdmin);
+  document.getElementById('active-users-badge')?.addEventListener('click', openAdmin);
   logoutBtn?.addEventListener('click', logout);
 
   const addInput = document.getElementById('add-ticker-input');
@@ -283,7 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=132');
+    const m = await import('./admin.js?v=133');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

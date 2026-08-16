@@ -476,7 +476,9 @@ body.mobile .donate-label { display: none; }
 body.auth-on .auth-ui { display: revert !important; }
 /* .btn { display:inline-flex } beats the hidden attribute — keep Sign In off when signed in */
 [data-signin-btn][hidden],
-body.signed-in [data-signin-btn] { display: none !important; }
+body.signed-in [data-signin-btn],
+body.user-jmb [data-signin-btn],
+body.auth-on [data-signin-btn] { display: none !important; }
 
 /* Admin button: only show when hosted (not localhost) */
 .hosted-only { display: none !important; }
@@ -597,6 +599,7 @@ body.user-jmb .jmb-download          { display: inline-flex; }
 /* ── jmb-only ─────────────────────────────────────────────── */
 .jmb-only                            { display: none !important; }
 body.user-jmb .jmb-only             { display: inline-flex !important; }
+body.user-jmb .jmb-only[hidden]     { display: none !important; }
 
 /* ── Auto-Add toggle ────────────────────────────────────────── */
 body.mobile .auto-add-toggle { display: none !important; }
