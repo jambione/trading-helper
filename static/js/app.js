@@ -19,7 +19,7 @@ import { init as initNews }                      from './news.js?v=133';
 import { init as initLeaderboard }               from './leaderboard.js?v=133';
 import { init as initPriceSpikes }               from './priceSpikes.js?v=133';
 import { init as initEngine }                    from './engine.js?v=133';
-import { init as initAdmin, open as openAdmin }  from './admin.js?v=134';
+import { init as initAdmin, open as openAdmin, toggle as toggleAdmin }  from './admin.js?v=136';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
 import { init as initMobilePager }                from './mobilePager.js?v=133';
@@ -260,7 +260,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   clrWlBtn ?.addEventListener('click', () => controls.clearWatchlist());
   settBtn  ?.addEventListener('click', openConfig);
-  adminBtn ?.addEventListener('click', openAdmin);
+  adminBtn ?.addEventListener('click', toggleAdmin);
   document.getElementById('active-users-badge')?.addEventListener('click', openAdmin);
   logoutBtn?.addEventListener('click', logout);
 
@@ -284,7 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = feedInput?.value.trim();
     const type = feedType?.value || 'info';
     if (!text) return;
-    const m = await import('./admin.js?v=134');
+    const m = await import('./admin.js?v=136');
     m.addFeedItem(type, text);
     if (feedInput) feedInput.value = '';
   };

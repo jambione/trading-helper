@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=132" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=134" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -619,14 +619,14 @@
      ADMIN DRAWER  (user=jmb only)
 ════════════════════════════════════════════════════════════════ -->
         <div class="drawer-backdrop" data-drawer="admin">
-            <aside class="drawer">
+            <aside class="drawer drawer--admin">
                 <div class="drawer-header">
-                    <span class="drawer-title">Admin</span>
+                    <button type="button" class="drawer-title drawer-title--close" data-admin-close title="Close admin panel">Admin</button>
                     <div class="tab-bar">
                         <button class="tab-btn tab-btn--active" data-admin-tab="online">Online</button>
                         <button class="tab-btn" data-admin-tab="users">Users</button>
                         <button class="tab-btn" data-admin-tab="feedback">Feedback</button>
-                        <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
+                        <button class="tab-btn" data-admin-tab="ticker-feed">Feed</button>
                         <button class="tab-btn" data-admin-tab="news">News</button>
                     </div>
                     <button data-admin-close class="btn btn--ghost btn--icon" title="Close">✕</button>
@@ -768,7 +768,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=135"></script>
+        <script type="module" src="/static/js/app.js?v=136"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

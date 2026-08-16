@@ -24,9 +24,9 @@ export function init(backdropEl) {
     btn.addEventListener('click', () => _switchTab(btn.dataset.adminTab))
   );
 
-  // Close
-  backdropEl.querySelector('[data-admin-close]')
-    ?.addEventListener('click', close);
+  // Close via title, X, or backdrop
+  backdropEl.querySelectorAll('[data-admin-close]')
+    .forEach(btn => btn.addEventListener('click', close));
   backdropEl.addEventListener('click', e => { if (e.target === backdropEl) close(); });
 }
 
@@ -38,6 +38,11 @@ export function open() {
 
 export function close() {
   _backdrop?.classList.remove('open');
+}
+
+export function toggle() {
+  if (_backdrop?.classList.contains('open')) close();
+  else open();
 }
 
 // ── Tabs ───────────────────────────────────────────────────────
