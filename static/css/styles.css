@@ -586,7 +586,7 @@ body.hosted [data-clear-transcript-btn] { display: none; }
 body.hosted .status-audio-section       { display: none; }
 body.hosted [data-tab-btn="audio"]      { display: none; }
 body.hosted [data-settings-btn]         { display: none; }
-body.hosted .main-grid               { grid-template-columns: 1fr 1fr 1fr 1fr; }
+body.hosted .main-grid               { grid-template-columns: 1fr 1fr; }
 body.hosted .add-ticker-row          { display: none; }
 body.hosted [data-clear-watchlist-btn] { display: none; }
 body.hosted .btn-add                 { display: none; }
@@ -2032,11 +2032,15 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
-/* AI Watch column — same navy surface as Scan; gold for P&L chrome */
+/* Book — warmer gold-navy so it reads apart from cool Scan */
 .panel-ai-watch {
-  border-color: var(--border-hi);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.40);
-  background: var(--surface);
+  border-color: var(--accent-border);
+  box-shadow:
+    0 4px 24px rgba(0,0,0,0.40),
+    0 0 0 1px rgba(212, 177, 90, 0.12),
+    0 0 28px rgba(212, 177, 90, 0.06);
+  background:
+    linear-gradient(180deg, rgba(212, 177, 90, 0.10) 0%, #121c2a 38%, #0e1826 100%);
 }
 .panel-ai-watch::after {
   content: '';
@@ -2044,7 +2048,7 @@ body.mobile .icon-btn {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: inset 0 1px 0 rgba(196, 181, 253, 0.12);
+  box-shadow: inset 0 1px 0 rgba(228, 201, 122, 0.18);
   z-index: 0;
 }
 .panel-ai-watch > * {
@@ -2052,11 +2056,11 @@ body.mobile .icon-btn {
   z-index: 1;
 }
 .panel-header--ai-watch {
-  background: var(--nav2);
-  border-bottom: 1px solid var(--border-hi);
+  background: linear-gradient(90deg, rgba(212, 177, 90, 0.16) 0%, rgba(18, 32, 48, 0.96) 62%);
+  border-bottom: 1px solid var(--accent-border);
 }
 .panel-ai-watch .panel-title {
-  color: var(--text-bright);
+  color: var(--accent-2);
   letter-spacing: 0.18em;
   white-space: nowrap;
 }
@@ -2148,8 +2152,8 @@ body.mobile .icon-btn {
 /* Shared horizontal inset so header grid matches row grid. */
 .panel-ai-watch .ai-book-table-header.feed-table-header {
   padding: 0 10px;
-  background: var(--nav2);
-  border-bottom-color: var(--border);
+  background: rgba(212, 177, 90, 0.06);
+  border-bottom-color: var(--accent-border);
 }
 .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
   padding: 10px 0;
@@ -2180,8 +2184,8 @@ body.mobile .icon-btn {
   padding: 8px 10px; /* same 10px sides as header */
 }
 .panel-ai-watch .feed-row--ai-book {
-  background: var(--card);
-  border: 1px solid var(--border);
+  background: rgba(18, 28, 42, 0.72);
+  border: 1px solid rgba(212, 177, 90, 0.10);
   margin-bottom: 3px;
   padding: 0 10px;
   width: 100%;
