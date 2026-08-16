@@ -1116,6 +1116,39 @@ body.mobile .icon-btn {
   color: var(--accent-2);
   border-bottom-color: var(--accent);
 }
+
+/* New names in that source — cyan pulse on the tab so it reads even when
+   another Scan tab is selected. Must beat the checked gold color. */
+.scan-source-tab.scan-source-tab--new-entry,
+#scan-src-claude:checked ~ .panel-header--scan label[for="scan-src-claude"].scan-source-tab--new-entry,
+#scan-src-tickers:checked ~ .panel-header--scan label[for="scan-src-tickers"].scan-source-tab--new-entry,
+#scan-src-trending:checked ~ .panel-header--scan label[for="scan-src-trending"].scan-source-tab--new-entry {
+  color: #a5f3fc;
+  border-bottom-color: rgba(34, 211, 238, 0.85);
+  animation: scan-tab-new-entry 5s ease-out forwards;
+}
+@keyframes scan-tab-new-entry {
+  0%   { color: #ecfeff; border-bottom-color: rgba(34, 211, 238, 1); }
+  18%  { color: #a5f3fc; border-bottom-color: rgba(34, 211, 238, 0.85); }
+  70%  { color: #67e8f9; border-bottom-color: rgba(34, 211, 238, 0.45); }
+  100% { color: var(--text-muted); border-bottom-color: transparent; }
+}
+@keyframes scan-tab-new-entry-active {
+  0%   { color: #ecfeff; border-bottom-color: rgba(34, 211, 238, 1); }
+  18%  { color: #a5f3fc; border-bottom-color: rgba(34, 211, 238, 0.85); }
+  70%  { color: #e8d48b; border-bottom-color: rgba(34, 211, 238, 0.35); }
+  100% { color: var(--accent-2); border-bottom-color: var(--accent); }
+}
+#scan-src-claude:checked ~ .panel-header--scan label[for="scan-src-claude"].scan-source-tab--new-entry,
+#scan-src-tickers:checked ~ .panel-header--scan label[for="scan-src-tickers"].scan-source-tab--new-entry,
+#scan-src-trending:checked ~ .panel-header--scan label[for="scan-src-trending"].scan-source-tab--new-entry {
+  animation-name: scan-tab-new-entry-active;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scan-source-tab.scan-source-tab--new-entry {
+    animation: none;
+  }
+}
 .scan-body {
   flex: 1;
   min-height: 0;

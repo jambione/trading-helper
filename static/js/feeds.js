@@ -10,7 +10,7 @@
 import { subscribe, get } from './store.js?v=133';
 import { api }       from './api.js?v=133';
 import { copyTicker } from './tickers.js?v=133';
-import { createSymbolMembershipWatcher } from './panelFlash.js?v=133';
+import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -108,8 +108,11 @@ export function init(panelEl, kind) {
       );
     }
 
-    // New symbol → cyan pulse on Trending / AI Research header (5s; skip first paint).
-    noteSymbols(panelEl, rows.map(r => r.symbol));
+    // New names or a new research/trend payload → cyan pulse on the Scan tab.
+    const rev = rows.map(r =>
+      `${r.symbol}:${r.source_mark || ''}:${r.rank ?? ''}:${r.reason || ''}`,
+    ).join('|');
+    noteSymbols(panelEl, rows.map(r => r.symbol), rev);
 
     if (!rows.length) {
       lastRows = [];
