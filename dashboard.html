@@ -20,7 +20,7 @@
             content="black-translucent"
         />
         <meta name="apple-mobile-web-app-title" content="Trading" />
-        <meta name="theme-color" content="#090f1d" />
+        <meta name="theme-color" content="#0a1220" />
 
         <!-- Fonts non-blocking (display=swap); no CSS @import so styles paint fast -->
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=123" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=125" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -186,147 +186,158 @@
             <div data-engine-body class="engine-body hidden"></div>
         </section>
 
-        <!-- Mobile-only pager tabs: Momentum · Trending · AI Watch · Research -->
+        <!-- Mobile-only pager: Scan · Book -->
         <div class="mobile-pager-tabs" data-pager-tabs>
-            <button type="button" class="mobile-pager-tab is-active" data-pager-target="tickers">Momentum</button>
-            <button type="button" class="mobile-pager-tab" data-pager-target="trending">Trending</button>
-            <button type="button" class="mobile-pager-tab" data-pager-target="claude">Research</button>
-            <button type="button" class="mobile-pager-tab" data-pager-target="ai-watch">Watch</button>
+            <button type="button" class="mobile-pager-tab is-active" data-pager-target="scan">Scan</button>
+            <button type="button" class="mobile-pager-tab" data-pager-target="ai-watch">Book</button>
         </div>
 
         <main class="main-grid">
-            <!-- ── LEFT: Watchlist ────────────────────────────────── -->
-            <section data-panel="tickers" class="panel panel-watchlist">
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">Momentum Stocks</span>
-                        <span data-ticker-count class="ticker-count"></span>
-                    </div>
-                    <div class="panel-header-right">
-                        <button
-                            data-clear-watchlist-btn
-                            class="btn btn--ghost btn--danger btn--sm"
-                        >
-                            ✕ Clear
-                        </button>
+            <!-- ── SCAN: one table, three sources ───────────────── -->
+            <section class="panel panel-scan" data-panel="scan">
+                <input class="scan-radio" type="radio" name="scan-src" id="scan-src-claude" value="claude" />
+                <input class="scan-radio" type="radio" name="scan-src" id="scan-src-tickers" value="tickers" checked />
+                <input class="scan-radio" type="radio" name="scan-src" id="scan-src-trending" value="trending" />
+
+                <div class="panel-header panel-header--scan">
+                    <span class="panel-title">Scan</span>
+                    <div class="scan-sources" role="tablist" aria-label="Scan source">
+                        <label class="scan-source-tab" for="scan-src-claude">Research</label>
+                        <label class="scan-source-tab" for="scan-src-tickers">Mine</label>
+                        <label class="scan-source-tab" for="scan-src-trending">Trend</label>
                     </div>
                 </div>
 
-                <div data-news class="news-feed hidden"></div>
+                <div class="scan-body">
+                    <!-- Mine (watchlist) -->
+                    <section data-panel="tickers" class="scan-pane panel-watchlist">
+                        <div class="panel-header">
+                            <div class="panel-header-left">
+                                <span class="panel-title">Momentum Stocks</span>
+                                <span data-ticker-count class="ticker-count"></span>
+                            </div>
+                            <div class="panel-header-right">
+                                <button
+                                    data-clear-watchlist-btn
+                                    class="btn btn--ghost btn--danger btn--sm"
+                                >
+                                    ✕ Clear
+                                </button>
+                            </div>
+                        </div>
 
-                <!-- Funnel suggest banner removed (was EXITS ONLY / Point monitors). -->
+                        <div data-news class="news-feed hidden"></div>
 
-                <div class="watchlist-table-header">
-                    <div class="watchlist-cols">
-                        <div class="th" data-sort-col="ticker">Ticker</div>
-                        <div class="th" data-sort-col="price">Price</div>
-                        <div class="th" data-sort-col="chg">Chg%</div>
-                        <div class="th" data-sort-col="vol">Vol</div>
-                        <div class="th" title="FIRST · NEW · BURST flags">Flags</div>
-                        <div class="th"></div>
-                    </div>
+                        <div class="watchlist-table-header">
+                            <div class="watchlist-cols">
+                                <div class="th" data-sort-col="ticker">Ticker</div>
+                                <div class="th" data-sort-col="price">Last</div>
+                                <div class="th" data-sort-col="chg">Chg</div>
+                                <div class="th desk-col-extra" data-sort-col="vol">Vol</div>
+                                <div class="th desk-col-extra" title="FIRST · NEW · BURST flags">Flags</div>
+                                <div class="th desk-col-extra"></div>
+                            </div>
+                        </div>
+
+                        <div class="add-ticker-row">
+                            <input
+                                id="add-ticker-input"
+                                type="text"
+                                placeholder="Add ticker…"
+                                autocomplete="off"
+                                spellcheck="false"
+                            />
+                            <button data-add-ticker-btn class="btn btn--ghost btn--sm">
+                                +
+                            </button>
+                        </div>
+
+                        <div data-ticker-rows class="watchlist-rows"></div>
+                    </section>
+
+                    <!-- Trend -->
+                    <section data-panel="trending" class="scan-pane panel-trending">
+                        <div class="panel-header">
+                            <div class="panel-header-left">
+                                <span class="panel-title">Trending Stocks</span>
+                                <span data-trending-count class="ticker-count"></span>
+                            </div>
+                            <div class="panel-header-right">
+                                <span data-trending-stamp class="feed-stamp"></span>
+                            </div>
+                        </div>
+                        <div class="feed-table-header">
+                            <div class="feed-cols feed-cols--trending">
+                                <div class="th" data-sort-col="ticker">Ticker</div>
+                                <div class="th" data-sort-col="price">Last</div>
+                                <div class="th" data-sort-col="chg">Chg</div>
+                                <div class="th desk-col-extra" data-sort-col="vol">Vol</div>
+                                <div class="th desk-col-extra" data-sort-col="rvol">RVOL</div>
+                                <div class="th desk-col-extra" data-sort-col="score">Score</div>
+                                <div class="th desk-col-extra" title="LOOK EXT / LOOK WASH — desk focus badge">Look</div>
+                            </div>
+                        </div>
+                        <div data-trending-error class="feed-error" hidden></div>
+                        <div data-trending-rows class="feed-rows">
+                            <span class="tx-placeholder">Waiting for trending data…</span>
+                        </div>
+                    </section>
+
+                    <!-- Research -->
+                    <section data-panel="claude" class="scan-pane panel-claude" aria-label="AI research">
+                        <div class="panel-header">
+                            <div class="panel-header-left">
+                                <span class="panel-title">AI Research</span>
+                                <span data-claude-count class="ticker-count"></span>
+                            </div>
+                            <div class="panel-header-right">
+                                <span data-claude-stamp class="feed-stamp"></span>
+                            </div>
+                        </div>
+                        <div class="feed-table-header">
+                            <div class="feed-cols feed-cols--claude">
+                                <div class="th" data-sort-col="ticker">Ticker</div>
+                                <div class="th desk-col-extra" data-sort-col="src">Src</div>
+                                <div class="th" data-sort-col="price">Last</div>
+                                <div class="th" data-sort-col="chg">Chg</div>
+                                <div class="th desk-col-extra" data-sort-col="vol">Vol</div>
+                                <div class="th desk-col-extra" data-sort-col="rvol">RVOL</div>
+                                <div class="th desk-col-extra" data-sort-col="score">Score</div>
+                                <div class="th desk-col-extra" data-sort-col="size">Size</div>
+                                <div class="th desk-col-extra" title="LOOK EXT / LOOK WASH — desk focus badge">Look</div>
+                            </div>
+                        </div>
+                        <div data-claude-error class="feed-error" hidden></div>
+                        <div data-claude-rows class="feed-rows">
+                            <span class="tx-placeholder">Waiting for AI research…</span>
+                        </div>
+                    </section>
                 </div>
-
-                <div class="add-ticker-row">
-                    <input
-                        id="add-ticker-input"
-                        type="text"
-                        placeholder="Add ticker…"
-                        autocomplete="off"
-                        spellcheck="false"
-                    />
-                    <button data-add-ticker-btn class="btn btn--ghost btn--sm">
-                        +
-                    </button>
-                </div>
-
-                <div data-ticker-rows class="watchlist-rows"></div>
             </section>
 
-            <!-- ── CENTER: Trending (Stocktwits) ──────────────────── -->
-            <section data-panel="trending" class="panel panel-trending">
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">Trending Stocks</span>
-                        <span data-trending-count class="ticker-count"></span>
-                    </div>
-                    <div class="panel-header-right">
-                        <span data-trending-stamp class="feed-stamp"></span>
-                    </div>
-                </div>
-                <div class="feed-table-header">
-                    <div class="feed-cols feed-cols--trending">
-                        <div class="th" data-sort-col="ticker">Ticker</div>
-                        <div class="th" data-sort-col="price">Price</div>
-                        <div class="th" data-sort-col="chg">Chg%</div>
-                        <div class="th" data-sort-col="vol">Vol</div>
-                        <div class="th" data-sort-col="rvol">RVOL</div>
-                        <div class="th" data-sort-col="score">Score</div>
-                        <div class="th" title="LOOK EXT / LOOK WASH — desk focus badge">Look</div>
-                    </div>
-                </div>
-                <div data-trending-error class="feed-error" hidden></div>
-                <div data-trending-rows class="feed-rows">
-                    <span class="tx-placeholder">Waiting for trending data…</span>
-                </div>
-            </section>
-
-            <!-- ── AI research ideas (Anthropic A / xAI X / both AX) ─ -->
-            <section data-panel="claude" class="panel panel-claude" aria-label="AI research">
-                <div class="panel-header">
-                    <div class="panel-header-left">
-                        <span class="panel-title">AI Research</span>
-                        <span data-claude-count class="ticker-count"></span>
-                    </div>
-                    <div class="panel-header-right">
-                        <span data-claude-stamp class="feed-stamp"></span>
-                    </div>
-                </div>
-                <div class="feed-table-header">
-                    <div class="feed-cols feed-cols--claude">
-                        <div class="th" data-sort-col="ticker">Ticker</div>
-                        <div class="th" data-sort-col="src">Src</div>
-                        <div class="th" data-sort-col="price">Price</div>
-                        <div class="th" data-sort-col="chg">Chg%</div>
-                        <div class="th" data-sort-col="vol">Vol</div>
-                        <div class="th" data-sort-col="rvol">RVOL</div>
-                        <div class="th" data-sort-col="score">Score</div>
-                        <div class="th" data-sort-col="size">Size</div>
-                        <div class="th" title="LOOK EXT / LOOK WASH — desk focus badge">Look</div>
-                    </div>
-                </div>
-                <div data-claude-error class="feed-error" hidden></div>
-                <div data-claude-rows class="feed-rows">
-                    <span class="tx-placeholder">Waiting for AI research…</span>
-                </div>
-            </section>
-
-            <!-- ── AI Watch book (watches → open positions with P&L) ─ -->
-            <section data-panel="ai-watch" class="panel panel-ai-watch" aria-label="Trader Bro Watch trading book" data-ai-book-section>
+            <!-- ── BOOK ─────────────────────────────────────────── -->
+            <section data-panel="ai-watch" class="panel panel-ai-watch" aria-label="Trading book" data-ai-book-section>
                 <div class="panel-header panel-header--ai-watch">
                     <div class="panel-header-left">
-                        <span class="ai-watch-badge" title="Live paper book — watch from 09:00 ET · trade RTH until 15:50 flatten · Mom flags / ST score &gt;10">BOOK</span>
-                        <span class="panel-title" title="Watch 09:00 ET · trade market hours · EOD 15:50">Trader Bro Watch</span>
-                        <span data-ai-book-count class="ticker-count"></span>
+                        <span class="panel-title" title="Watch 09:00 ET · trade market hours · EOD 15:50">Book</span>
                     </div>
                     <div class="panel-header-right">
-                        <span data-ai-book-stamp class="feed-stamp"></span>
+                        <div class="ai-book-day-pl" data-ai-book-day-pl title="Alpaca account day P&amp;L (equity vs prior close)">
+                            <span class="ai-book-day-pl__label">Today</span>
+                            <span class="ai-book-day-pl__value" data-ai-book-day-pl-value>—</span>
+                            <span class="ai-book-day-pl__pct" data-ai-book-day-pl-pct></span>
+                            <span class="ai-book-day-pl__eq" data-ai-book-day-pl-eq></span>
+                        </div>
                     </div>
-                </div>
-                <div class="ai-book-day-pl" data-ai-book-day-pl title="Alpaca account day P&amp;L (equity vs prior close)">
-                    <span class="ai-book-day-pl__label">Today</span>
-                    <span class="ai-book-day-pl__value" data-ai-book-day-pl-value>—</span>
-                    <span class="ai-book-day-pl__pct" data-ai-book-day-pl-pct></span>
-                    <span class="ai-book-day-pl__eq" data-ai-book-day-pl-eq></span>
                 </div>
                 <div class="feed-table-header ai-book-table-header">
                     <div class="feed-cols feed-cols--ai-book">
                         <div class="th">Ticker</div>
-                        <div class="th">Blocker</div>
-                        <div class="th" title="Open longs only. Raise-only shelf; flatten if last prints through.">RStop</div>
-                        <div class="th">Price</div>
-                        <div class="th" title="Williams %R(21) on 1-minute bars, shown as 100+%R. Hover a cell for the raw −xx number, HH/LL, and actual window minutes. OB = overbought (≥80). ↑ heating · ↓ cooling. thin = not enough 1m prints in the last ~25 minutes to trust %R.">EXH</div>
-                        <div class="th">Qty</div>
+                        <div class="th desk-col-extra">Blocker</div>
+                        <div class="th" title="Open longs only. Raise-only shelf; flatten if last prints through.">Stop</div>
+                        <div class="th">Last</div>
+                        <div class="th desk-col-extra" title="Williams %R(21) on 1-minute bars.">EXH</div>
+                        <div class="th desk-col-extra">Qty</div>
                         <div class="th">P&amp;L</div>
                     </div>
                 </div>
@@ -852,6 +863,21 @@
                 }
                 tick();
                 setInterval(tick, 1000);
+            })();
+        </script>
+        <script>
+            (function () {
+                var key = "ss:scan-src";
+                var saved = localStorage.getItem(key);
+                if (saved) {
+                    var el = document.getElementById("scan-src-" + saved);
+                    if (el) el.checked = true;
+                }
+                document.querySelectorAll('input[name="scan-src"]').forEach(function (r) {
+                    r.addEventListener("change", function () {
+                        if (r.checked) localStorage.setItem(key, r.value);
+                    });
+                });
             })();
         </script>
         <div id="toast-container"></div>

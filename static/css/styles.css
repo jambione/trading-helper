@@ -8,28 +8,28 @@
 
 /* ── Design tokens ──────────────────────────────────────────── */
 :root {
-  /* Color hierarchy — brownish-dark aurora */
-  --bg:            #0d0b15;   /* body / grid background — near-black        */
-  --bg-deep:       #09080f;   /* deepest: scrollable empty space            */
-  --surface:       #141220;   /* panel body background                      */
-  --surface-solid: #141220;
-  --card:          #1c1a2c;   /* alert cards, watchlist rows                */
-  --card-hi:       #231f38;   /* card hover / active state                  */
-  --nav:           #1a1828;   /* header bar, footer, leaderboard            */
-  --nav2:          #201e30;   /* panel headers, engine bar, sub-chrome      */
+  /* Color hierarchy — navy blue + gold */
+  --bg:            #0a1220;   /* body / grid background — deep navy         */
+  --bg-deep:       #070e18;   /* deepest: scrollable empty space            */
+  --surface:       #101b2e;   /* panel body background                      */
+  --surface-solid: #101b2e;
+  --card:          #152338;   /* alert cards, watchlist rows                */
+  --card-hi:       #1b2c44;   /* card hover / active state                  */
+  --nav:           #0c1828;   /* header bar, footer, leaderboard            */
+  --nav2:          #122036;   /* panel headers, engine bar, sub-chrome      */
 
   /* Borders */
   --border:        rgba(255, 255, 255, 0.06);
   --border-hi:     rgba(255, 255, 255, 0.12);
 
   /* Text */
-  --text:          #c8d4ee;
-  --text-dim:      #7a8cb4;
-  --text-muted:    #4d5c80;
+  --text:          #c8d6ee;
+  --text-dim:      #7d94b8;
+  --text-muted:    #4e6588;
   --text-bright:   #f0f6ff;
 
   /* Brand gold accent */
-  --accent:        #c9a044;
+  --accent:        #d4b15a;
   --accent-2:      #e0bc72;
   --accent-3:      #a07830;
   --accent-dim:    #b08838;
@@ -845,6 +845,12 @@ body.mobile .auto-alert-toggle { display: none !important; }
   .main-grid {
     grid-template-columns: 1fr !important;
   }
+  [data-panel="scan"],
+  .mobile-pager-tabs,
+  .leaderboard-bar,
+  .price-spike-bar {
+    display: none !important;
+  }
   [data-panel="tradingview"],
   #ticker-tv-resizer { display: none !important; }
   .ticker-row .watchlist-cols { padding: 14px 0; }
@@ -876,62 +882,27 @@ body.mobile .auto-alert-toggle { display: none !important; }
 body.mobile [data-panel="tradingview"] { display: none !important; }
 body.mobile #ticker-tv-resizer         { display: none !important; }
 
-/* ── Mobile: swipeable pager (Momentum ⇄ Trending ⇄ Research ⇄ Watch)
-   Scroll-snap strip; tabs drive scroll position (mobilePager.js). */
+/* ── Mobile: Book only (no Scan, no pager) ─────────────────── */
 .mobile-pager-tabs { display: none; }
-body.mobile .mobile-pager-tabs {
-  display: flex;
-  gap: 6px;
-  padding: 6px 10px 0;
-}
-body.mobile .mobile-pager-tab {
-  flex: 1 1 0;
-  background: var(--surface);
-  border: 1px solid var(--border-hi);
-  border-radius: 8px;
-  color: var(--text-dim);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 0;
-  cursor: pointer;
-  transition: color .15s, background .15s, border-color .15s;
-}
-body.mobile .mobile-pager-tab.is-active {
-  color: var(--accent-2);
-  background: var(--goldbg);
-  border-color: var(--goldbor);
+body.mobile .mobile-pager-tabs,
+body.mobile [data-panel="scan"],
+body.mobile .leaderboard-bar,
+body.mobile .price-spike-bar {
+  display: none !important;
 }
 
 body.mobile .main-grid {
-  display: flex !important;
-  flex-direction: row;
-  grid-template-columns: none !important;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-  scroll-behavior: smooth;
-  gap: 10px;
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  overflow: hidden;
+  gap: 0;
   padding: 8px 10px 10px;
 }
-body.mobile .main-grid::-webkit-scrollbar { display: none; }
-
-body.mobile .main-grid > [data-panel="tickers"],
-body.mobile .main-grid > [data-panel="trending"],
-body.mobile .main-grid > [data-panel="ai-watch"],
-body.mobile .main-grid > [data-panel="claude"] {
+body.mobile .main-grid > [data-panel="ai-watch"] {
   display: flex !important;
-  flex: 0 0 100%;
-  width: 100%;
-  min-width: 100%;
+  min-width: 0;
   margin: 0;
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
 }
-body.mobile .main-grid > [data-panel="tickers"]  { order: 1; }  /* Momentum */
-body.mobile .main-grid > [data-panel="trending"] { order: 2; }  /* Trending */
-body.mobile .main-grid > [data-panel="claude"]   { order: 3; }  /* Research */
-body.mobile .main-grid > [data-panel="ai-watch"] { order: 4; }  /* AI Watch */
 
 body.mobile .ticker-row .watchlist-cols { padding: 14px 0; }
 /* Drop Vol / RVOL / Size on mobile so ticker + price + chg stay readable */
@@ -943,19 +914,10 @@ body.mobile .cell-rvol,
 body.mobile .cell-size {
   display: none !important;
 }
-/* Ticker | Price | Chg% | Flags | actions */
-body.mobile .watchlist-cols {
-  grid-template-columns: 1.4fr 1fr 0.9fr 1.2fr 0.6fr;
-  width: 100%;
-}
-/* Ticker | Price | Chg% | Score | Look */
-body.mobile .feed-cols--trending {
-  grid-template-columns: 1.3fr 1fr 0.9fr 0.8fr minmax(64px, 1fr);
-  width: 100%;
-}
-/* Ticker | Src | Price | Chg% | Score | Look */
+body.mobile .watchlist-cols,
+body.mobile .feed-cols--trending,
 body.mobile .feed-cols--claude {
-  grid-template-columns: 1.2fr 0.5fr 1fr 0.9fr 0.8fr minmax(64px, 1fr);
+  grid-template-columns: 1.4fr 1fr 0.8fr;
   width: 100%;
 }
 body.mobile .cell-ticker { font-size: 15px; }
@@ -984,19 +946,13 @@ body.mobile .icon-btn {
 .main-grid {
   flex: 1;
   display: grid;
-  /* Momentum | Trending | AI Research | AI Watch */
-  grid-template-columns: 1fr 1fr 1fr 1.05fr;
+  /* Scan | Book */
+  grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
-  gap: 10px;
+  gap: 20px;
   min-height: 0;
-  padding: 10px;
-}
-
-@media (max-width: 1400px) {
-  .main-grid {
-    grid-template-columns: 1fr 1fr 1fr 1fr;
-  }
+  padding: 22px 28px;
 }
 
 .panel-resizer {
@@ -1049,10 +1005,115 @@ body.mobile .icon-btn {
   overflow: hidden;
   box-shadow: 0 4px 24px rgba(0,0,0,0.40);
   position: relative;
-  margin-right: 8px;
+  margin-right: 0;
 }
 .panel:last-child { margin-right: 0; }
 .panel::before { display: none; }
+
+/* ── Two-table desk (Scan + Book) ───────────────────────────── */
+.donate-bar,
+.suggestion-bar { display: none !important; }
+
+.scan-radio {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+.panel-scan {
+  min-width: 0;
+}
+.panel-header--scan {
+  gap: 18px;
+}
+.panel-header--scan .panel-title {
+  min-width: 4.5rem;
+}
+.scan-sources {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.scan-source-tab {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 0 6px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.scan-source-tab:hover { color: var(--text); }
+#scan-src-claude:checked ~ .panel-header--scan label[for="scan-src-claude"],
+#scan-src-tickers:checked ~ .panel-header--scan label[for="scan-src-tickers"],
+#scan-src-trending:checked ~ .panel-header--scan label[for="scan-src-trending"] {
+  color: var(--accent-2);
+  border-bottom-color: var(--accent);
+}
+.scan-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.scan-pane {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+#scan-src-tickers:checked ~ .scan-body > [data-panel="tickers"],
+#scan-src-trending:checked ~ .scan-body > [data-panel="trending"],
+#scan-src-claude:checked ~ .scan-body > [data-panel="claude"] {
+  display: flex;
+}
+.scan-pane > .panel-header { display: none; }
+
+/* Slim columns: Ticker | Last | Chg  and  Ticker | Stop | Last | P&L */
+.desk-col-extra,
+.cell-vol,
+.cell-flags,
+.cell-src,
+.cell-rvol,
+.cell-score,
+.cell-size,
+.cell-look,
+.ai-book-status,
+.cell-exh,
+.cell-qty,
+.feed-why,
+.feed-invalid,
+.signal-bar-row,
+.ai-watch-badge,
+.ai-book-day-pl__eq {
+  display: none !important;
+}
+.watchlist-cols {
+  grid-template-columns: 1.4fr 1fr 0.8fr !important;
+}
+.feed-cols--trending,
+.feed-cols--claude {
+  grid-template-columns: 1.4fr 1fr 0.8fr !important;
+}
+.feed-cols--ai-book {
+  grid-template-columns: 1.2fr 0.9fr 0.9fr 0.9fr !important;
+}
+
+/* Remove stays available on hover without a permanent column */
+.watchlist-cols { position: relative; }
+.cell-actions {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+}
+.ticker-row:hover .cell-actions { display: flex; }
 
 .panel-header {
   display: flex;
@@ -1971,17 +2032,11 @@ body.mobile .icon-btn {
   font-size: 9.5px;
   margin-right: 2px;
 }
-/* AI Watch column — trading book, distinct from research panels ─────────
-   Momentum / Trending / Research share the neutral glass look.
-   AI Watch is the live paper book: violet frame, tinted body, BOOK badge. */
+/* AI Watch column — same navy surface as Scan; gold for P&L chrome */
 .panel-ai-watch {
-  border-color: rgba(167, 139, 250, 0.45);
-  box-shadow:
-    0 0 0 1px rgba(139, 92, 246, 0.18),
-    0 4px 28px rgba(88, 28, 135, 0.28),
-    0 0 40px rgba(139, 92, 246, 0.08);
-  background:
-    linear-gradient(180deg, rgba(76, 29, 149, 0.22) 0%, rgba(20, 18, 32, 0.96) 42%, var(--surface) 100%);
+  border-color: var(--border-hi);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.40);
+  background: var(--surface);
 }
 .panel-ai-watch::after {
   content: '';
@@ -1997,16 +2052,16 @@ body.mobile .icon-btn {
   z-index: 1;
 }
 .panel-header--ai-watch {
-  background: linear-gradient(90deg, rgba(91, 33, 182, 0.55) 0%, rgba(32, 30, 48, 0.95) 70%);
-  border-bottom: 1px solid rgba(167, 139, 250, 0.35);
+  background: var(--nav2);
+  border-bottom: 1px solid var(--border-hi);
 }
 .panel-ai-watch .panel-title {
-  color: #ede9fe;
-  letter-spacing: 0.06em;
+  color: var(--text-bright);
+  letter-spacing: 0.18em;
   white-space: nowrap;
 }
 .panel-ai-watch .panel-subtitle {
-  color: #c4b5fd;
+  color: var(--text-dim);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -2014,15 +2069,15 @@ body.mobile .icon-btn {
   margin-left: 2px;
 }
 .panel-ai-watch .ticker-count {
-  color: #ddd6fe;
-  background: rgba(139, 92, 246, 0.25);
-  border: 1px solid rgba(167, 139, 250, 0.35);
+  color: var(--text);
+  background: var(--goldbg);
+  border: 1px solid var(--goldbor);
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 11px;
 }
 .panel-ai-watch .feed-stamp {
-  color: #a78bfa;
+  color: var(--text-dim);
   font-size: 10.5px;
   max-width: 100%;
   text-align: right;
@@ -2053,10 +2108,10 @@ body.mobile .icon-btn {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 12px 7px;
-  border-bottom: 1px solid rgba(167, 139, 250, 0.28);
-  background: linear-gradient(90deg, rgba(91, 33, 182, 0.35) 0%, rgba(24, 22, 38, 0.92) 55%);
+  flex-wrap: nowrap;
+  padding: 0;
+  border-bottom: none;
+  background: none;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
 }
@@ -2065,7 +2120,7 @@ body.mobile .icon-btn {
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #c4b5fd;
+  color: var(--accent);
   flex-shrink: 0;
 }
 .ai-book-day-pl__value {
@@ -2079,7 +2134,7 @@ body.mobile .icon-btn {
 .ai-book-day-pl__pct {
   font-size: 12px;
   font-weight: 700;
-  color: #a78bfa;
+  color: var(--text-dim);
 }
 .ai-book-day-pl__pct.chg-pos { color: #86efac; }
 .ai-book-day-pl__pct.chg-neg { color: #fca5a5; }
@@ -2093,8 +2148,8 @@ body.mobile .icon-btn {
 /* Shared horizontal inset so header grid matches row grid. */
 .panel-ai-watch .ai-book-table-header.feed-table-header {
   padding: 0 10px;
-  background: rgba(76, 29, 149, 0.28);
-  border-bottom-color: rgba(167, 139, 250, 0.22);
+  background: var(--nav2);
+  border-bottom-color: var(--border);
 }
 .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
   padding: 10px 0;
@@ -2112,9 +2167,10 @@ body.mobile .icon-btn {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.panel-ai-watch .ai-book-table-header .th:nth-child(1) { text-align: left; }   /* Ticker */
-.panel-ai-watch .ai-book-table-header .th:nth-child(2),
-.panel-ai-watch .ai-book-table-header .th:nth-child(3) { text-align: center; } /* Status, Trail */
+.panel-ai-watch .ai-book-table-header .th:nth-child(1) { text-align: left; }
+.panel-ai-watch .ai-book-table-header .th:nth-child(3),
+.panel-ai-watch .ai-book-table-header .th:nth-child(4),
+.panel-ai-watch .ai-book-table-header .th:nth-child(7) { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
@@ -2124,8 +2180,8 @@ body.mobile .icon-btn {
   padding: 8px 10px; /* same 10px sides as header */
 }
 .panel-ai-watch .feed-row--ai-book {
-  background: rgba(30, 20, 50, 0.45);
-  border: 1px solid rgba(139, 92, 246, 0.14);
+  background: var(--card);
+  border: 1px solid var(--border);
   margin-bottom: 3px;
   padding: 0 10px;
   width: 100%;
@@ -2137,12 +2193,12 @@ body.mobile .icon-btn {
   box-sizing: border-box;
 }
 .panel-ai-watch .feed-row--ai-book:hover {
-  border-color: rgba(167, 139, 250, 0.4);
-  background: rgba(76, 29, 149, 0.28);
+  border-color: var(--accent-border);
+  background: var(--card-hi);
 }
 .panel-ai-watch .feed-row--ai-open {
-  border-color: rgba(167, 139, 250, 0.55);
-  background: rgba(109, 40, 217, 0.38);
+  border-color: var(--accent-border);
+  background: var(--goldbg);
   box-shadow: none;
 }
 .panel-ai-watch .feed-row--ai-ready {
@@ -2151,7 +2207,7 @@ body.mobile .icon-btn {
   box-shadow: none;
 }
 .panel-ai-watch .tx-placeholder {
-  color: #8b7ab8;
+  color: var(--text-dim);
 }
 /* Fixed track so header cells align with body cells */
 .feed-cols--ai-book {
@@ -2191,8 +2247,8 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
 .feed-row--ai-open {
-  border-color: rgba(139, 92, 246, 0.28);
-  background: rgba(139, 92, 246, 0.06);
+  border-color: var(--accent-border);
+  background: var(--goldbg);
 }
 .feed-row--ai-ready {
   border-color: rgba(52, 211, 153, 0.28);
@@ -2663,10 +2719,11 @@ body.mobile .icon-btn {
 }
 
 .cell-actions {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 4px;
 }
+.ticker-row:hover .cell-actions { display: flex; }
 
 /* Action buttons */
 .btn-add, .btn-delete {
