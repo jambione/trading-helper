@@ -7,10 +7,11 @@
  *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=130';
+import { api } from './api.js?v=131';
+import { refresh as refreshSessions } from './sessions.js?v=131';
 
 let _backdrop = null;
-let _activeTab = 'feedback';
+let _activeTab = 'online';
 
 // ── Public ─────────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ function _switchTab(tab) {
   _backdrop.querySelectorAll('[data-admin-panel]').forEach(panel =>
     panel.classList.toggle('hidden', panel.dataset.adminPanel !== tab)
   );
+  if (tab === 'online')      refreshSessions();
   if (tab === 'feedback')    _loadFeedback();
   if (tab === 'users')       _loadUsers();
   if (tab === 'ticker-feed') _loadFeed();

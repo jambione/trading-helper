@@ -114,10 +114,12 @@
             </div>
 
             <div class="hdr-actions">
-                <!-- Active users count: visible to admins only -->
-                <span id="active-users-badge" class="jmb-only auth-ui" title="Currently active users" style="display:none; align-items:center; gap:4px; font-size:12px; color:var(--text-muted,#94a3b8); padding:0 4px;">
+                <!-- Active users count: JMB only -->
+                <span id="active-users-badge" class="jmb-only" title="Currently signed in" style="display:none; align-items:center; gap:4px; font-size:12px; color:var(--text-muted,#94a3b8); padding:0 4px;">
                     👥 <span id="active-users-count">0</span>
                 </span>
+
+                <a href="/login" data-signin-btn class="btn btn--ghost" hidden>Sign In</a>
 
                 <button
                     data-notif-btn
@@ -601,29 +603,9 @@
                         </div>
                     </div>
 
-                    <!-- ── Tab: Sessions (admin only) ────────────── -->
+                    <!-- ── Tab: Sessions (kept for localhost settings) ─ -->
                     <div class="tab-panel hidden auth-ui" data-tab-panel="sessions">
-                        <div id="sessions-panel">
-                            <div class="suggestions-empty">Loading…</div>
-                        </div>
-                        <div style="margin-top:12px;">
-                            <div class="form-section-label">Traffic (last 24h)</div>
-                            <div id="traffic-summary-panel" class="suggestions-list">
-                                <div class="suggestions-empty">Loading…</div>
-                            </div>
-                        </div>
-                        <div style="margin-top:12px;">
-                            <div class="form-section-label">Recent visitors</div>
-                            <div id="traffic-visitors-panel" class="suggestions-list">
-                                <div class="suggestions-empty">Loading…</div>
-                            </div>
-                        </div>
-                        <div style="margin-top:12px;">
-                            <div class="form-section-label">Login History</div>
-                            <div id="login-log-panel" class="suggestions-list">
-                                <div class="suggestions-empty">Loading…</div>
-                            </div>
-                        </div>
+                        <p class="account-note">Who is signed in lives under Admin → Online on the public site.</p>
                     </div>
                 </div>
                 <!-- /drawer-body -->
@@ -645,8 +627,9 @@
                 <div class="drawer-header">
                     <span class="drawer-title">Admin</span>
                     <div class="tab-bar">
-                        <button class="tab-btn tab-btn--active" data-admin-tab="feedback">Feedback</button>
+                        <button class="tab-btn tab-btn--active" data-admin-tab="online">Online</button>
                         <button class="tab-btn" data-admin-tab="users">Users</button>
+                        <button class="tab-btn" data-admin-tab="feedback">Feedback</button>
                         <button class="tab-btn" data-admin-tab="ticker-feed">Ticker Feed</button>
                         <button class="tab-btn" data-admin-tab="news">News</button>
                     </div>
@@ -689,8 +672,34 @@
 
                 <div class="drawer-body">
 
+                    <!-- ── Tab: Online ─────────────────────────── -->
+                    <div data-admin-panel="online">
+                        <p class="account-note">People signed in recently (last 30 minutes) and login history.</p>
+                        <div id="sessions-panel">
+                            <div class="suggestions-empty">Loading…</div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <div class="form-section-label">Traffic (last 24h)</div>
+                            <div id="traffic-summary-panel" class="suggestions-list">
+                                <div class="suggestions-empty">Loading…</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <div class="form-section-label">Recent visitors</div>
+                            <div id="traffic-visitors-panel" class="suggestions-list">
+                                <div class="suggestions-empty">Loading…</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <div class="form-section-label">Login History</div>
+                            <div id="login-log-panel" class="suggestions-list">
+                                <div class="suggestions-empty">Loading…</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- ── Tab: Feedback ──────────────────────── -->
-                    <div data-admin-panel="feedback">
+                    <div data-admin-panel="feedback" class="hidden">
                         <div data-admin-feedback class="suggestions-list">
                             <div class="suggestions-empty">Loading…</div>
                         </div>
@@ -797,7 +806,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=130"></script>
+        <script type="module" src="/static/js/app.js?v=131"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
