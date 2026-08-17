@@ -97,18 +97,51 @@ def dock_right():
         print(f"  ⚠ Could not dock window (Accessibility permission?): {r.stderr.strip()}")
 
 
+def jump_to_latest():
+    """Pin the channel on the newest messages, then nudge up and End again.
+
+    OCR only sees what's on screen. If Discord is scrolled up, new alerts
+    never appear. End → a few Ups (force a paint) → End again.
+    """
+    print("  Jumping Discord to latest messages...")
+    osa = (
+        'tell application "Discord" to activate\n'
+        'delay 0.3\n'
+        'tell application "System Events" to tell process "Discord"\n'
+        '    key code 119\n'          # End
+        '    delay 0.4\n'
+        '    key code 126\n'          # Up
+        '    delay 0.05\n'
+        '    key code 126\n'
+        '    delay 0.05\n'
+        '    key code 126\n'
+        '    delay 0.2\n'
+        '    key code 119\n'          # End — latest
+        'end tell\n'
+    )
+    r = subprocess.run(['osascript', '-e', osa], capture_output=True, text=True)
+    if r.returncode == 0:
+        print("  ✓ Channel at latest (End, nudge up, End).")
+    else:
+        print(f"  ⚠ Could not scroll channel (Accessibility?): {r.stderr.strip()}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--channel-id', default=DEFAULT_CHANNEL_ID,
                         help=f'Discord channel id to open (default: {DEFAULT_CHANNEL_ID})')
     parser.add_argument('--no-dock', dest='dock', action='store_false', default=True,
                         help="Open the channel but don't move/resize the window")
+    parser.add_argument('--no-scroll', dest='scroll', action='store_false', default=True,
+                        help="Do not jump the channel to the latest messages")
     args = parser.parse_args()
 
     activate_discord()
     open_channel(args.channel_id)
     if args.dock:
         dock_right()
+    if args.scroll:
+        jump_to_latest()
     print("  ✓ Discord ready for OCR. Keep this window visible (not minimized).")
     return 0
 

@@ -139,18 +139,9 @@ echo "   ✓ pull done"
 if [ "$DO_RESTART" = 0 ]; then
   echo "[3/3] skip restart (--pull-only)"
 elif [ "$FULL_SESSION" = 1 ]; then
-  echo "[3/3] full session: shutdown.command + startup.command"
-  echo "   (may open Discord / arrange windows — runs on the mini desktop session)"
-  ssh_mini "bash -s" <<'REMOTE'
-set -euo pipefail
-cd /Users/jambimac/repo/trading-helper
-# Non-interactive: strip trailing "press any key" waits by not attaching TTY for read
-export TERM="${TERM:-dumb}"
-bash scripts/shutdown.command </dev/null || true
-# startup.command can block on read when failing; still best-effort
-bash scripts/startup.command </dev/null || true
-./trading status || true
-REMOTE
+  echo "[3/3] full session: ./trading desk"
+  echo "   (Discord + caffeinate + windows + mac_agent — Mini console session)"
+  ssh_mini "cd '$MINI_REPO' && ./trading desk && ./trading status"
 else
   echo "[3/3] ./trading restart  (reloads dashboard/engine/OCR code — not full desktop)"
   ssh_mini "cd '$MINI_REPO' && ./trading restart && ./trading status"
