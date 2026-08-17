@@ -462,12 +462,12 @@ DEFAULT_CONFIG = {
     # Under continuation: minimum exhaustion % for a *heating* arm (0–100).
     # Overbought band still arms regardless. Under exhaustion_scalp: unused.
     # 0 = any rising %R may arm. The 50 floor blocked UMAC at 37% in-zone.
-    "ai_watch_exhaustion_heat_min_pct": 0.0,
-    # Refuse to arm once %R is already this extended (0–100). 08-13 forward
-    # print: 90–100 bucket −1.1% / 30m; HCTI/BYSI/CRMD were already there.
+    # 20–50 + rising (2026-08-17 tape): from-OS polls +1.45%/30m; 65+ heat
+    # and OB fills were the loss bucket.
+    "ai_watch_exhaustion_heat_min_pct": 20.0,
+    # Refuse to arm once %R is already this extended (0–100).
     # 0 disables the cap.
-    # 0 = no extended cap. Ratchet scratches a name already pinned at the highs.
-    "ai_watch_exhaustion_heat_max_pct": 0.0,
+    "ai_watch_exhaustion_heat_max_pct": 50.0,
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          False,
