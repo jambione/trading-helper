@@ -451,6 +451,7 @@ body.mobile .hdr-status { display: none; }
     row-gap: 8px;
   }
   .hdr-brand  { flex: 1; min-width: 0; }
+  .hdr-brand-text { display: none; }
   .hdr-actions { flex-shrink: 0; }
   .donate-label { display: none; }
 }
@@ -461,6 +462,7 @@ body.mobile .hdr {
   row-gap: 8px;
 }
 body.mobile .hdr-brand  { flex: 1; min-width: 0; }
+body.mobile .hdr-brand-text { display: none; }
 body.mobile .hdr-actions { flex-shrink: 0; }
 body.mobile .donate-label { display: none; }
 
