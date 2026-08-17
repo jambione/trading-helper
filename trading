@@ -7,8 +7,8 @@
 #   ./trading stop       graceful stop, then force-kill any stragglers
 #   ./trading restart    stop then start (use after editing code — processes
 #                        don't reload on their own)
-#   ./trading desk       Desktop reset: shutdown → close terminals →
-#                        caffeinate → startup.command
+#   ./trading desk       Mini only. Desktop reset: shutdown → close
+#                        terminals → caffeinate → startup.command
 #   ./trading status     what's running, for how long, and which build
 #   ./trading logs       tail both logs (Ctrl+C to stop tailing)
 #
@@ -42,6 +42,24 @@ PUBLIC_URL="https://trading.jbrasfield.com"
 
 _running() { pgrep -f "$1" >/dev/null 2>&1; }
 _tunnel_running() { pgrep -f "cloudflared.*$CF_TUNNEL" >/dev/null 2>&1; }
+
+# Desk reset closes Terminal and launches Discord/caffeinate. Never on the MacBook.
+_on_mini() {
+    [ "$(id -un 2>/dev/null || true)" = "jambimac" ] || return 1
+    [ "${HOME:-}" = "/Users/jambimac" ] || return 1
+    return 0
+}
+
+_require_mini() {
+    if _on_mini; then
+        return 0
+    fi
+    echo "❌ ./trading desk is Mini-only (user jambimac)."
+    echo "   This machine is $(id -un)@$(hostname -s 2>/dev/null || hostname)."
+    echo "   From the MacBook:  MINI_SSH=jambimac@100.113.165.84 ./scripts/deploy_mini.sh --full"
+    echo "   On the Mini:       ./trading desk"
+    return 1
+}
 
 _start_tunnel() {
     if [ -z "$CF" ]; then
@@ -324,6 +342,8 @@ EOF
 }
 
 cmd_desk() {
+    _require_mini || return 1
+
     echo ""
     echo "============================================"
     echo "  ./trading desk  $(date '+%Y-%m-%d %H:%M:%S')"
@@ -366,7 +386,7 @@ usage: ./trading <command>
                       (add 'local' to skip the tunnel and stay local-only)
   stop                stop dashboard + engine + tunnel
   restart [local]     stop then start (reload code after edits)
-  desk                shutdown → close terminals → caffeinate → startup
+  desk                Mini only: shutdown → close terminals → caffeinate → startup
                       (aliases: session, full)
   status              what's running + which build
   logs                tail dashboard + engine (+ tunnel) logs

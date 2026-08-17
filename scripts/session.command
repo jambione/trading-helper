@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # session.command — double-click from the Desktop for a full desk reset.
 #
-# Same as:  ./trading desk
+# Mini only (same as ./trading desk). Do not run on the MacBook.
 #   1. shutdown.command
 #   2. close Terminal / iTerm windows
 #   3. caffeinate -si
@@ -16,6 +16,15 @@
 set -uo pipefail
 
 REPO="${REPO:-/Users/jambimac/repo/trading-helper}"
+
+if [ "$(id -un 2>/dev/null || true)" != "jambimac" ] \
+   || [ "${HOME:-}" != "/Users/jambimac" ]; then
+  echo "❌ session.command is Mini-only (user jambimac)."
+  echo "   This machine is $(id -un)@$(hostname -s 2>/dev/null || hostname)."
+  echo "Press any key to close."
+  read -r -n1
+  exit 1
+fi
 
 cd "$REPO" || {
   echo "❌ Could not cd to $REPO"
