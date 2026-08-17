@@ -7,12 +7,12 @@
 
 import { connect, on, api }                      from './api.js?v=134';
 import { subscribe, set, selectTicker }          from './store.js?v=133';
-import { init as initFeeds }                     from './feeds.js?v=134';
-import { init as initTickers }                   from './tickers.js?v=133';
+import { init as initFeeds }                     from './feeds.js?v=137';
+import { init as initTickers }                   from './tickers.js?v=137';
 import { init as initTradingView }               from './tradingview.js?v=133';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=133';
 import { init as initResizer }                   from './resizer.js?v=133';
-import * as controls                             from './controls.js?v=133';
+import * as controls                             from './controls.js?v=137';
 import * as notifications                        from './notifications.js?v=133';
 import { isAuthenticated, logout, getQueryUser, setToken } from './auth.js?v=133';
 import { init as initNews }                      from './news.js?v=133';

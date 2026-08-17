@@ -111,6 +111,11 @@ function _applySort(rows) {
         const bv = b.day_vol ?? (_sortDir > 0 ? -Infinity : Infinity);
         return _sortDir * (av - bv);
       }
+      case 'rvol': {
+        const av = a.rvol ?? (_sortDir > 0 ? -Infinity : Infinity);
+        const bv = b.rvol ?? (_sortDir > 0 ? -Infinity : Infinity);
+        return _sortDir * (av - bv);
+      }
       default: return 0;
     }
   });
@@ -381,6 +386,12 @@ function _updateRow(el, row) {
     volEl.classList.toggle('vol-high', (row.rvol ?? 0) >= 1.5);
   }
 
+  const rvolEl = el.querySelector('[data-rvol]');
+  if (rvolEl) {
+    _setText(rvolEl, _fmtRvol(row.rvol));
+    rvolEl.classList.toggle('vol-high', (row.rvol ?? 0) >= 1.5);
+  }
+
   const flagsEl = el.querySelector('[data-flags]');
   if (flagsEl) {
     const fh = _flagsHtml(row);
@@ -646,6 +657,7 @@ function _rowHTML(row) {
     </div>
     <div class="cell-price${p.snap ? ' cell-price--snapshot' : ''}" data-price="${row.ticker}"${p.snap ? ` title="${_snapTitle(p.age)}"` : ''}>${p.txt}</div>
     <div class="cell-chg ${chgCls}" data-chg>${_fmtChg(row.pct_change ?? null)}</div>
+    <div class="cell-rvol${volCls}" data-rvol>${_fmtRvol(row.rvol)}</div>
     <div class="cell-vol${volCls}" data-vol>${_fmtVol(row.day_vol)}</div>
     <div class="cell-flags" data-flags>${_flagsHtml(row)}</div>
     <div class="cell-actions">
@@ -712,4 +724,10 @@ function _fmtVol(v) {
   if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
   if (v >= 1e3) return Math.round(v / 1e3) + 'K';
   return String(v);
+}
+
+function _fmtRvol(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `${n.toFixed(2)}×`;
 }

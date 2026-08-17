@@ -9,7 +9,7 @@
 
 import { subscribe, get } from './store.js?v=133';
 import { api }       from './api.js?v=133';
-import { copyTicker } from './tickers.js?v=133';
+import { copyTicker } from './tickers.js?v=137';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 
 export function init(panelEl, kind) {
@@ -1007,6 +1007,13 @@ function _updateFeedRow(el, r, kind, book) {
     _setText(el.querySelector('.cell-size'), size);
     const mark = r.source_mark || _markFromSource(r.source) || 'A';
     _setText(el.querySelector('.cell-src'), mark);
+    const notesEl = el.querySelector('.cell-notes');
+    if (notesEl) {
+      const why = r.reason || r.summary || '';
+      _setText(notesEl, why || '—');
+      if (why) notesEl.title = why;
+      else notesEl.removeAttribute('title');
+    }
 
     // Position chip — replace only when markup changes
     const tickerCell = el.querySelector('.cell-ticker');
@@ -1085,6 +1092,9 @@ function _applySort(rows, sortCol, sortDir) {
         const bv = b.rank ?? nullHi;
         return sortDir * (av - bv);
       }
+      case 'notes':
+        return sortDir * String(a.reason || a.summary || '')
+          .localeCompare(String(b.reason || b.summary || ''));
       default:
         return 0;
     }
@@ -1156,6 +1166,7 @@ function _row(r, kind, book) {
          +   `<div class="cell-score" data-score>${_esc(score)}</div>`
          +   `<div class="cell-size" data-size>${_esc(size)}</div>`
          +   `<div class="cell-look">${look}</div>`
+         +   `<div class="cell-notes" data-notes title="${_esc(why)}">${why ? _esc(why) : '—'}</div>`
          + `</div>`
          + thesis
          + `</div>`;

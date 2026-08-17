@@ -1168,7 +1168,8 @@ body.mobile .icon-btn {
 }
 .scan-pane > .panel-header { display: none; }
 
-/* Slim columns: Scan is Ticker | Last | Chg. Book is Ticker | State | Stop | Last | EXH | P&L */
+/* Slim Scan: Ticker | Last | Chg | unique (RVOL / Score / Notes).
+   Book stays Ticker | State | Stop | Last | EXH | P&L */
 .desk-col-extra,
 .cell-vol,
 .cell-flags,
@@ -1184,12 +1185,26 @@ body.mobile .icon-btn {
 .ai-watch-badge {
   display: none !important;
 }
-.watchlist-cols {
-  grid-template-columns: 1.4fr 1fr 0.8fr !important;
+.panel-watchlist .cell-rvol,
+.panel-watchlist .th[data-sort-col="rvol"] {
+  display: block !important;
 }
-.feed-cols--trending,
+.panel-trending .cell-score,
+.panel-trending .th[data-sort-col="score"] {
+  display: block !important;
+}
+.panel-claude .cell-notes,
+.panel-claude .th[data-sort-col="notes"] {
+  display: block !important;
+}
+.watchlist-cols {
+  grid-template-columns: 1.3fr 0.9fr 0.75fr 0.7fr !important;
+}
+.feed-cols--trending {
+  grid-template-columns: 1.3fr 0.9fr 0.75fr 0.65fr !important;
+}
 .feed-cols--claude {
-  grid-template-columns: 1.4fr 1fr 0.8fr !important;
+  grid-template-columns: 1.05fr 0.75fr 0.7fr 1.5fr !important;
 }
 .feed-cols--ai-book {
   grid-template-columns: 1fr 1.15fr 0.8fr 0.8fr 0.75fr 0.85fr !important;
@@ -1885,6 +1900,9 @@ body.mobile .icon-btn {
 .feed-table-header .th[data-sort-col="src"] {
   text-align: center;
 }
+.feed-table-header .th[data-sort-col="notes"] {
+  text-align: left;
+}
 
 .feed-rows .cell-src {
   text-align: center;
@@ -1966,6 +1984,18 @@ body.mobile .icon-btn {
   font-weight: 600;
   color: var(--text-bright);
   font-variant-numeric: tabular-nums;
+}
+.feed-rows .cell-notes,
+.cell-notes {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-dim);
+  text-align: left;
 }
 .feed-rows .cell-rvol {
   font-weight: 500;
@@ -2429,6 +2459,11 @@ body.mobile .icon-btn {
 .watchlist-table-header .watchlist-cols {
   padding: 10px 0;
 }
+.watchlist-table-header .th[data-sort-col="price"],
+.watchlist-table-header .th[data-sort-col="chg"],
+.watchlist-table-header .th[data-sort-col="rvol"] {
+  text-align: right;
+}
 
 .th {
   font-size: 9.5px;
@@ -2829,6 +2864,9 @@ body.mobile .icon-btn {
   .feed-cols--ai-book .cell-price.price-flash--down { transition: none; }
 }
 
+.ticker-row .cell-rvol {
+  text-align: right;
+}
 .cell-vol,
 .cell-rvol,
 .cell-size {
