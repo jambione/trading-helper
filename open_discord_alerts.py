@@ -98,30 +98,54 @@ def dock_right():
 
 
 def jump_to_latest():
-    """Pin the channel on the newest messages, then nudge up and End again.
+    """After Discord is up, pin the channel on the newest messages.
 
-    OCR only sees what's on screen. If Discord is scrolled up, new alerts
-    never appear. End → a few Ups (force a paint) → End again.
+    OCR only sees what's on screen. End/Cmd+Down do nothing unless the
+    message list is focused, so click the chat pane first, then jump.
     """
     print("  Jumping Discord to latest messages...")
+    time.sleep(1.5)
+    subprocess.run(
+        ['osascript', '-e', 'tell application "Discord" to activate'],
+        capture_output=True,
+    )
+    time.sleep(0.4)
+
+    win = get_discord_window()
+    if win and win['w'] > 80 and win['h'] > 80:
+        # Channel list is the left strip; chat + Jump to Present are right/bottom.
+        chat_x = int(win['x'] + win['w'] * 0.68)
+        chat_y = int(win['y'] + win['h'] * 0.52)
+        jump_x = int(win['x'] + win['w'] * 0.68)
+        jump_y = int(win['y'] + win['h'] * 0.90)
+        try:
+            pyautogui.click(chat_x, chat_y)
+            time.sleep(0.25)
+            pyautogui.click(jump_x, jump_y)
+            time.sleep(0.35)
+        except Exception as e:
+            print(f"  ⚠ Could not click chat pane: {e}")
+
     osa = (
         'tell application "Discord" to activate\n'
-        'delay 0.3\n'
+        'delay 0.2\n'
         'tell application "System Events" to tell process "Discord"\n'
-        '    key code 119\n'          # End
-        '    delay 0.4\n'
-        '    key code 126\n'          # Up
-        '    delay 0.05\n'
-        '    key code 126\n'
-        '    delay 0.05\n'
+        '    key code 125 using command down\n'  # Cmd+Down
+        '    delay 0.25\n'
+        '    key code 119\n'                     # End
+        '    delay 0.35\n'
+        '    key code 126\n'                     # Up (nudge / paint)
+        '    delay 0.08\n'
         '    key code 126\n'
         '    delay 0.2\n'
-        '    key code 119\n'          # End — latest
+        '    key code 119\n'                     # End — latest
+        '    delay 0.15\n'
+        '    key code 125 using command down\n'
         'end tell\n'
     )
     r = subprocess.run(['osascript', '-e', osa], capture_output=True, text=True)
     if r.returncode == 0:
-        print("  ✓ Channel at latest (End, nudge up, End).")
+        print("  ✓ Channel jumped to latest.")
     else:
         print(f"  ⚠ Could not scroll channel (Accessibility?): {r.stderr.strip()}")
 
