@@ -16,6 +16,7 @@ USAGE
     venv/bin/python tools/sim_rstop_path.py UMAC --day 2026-08-14 --sweep
     venv/bin/python tools/sim_rstop_path.py --bars-file /tmp/umac.json
     venv/bin/python tools/sim_rstop_path.py UMAC --day 2026-08-14 --json
+    venv/bin/python tools/sim_rstop_path.py UMAC --day 2026-08-14 --feed sip
 """
 from __future__ import annotations
 
@@ -34,8 +35,12 @@ ET = ZoneInfo("America/New_York")
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
+import desk_core  # noqa: E402
+desk_core.load_desk_env(_ROOT / "signal_engine.env")
+
 import ai_entry_watch as ew  # noqa: E402
 import ai_positions as cp  # noqa: E402
+import alpaca_api  # noqa: E402
 from config import load_config  # noqa: E402
 
 # (ts, open, high, low, close)
@@ -336,8 +341,9 @@ def fetch_day_ohlc(
     """1-minute (ts, o, h, l, c) for one ET day. Raises on repeated 429."""
     import requests
 
+    feed = alpaca_api.research_feed_rest(feed)
     start = datetime.fromisoformat(f"{day}T00:00:00").replace(tzinfo=ET)
-    end = start + timedelta(days=1)
+    end = alpaca_api.research_bar_end(feed, requested_end=start + timedelta(days=1))
     url = f"https://data.alpaca.markets/v2/stocks/{symbol}/bars"
     headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret}
     out: list[Bar] = []
@@ -501,7 +507,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="give 0.10/0.20 × T1 0.6/0.25/off × EXH on/off")
     p.add_argument("--json", action="store_true")
     p.add_argument("--trades", action="store_true", help="print each fill")
-    p.add_argument("--feed", default="iex")
+    p.add_argument("--feed", choices=("iex", "sip"), default="iex",
+                   help="Historical tape. sip = free delayed SIP (15m lag).")
     args = p.parse_args(argv)
 
     wash = {s.strip().upper() for s in args.wash.split(",") if s.strip()}

@@ -24,6 +24,7 @@ Output: console tables + benchmarks/ab_bench_<date>.csv + updates BENCHMARKS.md.
 USAGE
     venv/bin/python tools/ab_bench.py BYAH VSME EDHL ... --months 2
     venv/bin/python tools/ab_bench.py --default-pool --months 2
+    venv/bin/python tools/ab_bench.py --default-pool --feed sip
 """
 
 from __future__ import annotations
@@ -197,6 +198,8 @@ def main():
     ap.add_argument("--months", type=int, default=2)
     ap.add_argument("--slippage", type=float, default=SLIPPAGE_BPS,
                     help="per-side bps (25 microcaps, ~5 liquid)")
+    ap.add_argument("--feed", choices=("iex", "sip"), default="iex",
+                    help="Historical tape. sip = free delayed SIP (15m lag).")
     args = ap.parse_args()
 
     tickers = [t.upper() for t in args.tickers] or (DEFAULT_POOL if args.default_pool else [])
@@ -210,7 +213,7 @@ def main():
     # ── Fetch once per ticker ─────────────────────────────────────────────────
     data: dict = {}
     for sym in tickers:
-        df = fetch_history(sym, api, sec, months=args.months)
+        df = fetch_history(sym, api, sec, months=args.months, feed=args.feed)
         if df is None or len(df) < 200:
             print(f"  ⚠️  {sym}: not enough data — dropped from pool")
             continue
@@ -247,7 +250,7 @@ def main():
     W = 132
     print("=" * W)
     print(f"  A/B BENCHMARK — 3-indicator strategy, pooled over {len(pool)} alert-pool tickers, "
-          f"{args.months}mo RTH, slip {args.slippage:.0f}bps")
+          f"{args.months}mo RTH, {args.feed.upper()}, slip {args.slippage:.0f}bps")
     print("=" * W)
     hdr = (f"  {'variant':<26}{'n':>5} {'win%':>6} {'avg%':>7} {'tot%':>8} "
            f"{'PF':>6} {'Sharpe':>7} {'DD%':>6} {'CL':>3} {'$/trade':>8} "

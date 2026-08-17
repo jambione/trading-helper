@@ -35,14 +35,57 @@ def connect_data_client(cfg: dict):
     return StockHistoricalDataClient(cfg["api_key"], cfg["secret_key"])
 
 
+# Basic-plan SIP is historical only: anything newer than ~15 minutes 403s.
+# Live paths stay on IEX via `_get_feed_arg`. Research tools use
+# `research_bar_end` + `research_feed_rest` so delayed SIP is opt-in.
+DELAYED_SIP_LAG = timedelta(minutes=15)
+
+
 def _get_feed_arg(cfg: dict = None) -> dict:
-    """Always IEX on free Alpaca plans. SIP requires a paid data subscription
-    and is intentionally not used."""
+    """Always IEX on free Alpaca plans. Live SIP needs a paid data plan."""
     try:
         from alpaca.data.enums import DataFeed as _DF
         return {"feed": _DF.IEX}
     except Exception:
         return {}
+
+
+def normalize_research_feed(feed) -> str:
+    """`iex` or `sip`. Live code must not call this for latest-trade/stream."""
+    name = str(feed or "iex").strip().lower().replace("-", "_")
+    if name in ("sip", "delayed_sip"):
+        return "sip"
+    if name in ("iex", ""):
+        return "iex"
+    raise ValueError(f"unknown research feed {feed!r} (use iex or sip)")
+
+
+def research_feed_rest(feed) -> str:
+    """Alpaca REST `feed=` value for historical bar requests."""
+    return normalize_research_feed(feed)
+
+
+def research_bar_end(feed, *, now=None, requested_end=None) -> datetime:
+    """Latest UTC timestamp a historical request may use on this feed.
+
+    SIP on the free plan is delayed ~15 minutes; IEX is real-time. If
+    `requested_end` is set (a finished session, a day bound), the earlier of
+    that and the feed cap is returned so today's SIP fetch does not 403.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    cap = now - DELAYED_SIP_LAG if normalize_research_feed(feed) == "sip" else now
+    if requested_end is None:
+        return cap
+    end = requested_end
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    else:
+        end = end.astimezone(timezone.utc)
+    return min(end, cap)
 
 
 def _get_sort_desc_arg() -> dict:

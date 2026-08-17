@@ -21,6 +21,7 @@ HOW TO RUN
   python backtest.py AAPL TSLA NVDA
   python backtest.py AAPL --months 1
   python backtest.py AAPL --top 10
+  python backtest.py AAPL --feed sip   # delayed SIP (free; bars end 15m ago)
 
   Results are printed to the console and saved to backtest_results.csv
   in the same folder.
@@ -71,6 +72,7 @@ from signals import rsi as calc_rsi, compute_macd
 
 # ── Load credentials from signal_engine.env ──────────────────────────────────
 
+import alpaca_api  # noqa: E402
 import desk_core  # noqa: E402
 
 _load_env_file = desk_core.load_desk_env
@@ -113,7 +115,8 @@ RSI_PERIOD = 14     # RSI lookback period (not swept — standard value)
 ALPACA_BASE_URL = "https://data.alpaca.markets"
 
 def fetch_history(symbol: str, api_key: str, secret_key: str,
-                  months: int = 3, adjustment: str = "split") -> Optional[pd.DataFrame]:
+                  months: int = 3, adjustment: str = "split",
+                  feed: str = "iex") -> Optional[pd.DataFrame]:
     """
     Download N months of 1-minute OHLCV bars from Alpaca.
 
@@ -134,23 +137,28 @@ def fetch_history(symbol: str, api_key: str, secret_key: str,
               "in signal_engine.env")
         return None
 
+    feed = alpaca_api.research_feed_rest(feed)
+    end_dt = alpaca_api.research_bar_end(feed)
     headers  = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
     url      = f"{ALPACA_BASE_URL}/v2/stocks/{symbol}/bars"
-    start_dt = (datetime.now(timezone.utc) - timedelta(days=months * 31)
+    start_dt = (end_dt - timedelta(days=months * 31)
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_iso = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     all_bars   = []
     page_token = None
     page_num   = 0
 
-    print(f"  Fetching {months}-month bar history for {symbol}…", end="", flush=True)
+    print(f"  Fetching {months}-month {feed.upper()} bar history for {symbol}…",
+          end="", flush=True)
 
     while True:
         params: dict = {
             "timeframe":  "1Min",
             "start":      start_dt,
+            "end":        end_iso,
             "limit":      10000,
-            "feed":       "iex",
+            "feed":       feed,
             "sort":       "asc",
             "adjustment": adjustment,
         }
@@ -173,8 +181,7 @@ def fetch_history(symbol: str, api_key: str, secret_key: str,
             time.sleep(0.25)   # be polite to Alpaca's rate limiter
 
         except requests.exceptions.HTTPError as e:
-            # Free tier is IEX only — no SIP fallback (paid data plan).
-            print(f"\n  ❌  HTTP {resp.status_code}: {e}")
+            print(f"\n  ❌  HTTP {resp.status_code} ({feed}): {e}")
             break
         except Exception as e:
             print(f"\n  ❌  Fetch error: {e}")
@@ -557,6 +564,13 @@ def main():
         default=15,
         help="How many top combos to show per ticker (default: 15)",
     )
+    parser.add_argument(
+        "--feed",
+        choices=("iex", "sip"),
+        default="iex",
+        help="Historical tape. sip is free delayed SIP (ends 15m ago); "
+             "live engine stays IEX.",
+    )
     args = parser.parse_args()
 
     api_key, secret_key = _load_alpaca_credentials()
@@ -572,7 +586,8 @@ def main():
         print(f"  {ticker}")
         print(f"{'─'*60}")
 
-        df = fetch_history(ticker, api_key, secret_key, months=args.months)
+        df = fetch_history(ticker, api_key, secret_key, months=args.months,
+                           feed=args.feed)
         if df is None or len(df) < 50:
             print(f"  ⚠️   Not enough data for {ticker} — skipping")
             continue

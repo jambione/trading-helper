@@ -109,6 +109,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import ai_entry_watch as ew
+import alpaca_api
 from ai_paths import report_file
 from config import load_config
 
@@ -341,8 +342,9 @@ def fetch_day_bars(symbol: str, day: str, api_key: str, secret: str,
     """
     import requests
 
+    feed = alpaca_api.research_feed_rest(feed)
     start = datetime.fromisoformat(f"{day}T00:00:00").replace(tzinfo=ET)
-    end = start + timedelta(days=1)
+    end = alpaca_api.research_bar_end(feed, requested_end=start + timedelta(days=1))
     url = f"https://data.alpaca.markets/v2/stocks/{symbol}/bars"
     headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret}
     out: list[tuple] = []
@@ -388,7 +390,8 @@ def fetch_day_bars(symbol: str, day: str, api_key: str, secret: str,
     return out
 
 
-def load_bars(ranked: list, cfg: dict, cache_path: Path) -> dict:
+def load_bars(ranked: list, cfg: dict, cache_path: Path,
+              *, feed: str = "iex") -> dict:
     """(sym, day) -> [(ts, low)], cached on disk so a sweep fetches once."""
     cache: dict = {}
     if cache_path.exists():
@@ -408,7 +411,7 @@ def load_bars(ranked: list, cfg: dict, cache_path: Path) -> dict:
     for (sym, day), _obs in ranked:
         if (sym, day) in cache and cache[(sym, day)]:
             continue
-        bars = fetch_day_bars(sym, day, api_key, secret)
+        bars = fetch_day_bars(sym, day, api_key, secret, feed=feed)
         cache[(sym, day)] = bars
         fetched += 1
         print(f"  fetched {sym} {day}: {len(bars):,} 1-min bars", file=sys.stderr)
@@ -585,6 +588,8 @@ def main() -> int:
     ap.add_argument("--bars-cache",
                     default=str(ROOT / "benchmarks" / "replay_bars_cache.json"),
                     help="on-disk 1-min bar cache, so a sweep fetches once")
+    ap.add_argument("--feed", choices=("iex", "sip"), default="iex",
+                    help="Bar tape when --bars. sip = free delayed SIP.")
     args = ap.parse_args()
 
     ev = Path(args.events)
@@ -607,7 +612,10 @@ def main() -> int:
 
     bar_cache: dict = {}
     if args.bars:
-        bar_cache = load_bars(ranked, cfg, Path(args.bars_cache))
+        cache_path = Path(args.bars_cache)
+        if args.feed != "iex" and cache_path.name == "replay_bars_cache.json":
+            cache_path = cache_path.with_name(f"replay_bars_cache_{args.feed}.json")
+        bar_cache = load_bars(ranked, cfg, cache_path, feed=args.feed)
         missing = [f"{s} {d}" for (s, d), _ in ranked if not bar_cache.get((s, d))]
         if missing:
             print(f"no bars for: {', '.join(missing)} — those rows will report "

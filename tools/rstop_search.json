@@ -1,0 +1,10 @@
+{
+  "min_n": 30,
+  "search": {
+    "give_r": [0.08, 0.10, 0.15, 0.20],
+    "synth_rr": [0.50, 0.60, 1.00],
+    "heat_min_pct": [50, 65, 80],
+    "dead_trade_min": [15, 30, 60],
+    "exhaustion_rules": [true, false]
+  }
+}

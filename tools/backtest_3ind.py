@@ -17,6 +17,7 @@ USAGE
     python backtest_3ind.py NVDA TSLA --months 2 --slippage 25
     python backtest_3ind.py NVDA --exit-mode all --stop 2 --target 4
     python backtest_3ind.py NVDA --sweep            # grid over key thresholds
+    python backtest_3ind.py NVDA --feed sip         # delayed SIP (free)
 
 Credentials: ALPACA_API_KEY / ALPACA_SECRET_KEY from signal_engine.env (same
 file the engine and backtest.py use).
@@ -272,6 +273,8 @@ def main():
                     help="Aggregate every ticker's trades into ONE pooled result. "
                          "Microcaps fire too rarely to judge per-name; pooling a "
                          "whole watchlist is the only way to get a real sample size.")
+    ap.add_argument("--feed", choices=("iex", "sip"), default="iex",
+                    help="Historical tape. sip = free delayed SIP (15m lag).")
     args = ap.parse_args()
 
     api_key, secret_key = _load_alpaca_credentials()
@@ -287,7 +290,8 @@ def main():
     for ticker in (t.upper() for t in args.tickers):
         if not args.pool:
             print(f"\n{'─' * 64}\n  {ticker}\n{'─' * 64}")
-        df = fetch_history(ticker, api_key, secret_key, months=args.months)
+        df = fetch_history(ticker, api_key, secret_key, months=args.months,
+                           feed=args.feed)
         if df is not None and args.regular_hours_only:
             before = len(df)
             df = filter_regular_hours(df)

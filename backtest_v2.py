@@ -38,6 +38,7 @@ HOW TO RUN
   python backtest_v2.py GME
   python backtest_v2.py GME AAPL TSLA  --months 3
   python backtest_v2.py GME            --months 1 --top 10
+  python backtest_v2.py GME            --feed sip   # delayed SIP (free)
 """
 
 from __future__ import annotations
@@ -56,6 +57,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import requests
+
+import alpaca_api
 
 
 # ── Synthetic data generator (--demo mode) ────────────────────────────────────
@@ -249,26 +252,27 @@ ALPACA_BASE = "https://data.alpaca.markets"
 # ── Bar fetching ──────────────────────────────────────────────────────────────
 
 def fetch_bars(symbol: str, api_key: str, secret_key: str,
-               months: int = 3) -> Optional[pd.DataFrame]:
+               months: int = 3, feed: str = "iex") -> Optional[pd.DataFrame]:
+    feed = alpaca_api.research_feed_rest(feed)
+    end_dt = alpaca_api.research_bar_end(feed)
     headers    = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
     url        = f"{ALPACA_BASE}/v2/stocks/{symbol}/bars"
-    start      = (datetime.now(timezone.utc) - timedelta(days=months * 31)
+    start      = (end_dt - timedelta(days=months * 31)
                   ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_iso    = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     all_bars:  list = []
     page_token = None
 
-    print(f"  Fetching {months}mo bars for {symbol}…", end="", flush=True)
+    print(f"  Fetching {months}mo {feed.upper()} bars for {symbol}…",
+          end="", flush=True)
 
     while True:
-        params: dict = {"timeframe": "1Min", "start": start,
-                        "limit": 10_000, "feed": "iex", "sort": "asc"}
+        params: dict = {"timeframe": "1Min", "start": start, "end": end_iso,
+                        "limit": 10_000, "feed": feed, "sort": "asc"}
         if page_token:
             params["page_token"] = page_token
         try:
             r = requests.get(url, params=params, headers=headers, timeout=30)
-            if r.status_code == 422:
-                params["feed"] = "sip"
-                r = requests.get(url, params=params, headers=headers, timeout=30)
             r.raise_for_status()
             data       = r.json()
             all_bars.extend(data.get("bars", []))
@@ -948,6 +952,8 @@ def main():
                         help="Use synthetic data (no Alpaca connection needed)")
     parser.add_argument("--seeds", type=int, default=3,
                         help="Number of synthetic seeds to average over (--demo only, default: 3)")
+    parser.add_argument("--feed", choices=("iex", "sip"), default="iex",
+                        help="Historical tape. sip = free delayed SIP (15m lag).")
     args = parser.parse_args()
 
     all_rows: list[dict] = []
@@ -979,7 +985,8 @@ def main():
         print(f"  EXCELLENCE LOOP — {symbol}")
         print(f"{'═'*72}")
 
-        df = fetch_bars(symbol, api_key, secret_key, months=args.months)
+        df = fetch_bars(symbol, api_key, secret_key, months=args.months,
+                        feed=args.feed)
         if df is None or len(df) < 300:
             print(f"  ⚠️  Not enough data for {symbol} — skipping")
             continue

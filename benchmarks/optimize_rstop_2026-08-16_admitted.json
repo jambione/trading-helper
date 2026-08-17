@@ -1,0 +1,6508 @@
+{
+  "days": [
+    "2026-08-10",
+    "2026-08-11",
+    "2026-08-12",
+    "2026-08-13",
+    "2026-08-14"
+  ],
+  "symbols": [
+    "AAA",
+    "AACG",
+    "ABCL",
+    "ACHR",
+    "AEHL",
+    "AG",
+    "AIFA",
+    "AIMD",
+    "AIRO",
+    "ALOY",
+    "APLD",
+    "ARCT",
+    "AREN",
+    "ARTW",
+    "ASTS",
+    "AVBC",
+    "AXTI",
+    "B",
+    "BANL",
+    "BAOS",
+    "BCRX",
+    "BFLY",
+    "BIVI",
+    "BOT",
+    "BOXL",
+    "BQ",
+    "BRUN",
+    "BSEM",
+    "BTDR",
+    "BULL",
+    "BW",
+    "BYND",
+    "BYSI",
+    "CADL",
+    "CAVA",
+    "CCXI",
+    "CDTG",
+    "CELC",
+    "CELZ",
+    "CIFR",
+    "CLOV",
+    "CLRO",
+    "CMG",
+    "CRCL",
+    "CRIS",
+    "CRMD",
+    "CRSR",
+    "CRWU",
+    "CSIQ",
+    "CURI",
+    "DFSC",
+    "DFTX",
+    "DGNX",
+    "DOCS",
+    "DRMA",
+    "DXYZ",
+    "ETON",
+    "FCEL",
+    "FEAM",
+    "FGI",
+    "FLNC",
+    "FLY",
+    "FREL",
+    "FRMI",
+    "FSLY",
+    "FUFU",
+    "GLBS",
+    "GLIBK",
+    "GME",
+    "GRI",
+    "GRSD",
+    "HCTI",
+    "HELP",
+    "HHS",
+    "HIMS",
+    "HPE",
+    "HROW",
+    "HUDI",
+    "INBS",
+    "IND",
+    "INFQ",
+    "INHD",
+    "IONQ",
+    "IOVA",
+    "IPW",
+    "IPWR",
+    "IREN",
+    "JACK",
+    "JDZG",
+    "JOBY",
+    "JWEL",
+    "KOPN",
+    "KSCP",
+    "KTOS",
+    "LASR",
+    "LEXX",
+    "LFS",
+    "LIVE",
+    "LNKS",
+    "LPTH",
+    "LUNR",
+    "MARA",
+    "MF",
+    "MLTX",
+    "MNDY",
+    "MOBX",
+    "MRAM",
+    "MSGY",
+    "MTEN",
+    "MYSZ",
+    "NB",
+    "NCI",
+    "NEGG",
+    "NEXR",
+    "NKE",
+    "NLST",
+    "NMAX",
+    "NN",
+    "NNN",
+    "NTHI",
+    "NU",
+    "NXTC",
+    "OFAL",
+    "OGI",
+    "OIM",
+    "OKLO",
+    "OMER",
+    "ONDS",
+    "ONFO",
+    "ONON",
+    "OXLC",
+    "PDYN",
+    "PLAG",
+    "PMA",
+    "POLA",
+    "PSFE",
+    "PSKY",
+    "PSQH",
+    "QMCO",
+    "QNT",
+    "QS",
+    "RBRK",
+    "RCAT",
+    "RDGT",
+    "RENX",
+    "RIG",
+    "RIOT",
+    "RKLB",
+    "RMAX",
+    "RMCF",
+    "RNW",
+    "RUM",
+    "S",
+    "SCKT",
+    "SENS",
+    "SGML",
+    "SION",
+    "SLS",
+    "SMCI",
+    "SOFI",
+    "SORA",
+    "SOUN",
+    "SPAI",
+    "SPRC",
+    "SST",
+    "STAK",
+    "STIM",
+    "STKH",
+    "SUJA",
+    "SVCO",
+    "TC",
+    "TDIC",
+    "TEM",
+    "THH",
+    "TPST",
+    "TRNR",
+    "TSSI",
+    "TTD",
+    "UAMY",
+    "UMAC",
+    "UPWK",
+    "UUUU",
+    "VBIO",
+    "VELO",
+    "VG",
+    "VIVK",
+    "VWAV",
+    "WBD",
+    "WCT",
+    "WEN",
+    "WETO",
+    "WFF",
+    "WOK",
+    "WULF",
+    "WXM",
+    "WYFI",
+    "WYHG",
+    "XHG",
+    "XHLD",
+    "YJ",
+    "YYGH",
+    "ZETA",
+    "ZIG",
+    "ZIM",
+    "ZTG",
+    "ZTS"
+  ],
+  "baseline_held_dollar": 63.51,
+  "min_n": 30,
+  "cells": [
+    {
+      "name": "baseline",
+      "overlay": {},
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 500,
+        "win_pct": 30.4,
+        "total_dollar": 63.51,
+        "mean_dollar": 0.13,
+        "max_dd_dollar": 300.24,
+        "total_r_plan": 1.274
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 30.4,
+        "total_dollar": 63.51,
+        "mean_dollar": 0.13,
+        "max_dd_dollar": 300.24,
+        "total_r_plan": 1.274
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 606,
+        "win_pct": 32.2,
+        "total_dollar": 46.15,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 242.64,
+        "total_r_plan": 0.924
+      },
+      "held": {
+        "n": 606,
+        "win_pct": 32.2,
+        "total_dollar": 46.15,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 242.64,
+        "total_r_plan": 0.924
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 32.6,
+        "total_dollar": 69.67,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 533.06,
+        "total_r_plan": 1.398
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 32.6,
+        "total_dollar": 69.67,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 533.06,
+        "total_r_plan": 1.398
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 590,
+        "win_pct": 31.4,
+        "total_dollar": 48.54,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 231.96,
+        "total_r_plan": 0.971
+      },
+      "held": {
+        "n": 590,
+        "win_pct": 31.4,
+        "total_dollar": 48.54,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 231.96,
+        "total_r_plan": 0.971
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.8,
+        "total_dollar": 287.97,
+        "mean_dollar": 0.33,
+        "max_dd_dollar": 589.02,
+        "total_r_plan": 5.762
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.8,
+        "total_dollar": 287.97,
+        "mean_dollar": 0.33,
+        "max_dd_dollar": 589.02,
+        "total_r_plan": 5.762
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 588,
+        "win_pct": 31.0,
+        "total_dollar": 22.61,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 241.46,
+        "total_r_plan": 0.453
+      },
+      "held": {
+        "n": 588,
+        "win_pct": 31.0,
+        "total_dollar": 22.61,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 241.46,
+        "total_r_plan": 0.453
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.7,
+        "total_dollar": 132.46,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 591.59,
+        "total_r_plan": 2.653
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.7,
+        "total_dollar": 132.46,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 591.59,
+        "total_r_plan": 2.653
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 524,
+        "win_pct": 30.9,
+        "total_dollar": -52.19,
+        "mean_dollar": -0.1,
+        "max_dd_dollar": 291.44,
+        "total_r_plan": -1.042
+      },
+      "held": {
+        "n": 524,
+        "win_pct": 30.9,
+        "total_dollar": -52.19,
+        "mean_dollar": -0.1,
+        "max_dd_dollar": 291.44,
+        "total_r_plan": -1.042
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 32.6,
+        "total_dollar": 69.67,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 533.06,
+        "total_r_plan": 1.398
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 32.6,
+        "total_dollar": 69.67,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 533.06,
+        "total_r_plan": 1.398
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 511,
+        "win_pct": 29.7,
+        "total_dollar": -46.1,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 319.64,
+        "total_r_plan": -0.92
+      },
+      "held": {
+        "n": 511,
+        "win_pct": 29.7,
+        "total_dollar": -46.1,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 319.64,
+        "total_r_plan": -0.92
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.8,
+        "total_dollar": 287.97,
+        "mean_dollar": 0.33,
+        "max_dd_dollar": 589.02,
+        "total_r_plan": 5.762
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.8,
+        "total_dollar": 287.97,
+        "mean_dollar": 0.33,
+        "max_dd_dollar": 589.02,
+        "total_r_plan": 5.762
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 509,
+        "win_pct": 29.7,
+        "total_dollar": -40.04,
+        "mean_dollar": -0.08,
+        "max_dd_dollar": 331.14,
+        "total_r_plan": -0.8
+      },
+      "held": {
+        "n": 509,
+        "win_pct": 29.7,
+        "total_dollar": -40.04,
+        "mean_dollar": -0.08,
+        "max_dd_dollar": 331.14,
+        "total_r_plan": -0.8
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.7,
+        "total_dollar": 132.46,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 591.59,
+        "total_r_plan": 2.653
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.7,
+        "total_dollar": 132.46,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 591.59,
+        "total_r_plan": 2.653
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 388,
+        "win_pct": 31.7,
+        "total_dollar": 29.82,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 261.91,
+        "total_r_plan": 0.598
+      },
+      "held": {
+        "n": 388,
+        "win_pct": 31.7,
+        "total_dollar": 29.82,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 261.91,
+        "total_r_plan": 0.598
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 32.6,
+        "total_dollar": 69.67,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 533.06,
+        "total_r_plan": 1.398
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 32.6,
+        "total_dollar": 69.67,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 533.06,
+        "total_r_plan": 1.398
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 378,
+        "win_pct": 30.4,
+        "total_dollar": 29.93,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 263.95,
+        "total_r_plan": 0.599
+      },
+      "held": {
+        "n": 378,
+        "win_pct": 30.4,
+        "total_dollar": 29.93,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 263.95,
+        "total_r_plan": 0.599
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.8,
+        "total_dollar": 287.97,
+        "mean_dollar": 0.33,
+        "max_dd_dollar": 589.02,
+        "total_r_plan": 5.762
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.8,
+        "total_dollar": 287.97,
+        "mean_dollar": 0.33,
+        "max_dd_dollar": 589.02,
+        "total_r_plan": 5.762
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 378,
+        "win_pct": 30.2,
+        "total_dollar": 28.71,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 265.01,
+        "total_r_plan": 0.575
+      },
+      "held": {
+        "n": 378,
+        "win_pct": 30.2,
+        "total_dollar": 28.71,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 265.01,
+        "total_r_plan": 0.575
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.7,
+        "total_dollar": 132.46,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 591.59,
+        "total_r_plan": 2.653
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.7,
+        "total_dollar": 132.46,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 591.59,
+        "total_r_plan": 2.653
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 606,
+        "win_pct": 32.2,
+        "total_dollar": 97.44,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 243.48,
+        "total_r_plan": 1.952
+      },
+      "held": {
+        "n": 606,
+        "win_pct": 32.2,
+        "total_dollar": 97.44,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 243.48,
+        "total_r_plan": 1.952
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 32.3,
+        "total_dollar": 107.93,
+        "mean_dollar": 0.12,
+        "max_dd_dollar": 512.64,
+        "total_r_plan": 2.163
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 32.3,
+        "total_dollar": 107.93,
+        "mean_dollar": 0.12,
+        "max_dd_dollar": 512.64,
+        "total_r_plan": 2.163
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 590,
+        "win_pct": 31.4,
+        "total_dollar": 101.57,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 235.2,
+        "total_r_plan": 2.034
+      },
+      "held": {
+        "n": 590,
+        "win_pct": 31.4,
+        "total_dollar": 101.57,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 235.2,
+        "total_r_plan": 2.034
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.4,
+        "total_dollar": 371.36,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 571.1,
+        "total_r_plan": 7.429
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.4,
+        "total_dollar": 371.36,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 571.1,
+        "total_r_plan": 7.429
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 588,
+        "win_pct": 31.0,
+        "total_dollar": 75.64,
+        "mean_dollar": 0.13,
+        "max_dd_dollar": 244.7,
+        "total_r_plan": 1.515
+      },
+      "held": {
+        "n": 588,
+        "win_pct": 31.0,
+        "total_dollar": 75.64,
+        "mean_dollar": 0.13,
+        "max_dd_dollar": 244.7,
+        "total_r_plan": 1.515
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.4,
+        "total_dollar": 199.11,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 573.67,
+        "total_r_plan": 3.986
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.4,
+        "total_dollar": 199.11,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 573.67,
+        "total_r_plan": 3.986
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 524,
+        "win_pct": 30.9,
+        "total_dollar": 12.82,
+        "mean_dollar": 0.02,
+        "max_dd_dollar": 276.44,
+        "total_r_plan": 0.259
+      },
+      "held": {
+        "n": 524,
+        "win_pct": 30.9,
+        "total_dollar": 12.82,
+        "mean_dollar": 0.02,
+        "max_dd_dollar": 276.44,
+        "total_r_plan": 0.259
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 32.3,
+        "total_dollar": 107.93,
+        "mean_dollar": 0.12,
+        "max_dd_dollar": 512.64,
+        "total_r_plan": 2.163
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 32.3,
+        "total_dollar": 107.93,
+        "mean_dollar": 0.12,
+        "max_dd_dollar": 512.64,
+        "total_r_plan": 2.163
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 511,
+        "win_pct": 29.7,
+        "total_dollar": 17.88,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 304.64,
+        "total_r_plan": 0.359
+      },
+      "held": {
+        "n": 511,
+        "win_pct": 29.7,
+        "total_dollar": 17.88,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 304.64,
+        "total_r_plan": 0.359
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.4,
+        "total_dollar": 371.36,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 571.1,
+        "total_r_plan": 7.429
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.4,
+        "total_dollar": 371.36,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 571.1,
+        "total_r_plan": 7.429
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 509,
+        "win_pct": 29.7,
+        "total_dollar": 22.48,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 316.14,
+        "total_r_plan": 0.451
+      },
+      "held": {
+        "n": 509,
+        "win_pct": 29.7,
+        "total_dollar": 22.48,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 316.14,
+        "total_r_plan": 0.451
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.4,
+        "total_dollar": 199.11,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 573.67,
+        "total_r_plan": 3.986
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.4,
+        "total_dollar": 199.11,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 573.67,
+        "total_r_plan": 3.986
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 388,
+        "win_pct": 31.7,
+        "total_dollar": 68.49,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 266.36,
+        "total_r_plan": 1.371
+      },
+      "held": {
+        "n": 388,
+        "win_pct": 31.7,
+        "total_dollar": 68.49,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 266.36,
+        "total_r_plan": 1.371
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 32.3,
+        "total_dollar": 107.93,
+        "mean_dollar": 0.12,
+        "max_dd_dollar": 512.64,
+        "total_r_plan": 2.163
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 32.3,
+        "total_dollar": 107.93,
+        "mean_dollar": 0.12,
+        "max_dd_dollar": 512.64,
+        "total_r_plan": 2.163
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 378,
+        "win_pct": 30.4,
+        "total_dollar": 66.53,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 270.8,
+        "total_r_plan": 1.331
+      },
+      "held": {
+        "n": 378,
+        "win_pct": 30.4,
+        "total_dollar": 66.53,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 270.8,
+        "total_r_plan": 1.331
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.4,
+        "total_dollar": 371.36,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 571.1,
+        "total_r_plan": 7.429
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.4,
+        "total_dollar": 371.36,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 571.1,
+        "total_r_plan": 7.429
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 378,
+        "win_pct": 30.2,
+        "total_dollar": 65.31,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 271.86,
+        "total_r_plan": 1.306
+      },
+      "held": {
+        "n": 378,
+        "win_pct": 30.2,
+        "total_dollar": 65.31,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 271.86,
+        "total_r_plan": 1.306
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.4,
+        "total_dollar": 199.11,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 573.67,
+        "total_r_plan": 3.986
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.4,
+        "total_dollar": 199.11,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 573.67,
+        "total_r_plan": 3.986
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 606,
+        "win_pct": 31.8,
+        "total_dollar": 150.79,
+        "mean_dollar": 0.25,
+        "max_dd_dollar": 236.44,
+        "total_r_plan": 3.019
+      },
+      "held": {
+        "n": 606,
+        "win_pct": 31.8,
+        "total_dollar": 150.79,
+        "mean_dollar": 0.25,
+        "max_dd_dollar": 236.44,
+        "total_r_plan": 3.019
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 31.9,
+        "total_dollar": 234.19,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 492.83,
+        "total_r_plan": 4.689
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 31.9,
+        "total_dollar": 234.19,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 492.83,
+        "total_r_plan": 4.689
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 590,
+        "win_pct": 31.0,
+        "total_dollar": 152.63,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 228.16,
+        "total_r_plan": 3.055
+      },
+      "held": {
+        "n": 590,
+        "win_pct": 31.0,
+        "total_dollar": 152.63,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 228.16,
+        "total_r_plan": 3.055
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.1,
+        "total_dollar": 506.55,
+        "mean_dollar": 0.59,
+        "max_dd_dollar": 550.39,
+        "total_r_plan": 10.133
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.1,
+        "total_dollar": 506.55,
+        "mean_dollar": 0.59,
+        "max_dd_dollar": 550.39,
+        "total_r_plan": 10.133
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 588,
+        "win_pct": 30.6,
+        "total_dollar": 126.7,
+        "mean_dollar": 0.22,
+        "max_dd_dollar": 237.66,
+        "total_r_plan": 2.536
+      },
+      "held": {
+        "n": 588,
+        "win_pct": 30.6,
+        "total_dollar": 126.7,
+        "mean_dollar": 0.22,
+        "max_dd_dollar": 237.66,
+        "total_r_plan": 2.536
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.0,
+        "total_dollar": 329.03,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 552.96,
+        "total_r_plan": 6.585
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.0,
+        "total_dollar": 329.03,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 552.96,
+        "total_r_plan": 6.585
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 524,
+        "win_pct": 30.5,
+        "total_dollar": 16.94,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 312.52,
+        "total_r_plan": 0.341
+      },
+      "held": {
+        "n": 524,
+        "win_pct": 30.5,
+        "total_dollar": 16.94,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 312.52,
+        "total_r_plan": 0.341
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 31.9,
+        "total_dollar": 234.19,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 492.83,
+        "total_r_plan": 4.689
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 31.9,
+        "total_dollar": 234.19,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 492.83,
+        "total_r_plan": 4.689
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 511,
+        "win_pct": 29.4,
+        "total_dollar": 22.0,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 340.72,
+        "total_r_plan": 0.442
+      },
+      "held": {
+        "n": 511,
+        "win_pct": 29.4,
+        "total_dollar": 22.0,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 340.72,
+        "total_r_plan": 0.442
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.1,
+        "total_dollar": 506.55,
+        "mean_dollar": 0.59,
+        "max_dd_dollar": 550.39,
+        "total_r_plan": 10.133
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.1,
+        "total_dollar": 506.55,
+        "mean_dollar": 0.59,
+        "max_dd_dollar": 550.39,
+        "total_r_plan": 10.133
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 509,
+        "win_pct": 29.3,
+        "total_dollar": 26.6,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 352.22,
+        "total_r_plan": 0.533
+      },
+      "held": {
+        "n": 509,
+        "win_pct": 29.3,
+        "total_dollar": 26.6,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 352.22,
+        "total_r_plan": 0.533
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.0,
+        "total_dollar": 329.03,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 552.96,
+        "total_r_plan": 6.585
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.0,
+        "total_dollar": 329.03,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 552.96,
+        "total_r_plan": 6.585
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 388,
+        "win_pct": 31.4,
+        "total_dollar": 82.45,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 270.48,
+        "total_r_plan": 1.651
+      },
+      "held": {
+        "n": 388,
+        "win_pct": 31.4,
+        "total_dollar": 82.45,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 270.48,
+        "total_r_plan": 1.651
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 899,
+        "win_pct": 31.9,
+        "total_dollar": 234.19,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 492.83,
+        "total_r_plan": 4.689
+      },
+      "held": {
+        "n": 899,
+        "win_pct": 31.9,
+        "total_dollar": 234.19,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 492.83,
+        "total_r_plan": 4.689
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 378,
+        "win_pct": 30.2,
+        "total_dollar": 80.49,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 274.92,
+        "total_r_plan": 1.61
+      },
+      "held": {
+        "n": 378,
+        "win_pct": 30.2,
+        "total_dollar": 80.49,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 274.92,
+        "total_r_plan": 1.61
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 861,
+        "win_pct": 32.1,
+        "total_dollar": 506.55,
+        "mean_dollar": 0.59,
+        "max_dd_dollar": 550.39,
+        "total_r_plan": 10.133
+      },
+      "held": {
+        "n": 861,
+        "win_pct": 32.1,
+        "total_dollar": 506.55,
+        "mean_dollar": 0.59,
+        "max_dd_dollar": 550.39,
+        "total_r_plan": 10.133
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.08,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 378,
+        "win_pct": 29.9,
+        "total_dollar": 79.27,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 275.98,
+        "total_r_plan": 1.586
+      },
+      "held": {
+        "n": 378,
+        "win_pct": 29.9,
+        "total_dollar": 79.27,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 275.98,
+        "total_r_plan": 1.586
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.08,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.08,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 848,
+        "win_pct": 31.0,
+        "total_dollar": 329.03,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 552.96,
+        "total_r_plan": 6.585
+      },
+      "held": {
+        "n": 848,
+        "win_pct": 31.0,
+        "total_dollar": 329.03,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 552.96,
+        "total_r_plan": 6.585
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 587,
+        "win_pct": 33.6,
+        "total_dollar": 62.96,
+        "mean_dollar": 0.11,
+        "max_dd_dollar": 224.84,
+        "total_r_plan": 1.261
+      },
+      "held": {
+        "n": 587,
+        "win_pct": 33.6,
+        "total_dollar": 62.96,
+        "mean_dollar": 0.11,
+        "max_dd_dollar": 224.84,
+        "total_r_plan": 1.261
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.9,
+        "total_dollar": 87.51,
+        "mean_dollar": 0.1,
+        "max_dd_dollar": 582.86,
+        "total_r_plan": 1.756
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.9,
+        "total_dollar": 87.51,
+        "mean_dollar": 0.1,
+        "max_dd_dollar": 582.86,
+        "total_r_plan": 1.756
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 571,
+        "win_pct": 33.1,
+        "total_dollar": 82.38,
+        "mean_dollar": 0.14,
+        "max_dd_dollar": 235.22,
+        "total_r_plan": 1.65
+      },
+      "held": {
+        "n": 571,
+        "win_pct": 33.1,
+        "total_dollar": 82.38,
+        "mean_dollar": 0.14,
+        "max_dd_dollar": 235.22,
+        "total_r_plan": 1.65
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 834,
+        "win_pct": 31.7,
+        "total_dollar": -71.06,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 653.27,
+        "total_r_plan": -1.419
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 31.7,
+        "total_dollar": -71.06,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 653.27,
+        "total_r_plan": -1.419
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 560,
+        "win_pct": 32.7,
+        "total_dollar": 87.64,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 237.9,
+        "total_r_plan": 1.755
+      },
+      "held": {
+        "n": 560,
+        "win_pct": 32.7,
+        "total_dollar": 87.64,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 237.9,
+        "total_r_plan": 1.755
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.8,
+        "total_dollar": 129.04,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 628.73,
+        "total_r_plan": 2.583
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.8,
+        "total_dollar": 129.04,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 628.73,
+        "total_r_plan": 2.583
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 512,
+        "win_pct": 31.2,
+        "total_dollar": -10.81,
+        "mean_dollar": -0.02,
+        "max_dd_dollar": 292.96,
+        "total_r_plan": -0.213
+      },
+      "held": {
+        "n": 512,
+        "win_pct": 31.2,
+        "total_dollar": -10.81,
+        "mean_dollar": -0.02,
+        "max_dd_dollar": 292.96,
+        "total_r_plan": -0.213
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.9,
+        "total_dollar": 87.51,
+        "mean_dollar": 0.1,
+        "max_dd_dollar": 582.86,
+        "total_r_plan": 1.756
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.9,
+        "total_dollar": 87.51,
+        "mean_dollar": 0.1,
+        "max_dd_dollar": 582.86,
+        "total_r_plan": 1.756
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 500,
+        "win_pct": 30.4,
+        "total_dollar": 2.68,
+        "mean_dollar": 0.01,
+        "max_dd_dollar": 305.24,
+        "total_r_plan": 0.057
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 30.4,
+        "total_dollar": 2.68,
+        "mean_dollar": 0.01,
+        "max_dd_dollar": 305.24,
+        "total_r_plan": 0.057
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 834,
+        "win_pct": 31.7,
+        "total_dollar": -71.06,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 653.27,
+        "total_r_plan": -1.419
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 31.7,
+        "total_dollar": -71.06,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 653.27,
+        "total_r_plan": -1.419
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 493,
+        "win_pct": 30.2,
+        "total_dollar": 26.18,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 311.58,
+        "total_r_plan": 0.527
+      },
+      "held": {
+        "n": 493,
+        "win_pct": 30.2,
+        "total_dollar": 26.18,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 311.58,
+        "total_r_plan": 0.527
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.8,
+        "total_dollar": 129.04,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 628.73,
+        "total_r_plan": 2.583
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.8,
+        "total_dollar": 129.04,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 628.73,
+        "total_r_plan": 2.583
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 388,
+        "win_pct": 30.7,
+        "total_dollar": -53.05,
+        "mean_dollar": -0.14,
+        "max_dd_dollar": 298.72,
+        "total_r_plan": -1.06
+      },
+      "held": {
+        "n": 388,
+        "win_pct": 30.7,
+        "total_dollar": -53.05,
+        "mean_dollar": -0.14,
+        "max_dd_dollar": 298.72,
+        "total_r_plan": -1.06
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.9,
+        "total_dollar": 87.51,
+        "mean_dollar": 0.1,
+        "max_dd_dollar": 582.86,
+        "total_r_plan": 1.756
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.9,
+        "total_dollar": 87.51,
+        "mean_dollar": 0.1,
+        "max_dd_dollar": 582.86,
+        "total_r_plan": 1.756
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 376,
+        "win_pct": 29.3,
+        "total_dollar": -52.34,
+        "mean_dollar": -0.14,
+        "max_dd_dollar": 293.62,
+        "total_r_plan": -1.046
+      },
+      "held": {
+        "n": 376,
+        "win_pct": 29.3,
+        "total_dollar": -52.34,
+        "mean_dollar": -0.14,
+        "max_dd_dollar": 293.62,
+        "total_r_plan": -1.046
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 834,
+        "win_pct": 31.7,
+        "total_dollar": -71.06,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 653.27,
+        "total_r_plan": -1.419
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 31.7,
+        "total_dollar": -71.06,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 653.27,
+        "total_r_plan": -1.419
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 373,
+        "win_pct": 29.5,
+        "total_dollar": -39.46,
+        "mean_dollar": -0.11,
+        "max_dd_dollar": 285.25,
+        "total_r_plan": -0.789
+      },
+      "held": {
+        "n": 373,
+        "win_pct": 29.5,
+        "total_dollar": -39.46,
+        "mean_dollar": -0.11,
+        "max_dd_dollar": 285.25,
+        "total_r_plan": -0.789
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.8,
+        "total_dollar": 129.04,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 628.73,
+        "total_r_plan": 2.583
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.8,
+        "total_dollar": 129.04,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 628.73,
+        "total_r_plan": 2.583
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 587,
+        "win_pct": 33.6,
+        "total_dollar": 122.3,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 221.85,
+        "total_r_plan": 2.449
+      },
+      "held": {
+        "n": 587,
+        "win_pct": 33.6,
+        "total_dollar": 122.3,
+        "mean_dollar": 0.21,
+        "max_dd_dollar": 221.85,
+        "total_r_plan": 2.449
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.6,
+        "total_dollar": 156.43,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 575.17,
+        "total_r_plan": 3.133
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.6,
+        "total_dollar": 156.43,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 575.17,
+        "total_r_plan": 3.133
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 571,
+        "win_pct": 33.1,
+        "total_dollar": 138.49,
+        "mean_dollar": 0.24,
+        "max_dd_dollar": 225.86,
+        "total_r_plan": 2.773
+      },
+      "held": {
+        "n": 571,
+        "win_pct": 33.1,
+        "total_dollar": 138.49,
+        "mean_dollar": 0.24,
+        "max_dd_dollar": 225.86,
+        "total_r_plan": 2.773
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 834,
+        "win_pct": 31.3,
+        "total_dollar": 23.92,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 638.04,
+        "total_r_plan": 0.48
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 31.3,
+        "total_dollar": 23.92,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 638.04,
+        "total_r_plan": 0.48
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 560,
+        "win_pct": 32.7,
+        "total_dollar": 146.98,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 227.9,
+        "total_r_plan": 2.943
+      },
+      "held": {
+        "n": 560,
+        "win_pct": 32.7,
+        "total_dollar": 146.98,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 227.9,
+        "total_r_plan": 2.943
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.5,
+        "total_dollar": 210.68,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 623.54,
+        "total_r_plan": 4.215
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.5,
+        "total_dollar": 210.68,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 623.54,
+        "total_r_plan": 4.215
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 512,
+        "win_pct": 31.2,
+        "total_dollar": 58.56,
+        "mean_dollar": 0.11,
+        "max_dd_dollar": 287.96,
+        "total_r_plan": 1.175
+      },
+      "held": {
+        "n": 512,
+        "win_pct": 31.2,
+        "total_dollar": 58.56,
+        "mean_dollar": 0.11,
+        "max_dd_dollar": 287.96,
+        "total_r_plan": 1.175
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.6,
+        "total_dollar": 156.43,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 575.17,
+        "total_r_plan": 3.133
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.6,
+        "total_dollar": 156.43,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 575.17,
+        "total_r_plan": 3.133
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 500,
+        "win_pct": 30.4,
+        "total_dollar": 63.51,
+        "mean_dollar": 0.13,
+        "max_dd_dollar": 300.24,
+        "total_r_plan": 1.274
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 30.4,
+        "total_dollar": 63.51,
+        "mean_dollar": 0.13,
+        "max_dd_dollar": 300.24,
+        "total_r_plan": 1.274
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 834,
+        "win_pct": 31.3,
+        "total_dollar": 23.92,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 638.04,
+        "total_r_plan": 0.48
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 31.3,
+        "total_dollar": 23.92,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 638.04,
+        "total_r_plan": 0.48
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 493,
+        "win_pct": 30.2,
+        "total_dollar": 91.71,
+        "mean_dollar": 0.19,
+        "max_dd_dollar": 306.58,
+        "total_r_plan": 1.837
+      },
+      "held": {
+        "n": 493,
+        "win_pct": 30.2,
+        "total_dollar": 91.71,
+        "mean_dollar": 0.19,
+        "max_dd_dollar": 306.58,
+        "total_r_plan": 1.837
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.5,
+        "total_dollar": 210.68,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 623.54,
+        "total_r_plan": 4.215
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.5,
+        "total_dollar": 210.68,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 623.54,
+        "total_r_plan": 4.215
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 388,
+        "win_pct": 30.7,
+        "total_dollar": -15.41,
+        "mean_dollar": -0.04,
+        "max_dd_dollar": 301.47,
+        "total_r_plan": -0.307
+      },
+      "held": {
+        "n": 388,
+        "win_pct": 30.7,
+        "total_dollar": -15.41,
+        "mean_dollar": -0.04,
+        "max_dd_dollar": 301.47,
+        "total_r_plan": -0.307
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.6,
+        "total_dollar": 156.43,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 575.17,
+        "total_r_plan": 3.133
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.6,
+        "total_dollar": 156.43,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 575.17,
+        "total_r_plan": 3.133
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 376,
+        "win_pct": 29.3,
+        "total_dollar": -14.87,
+        "mean_dollar": -0.04,
+        "max_dd_dollar": 299.08,
+        "total_r_plan": -0.296
+      },
+      "held": {
+        "n": 376,
+        "win_pct": 29.3,
+        "total_dollar": -14.87,
+        "mean_dollar": -0.04,
+        "max_dd_dollar": 299.08,
+        "total_r_plan": -0.296
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 834,
+        "win_pct": 31.3,
+        "total_dollar": 23.92,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 638.04,
+        "total_r_plan": 0.48
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 31.3,
+        "total_dollar": 23.92,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 638.04,
+        "total_r_plan": 0.48
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 373,
+        "win_pct": 29.5,
+        "total_dollar": -0.89,
+        "mean_dollar": -0.0,
+        "max_dd_dollar": 290.71,
+        "total_r_plan": -0.017
+      },
+      "held": {
+        "n": 373,
+        "win_pct": 29.5,
+        "total_dollar": -0.89,
+        "mean_dollar": -0.0,
+        "max_dd_dollar": 290.71,
+        "total_r_plan": -0.017
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.5,
+        "total_dollar": 210.68,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 623.54,
+        "total_r_plan": 4.215
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.5,
+        "total_dollar": 210.68,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 623.54,
+        "total_r_plan": 4.215
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 587,
+        "win_pct": 33.2,
+        "total_dollar": 202.66,
+        "mean_dollar": 0.35,
+        "max_dd_dollar": 221.85,
+        "total_r_plan": 4.057
+      },
+      "held": {
+        "n": 587,
+        "win_pct": 33.2,
+        "total_dollar": 202.66,
+        "mean_dollar": 0.35,
+        "max_dd_dollar": 221.85,
+        "total_r_plan": 4.057
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.1,
+        "total_dollar": 307.24,
+        "mean_dollar": 0.36,
+        "max_dd_dollar": 559.44,
+        "total_r_plan": 6.151
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.1,
+        "total_dollar": 307.24,
+        "mean_dollar": 0.36,
+        "max_dd_dollar": 559.44,
+        "total_r_plan": 6.151
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 571,
+        "win_pct": 32.7,
+        "total_dollar": 217.72,
+        "mean_dollar": 0.38,
+        "max_dd_dollar": 230.49,
+        "total_r_plan": 4.358
+      },
+      "held": {
+        "n": 571,
+        "win_pct": 32.7,
+        "total_dollar": 217.72,
+        "mean_dollar": 0.38,
+        "max_dd_dollar": 230.49,
+        "total_r_plan": 4.358
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 834,
+        "win_pct": 30.9,
+        "total_dollar": 163.62,
+        "mean_dollar": 0.2,
+        "max_dd_dollar": 609.09,
+        "total_r_plan": 3.275
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 30.9,
+        "total_dollar": 163.62,
+        "mean_dollar": 0.2,
+        "max_dd_dollar": 609.09,
+        "total_r_plan": 3.275
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 560,
+        "win_pct": 32.3,
+        "total_dollar": 227.86,
+        "mean_dollar": 0.41,
+        "max_dd_dollar": 233.17,
+        "total_r_plan": 4.56
+      },
+      "held": {
+        "n": 560,
+        "win_pct": 32.3,
+        "total_dollar": 227.86,
+        "mean_dollar": 0.41,
+        "max_dd_dollar": 233.17,
+        "total_r_plan": 4.56
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.1,
+        "total_dollar": 344.16,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 594.59,
+        "total_r_plan": 6.885
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.1,
+        "total_dollar": 344.16,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 594.59,
+        "total_r_plan": 6.885
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 512,
+        "win_pct": 30.9,
+        "total_dollar": 87.84,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 305.14,
+        "total_r_plan": 1.76
+      },
+      "held": {
+        "n": 512,
+        "win_pct": 30.9,
+        "total_dollar": 87.84,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 305.14,
+        "total_r_plan": 1.76
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.1,
+        "total_dollar": 307.24,
+        "mean_dollar": 0.36,
+        "max_dd_dollar": 559.44,
+        "total_r_plan": 6.151
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.1,
+        "total_dollar": 307.24,
+        "mean_dollar": 0.36,
+        "max_dd_dollar": 559.44,
+        "total_r_plan": 6.151
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 500,
+        "win_pct": 30.0,
+        "total_dollar": 96.31,
+        "mean_dollar": 0.19,
+        "max_dd_dollar": 317.42,
+        "total_r_plan": 1.93
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 30.0,
+        "total_dollar": 96.31,
+        "mean_dollar": 0.19,
+        "max_dd_dollar": 317.42,
+        "total_r_plan": 1.93
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 834,
+        "win_pct": 30.9,
+        "total_dollar": 163.62,
+        "mean_dollar": 0.2,
+        "max_dd_dollar": 609.09,
+        "total_r_plan": 3.275
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 30.9,
+        "total_dollar": 163.62,
+        "mean_dollar": 0.2,
+        "max_dd_dollar": 609.09,
+        "total_r_plan": 3.275
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 493,
+        "win_pct": 29.8,
+        "total_dollar": 126.16,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 323.76,
+        "total_r_plan": 2.526
+      },
+      "held": {
+        "n": 493,
+        "win_pct": 29.8,
+        "total_dollar": 126.16,
+        "mean_dollar": 0.26,
+        "max_dd_dollar": 323.76,
+        "total_r_plan": 2.526
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.1,
+        "total_dollar": 344.16,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 594.59,
+        "total_r_plan": 6.885
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.1,
+        "total_dollar": 344.16,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 594.59,
+        "total_r_plan": 6.885
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 388,
+        "win_pct": 30.4,
+        "total_dollar": 17.14,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 306.09,
+        "total_r_plan": 0.344
+      },
+      "held": {
+        "n": 388,
+        "win_pct": 30.4,
+        "total_dollar": 17.14,
+        "mean_dollar": 0.04,
+        "max_dd_dollar": 306.09,
+        "total_r_plan": 0.344
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 865,
+        "win_pct": 31.1,
+        "total_dollar": 307.24,
+        "mean_dollar": 0.36,
+        "max_dd_dollar": 559.44,
+        "total_r_plan": 6.151
+      },
+      "held": {
+        "n": 865,
+        "win_pct": 31.1,
+        "total_dollar": 307.24,
+        "mean_dollar": 0.36,
+        "max_dd_dollar": 559.44,
+        "total_r_plan": 6.151
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 376,
+        "win_pct": 29.0,
+        "total_dollar": 17.68,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 303.7,
+        "total_r_plan": 0.355
+      },
+      "held": {
+        "n": 376,
+        "win_pct": 29.0,
+        "total_dollar": 17.68,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 303.7,
+        "total_r_plan": 0.355
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 834,
+        "win_pct": 30.9,
+        "total_dollar": 163.62,
+        "mean_dollar": 0.2,
+        "max_dd_dollar": 609.09,
+        "total_r_plan": 3.275
+      },
+      "held": {
+        "n": 834,
+        "win_pct": 30.9,
+        "total_dollar": 163.62,
+        "mean_dollar": 0.2,
+        "max_dd_dollar": 609.09,
+        "total_r_plan": 3.275
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.1,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 373,
+        "win_pct": 29.2,
+        "total_dollar": 31.66,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 295.33,
+        "total_r_plan": 0.634
+      },
+      "held": {
+        "n": 373,
+        "win_pct": 29.2,
+        "total_dollar": 31.66,
+        "mean_dollar": 0.08,
+        "max_dd_dollar": 295.33,
+        "total_r_plan": 0.634
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.1,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.1,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 807,
+        "win_pct": 31.1,
+        "total_dollar": 344.16,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 594.59,
+        "total_r_plan": 6.885
+      },
+      "held": {
+        "n": 807,
+        "win_pct": 31.1,
+        "total_dollar": 344.16,
+        "mean_dollar": 0.43,
+        "max_dd_dollar": 594.59,
+        "total_r_plan": 6.885
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 531,
+        "win_pct": 34.8,
+        "total_dollar": 205.96,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 295.16,
+        "total_r_plan": 4.119
+      },
+      "held": {
+        "n": 531,
+        "win_pct": 34.8,
+        "total_dollar": 205.96,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 295.16,
+        "total_r_plan": 4.119
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 36.4,
+        "total_dollar": 600.56,
+        "mean_dollar": 0.81,
+        "max_dd_dollar": 558.27,
+        "total_r_plan": 12.012
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 36.4,
+        "total_dollar": 600.56,
+        "mean_dollar": 0.81,
+        "max_dd_dollar": 558.27,
+        "total_r_plan": 12.012
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 500,
+        "win_pct": 34.4,
+        "total_dollar": 194.52,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 328.86,
+        "total_r_plan": 3.89
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 34.4,
+        "total_dollar": 194.52,
+        "mean_dollar": 0.39,
+        "max_dd_dollar": 328.86,
+        "total_r_plan": 3.89
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 34.6,
+        "total_dollar": 515.44,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 512.06,
+        "total_r_plan": 10.31
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 34.6,
+        "total_dollar": 515.44,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 512.06,
+        "total_r_plan": 10.31
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 483,
+        "win_pct": 32.9,
+        "total_dollar": 202.09,
+        "mean_dollar": 0.42,
+        "max_dd_dollar": 322.12,
+        "total_r_plan": 4.042
+      },
+      "held": {
+        "n": 483,
+        "win_pct": 32.9,
+        "total_dollar": 202.09,
+        "mean_dollar": 0.42,
+        "max_dd_dollar": 322.12,
+        "total_r_plan": 4.042
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.8,
+        "total_dollar": 469.05,
+        "mean_dollar": 0.69,
+        "max_dd_dollar": 452.35,
+        "total_r_plan": 9.383
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.8,
+        "total_dollar": 469.05,
+        "mean_dollar": 0.69,
+        "max_dd_dollar": 452.35,
+        "total_r_plan": 9.383
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 473,
+        "win_pct": 32.3,
+        "total_dollar": 83.76,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 324.51,
+        "total_r_plan": 1.676
+      },
+      "held": {
+        "n": 473,
+        "win_pct": 32.3,
+        "total_dollar": 83.76,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 324.51,
+        "total_r_plan": 1.676
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 36.4,
+        "total_dollar": 600.56,
+        "mean_dollar": 0.81,
+        "max_dd_dollar": 558.27,
+        "total_r_plan": 12.012
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 36.4,
+        "total_dollar": 600.56,
+        "mean_dollar": 0.81,
+        "max_dd_dollar": 558.27,
+        "total_r_plan": 12.012
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 449,
+        "win_pct": 31.4,
+        "total_dollar": 65.44,
+        "mean_dollar": 0.15,
+        "max_dd_dollar": 350.98,
+        "total_r_plan": 1.308
+      },
+      "held": {
+        "n": 449,
+        "win_pct": 31.4,
+        "total_dollar": 65.44,
+        "mean_dollar": 0.15,
+        "max_dd_dollar": 350.98,
+        "total_r_plan": 1.308
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 34.6,
+        "total_dollar": 515.44,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 512.06,
+        "total_r_plan": 10.31
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 34.6,
+        "total_dollar": 515.44,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 512.06,
+        "total_r_plan": 10.31
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 432,
+        "win_pct": 31.5,
+        "total_dollar": 108.25,
+        "mean_dollar": 0.25,
+        "max_dd_dollar": 344.45,
+        "total_r_plan": 2.164
+      },
+      "held": {
+        "n": 432,
+        "win_pct": 31.5,
+        "total_dollar": 108.25,
+        "mean_dollar": 0.25,
+        "max_dd_dollar": 344.45,
+        "total_r_plan": 2.164
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.8,
+        "total_dollar": 469.05,
+        "mean_dollar": 0.69,
+        "max_dd_dollar": 452.35,
+        "total_r_plan": 9.383
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.8,
+        "total_dollar": 469.05,
+        "mean_dollar": 0.69,
+        "max_dd_dollar": 452.35,
+        "total_r_plan": 9.383
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 360,
+        "win_pct": 33.6,
+        "total_dollar": 91.24,
+        "mean_dollar": 0.25,
+        "max_dd_dollar": 300.87,
+        "total_r_plan": 1.826
+      },
+      "held": {
+        "n": 360,
+        "win_pct": 33.6,
+        "total_dollar": 91.24,
+        "mean_dollar": 0.25,
+        "max_dd_dollar": 300.87,
+        "total_r_plan": 1.826
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 36.4,
+        "total_dollar": 600.56,
+        "mean_dollar": 0.81,
+        "max_dd_dollar": 558.27,
+        "total_r_plan": 12.012
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 36.4,
+        "total_dollar": 600.56,
+        "mean_dollar": 0.81,
+        "max_dd_dollar": 558.27,
+        "total_r_plan": 12.012
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 349,
+        "win_pct": 31.8,
+        "total_dollar": -30.38,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 360.2,
+        "total_r_plan": -0.607
+      },
+      "held": {
+        "n": 349,
+        "win_pct": 31.8,
+        "total_dollar": -30.38,
+        "mean_dollar": -0.09,
+        "max_dd_dollar": 360.2,
+        "total_r_plan": -0.607
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 34.6,
+        "total_dollar": 515.44,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 512.06,
+        "total_r_plan": 10.31
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 34.6,
+        "total_dollar": 515.44,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 512.06,
+        "total_r_plan": 10.31
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 338,
+        "win_pct": 32.2,
+        "total_dollar": 29.87,
+        "mean_dollar": 0.09,
+        "max_dd_dollar": 337.63,
+        "total_r_plan": 0.597
+      },
+      "held": {
+        "n": 338,
+        "win_pct": 32.2,
+        "total_dollar": 29.87,
+        "mean_dollar": 0.09,
+        "max_dd_dollar": 337.63,
+        "total_r_plan": 0.597
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.8,
+        "total_dollar": 469.05,
+        "mean_dollar": 0.69,
+        "max_dd_dollar": 452.35,
+        "total_r_plan": 9.383
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.8,
+        "total_dollar": 469.05,
+        "mean_dollar": 0.69,
+        "max_dd_dollar": 452.35,
+        "total_r_plan": 9.383
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 531,
+        "win_pct": 34.8,
+        "total_dollar": 264.05,
+        "mean_dollar": 0.5,
+        "max_dd_dollar": 285.16,
+        "total_r_plan": 5.281
+      },
+      "held": {
+        "n": 531,
+        "win_pct": 34.8,
+        "total_dollar": 264.05,
+        "mean_dollar": 0.5,
+        "max_dd_dollar": 285.16,
+        "total_r_plan": 5.281
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 36.0,
+        "total_dollar": 675.75,
+        "mean_dollar": 0.91,
+        "max_dd_dollar": 560.14,
+        "total_r_plan": 13.515
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 36.0,
+        "total_dollar": 675.75,
+        "mean_dollar": 0.91,
+        "max_dd_dollar": 560.14,
+        "total_r_plan": 13.515
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 500,
+        "win_pct": 34.4,
+        "total_dollar": 257.32,
+        "mean_dollar": 0.51,
+        "max_dd_dollar": 318.86,
+        "total_r_plan": 5.146
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 34.4,
+        "total_dollar": 257.32,
+        "mean_dollar": 0.51,
+        "max_dd_dollar": 318.86,
+        "total_r_plan": 5.146
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 34.3,
+        "total_dollar": 612.33,
+        "mean_dollar": 0.87,
+        "max_dd_dollar": 490.18,
+        "total_r_plan": 12.248
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 34.3,
+        "total_dollar": 612.33,
+        "mean_dollar": 0.87,
+        "max_dd_dollar": 490.18,
+        "total_r_plan": 12.248
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 483,
+        "win_pct": 32.9,
+        "total_dollar": 269.45,
+        "mean_dollar": 0.56,
+        "max_dd_dollar": 312.12,
+        "total_r_plan": 5.389
+      },
+      "held": {
+        "n": 483,
+        "win_pct": 32.9,
+        "total_dollar": 269.45,
+        "mean_dollar": 0.56,
+        "max_dd_dollar": 312.12,
+        "total_r_plan": 5.389
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.5,
+        "total_dollar": 538.6,
+        "mean_dollar": 0.8,
+        "max_dd_dollar": 427.98,
+        "total_r_plan": 10.774
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.5,
+        "total_dollar": 538.6,
+        "mean_dollar": 0.8,
+        "max_dd_dollar": 427.98,
+        "total_r_plan": 10.774
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 473,
+        "win_pct": 32.3,
+        "total_dollar": 153.42,
+        "mean_dollar": 0.32,
+        "max_dd_dollar": 317.02,
+        "total_r_plan": 3.069
+      },
+      "held": {
+        "n": 473,
+        "win_pct": 32.3,
+        "total_dollar": 153.42,
+        "mean_dollar": 0.32,
+        "max_dd_dollar": 317.02,
+        "total_r_plan": 3.069
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 36.0,
+        "total_dollar": 675.75,
+        "mean_dollar": 0.91,
+        "max_dd_dollar": 560.14,
+        "total_r_plan": 13.515
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 36.0,
+        "total_dollar": 675.75,
+        "mean_dollar": 0.91,
+        "max_dd_dollar": 560.14,
+        "total_r_plan": 13.515
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 449,
+        "win_pct": 31.4,
+        "total_dollar": 133.52,
+        "mean_dollar": 0.3,
+        "max_dd_dollar": 343.49,
+        "total_r_plan": 2.67
+      },
+      "held": {
+        "n": 449,
+        "win_pct": 31.4,
+        "total_dollar": 133.52,
+        "mean_dollar": 0.3,
+        "max_dd_dollar": 343.49,
+        "total_r_plan": 2.67
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 34.3,
+        "total_dollar": 612.33,
+        "mean_dollar": 0.87,
+        "max_dd_dollar": 490.18,
+        "total_r_plan": 12.248
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 34.3,
+        "total_dollar": 612.33,
+        "mean_dollar": 0.87,
+        "max_dd_dollar": 490.18,
+        "total_r_plan": 12.248
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 432,
+        "win_pct": 31.5,
+        "total_dollar": 175.41,
+        "mean_dollar": 0.41,
+        "max_dd_dollar": 336.96,
+        "total_r_plan": 3.508
+      },
+      "held": {
+        "n": 432,
+        "win_pct": 31.5,
+        "total_dollar": 175.41,
+        "mean_dollar": 0.41,
+        "max_dd_dollar": 336.96,
+        "total_r_plan": 3.508
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.5,
+        "total_dollar": 538.6,
+        "mean_dollar": 0.8,
+        "max_dd_dollar": 427.98,
+        "total_r_plan": 10.774
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.5,
+        "total_dollar": 538.6,
+        "mean_dollar": 0.8,
+        "max_dd_dollar": 427.98,
+        "total_r_plan": 10.774
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 360,
+        "win_pct": 33.6,
+        "total_dollar": 115.54,
+        "mean_dollar": 0.32,
+        "max_dd_dollar": 295.87,
+        "total_r_plan": 2.312
+      },
+      "held": {
+        "n": 360,
+        "win_pct": 33.6,
+        "total_dollar": 115.54,
+        "mean_dollar": 0.32,
+        "max_dd_dollar": 295.87,
+        "total_r_plan": 2.312
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 36.0,
+        "total_dollar": 675.75,
+        "mean_dollar": 0.91,
+        "max_dd_dollar": 560.14,
+        "total_r_plan": 13.515
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 36.0,
+        "total_dollar": 675.75,
+        "mean_dollar": 0.91,
+        "max_dd_dollar": 560.14,
+        "total_r_plan": 13.515
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 349,
+        "win_pct": 31.8,
+        "total_dollar": -1.57,
+        "mean_dollar": -0.0,
+        "max_dd_dollar": 356.91,
+        "total_r_plan": -0.03
+      },
+      "held": {
+        "n": 349,
+        "win_pct": 31.8,
+        "total_dollar": -1.57,
+        "mean_dollar": -0.0,
+        "max_dd_dollar": 356.91,
+        "total_r_plan": -0.03
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 34.3,
+        "total_dollar": 612.33,
+        "mean_dollar": 0.87,
+        "max_dd_dollar": 490.18,
+        "total_r_plan": 12.248
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 34.3,
+        "total_dollar": 612.33,
+        "mean_dollar": 0.87,
+        "max_dd_dollar": 490.18,
+        "total_r_plan": 12.248
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 338,
+        "win_pct": 32.2,
+        "total_dollar": 57.76,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 335.26,
+        "total_r_plan": 1.156
+      },
+      "held": {
+        "n": 338,
+        "win_pct": 32.2,
+        "total_dollar": 57.76,
+        "mean_dollar": 0.17,
+        "max_dd_dollar": 335.26,
+        "total_r_plan": 1.156
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.5,
+        "total_dollar": 538.6,
+        "mean_dollar": 0.8,
+        "max_dd_dollar": 427.98,
+        "total_r_plan": 10.774
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.5,
+        "total_dollar": 538.6,
+        "mean_dollar": 0.8,
+        "max_dd_dollar": 427.98,
+        "total_r_plan": 10.774
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 531,
+        "win_pct": 34.5,
+        "total_dollar": 352.09,
+        "mean_dollar": 0.66,
+        "max_dd_dollar": 290.43,
+        "total_r_plan": 7.043
+      },
+      "held": {
+        "n": 531,
+        "win_pct": 34.5,
+        "total_dollar": 352.09,
+        "mean_dollar": 0.66,
+        "max_dd_dollar": 290.43,
+        "total_r_plan": 7.043
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 35.3,
+        "total_dollar": 819.07,
+        "mean_dollar": 1.1,
+        "max_dd_dollar": 524.98,
+        "total_r_plan": 16.382
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 35.3,
+        "total_dollar": 819.07,
+        "mean_dollar": 1.1,
+        "max_dd_dollar": 524.98,
+        "total_r_plan": 16.382
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 500,
+        "win_pct": 34.0,
+        "total_dollar": 348.07,
+        "mean_dollar": 0.7,
+        "max_dd_dollar": 324.13,
+        "total_r_plan": 6.962
+      },
+      "held": {
+        "n": 500,
+        "win_pct": 34.0,
+        "total_dollar": 348.07,
+        "mean_dollar": 0.7,
+        "max_dd_dollar": 324.13,
+        "total_r_plan": 6.962
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 33.9,
+        "total_dollar": 759.74,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 473.7,
+        "total_r_plan": 15.197
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 33.9,
+        "total_dollar": 759.74,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 473.7,
+        "total_r_plan": 15.197
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 483,
+        "win_pct": 32.5,
+        "total_dollar": 354.63,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 317.39,
+        "total_r_plan": 7.094
+      },
+      "held": {
+        "n": 483,
+        "win_pct": 32.5,
+        "total_dollar": 354.63,
+        "mean_dollar": 0.73,
+        "max_dd_dollar": 317.39,
+        "total_r_plan": 7.094
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.1,
+        "total_dollar": 681.13,
+        "mean_dollar": 1.01,
+        "max_dd_dollar": 403.85,
+        "total_r_plan": 13.625
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.1,
+        "total_dollar": 681.13,
+        "mean_dollar": 1.01,
+        "max_dd_dollar": 403.85,
+        "total_r_plan": 13.625
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 473,
+        "win_pct": 31.9,
+        "total_dollar": 179.83,
+        "mean_dollar": 0.38,
+        "max_dd_dollar": 324.19,
+        "total_r_plan": 3.597
+      },
+      "held": {
+        "n": 473,
+        "win_pct": 31.9,
+        "total_dollar": 179.83,
+        "mean_dollar": 0.38,
+        "max_dd_dollar": 324.19,
+        "total_r_plan": 3.597
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 35.3,
+        "total_dollar": 819.07,
+        "mean_dollar": 1.1,
+        "max_dd_dollar": 524.98,
+        "total_r_plan": 16.382
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 35.3,
+        "total_dollar": 819.07,
+        "mean_dollar": 1.1,
+        "max_dd_dollar": 524.98,
+        "total_r_plan": 16.382
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 449,
+        "win_pct": 31.0,
+        "total_dollar": 152.88,
+        "mean_dollar": 0.34,
+        "max_dd_dollar": 350.66,
+        "total_r_plan": 3.057
+      },
+      "held": {
+        "n": 449,
+        "win_pct": 31.0,
+        "total_dollar": 152.88,
+        "mean_dollar": 0.34,
+        "max_dd_dollar": 350.66,
+        "total_r_plan": 3.057
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 33.9,
+        "total_dollar": 759.74,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 473.7,
+        "total_r_plan": 15.197
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 33.9,
+        "total_dollar": 759.74,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 473.7,
+        "total_r_plan": 15.197
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 432,
+        "win_pct": 31.0,
+        "total_dollar": 195.35,
+        "mean_dollar": 0.45,
+        "max_dd_dollar": 344.31,
+        "total_r_plan": 3.907
+      },
+      "held": {
+        "n": 432,
+        "win_pct": 31.0,
+        "total_dollar": 195.35,
+        "mean_dollar": 0.45,
+        "max_dd_dollar": 344.31,
+        "total_r_plan": 3.907
+      },
+      "fold_wins": 5,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.1,
+        "total_dollar": 681.13,
+        "mean_dollar": 1.01,
+        "max_dd_dollar": 403.85,
+        "total_r_plan": 13.625
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.1,
+        "total_dollar": 681.13,
+        "mean_dollar": 1.01,
+        "max_dd_dollar": 403.85,
+        "total_r_plan": 13.625
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 360,
+        "win_pct": 33.3,
+        "total_dollar": 148.14,
+        "mean_dollar": 0.41,
+        "max_dd_dollar": 314.15,
+        "total_r_plan": 2.964
+      },
+      "held": {
+        "n": 360,
+        "win_pct": 33.3,
+        "total_dollar": 148.14,
+        "mean_dollar": 0.41,
+        "max_dd_dollar": 314.15,
+        "total_r_plan": 2.964
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 745,
+        "win_pct": 35.3,
+        "total_dollar": 819.07,
+        "mean_dollar": 1.1,
+        "max_dd_dollar": 524.98,
+        "total_r_plan": 16.382
+      },
+      "held": {
+        "n": 745,
+        "win_pct": 35.3,
+        "total_dollar": 819.07,
+        "mean_dollar": 1.1,
+        "max_dd_dollar": 524.98,
+        "total_r_plan": 16.382
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 349,
+        "win_pct": 31.5,
+        "total_dollar": 20.3,
+        "mean_dollar": 0.06,
+        "max_dd_dollar": 357.96,
+        "total_r_plan": 0.407
+      },
+      "held": {
+        "n": 349,
+        "win_pct": 31.5,
+        "total_dollar": 20.3,
+        "mean_dollar": 0.06,
+        "max_dd_dollar": 357.96,
+        "total_r_plan": 0.407
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 703,
+        "win_pct": 33.9,
+        "total_dollar": 759.74,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 473.7,
+        "total_r_plan": 15.197
+      },
+      "held": {
+        "n": 703,
+        "win_pct": 33.9,
+        "total_dollar": 759.74,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 473.7,
+        "total_r_plan": 15.197
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.15,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "hypothesis",
+      "pooled": {
+        "n": 338,
+        "win_pct": 32.0,
+        "total_dollar": 79.63,
+        "mean_dollar": 0.24,
+        "max_dd_dollar": 344.75,
+        "total_r_plan": 1.593
+      },
+      "held": {
+        "n": 338,
+        "win_pct": 32.0,
+        "total_dollar": 79.63,
+        "mean_dollar": 0.24,
+        "max_dd_dollar": 344.75,
+        "total_r_plan": 1.593
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.15,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.15,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 677,
+        "win_pct": 33.1,
+        "total_dollar": 681.13,
+        "mean_dollar": 1.01,
+        "max_dd_dollar": 403.85,
+        "total_r_plan": 13.625
+      },
+      "held": {
+        "n": 677,
+        "win_pct": 33.1,
+        "total_dollar": 681.13,
+        "mean_dollar": 1.01,
+        "max_dd_dollar": 403.85,
+        "total_r_plan": 13.625
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 494,
+        "win_pct": 33.0,
+        "total_dollar": 23.57,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 247.96,
+        "total_r_plan": 0.47
+      },
+      "held": {
+        "n": 494,
+        "win_pct": 33.0,
+        "total_dollar": 23.57,
+        "mean_dollar": 0.05,
+        "max_dd_dollar": 247.96,
+        "total_r_plan": 0.47
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 37.5,
+        "total_dollar": 638.56,
+        "mean_dollar": 0.97,
+        "max_dd_dollar": 302.8,
+        "total_r_plan": 12.771
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 37.5,
+        "total_dollar": 638.56,
+        "mean_dollar": 0.97,
+        "max_dd_dollar": 302.8,
+        "total_r_plan": 12.771
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 459,
+        "win_pct": 33.8,
+        "total_dollar": 84.47,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 263.45,
+        "total_r_plan": 1.689
+      },
+      "held": {
+        "n": 459,
+        "win_pct": 33.8,
+        "total_dollar": 84.47,
+        "mean_dollar": 0.18,
+        "max_dd_dollar": 263.45,
+        "total_r_plan": 1.689
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 36.0,
+        "total_dollar": 578.66,
+        "mean_dollar": 1.0,
+        "max_dd_dollar": 324.41,
+        "total_r_plan": 11.572
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 36.0,
+        "total_dollar": 578.66,
+        "mean_dollar": 1.0,
+        "max_dd_dollar": 324.41,
+        "total_r_plan": 11.572
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 437,
+        "win_pct": 32.5,
+        "total_dollar": -0.19,
+        "mean_dollar": -0.0,
+        "max_dd_dollar": 309.4,
+        "total_r_plan": -0.005
+      },
+      "held": {
+        "n": 437,
+        "win_pct": 32.5,
+        "total_dollar": -0.19,
+        "mean_dollar": -0.0,
+        "max_dd_dollar": 309.4,
+        "total_r_plan": -0.005
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 34.6,
+        "total_dollar": 491.36,
+        "mean_dollar": 0.9,
+        "max_dd_dollar": 344.68,
+        "total_r_plan": 9.826
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 34.6,
+        "total_dollar": 491.36,
+        "mean_dollar": 0.9,
+        "max_dd_dollar": 344.68,
+        "total_r_plan": 9.826
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 451,
+        "win_pct": 32.2,
+        "total_dollar": -55.2,
+        "mean_dollar": -0.12,
+        "max_dd_dollar": 335.33,
+        "total_r_plan": -1.103
+      },
+      "held": {
+        "n": 451,
+        "win_pct": 32.2,
+        "total_dollar": -55.2,
+        "mean_dollar": -0.12,
+        "max_dd_dollar": 335.33,
+        "total_r_plan": -1.103
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 37.5,
+        "total_dollar": 638.56,
+        "mean_dollar": 0.97,
+        "max_dd_dollar": 302.8,
+        "total_r_plan": 12.771
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 37.5,
+        "total_dollar": 638.56,
+        "mean_dollar": 0.97,
+        "max_dd_dollar": 302.8,
+        "total_r_plan": 12.771
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 406,
+        "win_pct": 32.5,
+        "total_dollar": -126.89,
+        "mean_dollar": -0.31,
+        "max_dd_dollar": 357.96,
+        "total_r_plan": -2.537
+      },
+      "held": {
+        "n": 406,
+        "win_pct": 32.5,
+        "total_dollar": -126.89,
+        "mean_dollar": -0.31,
+        "max_dd_dollar": 357.96,
+        "total_r_plan": -2.537
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 36.0,
+        "total_dollar": 578.66,
+        "mean_dollar": 1.0,
+        "max_dd_dollar": 324.41,
+        "total_r_plan": 11.572
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 36.0,
+        "total_dollar": 578.66,
+        "mean_dollar": 1.0,
+        "max_dd_dollar": 324.41,
+        "total_r_plan": 11.572
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 391,
+        "win_pct": 31.2,
+        "total_dollar": -112.55,
+        "mean_dollar": -0.29,
+        "max_dd_dollar": 363.46,
+        "total_r_plan": -2.251
+      },
+      "held": {
+        "n": 391,
+        "win_pct": 31.2,
+        "total_dollar": -112.55,
+        "mean_dollar": -0.29,
+        "max_dd_dollar": 363.46,
+        "total_r_plan": -2.251
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 34.6,
+        "total_dollar": 491.36,
+        "mean_dollar": 0.9,
+        "max_dd_dollar": 344.68,
+        "total_r_plan": 9.826
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 34.6,
+        "total_dollar": 491.36,
+        "mean_dollar": 0.9,
+        "max_dd_dollar": 344.68,
+        "total_r_plan": 9.826
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 346,
+        "win_pct": 33.5,
+        "total_dollar": -38.96,
+        "mean_dollar": -0.11,
+        "max_dd_dollar": 341.96,
+        "total_r_plan": -0.777
+      },
+      "held": {
+        "n": 346,
+        "win_pct": 33.5,
+        "total_dollar": -38.96,
+        "mean_dollar": -0.11,
+        "max_dd_dollar": 341.96,
+        "total_r_plan": -0.777
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 37.5,
+        "total_dollar": 638.56,
+        "mean_dollar": 0.97,
+        "max_dd_dollar": 302.8,
+        "total_r_plan": 12.771
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 37.5,
+        "total_dollar": 638.56,
+        "mean_dollar": 0.97,
+        "max_dd_dollar": 302.8,
+        "total_r_plan": 12.771
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 322,
+        "win_pct": 32.9,
+        "total_dollar": -158.55,
+        "mean_dollar": -0.49,
+        "max_dd_dollar": 453.33,
+        "total_r_plan": -3.17
+      },
+      "held": {
+        "n": 322,
+        "win_pct": 32.9,
+        "total_dollar": -158.55,
+        "mean_dollar": -0.49,
+        "max_dd_dollar": 453.33,
+        "total_r_plan": -3.17
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 36.0,
+        "total_dollar": 578.66,
+        "mean_dollar": 1.0,
+        "max_dd_dollar": 324.41,
+        "total_r_plan": 11.572
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 36.0,
+        "total_dollar": 578.66,
+        "mean_dollar": 1.0,
+        "max_dd_dollar": 324.41,
+        "total_r_plan": 11.572
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 312,
+        "win_pct": 32.4,
+        "total_dollar": -89.71,
+        "mean_dollar": -0.29,
+        "max_dd_dollar": 374.96,
+        "total_r_plan": -1.793
+      },
+      "held": {
+        "n": 312,
+        "win_pct": 32.4,
+        "total_dollar": -89.71,
+        "mean_dollar": -0.29,
+        "max_dd_dollar": 374.96,
+        "total_r_plan": -1.793
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=0.5",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.5,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 34.6,
+        "total_dollar": 491.36,
+        "mean_dollar": 0.9,
+        "max_dd_dollar": 344.68,
+        "total_r_plan": 9.826
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 34.6,
+        "total_dollar": 491.36,
+        "mean_dollar": 0.9,
+        "max_dd_dollar": 344.68,
+        "total_r_plan": 9.826
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 494,
+        "win_pct": 33.0,
+        "total_dollar": 78.08,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 243.96,
+        "total_r_plan": 1.56
+      },
+      "held": {
+        "n": 494,
+        "win_pct": 33.0,
+        "total_dollar": 78.08,
+        "mean_dollar": 0.16,
+        "max_dd_dollar": 243.96,
+        "total_r_plan": 1.56
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 37.0,
+        "total_dollar": 690.81,
+        "mean_dollar": 1.05,
+        "max_dd_dollar": 311.2,
+        "total_r_plan": 13.815
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 37.0,
+        "total_dollar": 690.81,
+        "mean_dollar": 1.05,
+        "max_dd_dollar": 311.2,
+        "total_r_plan": 13.815
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 459,
+        "win_pct": 33.8,
+        "total_dollar": 135.2,
+        "mean_dollar": 0.29,
+        "max_dd_dollar": 254.45,
+        "total_r_plan": 2.703
+      },
+      "held": {
+        "n": 459,
+        "win_pct": 33.8,
+        "total_dollar": 135.2,
+        "mean_dollar": 0.29,
+        "max_dd_dollar": 254.45,
+        "total_r_plan": 2.703
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 35.6,
+        "total_dollar": 629.79,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 289.99,
+        "total_r_plan": 12.593
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 35.6,
+        "total_dollar": 629.79,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 289.99,
+        "total_r_plan": 12.593
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 437,
+        "win_pct": 32.5,
+        "total_dollar": 49.61,
+        "mean_dollar": 0.11,
+        "max_dd_dollar": 299.37,
+        "total_r_plan": 0.991
+      },
+      "held": {
+        "n": 437,
+        "win_pct": 32.5,
+        "total_dollar": 49.61,
+        "mean_dollar": 0.11,
+        "max_dd_dollar": 299.37,
+        "total_r_plan": 0.991
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 34.4,
+        "total_dollar": 565.16,
+        "mean_dollar": 1.04,
+        "max_dd_dollar": 323.07,
+        "total_r_plan": 11.301
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 34.4,
+        "total_dollar": 565.16,
+        "mean_dollar": 1.04,
+        "max_dd_dollar": 323.07,
+        "total_r_plan": 11.301
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 451,
+        "win_pct": 32.2,
+        "total_dollar": 7.12,
+        "mean_dollar": 0.02,
+        "max_dd_dollar": 307.82,
+        "total_r_plan": 0.144
+      },
+      "held": {
+        "n": 451,
+        "win_pct": 32.2,
+        "total_dollar": 7.12,
+        "mean_dollar": 0.02,
+        "max_dd_dollar": 307.82,
+        "total_r_plan": 0.144
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 37.0,
+        "total_dollar": 690.81,
+        "mean_dollar": 1.05,
+        "max_dd_dollar": 311.2,
+        "total_r_plan": 13.815
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 37.0,
+        "total_dollar": 690.81,
+        "mean_dollar": 1.05,
+        "max_dd_dollar": 311.2,
+        "total_r_plan": 13.815
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 406,
+        "win_pct": 32.5,
+        "total_dollar": -76.93,
+        "mean_dollar": -0.19,
+        "max_dd_dollar": 335.45,
+        "total_r_plan": -1.538
+      },
+      "held": {
+        "n": 406,
+        "win_pct": 32.5,
+        "total_dollar": -76.93,
+        "mean_dollar": -0.19,
+        "max_dd_dollar": 335.45,
+        "total_r_plan": -1.538
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 35.6,
+        "total_dollar": 629.79,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 289.99,
+        "total_r_plan": 12.593
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 35.6,
+        "total_dollar": 629.79,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 289.99,
+        "total_r_plan": 12.593
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 391,
+        "win_pct": 31.2,
+        "total_dollar": -59.91,
+        "mean_dollar": -0.15,
+        "max_dd_dollar": 340.95,
+        "total_r_plan": -1.198
+      },
+      "held": {
+        "n": 391,
+        "win_pct": 31.2,
+        "total_dollar": -59.91,
+        "mean_dollar": -0.15,
+        "max_dd_dollar": 340.95,
+        "total_r_plan": -1.198
+      },
+      "fold_wins": 0,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 34.4,
+        "total_dollar": 565.16,
+        "mean_dollar": 1.04,
+        "max_dd_dollar": 323.07,
+        "total_r_plan": 11.301
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 34.4,
+        "total_dollar": 565.16,
+        "mean_dollar": 1.04,
+        "max_dd_dollar": 323.07,
+        "total_r_plan": 11.301
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 346,
+        "win_pct": 33.5,
+        "total_dollar": -18.52,
+        "mean_dollar": -0.05,
+        "max_dd_dollar": 329.91,
+        "total_r_plan": -0.368
+      },
+      "held": {
+        "n": 346,
+        "win_pct": 33.5,
+        "total_dollar": -18.52,
+        "mean_dollar": -0.05,
+        "max_dd_dollar": 329.91,
+        "total_r_plan": -0.368
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 37.0,
+        "total_dollar": 690.81,
+        "mean_dollar": 1.05,
+        "max_dd_dollar": 311.2,
+        "total_r_plan": 13.815
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 37.0,
+        "total_dollar": 690.81,
+        "mean_dollar": 1.05,
+        "max_dd_dollar": 311.2,
+        "total_r_plan": 13.815
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 322,
+        "win_pct": 32.9,
+        "total_dollar": -134.62,
+        "mean_dollar": -0.42,
+        "max_dd_dollar": 436.58,
+        "total_r_plan": -2.691
+      },
+      "held": {
+        "n": 322,
+        "win_pct": 32.9,
+        "total_dollar": -134.62,
+        "mean_dollar": -0.42,
+        "max_dd_dollar": 436.58,
+        "total_r_plan": -2.691
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 35.6,
+        "total_dollar": 629.79,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 289.99,
+        "total_r_plan": 12.593
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 35.6,
+        "total_dollar": 629.79,
+        "mean_dollar": 1.08,
+        "max_dd_dollar": 289.99,
+        "total_r_plan": 12.593
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 312,
+        "win_pct": 32.4,
+        "total_dollar": -61.55,
+        "mean_dollar": -0.2,
+        "max_dd_dollar": 362.53,
+        "total_r_plan": -1.23
+      },
+      "held": {
+        "n": 312,
+        "win_pct": 32.4,
+        "total_dollar": -61.55,
+        "mean_dollar": -0.2,
+        "max_dd_dollar": 362.53,
+        "total_r_plan": -1.23
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=0.6",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 0.6,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 34.4,
+        "total_dollar": 565.16,
+        "mean_dollar": 1.04,
+        "max_dd_dollar": 323.07,
+        "total_r_plan": 11.301
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 34.4,
+        "total_dollar": 565.16,
+        "mean_dollar": 1.04,
+        "max_dd_dollar": 323.07,
+        "total_r_plan": 11.301
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 494,
+        "win_pct": 32.6,
+        "total_dollar": 142.77,
+        "mean_dollar": 0.29,
+        "max_dd_dollar": 241.61,
+        "total_r_plan": 2.854
+      },
+      "held": {
+        "n": 494,
+        "win_pct": 32.6,
+        "total_dollar": 142.77,
+        "mean_dollar": 0.29,
+        "max_dd_dollar": 241.61,
+        "total_r_plan": 2.854
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 36.3,
+        "total_dollar": 814.39,
+        "mean_dollar": 1.24,
+        "max_dd_dollar": 283.22,
+        "total_r_plan": 16.286
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 36.3,
+        "total_dollar": 814.39,
+        "mean_dollar": 1.24,
+        "max_dd_dollar": 283.22,
+        "total_r_plan": 16.286
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 459,
+        "win_pct": 33.1,
+        "total_dollar": 183.77,
+        "mean_dollar": 0.4,
+        "max_dd_dollar": 255.33,
+        "total_r_plan": 3.675
+      },
+      "held": {
+        "n": 459,
+        "win_pct": 33.1,
+        "total_dollar": 183.77,
+        "mean_dollar": 0.4,
+        "max_dd_dollar": 255.33,
+        "total_r_plan": 3.675
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 34.9,
+        "total_dollar": 769.01,
+        "mean_dollar": 1.32,
+        "max_dd_dollar": 243.38,
+        "total_r_plan": 15.378
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 34.9,
+        "total_dollar": 769.01,
+        "mean_dollar": 1.32,
+        "max_dd_dollar": 243.38,
+        "total_r_plan": 15.378
+      },
+      "fold_wins": 5,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 437,
+        "win_pct": 31.8,
+        "total_dollar": 99.94,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 299.91,
+        "total_r_plan": 1.998
+      },
+      "held": {
+        "n": 437,
+        "win_pct": 31.8,
+        "total_dollar": 99.94,
+        "mean_dollar": 0.23,
+        "max_dd_dollar": 299.91,
+        "total_r_plan": 1.998
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=50,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 50,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 33.6,
+        "total_dollar": 693.96,
+        "mean_dollar": 1.28,
+        "max_dd_dollar": 270.37,
+        "total_r_plan": 13.878
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 33.6,
+        "total_dollar": 693.96,
+        "mean_dollar": 1.28,
+        "max_dd_dollar": 270.37,
+        "total_r_plan": 13.878
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 451,
+        "win_pct": 31.5,
+        "total_dollar": 62.59,
+        "mean_dollar": 0.14,
+        "max_dd_dollar": 331.56,
+        "total_r_plan": 1.253
+      },
+      "held": {
+        "n": 451,
+        "win_pct": 31.5,
+        "total_dollar": 62.59,
+        "mean_dollar": 0.14,
+        "max_dd_dollar": 331.56,
+        "total_r_plan": 1.253
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 36.3,
+        "total_dollar": 814.39,
+        "mean_dollar": 1.24,
+        "max_dd_dollar": 283.22,
+        "total_r_plan": 16.286
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 36.3,
+        "total_dollar": 814.39,
+        "mean_dollar": 1.24,
+        "max_dd_dollar": 283.22,
+        "total_r_plan": 16.286
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 406,
+        "win_pct": 31.8,
+        "total_dollar": -19.83,
+        "mean_dollar": -0.05,
+        "max_dd_dollar": 346.54,
+        "total_r_plan": -0.397
+      },
+      "held": {
+        "n": 406,
+        "win_pct": 31.8,
+        "total_dollar": -19.83,
+        "mean_dollar": -0.05,
+        "max_dd_dollar": 346.54,
+        "total_r_plan": -0.397
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 34.9,
+        "total_dollar": 769.01,
+        "mean_dollar": 1.32,
+        "max_dd_dollar": 243.38,
+        "total_r_plan": 15.378
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 34.9,
+        "total_dollar": 769.01,
+        "mean_dollar": 1.32,
+        "max_dd_dollar": 243.38,
+        "total_r_plan": 15.378
+      },
+      "fold_wins": 5,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 391,
+        "win_pct": 30.4,
+        "total_dollar": -7.96,
+        "mean_dollar": -0.02,
+        "max_dd_dollar": 354.02,
+        "total_r_plan": -0.16
+      },
+      "held": {
+        "n": 391,
+        "win_pct": 30.4,
+        "total_dollar": -7.96,
+        "mean_dollar": -0.02,
+        "max_dd_dollar": 354.02,
+        "total_r_plan": -0.16
+      },
+      "fold_wins": 1,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=65,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 65,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 33.6,
+        "total_dollar": 693.96,
+        "mean_dollar": 1.28,
+        "max_dd_dollar": 270.37,
+        "total_r_plan": 13.878
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 33.6,
+        "total_dollar": 693.96,
+        "mean_dollar": 1.28,
+        "max_dd_dollar": 270.37,
+        "total_r_plan": 13.878
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 346,
+        "win_pct": 32.9,
+        "total_dollar": 11.53,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 319.14,
+        "total_r_plan": 0.233
+      },
+      "held": {
+        "n": 346,
+        "win_pct": 32.9,
+        "total_dollar": 11.53,
+        "mean_dollar": 0.03,
+        "max_dd_dollar": 319.14,
+        "total_r_plan": 0.233
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=15,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 15,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 656,
+        "win_pct": 36.3,
+        "total_dollar": 814.39,
+        "mean_dollar": 1.24,
+        "max_dd_dollar": 283.22,
+        "total_r_plan": 16.286
+      },
+      "held": {
+        "n": 656,
+        "win_pct": 36.3,
+        "total_dollar": 814.39,
+        "mean_dollar": 1.24,
+        "max_dd_dollar": 283.22,
+        "total_r_plan": 16.286
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 322,
+        "win_pct": 32.3,
+        "total_dollar": -116.56,
+        "mean_dollar": -0.36,
+        "max_dd_dollar": 438.91,
+        "total_r_plan": -2.33
+      },
+      "held": {
+        "n": 322,
+        "win_pct": 32.3,
+        "total_dollar": -116.56,
+        "mean_dollar": -0.36,
+        "max_dd_dollar": 438.91,
+        "total_r_plan": -2.33
+      },
+      "fold_wins": 3,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=30,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 30,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 581,
+        "win_pct": 34.9,
+        "total_dollar": 769.01,
+        "mean_dollar": 1.32,
+        "max_dd_dollar": 243.38,
+        "total_r_plan": 15.378
+      },
+      "held": {
+        "n": 581,
+        "win_pct": 34.9,
+        "total_dollar": 769.01,
+        "mean_dollar": 1.32,
+        "max_dd_dollar": 243.38,
+        "total_r_plan": 15.378
+      },
+      "fold_wins": 5,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=True,give_r=0.2,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": true
+      },
+      "verdict": "do_not_promote",
+      "pooled": {
+        "n": 312,
+        "win_pct": 31.7,
+        "total_dollar": -51.2,
+        "mean_dollar": -0.16,
+        "max_dd_dollar": 372.57,
+        "total_r_plan": -1.023
+      },
+      "held": {
+        "n": 312,
+        "win_pct": 31.7,
+        "total_dollar": -51.2,
+        "mean_dollar": -0.16,
+        "max_dd_dollar": 372.57,
+        "total_r_plan": -1.023
+      },
+      "fold_wins": 2,
+      "n_folds": 5
+    },
+    {
+      "name": "dead_trade_min=60,exhaustion_rules=False,give_r=0.2,heat_min_pct=80,synth_rr=1.0",
+      "overlay": {
+        "give_r": 0.2,
+        "synth_rr": 1.0,
+        "heat_min_pct": 80,
+        "dead_trade_min": 60,
+        "exhaustion_rules": false
+      },
+      "verdict": "candidate",
+      "pooled": {
+        "n": 544,
+        "win_pct": 33.6,
+        "total_dollar": 693.96,
+        "mean_dollar": 1.28,
+        "max_dd_dollar": 270.37,
+        "total_r_plan": 13.878
+      },
+      "held": {
+        "n": 544,
+        "win_pct": 33.6,
+        "total_dollar": 693.96,
+        "mean_dollar": 1.28,
+        "max_dd_dollar": 270.37,
+        "total_r_plan": 13.878
+      },
+      "fold_wins": 4,
+      "n_folds": 5
+    }
+  ]
+}
