@@ -180,7 +180,7 @@ DEFAULT_CONFIG = {
     # Names under ai_watch_cheap_price (HCTI/BYSI): tighter notional.
     "ai_max_position_pct_cheap":   5.0,
     "ai_watch_cheap_price":        5.0,
-    "ai_reentry_cooldown_sec":    900.0,    # no re-arm this soon after an exit
+    "ai_reentry_cooldown_sec":    300.0,    # no re-arm this soon after an exit
     # After a wash-trade broker reject, freeze the symbol this long so the
     # poller does not re-place every 20s (2026-08-11 QMCO thrash).
     "ai_wash_cooldown_sec":      1800.0,
@@ -470,7 +470,7 @@ DEFAULT_CONFIG = {
     "ai_watch_exhaustion_heat_max_pct": 0.0,
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
-    "ai_watch_ob_allow_hot":          True,
+    "ai_watch_ob_allow_hot":          False,
     # False: cooling EXH refuses even at last / in-zone. Last-mode still
     # buys rising or pinned-OB names above the old pullback band.
     "ai_watch_in_zone_ignore_fade":  False,
@@ -497,7 +497,7 @@ DEFAULT_CONFIG = {
     # Watch the BLIND line in desk_report section 5. If it climbs toward the
     # whole book the constraint is the data feed (SIP), not this gate.
     # False: thin tape may still arm on zone; the ratchet does not need %R.
-    "ai_watch_require_exhaustion_data": False,
+    "ai_watch_require_exhaustion_data": True,
     # Widest the %R window may stretch, as a multiple of its nominal duration
     # (21 bars x 60s = 21 min, so 3.0 allows ~63 min). 0 disables the check.
     #
@@ -626,7 +626,7 @@ DEFAULT_CONFIG = {
     # symbol for the rest of the ET session. Winners and 0.5R runners may.
     # Off: a scratch may re-arm after cooldown. The 0.10R shelf re-scratches
     # a dead name; blocking the book all day left the ratchet with nothing.
-    "ai_dead_reentry_block":           False,
+    "ai_dead_reentry_block":           True,
     "ai_reentry_min_mfe_r":            0.50,
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
