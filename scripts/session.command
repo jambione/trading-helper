@@ -2,8 +2,10 @@
 # session.command — double-click from the Desktop for a full desk reset.
 #
 # Same as:  ./trading desk
-#   shutdown.command  +  stack  +  Discord (jump to latest)  +  caffeinate
-#   + window arrange  +  mac_agent (background)
+#   1. shutdown.command
+#   2. close Terminal / iTerm windows
+#   3. caffeinate -si
+#   4. startup.command  (new Terminal; Discord jumps to latest)
 #
 # Source of truth: scripts/session.command
 # Desktop copy:    ~/Desktop/session.command  (re-copy after edits)
@@ -30,10 +32,5 @@ echo "============================================"
 echo ""
 
 ./trading desk
-status=$?
-
-echo ""
-echo "This window can stay open (stack is in the background)."
-echo "Press any key to close the Terminal only."
-read -r -n1
-exit "$status"
+# desk quits Terminal; if we are still here (SSH), do not wait on a key.
+exit 0

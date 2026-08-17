@@ -140,8 +140,8 @@ if [ "$DO_RESTART" = 0 ]; then
   echo "[3/3] skip restart (--pull-only)"
 elif [ "$FULL_SESSION" = 1 ]; then
   echo "[3/3] full session: ./trading desk"
-  echo "   (Discord + caffeinate + windows + mac_agent — Mini console session)"
-  ssh_mini "cd '$MINI_REPO' && ./trading desk && ./trading status"
+  echo "   (shutdown → close terminals → caffeinate → startup on the Mini)"
+  ssh_mini "cd '$MINI_REPO' && ./trading desk"
 else
   echo "[3/3] ./trading restart  (reloads dashboard/engine/OCR code — not full desktop)"
   ssh_mini "cd '$MINI_REPO' && ./trading restart && ./trading status"

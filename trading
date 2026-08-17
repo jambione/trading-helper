@@ -7,8 +7,8 @@
 #   ./trading stop       graceful stop, then force-kill any stragglers
 #   ./trading restart    stop then start (use after editing code — processes
 #                        don't reload on their own)
-#   ./trading desk       Desktop session: shutdown + stack + Discord (scrolled
-#                        to latest) + caffeinate + windows + mac_agent
+#   ./trading desk       Desktop reset: shutdown → close terminals →
+#                        caffeinate → startup.command
 #   ./trading status     what's running, for how long, and which build
 #   ./trading logs       tail both logs (Ctrl+C to stop tailing)
 #
@@ -271,60 +271,80 @@ cmd_logs() {
     tail -n 40 -f $files
 }
 
+_close_terminal_windows() {
+    # Close Terminal / iTerm windows. The rest of the desk sequence is
+    # scheduled *outside* Terminal first so quitting does not abort it.
+    echo "[desk 2/4] Closing Terminal / iTerm windows..."
+    osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
+tell application "System Events"
+    if exists process "iTerm2" then
+        try
+            tell application "iTerm2" to quit
+        end try
+    end if
+    if exists process "iTerm" then
+        try
+            tell application "iTerm" to quit
+        end try
+    end if
+    if exists process "Terminal" then
+        try
+            tell application "Terminal" to quit
+        end try
+    end if
+end tell
+APPLESCRIPT
+}
+
+_schedule_caffeinate_then_startup() {
+    local starter="$ROOT/scripts/startup.command"
+    if [ ! -f "$starter" ]; then
+        echo "❌ scripts/startup.command missing"
+        return 1
+    fi
+    # Runs after Terminal has quit: caffeinate, then open startup.command
+    # (fresh Terminal window — same as double-clicking it on the Desktop).
+    local delayed="$LOGDIR/desk-continue.sh"
+    mkdir -p "$LOGDIR"
+    cat > "$delayed" <<EOF
+#!/bin/bash
+sleep 3
+# Keep the Mini awake on AC (same flags as run_trading_server.sh).
+if ! pgrep -f "caffeinate -si" >/dev/null 2>&1; then
+  /usr/bin/caffeinate -si >/dev/null 2>&1 &
+fi
+sleep 1
+open "$starter"
+EOF
+    chmod +x "$delayed"
+    # Launch via osascript so it is not a child of this Terminal session.
+    osascript -e "do shell script \"/bin/bash '$delayed' >/dev/null 2>&1 &\"" \
+        >/dev/null 2>&1 \
+        || nohup /bin/bash "$delayed" >/dev/null 2>&1 &
+}
+
 cmd_desk() {
-    # Full GUI session (same job as Desktop shutdown + startup), but
-    # mac_agent stays in the background so this is safe over SSH.
     echo ""
     echo "============================================"
     echo "  ./trading desk  $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "  1 shutdown  2 close terminals  3 caffeinate  4 startup"
     echo "============================================"
     echo ""
 
+    echo "[desk 1/4] shutdown.command"
     if [ -f "$ROOT/scripts/shutdown.command" ]; then
-        echo "[desk] Desktop shutdown..."
         bash "$ROOT/scripts/shutdown.command" </dev/null || true
     else
-        echo "[desk] shutdown.command missing — ./trading stop only"
         cmd_stop
     fi
-    sleep 1
 
-    echo "[desk] Starting stack..."
-    cmd_start "$@"
+    echo "[desk 3–4/4] Schedule caffeinate -si, then startup.command"
+    _schedule_caffeinate_then_startup
 
-    if ! pgrep -f "caffeinate -si" >/dev/null 2>&1; then
-        echo "[desk] caffeinate -si (keep Mini awake)"
-        nohup caffeinate -si >/dev/null 2>&1 &
-    else
-        echo "[desk] caffeinate already running"
-    fi
-
-    echo "[desk] Opening Discord → alerts + jump to latest..."
-    if [ -x "$ROOT/.venv/bin/python" ]; then
-        "$ROOT/.venv/bin/python" "$ROOT/open_discord_alerts.py" \
-            || echo "⚠ Could not open/scroll Discord — do it on the Mini"
-    else
-        echo "⚠ venv missing — open Discord manually"
-    fi
-
-    if [ -f "$ROOT/scripts/arrange_windows.sh" ]; then
-        echo "[desk] Arranging windows in 10s..."
-        bash "$ROOT/scripts/arrange_windows.sh" 10 &
-    fi
-
-    if [ -f "$ROOT/mac_agent.sh" ]; then
-        if ! _running "mac_agent.py"; then
-            echo "[desk] Starting mac_agent (background)"
-            nohup bash "$ROOT/mac_agent.sh" >"$LOGDIR/mac_agent.log" 2>&1 &
-            echo "$!" >> "$PIDFILE"
-        else
-            echo "[desk] mac_agent already running"
-        fi
-    fi
+    _close_terminal_windows
 
     echo ""
-    echo "✅ Desk session requested. OCR needs Discord visible, not minimized."
-    cmd_status
+    echo "✅ Shutdown done. Caffeinate + startup will run in a new Terminal."
 }
 
 case "${1:-}" in
@@ -346,8 +366,7 @@ usage: ./trading <command>
                       (add 'local' to skip the tunnel and stay local-only)
   stop                stop dashboard + engine + tunnel
   restart [local]     stop then start (reload code after edits)
-  desk                full Desktop session: shutdown + stack + Discord (latest)
-                      + caffeinate + window arrange + mac_agent
+  desk                shutdown → close terminals → caffeinate → startup
                       (aliases: session, full)
   status              what's running + which build
   logs                tail dashboard + engine (+ tunnel) logs
