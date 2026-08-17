@@ -2892,6 +2892,13 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIX):
             return await call_next(request)
 
+        # Local producers (Discord OCR on the same box) POST heartbeats here
+        # every couple of seconds with no browser session. Remote ingest still
+        # needs a token — only loopback is trusted.
+        if path == "/api/discord/ingest" and request.client and request.client.host in (
+                "127.0.0.1", "::1", "localhost"):
+            return await call_next(request)
+
         # CORS preflight passes through; CORSMiddleware handles the response
         if request.method == "OPTIONS":
             return await call_next(request)

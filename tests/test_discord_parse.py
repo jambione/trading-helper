@@ -402,3 +402,32 @@ def test_a_listed_ticker_needs_no_float_size():
     assert len(cards) == 1
     assert cards[0]["ticker"] == "VATE"
     assert cards[0]["off_universe"] is False
+
+
+def test_post_ingest_retries_after_401(monkeypatch):
+    calls = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=5):
+        calls.append(dict(req.headers))
+        if len(calls) == 1:
+            raise ds.urllib.error.HTTPError(
+                req.full_url, 401, "Unauthorized", hdrs=None, fp=None)
+        return _Resp()
+
+    monkeypatch.setattr(ds, "_AUTH_TOKEN", "stale")
+    monkeypatch.setattr(ds, "DASHBOARD_USER", "jmb")
+    monkeypatch.setattr(ds, "DASHBOARD_PASS", "x")
+    monkeypatch.setattr(ds, "_dashboard_login", lambda: "fresh")
+    monkeypatch.setattr(ds.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ds, "drop_counts", lambda: {})
+    ds._post_ingest([], [])
+    assert len(calls) == 2
+    assert "Bearer stale" in str(calls[0].get("Authorization") or calls[0].get("authorization"))
+    assert "Bearer fresh" in str(calls[1].get("Authorization") or calls[1].get("authorization"))

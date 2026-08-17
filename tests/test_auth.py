@@ -155,6 +155,16 @@ def test_logout_clears_cookie(auth_client):
     assert auth_client.get("/api/config").status_code == 401
 
 
+def test_discord_ingest_requires_auth(auth_client):
+    denied = auth_client.post("/api/discord/ingest", json={"alerts": []})
+    assert denied.status_code == 401
+
+    auth_client.post("/auth/login", json={"username": "alice", "password": "s3cret1"})
+    ok = auth_client.post("/api/discord/ingest", json={"alerts": []})
+    assert ok.status_code == 200
+    assert ok.json()["ok"] is True
+
+
 def test_login_page_is_the_form(auth_client):
     r = auth_client.get("/login")
     assert r.status_code == 200

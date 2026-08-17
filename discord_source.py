@@ -82,7 +82,62 @@ try:
 except Exception:  # pragma: no cover
     _native_ocr = None  # type: ignore
 CONFIG_FILE   = ROOT / "config" / "bot_config.json"
-DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:8888")
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:8888").rstrip("/")
+DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
+DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
+_AUTH_TOKEN = ""
+
+
+def _load_dashboard_creds() -> None:
+    """Fill DASHBOARD_USER/PASS from signal_engine.env when the shell didn't."""
+    global DASHBOARD_USER, DASHBOARD_PASS
+    if DASHBOARD_USER and DASHBOARD_PASS:
+        return
+    env_path = ROOT / "signal_engine.env"
+    if not env_path.exists():
+        return
+    try:
+        for raw in env_path.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key == "DASHBOARD_USER" and not DASHBOARD_USER:
+                DASHBOARD_USER = val
+            elif key == "DASHBOARD_PASS" and not DASHBOARD_PASS:
+                DASHBOARD_PASS = val
+    except OSError:
+        return
+
+
+def _dashboard_login() -> str:
+    """POST /auth/login and return the Bearer token, or '' on failure."""
+    if not DASHBOARD_USER or not DASHBOARD_PASS:
+        return ""
+    body = json.dumps({"username": DASHBOARD_USER, "password": DASHBOARD_PASS}).encode()
+    req = urllib.request.Request(
+        f"{DASHBOARD_URL}/auth/login",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+        if data.get("ok") and data.get("token"):
+            print(f"[discord] logged in as {DASHBOARD_USER!r}", flush=True)
+            return str(data["token"])
+        print(f"[discord] login failed: {data.get('error', 'no token')}", flush=True)
+    except Exception as e:
+        print(f"[discord] login error: {e}", flush=True)
+    return ""
+
+
+def _ensure_logged_in() -> None:
+    global _AUTH_TOKEN
+    if not _AUTH_TOKEN:
+        _AUTH_TOKEN = _dashboard_login()
 
 # A standard alert line carries this arrow marker between the ticker/headline and
 # the data payload. Two-or-more ">" tolerates OCR dropping a couple of arrows.
@@ -1173,33 +1228,52 @@ def _post_ingest(alerts: list[dict], sentiment: list, bb_live: list | None = Non
     sentiment carries SentimentEvent records (market/chat/chart direction).
     bb_live carries BBLiveCall records — display-only Trader Bro suggestions
     that deliberately do NOT feed the mention/burst system."""
-    try:
-        body = json.dumps({"alerts": alerts,
-                           "sentiment": [asdict(e) for e in sentiment],
-                           "bb_live": [asdict(c) for c in (bb_live or [])],
-                           "drops": drop_counts()}).encode()
-        req  = urllib.request.Request(
+    global _AUTH_TOKEN
+    body = json.dumps({"alerts": alerts,
+                       "sentiment": [asdict(e) for e in sentiment],
+                       "bb_live": [asdict(c) for c in (bb_live or [])],
+                       "drops": drop_counts()}).encode()
+    last_err: Exception | None = None
+    for attempt in range(2):
+        _ensure_logged_in()
+        headers = {"Content-Type": "application/json"}
+        if _AUTH_TOKEN:
+            headers["Authorization"] = f"Bearer {_AUTH_TOKEN}"
+        req = urllib.request.Request(
             f"{DASHBOARD_URL}/api/discord/ingest",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=5):
-            pass
-        for a in alerts:
-            print(f"  → {a['ticker']}", flush=True)
-    except urllib.error.URLError as e:
-        if isinstance(e.reason, TimeoutError) or "timed out" in str(e).lower():
-            print(f"[discord] POST timeout — dashboard slow? ({e})", flush=True)
-        elif alerts:
-            print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
-        else:
-            print(f"[discord] heartbeat POST failed: {e}", flush=True)
-    except Exception as e:
-        if alerts:
-            print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
-        else:
-            print(f"[discord] heartbeat POST failed: {e}", flush=True)
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+            for a in alerts:
+                print(f"  → {a['ticker']}", flush=True)
+            return
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 401 and attempt == 0:
+                print("[discord] 401 — re-authenticating…", flush=True)
+                _AUTH_TOKEN = _dashboard_login()
+                continue
+            break
+        except urllib.error.URLError as e:
+            last_err = e
+            break
+        except Exception as e:
+            last_err = e
+            break
+    e = last_err
+    if e is None:
+        return
+    if isinstance(e, urllib.error.URLError) and (
+            isinstance(e.reason, TimeoutError) or "timed out" in str(e).lower()):
+        print(f"[discord] POST timeout — dashboard slow? ({e})", flush=True)
+    elif alerts:
+        print(f"  → {[a['ticker'] for a in alerts]}  (API error: {e})", flush=True)
+    else:
+        print(f"[discord] heartbeat POST failed: {e}", flush=True)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -1269,6 +1343,12 @@ def main() -> None:
     cfg      = _load_config()
     poll_sec = float(cfg.get("discord_ocr_poll_sec", 2.5) or 2.5)
     cmd      = _ocr_command(cfg)
+    _load_dashboard_creds()
+    if DASHBOARD_USER:
+        _ensure_logged_in()
+    elif not _AUTH_TOKEN:
+        print("[discord] WARNING: DASHBOARD_USER unset — ingest POSTs will 401 if auth is on",
+              flush=True)
 
     print(f"[discord] OCR source started — polling every {poll_sec:g}s", flush=True)
     if cmd:
