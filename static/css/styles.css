@@ -1201,12 +1201,30 @@ body.mobile .icon-btn {
 }
 .watchlist-cols {
   grid-template-columns: 1.3fr 0.9fr 0.75fr 0.7fr !important;
+  column-gap: 10px;
 }
 .feed-cols--trending {
   grid-template-columns: 1.3fr 0.9fr 0.75fr 0.65fr !important;
+  column-gap: 10px;
 }
 .feed-cols--claude {
-  grid-template-columns: 1.05fr 0.75fr 0.7fr 1.5fr !important;
+  /* Ticker | Last | Chg | Notes — extra track for notes so CHG isn't glued on */
+  grid-template-columns: 1fr 0.7fr 0.65fr 1.85fr !important;
+  column-gap: 12px;
+}
+.panel-watchlist .cell-price,
+.panel-watchlist .cell-chg,
+.panel-watchlist .cell-rvol,
+.panel-watchlist .cell-vol {
+  text-align: right;
+}
+.panel-claude .cell-notes,
+.panel-claude .th[data-sort-col="notes"] {
+  padding-left: 14px;
+}
+.panel-claude .cell-chg,
+.panel-claude .th[data-sort-col="chg"] {
+  padding-right: 8px;
 }
 .feed-cols--ai-book {
   grid-template-columns: 1fr 1.15fr 0.8fr 0.8fr 0.75fr 0.85fr !important;
@@ -1876,7 +1894,8 @@ body.mobile .icon-btn {
 
 /* Sortable headers + rows — same chrome as Momentum Stocks (ticker-row) */
 .feed-table-header {
-  padding: 0 16px;
+  /* 10px rows pad + 8px ticker-row pad — keep header tracks over the values */
+  padding: 0 18px;
   border-bottom: 1px solid var(--border-hi);
   flex-shrink: 0;
   background: var(--nav2);
@@ -2453,7 +2472,8 @@ body.mobile .icon-btn {
 }
 
 .watchlist-table-header {
-  padding: 0 16px;
+  /* Match .watchlist-rows (10px) + .ticker-row (8px) so LAST/CHG/RVOL sit on values */
+  padding: 0 18px;
   border-bottom: 1px solid var(--border-hi);
   flex-shrink: 0;
   background: var(--nav2);
