@@ -466,8 +466,9 @@ DEFAULT_CONFIG = {
     # and OB fills were the loss bucket.
     "ai_watch_exhaustion_heat_min_pct": 20.0,
     # Refuse to arm once %R is already this extended (0–100).
-    # 0 disables the cap.
-    "ai_watch_exhaustion_heat_max_pct": 50.0,
+    # 0 = no cap. A 50 ceiling parked AMLX (EXH ~86) as "extended"
+    # while it was in/below the zone; operator wants those fills.
+    "ai_watch_exhaustion_heat_max_pct": 0.0,
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          False,

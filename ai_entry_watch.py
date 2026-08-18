@@ -3768,7 +3768,7 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         heat_min = 50.0 if raw_min is None else float(raw_min)
     except (TypeError, ValueError):
         heat_min = 50.0
-    raw_max = cfg.get("ai_watch_exhaustion_heat_max_pct", 90.0)
+    raw_max = cfg.get("ai_watch_exhaustion_heat_max_pct", 0.0)
     try:
         heat_max = 0.0 if raw_max is None else float(raw_max)
     except (TypeError, ValueError):

@@ -3376,6 +3376,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         "ai_watch_require_exhaustion_data": True,
         "rte_threshold": 20,
         "ai_watch_exhaustion_heat_min_pct": 50.0,
+        "ai_watch_exhaustion_heat_max_pct": 90.0,
     }
     # Rising through 70% — the new admission (was refused as not_overbought).
     heat = {
@@ -3407,6 +3408,11 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
     }
     ok, why = ew.exhaustion_allows_buy(too_hot, cfg)
     assert ok is False and why == "already_extended"
+
+    # Operator default: no heat cap — AMLX-style 86 EXH still arms.
+    no_cap = dict(cfg, ai_watch_exhaustion_heat_max_pct=0.0)
+    ok, why = ew.exhaustion_allows_buy(too_hot, no_cap)
+    assert ok is True and why == "overbought"
 
     # Desk-hot (trending / momentum) already in OB may still arm.
     hot_tr = dict(too_hot, source="trending")
