@@ -168,7 +168,11 @@ function _renderTable(allRows) {
   _noteSymbols(_panelEl, (rows || []).map(r => r.ticker));
 
   if (!rows.length) {
-    _rowsEl.innerHTML = '';
+    const nBook = (allRows || []).filter(r => _isBookOnly(r)).length;
+    const msg = nBook
+      ? 'No Discord alerts — Book tape names stay off this list'
+      : 'No Discord alerts yet';
+    _rowsEl.innerHTML = `<span class="tx-placeholder">${msg}</span>`;
     _prevPrices = {};
     return;
   }

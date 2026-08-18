@@ -281,6 +281,7 @@ function _bookRows(book) {
       block_code: w.block_code || null,
       blocker: w.blocker || w.block_reason || null,
       block_reason: w.block_reason || w.blocker || null,
+      block_detail: w.block_detail || null,
       exhaustion: w.exhaustion != null ? w.exhaustion : null,
       exhaustion_state: w.exhaustion_state || null,
       pctr: w.pctr != null ? w.pctr : null,
@@ -567,7 +568,10 @@ function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
       : `Stale (${ageSec != null ? ageSec + 's' : '?'}) — book thread may be down · ${detail}`;
   }
 
-  if (sectionEl) sectionEl.hidden = false;
+  if (sectionEl) {
+    sectionEl.hidden = false;
+    sectionEl.classList.toggle('ai-book--has-open', nOpen > 0);
+  }
 
   if (!rows.length) {
     // Hold open rows through a one-tick empty wire (broker blip / race).
@@ -622,8 +626,7 @@ function _createBookRow(r, owner) {
   el.addEventListener('click', () => _add(el, sym));
   const statusEl0 = el.querySelector('.ai-book-status');
   if (statusEl0) {
-    const label = _bookBlockerLabel(r);
-    statusEl0.title = label && label !== '—' ? label : '';
+    statusEl0.title = _bookBlockerTitle(r);
   }
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
@@ -644,8 +647,9 @@ function _bookBlockerLabel(r) {
   if (phase === 'submitted') return 'sent';
   const b = String(r.blocker || r.block_reason || '').trim();
   const code = String(r.block_code || '').trim();
-  // A real refuse (heat low, rvol low, no %R) wins over a leftover "in zone".
-  if (b && !(r.ready) && !['in zone', 'in_zone'].includes(b.toLowerCase()) && code !== 'in_zone') {
+  const detail = String(r.block_detail || '').trim();
+  // A real refuse (heat low, dead today) wins over leftover "in zone" / buy.
+  if (b && !(r.ready) && !['in zone', 'in_zone', 'buy'].includes(b.toLowerCase()) && code !== 'in_zone') {
     return b;
   }
   if (code && !r.ready && !['in_zone', 'placing'].includes(code)) {
@@ -653,7 +657,21 @@ function _bookBlockerLabel(r) {
   }
   if (r.ready || phase === 'ready') return 'buy';
   if (b) return b;
+  if (detail) return detail;
   return 'watching';
+}
+
+function _bookBlockerTitle(r) {
+  const label = _bookBlockerLabel(r);
+  const detail = String((r && r.block_detail) || '').trim();
+  const code = String((r && r.block_code) || '').trim();
+  const parts = [];
+  if (label && label !== '—') parts.push(label);
+  if (detail && detail.toLowerCase() !== label.toLowerCase()) parts.push(detail);
+  if (code && !parts.some(p => p.toLowerCase().includes(code.replace(/_/g, ' ')))) {
+    parts.push(code.replace(/_/g, ' '));
+  }
+  return parts.join(' — ');
 }
 
 function _bookBlockerClass(r) {
@@ -679,7 +697,7 @@ function _updateBookRow(el, r) {
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) {
     statusEl.className = _bookBlockerClass(r);
-    statusEl.title = statusLabel && statusLabel !== '—' ? statusLabel : '';
+    statusEl.title = _bookBlockerTitle(r);
   }
   const trail = _fmtTrail(_bookStopPx(r));
   const zoneEl = el.querySelector('.cell-zone');
@@ -756,9 +774,8 @@ function _updateBookRow(el, r) {
     plEl.className = `cell-pl ${isOpen ? _plClass(r) : ''}`.trim();
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
-  el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'in zone');
+  el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'buy');
   if (el.title) el.title = '';
-  if (statusEl && statusEl.title) statusEl.title = '';
 }
 
 function _bookRowHtml(r) {
@@ -789,7 +806,7 @@ function _bookRowHtml(r) {
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}</div>`
-    + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
+    + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-zone ${_zoneClass(r)}"${_fmtZoneTitle(r) ? ` title="${_esc(_fmtZoneTitle(r))}"` : ''}>${_esc(_fmtZone(r))}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`

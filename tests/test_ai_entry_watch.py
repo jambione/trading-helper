@@ -826,7 +826,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "agreement", "reason", "source", "ready", "in_zone",
         # Which geometry drew the band — double_bottom vs the offset fallback.
         "zone_kind",
-        "block_code", "blocker", "block_reason",
+        "block_code", "blocker", "block_reason", "block_detail",
     }
     for row in snap:
         assert set(row.keys()) == keys
@@ -3453,13 +3453,20 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
         "symbol": "RUM", "source": "xai", "rvol": 0.6,
         "entry_low": 7.54, "entry_high": 7.65, "stop_price": 7.20,
         "zone_kind": "double_bottom",
-        "block_code": "dead_reentry", "blocker": "loser once",
+        "block_code": "dead_reentry", "blocker": "dead today",
     }
     ew.apply_tape_blocker(rum, 7.65)
     assert rum["in_zone"] is True
     assert rum["ready"] is False
     assert rum["block_code"] == "dead_reentry"
-    assert "loser" in str(rum["blocker"]).lower()
+    assert "dead" in str(rum["blocker"]).lower()
+
+    # Tape above the band must not hide a session refuse (DUOT 08-18).
+    rum_hi = dict(rum, entry_low=11.79, entry_high=11.89, stop_price=11.25)
+    ew.apply_tape_blocker(rum_hi, 12.11)
+    assert rum_hi["in_zone"] is False
+    assert rum_hi["ready"] is False
+    assert rum_hi["block_code"] == "dead_reentry"
 
 
 def _prime_ohlc(ew, symbol, rows, now, *, step_sec=60.0):

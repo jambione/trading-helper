@@ -149,8 +149,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "already_extended": "extended",
     "in_zone_fade_ok": "in zone",
     "overbought_hot": "OB hot",
-    "dead_reentry": "loser once",
-    "loser_reentry": "loser once",
+    "dead_reentry": "dead today",
+    "loser_reentry": "dead today",
     "thin_rvol": "rvol low",
     "look_wash": "WASH",
     "not_heating_cooling": "cooling",
@@ -224,6 +224,8 @@ def set_block_reason(
     rec["block_ts"] = float(now if now is not None else time.time())
     if detail:
         rec["block_detail"] = str(detail)[:200]
+    else:
+        rec.pop("block_detail", None)
 
 
 def clear_block_reason(rec: dict) -> None:
@@ -523,6 +525,19 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
         )
         row["block_reason"] = row.get("blocker")
 
+    # Capital/session refuses stay visible even when last is above the band.
+    # DUOT 08-18: tape in-zone painted "buy" while the poller had already
+    # dead-reentry'd, then stamped above_zone off a stale REST ask.
+    if keep and not arm_at_last(_push_cfg()):
+        if last > max(lo, hi):
+            row["in_zone"] = False
+        elif ask_in_zone(last, lo, hi, 0.0):
+            row["in_zone"] = True
+        else:
+            row["in_zone"] = False
+        _keep_stored()
+        return
+
     if arm_at_last(_push_cfg()):
         if keep:
             _keep_stored()
@@ -752,6 +767,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "block_code": b_code,
             "blocker": b_label,
             "block_reason": b_label,
+            "block_detail": rec.get("block_detail"),
         })
     # Ready first, then higher score, then symbol for stable UI.
     rows.sort(key=lambda r: (
@@ -846,6 +862,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "block_code": b_code,
         "blocker": b_label,
         "block_reason": b_label,
+        "block_detail": rec.get("block_detail"),
         "qty": None,
         "avg_entry": None,
         "pl": None,
@@ -5406,7 +5423,8 @@ def should_arm_buy(
         allowed = set(armable)
         if not bool(cfg.get("ai_watch_require_db_zone", True)):
             allowed.add("offset")
-        if zk not in allowed:
+        # Missing zone_kind is a model / test structure, not the offset fallback.
+        if zk and zk not in allowed:
             return False, "offset_zone"
     try:
         min_rr = float(cfg.get("ai_min_reward_risk", 0) or 0)
@@ -6457,6 +6475,27 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         except (TypeError, ValueError):
             bid_f = None
 
+        # Session/capital refuses first so State never says "buy" / "above
+        # zone" for a name we will not arm even if last sits in the band.
+        try:
+            cool = float(cfg.get("ai_reentry_cooldown_sec", 900.0) or 0.0)
+        except (TypeError, ValueError):
+            cool = 0.0
+        if cool > 0:
+            last_exit = _recent_exit_ts(sym)
+            if last_exit and (t0 - last_exit) < cool:
+                _skip("reentry_cooldown",
+                      detail=f"{int(cool - (t0 - last_exit))}s left")
+                continue
+        if _dead_reentry_blocked(sym, t0, cfg):
+            _skip("dead_reentry", detail="already dead today")
+            continue
+        wash_until = float(_wash_cooldown_until.get(sym) or 0.0)
+        if wash_until > t0:
+            _skip("wash_cooldown",
+                  detail=f"{int(wash_until - t0)}s left")
+            continue
+
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg)
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
@@ -6555,26 +6594,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         if not gate_ok:
             _skip(_blocker_for_gate(gate_why), detail=gate_why)
-            continue
-
-        # Re-entry cooldown: a name that just stopped out must not re-arm
-        # inside the same move.
-        cool = float(cfg.get("ai_reentry_cooldown_sec", 900.0) or 0.0)
-        if cool > 0:
-            last_exit = _recent_exit_ts(sym)
-            if last_exit and (t0 - last_exit) < cool:
-                _skip("reentry_cooldown",
-                      detail=f"{int(cool - (t0 - last_exit))}s left")
-                continue
-        if _dead_reentry_blocked(sym, t0, cfg):
-            _skip("dead_reentry", detail="already dead today")
-            continue
-
-        # Wash-trade cooldown (broker reject thrash — independent of exits).
-        wash_until = float(_wash_cooldown_until.get(sym) or 0.0)
-        if wash_until > t0:
-            _skip("wash_cooldown",
-                  detail=f"{int(wash_until - t0)}s left")
             continue
 
         if not allow_buys:

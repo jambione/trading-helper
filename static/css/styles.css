@@ -2435,6 +2435,38 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-zone.zone--above { color: #c4b5fd; }
 .panel-ai-watch .feed-cols--ai-book .cell-zone.zone--below { color: #fbbf24; }
 
+/* Mobile + an open long: drop State/Zone so Last, Stop, EXH, P&L can breathe. */
+body.mobile .panel-ai-watch.ai-book--has-open .th-state,
+body.mobile .panel-ai-watch.ai-book--has-open .th-zone,
+body.mobile .panel-ai-watch.ai-book--has-open .ai-book-status,
+body.mobile .panel-ai-watch.ai-book--has-open .cell-zone {
+  display: none !important;
+}
+body.mobile .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
+  grid-template-columns:
+    minmax(56px, 1fr)
+    minmax(64px, 1fr)
+    minmax(58px, 0.9fr)
+    minmax(52px, 0.8fr)
+    minmax(64px, 1.1fr) !important;
+}
+@media (max-width: 700px) {
+  .panel-ai-watch.ai-book--has-open .th-state,
+  .panel-ai-watch.ai-book--has-open .th-zone,
+  .panel-ai-watch.ai-book--has-open .ai-book-status,
+  .panel-ai-watch.ai-book--has-open .cell-zone {
+    display: none !important;
+  }
+  .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
+    grid-template-columns:
+      minmax(56px, 1fr)
+      minmax(64px, 1fr)
+      minmax(58px, 0.9fr)
+      minmax(52px, 0.8fr)
+      minmax(64px, 1.1fr) !important;
+  }
+}
+
 .feed-row--ai-open {
   border-color: rgba(139, 92, 246, 0.28);
   background: rgba(139, 92, 246, 0.06);
