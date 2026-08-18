@@ -456,7 +456,7 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
                 float(row.get("entry_high") or 0) * 1.06 or 1.0
             ),
             "reward_risk": row.get("reward_risk") or 0.6,
-            "zone_kind": row.get("zone_kind") or "double_bottom",
+            "zone_kind": row.get("zone_kind") or "pullback_band",
             "synthetic": str(row.get("zone_kind") or "").lower()
             in ("pullback_band", "offset"),
         },

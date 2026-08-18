@@ -262,6 +262,8 @@ function _bookRows(book) {
       wait_kind: w.wait_kind,
       entry_low: w.entry_low,
       entry_high: w.entry_high,
+      zone_kind: w.zone_kind || null,
+      in_zone: !!w.in_zone,
       stop_price: w.stop_price != null ? w.stop_price : null,
       local_stop: w.local_stop != null ? w.local_stop : null,
       risk_per_share: w.risk_per_share != null ? w.risk_per_share : null,
@@ -680,6 +682,13 @@ function _updateBookRow(el, r) {
     statusEl.title = statusLabel && statusLabel !== '—' ? statusLabel : '';
   }
   const trail = _fmtTrail(_bookStopPx(r));
+  const zoneEl = el.querySelector('.cell-zone');
+  if (zoneEl) {
+    _setText(zoneEl, _fmtZone(r));
+    zoneEl.className = `cell-zone ${_zoneClass(r)}`.trim();
+    const zTip = _fmtZoneTitle(r);
+    zoneEl.title = zTip || '';
+  }
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -781,8 +790,9 @@ function _bookRowHtml(r) {
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}</div>`
     + `<div class="${statusCls}">${_esc(statusLabel)}</div>`
-    + `<div class="cell-trail">${_esc(trail)}</div>`
+    + `<div class="cell-zone ${_zoneClass(r)}"${_fmtZoneTitle(r) ? ` title="${_esc(_fmtZoneTitle(r))}"` : ''}>${_esc(_fmtZone(r))}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
+    + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
@@ -814,6 +824,55 @@ function _bookStopPx(r) {
 function _fmtTrail(v) {
   const n = Number(v);
   return v != null && Number.isFinite(n) && n > 0 ? `$${n.toFixed(2)}` : '—';
+}
+
+function _zonePx(x) {
+  const n = Number(x);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 100) return n.toFixed(2);
+  if (n >= 1) return n.toFixed(2);
+  return n.toFixed(3);
+}
+
+function _fmtZone(r) {
+  const lo = r && r.entry_low != null ? Number(r.entry_low) : NaN;
+  const hi = r && r.entry_high != null ? Number(r.entry_high) : NaN;
+  const a = _zonePx(Math.min(lo, hi));
+  const b = _zonePx(Math.max(lo, hi));
+  if (!a || !b) return '—';
+  return `${a}–${b}`;
+}
+
+function _zoneWhere(r) {
+  const lo = r && r.entry_low != null ? Number(r.entry_low) : NaN;
+  const hi = r && r.entry_high != null ? Number(r.entry_high) : NaN;
+  const last = r && (r.price != null ? Number(r.price)
+    : (r.last_ask != null ? Number(r.last_ask) : NaN));
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0 || hi <= 0
+      || !Number.isFinite(last) || last <= 0) {
+    return '';
+  }
+  const top = Math.max(lo, hi);
+  const bot = Math.min(lo, hi);
+  if (last > top) return 'above';
+  if (last < bot) return 'below';
+  return 'in';
+}
+
+function _zoneClass(r) {
+  const w = _zoneWhere(r);
+  return w ? `zone--${w}` : '';
+}
+
+function _fmtZoneTitle(r) {
+  const band = _fmtZone(r);
+  if (band === '—') return '';
+  const kind = String((r && r.zone_kind) || '').replace(/_/g, ' ');
+  const where = _zoneWhere(r);
+  const last = r && (r.price != null ? Number(r.price)
+    : (r.last_ask != null ? Number(r.last_ask) : NaN));
+  const lastS = Number.isFinite(last) && last > 0 ? `last $${last.toFixed(2)}` : '';
+  return [kind || 'zone', band, lastS, where].filter(Boolean).join(' · ');
 }
 
 function _bookSourceLabel(source) {

@@ -1227,7 +1227,15 @@ body.mobile .icon-btn {
   padding-right: 8px;
 }
 .feed-cols--ai-book {
-  grid-template-columns: 1fr 1.15fr 0.8fr 0.8fr 0.75fr 0.85fr !important;
+  grid-template-columns:
+    minmax(52px, 1.0fr)
+    minmax(5.5rem, 1.15fr)
+    minmax(88px, 1.15fr)
+    minmax(56px, 0.75fr)
+    minmax(52px, 0.7fr)
+    minmax(48px, 0.55fr)
+    minmax(36px, 0.45fr)
+    minmax(56px, 0.8fr) !important;
 }
 
 /* Remove stays available on hover without a permanent column */
@@ -2345,7 +2353,8 @@ body.mobile .icon-btn {
 .panel-ai-watch .ai-book-table-header .th:nth-child(3),
 .panel-ai-watch .ai-book-table-header .th:nth-child(4),
 .panel-ai-watch .ai-book-table-header .th:nth-child(5),
-.panel-ai-watch .ai-book-table-header .th:nth-child(7) { text-align: right; }
+.panel-ai-watch .ai-book-table-header .th:nth-child(6),
+.panel-ai-watch .ai-book-table-header .th:nth-child(8) { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
@@ -2389,15 +2398,16 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | Blocker | RStop | Price | EXH | Qty | P&L */
+  /* Ticker | State | Zone | Last | Stop | EXH | Qty | P&L */
   grid-template-columns:
-    minmax(52px, 1.1fr)
-    minmax(6.5rem, 1.35fr)
-    minmax(58px, 0.8fr)
-    minmax(56px, 0.8fr)
-    minmax(48px, 0.6fr)
-    minmax(36px, 0.5fr)
-    minmax(56px, 0.85fr);
+    minmax(52px, 1.0fr)
+    minmax(5.5rem, 1.15fr)
+    minmax(88px, 1.15fr)
+    minmax(56px, 0.75fr)
+    minmax(52px, 0.7fr)
+    minmax(48px, 0.55fr)
+    minmax(36px, 0.45fr)
+    minmax(56px, 0.8fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2415,11 +2425,15 @@ body.mobile .icon-btn {
   white-space: normal;
   line-height: 1.15;
 }
-.panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: center; }
+.panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: right; }
+.panel-ai-watch .feed-cols--ai-book .cell-zone,
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
+.panel-ai-watch .feed-cols--ai-book .cell-zone.zone--in { color: #6ee7b7; }
+.panel-ai-watch .feed-cols--ai-book .cell-zone.zone--above { color: #c4b5fd; }
+.panel-ai-watch .feed-cols--ai-book .cell-zone.zone--below { color: #fbbf24; }
 
 .feed-row--ai-open {
   border-color: rgba(139, 92, 246, 0.28);
