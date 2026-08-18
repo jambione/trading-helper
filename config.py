@@ -409,11 +409,11 @@ DEFAULT_CONFIG = {
     # Synthetic pullback zone when model has no levels (Mom/ST).
     "ai_watch_synth_zone_enabled":     True,
     # Zone construction mode for synthetic levels:
-    #   "double_bottom" — two matching swing lows on 1m bars; buy band from
-    #                     support up ~1.25% (tiny pad under). Falls back to
-    #                     "offset" when bars/pattern unavailable.
-    #   "offset"        — % under the live print (legacy).
-    "ai_watch_zone_mode":     "double_bottom",
+    #   "pullback"      — buy band from this name's own dip history (default).
+    #   "double_bottom" — two matching swing lows on 1m bars; tiny band above
+    #                     support. Most momentum names never print this.
+    #   "offset"        — fixed % under the live print (legacy; not armable).
+    "ai_watch_zone_mode":     "pullback",
     # How the book arms a buy.
     #   "zone" — wait for a pullback into the band (capital-first default).
     #   "last" — buy the tape; RSTOP is the trade. Zone is display/R only.

@@ -28,6 +28,7 @@ def test_watch_config_defaults_present():
     assert cfg["ai_watch_poll_sec"] == 20.0
     assert float(DEFAULT_CONFIG["ai_entry_zone_pad_pct"]) == 0.0
     assert DEFAULT_CONFIG["ai_watch_arm_mode"] == "zone"
+    assert DEFAULT_CONFIG["ai_watch_zone_mode"] == "pullback"
     assert int(DEFAULT_CONFIG["ai_max_positions"]) == 2
     assert float(DEFAULT_CONFIG["ai_local_trail_arm_r"]) == 0.5
 
@@ -2757,6 +2758,36 @@ def test_double_bottom_zone_still_arms():
     ok, why = ew.should_arm_buy(
         _armable_record(db), ask=ask, bid=ask - 0.01, cfg=_db_cfg())
     assert ok and why.startswith("zone")
+
+
+def test_pullback_band_arms_and_offset_still_refused():
+    """Default wait is a measured dip, not a double-bottom or last-print chase."""
+    import ai_entry_watch as ew
+
+    band = ew.build_band_zone_structure(
+        10.0, 9.60, 9.85, {"ai_watch_synth_rr": 1.0, "ai_watch_synth_stop_pct": 5.0},
+        reason="test")
+    assert band is not None and band["zone_kind"] == "pullback_band"
+    rec = _armable_record(band)
+    rec["indicator"]["pctr"] = -60.0
+    cfg = _db_cfg(
+        ai_watch_zone_mode="pullback",
+        ai_watch_min_stop_pct=0,
+        ai_min_reward_risk=0.5,
+    )
+    ask = (band["entry_low"] + band["entry_high"]) / 2
+    ok, why = ew.should_arm_buy(rec, ask=ask, bid=ask - 0.01, cfg=cfg)
+    assert ok and why.startswith("zone")
+
+    offset = ew.build_offset_zone_structure(10.0, {})
+    offset.setdefault("zone_kind", "offset")
+    ok2, why2 = ew.should_arm_buy(
+        _armable_record(offset),
+        ask=(offset["entry_low"] + offset["entry_high"]) / 2,
+        bid=None,
+        cfg=cfg,
+    )
+    assert (ok2, why2) == (False, "offset_zone")
 
 
 def test_offset_fallback_can_be_re_enabled_by_config():

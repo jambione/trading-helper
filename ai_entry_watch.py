@@ -5000,10 +5000,12 @@ def ensure_offset_zone_if_needed(
     if reanchor:
         reason = (reason + " · reanchor").strip(" ·")
     sym = str(rec.get("symbol") or "").upper()
-    mode = str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
+    mode = str(cfg.get("ai_watch_zone_mode") or "pullback").lower().strip()
     synth: dict[str, Any] | None = None
     zone_reason = "offset_from_last"
 
+    # Pullback is the default wait: a band under last, sized from this
+    # name's own dips. Double-bottom is optional and rare on 1m heat.
     if mode in ("double_bottom", "db", "structure"):
         synth = build_double_bottom_zone_for_symbol(
             sym, ask_f, cfg, now=float(now), reason=reason)
@@ -5396,15 +5398,16 @@ def should_arm_buy(
     if not isinstance(armable, (list, tuple)) or not armable:
         armable = ("double_bottom", "pullback_band", "at_last")
     armable = {str(k).lower().strip() for k in armable}
-    if (
-        not last_mode
-        and str(cfg.get("ai_watch_zone_mode") or "double_bottom").lower().strip()
-        in ("double_bottom", "db", "structure")
-        and bool(cfg.get("ai_watch_require_db_zone", True))
-        and bool(structure.get("synthetic"))
-        and str(structure.get("zone_kind") or "").lower() not in armable
-    ):
-        return False, "offset_zone"
+    # Offset (fixed % under last) is not a zone. It was −0.0027R over 1,220
+    # symbol-days. Refuse it in every zone mode unless the operator puts
+    # "offset" on the armable list or flips require_db_zone off.
+    if not last_mode:
+        zk = str(structure.get("zone_kind") or "").lower().strip()
+        allowed = set(armable)
+        if not bool(cfg.get("ai_watch_require_db_zone", True)):
+            allowed.add("offset")
+        if zk not in allowed:
+            return False, "offset_zone"
     try:
         min_rr = float(cfg.get("ai_min_reward_risk", 0) or 0)
     except (TypeError, ValueError):
