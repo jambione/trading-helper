@@ -33,6 +33,15 @@ So the contract here is deliberately narrow:
 The floor does not delay the honest cases. The first login of a process is
 never throttled, and an expired 30-day token 401s long after the last attempt,
 so it refreshes immediately. Only *repeated* failures inside the window wait.
+
+**Rejections and timeouts are not the same failure.** The backoff exists to
+stop a client hammering a dashboard that *is* answering — a wrong password or
+a rejected token does not get better by asking 400 times a minute. A timeout
+or a refused connection is the opposite case: the server never processed the
+request, so retrying costs it nothing, and the desk needs to be back the
+moment it recovers. Backing those off exponentially locked the momentum
+monitor out for 230s at a time while the dashboard was merely slow. Transport
+failures therefore retry on a short fixed interval and never grow the streak.
 """
 
 from __future__ import annotations
@@ -59,6 +68,15 @@ DEFAULT_USER_AGENT = "trading-helper-desk/1.0"
 DEFAULT_MIN_LOGIN_INTERVAL = 30.0
 DEFAULT_MAX_BACKOFF = 300.0
 
+# A dashboard that never answered gets retried on this fixed interval instead
+# of the exponential one — it processed nothing, so there is nothing to spare.
+DEFAULT_TRANSPORT_RETRY = 5.0
+
+# Logging in is slower than a normal request: it runs PBKDF2 server-side and,
+# on a busy desk, has been measured at 9-12s. Give it its own budget so a slow
+# login does not read as a dead dashboard.
+DEFAULT_LOGIN_TIMEOUT = 25.0
+
 # Refresh this long before the token actually expires, so a live request never
 # races the expiry. Tokens are 30 days, so this is nowhere near hot.
 DEFAULT_REFRESH_BEFORE = 300.0
@@ -78,8 +96,10 @@ class DashboardAuth:
         user_agent: str = DEFAULT_USER_AGENT,
         log_prefix: str = "[auth]",
         timeout: float = 10.0,
+        login_timeout: float | None = None,
         min_login_interval: float = DEFAULT_MIN_LOGIN_INTERVAL,
         max_backoff: float = DEFAULT_MAX_BACKOFF,
+        transport_retry: float = DEFAULT_TRANSPORT_RETRY,
         refresh_before: float = DEFAULT_REFRESH_BEFORE,
         verbose: bool = True,
     ) -> None:
@@ -88,8 +108,14 @@ class DashboardAuth:
         self.user_agent = user_agent
         self.log_prefix = log_prefix
         self.timeout = timeout
+        # Never let a caller's tight per-request timeout (ai_entry_watch uses
+        # 4s) become the login budget — logging in is the slow call.
+        self.login_timeout = (
+            max(float(timeout), DEFAULT_LOGIN_TIMEOUT)
+            if login_timeout is None else float(login_timeout))
         self.min_login_interval = float(min_login_interval)
         self.max_backoff = float(max_backoff)
+        self.transport_retry = float(transport_retry)
         self.refresh_before = float(refresh_before)
         self.verbose = verbose
 
@@ -101,6 +127,9 @@ class DashboardAuth:
         # luck rather than by intent.
         self._last_attempt: float | None = None
         self._fail_streak = 0
+        # True when the last attempt failed at the transport layer (timeout,
+        # refused, DNS) rather than being rejected by the dashboard.
+        self._last_was_transport = False
         self._creds_loaded = False
 
         self.url = self.default_url
@@ -152,7 +181,10 @@ class DashboardAuth:
         """Seconds still to wait before another login attempt is allowed."""
         if self._last_attempt is None:
             return 0.0
-        if self._fail_streak <= 0:
+        if self._last_was_transport:
+            # The dashboard never answered — nothing to protect it from.
+            window = self.transport_retry
+        elif self._fail_streak <= 0:
             window = self.min_login_interval
         else:
             window = min(
@@ -190,7 +222,7 @@ class DashboardAuth:
                 # an outage, and a per-request log line is its own flood.
                 return ""
             self._last_attempt = time.monotonic()
-            tok, ttl, err = self._post_login(url, user, password)
+            tok, ttl, err, transport = self._post_login(url, user, password)
             if tok:
                 self._token = tok
                 self._expires_at = time.monotonic() + max(ttl, 60.0)
@@ -201,17 +233,27 @@ class DashboardAuth:
                     self._log(f"logged in as {user!r} — "
                               f"token valid for {max(ttl, 60.0) / 3600:.0f}h")
                 self._fail_streak = 0
+                self._last_was_transport = False
                 return self._token
             self._token = ""
             self._expires_at = 0.0
-            self._fail_streak += 1
-            self._log(f"login failed ({err}) — next attempt in "
+            self._last_was_transport = transport
+            if not transport:
+                # Only a dashboard that answered and said no grows the streak.
+                self._fail_streak += 1
+            self._log(f"login failed ({err}) — "
+                      f"{'retrying' if transport else 'next attempt'} in "
                       f"{self._wait_needed():.0f}s")
             return ""
 
     def _post_login(self, url: str, user: str, password: str
-                    ) -> tuple[str, float, str]:
-        """POST /auth/login. Returns ``(token, ttl_seconds, error)``."""
+                    ) -> tuple[str, float, str, bool]:
+        """POST /auth/login.
+
+        Returns ``(token, ttl_seconds, error, transport_failure)``. The last
+        field separates "the dashboard said no" from "the dashboard never
+        answered", which is what decides the retry interval.
+        """
         body = json.dumps({"username": user, "password": password}).encode()
         req = urllib.request.Request(
             f"{url}/auth/login",
@@ -221,18 +263,22 @@ class DashboardAuth:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.login_timeout) as resp:
                 data = json.loads(resp.read().decode() or "{}")
-        except Exception as e:  # noqa: BLE001 — any failure is one failure
-            return "", 0.0, f"{type(e).__name__}: {e}"[:200]
+        except urllib.error.HTTPError as e:
+            # It answered — a 401/429/500 is a real rejection, back it off.
+            # 429 especially: the server is telling us to stop.
+            return "", 0.0, f"HTTP {e.code}", False
+        except Exception as e:  # noqa: BLE001 — timeout, refused, DNS, TLS
+            return "", 0.0, f"{type(e).__name__}: {e}"[:200], True
         tok = str(data.get("token") or data.get("access_token") or "")
         if not tok:
-            return "", 0.0, str(data.get("error") or "no token in response")
+            return "", 0.0, str(data.get("error") or "no token in response"), False
         try:
             ttl = float(data.get("expires_in") or 3600.0)
         except (TypeError, ValueError):
             ttl = 3600.0
-        return tok, ttl, ""
+        return tok, ttl, "", False
 
     # ── requests ─────────────────────────────────────────────────────────────
 
@@ -282,6 +328,7 @@ class DashboardAuth:
             self._expires_at = 0.0
             self._last_attempt = None
             self._fail_streak = 0
+            self._last_was_transport = False
             self._creds_loaded = False
 
 

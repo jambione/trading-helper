@@ -193,6 +193,77 @@ def test_backoff_is_capped(tmp_path, monkeypatch):
     assert a._wait_needed() == pytest.approx(60.0, abs=1.0)
 
 
+def test_a_timeout_is_not_a_rejection(tmp_path, monkeypatch):
+    """A dashboard that never answered gets retried soon, not backed off.
+
+    The momentum monitor was locked out for 230s at a time because a slow
+    /auth/login was counted as a failed credential.
+    """
+    calls = []
+
+    def _timeout(req, timeout=None):
+        calls.append(1)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _timeout)
+    a = _auth(tmp_path, min_login_interval=30.0, transport_retry=5.0)
+    a.token(force=True)
+
+    assert a._fail_streak == 0, "a timeout must not grow the backoff streak"
+    assert a._wait_needed() == pytest.approx(5.0, abs=1.0)
+
+    for _ in range(20):          # still throttled inside its own window
+        a.token(force=True)
+    assert len(calls) == 1
+
+    a._last_attempt -= 6.0
+    a.token(force=True)
+    assert len(calls) == 2
+
+
+def test_an_http_rejection_still_backs_off(tmp_path, monkeypatch):
+    """A dashboard that answered 401/429 is saying no — back off properly."""
+    def _reject(req, timeout=None):
+        url = getattr(req, "full_url", None) or req.get_full_url()
+        raise urllib.error.HTTPError(url, 429, "Too many", hdrs=None, fp=None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _reject)
+    a = _auth(tmp_path, min_login_interval=30.0)
+    a.token(force=True)
+    assert a._fail_streak == 1
+    assert a._wait_needed() == pytest.approx(60.0, abs=2.0)
+
+
+def test_desk_recovers_promptly_when_the_dashboard_returns(tmp_path, monkeypatch):
+    state = {"up": False}
+
+    def _flaky(req, timeout=None):
+        if not state["up"]:
+            raise TimeoutError("timed out")
+        return _Resp(b'{"ok":true,"token":"t-ok","expires_in":2592000}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", _flaky)
+    a = _auth(tmp_path, min_login_interval=30.0, transport_retry=5.0)
+    assert a.token(force=True) == ""
+    state["up"] = True
+    a._last_attempt -= 6.0
+    assert a.token(force=True) == "t-ok"
+
+
+def test_login_gets_its_own_timeout_budget(tmp_path, monkeypatch):
+    """ai_entry_watch uses a 4s request timeout; logins measured 9-12s."""
+    seen = {}
+
+    def _capture(req, timeout=None):
+        seen["timeout"] = timeout
+        return _Resp(b'{"ok":true,"token":"t","expires_in":60}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", _capture)
+    a = _auth(tmp_path, timeout=4.0)
+    a.token(force=True)
+    assert seen["timeout"] >= desk_auth.DEFAULT_LOGIN_TIMEOUT
+
+
 def test_a_success_clears_the_backoff(tmp_path, monkeypatch):
     state = {"ok": False}
     calls: list[str] = []

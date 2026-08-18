@@ -18,6 +18,7 @@ import threading
 import time
 import zipfile
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -2836,6 +2837,17 @@ def _ws_token(ws: WebSocket, token: str = "") -> str:
     return first_valid_token(token, ws.cookies.get(COOKIE_NAME, ""))
 
 
+# SMTP gets its own threads so it can never starve the shared executor.
+#
+# asyncio's default pool is min(32, cpu+4) — 14 threads on this box — and
+# every send_*_email holds one for up to the 15s SMTP timeout. The login
+# handler awaits three executor tasks (authenticate, record_login,
+# record_traffic_hit), so a burst of slow sends pushes logins behind the
+# queue: on 2026-08-18, with the account over its daily send quota and 1,176
+# mails bouncing, /auth/login went from ~50ms to 9-30s and the desk clients
+# timed out. Two dedicated threads bound the damage to the mail itself.
+_EMAIL_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="smtp")
+
 _AUTH_HITS: dict[str, list[float]] = {}
 
 # Failed logins are throttled tightly (password guessing). Successful ones need
@@ -3156,7 +3168,7 @@ async def auth_login(request: Request):
         )
         # Failures only, and never on the request path (SMTP was stalling the feed).
         if not ok:
-            loop.run_in_executor(None, lambda: send_login_email(logged_as, ok, ip=ip, ua=ua))
+            loop.run_in_executor(_EMAIL_POOL, lambda: send_login_email(logged_as, ok, ip=ip, ua=ua))
         await loop.run_in_executor(
             None,
             lambda: record_traffic_hit(
@@ -3216,13 +3228,13 @@ async def auth_register(request: Request):
 
         _auth_rate_hit(f"register:{ip}")
         await loop.run_in_executor(
-            None,
+            _EMAIL_POOL,
             lambda: send_access_request_email(
                 profile["username"], profile.get("email") or email, profile.get("display_name") or display_name),
         )
         if profile.get("email"):
             await loop.run_in_executor(
-                None,
+                _EMAIL_POOL,
                 lambda: send_access_received_email(profile["email"], profile.get("display_name") or ""),
             )
 
@@ -3265,7 +3277,7 @@ async def auth_forgot(request: Request):
         raw, _uname = await loop.run_in_executor(None, lambda: create_reset_token(email))
         if raw:
             url = f"{_public_base_url(request)}/reset?token={raw}"
-            await loop.run_in_executor(None, lambda: send_password_reset_email(email, url))
+            await loop.run_in_executor(_EMAIL_POOL, lambda: send_password_reset_email(email, url))
         _auth_rate_hit(f"forgot:{ip}")
         return JSONResponse({"ok": True})
     except Exception:
@@ -3438,7 +3450,7 @@ async def api_admin_user_send_reset(username: str, request: Request):
     if not raw:
         return JSONResponse({"ok": False, "error": "Could not create reset link"}, status_code=400)
     url = f"{_public_base_url(request)}/reset?token={raw}"
-    await loop.run_in_executor(None, lambda: send_password_reset_email(email, url))
+    await loop.run_in_executor(_EMAIL_POOL, lambda: send_password_reset_email(email, url))
     return JSONResponse({"ok": True, "message": "Reset email sent"})
 
 
@@ -3465,7 +3477,7 @@ async def api_admin_user_action(username: str, action: str, request: Request):
     if action == "approve" and profile and profile.get("email"):
         login_url = f"{_public_base_url(request)}/login"
         await loop.run_in_executor(
-            None,
+            _EMAIL_POOL,
             lambda: send_access_approved_email(
                 profile["email"], profile.get("display_name") or "", login_url),
         )
@@ -4302,7 +4314,7 @@ async def api_add_suggestion(request: Request):
         # Wait for email result so the UI can show whether it left the box.
         # Keep it on a worker thread so SMTP never blocks the event loop.
         email_sent = await loop.run_in_executor(
-            None, lambda: send_suggestion_email(message, ip, ua))
+            _EMAIL_POOL, lambda: send_suggestion_email(message, ip, ua))
         status = smtp_status()
         return JSONResponse({
             "ok": True,
