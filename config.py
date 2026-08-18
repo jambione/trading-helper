@@ -623,10 +623,11 @@ DEFAULT_CONFIG = {
     "ai_dead_trade_min":               30.0,
     "ai_dead_trade_mfe_r":            0.10,
     # After a losing exit that never printed 0.5R MFE, do not re-arm that
-    # symbol for the rest of the ET session. Winners and 0.5R runners may.
-    # Off: a scratch may re-arm after cooldown. The 0.10R shelf re-scratches
-    # a dead name; blocking the book all day left the ratchet with nothing.
-    "ai_dead_reentry_block":           True,
+    # symbol for the rest of the ET session. Off by default: a same-day
+    # trade is not a lifetime ban — if the name still passes inclusion
+    # and cooldown, Bro may take it again. Winners / 0.5R runners were
+    # already allowed when this flag is on.
+    "ai_dead_reentry_block":           False,
     "ai_reentry_min_mfe_r":            0.50,
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,

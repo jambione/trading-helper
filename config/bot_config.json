@@ -245,7 +245,7 @@
   "ai_watch_arm_below_zone_max_r": 1.0,
   "ai_dead_trade_min": 30.0,
   "ai_dead_trade_mfe_r": 0.10,
-  "ai_dead_reentry_block": true,
+  "ai_dead_reentry_block": false,
   "ai_reentry_min_mfe_r": 0.50,
   "ai_position_shadow_enabled": true,
   "ai_sell_signal_breakeven": true,

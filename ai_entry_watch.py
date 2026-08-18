@@ -5883,10 +5883,12 @@ def _same_et_day(ts: float, now: float) -> bool:
 def _dead_reentry_blocked(symbol: str, now: float, cfg: dict) -> bool:
     """True when today's last exit was a loser that never ran 0.5R.
 
-    Green exits and names that printed MFE ≥ ``ai_reentry_min_mfe_r``
-    may re-arm (LFS). Dead/scratch losers may not (LUNR/CELC/LPTH).
+    Off unless ``ai_dead_reentry_block`` is set. Same-day re-entry is
+    allowed by default; ``ai_reentry_cooldown_sec`` still spaces fills.
+    When the flag is on, green exits and names that printed MFE ≥
+    ``ai_reentry_min_mfe_r`` may still re-arm (LFS).
     """
-    if not bool(cfg.get("ai_dead_reentry_block", True)):
+    if not bool(cfg.get("ai_dead_reentry_block", False)):
         return False
     row = _last_exit_row(symbol)
     if not row or not row.get("ts"):

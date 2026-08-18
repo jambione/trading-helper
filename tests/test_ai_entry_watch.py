@@ -2202,6 +2202,24 @@ def test_reentry_allows_winner_or_half_r_mfe():
         ew._last_exit_row = orig
 
 
+def test_inclusion_allows_same_day_when_dead_block_off():
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_dead_reentry_block=False)
+    now = time.time()
+    orig = ew._last_exit_row
+    ew._last_exit_row = lambda s: (
+        {"ts": now - 60, "realized_r": -0.2, "mfe_r": 0.05}
+        if s == "AMLX" else None)
+    try:
+        ok, _met, why = ew.passes_inclusion(
+            {"symbol": "AMLX", "price": 32.0, "pct_change": 4.0},
+            cfg, indicators={"AMLX": _bullish()})
+        assert ok is True and why == ""
+    finally:
+        ew._last_exit_row = orig
+
+
 def test_inclusion_rejects_dead_today():
     import ai_entry_watch as ew
 
