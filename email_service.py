@@ -110,12 +110,14 @@ def _send(msg, recipients, host, port, user, password, from_addr, label: str) ->
 
 
 def send_login_email(username: str, success: bool, ip: str = "", ua: str = "", location: str = "") -> bool:
+    """Notify on failed logins only.
+
+    Successful machine/desk logins (OCR, momentum, engine) used to fire
+    one SMTP send each and stall /api/state. Success is recorded in the
+    login log; do not email it.
     """
-    Send a login-attempt notification email.
-    Fires for both successful and failed logins.
-    Returns False (and logs) if SMTP is not configured or send fails.
-    Runs synchronously — call from a background thread.
-    """
+    if success:
+        return False
     if not _is_configured():
         log.warning("[EMAIL] SMTP not configured — skipping login email "
                     "(add smtp_host/smtp_user/smtp_pass to config/secrets.json)")

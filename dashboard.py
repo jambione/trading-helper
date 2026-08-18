@@ -2838,11 +2838,25 @@ def _ws_token(ws: WebSocket, token: str = "") -> str:
 
 _AUTH_HITS: dict[str, list[float]] = {}
 
+# Failed logins are throttled tightly (password guessing). Successful ones need
+# a ceiling too: on 2026-08-18 a desk client re-logged-in on every 401 and made
+# 2,639 logins in a day, 398 in the worst minute, each costing a ~20ms PBKDF2
+# verify and a login-log row. None of it was rate limited, because only
+# failures were ever counted. This ceiling is per-IP and counts every attempt.
+# 60 per 5 minutes is far above any honest use — five desk clients plus a
+# browser log in a handful of times per restart — and far below a storm.
+_LOGIN_BURST_LIMIT  = 60
+_LOGIN_BURST_WINDOW = 300.0
+
 
 def _auth_rate_limited(key: str, limit: int, window: float) -> bool:
     now = time.time()
     hits = [t for t in _AUTH_HITS.get(key, []) if now - t < window]
-    _AUTH_HITS[key] = hits
+    if hits:
+        _AUTH_HITS[key] = hits
+    else:
+        # Don't keep an entry per IP that ever touched /auth/login forever.
+        _AUTH_HITS.pop(key, None)
     return len(hits) >= limit
 
 
@@ -3116,10 +3130,17 @@ async def auth_login(request: Request):
         ua = meta["user_agent"]
         cf_country = meta.get("cf_country") or ""
 
-        rate_key = f"login:{ip}"
-        if _auth_rate_limited(rate_key, 10, 900):
+        rate_key  = f"login:{ip}"
+        burst_key = f"login-burst:{ip}"
+        # Two ceilings: failures (guessing) and total attempts (client storms).
+        if (_auth_rate_limited(rate_key, 10, 900)
+                or _auth_rate_limited(burst_key, _LOGIN_BURST_LIMIT,
+                                      _LOGIN_BURST_WINDOW)):
             return JSONResponse({"ok": False, "error": "Too many attempts. Try again later."},
                                 status_code=429)
+        # Counted before the password check, so a storm of *successful* logins
+        # is throttled too — that is the one that actually happened.
+        _auth_rate_hit(burst_key)
 
         loop = asyncio.get_running_loop()
         user, auth_err = await loop.run_in_executor(
@@ -3133,7 +3154,9 @@ async def auth_login(request: Request):
             None,
             lambda: record_login(logged_as, ip, ua, success=ok, cf_country=cf_country),
         )
-        await loop.run_in_executor(None, lambda: send_login_email(logged_as, ok, ip=ip, ua=ua))
+        # Failures only, and never on the request path (SMTP was stalling the feed).
+        if not ok:
+            loop.run_in_executor(None, lambda: send_login_email(logged_as, ok, ip=ip, ua=ua))
         await loop.run_in_executor(
             None,
             lambda: record_traffic_hit(

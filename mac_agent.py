@@ -84,6 +84,8 @@ def _load_env(path: Path):
 
 _load_env(Path(__file__).parent / ".env")
 
+import desk_auth  # noqa: E402 — after _load_env so creds are in os.environ
+
 # ── Config — set values in .env (see .env.example) ───────────────────────────
 DASHBOARD_URL  = os.environ.get("DASHBOARD_URL",  "https://trading.jbrasfield.com")
 DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
@@ -108,9 +110,7 @@ except ImportError:  # pragma: no cover
         "ax": "toast",
     }
 
-# ── Token — managed automatically, do not edit ────────────────────────────────
-_token      = ""
-_token_lock = threading.Lock()
+# ── Token — managed automatically by desk_auth, do not edit ───────────────────
 TOKEN_TTL      = 30 * 86400  # fallback if login response omits expires_in
 REFRESH_BEFORE = 300     # re-login 5 minutes before expiry
 
@@ -120,7 +120,6 @@ _UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
-_token_expires_at = 0.0
 
 BRAVE_TV_TAB = int(os.environ.get("BRAVE_TV_TAB", "1"))
 
@@ -569,45 +568,34 @@ def read_tv_symbol() -> str | None:
 # Auth — auto-login and token refresh
 # =============================================================================
 
+# desk_auth owns the token cache, the lock and — the part this file was
+# missing — a floor between login attempts. _ensure_token() runs on every
+# /api/state poll (POLL_INTERVAL, 1.5s), so a login that kept failing used to
+# mean a POST /auth/login every 1.5s for as long as it stayed broken.
+_dash_auth = desk_auth.for_process(
+    "mac_agent",
+    Path(__file__).parent,
+    default_url=DASHBOARD_URL,
+    user_agent=_UA,          # browser-like — Cloudflare 403s the default
+    log_prefix="  🔑",
+    refresh_before=REFRESH_BEFORE,
+)
+
+
 def _login() -> bool:
-    global _token, _token_expires_at
-    if not DASHBOARD_USER or not DASHBOARD_PASS:
-        return False
-    url  = DASHBOARD_URL.rstrip("/") + "/auth/login"
-    body = json.dumps({"username": DASHBOARD_USER, "password": DASHBOARD_PASS}).encode()
-    try:
-        req  = _UReq(url, data=body, headers={"Content-Type": "application/json", "User-Agent": _UA})
-        resp = urlopen(req, timeout=10)
-        data = json.loads(resp.read().decode())
-        tok  = data.get("token") or data.get("access_token", "")
-        if tok:
-            try:
-                ttl = int(data.get("expires_in") or TOKEN_TTL)
-            except (TypeError, ValueError):
-                ttl = TOKEN_TTL
-            with _token_lock:
-                _token            = tok
-                _token_expires_at = time.time() + max(ttl, 60)
-            print(f"  🔑 Logged in — token valid for {max(ttl, 60) // 3600} h")
-            return True
-        print(f"  ⚠️  Login response had no token: {data}")
-        return False
-    except Exception as e:
-        print(f"  ⚠️  Login failed: {e}")
-        return False
+    """Force a fresh login. False on failure or while backing off."""
+    _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+    return bool(_dash_auth.token(force=True))
 
 
 def _ensure_token():
-    with _token_lock:
-        expires = _token_expires_at
-        has_tok = bool(_token)
-    if not has_tok or time.time() >= expires - REFRESH_BEFORE:
-        _login()
+    """Log in if there is no usable token. Cheap enough to call per poll."""
+    _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+    _dash_auth.token()
 
 
 def _auth_header() -> dict:
-    with _token_lock:
-        tok = _token
+    tok = _dash_auth.token()
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 

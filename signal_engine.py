@@ -87,6 +87,7 @@ import requests
 # ── Import our own signal library ─────────────────────────────────────────────
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+import desk_auth
 import desk_core
 from signals import (
     rsi as calc_rsi, compute_macd,
@@ -462,25 +463,25 @@ def _load_finnhub_key() -> str:
 
 # ── Dashboard authentication ──────────────────────────────────────────────────
 
+_dash_auth = desk_auth.for_process(
+    "signal_engine",
+    _HERE,
+    default_url=DASHBOARD_URL,
+    log_prefix="[AUTH]",
+)
+
+
 def _dashboard_login(user: str, password: str) -> Optional[str]:
-    """POST /auth/login and return the Bearer token, or None on failure."""
+    """Bearer token for *user*, or None on failure / while backing off.
+
+    The token cache, the lock and the floor between attempts live in
+    desk_auth now — this engine's copy had none of the three, so a persistent
+    401 meant a fresh POST /auth/login on every poll.
+    """
     if not user or not password:
         return None
-    try:
-        resp = requests.post(
-            f"{DASHBOARD_URL}/auth/login",
-            json={"username": user, "password": password},
-            timeout=10,
-        )
-        data = resp.json()
-        if resp.status_code == 200 and data.get("ok"):
-            print(f"[AUTH] Logged in as '{user}' ✓")
-            return data.get("token", "")
-        print(f"[AUTH] Login failed: {data.get('error', resp.status_code)}")
-        return None
-    except Exception as e:
-        print(f"[AUTH] Login error: {e}")
-        return None
+    _dash_auth.set_creds(DASHBOARD_URL, user, password)
+    return _dash_auth.token(force=True) or None
 
 
 # ── Tracking triggers (dashboard row → engine active set) ─────────────────────

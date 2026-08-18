@@ -440,3 +440,49 @@ def test_forgot_always_ok(auth_client):
     r = auth_client.post("/auth/forgot", json={"email": "missing@example.com"})
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+# ── login rate limiting ──────────────────────────────────────────────────────
+
+@pytest.fixture
+def clean_auth_hits():
+    """_AUTH_HITS is module state — don't let one test's storm reach another."""
+    import dashboard as d
+    d._AUTH_HITS.clear()
+    yield d
+    d._AUTH_HITS.clear()
+
+
+def test_successful_login_storm_is_rate_limited(auth_client, clean_auth_hits):
+    """The 2026-08-18 storm: 2,639 logins in a day, none of them throttled.
+
+    Only *failed* logins were counted, so a desk client re-logging-in on every
+    401 sailed past the limiter — each attempt costing a ~20ms PBKDF2 verify.
+    """
+    d = clean_auth_hits
+    good = {"username": "alice", "password": "s3cret1"}
+    codes = [auth_client.post("/auth/login", json=good).status_code
+             for _ in range(d._LOGIN_BURST_LIMIT + 5)]
+
+    assert codes[0] == 200
+    assert 429 in codes, "a storm of valid logins was never throttled"
+    assert codes.count(200) <= d._LOGIN_BURST_LIMIT
+    assert codes[-1] == 429
+
+
+def test_honest_login_volume_is_not_rate_limited(auth_client, clean_auth_hits):
+    """Five desk clients plus a browser must never trip the burst ceiling."""
+    good = {"username": "alice", "password": "s3cret1"}
+    codes = [auth_client.post("/auth/login", json=good).status_code
+             for _ in range(6)]
+    assert codes == [200] * 6
+
+
+def test_failed_logins_still_hit_the_tighter_ceiling(auth_client, clean_auth_hits):
+    """Password guessing is capped at 10, well below the burst ceiling."""
+    bad = {"username": "alice", "password": "wrong"}
+    codes = [auth_client.post("/auth/login", json=bad).status_code
+             for _ in range(12)]
+    assert codes[0] == 401
+    assert codes[-1] == 429
+    assert codes.count(401) <= 10

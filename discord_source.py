@@ -71,6 +71,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "transcription"))
 from ticker_extract import is_valid_ticker  # noqa: E402
 
+import desk_auth  # noqa: E402
+
 ROOT          = Path(__file__).parent
 # Optional Swift binary fallback (native Python capture is preferred — same process
 # that already holds Screen Recording on macOS 15+/26).
@@ -90,49 +92,38 @@ DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
 _AUTH_TOKEN = ""
 
 
+_dash_auth = desk_auth.for_process(
+    "discord_source",
+    ROOT,
+    default_url=DASHBOARD_URL,
+    log_prefix="[discord]",
+)
+
+
 def _load_dashboard_creds() -> None:
     """Fill dashboard URL/user/pass from .env, then signal_engine.env.
 
     Shell values always win (desk_core.load_env_file skips keys already set).
     .env is the file mac_agent and the operator use; signal_engine.env is the
-    engine's copy and only fills gaps.
+    engine's copy and only fills gaps. desk_auth owns the order so every desk
+    process resolves credentials the same way.
     """
     global DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS
-    from desk_core import load_env_file
-    load_env_file(ROOT / ".env")
-    load_env_file(ROOT / "signal_engine.env")
-    DASHBOARD_URL = os.environ.get("DASHBOARD_URL", DASHBOARD_URL).rstrip("/")
-    DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
-    DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
+    _dash_auth.root = ROOT  # tests point ROOT at a tmp_path
+    url, user, password = _dash_auth.load_creds(force=True)
+    DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS = url, user, password
 
 
 def _dashboard_login() -> str:
-    """POST /auth/login and return the Bearer token, or '' on failure."""
-    if not DASHBOARD_USER or not DASHBOARD_PASS:
-        return ""
-    body = json.dumps({"username": DASHBOARD_USER, "password": DASHBOARD_PASS}).encode()
-    req = urllib.request.Request(
-        f"{DASHBOARD_URL}/auth/login",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode() or "{}")
-        if data.get("ok") and data.get("token"):
-            print(f"[discord] logged in as {DASHBOARD_USER!r}", flush=True)
-            return str(data["token"])
-        print(f"[discord] login failed: {data.get('error', 'no token')}", flush=True)
-    except Exception as e:
-        print(f"[discord] login error: {e}", flush=True)
-    return ""
+    """Fresh Bearer token for the 401 path. '' on failure or while backing off."""
+    return _dash_auth.token(force=True)
 
 
 def _ensure_logged_in() -> None:
+    """Make sure a token is cached. Does not re-read the env files."""
     global _AUTH_TOKEN
     if not _AUTH_TOKEN:
-        _AUTH_TOKEN = _dashboard_login()
+        _AUTH_TOKEN = _dash_auth.token()
 
 # A standard alert line carries this arrow marker between the ticker/headline and
 # the data payload. Two-or-more ">" tolerates OCR dropping a couple of arrows.

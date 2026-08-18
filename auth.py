@@ -65,13 +65,35 @@ _MIN_TTL_SEC  = 3600
 
 # ── Secrets / config helpers ──────────────────────────────────────────────────
 
+# (path, mtime_ns, size, parsed). is_auth_required() runs on every request and
+# every _sign() goes through _jwt_secret(), so an uncached read meant ~4 reads
+# and 4 json.loads of secrets.json per authenticated request. Keyed on
+# path+mtime+size so an edited file is still picked up without a restart, and
+# so tests that point _SECRETS_FILE at a tmp file never see another file's
+# cache. Callers only ever .get() the result, so sharing the dict is safe.
+_SECRETS_CACHE: tuple[str, int, int, dict] = ("", 0, 0, {})
+
+
 def _load_secrets() -> dict:
-    if _SECRETS_FILE.exists():
-        try:
-            return json.loads(_SECRETS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    global _SECRETS_CACHE
+    path = str(_SECRETS_FILE)
+    try:
+        st = _SECRETS_FILE.stat()
+    except OSError:
+        _SECRETS_CACHE = ("", 0, 0, {})
+        return {}
+    c_path, c_mtime, c_size, cached = _SECRETS_CACHE
+    if (cached and c_path == path
+            and c_mtime == st.st_mtime_ns and c_size == st.st_size):
+        return cached
+    try:
+        data = json.loads(_SECRETS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    _SECRETS_CACHE = (path, st.st_mtime_ns, st.st_size, data)
+    return data
 
 
 def _secret(key: str, env_var: str, default: str) -> str:

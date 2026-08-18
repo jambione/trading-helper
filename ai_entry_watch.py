@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import desk_auth  # noqa: E402
 import desk_core  # noqa: E402
 from ai_paths import resolve_report_dir  # noqa: E402
 
@@ -1758,104 +1759,47 @@ _DASH_TIMEOUT = 4.0
 # sends its own. Any non-default agent passes; identify ourselves honestly.
 _DASH_UA = "trading-helper-desk/1.0"
 
-# Bearer from POST /auth/login (DASHBOARD_USER / DASHBOARD_PASS in
-# signal_engine.env). Middleware 401s /api/state without it, so momentum
-# never seeded (CDTG sat on the desk and never reached the book).
-_dash_token = ""
-_dash_token_exp = 0.0
-_dash_creds_loaded = False
+# Bearer from POST /auth/login (DASHBOARD_USER / DASHBOARD_PASS in .env, then
+# signal_engine.env). Middleware 401s /api/state without it, so momentum never
+# seeded (CDTG sat on the desk and never reached the book).
+#
+# The login itself lives in desk_auth now. It used to live here, unlocked and
+# with a forced re-login on every 401 — and since dashboard_state() runs on a
+# ~2s tick, the day auth was switched on that turned one misconfiguration into
+# 398 logins in a minute. desk_auth keeps one login in flight and puts a floor
+# between attempts; see its module docstring.
+_dash_auth = desk_auth.for_process(
+    "ai_entry_watch",
+    ROOT,
+    default_url=DASHBOARD_URL,
+    user_agent=_DASH_UA,
+    log_prefix="[watch/auth]",
+    timeout=_DASH_TIMEOUT,
+)
 
 
 def _load_dashboard_creds() -> None:
-    """Fill user/pass from signal_engine.env when the process skipped load_desk_env."""
-    global DASHBOARD_USER, DASHBOARD_PASS, DASHBOARD_URL, _dash_creds_loaded
-    if _dash_creds_loaded:
-        return
-    _dash_creds_loaded = True
-    if DASHBOARD_USER and DASHBOARD_PASS:
-        return
-    try:
-        desk_core.load_desk_env(ROOT / "signal_engine.env")
-    except Exception:
-        return
-    DASHBOARD_USER = os.getenv("DASHBOARD_USER", "") or DASHBOARD_USER
-    DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "") or DASHBOARD_PASS
-    url = (os.getenv("DASHBOARD_URL") or "").strip()
-    if url:
-        DASHBOARD_URL = url.rstrip("/")
+    """Resolve dashboard URL/user/pass and mirror them onto module globals."""
+    global DASHBOARD_USER, DASHBOARD_PASS, DASHBOARD_URL
+    url, user, password = _dash_auth.load_creds()
+    DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS = url, user, password
 
 
 def _dashboard_login(*, force: bool = False) -> str:
-    """POST /auth/login; cache the Bearer token. Empty string on failure."""
-    global _dash_token, _dash_token_exp
+    """Cached Bearer token. Empty string on failure or while backing off."""
     _load_dashboard_creds()
-    now = time.time()
-    if not force and _dash_token and now < (_dash_token_exp - 60.0):
-        return _dash_token
-    user, password = DASHBOARD_USER, DASHBOARD_PASS
-    if not user or not password:
-        _dash_token = ""
-        _dash_token_exp = 0.0
-        return ""
-    body = json.dumps({"username": user, "password": password}).encode("utf-8")
-    try:
-        import urllib.request
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/auth/login",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": _DASH_UA,
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=_DASH_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8") or "{}")
-        tok = str(data.get("token") or data.get("access_token") or "")
-        if data.get("ok") and tok:
-            try:
-                ttl = float(data.get("expires_in") or 3600)
-            except (TypeError, ValueError):
-                ttl = 3600.0
-            _dash_token = tok
-            _dash_token_exp = time.time() + max(ttl, 60.0)
-            return _dash_token
-    except Exception:
-        pass
-    _dash_token = ""
-    _dash_token_exp = 0.0
-    return ""
+    return _dash_auth.token(force=force)
 
 
 def _dash_headers(*, json_body: bool = False) -> dict[str, str]:
-    headers = {"User-Agent": _DASH_UA}
-    if json_body:
-        headers["Content-Type"] = "application/json"
-    tok = _dashboard_login()
-    if tok:
-        headers["Authorization"] = f"Bearer {tok}"
-    return headers
+    _load_dashboard_creds()
+    return _dash_auth.headers(json_body=json_body)
 
 
 def _dash_urlopen(url: str, *, data: bytes | None = None, method: str | None = None):
-    """urllib GET/POST with env auth; one re-login on 401."""
-    import urllib.error
-    import urllib.request
-
-    def _open():
-        req = urllib.request.Request(
-            url, data=data, headers=_dash_headers(json_body=data is not None),
-            method=method,
-        )
-        return urllib.request.urlopen(req, timeout=_DASH_TIMEOUT)
-
-    try:
-        return _open()
-    except urllib.error.HTTPError as e:
-        if e.code != 401:
-            raise
-        _dashboard_login(force=True)
-        return _open()
+    """urllib GET/POST with env auth; one throttled re-login on 401."""
+    _load_dashboard_creds()
+    return _dash_auth.urlopen(url, data=data, method=method)
 
 # Last dashboard fetch: (monotonic_ts, payload). Two callers used to issue their
 # own GET (2s timeout each) on every 2s book tick, so a slow dashboard could eat

@@ -2795,12 +2795,11 @@ def test_dashboard_state_logs_in_with_env_creds_after_401(monkeypatch):
     import urllib.request
     import ai_entry_watch as ew
 
-    monkeypatch.setattr(ew, "DASHBOARD_USER", "desk")
-    monkeypatch.setattr(ew, "DASHBOARD_PASS", "secret")
-    monkeypatch.setattr(ew, "DASHBOARD_URL", "https://trading.jbrasfield.com")
-    ew._dash_token = ""
-    ew._dash_token_exp = 0.0
-    ew._dash_creds_loaded = True
+    # Shell values win over the env files, so these are what desk_auth resolves.
+    monkeypatch.setenv("DASHBOARD_URL", "https://trading.jbrasfield.com")
+    monkeypatch.setenv("DASHBOARD_USER", "desk")
+    monkeypatch.setenv("DASHBOARD_PASS", "secret")
+    ew._dash_auth.reset()
 
     calls: list[str] = []
 
@@ -2829,7 +2828,10 @@ def test_dashboard_state_logs_in_with_env_creds_after_401(monkeypatch):
         return _Resp(b'{"tickers":[{"ticker":"CDTG","price":5.3,"pct_change":77.8}]}')
 
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
-    data = ew.dashboard_state(force=True)
+    try:
+        data = ew.dashboard_state(force=True)
+    finally:
+        ew._dash_auth.reset()  # process-wide instance — don't leak a token
     assert any(u.endswith("/auth/login") for u in calls)
     assert any(u.endswith("/api/state") for u in calls)
     assert data["tickers"][0]["ticker"] == "CDTG"
