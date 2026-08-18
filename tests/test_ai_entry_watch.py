@@ -1,6 +1,7 @@
 # tests/test_ai_entry_watch.py
 import json
 import os, sys
+import time
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config import DEFAULT_CONFIG, load_config
@@ -306,6 +307,71 @@ def test_research_seed_respects_cap_and_flag(tmp_path, monkeypatch):
     rows = ew.desk_candidate_rows(
         _seed_cfg(ai_watch_seed_research=True, ai_watch_seed_research_n=2))
     assert len(rows) == 2
+
+
+def test_trending_seeds_green_panel_names_without_score_floor(tmp_path, monkeypatch):
+    """TREND tab names that are green belong on the shortlist.
+
+    Score is a rank, not a gate — SENS +9.8% / 4.8 sat on the panel and
+    never reached the book because 4.8 < 5.0 and 9.8 < 15.
+    """
+    import ai_entry_watch as ew
+
+    (tmp_path / "trending_stocks.json").write_text(json.dumps({
+        "rows": [
+            {"symbol": "SENS", "trending_score": 4.8, "pct_change": 9.86,
+             "price": 8.80, "is_equity": True},
+            {"symbol": "SLS", "trending_score": 7.5, "pct_change": 0.62,
+             "price": 13.08, "is_equity": True},
+            {"symbol": "CIFR", "trending_score": 9.9, "pct_change": -9.22,
+             "price": 16.80, "is_equity": True},
+        ],
+    }), encoding="utf-8")
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    rows = ew.desk_candidate_rows(_seed_cfg(
+        ai_watch_seed_trending=True,
+        ai_watch_trending_min_score=5.0,
+        ai_watch_trending_min_pct_change=15.0,
+        ai_watch_require_look_ext=False,
+    ))
+    by = {r["symbol"]: r for r in rows}
+    assert "SENS" in by and by["SENS"]["source"] == "trending"
+    assert "SLS" in by
+    assert "CIFR" not in by
+
+
+def test_inclusion_retries_trending_when_momentum_is_thin():
+    """Momentum owns the first row; a later TREND row must still be tried."""
+    import ai_entry_watch as ew
+
+    ew._admit_ticks.clear()
+    cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=2.0,
+                    ai_watch_trending_min_rvol=1.5, ai_watch_admit_ticks=1)
+    rows = [
+        {"symbol": "GRRR", "price": 15.3, "pct_change": 2.44, "rvol": 1.6,
+         "source": "momentum", "criteria": ["mom_open"], "mom_open_soft": True},
+        {"symbol": "GRRR", "price": 15.3, "pct_change": 2.44, "rvol": 1.6,
+         "source": "trending", "criteria": ["score"]},
+    ]
+    kept, rejected = ew.apply_inclusion_gate(rows, cfg, indicators={})
+    assert [r["symbol"] for r in kept] == ["GRRR"]
+    assert kept[0]["source"] == "trending"
+    assert not any(r["symbol"] == "GRRR" for r in rejected)
+
+
+def test_research_without_quote_is_admitted():
+    """Board names have no desk print until they sit on the book."""
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_watch_require_indicators=False)
+    row = {"symbol": "RCAT", "source": "xai", "price": None, "pct_change": None,
+           "criteria": ["research"]}
+    ok, _met, why = ew.passes_inclusion(row, cfg, indicators={})
+    assert ok is True, why
+
+    red = dict(row, price=15.0, pct_change=-21.0)
+    ok, _met, why = ew.passes_inclusion(red, cfg, indicators={})
+    assert ok is False and why == "not_uptrend"
 
 
 def test_bb_live_seed_admits_fresh_calls_only(monkeypatch):
@@ -2134,6 +2200,54 @@ def test_reentry_allows_winner_or_half_r_mfe():
         assert ew._dead_reentry_blocked("LUNR", now, cfg) is True
     finally:
         ew._last_exit_row = orig
+
+
+def test_inclusion_rejects_dead_today():
+    import ai_entry_watch as ew
+
+    cfg = _incl_cfg(ai_dead_reentry_block=True, ai_reentry_min_mfe_r=0.50)
+    now = time.time()
+    orig = ew._last_exit_row
+    ew._last_exit_row = lambda s: (
+        {"ts": now - 60, "realized_r": -0.2, "mfe_r": 0.05}
+        if s == "AMLX" else None)
+    try:
+        ok, _met, why = ew.passes_inclusion(
+            {"symbol": "AMLX", "price": 32.0, "pct_change": 4.0},
+            cfg, indicators={"AMLX": _bullish()})
+        assert ok is False and why == "dead_reentry"
+    finally:
+        ew._last_exit_row = orig
+
+
+def test_dead_today_dropped_from_book_and_snapshot(tmp_path, monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    state = {
+        "AMLX": {
+            "symbol": "AMLX", "status": "watching",
+            "block_code": "dead_reentry", "blocker": "dead today",
+            "last_ask": 32.0,
+        },
+        "ANGX": {
+            "symbol": "ANGX", "status": "watching",
+            "block_code": "above_zone", "last_ask": 5.09,
+        },
+        "OPEN": {
+            "symbol": "OPEN", "status": "submitted",
+            "block_code": "dead_reentry",
+        },
+    }
+    ew.save_watch(state)
+    snap = ew.public_snapshot()
+    assert [r["symbol"] for r in snap] == ["ANGX"]
+    book = ew.book_table_rows(state=state)
+    assert {r["symbol"] for r in book} == {"ANGX", "OPEN"}
+    out = ew.drop_watch_symbols(["AMLX", "OPEN"])
+    assert "AMLX" not in out
+    assert "OPEN" in out
+    assert "ANGX" in out
 
 
 def _stream_cfg(**over):

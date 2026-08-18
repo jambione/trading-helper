@@ -653,6 +653,36 @@ def merge_watch_records(records: dict[str, dict]) -> dict[str, dict]:
         return state
 
 
+def drop_watch_symbols(symbols) -> dict[str, dict]:
+    """Remove *symbols* from the book unless a paper order is in flight.
+
+    Dead-today losers must not occupy a slot or a quote. Submitted / filled
+    rows stay so an open ticket is still managed.
+    """
+    wanted = {
+        str(s or "").upper().strip()
+        for s in (symbols or [])
+        if str(s or "").strip()
+    }
+    if not wanted:
+        return load_watch()
+    with _WATCH_LOCK:
+        state = load_watch()
+        changed = False
+        for key in wanted:
+            rec = state.get(key)
+            if not isinstance(rec, dict):
+                continue
+            status = str(rec.get("status") or "").lower().strip()
+            if status in ("submitted", "filled"):
+                continue
+            state.pop(key, None)
+            changed = True
+        if changed:
+            save_watch(state)
+        return state
+
+
 def public_snapshot(state: dict | None = None) -> list[dict]:
     """Operator-facing watch queue rows for positions JSON.
 
@@ -679,6 +709,9 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
         if status in _TERMINAL_STATUSES:
             continue
         if status and status not in _ARMABLE_STATUSES:
+            continue
+        block = str(rec.get("block_code") or "").lower().strip()
+        if block in ("dead_reentry", "loser_reentry"):
             continue
         structure = rec.get("structure")
         if not isinstance(structure, dict):
@@ -951,6 +984,12 @@ def book_table_rows(
                 continue
             status = str(rec.get("status") or "").lower().strip()
             if status in ("invalidated", "expired"):
+                continue
+            if (
+                status not in ("submitted", "filled")
+                and str(rec.get("block_code") or "") in (
+                    "dead_reentry", "loser_reentry")
+            ):
                 continue
             by_sym[sym] = _watch_row_from_record(sym, rec)
     elif isinstance(watch_rows, list):
@@ -2200,7 +2239,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     if r.get("is_equity") is False:
                         continue
                     s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
-                    if not s or not s[0].isalpha() or s in seen:
+                    if not s or not s[0].isalpha():
                         continue
                     if not _price_under_cap(r.get("price"), max_price):
                         continue
@@ -2260,10 +2299,15 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         and tr_min_rvol > 0
                         and rvol >= tr_min_rvol
                     )
-                    if not (score_ok or pct_ok or rvol_ok):
-                        continue
                     # Long-only: refuse red days when we know the change.
                     if pct is not None and pct <= 0:
+                        continue
+                    # On the TREND panel and green is enough to shortlist
+                    # (score ranks; it is not a hard floor). require_look_ext
+                    # still needs a numeric claim so the EXT-only path stays
+                    # tight. SENS +9.8% / score 4.8 sat on the panel and
+                    # never reached the book.
+                    if require_ext and not (score_ok or pct_ok or rvol_ok):
                         continue
                     seen.add(s)
                     crit: list[str] = []
@@ -2334,7 +2378,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 if added >= n:
                     break
                 s = str(r.get("symbol") or "").upper().strip()
-                if not s or s in seen:
+                if not s:
                     continue
                 live = desk_rows.get(s) or {}
                 tr = tr_by.get(s) or {}
@@ -2352,6 +2396,11 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     px = float(px_src) if px_src is not None else None
                 except (TypeError, ValueError):
                     px = None
+                pct_f = _pct_change_value(pct_src)
+                # Red research stays off a long-only book. Still emit a row
+                # when change is unknown so the book can subscribe a quote.
+                if pct_f is not None and pct_f <= 0:
+                    continue
                 try:
                     dvol = float(live.get("day_vol")) if live.get("day_vol") is not None else None
                 except (TypeError, ValueError):
@@ -2366,7 +2415,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 row = dict(r)
                 row.update({
                     "price": px,
-                    "pct_change": _pct_change_value(pct_src),
+                    "pct_change": pct_f,
                     "rvol": rvol_src,
                     "dollar_volume": (dvol * px) if (dvol and px) else None,
                     "criteria": ["research"],
@@ -2688,6 +2737,10 @@ def passes_inclusion(
         return False, list(row.get("criteria") or []), "look_wash"
     sym = str(row.get("symbol") or "").upper().strip()
     met = list(row.get("criteria") or [])
+    if sym and _dead_reentry_blocked(sym, time.time(), cfg):
+        return False, met, "dead_reentry"
+    source = str(row.get("source") or "").strip().lower()
+    is_research = source in _RESEARCH_SOURCES
 
     price = row.get("price")
     try:
@@ -2710,8 +2763,13 @@ def passes_inclusion(
     # to be judged by the gates below.
     if min_price > 0:
         if price_f is None:
-            return False, met, "no_price"
-        if price_f < min_price:
+            # Research theses have no desk quote until they sit on the book
+            # (Finnhub subscribe is book-membership). Rejecting no_price
+            # here is a deadlock: never admitted → never quoted → never
+            # admitted. Other sources still fail closed.
+            if not is_research:
+                return False, met, "no_price"
+        elif price_f < min_price:
             return False, met, "below_min_price"
 
     # Soft Momentum-open seed: skip score/indicators only. RVOL (when known)
@@ -2735,14 +2793,19 @@ def passes_inclusion(
             return False, met, "thin_dollar_volume"
         met.append("liquidity")
 
-    # Long-only: must be up on the day.
+    # Long-only: must be up on the day. Research with no print yet abstains
+    # (same idea as unknown rvol) so the thesis can sit and get a quote.
     if bool(cfg.get("ai_watch_require_uptrend", True)):
         pct = _pct_change_value(row.get("pct_change"))
-        if pct is None or pct <= 0:
-            return False, met, "not_uptrend"
-        met.append("uptrend")
-
-    source = str(row.get("source") or "").strip().lower()
+        if is_research:
+            if pct is not None and pct <= 0:
+                return False, met, "not_uptrend"
+            if pct is not None and pct > 0:
+                met.append("uptrend")
+        else:
+            if pct is None or pct <= 0:
+                return False, met, "not_uptrend"
+            met.append("uptrend")
 
     # Momentum and trending both need evidence of unusual activity, not just
     # popularity — a flat RVOL means nothing dislocated today regardless of
@@ -2847,26 +2910,34 @@ def apply_inclusion_gate(
     kept: list[dict] = []
     rejected: list[dict] = []
     seen: set[str] = set()
+    kept_syms: set[str] = set()
+    last_reject: dict[str, dict] = {}
     for row in rows:
         sym = str(row.get("symbol") or "").upper().strip()
-        if not sym:
+        if not sym or sym in kept_syms:
             continue
         seen.add(sym)
         ok, met, why = passes_inclusion(row, cfg, indicators=indicators)
         if not ok:
-            _admit_ticks.pop(sym, None)
-            rejected.append({"symbol": sym, "reason": why, "criteria": met})
+            last_reject[sym] = {"symbol": sym, "reason": why, "criteria": met}
             continue
+        last_reject.pop(sym, None)
         ticks = _admit_ticks.get(sym, 0) + 1
         _admit_ticks[sym] = ticks
         if ticks < need:
-            rejected.append({
+            last_reject[sym] = {
                 "symbol": sym, "reason": f"dwell_{ticks}/{need}", "criteria": met,
-            })
+            }
             continue
         out = dict(row)
         out["criteria"] = met
         kept.append(out)
+        kept_syms.add(sym)
+    for rec in last_reject.values():
+        rejected.append(rec)
+        why = str(rec.get("reason") or "")
+        if not why.startswith("dwell_"):
+            _admit_ticks.pop(rec["symbol"], None)
     for gone in [s for s in _admit_ticks if s not in seen]:
         _admit_ticks.pop(gone, None)
     return kept, rejected
@@ -2987,10 +3058,10 @@ def sync_watch_from_source_panels(
         pass
 
     with _WATCH_LOCK:
-        return _sync_watch_locked(candidates, t0)
+        return _sync_watch_locked(candidates, t0, cfg)
 
 
-def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
+def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = None) -> dict:
     """Rebuild step of ``sync_watch_from_source_panels`` — caller holds the lock."""
     old = load_watch()
     if not isinstance(old, dict):
@@ -3010,11 +3081,25 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
         src = str(r.get("source") or "").lower()
         if src not in _PANEL_SOURCES:
             continue
+        if _dead_reentry_blocked(sym, t0, cfg if isinstance(cfg, dict) else {}):
+            continue
         merged[sym] = r
 
     # Empty sources at startup: keep prior state to avoid wipe race.
     if not merged and old:
-        return old
+        cfg_d = cfg if isinstance(cfg, dict) else {}
+        cleaned = dict(old)
+        for key, rec in list(cleaned.items()):
+            if not isinstance(rec, dict):
+                continue
+            status = str(rec.get("status") or "").lower().strip()
+            if status in ("submitted", "filled"):
+                continue
+            if _dead_reentry_blocked(key, t0, cfg_d):
+                cleaned.pop(key, None)
+        if cleaned != old:
+            save_watch(cleaned)
+        return cleaned
 
     new_state: dict[str, Any] = {}
     for sym, row in merged.items():
@@ -3096,6 +3181,13 @@ def _sync_watch_locked(candidates: list[dict], t0: float) -> dict:
         is_duel = bool(rec.get("duel") or rec.get("duel_source"))
         if status in ("submitted", "filled") or is_duel:
             if status in ("invalidated", "expired") and not is_duel:
+                continue
+            if (
+                status not in ("submitted", "filled")
+                and _dead_reentry_blocked(
+                    key, t0, cfg if isinstance(cfg, dict) else {}
+                )
+            ):
                 continue
             kept = dict(rec)
             kept["symbol"] = key
@@ -6201,6 +6293,22 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         status = str(rec.get("status") or "").lower().strip()
         if status in _TERMINAL_STATUSES:
             continue
+        if (
+            status not in ("submitted", "filled")
+            and _dead_reentry_blocked(sym, t0, cfg)
+        ):
+            events.append({
+                "kind": "watch_drop",
+                "symbol": sym,
+                "reason": "dead_reentry",
+            })
+            try:
+                events[-1] = cp.log_event(
+                    "watch_drop", symbol=sym, reason="dead_reentry")
+            except Exception:
+                pass
+            drop_watch_symbols([sym])
+            continue
 
         live_rv = _desk_rvol(sym)
         if live_rv is not None:
@@ -6488,7 +6596,16 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                       detail=f"{int(cool - (t0 - last_exit))}s left")
                 continue
         if _dead_reentry_blocked(sym, t0, cfg):
-            _skip("dead_reentry", detail="already dead today")
+            try:
+                events.append(cp.log_event(
+                    "watch_drop", symbol=sym, reason="dead_reentry"))
+            except Exception:
+                events.append({
+                    "kind": "watch_drop",
+                    "symbol": sym,
+                    "reason": "dead_reentry",
+                })
+            drop_watch_symbols([sym])
             continue
         wash_until = float(_wash_cooldown_until.get(sym) or 0.0)
         if wash_until > t0:
