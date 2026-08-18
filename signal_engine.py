@@ -543,8 +543,9 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 
     min_needed = MACD_SLOW + MACD_SIG + 5   # 40 bars minimum for stable MACD
 
-    # IEX only — free with every Alpaca account. SIP needs Algo Trader Plus.
-    feeds = ("iex",)
+    # iex is free. sip needs Algo Trader Plus and matches TradingView highs/lows.
+    feed_name = (os.getenv("ALPACA_BAR_FEED") or "iex").strip().lower()
+    feeds = ("sip",) if feed_name == "sip" else ("iex",)
     for feed in feeds:
         # sort=desc, NOT asc. `limit` truncates from whichever end the sort
         # starts at, so ascending returned the OLDEST `count` bars in the
@@ -1068,6 +1069,11 @@ class TickerState:
             "pctr_falling":      bool(s.get("pctr_falling")),
             "pctr_slow_falling": bool(s.get("pctr_slow_falling")),
             "pctr_deep_os":      bool(s.get("pctr_deep_os")),
+            "pctr_ob":           bool(s.get("pctr_ob")),
+            "pctr_tight":        bool(s.get("pctr_tight")),
+            "pctr_gap":          s.get("pctr_gap"),
+            "cm_rsi_low":        bool(s.get("cm_rsi_low")),
+            "cm_rsi_green":      bool(s.get("cm_rsi_green")),
             "macd_cross":     bool(s.get("macd_cross")),
             "macd_sep_ratio": s.get("macd_sep_ratio"),
             "macd_ok":        bool(s.get("macd_ok")),

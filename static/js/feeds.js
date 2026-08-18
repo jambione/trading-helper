@@ -285,6 +285,13 @@ function _bookRows(book) {
       exhaustion: w.exhaustion != null ? w.exhaustion : null,
       exhaustion_state: w.exhaustion_state || null,
       pctr: w.pctr != null ? w.pctr : null,
+      pctr_slow: w.pctr_slow != null ? w.pctr_slow : null,
+      pctr_ob: !!w.pctr_ob,
+      pctr_tight: !!w.pctr_tight,
+      pctr_gap: w.pctr_gap != null ? w.pctr_gap : null,
+      cm_rsi: w.cm_rsi != null ? w.cm_rsi : null,
+      cm_rsi_green: !!w.cm_rsi_green,
+      cm_rsi_low: !!w.cm_rsi_low,
       pctr_raw: w.pctr_raw != null ? w.pctr_raw : null,
       pctr_src: w.pctr_src || null,
       exh_bars: w.exh_bars != null ? w.exh_bars : null,
@@ -700,12 +707,11 @@ function _updateBookRow(el, r) {
     statusEl.title = _bookBlockerTitle(r);
   }
   const trail = _fmtTrail(_bookStopPx(r));
-  const zoneEl = el.querySelector('.cell-zone');
-  if (zoneEl) {
-    _setText(zoneEl, _fmtZone(r));
-    zoneEl.className = `cell-zone ${_zoneClass(r)}`.trim();
-    const zTip = _fmtZoneTitle(r);
-    zoneEl.title = zTip || '';
+  const rsiEl = el.querySelector('.cell-rsi');
+  if (rsiEl) {
+    _setText(rsiEl, _fmtRsi(r));
+    rsiEl.className = `cell-rsi${_rsiClass(r)}`.trim();
+    rsiEl.title = _fmtRsiTitle(r);
   }
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -759,9 +765,10 @@ function _updateBookRow(el, r) {
         'price-flash--up', 'price-flash--down'), 600);
     }
     if (exhN != null) _bookPrevExh[symKey] = exhN;
-    _setText(exhEl, _fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src));
+    _setText(exhEl, _fmtExhPair(r));
     exhEl.classList.add('cell-exh');
-    exhEl.classList.toggle('exh--ob', r.exhaustion_state === 'overbought');
+    exhEl.classList.toggle('exh--ob', !!r.pctr_ob || r.exhaustion_state === 'overbought');
+    exhEl.classList.toggle('exh--tight', !!r.pctr_tight);
     exhEl.classList.toggle('exh--up', r.exhaustion_state === 'heating');
     exhEl.classList.toggle('exh--down', r.exhaustion_state === 'cooling');
     const tip = _fmtExhTitle(r);
@@ -800,17 +807,17 @@ function _bookRowHtml(r) {
   const plCls = isOpen ? _plClass(r) : '';
   const rowCls = isOpen
     ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-open'
-    : ((phase === 'ready' || statusLabel === 'in zone')
+    : ((phase === 'ready' || statusLabel === 'buy')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}</div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
-    + `<div class="cell-zone ${_zoneClass(r)}"${_fmtZoneTitle(r) ? ` title="${_esc(_fmtZoneTitle(r))}"` : ''}>${_esc(_fmtZone(r))}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
-    + `<div class="cell-exh${_exhClass(r.exhaustion_state)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExh(r.exhaustion, r.exhaustion_state, r.pctr_src))}</div>`
+    + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExhPair(r))}</div>`
+    + `<div class="cell-rsi${_rsiClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_fmtRsi(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -919,28 +926,76 @@ function _fmtExh(v, state, src) {
   return `${n.toFixed(1)}%${mark}`;
 }
 
-/** Hover: Williams %R(21) on 1m, plus the window used. */
+function _fmtPr(v) {
+  const n = Number(v);
+  if (v == null || !Number.isFinite(n)) return '—';
+  return n.toFixed(1);
+}
+
+/** TradingView-style pair: fast / slow on the %R scale (0 at the top). */
+function _fmtExhPair(r) {
+  if (!r) return '—';
+  if (r.pctr_src === 'sparse_window' && r.pctr == null && r.pctr_slow == null) {
+    return 'thin';
+  }
+  if (r.pctr == null && r.pctr_slow == null) return '—';
+  return `${_fmtPr(r.pctr)} / ${_fmtPr(r.pctr_slow)}`;
+}
+
+function _exhPairClass(r) {
+  let cls = _exhClass(r && r.exhaustion_state);
+  if (r && r.pctr_ob) cls += ' exh--ob';
+  if (r && r.pctr_tight) cls += ' exh--tight';
+  return cls;
+}
+
+function _fmtRsi(r) {
+  if (!r || r.cm_rsi == null || !Number.isFinite(Number(r.cm_rsi))) return '—';
+  return Number(r.cm_rsi).toFixed(1);
+}
+
+function _rsiClass(r) {
+  if (!r) return '';
+  if (r.cm_rsi_green) return ' rsi--green';
+  if (r.cm_rsi_low) return ' rsi--low';
+  return '';
+}
+
+function _fmtRsiTitle(r) {
+  if (!r) return 'CM RSI-2';
+  const bits = ['CM RSI-2'];
+  if (r.cm_rsi != null && Number.isFinite(Number(r.cm_rsi))) {
+    bits.push(Number(r.cm_rsi).toFixed(1));
+  }
+  if (r.cm_rsi_green) bits.push('green');
+  else if (r.cm_rsi_low) bits.push('low');
+  return bits.join(' · ');
+}
+
+/** Hover: both %R lines plus the window used. */
 function _fmtExhTitle(r) {
   if (!r) return '';
-  const bits = ['Williams %R(21) × 1m live'];
+  const bits = ['%R fast(21) / slow(112)'];
   if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
-    bits.push(`smoothed ${Number(r.pctr).toFixed(1)}`);
+    bits.push(`fast ${Number(r.pctr).toFixed(1)}`);
   }
-  if (r.pctr_raw != null && Number.isFinite(Number(r.pctr_raw))) {
-    bits.push(`raw ${Number(r.pctr_raw).toFixed(1)}`);
+  if (r.pctr_slow != null && Number.isFinite(Number(r.pctr_slow))) {
+    bits.push(`slow ${Number(r.pctr_slow).toFixed(1)}`);
+  }
+  if (r.pctr_ob) bits.push('red boxes');
+  if (r.pctr_tight) bits.push('tight');
+  if (r.pctr_gap != null && Number.isFinite(Number(r.pctr_gap))) {
+    bits.push(`gap ${Number(r.pctr_gap).toFixed(1)}`);
   }
   if (r.exh_window_min != null && Number.isFinite(Number(r.exh_window_min))) {
     bits.push(`window ${Number(r.exh_window_min).toFixed(1)}m`);
   }
   if (r.exh_bars != null) bits.push(`${r.exh_bars} bars`);
-  if (r.exh_hh != null && r.exh_ll != null) {
-    bits.push(`HH ${Number(r.exh_hh).toFixed(2)} LL ${Number(r.exh_ll).toFixed(2)}`);
-  }
   if (r.pctr_src === 'sparse_window') {
-    return 'No 1m %R — not enough prints in the last ~25 minutes to trust a reading';
+    return 'No 1m %R — not enough prints in the clock window to trust a reading';
   }
   if (r.pctr_src === 'clock_range') {
-    bits[0] = 'Range %R on 1m prints in the last ~25m (not a full 21-bar window)';
+    bits[0] = 'Range %R on recent 1m prints (not a full 21/112 window)';
   }
   return bits.length > 1 ? bits.join(' · ') : '';
 }

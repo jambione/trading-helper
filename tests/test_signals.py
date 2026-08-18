@@ -247,3 +247,45 @@ def test_macd_can_be_put_back_in_the_exit_set():
     a = _exit_arrays(macd_down=True, cm_high_falling=False,
                      pctr_exhausted_falling=False)
     assert s.sell_signal(a, 19, p) is True
+
+
+def test_percent_r_both_lines_native_112_and_red_boxes():
+    """TV Standard formula: both lines >= -20 is overbought (red boxes)."""
+    n = 200
+    # Flat tape at the high of the entire window → %R pins at 0.
+    closes = np.full(n, 20.0)
+    highs = np.full(n, 20.0)
+    lows = np.concatenate([np.full(n - 1, 10.0), [19.5]])
+    df = _ohlc(closes, highs=highs, lows=lows)
+    out = signals.compute_percent_r_exhaustion(df, {
+        "rte_threshold": 20, "rte_fast_length": 21,
+        "rte_slow_native_length": 112, "rte_slow_timeframe": None,
+        "rte_confluence_max": 15,
+    })
+    last = out.iloc[-1]
+    assert last["s_percentR"] >= -20
+    assert last["l_percentR"] >= -20
+    assert bool(last["overbought"]) is True
+    assert bool(last["rte_tight"]) is True
+    assert bool(last["rte_strong"]) is True
+
+
+def test_percent_r_far_apart_in_band_is_not_tight():
+    n = 180
+    # Long grind up, then a sharp last-bar spike: fast line at the top,
+    # slow line still mid-range.
+    closes = np.linspace(10, 12, n - 1)
+    closes = np.append(closes, 40.0)
+    highs = np.maximum(closes, 12.0)
+    highs[-1] = 40.0
+    lows = np.minimum(closes, 10.0)
+    df = _ohlc(closes, highs=highs, lows=lows)
+    out = signals.compute_percent_r_exhaustion(df, {
+        "rte_threshold": 20, "rte_confluence_max": 8,
+        "rte_slow_timeframe": None,
+    })
+    last = out.iloc[-1]
+    if bool(last["overbought"]):
+        # If both happened to land in-band, a wide gap must not be "strong".
+        if last["rte_gap"] > 8:
+            assert bool(last["rte_strong"]) is False

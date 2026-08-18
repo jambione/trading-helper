@@ -231,36 +231,27 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     threshold = cfg.get("rte_threshold", 20)
 
     # Fast line: native bars. This is the short scale.
+    fast_span = max(1, int(cfg.get("rte_fast_ewm_span", 7) or 7))
     s_pr = williams_pr(df["high"], df["low"], df["close"],
                        int(cfg.get("rte_fast_length", 21)))
-    s_percentR = s_pr.ewm(span=7, adjust=False).mean()
+    s_percentR = s_pr.ewm(span=fast_span, adjust=False).mean()
 
-    # Slow line: a genuinely LONGER SCALE, which means coarser bars — not
-    # merely a longer lookback over the same ones.
-    #
-    # It was %R(112) on the native 1-minute series. Two problems. IEX is a few
-    # percent of the consolidated tape, so a thin momentum name — precisely
-    # what this desk trades — does not print every minute; a 112-bar window
-    # frequently had no valid span at all, and pctr_slow published null on live
-    # names while the fast line computed fine. And 112 native bars is only
-    # ~1.9h against the fast line's 21m, a 5:1 separation that makes the two
-    # lines near-duplicates rather than two timeframes.
-    #
-    # Resampling 1m -> 15m and taking %R(21) covers ~5.25h from bars that
-    # actually exist, a ~15:1 separation. Resampled, not re-fetched: the desk
-    # already takes hundreds of rate-limit rejections a day and a second bar
-    # series per symbol would make that worse for information already held.
-    slow_tf = cfg.get("rte_slow_timeframe", "15min")
+    # Slow line matches TradingView %R Trend Exhaustion [upslidedown]:
+    # %R(112) EMA(3) on the SAME bars as the fast line. A coarser resample
+    # (rte_slow_timeframe, e.g. "15min") is opt-in for research only.
+    slow_tf = cfg.get("rte_slow_timeframe", None)
+    if isinstance(slow_tf, str) and slow_tf.strip().lower() in (
+            "", "none", "native", "0", "false"):
+        slow_tf = None
     slow_len = int(cfg.get("rte_slow_length", 21))
+    slow_span = max(1, int(cfg.get("rte_slow_ewm_span", 3) or 3))
     l_percentR = None
     if slow_tf:
         l_percentR = _resampled_percent_r(df, slow_tf, slow_len)
     if l_percentR is None:
-        # No usable time index, or too little history to resample. Fall back to
-        # the native-bar long lookback rather than dropping the line entirely.
         l_pr = williams_pr(df["high"], df["low"], df["close"],
                            int(cfg.get("rte_slow_native_length", 112)))
-        l_percentR = l_pr.ewm(span=3, adjust=False).mean()
+        l_percentR = l_pr.ewm(span=slow_span, adjust=False).mean()
 
     df["s_percentR"] = s_percentR
     df["l_percentR"] = l_percentR
@@ -268,6 +259,13 @@ def compute_percent_r_exhaustion(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     # Overbought/Oversold conditions
     df["overbought"] = (s_percentR >= -threshold) & (l_percentR >= -threshold)
     df["oversold"]   = (s_percentR <= -100 + threshold) & (l_percentR <= -100 + threshold)
+    df["rte_gap"] = (s_percentR - l_percentR).abs()
+    try:
+        confluence = float(cfg.get("rte_confluence_max", 15) or 15)
+    except (TypeError, ValueError):
+        confluence = 15.0
+    df["rte_tight"] = df["overbought"] & (df["rte_gap"] <= confluence)
+    df["rte_strong"] = df["rte_tight"]
     
     # Track consecutive bars in zone
     ob_groups = (df["overbought"] != df["overbought"].shift()).cumsum()

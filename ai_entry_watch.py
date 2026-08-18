@@ -149,6 +149,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "heating_too_low": "heat low",
     "already_extended": "extended",
     "wait_exh": "wait EXH",
+    "wait_rsi": "wait RSI",
+    "exh_not_tight": "EXH wide",
+    "exh_rsi": "buy",
+    "last_exh_rsi": "buy",
     "in_zone_fade_ok": "in zone",
     "overbought_hot": "OB hot",
     "dead_reentry": "dead today",
@@ -3285,6 +3289,24 @@ def _rte_fast_length(cfg: dict) -> int:
     return max(2, length)
 
 
+def _rte_slow_length(cfg: dict) -> int:
+    try:
+        length = int(cfg.get("rte_slow_native_length", 112) or 112)
+    except (TypeError, ValueError):
+        length = 112
+    return max(2, length)
+
+
+def tv_exh_rsi_enabled(cfg: dict | None) -> bool:
+    """True when the desk uses both %R lines then CM RSI (no MACD, no zone).
+
+    Missing key is off so unit-test cfg dicts keep the old heat gate.
+    Live bot_config / DEFAULT_CONFIG set the flag on.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_tv_exh_rsi"))
+
+
 def _cached_ohlc_stamps(symbol: str, cfg: dict, now: float) -> list[float] | None:
     """Bar timestamps aligned with ``symbol_ohlc``, or None if unknown."""
     sym = str(symbol or "").upper().strip()
@@ -3313,6 +3335,7 @@ def clock_window_rows(
     now: float,
     *,
     rows: list[tuple[float, float, float]] | None = None,
+    length: int | None = None,
 ) -> tuple[list[tuple[float, float, float]], float | None]:
     """Bars that actually sit in the last N minutes of the 1m window.
 
@@ -3329,7 +3352,8 @@ def clock_window_rows(
     """
     if rows is None:
         rows = symbol_ohlc(symbol, cfg, now)
-    length = _rte_fast_length(cfg)
+    length = int(length) if length is not None else _rte_fast_length(cfg)
+    length = max(2, length)
     bar_sec = _bar_seconds(cfg)
     try:
         slack = float(cfg.get("ai_watch_exhaustion_clock_slack", 1.25) or 1.25)
@@ -3365,6 +3389,203 @@ def clock_window_rows(
     return list(rows), window_span_sec(symbol, length, cfg, now)
 
 
+def _raw_percent_r(hh: float, ll: float, close: float) -> float | None:
+    span = hh - ll
+    if span <= 0:
+        return None
+    return -100.0 * (hh - close) / span
+
+
+def _live_percent_r_line(
+    rows: list[tuple[float, float, float]],
+    price: float,
+    length: int,
+    ewm_span: float,
+    eps: float,
+    *,
+    min_range: int,
+) -> tuple[float, bool, bool, str] | None:
+    """(smoothed %R, rising, falling, src) against *price* as the live close."""
+    if len(rows) < min_range:
+        return None
+    px = float(price)
+    if len(rows) < length:
+        hh = max([r[0] for r in rows] + [px])
+        ll = min([r[1] for r in rows] + [px])
+        live_raw = _raw_percent_r(hh, ll, px)
+        if live_raw is None:
+            return None
+        prev_raw = _raw_percent_r(hh, ll, rows[-1][2])
+        if prev_raw is None:
+            prev_raw = live_raw
+        return (
+            live_raw,
+            live_raw > prev_raw + eps,
+            live_raw < prev_raw - eps,
+            "clock_range",
+        )
+    series: list[float] = []
+    for i in range(length - 1, len(rows)):
+        win = rows[i - length + 1:i + 1]
+        hh = max(r[0] for r in win)
+        ll = min(r[1] for r in win)
+        v = _raw_percent_r(hh, ll, win[-1][2])
+        if v is not None:
+            series.append(v)
+    if not series:
+        return None
+    alpha = 2.0 / (max(1.0, float(ewm_span)) + 1.0)
+    sm = series[0]
+    for v in series[1:]:
+        sm = alpha * v + (1.0 - alpha) * sm
+    prev_sm = sm
+    win = rows[-(length - 1):] if length > 1 else []
+    hh = max([r[0] for r in win] + [px]) if win else px
+    ll = min([r[1] for r in win] + [px]) if win else px
+    live_raw = _raw_percent_r(hh, ll, px)
+    if live_raw is None:
+        return None
+    live_sm = alpha * live_raw + (1.0 - alpha) * prev_sm
+    return (
+        live_sm,
+        live_sm > prev_sm + eps,
+        live_sm < prev_sm - eps,
+        "live",
+    )
+
+
+def live_cm_rsi(
+    symbol: str,
+    price: float,
+    cfg: dict,
+    now: float,
+) -> tuple[float, bool] | None:
+    """(RSI-2, green) with the live print as the latest close.
+
+    Green is Connors: close > SMA(200) and close < SMA(5) and RSI < 10.
+    SMA(200) needs a full window; without it green is False but RSI still
+    publishes so the 30-second trigger can fire.
+    """
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0:
+        return None
+    rows = symbol_ohlc(symbol, cfg, now)
+    if len(rows) < 3:
+        return None
+    closes = [float(r[2]) for r in rows] + [px]
+    try:
+        period = max(2, int(cfg.get("cm_rsi_length", 2) or 2))
+    except (TypeError, ValueError):
+        period = 2
+    alpha = 1.0 / period
+    up = 0.0
+    down = 0.0
+    rsi = None
+    for i in range(1, len(closes)):
+        delta = closes[i] - closes[i - 1]
+        gain = delta if delta > 0 else 0.0
+        loss = -delta if delta < 0 else 0.0
+        if i == 1:
+            up, down = gain, loss
+        else:
+            up = alpha * gain + (1.0 - alpha) * up
+            down = alpha * loss + (1.0 - alpha) * down
+        if down == 0:
+            rsi = 100.0
+        elif up == 0:
+            rsi = 0.0
+        else:
+            rsi = 100.0 - (100.0 / (1.0 + up / down))
+    if rsi is None:
+        return None
+    sma5 = sum(closes[-5:]) / 5.0 if len(closes) >= 5 else None
+    sma200 = sum(closes[-200:]) / 200.0 if len(closes) >= 200 else None
+    green = bool(
+        sma200 is not None and sma5 is not None
+        and px > sma200 and px < sma5 and rsi < 10.0
+    )
+    return float(rsi), green
+
+
+def live_exhaustion_pair(
+    symbol: str,
+    price: float,
+    cfg: dict,
+    now: float,
+) -> dict | None:
+    """Fast + slow live %R. None when the fast line cannot form at all."""
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0:
+        return None
+    try:
+        min_range = int(cfg.get("ai_watch_exhaustion_min_range_bars", 6) or 6)
+    except (TypeError, ValueError):
+        min_range = 6
+    min_range = max(2, min_range)
+    try:
+        eps = float(cfg.get("rte_direction_eps", 0.05) or 0.0)
+    except (TypeError, ValueError):
+        eps = 0.05
+    try:
+        fast_span = float(cfg.get("rte_fast_ewm_span", 7) or 7)
+    except (TypeError, ValueError):
+        fast_span = 7.0
+    try:
+        slow_span = float(cfg.get("rte_slow_ewm_span", 3) or 3)
+    except (TypeError, ValueError):
+        slow_span = 3.0
+
+    fast_len = _rte_fast_length(cfg)
+    slow_len = _rte_slow_length(cfg)
+    fast_rows, fast_span_sec = clock_window_rows(
+        symbol, cfg, now, length=fast_len)
+    fast = _live_percent_r_line(
+        fast_rows, px, fast_len, fast_span, eps, min_range=min_range)
+    if fast is None:
+        return None
+    slow_rows, slow_span_sec = clock_window_rows(
+        symbol, cfg, now, length=slow_len)
+    slow = _live_percent_r_line(
+        slow_rows, px, slow_len, slow_span, eps, min_range=slow_len)
+    out = {
+        "fast": fast[0],
+        "fast_rising": fast[1],
+        "fast_falling": fast[2],
+        "fast_src": fast[3],
+        "fast_bars": len(fast_rows),
+        "fast_window_sec": fast_span_sec,
+        "slow": None if slow is None else slow[0],
+        "slow_rising": None if slow is None else slow[1],
+        "slow_falling": None if slow is None else slow[2],
+        "slow_src": None if slow is None else slow[3],
+        "slow_bars": len(slow_rows),
+        "slow_window_sec": slow_span_sec,
+    }
+    try:
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    try:
+        tight_max = float(cfg.get("rte_confluence_max", 15) or 15)
+    except (TypeError, ValueError):
+        tight_max = 15.0
+    if out["slow"] is not None:
+        out["ob"] = out["fast"] >= -thr and out["slow"] >= -thr
+        out["gap"] = abs(out["fast"] - out["slow"])
+        out["tight"] = bool(out["ob"] and out["gap"] <= tight_max)
+    else:
+        out["ob"] = False
+        out["gap"] = None
+        out["tight"] = False
+    return out
+
+
 def live_exhaustion(
     symbol: str,
     price: float,
@@ -3394,89 +3615,12 @@ def live_exhaustion(
     bar's smoothed value by the live raw reading reproduces what the engine
     would publish at the next bar close, without waiting for it.
     """
-    try:
-        px = float(price)
-    except (TypeError, ValueError):
+    got = live_exhaustion_pair(symbol, price, cfg, now)
+    if got is None or got.get("fast") is None:
         return None
-    if px <= 0:
-        return None
-    length = _rte_fast_length(cfg)
-    rows, _span = clock_window_rows(symbol, cfg, now)
-    try:
-        min_range = int(cfg.get("ai_watch_exhaustion_min_range_bars", 6) or 6)
-    except (TypeError, ValueError):
-        min_range = 6
-    min_range = max(2, min_range)
-    if len(rows) < min_range:
-        return None
-
-    def _raw(hh: float, ll: float, close: float) -> float | None:
-        span = hh - ll
-        if span <= 0:
-            return None
-        return -100.0 * (hh - close) / span
-
-    try:
-        eps = float(cfg.get("rte_direction_eps", 0.05) or 0.0)
-    except (TypeError, ValueError):
-        eps = 0.05
-
-    # Thin tape: not enough 1m bars for %R(21). Use Williams %R against the
-    # high/low of the prints that *did* occur in the clock window. MOBX/PSFE
-    # class names print ~10 times in 25 minutes — a blank EXH is worse than
-    # "where is the last print in the last 25 minutes' range".
-    if len(rows) < length:
-        hh = max([r[0] for r in rows] + [px])
-        ll = min([r[1] for r in rows] + [px])
-        live_raw = _raw(hh, ll, px)
-        if live_raw is None:
-            return None
-        prev_close = rows[-1][2]
-        prev_raw = _raw(hh, ll, prev_close)
-        if prev_raw is None:
-            prev_raw = live_raw
-        rising = live_raw > prev_raw + eps
-        falling = live_raw < prev_raw - eps
-        ex = max(0.0, min(100.0, 100.0 + live_raw))
-        return live_raw, ex, rising, falling
-
-    # Raw %R for each closed bar, same window the engine uses.
-    series: list[float] = []
-    for i in range(length - 1, len(rows)):
-        win = rows[i - length + 1:i + 1]
-        hh = max(r[0] for r in win)
-        ll = min(r[1] for r in win)
-        v = _raw(hh, ll, win[-1][2])
-        if v is not None:
-            series.append(v)
-    if not series:
-        return None
-
-    try:
-        span = float(cfg.get("rte_fast_ewm_span", 7) or 7)
-    except (TypeError, ValueError):
-        span = 7.0
-    alpha = 2.0 / (max(1.0, span) + 1.0)
-    sm = series[0]
-    for v in series[1:]:
-        sm = alpha * v + (1.0 - alpha) * sm
-    prev_sm = sm
-
-    # Live bar: the window rolls forward one, and the live price is both the
-    # close and a candidate for the window's high/low — a print above the
-    # window high IS a new high, which is exactly when %R pins toward 0.
-    win = rows[-(length - 1):] if length > 1 else []
-    hh = max([r[0] for r in win] + [px]) if win else px
-    ll = min([r[1] for r in win] + [px]) if win else px
-    live_raw = _raw(hh, ll, px)
-    if live_raw is None:
-        return None
-    live_sm = alpha * live_raw + (1.0 - alpha) * prev_sm
-
-    rising = live_sm > prev_sm + eps
-    falling = live_sm < prev_sm - eps
-    ex = max(0.0, min(100.0, 100.0 + live_sm))
-    return live_sm, ex, rising, falling
+    pctr = float(got["fast"])
+    ex = max(0.0, min(100.0, 100.0 + pctr))
+    return pctr, ex, bool(got["fast_rising"]), bool(got["fast_falling"])
 
 
 def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
@@ -3491,12 +3635,17 @@ def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
     if ind.get("pctr") is None and ind.get("pctr_src") == reason:
         return
     ind["pctr"] = None
+    ind["pctr_slow"] = None
     ind["pctr_ok"] = False
+    ind["pctr_ob"] = False
+    ind["pctr_tight"] = False
     ind["pctr_rising"] = False
     ind["pctr_falling"] = False
+    ind["pctr_slow_falling"] = False
     ind["pctr_src"] = reason
     ind["pctr_ts"] = float(now)
-    for k in ("pctr_raw", "pctr_hh", "pctr_ll", "pctr_bars", "pctr_window_sec"):
+    for k in ("pctr_raw", "pctr_hh", "pctr_ll", "pctr_bars", "pctr_window_sec",
+              "pctr_gap"):
         ind.pop(k, None)
 
 
@@ -3512,26 +3661,53 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
     if not bool(cfg.get("ai_watch_exhaustion_live", True)):
         return False
     sym = rec.get("symbol") or ""
-    got = live_exhaustion(sym, price, cfg, now)
-    if got is None:
+    pair = live_exhaustion_pair(sym, price, cfg, now)
+    if pair is None:
         rows, span = clock_window_rows(sym, cfg, now)
         # Only blank when we *saw* bars and they failed the clock window.
         # A cold cache (no rows yet) keeps whatever the engine last published.
         if rows or span is not None:
             _clear_stale_pctr(rec, reason="sparse_window", now=now)
         return False
-    pctr, _ex, rising, falling = got
+    pctr = pair["fast"]
+    rising = bool(pair["fast_rising"])
+    falling = bool(pair["fast_falling"])
     ind = rec.get("indicator")
     if not isinstance(ind, dict):
         ind = {}
         rec["indicator"] = ind
-    ind["pctr"] = round(pctr, 2)
-    ind["pctr_rising"] = bool(rising)
-    ind["pctr_falling"] = bool(falling)
+    ind["pctr"] = round(float(pctr), 2)
+    ind["pctr_rising"] = rising
+    ind["pctr_falling"] = falling
+    if pair.get("slow") is not None:
+        ind["pctr_slow"] = round(float(pair["slow"]), 2)
+        ind["pctr_slow_falling"] = bool(pair.get("slow_falling"))
+        ind["pctr_slow_rising"] = bool(pair.get("slow_rising"))
+    else:
+        ind["pctr_slow"] = None
+        ind["pctr_slow_falling"] = False
+        ind["pctr_slow_rising"] = False
+    ind["pctr_ob"] = bool(pair.get("ob"))
+    ind["pctr_tight"] = bool(pair.get("tight"))
+    if pair.get("gap") is not None:
+        ind["pctr_gap"] = round(float(pair["gap"]), 2)
     rows, span = clock_window_rows(sym, cfg, now)
     length = _rte_fast_length(cfg)
-    ind["pctr_src"] = "live" if len(rows) >= length else "clock_range"
+    both_live = pair.get("fast_src") == "live" and pair.get("slow_src") == "live"
+    ind["pctr_src"] = (
+        "live" if both_live
+        else (pair.get("fast_src") or ("live" if len(rows) >= length else "clock_range"))
+    )
     ind["pctr_ts"] = float(now)
+    rsi_got = live_cm_rsi(sym, price, cfg, now)
+    if rsi_got is not None:
+        ind["cm_rsi"] = round(float(rsi_got[0]), 1)
+        ind["cm_rsi_green"] = bool(rsi_got[1])
+        try:
+            buy_max = float(cfg.get("cm_rsi_buy_max", 10) or 10)
+        except (TypeError, ValueError):
+            buy_max = 10.0
+        ind["cm_rsi_low"] = float(rsi_got[0]) <= buy_max
     try:
         px = float(price)
     except (TypeError, ValueError):
@@ -3565,14 +3741,19 @@ def ensure_symbol_ohlc(
     ``no_exhaustion_data`` under ``ai_watch_require_exhaustion_data``.
     """
     rows = symbol_ohlc(symbol, cfg, now)
-    try:
-        length = int(cfg.get("rte_fast_length", 21) or 21)
-    except (TypeError, ValueError):
-        length = 21
-    length = max(2, length)
-    if len(rows) >= length + 2:
+    fast_need = _rte_fast_length(cfg) + 2
+    # A warm cache that can form the fast line is enough — don't refetch
+    # every poll just because the slow 112-bar window is still short.
+    if len(rows) >= fast_need:
         return rows
-    _fetch_symbol_lows(symbol, cfg, now)
+    need = max(fast_need, _rte_slow_length(cfg) + 2)
+    cfg2 = dict(cfg or {})
+    try:
+        look = int(cfg2.get("ai_watch_db_lookback_bars", 220) or 220)
+    except (TypeError, ValueError):
+        look = 220
+    cfg2["ai_watch_db_lookback_bars"] = max(look, need)
+    _fetch_symbol_lows(symbol, cfg2, now)
     return symbol_ohlc(symbol, cfg, now)
 
 
@@ -3638,15 +3819,24 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
     ind = rec.get("indicator") if isinstance(rec, dict) else None
     if not isinstance(ind, dict):
         return {
-            "pctr": None, "pctr_raw": None, "pctr_src": None,
+            "pctr": None, "pctr_slow": None, "pctr_raw": None, "pctr_src": None,
+            "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
+            "cm_rsi": None, "cm_rsi_green": False, "cm_rsi_low": False,
             "exh_bars": None, "exh_window_min": None,
             "exh_hh": None, "exh_ll": None,
         }
     span = _f_or_none(ind.get("pctr_window_sec"))
     return {
         "pctr": _f_or_none(ind.get("pctr")),
+        "pctr_slow": _f_or_none(ind.get("pctr_slow")),
         "pctr_raw": _f_or_none(ind.get("pctr_raw")),
         "pctr_src": str(ind.get("pctr_src") or "") or None,
+        "pctr_ob": bool(ind.get("pctr_ob")),
+        "pctr_tight": bool(ind.get("pctr_tight")),
+        "pctr_gap": _f_or_none(ind.get("pctr_gap")),
+        "cm_rsi": _f_or_none(ind.get("cm_rsi")),
+        "cm_rsi_green": bool(ind.get("cm_rsi_green")),
+        "cm_rsi_low": bool(ind.get("cm_rsi_low")),
         "exh_bars": (
             int(ind["pctr_bars"])
             if isinstance(ind.get("pctr_bars"), (int, float))
@@ -3687,7 +3877,26 @@ def exhaustion_pct(record: dict) -> float | None:
 
 
 def is_overbought(record: dict, cfg: dict) -> bool | None:
-    """True when %R has reached the overbought band. None when unknown."""
+    """True when %R has reached the overbought band. None when unknown.
+
+    TV desk mode (both lines): red boxes = fast AND slow >= -threshold.
+    Legacy: fast line only (100 + %R >= 100 - threshold).
+    """
+    if tv_exh_rsi_enabled(cfg):
+        ind = record.get("indicator") if isinstance(record, dict) else None
+        if not isinstance(ind, dict):
+            return None
+        if ind.get("pctr_ob") is True:
+            return True
+        fast = _f_or_none(ind.get("pctr"))
+        slow = _f_or_none(ind.get("pctr_slow"))
+        if fast is None or slow is None:
+            return None if fast is None and slow is None else False
+        try:
+            thr = float(cfg.get("rte_threshold", 20) or 20)
+        except (TypeError, ValueError):
+            thr = 20.0
+        return fast >= -thr and slow >= -thr
     ex = exhaustion_pct(record)
     if ex is None:
         return None
@@ -3777,17 +3986,59 @@ def _hot_ob_source(record: dict) -> bool:
     return False
 
 
+def _tv_exh_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
+    """%R red-box hold (both lines, optionally tight) then CM RSI-2 low."""
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    fast = _f_or_none(ind.get("pctr"))
+    slow = _f_or_none(ind.get("pctr_slow"))
+    if fast is None or slow is None:
+        if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
+            return False, "no_exhaustion_data"
+        if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
+            return True, "no_exhaustion_fallback"
+        return False, "no_exhaustion_data"
+    try:
+        thr = float(cfg.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    both_ob = bool(ind.get("pctr_ob")) or (fast >= -thr and slow >= -thr)
+    if not both_ob:
+        return False, "wait_exh"
+    try:
+        tight_max = float(cfg.get("rte_confluence_max", 15) or 15)
+    except (TypeError, ValueError):
+        tight_max = 15.0
+    gap = abs(fast - slow)
+    tight = bool(ind.get("pctr_tight")) or gap <= tight_max
+    if bool(cfg.get("rte_require_tight", True)) and not tight:
+        return False, "exh_not_tight"
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None:
+        return False, "wait_rsi"
+    try:
+        buy_max = float(cfg.get("cm_rsi_buy_max", 10) or 10)
+    except (TypeError, ValueError):
+        buy_max = 10.0
+    if rsi > buy_max:
+        return False, "wait_rsi"
+    return True, "exh_rsi"
+
+
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
-    Direction filter: buy when fast %R is **rising**, or the name is
-    already **overbought and not falling**. Cooling / rolling-over OB
-    refuse. Heat min/max still apply to the non-OB path (both 0 = off).
+    TV desk mode: both %R lines in the overbought band (red boxes),
+    optionally close together, then CM RSI-2 at/under buy_max.
+
+    Legacy: buy when fast %R is **rising**, or the name is already
+    **overbought and not falling**. Heat min/max still apply there.
 
     A missing reading REFUSES under ai_watch_require_exhaustion_data.
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return True, "exhaustion_off"
+    if tv_exh_rsi_enabled(cfg):
+        return _tv_exh_rsi_allows_buy(record, cfg)
     state = exhaustion_state(record, cfg)
     if state == "unknown":
         if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
@@ -6404,6 +6655,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "pctr_rising": sig.get("pctr_rising"),
                 "pctr_falling": sig.get("pctr_falling"),
                 "pctr_slow_falling": sig.get("pctr_slow_falling"),
+                "pctr_ob": sig.get("pctr_ob"),
+                "pctr_tight": sig.get("pctr_tight"),
+                "cm_rsi_green": sig.get("cm_rsi_green"),
                 "ts": t0,
             }
         elif "indicator" in rec:

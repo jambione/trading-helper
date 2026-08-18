@@ -24,10 +24,25 @@ DEFAULT_CONFIG = {
     # ── Signal: %R Trend Exhaustion ─────────────────────────
     "rte_threshold":  20,    # overbought/oversold zone edge (0-50)
     "rte_min_boxes":   2,    # consecutive bars required to be "on deck"
+    "rte_fast_length": 21,   # TV fast %R lookback
+    "rte_fast_ewm_span": 7,  # TV fast smoothing
+    "rte_slow_native_length": 112,  # TV slow %R on the same bars
+    "rte_slow_ewm_span": 3,  # TV slow smoothing
+    "rte_slow_timeframe": "",  # empty = native 112; "15min" is research-only
+    "rte_confluence_max": 15.0,  # |fast-slow| for "close together"
+    "rte_require_tight": True,   # red-box hold must also be tight to arm
 
     # ── Signal: CM RSI-2 ────────────────────────────────────
     "cm_rsi_length":    2,   # RSI period (2 = original Larry Connors CM RSI-2)
     "cm_rsi_oversold": 25,   # approaching-oversold threshold for signal
+    "cm_rsi_buy_max":   10.0,  # line at the bottom of the CM RSI pane
+    "cm_rsi_prefer_green": True,  # Connors color is a strength flag, not a gate
+    # Desk buy = both %R lines in the top band, then RSI-2 <= buy_max.
+    "ai_watch_tv_exh_rsi": True,
+
+    # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
+    # and is what matches TradingView highs/lows on thin names.
+    "alpaca_bar_feed": "iex",
 
     # ── Signal: OBV Oscillator ──────────────────────────────
     "obv_length": 20,
@@ -417,7 +432,7 @@ DEFAULT_CONFIG = {
     # How the book arms a buy.
     #   "zone" — wait for a pullback into the band (capital-first default).
     #   "last" — buy the tape; RSTOP is the trade. Zone is display/R only.
-    "ai_watch_arm_mode":              "zone",
+    "ai_watch_arm_mode":              "last",
     # In double_bottom mode, refuse to arm on the offset fallback. Without this
     # a name with no detectable shelf quietly becomes a different trade — a
     # percentage band with a 5% stop, the regime the 90-day replay measured at
@@ -544,7 +559,7 @@ DEFAULT_CONFIG = {
     "ai_watch_db_match_pct":           0.40,  # two lows "same support" if within this %
     "ai_watch_db_swing_bars":             2,  # pivot: lower than this many bars each side
     "ai_watch_db_min_sep_bars":           3,  # min bars between the two bottoms
-    "ai_watch_db_lookback_bars":         90,  # recent 1m bars to scan
+    "ai_watch_db_lookback_bars":        220,  # 112-bar slow %R + SMA(200) room
     "ai_watch_db_bar_refresh_sec":     120.0,  # throttle REST bar pulls per symbol
     "ai_watch_db_require_price_above": True,  # only arm structure if last > support
     # 2.0 (not 5.0): at a 5% offset the zone is built 5% under the print and

@@ -58,7 +58,7 @@ DEFAULT_PARAMS: dict = {
     # See signals._resampled_percent_r.
     "rte_threshold":   20,
     "rte_fast_length": 21,       # native bars
-    "rte_slow_timeframe": "15min",   # None = long lookback on native bars
+    "rte_slow_timeframe": None,      # None = TV native %R(112) on the same bars
     "rte_slow_length": 21,       # 21 x 15m ≈ 5.25h vs the fast line's 21m
     "rte_slow_native_length": 112,   # fallback when resampling is impossible
     "rte_slow_threshold": 20,    # exhaustion band for the long line
@@ -331,6 +331,8 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
         # Slow %R line + deep-oversold band (desk FOCUS uses both lines)
         "pctr_slow": None, "pctr_falling": False, "pctr_slow_falling": False,
         "pctr_deep_os": False,
+        "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
+        "cm_rsi_low": False, "cm_rsi_green": False,
         "macd_cross": False, "macd_sep_ratio": None, "macd_ok": False,
         "buy": False, "sell": False, "buy_pct": 0,
     }
@@ -367,6 +369,30 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
             and -100.0 <= float(pr_s) <= -75.0
             and out["pctr_falling"] and out["pctr_slow_falling"]):
         out["pctr_deep_os"] = True
+
+    # Desk / watchlist: both-line overbought (red boxes) and tightness.
+    try:
+        thr = float(p.get("rte_threshold", 20) or 20)
+    except (TypeError, ValueError):
+        thr = 20.0
+    try:
+        tight_max = float(p.get("rte_confluence_max", 15) or 15)
+    except (TypeError, ValueError):
+        tight_max = 15.0
+    if np.isfinite(pr) and np.isfinite(pr_s):
+        out["pctr_ob"] = bool(float(pr) >= -thr and float(pr_s) >= -thr)
+        out["pctr_gap"] = round(abs(float(pr) - float(pr_s)), 2)
+        out["pctr_tight"] = bool(out["pctr_ob"] and out["pctr_gap"] <= tight_max)
+    else:
+        out["pctr_ob"] = False
+        out["pctr_gap"] = None
+        out["pctr_tight"] = False
+    try:
+        buy_max = float(p.get("cm_rsi_buy_max", 10) or 10)
+    except (TypeError, ValueError):
+        buy_max = 10.0
+    out["cm_rsi_low"] = bool(np.isfinite(cm) and float(cm) <= buy_max)
+    out["cm_rsi_green"] = bool(out.get("cm_ok") and np.isfinite(cm) and float(cm) < 10.0)
 
     # MACD: recent bullish cross, still bullish, wide separation
     line, sig = a["macd_line"][i], a["macd_signal"][i]

@@ -48,16 +48,23 @@ Bar = tuple[float, float, float, float, float]
 
 
 def path_cfg(**over) -> dict[str, Any]:
-    """Live config with last-mode + EXH direction pinned on top."""
+    """Live last-mode + TV %R pair then CM RSI-2, ratchet on top."""
     try:
         cfg = dict(load_config() or {})
     except Exception:
         cfg = {}
     cfg.update({
         "ai_watch_arm_mode": "last",
+        "ai_watch_tv_exh_rsi": True,
         "ai_watch_exhaustion_rules": True,
         "ai_watch_in_zone_ignore_fade": False,
-        "ai_watch_require_exhaustion_data": False,
+        "ai_watch_require_exhaustion_data": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15.0,
+        "rte_require_tight": True,
+        "rte_slow_timeframe": "",
+        "rte_slow_native_length": 112,
+        "cm_rsi_buy_max": 10.0,
         "ai_watch_exhaustion_heat_min_pct": 0.0,
         "ai_watch_exhaustion_heat_max_pct": 0.0,
         "ai_watch_ob_allow_hot": True,
@@ -149,6 +156,7 @@ def walk_symbol(
     scale_pct: float | None = None,
     cooldown_sec: float | None = None,
     max_trades: int = 0,
+    warmup: list[Bar] | None = None,
 ) -> dict[str, Any]:
     """Walk one symbol-day. Returns trades + refuse counts.
 
@@ -206,7 +214,7 @@ def walk_symbol(
     n = len(bars)
     for i, bar in enumerate(bars):
         ts, o, h, low, c = bar
-        closed = bars[:i]
+        closed = list(warmup or []) + bars[:i]
 
         if pending is not None:
             intended = float(pending["px"])
@@ -481,13 +489,16 @@ def run_book(
     fill: str,
     t1_rr: float | None,
     max_trades: int,
+    warmup: dict[str, list[Bar]] | None = None,
 ) -> list[dict]:
     out = []
+    warm = warmup or {}
     for sym, bars in book.items():
         look = "WASH" if sym.upper() in wash else None
         out.append(walk_symbol(
             sym, bars, cfg, look=look, fill=fill,
             t1_rr=t1_rr, max_trades=max_trades,
+            warmup=warm.get(sym) or warm.get(sym.upper()),
         ))
     return out
 
@@ -509,10 +520,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--trades", action="store_true", help="print each fill")
     p.add_argument("--feed", choices=("iex", "sip"), default="iex",
                    help="Historical tape. sip = free delayed SIP (15m lag).")
+    p.add_argument("--warmup-days", type=int, default=1,
+                   help="Prior ET sessions prepended so %%R(112) can form.")
+    p.add_argument("--legacy-exh", action="store_true",
+                   help="Old single-line heat gate instead of TV two-line+RSI.")
     args = p.parse_args(argv)
 
     wash = {s.strip().upper() for s in args.wash.split(",") if s.strip()}
 
+    warmup_book: dict[str, list[Bar]] = {}
     if args.bars_file:
         book = load_bars_file(Path(args.bars_file))
     else:
@@ -526,11 +542,21 @@ def main(argv: list[str] | None = None) -> int:
             print("no Alpaca api_key/secret_key in config", file=sys.stderr)
             return 2
         book = {}
+        day0 = datetime.fromisoformat(args.day).date()
         for raw in args.symbols:
             sym = raw.upper().strip()
             print(f"  fetching {sym} {args.day}…", file=sys.stderr)
             book[sym] = fetch_day_ohlc(sym, args.day, key, secret, feed=args.feed)
-            print(f"  {sym}: {len(book[sym])} bars", file=sys.stderr)
+            warm: list[Bar] = []
+            for back in range(1, max(0, int(args.warmup_days)) + 1):
+                prev = (day0 - timedelta(days=back)).isoformat()
+                print(f"  fetching {sym} warmup {prev}…", file=sys.stderr)
+                try:
+                    warm = fetch_day_ohlc(sym, prev, key, secret, feed=args.feed) + warm
+                except Exception as e:
+                    print(f"  {sym} warmup {prev}: {e}", file=sys.stderr)
+            warmup_book[sym] = warm
+            print(f"  {sym}: {len(book[sym])} bars + {len(warm)} warmup", file=sys.stderr)
 
     if args.sweep:
         rows = []
@@ -546,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
                     results = run_book(
                         book, cfg, wash=wash, fill=args.fill,
                         t1_rr=t1, max_trades=args.max_trades,
+                        warmup=warmup_book,
                     )
                     trades = [t for r in results for t in r["trades"]]
                     s = summarize(trades)
@@ -577,6 +604,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = path_cfg(
         ai_watch_exhaustion_rules=(args.exh == "on"),
     )
+    if args.legacy_exh:
+        cfg["ai_watch_tv_exh_rsi"] = False
+        cfg["ai_watch_require_exhaustion_data"] = False
     if args.give_r is not None:
         cfg["ai_local_trail_give_r"] = args.give_r
         cfg["ai_local_trail_give_open_r"] = args.give_r
@@ -584,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
     results = run_book(
         book, cfg, wash=wash, fill=args.fill,
         t1_rr=t1, max_trades=args.max_trades,
+        warmup=warmup_book,
     )
     if args.json:
         print(json.dumps(results, indent=2))

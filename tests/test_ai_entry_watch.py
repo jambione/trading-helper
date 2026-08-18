@@ -28,7 +28,7 @@ def test_watch_config_defaults_present():
     assert DEFAULT_CONFIG["ai_watch_seed_trending"] is True
     assert cfg["ai_watch_poll_sec"] == 20.0
     assert float(DEFAULT_CONFIG["ai_entry_zone_pad_pct"]) == 0.0
-    assert DEFAULT_CONFIG["ai_watch_arm_mode"] == "zone"
+    assert DEFAULT_CONFIG["ai_watch_arm_mode"] == "last"
     assert DEFAULT_CONFIG["ai_watch_zone_mode"] == "pullback"
     assert int(DEFAULT_CONFIG["ai_max_positions"]) == 2
     assert float(DEFAULT_CONFIG["ai_local_trail_arm_r"]) == 0.5
@@ -887,7 +887,9 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
         "stop_price",
         "last_ask", "score", "rvol", "exhaustion", "exhaustion_state",
-        "pctr", "pctr_raw", "pctr_src", "exh_bars", "exh_window_min",
+        "pctr", "pctr_slow", "pctr_raw", "pctr_src", "pctr_ob", "pctr_tight",
+        "pctr_gap", "cm_rsi", "cm_rsi_green", "cm_rsi_low",
+        "exh_bars", "exh_window_min",
         "exh_hh", "exh_ll",
         "agreement", "reason", "source", "ready", "in_zone",
         # Which geometry drew the band — double_bottom vs the offset fallback.
@@ -3821,6 +3823,9 @@ def test_live_exhaustion_range_fallback_for_thin_tape():
 def _last_cfg(**over):
     cfg = {
         "ai_watch_arm_mode": "last",
+        # Existing last-mode tests cover the heat/rising gate. The TV
+        # two-line + RSI machine is tested separately.
+        "ai_watch_tv_exh_rsi": False,
         "ai_watch_exhaustion_rules": True,
         "ai_watch_in_zone_ignore_fade": False,
         "ai_watch_require_exhaustion_data": False,
@@ -3979,3 +3984,134 @@ def test_ensure_offset_last_mode_tracks_the_tape():
     ev2 = ew.ensure_offset_zone_if_needed(rec, 13.0, _last_cfg(), now=2.0)
     assert rec["structure"]["anchor_price"] == pytest.approx(13.0)
     assert rec["structure"]["stop_price"] == pytest.approx(12.35)
+
+
+def _tv_cfg(**over):
+    cfg = {
+        "ai_watch_arm_mode": "last",
+        "ai_watch_tv_exh_rsi": True,
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_exhaustion_data": True,
+        "rte_threshold": 20,
+        "rte_confluence_max": 15,
+        "rte_require_tight": True,
+        "cm_rsi_buy_max": 10.0,
+        "ai_min_reward_risk": 0,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_require_db_zone": False,
+        "ai_watch_arm_require_indicators": False,
+        "ai_watch_armable_zone_kinds": ["at_last", "double_bottom", "pullback_band"],
+    }
+    cfg.update(over)
+    return cfg
+
+
+def _tv_rec(*, fast=-6.0, slow=-3.0, rsi=8.0, tight=True):
+    rec = {
+        "symbol": "TV",
+        "status": "watching",
+        "structure": {
+            "decision": "WAIT", "wait_kind": "wait_for_zone",
+            "entry_low": 27.0, "entry_high": 28.5,
+            "stop_price": 25.0, "target_1": 35.0, "reward_risk": 3.5,
+            "zone_kind": "at_last",
+        },
+        "indicator": {
+            "pctr": fast,
+            "pctr_slow": slow,
+            "pctr_ob": fast >= -20 and slow >= -20,
+            "pctr_tight": tight and fast >= -20 and slow >= -20,
+            "pctr_gap": abs(fast - slow),
+            "cm_rsi": rsi,
+            "cm_rsi_low": rsi <= 10,
+            "cm_rsi_green": False,
+            "pctr_rising": True,
+            "pctr_falling": False,
+        },
+    }
+    return rec
+
+
+def test_tv_exh_rsi_requires_both_lines_then_rsi():
+    import ai_entry_watch as ew
+
+    cfg = _tv_cfg()
+    # RSI low alone does not arm.
+    ok, why = ew.exhaustion_allows_buy(_tv_rec(fast=-80.0, slow=-70.0, rsi=8.0), cfg)
+    assert ok is False and why == "wait_exh"
+
+    # Boxes but RSI still high.
+    ok, why = ew.exhaustion_allows_buy(_tv_rec(rsi=40.0), cfg)
+    assert ok is False and why == "wait_rsi"
+
+    # Wide gap with require_tight.
+    ok, why = ew.exhaustion_allows_buy(
+        _tv_rec(fast=-2.0, slow=-19.0, rsi=8.0, tight=False), cfg)
+    assert ok is False and why == "exh_not_tight"
+
+    # Red boxes + close together + RSI at the bottom.
+    ok, why = ew.exhaustion_allows_buy(_tv_rec(), cfg)
+    assert ok is True and why == "exh_rsi"
+
+    # Missing slow line is no data, not a pass.
+    rec = _tv_rec()
+    rec["indicator"]["pctr_slow"] = None
+    rec["indicator"]["pctr_ob"] = False
+    ok, why = ew.exhaustion_allows_buy(rec, cfg)
+    assert ok is False and why == "no_exhaustion_data"
+
+
+def test_tv_exh_rsi_arms_in_last_mode_without_zone_membership():
+    import ai_entry_watch as ew
+
+    rec = _tv_rec()
+    ok, why = ew.should_arm_buy(rec, ask=40.0, bid=39.9, cfg=_tv_cfg())
+    assert ok is True and why.startswith("last_")
+
+    rec_rsi = _tv_rec(rsi=40.0)
+    ok, why = ew.should_arm_buy(rec_rsi, ask=40.0, bid=39.9, cfg=_tv_cfg())
+    assert ok is False and why == "wait_rsi"
+
+
+def test_tv_macd_does_not_gate_the_tv_setup():
+    import ai_entry_watch as ew
+
+    rec = _tv_rec()
+    rec["indicator"]["macd_ok"] = False
+    rec["indicator"]["sell_signal"] = False
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=_tv_cfg())
+    assert ok is True
+
+
+def test_watch_row_wires_both_percent_r_and_rsi():
+    import ai_entry_watch as ew
+
+    rec = _tv_rec()
+    rec["last_ask"] = 28.0
+    row = ew._watch_row_from_record("TV", rec)
+    assert row["pctr"] == pytest.approx(-6.0)
+    assert row["pctr_slow"] == pytest.approx(-3.0)
+    assert row["cm_rsi"] == pytest.approx(8.0)
+    assert row["pctr_ob"] is True
+
+
+def test_live_exhaustion_pair_writes_slow_when_112_bars(monkeypatch):
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _synthetic_ohlc(130)
+    _prime_ohlc(ew, "PAIR", rows, now, step_sec=60.0)
+    cfg = {
+        "rte_fast_length": 21,
+        "rte_slow_native_length": 112,
+        "ai_watch_db_bar_seconds": 60.0,
+    }
+    px = rows[-1][2] + 0.01
+    pair = ew.live_exhaustion_pair("PAIR", px, cfg, now)
+    assert pair is not None
+    assert pair["fast"] is not None
+    assert pair["slow"] is not None
+    rec = {"symbol": "PAIR"}
+    assert ew.apply_live_exhaustion(rec, px, cfg, now) is True
+    assert rec["indicator"]["pctr"] is not None
+    assert rec["indicator"]["pctr_slow"] is not None

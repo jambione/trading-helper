@@ -42,9 +42,15 @@ DELAYED_SIP_LAG = timedelta(minutes=15)
 
 
 def _get_feed_arg(cfg: dict = None) -> dict:
-    """Always IEX on free Alpaca plans. Live SIP needs a paid data plan."""
+    """IEX by default. ``alpaca_bar_feed=sip`` when the account has live SIP."""
+    name = "iex"
+    if isinstance(cfg, dict):
+        raw = cfg.get("alpaca_bar_feed") or cfg.get("alpaca_data_feed") or "iex"
+        name = str(raw).strip().lower()
     try:
         from alpaca.data.enums import DataFeed as _DF
+        if name == "sip":
+            return {"feed": _DF.SIP}
         return {"feed": _DF.IEX}
     except Exception:
         return {}

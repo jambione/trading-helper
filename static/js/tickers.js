@@ -510,11 +510,12 @@ function _signalPills(sp) {
   }
 
   if (sp.strategy === 'three_indicator') {
-    const cm = sp.cm_rsi, pr = sp.pctr, sep = sp.macd_sep_ratio;
-    const cmPill = `<span class="sig-cond ${sp.cm_ok ? 'cond-ok' : 'cond-no'}" title="CM RSI-2 ${cm != null ? cm.toFixed(1) : '?'}${sp.cm_rsi_rising ? ' rising' : ''} — need <40 rising">CM</span>`;
-    const prPill = `<span class="sig-cond ${sp.pctr_ok ? 'cond-ok' : 'cond-no'}" title="%R Exhaustion ${pr != null ? pr.toFixed(1) : '?'}${sp.pctr_rising ? ' rising toward 0' : ''}">%R</span>`;
-    const mdPill = `<span class="sig-cond ${sp.macd_ok ? 'cond-ok' : 'cond-no'}" title="MACD ${sp.macd_cross ? 'crossed bullish' : 'no cross'}${sep != null ? `, separation ×${sep}` : ''} — need wide cross">MACD</span>`;
-    return `${cmPill}${prPill}${mdPill}${hotPill}${srcBadge}`;
+    const cm = sp.cm_rsi, pr = sp.pctr, slow = sp.pctr_slow;
+    const rsiOk = !!(sp.cm_rsi_low || (cm != null && cm <= 10));
+    const prOk = !!(sp.pctr_ob || sp.pctr_ok);
+    const cmPill = `<span class="sig-cond ${rsiOk ? 'cond-ok' : 'cond-no'}" title="CM RSI-2 ${cm != null ? cm.toFixed(1) : '?'}${sp.cm_rsi_green ? ' green' : ''} — buy when ≤10">RSI ${cm != null ? cm.toFixed(0) : '?'}</span>`;
+    const prPill = `<span class="sig-cond ${prOk ? 'cond-ok' : 'cond-no'}" title="%R fast/slow ${pr != null ? pr.toFixed(1) : '?'}/${slow != null ? Number(slow).toFixed(1) : '?'}">${pr != null ? pr.toFixed(0) : '?'}/${slow != null ? Number(slow).toFixed(0) : '?'}</span>`;
+    return `${cmPill}${prPill}${hotPill}${srcBadge}`;
   }
 
   // momentum (default)
