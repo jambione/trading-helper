@@ -1220,10 +1220,14 @@ def _post_ingest(alerts: list[dict], sentiment: list, bb_live: list | None = Non
                        "bb_live": [asdict(c) for c in (bb_live or [])],
                        "drops": drop_counts()}).encode()
     last_err: Exception | None = None
+    _dash_auth.load_creds()
     for attempt in range(2):
-        _ensure_logged_in()
+        if not _dash_auth.desk_secret:
+            _ensure_logged_in()
         headers = {"Content-Type": "application/json"}
-        if _AUTH_TOKEN:
+        if _dash_auth.desk_secret:
+            headers["X-Desk-Secret"] = _dash_auth.desk_secret
+        elif _AUTH_TOKEN:
             headers["Authorization"] = f"Bearer {_AUTH_TOKEN}"
         req = urllib.request.Request(
             f"{DASHBOARD_URL}/api/discord/ingest",
@@ -1239,7 +1243,7 @@ def _post_ingest(alerts: list[dict], sentiment: list, bb_live: list | None = Non
             return
         except urllib.error.HTTPError as e:
             last_err = e
-            if e.code == 401 and attempt == 0:
+            if e.code == 401 and attempt == 0 and not _dash_auth.desk_secret:
                 print("[discord] 401 — re-authenticating…", flush=True)
                 _AUTH_TOKEN = _dashboard_login()
                 continue

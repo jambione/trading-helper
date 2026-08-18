@@ -135,8 +135,31 @@ class DashboardAuth:
         self.url = self.default_url
         self.user = ""
         self.password = ""
+        self.desk_secret = ""
 
     # ── credentials ──────────────────────────────────────────────────────────
+
+    def _load_desk_secret(self) -> str:
+        """The machine credential, if this box has one.
+
+        Env first, then config/secrets.json — every desk process already runs
+        on the box that holds it, so there is no need to copy it into .env and
+        no second place for it to drift. Falls back to
+        ``engine_control_secret``, which is the same credential /api/engine/*
+        has always used.
+        """
+        val = (os.environ.get("DESK_SECRET") or "").strip()
+        if val:
+            return val
+        try:
+            data = json.loads(
+                (self.root / "config" / "secrets.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        return str(data.get("desk_secret")
+                   or data.get("engine_control_secret") or "").strip()
 
     def load_creds(self, *, force: bool = False) -> tuple[str, str, str]:
         """Resolve URL/user/password from the shell, then :data:`ENV_FILES`.
@@ -158,17 +181,22 @@ class DashboardAuth:
         self.url = (os.environ.get("DASHBOARD_URL") or self.default_url).rstrip("/")
         self.user = os.environ.get("DASHBOARD_USER", "")
         self.password = os.environ.get("DASHBOARD_PASS", "")
+        self.desk_secret = self._load_desk_secret()
         return self.url, self.user, self.password
 
     def set_creds(self, url: str, user: str, password: str) -> None:
         """Use these credentials verbatim and stop consulting the env files.
 
         For callers that already resolved credentials their own way
-        (signal_engine passes its module globals in).
+        (signal_engine passes its module globals in). The machine secret is
+        still read from the box — it does not live in those globals, and
+        skipping it here is how a caller that used set_creds kept POSTing
+        /auth/login after the desk-secret path existed.
         """
         self.url = (url or self.default_url).rstrip("/")
         self.user = user or ""
         self.password = password or ""
+        self.desk_secret = self._load_desk_secret()
         self._creds_loaded = True
 
     # ── token ────────────────────────────────────────────────────────────────
@@ -204,7 +232,14 @@ class DashboardAuth:
         ``force=True`` ignores the cached token (use it after a 401) but still
         respects the attempt floor — that is what stops a 401 loop from
         becoming a login storm.
+
+        A machine secret is not a token. Callers that still go through
+        ``token()`` (mac_agent ``_ensure_token`` on every poll) must not
+        POST /auth/login when ``headers()`` is going to send X-Desk-Secret.
         """
+        self.load_creds()
+        if self.desk_secret:
+            return ""
         if not force and self._token_is_fresh():
             return self._token
         with self._lock:
@@ -221,8 +256,15 @@ class DashboardAuth:
                 # Deliberately silent-ish: this fires on every request during
                 # an outage, and a per-request log line is its own flood.
                 return ""
-            self._last_attempt = time.monotonic()
-            tok, ttl, err, transport = self._post_login(url, user, password)
+            # Timed from when the attempt *finishes*, not when it starts. A
+            # timeout burns login_timeout (25s) before returning, which is
+            # longer than transport_retry — so timing from the start left the
+            # floor already expired and the client retried with no gap at all
+            # ("retrying in 0s", over and over, while the dashboard was down).
+            try:
+                tok, ttl, err, transport = self._post_login(url, user, password)
+            finally:
+                self._last_attempt = time.monotonic()
             if tok:
                 self._token = tok
                 self._expires_at = time.monotonic() + max(ttl, 60.0)
@@ -286,6 +328,12 @@ class DashboardAuth:
         out = {"User-Agent": self.user_agent}
         if json_body:
             out["Content-Type"] = "application/json"
+        self.load_creds()
+        if self.desk_secret:
+            # Machine credential: no login, no token, no PBKDF2. Nothing here
+            # can queue behind /auth/login, which is the whole point.
+            out["X-Desk-Secret"] = self.desk_secret
+            return out
         tok = self.token()
         if tok:
             out["Authorization"] = f"Bearer {tok}"
@@ -314,6 +362,10 @@ class DashboardAuth:
             return _open()
         except urllib.error.HTTPError as e:
             if e.code != 401:
+                raise
+            if self.desk_secret:
+                # A shared secret is either right or wrong — retrying with the
+                # same one just doubles the load. Surface it.
                 raise
             if not self.token(force=True):
                 raise

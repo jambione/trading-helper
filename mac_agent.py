@@ -583,20 +583,25 @@ _dash_auth = desk_auth.for_process(
 
 
 def _login() -> bool:
-    """Force a fresh login. False on failure or while backing off."""
+    """Force a fresh login. False on failure, backoff, or machine-secret path."""
     _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+    if _dash_auth.desk_secret:
+        return True
     return bool(_dash_auth.token(force=True))
 
 
 def _ensure_token():
-    """Log in if there is no usable token. Cheap enough to call per poll."""
+    """Make sure the next request can authenticate. Cheap enough to call per poll."""
     _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+    if _dash_auth.desk_secret:
+        return
     _dash_auth.token()
 
 
 def _auth_header() -> dict:
-    tok = _dash_auth.token()
-    return {"Authorization": f"Bearer {tok}"} if tok else {}
+    _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+    h = _dash_auth.headers()
+    return {k: v for k, v in h.items() if k in ("Authorization", "X-Desk-Secret")}
 
 
 # =============================================================================

@@ -467,6 +467,11 @@ def test_post_ingest_retries_after_401(monkeypatch):
     monkeypatch.setattr(ds, "DASHBOARD_USER", "jmb")
     monkeypatch.setattr(ds, "DASHBOARD_PASS", "x")
     monkeypatch.setattr(ds, "_dashboard_login", lambda: "fresh")
+    # This test is the Bearer retry path; the live box has a machine secret
+    # that would skip /auth/login entirely.
+    monkeypatch.setattr(ds._dash_auth, "desk_secret", "")
+    monkeypatch.setattr(ds._dash_auth, "_load_desk_secret", lambda: "")
+    monkeypatch.setattr(ds._dash_auth, "_creds_loaded", True)
     monkeypatch.setattr(ds.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(ds, "drop_counts", lambda: {})
     ds._post_ingest([], [])

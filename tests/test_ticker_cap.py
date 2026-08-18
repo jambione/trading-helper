@@ -9,6 +9,8 @@ intake too.
 
 import json
 import sys
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -95,3 +97,53 @@ def test_cap_bounds_what_ai_watch_can_seed(tmp_path, monkeypatch):
           [_entry(s, minutes_ago=i) for i, s in enumerate(syms)])
 
     assert len(d.load_tickers()) == 4
+
+
+def test_snapshot_does_not_take_ticker_lock_while_holding_state(tmp_path, monkeypatch):
+    """Lock inversion: STATE then _ticker_lock vs remove_ticker_from_log.
+
+    That deadlock filled the default executor with hung /api/state work, so
+    /auth/login timed out and the momentum desk printed login-failed.
+    """
+    _seed(tmp_path, monkeypatch, [_entry("AAA", minutes_ago=1)])
+    d.load_tickers()
+    monkeypatch.setattr(d, "load_news", lambda: [])
+    monkeypatch.setattr(d, "load_swing", lambda: [])
+    monkeypatch.setattr(d, "load_rs", lambda: {})
+    monkeypatch.setattr(d, "load_claude_suggestions", lambda: {})
+    monkeypatch.setattr(d, "load_grok_suggestions", lambda: {})
+    monkeypatch.setattr(d, "build_ai_suggestions", lambda *a, **k: {})
+    monkeypatch.setattr(d, "load_ai_positions", lambda: {})
+    monkeypatch.setattr(d, "load_trending", lambda: [])
+    monkeypatch.setattr(d, "_build_mention_rank", lambda *a, **k: {})
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {})
+    monkeypatch.setattr(d, "_fh_subscribe", lambda *a, **k: None)
+    monkeypatch.setattr(d, "overlay_ai_book_live_prices", lambda p, **k: p or {})
+
+    started = threading.Event()
+    done = threading.Event()
+
+    def _run():
+        started.set()
+        d._snapshot()
+        done.set()
+
+    released = False
+    d._ticker_lock.acquire()
+    try:
+        t = threading.Thread(target=_run, name="snap")
+        t.start()
+        assert started.wait(1.0)
+        time.sleep(0.15)
+        # Waiting on _ticker_lock is fine. Holding STATE.lock while doing
+        # so is the inversion — remove_ticker_from_log takes them the
+        # other way and the desk never comes back.
+        assert not d.STATE.lock.locked(), (
+            "_snapshot held STATE.lock while blocked on _ticker_lock")
+        d._ticker_lock.release()
+        released = True
+        assert done.wait(3.0), "_snapshot hung after ticker lock was released"
+        t.join(1.0)
+    finally:
+        if not released:
+            d._ticker_lock.release()

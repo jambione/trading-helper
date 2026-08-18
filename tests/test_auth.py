@@ -486,3 +486,23 @@ def test_failed_logins_still_hit_the_tighter_ceiling(auth_client, clean_auth_hit
     assert codes[0] == 401
     assert codes[-1] == 429
     assert codes.count(401) <= 10
+
+
+def test_desk_secret_opens_the_api_without_a_login(auth_client):
+    """Machine credential: no PBKDF2, no token, no /auth/login."""
+    import dashboard as d
+    with d.STATE.lock:
+        d.STATE.cfg["engine_control_secret"] = "box-secret"
+    try:
+        denied = auth_client.get("/api/config")
+        assert denied.status_code == 401
+        wrong = auth_client.get("/api/config", headers={"X-Desk-Secret": "nope"})
+        assert wrong.status_code == 401
+        ok = auth_client.get("/api/config", headers={"X-Desk-Secret": "box-secret"})
+        assert ok.status_code == 200
+        short = auth_client.get("/api/config", headers={"X-Desk-Secret": "x"})
+        assert short.status_code == 401
+    finally:
+        with d.STATE.lock:
+            d.STATE.cfg.pop("engine_control_secret", None)
+            d.STATE.cfg.pop("desk_secret", None)

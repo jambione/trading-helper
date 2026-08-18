@@ -1287,9 +1287,14 @@ class SignalEngine:
             print(f"  📌 PINNED {sym} — compare ticker (never expires, realtime eval)")
 
     def _auth_headers(self) -> dict:
-        return {"Authorization": f"Bearer {self._token}"} if self._token else {}
+        _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+        h = _dash_auth.headers()
+        return {k: v for k, v in h.items() if k in ("Authorization", "X-Desk-Secret")}
 
     def _ensure_logged_in(self):
+        _dash_auth.set_creds(DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS)
+        if _dash_auth.desk_secret:
+            return
         if not self._token and DASHBOARD_USER and DASHBOARD_PASS:
             self._token = _dashboard_login(DASHBOARD_USER, DASHBOARD_PASS)
 

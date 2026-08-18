@@ -2802,6 +2802,10 @@ def test_dashboard_state_logs_in_with_env_creds_after_401(monkeypatch):
     monkeypatch.setenv("DASHBOARD_USER", "desk")
     monkeypatch.setenv("DASHBOARD_PASS", "secret")
     ew._dash_auth.reset()
+    # Pin the Bearer path: the live secrets.json has engine_control_secret
+    # and would skip /auth/login via X-Desk-Secret.
+    monkeypatch.setattr(ew._dash_auth, "_load_desk_secret", lambda: "")
+    ew._dash_auth.desk_secret = ""
 
     calls: list[str] = []
 
@@ -3972,6 +3976,39 @@ def test_apply_tape_blocker_last_mode_ready_above_band(monkeypatch):
     ew.apply_tape_blocker(row, 34.50)
     assert row["ready"] is True
     assert row["block_code"] == "in_zone"
+
+
+def test_overlay_live_prices_does_not_refetch_api_state(monkeypatch):
+    """overlay_ai_book_live_prices runs on the /api/state path.
+
+    _row_arm_refuse used to GET /api/state for live rvol, so the snapshot
+    waited on itself and every desk login timed out behind it.
+    """
+    import dashboard as d
+    import ai_entry_watch as ew
+
+    hits = []
+
+    def _boom(*a, **k):
+        hits.append(1)
+        raise AssertionError("dashboard_state must not run inside overlay")
+
+    monkeypatch.setattr(ew, "dashboard_state", _boom)
+    monkeypatch.setattr(ew, "_desk_rvol", _boom)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    monkeypatch.setattr(d, "_live_quote_for", lambda s, now=None: (1.5, 0.1))
+    payload = {
+        "entry_book": [{
+            "symbol": "AAA", "source": "momentum", "rvol": 3.0,
+            "entry_low": 1.0, "entry_high": 2.0, "stop_price": 0.8,
+            "target_1": 2.4, "reward_risk": 0.6,
+            "zone_kind": "pullback_band",
+        }],
+        "entry_watch": [],
+    }
+    out = d.overlay_ai_book_live_prices(payload)
+    assert hits == []
+    assert out["entry_book"][0]["price"] == 1.5
 
 
 def test_ensure_offset_last_mode_tracks_the_tape():

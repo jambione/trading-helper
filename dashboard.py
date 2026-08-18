@@ -6,6 +6,7 @@ Ties together the Discord OCR alert source, real-time prices, and signals.
 """
 
 import asyncio
+import hmac
 import io
 import json
 import logging
@@ -1701,6 +1702,23 @@ def add_ticker_to_log(ticker: str, src: str = "") -> tuple[bool, bool]:
             return False, False
 
 
+def _ticker_src_map() -> dict[str, str]:
+    """ticker → src tag, one lock acquisition.
+
+    ``_snapshot`` used to call ``_ticker_src`` *inside* STATE.lock. That
+    function takes ``_ticker_lock``, and ``remove_ticker_from_log`` takes
+    them the other way around — STATE.lock then waited forever, the default
+    executor filled with hung /api/state work, and /auth/login timed out.
+    """
+    with _ticker_lock:
+        out: dict[str, str] = {}
+        for e in _ticker_cache.get("entries") or []:
+            t = str(e.get("ticker") or "").upper()
+            if t:
+                out[t] = str(e.get("src") or "")
+        return out
+
+
 def _ticker_src(ticker: str) -> str:
     """The recorded ``src`` for a watchlist entry ('' when plain candidate).
 
@@ -1715,11 +1733,7 @@ def _ticker_src(ticker: str) -> str:
     with it.
     """
     t = str(ticker or "").upper()
-    with _ticker_lock:
-        for e in _ticker_cache.get("entries") or []:
-            if str(e.get("ticker") or "").upper() == t:
-                return str(e.get("src") or "")
-    return ""
+    return _ticker_src_map().get(t, "")
 
 
 def remove_ticker_from_log(ticker: str) -> bool:
@@ -1733,15 +1747,17 @@ def remove_ticker_from_log(ticker: str) -> bool:
             entries = [e for e in _ticker_cache["entries"] if e["ticker"] != ticker]
             _atomic_write_json(TICKER_LOG, entries)
             _ticker_cache["mtime"] = -1.0
-            with STATE.lock:
-                STATE.tickers.pop(ticker, None)
-                STATE.mention_ts.pop(ticker, None)
-                STATE.mention_daily.pop(ticker, None)
-                STATE.find_it_first_ts.pop(ticker, None)
-            return True
         except Exception as e:
             log.error(f"[TICKER] Remove {ticker} failed: {e}")
             return False
+    # STATE.lock after releasing _ticker_lock. Nesting them here was the
+    # other half of the _snapshot inversion (STATE then ticker).
+    with STATE.lock:
+        STATE.tickers.pop(ticker, None)
+        STATE.mention_ts.pop(ticker, None)
+        STATE.mention_daily.pop(ticker, None)
+        STATE.find_it_first_ts.pop(ticker, None)
+    return True
 
 
 def refresh_ticker_timestamps(tickers: list[str]):
@@ -2576,6 +2592,8 @@ def _snapshot() -> dict:
     mention_rank = _build_mention_rank(set(tickers))
     if mention_rank:
         refresh_ticker_timestamps(list(mention_rank.keys()))
+    # Read under _ticker_lock *before* STATE.lock — see _ticker_src_map.
+    src_map = _ticker_src_map()
 
     with STATE.lock:
         now_ts    = time.time()
@@ -2592,7 +2610,7 @@ def _snapshot() -> dict:
             # Why this symbol holds a data subscription. The Momentum panel
             # hides src="book" rows that have no momentum activity of their own
             # — they are here for the AI Watch book's tape, not as candidates.
-            src_tag = _ticker_src(t)
+            src_tag = src_map.get(t) or ""
             if src_tag:
                 d["src"] = src_tag
             price    = d.get("price")
@@ -2741,6 +2759,31 @@ def _snapshot() -> dict:
         }
 
 
+_SNAP_LOCK = threading.Lock()
+_SNAP_CACHE: tuple[float, dict] = (0.0, {})
+_SNAP_TTL = 0.20  # share one snapshot across HTTP + the 4Hz WebSocket
+
+
+def snapshot() -> dict:
+    """Latest desk snapshot, reused briefly so pollers don't stampede.
+
+    /api/state and each WebSocket used to run ``_snapshot`` on the default
+    executor. A handful of desk clients plus one browser tab meant a dozen
+    copies in flight, all taking STATE.lock, and /auth/login queued behind
+    them until it timed out.
+    """
+    global _SNAP_CACHE
+    now = time.monotonic()
+    ts, val = _SNAP_CACHE
+    if val and now - ts < _SNAP_TTL:
+        return val
+    with _SNAP_LOCK:
+        ts, val = _SNAP_CACHE
+        if val and time.monotonic() - ts < _SNAP_TTL:
+            return val
+        snap = _snapshot()
+        _SNAP_CACHE = (time.monotonic(), snap)
+        return snap
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -2815,6 +2858,33 @@ def _bearer_token(request: Request) -> str:
     return ""
 
 
+def _desk_secret_ok(request: Request) -> bool:
+    """True when a request carries the desk's machine credential.
+
+    The desk processes are not people. Making them log in with the operator's
+    username and password meant every restart ran PBKDF2 at 260k iterations
+    through /auth/login — the same endpoint a browser uses — and any hiccup
+    there took the whole desk offline even though every client was on
+    loopback. On 2026-08-18 that produced 2,639 logins in a day and then a
+    login path slow enough to time out.
+
+    A shared secret compared in constant time costs microseconds, needs no
+    token lifecycle, and cannot storm anything. This is the same credential
+    and header style /api/engine/* already uses; ``desk_secret`` overrides it
+    when the two need to be separated.
+    """
+    cfg = getattr(STATE, "cfg", {}) or {}
+    secret = str(cfg.get("desk_secret") or cfg.get("engine_control_secret") or "").strip()
+    if not secret:
+        return False
+    sent = (request.headers.get("X-Desk-Secret") or "").strip()
+    if not sent or len(sent) != len(secret):
+        # compare_digest raises ValueError on a length mismatch, which
+        # would turn a wrong secret into a 500.
+        return False
+    return hmac.compare_digest(sent, secret)
+
+
 def _request_identity(request: Request) -> tuple[str, str]:
     # Prefer a still-valid token. An expired Authorization header must not
     # hide a good HttpOnly session cookie — that's how visits stay logged in.
@@ -2847,6 +2917,11 @@ def _ws_token(ws: WebSocket, token: str = "") -> str:
 # mails bouncing, /auth/login went from ~50ms to 9-30s and the desk clients
 # timed out. Two dedicated threads bound the damage to the mail itself.
 _EMAIL_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="smtp")
+
+# Login must not share the default executor with _snapshot. A stuck
+# /api/state stampede fills that pool and every desk client then times
+# out on /auth/login — the feed looks like an auth outage.
+_AUTH_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="auth")
 
 _AUTH_HITS: dict[str, list[float]] = {}
 
@@ -2916,6 +2991,13 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
         # Allow unauthenticated access to the login page, login endpoint, and static files
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIX):
+            return await call_next(request)
+
+        # The desk's own processes present a machine credential instead of
+        # logging in as the operator. Checked before anything expensive: it is
+        # a constant-time compare, so the engine, the OCR source, the momentum
+        # monitor and the agents never touch PBKDF2 or /auth/login at all.
+        if _desk_secret_ok(request):
             return await call_next(request)
 
         # Local producers (Discord OCR on the same box) POST heartbeats here
@@ -3156,21 +3238,21 @@ async def auth_login(request: Request):
 
         loop = asyncio.get_running_loop()
         user, auth_err = await loop.run_in_executor(
-            None, lambda: authenticate(username, password))
+            _AUTH_POOL, lambda: authenticate(username, password))
         ok = bool(user) and not auth_err
         logged_as = user or username
         if not ok:
             _auth_rate_hit(rate_key)
 
         await loop.run_in_executor(
-            None,
+            _AUTH_POOL,
             lambda: record_login(logged_as, ip, ua, success=ok, cf_country=cf_country),
         )
         # Failures only, and never on the request path (SMTP was stalling the feed).
         if not ok:
             loop.run_in_executor(_EMAIL_POOL, lambda: send_login_email(logged_as, ok, ip=ip, ua=ua))
         await loop.run_in_executor(
-            None,
+            _AUTH_POOL,
             lambda: record_traffic_hit(
                 path="/auth/login",
                 method="POST",
@@ -3489,7 +3571,7 @@ async def api_state():
     loop = asyncio.get_running_loop()
     # _snapshot() already merges signal_proximity + the version badge, so the
     # HTTP and WebSocket paths return identical data.
-    snap = await loop.run_in_executor(None, _snapshot)
+    snap = await loop.run_in_executor(None, snapshot)
     return JSONResponse(snap)
 
 
@@ -4505,7 +4587,7 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
     last_snap_str = None
     try:
         while True:
-            snap = await asyncio.get_running_loop().run_in_executor(None, _snapshot)
+            snap = await asyncio.get_running_loop().run_in_executor(None, snapshot)
             snap_str = _json.dumps(snap, sort_keys=True, default=str)
             if snap_str != last_snap_str:
                 await ws.send_text(snap_str)

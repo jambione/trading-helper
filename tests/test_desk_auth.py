@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -22,7 +23,7 @@ import desk_auth
 def _restore_dashboard_env():
     """load_creds() injects into os.environ — don't leak it into other tests."""
     import os
-    keys = ("DASHBOARD_URL", "DASHBOARD_USER", "DASHBOARD_PASS")
+    keys = ("DASHBOARD_URL", "DASHBOARD_USER", "DASHBOARD_PASS", "DESK_SECRET")
     saved = {k: os.environ.get(k) for k in keys}
     yield
     for k, v in saved.items():
@@ -221,6 +222,35 @@ def test_a_timeout_is_not_a_rejection(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_a_slow_timeout_still_leaves_a_gap(tmp_path, monkeypatch):
+    """Timing the floor from the attempt's *start* left no gap at all.
+
+    A timeout burns the full login_timeout (25s) before raising, which is
+    longer than transport_retry — so the floor had already expired by the time
+    the attempt returned and the client retried flat out, printing
+    "retrying in 0s" on a loop while the dashboard was down.
+    """
+    calls = []
+
+    def _slow_timeout(req, timeout=None):
+        calls.append(1)
+        time.sleep(0.6)                 # stands in for the 25s login timeout
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _slow_timeout)
+    a = _auth(tmp_path, transport_retry=0.5, min_login_interval=30.0)
+    a.token(force=True)
+
+    assert a._wait_needed() > 0.2, "no gap — the client will retry flat out"
+    a.token(force=True)
+    a.token(force=True)
+    assert len(calls) == 1, f"{len(calls)} attempts — hot retry loop"
+
+    time.sleep(0.55)
+    a.token(force=True)
+    assert len(calls) == 2
+
+
 def test_an_http_rejection_still_backs_off(tmp_path, monkeypatch):
     """A dashboard that answered 401/429 is saying no — back off properly."""
     def _reject(req, timeout=None):
@@ -382,6 +412,52 @@ def test_headers_carry_the_user_agent_and_bearer(tmp_path, monkeypatch):
     assert h["User-Agent"] == "trading-helper-desk/1.0"
     assert h["Authorization"] == "Bearer t-1"
     assert h["Content-Type"] == "application/json"
+
+
+def test_machine_secret_skips_login(tmp_path, monkeypatch):
+    """Desk processes on the box must not POST /auth/login at all."""
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "secrets.json").write_text(
+        json.dumps({"engine_control_secret": "s3cret"}), encoding="utf-8")
+    monkeypatch.delenv("DESK_SECRET", raising=False)
+    calls = _login_counter(monkeypatch)
+    a = desk_auth.DashboardAuth(tmp_path, verbose=False)
+    a.set_creds("http://dash", "desk", "secret")
+    h = a.headers()
+    assert h["X-Desk-Secret"] == "s3cret"
+    assert "Authorization" not in h
+    assert a.token(force=True) == ""
+    assert calls == []
+
+
+def test_desk_secret_env_beats_the_file(tmp_path, monkeypatch):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "secrets.json").write_text(
+        json.dumps({"engine_control_secret": "from-file"}), encoding="utf-8")
+    monkeypatch.setenv("DESK_SECRET", "from-env")
+    a = desk_auth.DashboardAuth(tmp_path, verbose=False)
+    a.load_creds()
+    assert a.headers()["X-Desk-Secret"] == "from-env"
+
+
+def test_urlopen_does_not_relogin_when_using_a_machine_secret(tmp_path, monkeypatch):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "secrets.json").write_text(
+        json.dumps({"desk_secret": "box"}), encoding="utf-8")
+    calls: list[str] = []
+
+    def _always_401(req, timeout=None):
+        url = getattr(req, "full_url", None) or req.get_full_url()
+        calls.append(url)
+        raise urllib.error.HTTPError(url, 401, "no", hdrs=None, fp=None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _always_401)
+    a = desk_auth.DashboardAuth(tmp_path, verbose=False)
+    a.set_creds("http://dash", "desk", "secret")
+    with pytest.raises(urllib.error.HTTPError) as e:
+        a.urlopen("http://dash/api/state")
+    assert e.value.code == 401
+    assert calls == ["http://dash/api/state"]
 
 
 def test_for_process_returns_one_instance_per_name(tmp_path):

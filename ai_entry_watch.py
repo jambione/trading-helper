@@ -469,9 +469,9 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
             in ("pullback_band", "offset"),
         },
     }
-    live_rv = _desk_rvol(rec["symbol"]) if rec["symbol"] else None
-    if live_rv is not None:
-        rec["rvol"] = live_rv
+    # Row rvol only. _desk_rvol GETs /api/state, and overlay_ai_book_live_prices
+    # runs this on the /api/state path — a self-fetch that waited on the
+    # snapshot it was building (48s, then desk logins timed out behind it).
     pctr = _f_or_none(row.get("pctr"))
     if pctr is None:
         exh = _f_or_none(row.get("exhaustion"))
