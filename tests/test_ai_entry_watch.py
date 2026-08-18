@@ -27,6 +27,9 @@ def test_watch_config_defaults_present():
     assert DEFAULT_CONFIG["ai_watch_seed_trending"] is True
     assert cfg["ai_watch_poll_sec"] == 20.0
     assert float(DEFAULT_CONFIG["ai_entry_zone_pad_pct"]) == 0.0
+    assert DEFAULT_CONFIG["ai_watch_arm_mode"] == "zone"
+    assert int(DEFAULT_CONFIG["ai_max_positions"]) == 2
+    assert float(DEFAULT_CONFIG["ai_local_trail_arm_r"]) == 0.5
 
 
 def test_upsert_requires_agreement_by_default(tmp_path, monkeypatch):
@@ -2832,6 +2835,44 @@ def test_cheap_pullback_band_overbought_is_refused():
     rec["source"] = "momentum"
     ok5, why5 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=cfg)
     assert ok5 and why5.startswith("zone")
+    # Last-mode used to skip cheap_ob and buy the same dump at the tape.
+    rec["indicator"]["pctr"] = -15.0
+    rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_falling"] = False
+    last_cfg = dict(cfg)
+    last_cfg["ai_watch_arm_mode"] = "last"
+    ok6, why6 = ew.should_arm_buy(rec, ask=2.00, bid=1.99, cfg=last_cfg)
+    assert (ok6, why6) == (False, "cheap_ob_band")
+
+
+def test_cheap_name_already_extended_on_the_day_is_refused():
+    """WCT/BYSI/HCTI: $1–2 names +60% are blow-offs, not pullbacks."""
+    import ai_entry_watch as ew
+
+    rec = _armable_record({
+        "decision": "WAIT", "wait_kind": "wait_for_zone",
+        "entry_low": 1.20, "entry_high": 1.35, "stop_price": 1.15,
+        "target_1": 1.50, "reward_risk": 1.5,
+        "zone_kind": "double_bottom", "synthetic": True,
+    })
+    rec["admit_pct_change"] = 64.94
+    rec["indicator"] = {
+        "pctr": -60.0, "pctr_rising": True, "pctr_falling": False,
+    }
+    cfg = _db_cfg(
+        ai_watch_exhaustion_rules=True,
+        ai_watch_cheap_price=5.0,
+        ai_watch_min_stop_pct=0,
+        ai_min_reward_risk=0.5,
+        ai_watch_exhaustion_heat_min_pct=20.0,
+        ai_watch_exhaustion_heat_max_pct=50.0,
+    )
+    ok, why = ew.should_arm_buy(rec, ask=1.27, bid=1.26, cfg=cfg)
+    assert (ok, why) == (False, "extended_cheap")
+    assert ew.format_blocker("extended_cheap") == "blow-off"
+    rec["admit_pct_change"] = 8.0
+    ok2, why2 = ew.should_arm_buy(rec, ask=1.27, bid=1.26, cfg=cfg)
+    assert ok2 and why2.startswith("zone")
 
 
 def test_hot_overbought_arms_in_and_below_zone_not_above():

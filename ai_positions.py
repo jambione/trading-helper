@@ -1265,19 +1265,15 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err}
     if stop_price >= sizing_entry:
-        # Fill came in through the planned stop. Rebuild the floor under
-        # the fill — the plan stop is not live until the position is open.
-        try:
-            min_pct = float(cfg.get("ai_watch_min_stop_pct", 1.5) or 1.5)
-        except (TypeError, ValueError):
-            min_pct = 1.5
-        min_pct = max(0.5, min_pct)
-        new_stop = float(sizing_entry) * (1.0 - min_pct / 100.0)
-        log_event(
-            "entry_stop_rebased", symbol=ticker,
-            from_stop=stop_price, to_stop=new_stop, fill=sizing_entry,
+        # A fill through the planned stop is already dead. Rebasing a new
+        # floor under it (08-17 DUOT/SWMR) opened 18 trades that flattened
+        # in ~9s. Refuse; do not invent a stop after the thesis is gone.
+        err = (
+            f"refused: stop ${float(stop_price):.4f} at/above entry "
+            f"${float(sizing_entry):.4f} (dead fill)"
         )
-        stop_price = new_stop
+        log_event("entry_fail", symbol=ticker, reason=err)
+        return {"ok": False, "error": err}
     if target_1 <= sizing_entry:
         err = (
             f"refused: target_1 ${target_1:.4f} must be above entry "
@@ -2248,11 +2244,20 @@ def initial_local_stop(
     risk: float | None,
     cfg: dict | None = None,
 ) -> float | None:
-    """Working RSTOP at fill: entry − 0.10R. Not the 5% disaster floor.
+    """Working stop at fill.
 
-    Flatten compares last to this shelf. Seeding the plan stop left a
-    5% hole for one or two polls and the 0.10R trail never fired.
+    When ``ai_local_trail_arm_r`` > 0 the structure stop stays in force
+    until MFE reaches that arm. Seeding entry−give here used to ignore
+    arm_r and flatten the first noise print. arm_r == 0 still seeds
+    entry − give (legacy scalp).
     """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
+    except (TypeError, ValueError):
+        arm_need = 0.0
+    if arm_need > 0:
+        return None
     try:
         e = float(entry or 0)
     except (TypeError, ValueError):

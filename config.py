@@ -158,11 +158,11 @@ DEFAULT_CONFIG = {
     "ai_trade_amount":        1000.0,
     # Ratchet-first: give the 0.10R shelf more names to work. Fill abort and
     # cheap-OB still block dumps; selection is no longer the bottleneck.
-    "ai_max_positions":            8,
+    "ai_max_positions":            2,
     # One open slot per this much equity (floor 1, ceiling ai_max_positions).
-    # $250 → 1 name; $2,000 → 8. Set 0 to disable scaling.
-    "ai_position_slot_equity":   250.0,
-    "ai_max_buys_per_poll":        2,
+    # $500 → 1 name; $1,000 → 2. Set 0 to disable scaling.
+    "ai_position_slot_equity":   500.0,
+    "ai_max_buys_per_poll":        1,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
     "ai_trade_style": "Day scalp",
@@ -415,9 +415,9 @@ DEFAULT_CONFIG = {
     #   "offset"        — % under the live print (legacy).
     "ai_watch_zone_mode":     "double_bottom",
     # How the book arms a buy.
+    #   "zone" — wait for a pullback into the band (capital-first default).
     #   "last" — buy the tape; RSTOP is the trade. Zone is display/R only.
-    #   "zone" — wait for a pullback into the band (legacy).
-    "ai_watch_arm_mode":              "last",
+    "ai_watch_arm_mode":              "zone",
     # In double_bottom mode, refuse to arm on the offset fallback. Without this
     # a name with no detectable shelf quietly becomes a different trade — a
     # percentage band with a 5% stop, the regime the 90-day replay measured at
@@ -577,10 +577,10 @@ DEFAULT_CONFIG = {
     "ai_watch_zone_width_pct":         4.0,  # zone depth below entry_high
     # Measured off the *fill*, not entry_low — see _decision_for_place.
     "ai_watch_synth_stop_pct":         5.0,  # stop under the fill price
-    # Day Scalp v0: first bank inside a normal day's range. 1.5R at 5% stop
-    # demanded +7.5% (above p75 of day range) and ~77% of replay exits hit the
-    # 15:50 clock instead. 0.6R ≈ +3% — reachable for small consistent banks.
-    "ai_watch_synth_rr":               0.6,  # target at this R multiple
+    # First bank at 1R. 0.6R was a scalp that cut continuation winners
+    # before the ratchet could lock them (30m+ holds were the only green
+    # bucket on 2026-08-11..18).
+    "ai_watch_synth_rr":               1.0,  # target at this R multiple
     # Scale-out / runner (synthetic dual tranche when ai_day_scalp_dual_tranche).
     "ai_watch_synth_scale_out_pct":   50.0,  # % of shares with T1 take-profit
     # Runner trail after T1, in R — a percent trail is a different trade on
@@ -589,14 +589,14 @@ DEFAULT_CONFIG = {
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
     # Local profit trail: stop = last − give, only ratchets up.
-    # Constant 0.10R from the first tick. give_open_r is unused unless
-    # set wider than give_r. give_px > 0 is a legacy fixed dollar.
+    # Armed only after +arm_r MFE so the structure stop owns the open.
+    # 0.10R from tick one shook out 60 names last week at mean MFE 0.19R.
     # Flatten if last prints through. This is the stop of record when
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
-    "ai_local_trail_arm_r":            0.0,
+    "ai_local_trail_arm_r":            0.5,
     "ai_local_trail_give_r":           0.10,
-    "ai_local_trail_give_open_r":      0.10,
+    "ai_local_trail_give_open_r":      0.20,
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
     "ai_local_trail_min_give_px":      0.06,
@@ -620,7 +620,7 @@ DEFAULT_CONFIG = {
     # Dead trade: no scale-out, MFE never reached, still flat/red → flatten.
     # Continuation wants this tighter so positions do not sit 90m for −0.3R
     # (S/CRCL on 2026-08-11) waiting for an exhaustion exit that is now off.
-    "ai_dead_trade_min":               22.0,
+    "ai_dead_trade_min":               30.0,
     "ai_dead_trade_mfe_r":            0.10,
     # After a losing exit that never printed 0.5R MFE, do not re-arm that
     # symbol for the rest of the ET session. Winners and 0.5R runners may.
@@ -902,6 +902,8 @@ _EFFECTIVE_KEYS = (
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
     "ai_local_trail_enabled",
+    "ai_local_trail_arm_r",
+    "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_ob_allow_hot",
     "ai_trading_source",

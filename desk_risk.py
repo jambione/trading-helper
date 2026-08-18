@@ -172,7 +172,7 @@ def equity_book_limits(
     """Scale slots and notional cap from live equity.
 
     * ``max_positions`` = one slot per ``slot_equity``, at least 1, at most the
-      configured ceiling. $250 → 1, $500 → 2, $2,000 → 8.
+      configured ceiling. $500 → 1, $1,000 → 2.
     * Dollar cap = ``max(equity × configured %, one slot)``, never more than
       equity. So $250 can use the whole book; at $10k the 8% ceiling binds and
       dollar size keeps growing with equity.

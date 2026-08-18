@@ -60,11 +60,15 @@ def arm_at_last(cfg: dict | None = None) -> bool:
     """True when the book buys the tape instead of waiting for a pullback.
 
     Missing / unknown ``ai_watch_arm_mode`` stays on the zone path so unit
-    tests that omit the key keep their old geometry. Live config sets
-    ``last``.
+    tests that omit the key keep their old geometry. Live default is zone.
     """
     mode = str((cfg or {}).get("ai_watch_arm_mode") or "").lower().strip()
     return mode in ("last", "at_last", "tape", "market", "no_zone")
+
+
+# Cheap names already up this far on the day are a blow-off, not a dip.
+# WCT/BYSI/HCTI/BQ (2026-08-12/13) were +60–110% and -$100 each.
+_CHEAP_BLOWOFF_PCT = 15.0
 
 # Serializes every load -> mutate -> save of the watch file.
 #
@@ -136,6 +140,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "offset_zone": "no shelf",
     "stop_too_tight": "stop too tight",
     "cheap_ob_band": "cheap OB band",
+    "extended_cheap": "blow-off",
     # Exhaustion gate (ai_watch_exhaustion_rules) — UI must name these or
     # in-zone names look "ready" while the poll refuses on missing %R.
     "no_exhaustion_data": "no %R",
@@ -5259,6 +5264,19 @@ def _shadow_row(
     }
 
 
+def _arm_day_change(record: dict) -> float | None:
+    """Session % change the arm gate sees (admit stamp, else features)."""
+    rec = record if isinstance(record, dict) else {}
+    for key in ("admit_pct_change", "pct_change"):
+        got = _f_or_none(rec.get(key))
+        if got is not None:
+            return got
+    feat = rec.get("features")
+    if isinstance(feat, dict):
+        return _f_or_none(feat.get("pct_change"))
+    return None
+
+
 def _arm_rvol(record: dict) -> float | None:
     """RVOL the arm gate sees. Live stamp on the record, else admit.
 
@@ -5527,22 +5545,28 @@ def should_arm_buy(
             return False, exh_why
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
-    # 20% of equity, then −1R in under a minute. Hot-OB used to punch
-    # through this (momentum HCTI 08-13). A real double-bottom under $5
-    # can still arm. Heating (not yet OB) cheap pullbacks can too.
+    # 20% of equity, then −1R in under a minute. Last-mode used to skip
+    # this and buy the same blow-off at the tape.
     try:
         cheap_px = float(cfg.get("ai_watch_cheap_price", 5.0) or 0.0)
     except (TypeError, ValueError):
         cheap_px = 5.0
     zk = str(structure.get("zone_kind") or "").lower().strip()
     if (
-        not last_mode
-        and cheap_px > 0
+        cheap_px > 0
         and a < cheap_px
-        and zk in ("pullback_band", "offset", "")
+        and zk in ("pullback_band", "offset", "at_last", "")
         and is_overbought(record, cfg) is True
     ):
         return False, "cheap_ob_band"
+    day_chg = _arm_day_change(record)
+    if (
+        cheap_px > 0
+        and a < cheap_px
+        and day_chg is not None
+        and day_chg >= _CHEAP_BLOWOFF_PCT
+    ):
+        return False, "extended_cheap"
 
     if last_mode:
         # Last is the entry. Structure only supplies stop/target for R.

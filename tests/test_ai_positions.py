@@ -1969,6 +1969,28 @@ def test_place_scaled_entry_allows_armable_below_zone(tmp_path, monkeypatch):
     assert stub.calls and stub.calls[0]["qty"] > 0
 
 
+def test_place_scaled_entry_refuses_stop_at_or_above_entry(
+        tmp_path, monkeypatch):
+    """Do not rebase a new floor under a dead fill (08-17 DUOT)."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_max_position_pct": 25.0,
+        "ai_watch_arm_mode": "zone",
+        "ai_fill_abort_r": 0.15,
+    })
+    monkeypatch.setattr(cp, "_live_tape_px", lambda ticker: None)
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(
+        entry_low=10.0, entry_high=10.5, stop_price=11.0, target_1=12.0)
+    out = cp.place_scaled_entry(
+        "duot", decision, account_equity=50_000.0, risk_pct=1.0)
+    assert out["ok"] is False
+    assert "dead fill" in str(out.get("error") or "").lower()
+    assert stub.calls == []
+
+
 def test_place_scaled_entry_refuses_when_ask_is_through_the_stop(
         tmp_path, monkeypatch):
     """FGI/SPAI/TDIC: last already under the plan stop — do not open."""
@@ -2862,9 +2884,20 @@ def test_initial_local_stop_is_entry_minus_give_not_the_plan_floor():
     cfg = {
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_min_give_px": 0,
+        "ai_local_trail_arm_r": 0.0,
     }
     # $20 fill, 5% plan stop $19, 0.10R = $0.10 → shelf $19.90.
     assert cp.initial_local_stop(20.0, 1.0, cfg) == pytest.approx(19.90)
+
+
+def test_initial_local_stop_waits_for_arm_r():
+    """Capital-first: structure stop owns the open until MFE hits arm_r."""
+    cfg = {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+        "ai_local_trail_arm_r": 0.5,
+    }
+    assert cp.initial_local_stop(20.0, 1.0, cfg) is None
 
 
 def test_tight_give_waits_until_last_minus_give_clears_entry():
