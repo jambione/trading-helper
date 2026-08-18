@@ -2525,6 +2525,50 @@ def test_arm_refuses_known_low_rvol_including_research():
     assert ok and why.startswith("zone")
 
 
+def test_zone_entry_opens_a_window_for_exh_to_arm():
+    """Zone is the trigger; EXH may confirm on a later tick inside 20s."""
+    import ai_entry_watch as ew
+
+    rec = _armable_rec(pctr=False)
+    rec["indicator"]["pctr"] = -80.0
+    rec["indicator"]["pctr_rising"] = False
+    rec["indicator"]["pctr_falling"] = True
+    cfg = _arm_cfg(
+        ai_watch_exhaustion_rules=True,
+        ai_watch_arm_require_indicators=False,
+        ai_watch_zone_exh_window_sec=20.0,
+        ai_watch_exhaustion_heat_min_pct=20.0,
+        ai_watch_exhaustion_heat_max_pct=0.0,
+    )
+    t0 = 1_000_000.0
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=cfg, now=t0)
+    assert ok is False and why == "wait_exh"
+    assert rec.get("zone_touch_ts") == t0
+
+    rec["indicator"]["pctr"] = -40.0
+    rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_falling"] = False
+    rec["indicator"]["pctr_ok"] = True
+    ok, why = ew.should_arm_buy(rec, ask=28.0, bid=27.9, cfg=cfg, now=t0 + 10.0)
+    assert ok is True and why.startswith("zone")
+
+    rec_late = _armable_rec(pctr=False)
+    rec_late["indicator"]["pctr"] = -80.0
+    rec_late["indicator"]["pctr_rising"] = False
+    rec_late["indicator"]["pctr_falling"] = True
+    rec_late["zone_touch_ts"] = t0
+    ok, why = ew.should_arm_buy(
+        rec_late, ask=28.0, bid=27.9, cfg=cfg, now=t0 + 21.0)
+    assert ok is False and why != "wait_exh"
+
+    rec_leave = _armable_rec(pctr=False)
+    rec_leave["zone_touch_ts"] = t0
+    ok, why = ew.should_arm_buy(
+        rec_leave, ask=32.0, bid=31.9, cfg=cfg, now=t0 + 5.0)
+    assert why == "above_zone"
+    assert "zone_touch_ts" not in rec_leave
+
+
 def test_arm_requires_price_in_zone_AND_the_two_named_indicators():
     """CM RSI-2 and %R exhaustion are the buy signals. The zone answers "is this
     a good price"; those two answer "is this a good moment". Both must hold at
@@ -2742,6 +2786,53 @@ def test_dashboard_requests_send_a_non_default_user_agent():
 
     assert seen["ua"] == ew._DASH_UA
     assert seen["timeout"] == ew._DASH_TIMEOUT
+
+
+def test_dashboard_state_logs_in_with_env_creds_after_401(monkeypatch):
+    """Auth middleware 401s /api/state; desk must use DASHBOARD_USER/PASS."""
+    import json
+    import urllib.error
+    import urllib.request
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "DASHBOARD_USER", "desk")
+    monkeypatch.setattr(ew, "DASHBOARD_PASS", "secret")
+    monkeypatch.setattr(ew, "DASHBOARD_URL", "https://trading.jbrasfield.com")
+    ew._dash_token = ""
+    ew._dash_token_exp = 0.0
+    ew._dash_creds_loaded = True
+
+    calls: list[str] = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        url = getattr(req, "full_url", None) or req.get_full_url()
+        calls.append(url)
+        if url.endswith("/auth/login"):
+            return _Resp(b'{"ok":true,"token":"t-desk","expires_in":3600}')
+        auth = req.get_header("Authorization") or req.get_header("authorization")
+        if not auth:
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
+        assert auth == "Bearer t-desk"
+        return _Resp(b'{"tickers":[{"ticker":"CDTG","price":5.3,"pct_change":77.8}]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    data = ew.dashboard_state(force=True)
+    assert any(u.endswith("/auth/login") for u in calls)
+    assert any(u.endswith("/api/state") for u in calls)
+    assert data["tickers"][0]["ticker"] == "CDTG"
 
 
 def test_capped_engine_push_sends_the_best_candidates_not_the_alphabet(monkeypatch):

@@ -147,6 +147,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
     "already_extended": "extended",
+    "wait_exh": "wait EXH",
     "in_zone_fade_ok": "in zone",
     "overbought_hot": "OB hot",
     "dead_reentry": "dead today",
@@ -1394,6 +1395,8 @@ def upsert_from_rows(
             "updated_ts": float(now),
             **_admission_fields(row, prev, float(now)),
         }
+        if prev.get("zone_touch_ts") is not None:
+            rec["zone_touch_ts"] = prev["zone_touch_ts"]
         state[sym] = rec
 
     save_watch(state)
@@ -1744,6 +1747,8 @@ def _momentum_has_flag(row: dict) -> bool:
 # never saw. The push was a no-op, the indicator map was permanently empty, and
 # should_arm_buy blocked every symbol on `no_indicators`.
 DASHBOARD_URL = (os.getenv("DASHBOARD_URL") or "https://trading.jbrasfield.com").rstrip("/")
+DASHBOARD_USER = os.getenv("DASHBOARD_USER", "")
+DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
 
 # Remote hop, so the old 2s local timeouts are too tight to be a real signal.
 _DASH_TIMEOUT = 4.0
@@ -1752,6 +1757,105 @@ _DASH_TIMEOUT = 4.0
 # "Python-urllib/x.y" agent. signal_engine.py never hit this because `requests`
 # sends its own. Any non-default agent passes; identify ourselves honestly.
 _DASH_UA = "trading-helper-desk/1.0"
+
+# Bearer from POST /auth/login (DASHBOARD_USER / DASHBOARD_PASS in
+# signal_engine.env). Middleware 401s /api/state without it, so momentum
+# never seeded (CDTG sat on the desk and never reached the book).
+_dash_token = ""
+_dash_token_exp = 0.0
+_dash_creds_loaded = False
+
+
+def _load_dashboard_creds() -> None:
+    """Fill user/pass from signal_engine.env when the process skipped load_desk_env."""
+    global DASHBOARD_USER, DASHBOARD_PASS, DASHBOARD_URL, _dash_creds_loaded
+    if _dash_creds_loaded:
+        return
+    _dash_creds_loaded = True
+    if DASHBOARD_USER and DASHBOARD_PASS:
+        return
+    try:
+        desk_core.load_desk_env(ROOT / "signal_engine.env")
+    except Exception:
+        return
+    DASHBOARD_USER = os.getenv("DASHBOARD_USER", "") or DASHBOARD_USER
+    DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "") or DASHBOARD_PASS
+    url = (os.getenv("DASHBOARD_URL") or "").strip()
+    if url:
+        DASHBOARD_URL = url.rstrip("/")
+
+
+def _dashboard_login(*, force: bool = False) -> str:
+    """POST /auth/login; cache the Bearer token. Empty string on failure."""
+    global _dash_token, _dash_token_exp
+    _load_dashboard_creds()
+    now = time.time()
+    if not force and _dash_token and now < (_dash_token_exp - 60.0):
+        return _dash_token
+    user, password = DASHBOARD_USER, DASHBOARD_PASS
+    if not user or not password:
+        _dash_token = ""
+        _dash_token_exp = 0.0
+        return ""
+    body = json.dumps({"username": user, "password": password}).encode("utf-8")
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"{DASHBOARD_URL}/auth/login",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": _DASH_UA,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=_DASH_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+        tok = str(data.get("token") or data.get("access_token") or "")
+        if data.get("ok") and tok:
+            try:
+                ttl = float(data.get("expires_in") or 3600)
+            except (TypeError, ValueError):
+                ttl = 3600.0
+            _dash_token = tok
+            _dash_token_exp = time.time() + max(ttl, 60.0)
+            return _dash_token
+    except Exception:
+        pass
+    _dash_token = ""
+    _dash_token_exp = 0.0
+    return ""
+
+
+def _dash_headers(*, json_body: bool = False) -> dict[str, str]:
+    headers = {"User-Agent": _DASH_UA}
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    tok = _dashboard_login()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    return headers
+
+
+def _dash_urlopen(url: str, *, data: bytes | None = None, method: str | None = None):
+    """urllib GET/POST with env auth; one re-login on 401."""
+    import urllib.error
+    import urllib.request
+
+    def _open():
+        req = urllib.request.Request(
+            url, data=data, headers=_dash_headers(json_body=data is not None),
+            method=method,
+        )
+        return urllib.request.urlopen(req, timeout=_DASH_TIMEOUT)
+
+    try:
+        return _open()
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            raise
+        _dashboard_login(force=True)
+        return _open()
 
 # Last dashboard fetch: (monotonic_ts, payload). Two callers used to issue their
 # own GET (2s timeout each) on every 2s book tick, so a slow dashboard could eat
@@ -1774,14 +1878,7 @@ def dashboard_state(*, force: bool = False) -> dict:
     if not force and cached and (mono - ts) < _DASH_CACHE_TTL:
         return cached
     try:
-        import urllib.request
-        with urllib.request.urlopen(
-            urllib.request.Request(
-                f"{DASHBOARD_URL}/api/state",
-                headers={"User-Agent": _DASH_UA},
-            ),
-            timeout=_DASH_TIMEOUT,
-        ) as resp:
+        with _dash_urlopen(f"{DASHBOARD_URL}/api/state") as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if not isinstance(data, dict):
             raise TypeError(f"unexpected payload type {type(data).__name__}")
@@ -2529,17 +2626,14 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
     for m in missing:
         _pushed_at[m] = now
     try:
-        import urllib.request
-        req = urllib.request.Request(
+        with _dash_urlopen(
             f"{DASHBOARD_URL}/api/tickers/add-bulk",
             # src="book" marks these as data subscriptions, not momentum
             # candidates — the Momentum panel filters them out so pushing the
             # whole book does not bury the panel it seeds from.
             data=json.dumps({"tickers": missing, "src": "book"}).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": _DASH_UA},
             method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=_DASH_TIMEOUT):
+        ):
             pass
         return {"pushed": len(missing), "known": len(known)}
     except Exception:
@@ -3139,6 +3233,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         for k in (
             "block_code", "block_reason", "block_ts", "block_detail",
             "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
+            "zone_touch_ts",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
@@ -5429,6 +5524,7 @@ def should_arm_buy(
     ask: float,
     bid: float | None,
     cfg: dict,
+    now: float | None = None,
 ) -> tuple[bool, str]:
     """Whether a watch record may auto-arm a paper buy at *ask*.
 
@@ -5635,6 +5731,16 @@ def should_arm_buy(
         if rv is not None and rv + 1e-12 < min_rvol:
             return False, "thin_rvol"
 
+    try:
+        zone_win = float(cfg.get("ai_watch_zone_exh_window_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        zone_win = 0.0
+    in_zone = ask_triggers_zone(
+        a, entry_low, entry_high,
+        pad_pct=pad, stop=_stop,
+        max_below_r=arm_below_max_r(cfg),
+        arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
+    )
     if not exh_ok:
         # Optional: cooling EXH may still fill. Last-mode does not also
         # demand the leftover pullback band. Zone mode still does.
@@ -5644,18 +5750,11 @@ def should_arm_buy(
         )
         if last_mode and fade_ok:
             exh_ok, exh_why = True, "in_zone_fade_ok"
-        elif (
-            fade_ok
-            and ask_triggers_zone(
-                a, entry_low, entry_high,
-                pad_pct=pad, stop=_stop,
-                max_below_r=arm_below_max_r(cfg),
-                arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
-            )
-        ):
+        elif fade_ok and in_zone:
             exh_ok, exh_why = True, "in_zone_fade_ok"
-        else:
+        elif zone_win <= 0:
             return False, exh_why
+        # zone_win > 0: stay on the name; zone entry starts a wait below.
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
     # 20% of equity, then −1R in under a minute. Last-mode used to skip
@@ -5683,24 +5782,38 @@ def should_arm_buy(
 
     if last_mode:
         # Last is the entry. Structure only supplies stop/target for R.
+        if not exh_ok:
+            return False, exh_why
         return True, f"last_{exh_why}"
 
-    # Zone membership is the primary arm signal (matches UI READY).
-    # In *or below* the band (to the stop, default 1.0R) both count as in-zone
-    # for trading — above the band never does.
-    if ask_triggers_zone(
-        a, entry_low, entry_high,
-        pad_pct=pad, stop=_stop,
-        max_below_r=arm_below_max_r(cfg),
-        arm_below=bool(cfg.get("ai_watch_arm_below_zone", True)),
-    ):
-        return True, f"zone_{exh_why}"
+    t_now = float(now if now is not None else time.time())
+    if not in_zone:
+        if isinstance(record, dict):
+            record.pop("zone_touch_ts", None)
+        frac = max(0.0, pad) / 100.0
+        high_bound = max(entry_low, entry_high) * (1.0 + frac)
+        if a > high_bound:
+            return False, "above_zone"
+        return False, "below_zone"
 
-    frac = max(0.0, pad) / 100.0
-    high_bound = max(entry_low, entry_high) * (1.0 + frac)
-    if a > high_bound:
-        return False, "above_zone"
-    return False, "below_zone"
+    # In / below the band. Stamp first touch so EXH can arm on a later tick.
+    if zone_win > 0:
+        try:
+            touch = float(record.get("zone_touch_ts") or 0.0)
+        except (TypeError, ValueError):
+            touch = 0.0
+        if touch <= 0:
+            touch = t_now
+            record["zone_touch_ts"] = touch
+        if exh_ok:
+            return True, f"zone_{exh_why}"
+        if (t_now - touch) <= zone_win + 1e-9:
+            return False, "wait_exh"
+        return False, exh_why
+
+    if exh_ok:
+        return True, f"zone_{exh_why}"
+    return False, exh_why
 
 
 def _prune_structure_budget(now: float) -> None:
@@ -6615,7 +6728,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                   detail=f"{int(wash_until - t0)}s left")
             continue
 
-        ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg)
+        ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the
         # desk declined, and nothing else on disk says what that cost.
@@ -6745,7 +6858,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             bid2_f = float(bid2) if bid2 is not None else None
         except Exception:
             bid2_f = bid_f
-        ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg)
+        ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
         if not ok_arm2:
             _skip(f"recheck_{why2}")
             continue
