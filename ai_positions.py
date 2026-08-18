@@ -2244,20 +2244,12 @@ def initial_local_stop(
     risk: float | None,
     cfg: dict | None = None,
 ) -> float | None:
-    """Working stop at fill.
+    """Working rstop at fill: entry − 0.10R (give_r), not the 5% plan stop.
 
-    When ``ai_local_trail_arm_r`` > 0 the structure stop stays in force
-    until MFE reaches that arm. Seeding entry−give here used to ignore
-    arm_r and flatten the first noise print. arm_r == 0 still seeds
-    entry − give (legacy scalp).
+    ``ai_local_trail_arm_r`` only delays *raising* the shelf. The live
+    rstop is always the 0.10R working shelf from the fill.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
-    try:
-        arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
-    except (TypeError, ValueError):
-        arm_need = 0.0
-    if arm_need > 0:
-        return None
     try:
         e = float(entry or 0)
     except (TypeError, ValueError):
@@ -2357,7 +2349,10 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     except (TypeError, ValueError):
         arm_need = 0.0
     if arm_need > 0 and float(mfe) + 1e-9 < arm_need:
-        return prev or floor
+        # Hold the 0.10R working shelf. Do not fall back to the 5% plan
+        # stop — that is the disaster floor, not the live rstop.
+        seed = initial_local_stop(entry, risk, cfg)
+        return prev or seed or floor
     give_mfe = mfe
     if not _tight_give_clears_entry(last, entry, risk, cfg):
         give_mfe = 0.0
@@ -3450,10 +3445,19 @@ def manage_open_positions(
             seed = initial_local_stop(
                 _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all())
             if loc is None:
-                loc = floor
+                loc = seed or floor
             elif seed is not None and loc + 1e-9 < seed:
                 # Plan-stop leftover (5% floor) is not the working shelf.
                 loc = seed
+                # Do not lift through the live print — that would flatten
+                # an open name that is already more than 0.10R off entry.
+                if last is not None and last > 0 and loc + 1e-9 >= last:
+                    give = local_trail_give(
+                        last, _risk_basis(pos), _cfg_all(), mfe_r=0.0)
+                    under = round(float(last) - give, 6)
+                    if under > 0 and under < last:
+                        loc = under
+                pos["local_stop_price"] = loc
             trigger = flatten_px.get(str(ticker).upper())
             if trigger is None:
                 trigger = last

@@ -2509,8 +2509,14 @@ def test_local_profit_stop_holds_plan_stop_until_arm_r():
         "ai_local_trail_give_open_r": 0.20,
         "ai_local_trail_min_give_px": 0,
     }
-    # Unarmed: hold the plan / stored shelf.
+    # Unarmed: keep stored shelf if already set (never lower).
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(9.80)
+    pos["local_stop_price"] = None
+    # Unarmed with no stored shelf: working rstop (entry − give), not 5% plan.
+    seed = cp.initial_local_stop(10.00, 0.20, cfg)
+    assert seed == pytest.approx(9.96)
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(seed)
+    pos["local_stop_price"] = 9.98
     pos["last_seen_price"] = 10.06
     pos["mfe_r"] = 0.30
     # Armed, mfe 0.30 > 0.25: last − 0.10R = 10.04
@@ -2890,14 +2896,14 @@ def test_initial_local_stop_is_entry_minus_give_not_the_plan_floor():
     assert cp.initial_local_stop(20.0, 1.0, cfg) == pytest.approx(19.90)
 
 
-def test_initial_local_stop_waits_for_arm_r():
-    """Capital-first: structure stop owns the open until MFE hits arm_r."""
+def test_initial_local_stop_is_rstop_even_when_arm_r_set():
+    """0.10R is the live rstop from fill; arm_r only delays raising."""
     cfg = {
         "ai_local_trail_give_r": 0.10,
         "ai_local_trail_min_give_px": 0,
         "ai_local_trail_arm_r": 0.5,
     }
-    assert cp.initial_local_stop(20.0, 1.0, cfg) is None
+    assert cp.initial_local_stop(20.0, 1.0, cfg) == pytest.approx(19.90)
 
 
 def test_tight_give_waits_until_last_minus_give_clears_entry():

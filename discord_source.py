@@ -37,7 +37,9 @@ Setup:
   1. Build the OCR helper (one time):   swiftc discord_ocr.swift -o discord_ocr
   2. Keep the Discord window with the alert channel visible (not minimized).
   3. Enable in config/bot_config.json:   "discord_ocr_enabled": true
-  4. Run standalone for testing:         python discord_source.py
+  4. Dashboard login: DASHBOARD_USER / DASHBOARD_PASS in repo-root .env
+     (same file mac_agent reads). signal_engine.env is the fallback.
+  5. Run standalone for testing:         python discord_source.py
      or let start_all.py launch it automatically when enabled.
 
 The first run will request Screen Recording permission (same as the audio
@@ -89,26 +91,19 @@ _AUTH_TOKEN = ""
 
 
 def _load_dashboard_creds() -> None:
-    """Fill DASHBOARD_USER/PASS from signal_engine.env when the shell didn't."""
-    global DASHBOARD_USER, DASHBOARD_PASS
-    if DASHBOARD_USER and DASHBOARD_PASS:
-        return
-    env_path = ROOT / "signal_engine.env"
-    if not env_path.exists():
-        return
-    try:
-        for raw in env_path.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            key, val = key.strip(), val.strip().strip('"').strip("'")
-            if key == "DASHBOARD_USER" and not DASHBOARD_USER:
-                DASHBOARD_USER = val
-            elif key == "DASHBOARD_PASS" and not DASHBOARD_PASS:
-                DASHBOARD_PASS = val
-    except OSError:
-        return
+    """Fill dashboard URL/user/pass from .env, then signal_engine.env.
+
+    Shell values always win (desk_core.load_env_file skips keys already set).
+    .env is the file mac_agent and the operator use; signal_engine.env is the
+    engine's copy and only fills gaps.
+    """
+    global DASHBOARD_URL, DASHBOARD_USER, DASHBOARD_PASS
+    from desk_core import load_env_file
+    load_env_file(ROOT / ".env")
+    load_env_file(ROOT / "signal_engine.env")
+    DASHBOARD_URL = os.environ.get("DASHBOARD_URL", DASHBOARD_URL).rstrip("/")
+    DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "")
+    DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
 
 
 def _dashboard_login() -> str:
@@ -1347,7 +1342,8 @@ def main() -> None:
     if DASHBOARD_USER:
         _ensure_logged_in()
     elif not _AUTH_TOKEN:
-        print("[discord] WARNING: DASHBOARD_USER unset — ingest POSTs will 401 if auth is on",
+        print("[discord] WARNING: DASHBOARD_USER unset — put it in .env "
+              "(ingest POSTs will 401 if auth is on)",
               flush=True)
 
     print(f"[discord] OCR source started — polling every {poll_sec:g}s", flush=True)

@@ -404,6 +404,48 @@ def test_a_listed_ticker_needs_no_float_size():
     assert cards[0]["off_universe"] is False
 
 
+def test_load_dashboard_creds_prefers_dotenv(tmp_path, monkeypatch):
+    """Operator creds live in .env; the engine file is only a fallback."""
+    (tmp_path / ".env").write_text(
+        "DASHBOARD_URL=http://127.0.0.1:9\n"
+        "DASHBOARD_USER=from_dotenv\n"
+        "DASHBOARD_PASS=dotenv_secret\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "signal_engine.env").write_text(
+        "DASHBOARD_USER=from_engine\n"
+        "DASHBOARD_PASS=engine_secret\n",
+        encoding="utf-8",
+    )
+    for key in ("DASHBOARD_URL", "DASHBOARD_USER", "DASHBOARD_PASS"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(ds, "ROOT", tmp_path)
+    monkeypatch.setattr(ds, "DASHBOARD_URL", "http://localhost:8888")
+    monkeypatch.setattr(ds, "DASHBOARD_USER", "")
+    monkeypatch.setattr(ds, "DASHBOARD_PASS", "")
+    ds._load_dashboard_creds()
+    assert ds.DASHBOARD_USER == "from_dotenv"
+    assert ds.DASHBOARD_PASS == "dotenv_secret"
+    assert ds.DASHBOARD_URL == "http://127.0.0.1:9"
+
+
+def test_load_dashboard_creds_falls_back_to_engine_env(tmp_path, monkeypatch):
+    (tmp_path / "signal_engine.env").write_text(
+        "DASHBOARD_USER=from_engine\n"
+        "DASHBOARD_PASS=engine_secret\n",
+        encoding="utf-8",
+    )
+    for key in ("DASHBOARD_URL", "DASHBOARD_USER", "DASHBOARD_PASS"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(ds, "ROOT", tmp_path)
+    monkeypatch.setattr(ds, "DASHBOARD_URL", "http://localhost:8888")
+    monkeypatch.setattr(ds, "DASHBOARD_USER", "")
+    monkeypatch.setattr(ds, "DASHBOARD_PASS", "")
+    ds._load_dashboard_creds()
+    assert ds.DASHBOARD_USER == "from_engine"
+    assert ds.DASHBOARD_PASS == "engine_secret"
+
+
 def test_post_ingest_retries_after_401(monkeypatch):
     calls = []
 
