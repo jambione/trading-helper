@@ -4093,6 +4093,27 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return True, "exhaustion_off"
+    # The reading has to BE the indicator before it is allowed to decide.
+    #
+    # pctr_src says how the number was produced. "live" is a rolling %R(length)
+    # over a clock window, recomputed against the live print — the thing the
+    # operator reads off a chart. "clock_range" means the window did not hold
+    # length bars, so it reported position-in-range over whatever it had, and
+    # "sparse_window" means it barely had anything. Those print in the same
+    # column and mean something else: 2026-08-19 ran 57.9% live, 33.1%
+    # clock_range, 8.5% sparse, with the window spanning 23 minutes at the
+    # median and over sixteen hours at p90.
+    #
+    # Bars come from Alpaca IEX, a few percent of the consolidated tape, so a
+    # thin name simply does not have a 1-minute bar every minute. That is a
+    # data problem and the honest response is to decline the trade, not to
+    # average the gap away.
+    if bool(cfg.get("ai_watch_require_live_pctr", False)):
+        ind = record.get("indicator") if isinstance(record, dict) else None
+        ind = ind if isinstance(ind, dict) else {}
+        src = str(ind.get("pctr_src") or "").strip().lower()
+        if src != "live":
+            return False, f"pctr_not_live_{src or 'missing'}"
     if tv_exh_rsi_enabled(cfg):
         return _tv_exh_rsi_allows_buy(record, cfg)
     state = exhaustion_state(record, cfg)

@@ -768,6 +768,7 @@ function _updateBookRow(el, r) {
     exhEl.classList.toggle('exh--tight', !!r.pctr_tight);
     exhEl.classList.toggle('exh--up', r.exhaustion_state === 'heating');
     exhEl.classList.toggle('exh--down', r.exhaustion_state === 'cooling');
+    exhEl.classList.toggle('exh--stale', _exhStale(r));
     const tip = _fmtExhTitle(r);
     if (tip) exhEl.title = tip;
   }
@@ -964,10 +965,22 @@ function _bookExhText(r) {
   return _fmtExh(ex, r.exhaustion_state, r.pctr_src);
 }
 
+/** "live" means a rolling %R over a clock window, recomputed against the live
+ *  print — the number on a chart. Anything else (clock_range, sparse_window)
+ *  is position-in-range over whatever bars existed, which is a different
+ *  measurement wearing the same column. Marked so it is obvious at a glance
+ *  which readings the desk should be trusted to act on. */
+function _exhStale(r) {
+  if (!r) return false;
+  const src = String(r.pctr_src || '').toLowerCase().trim();
+  return src !== '' && src !== 'live';
+}
+
 function _exhPairClass(r) {
   let cls = _exhClass(r && r.exhaustion_state);
   if (r && r.pctr_ob) cls += ' exh--ob';
   if (r && r.pctr_tight) cls += ' exh--tight';
+  if (_exhStale(r)) cls += ' exh--stale';
   return cls;
 }
 
@@ -1007,6 +1020,10 @@ function _fmtExhTitle(r) {
     bits.push(`slow ${Number(r.pctr_slow).toFixed(1)}`);
   } else {
     bits.push('slow n/a (needs 112 bars)');
+  }
+  const src = String(r.pctr_src || '').toLowerCase().trim();
+  if (src && src !== 'live') {
+    bits.push(`NOT LIVE (${src}) - range over the bars that existed`);
   }
   if (r.pctr_ob) bits.push('red boxes');
   if (r.pctr_tight) bits.push('tight');

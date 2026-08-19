@@ -1,0 +1,12 @@
+{
+  "min_n": 30,
+  "description": "Did today's ratchet work help? Baseline is the live config as of 2026-08-19 close: arm 0.15R/0.10%, breakeven 0.10R/0.15%, give capped at 0.10% of price. The grid re-runs the same tape under the settings the desk woke up with (arm 0.5R, no percent triggers, no breakeven floor, no give ceiling) and the two intermediate steps, so the comparison is against what was actually replaced rather than against an invented control. give_open_r is pinned at each step because give_r drags it along otherwise. Note print_ring is NOT simulated: the sim calls note_trail_print with its default ring of 3, so the damping change does not appear here either way.",
+  "search": {
+    "arm_r": [0.5, 0.15],
+    "arm_pct": [0.0, 0.10],
+    "be_at_r": [0.0, 0.10],
+    "be_at_pct": [0.0, 0.15],
+    "give_max_pct": [0.0, 0.20, 0.10],
+    "give_open_r": [0.2, 0.1]
+  }
+}

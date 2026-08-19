@@ -517,6 +517,10 @@ DEFAULT_CONFIG = {
     # whole book the constraint is the data feed (SIP), not this gate.
     # False: thin tape may still arm on zone; the ratchet does not need %R.
     "ai_watch_require_exhaustion_data": True,
+    # Only arm on a %R that is a real rolling reading (pctr_src == "live").
+    # clock_range / sparse_window print in the same column and are a
+    # different measurement. 0/False keeps the old behaviour.
+    "ai_watch_require_live_pctr":   False,
     # Widest the %R window may stretch, as a multiple of its nominal duration
     # (21 bars x 60s = 21 min, so 3.0 allows ~63 min). 0 disables the check.
     #

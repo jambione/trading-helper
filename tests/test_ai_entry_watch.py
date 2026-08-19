@@ -4339,3 +4339,49 @@ def test_rvol_ranked_survives_a_throwing_lookup():
     state = {"AAA": {"symbol": "AAA", "admit_rvol": 3.0},
              "BBB": {"symbol": "BBB", "admit_rvol": 1.0}}
     assert [s for s, _ in ew.rvol_ranked(state, live_lookup=boom)] == ["AAA", "BBB"]
+
+
+# ── a reading has to BE the indicator before it may decide ───────────────
+#
+# 2026-08-19: 57.9% of readings were live, 33.1% clock_range, 8.5%
+# sparse_window. The last two are position-in-range over whatever bars
+# existed, printed in the same column as a rolling %R(21).
+
+def _exh_rec(src, ex_pct=70.0, rising=True):
+    # pctr = ex - 100, so exhaustion_pct() reads back as ex_pct.
+    return {"symbol": "AAA",
+            "indicator": {"pctr": ex_pct - 100.0, "pctr_src": src,
+                          "pctr_rising": rising}}
+
+
+_EXH_CFG = {"ai_watch_exhaustion_rules": True,
+            "ai_watch_exhaustion_heat_min_pct": 40.0,
+            "ai_watch_require_exhaustion_data": True}
+
+
+def test_live_reading_still_allowed():
+    import ai_entry_watch as ew
+    cfg = dict(_EXH_CFG, ai_watch_require_live_pctr=True)
+    ok, why = ew.exhaustion_allows_buy(_exh_rec("live"), cfg)
+    assert ok is True, why
+
+
+def test_clock_range_reading_is_refused_when_live_is_required():
+    import ai_entry_watch as ew
+    cfg = dict(_EXH_CFG, ai_watch_require_live_pctr=True)
+    ok, why = ew.exhaustion_allows_buy(_exh_rec("clock_range"), cfg)
+    assert ok is False and why == "pctr_not_live_clock_range"
+
+
+def test_sparse_and_missing_sources_are_refused_too():
+    import ai_entry_watch as ew
+    cfg = dict(_EXH_CFG, ai_watch_require_live_pctr=True)
+    assert ew.exhaustion_allows_buy(_exh_rec("sparse_window"), cfg)[1] == \
+        "pctr_not_live_sparse_window"
+    assert ew.exhaustion_allows_buy(_exh_rec(""), cfg)[1] == "pctr_not_live_missing"
+
+
+def test_gate_is_off_by_default_so_nothing_changes_unasked():
+    import ai_entry_watch as ew
+    ok, why = ew.exhaustion_allows_buy(_exh_rec("clock_range"), dict(_EXH_CFG))
+    assert ok is True, why
