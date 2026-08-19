@@ -254,3 +254,58 @@ def test_successful_fetch_still_caches_a_genuine_none(monkeypatch):
     assert "NEWIPO" in mf._AVG_VOL_CACHE and out["NEWIPO"] is None
     mf._AVG_VOL_CACHE.clear()
     mf._AVG_VOL_DATE = ""
+
+
+# ── the buy rule's own inputs have to be on the row that scores it ───────
+#
+# Fourth gap, same shape, found 2026-08-19. The desk switched to
+# "both %R lines then CM RSI-2" (454ea10) and the shadow row kept recording
+# only the fast %R line plus booleans. rte_threshold, rte_confluence_max and
+# cm_rsi_buy_max therefore had no recorded input between them, so the three
+# thresholds that decide every entry could not be swept at any sample size.
+
+def _rec_with_indicator(**ind):
+    return {
+        "symbol": "AAA",
+        "status": "watching",
+        "structure": {"entry_low": 9.0, "entry_high": 10.0,
+                      "stop_price": 8.5, "target_1": 11.0},
+        "indicator": ind,
+    }
+
+
+def _row(rec):
+    return ew._shadow_row(rec, price=9.5, price_src="quote",
+                          arm_ok=False, arm_why="wait_rsi", now=1_000_000.0)
+
+
+def test_shadow_row_carries_both_pctr_lines_and_the_raw_rsi():
+    row = _row(_rec_with_indicator(
+        pctr=-12.0, pctr_slow=-18.0, pctr_gap=6.0,
+        pctr_ob=True, pctr_tight=True, cm_rsi=7.5,
+    ))
+    # Levels, not verdicts: cm_ok tells you the gate passed, never what it
+    # would have done at a different cutoff.
+    assert row["pctr"] == -12.0
+    assert row["pctr_slow"] == -18.0
+    assert row["pctr_gap"] == 6.0
+    assert row["cm_rsi"] == 7.5
+    assert row["pctr_ob"] is True
+    assert row["pctr_tight"] is True
+
+
+def test_shadow_row_records_a_missing_rsi_rather_than_omitting_it():
+    """cm_rsi None is the reason _tv_exh_rsi_allows_buy refuses with wait_rsi.
+
+    A session that records no cm_rsi is a session the desk could not have
+    bought in, so the None is the observation — not something to drop.
+    """
+    row = _row(_rec_with_indicator(pctr=-12.0))
+    assert "cm_rsi" in row and row["cm_rsi"] is None
+    assert "pctr_slow" in row and row["pctr_slow"] is None
+
+
+def test_instrumentation_check_watches_the_buy_rule_inputs():
+    import instrumentation_check as ic
+    for field in ("pctr", "pctr_slow", "cm_rsi"):
+        assert field in ic.DECISION_FIELDS["shadow"], field

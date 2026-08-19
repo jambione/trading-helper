@@ -5711,6 +5711,20 @@ def _shadow_row(
         # is a guess (3x) and this column is the only way to sweep it: bucket
         # forward return by span and the cutoff stops being an opinion.
         "window_span_min": _window_span_min(rec),
+        # The three inputs the live buy rule actually compares, as LEVELS.
+        #
+        # _tv_exh_rsi_allows_buy tests both %R lines against rte_threshold,
+        # their gap against rte_confluence_max, then CM RSI-2 against
+        # cm_rsi_buy_max. Only the fast line was on this row, so two of those
+        # three thresholds had no recorded input at all and could not be swept
+        # — the same hole that made the heat floor a guess (see the comment on
+        # "exhaustion" above). Booleans are not enough: cm_ok says the gate
+        # passed, never what it would have done at a different cutoff.
+        "pctr_slow": _f_or_none(sig.get("pctr_slow")) if sig else None,
+        "pctr_gap": _f_or_none(sig.get("pctr_gap")) if sig else None,
+        "pctr_ob": bool(sig.get("pctr_ob")) if sig else None,
+        "pctr_tight": bool(sig.get("pctr_tight")) if sig else None,
+        "cm_rsi": _f_or_none(sig.get("cm_rsi")) if sig else None,
         # Timing state.
         "cm_ok": bool(sig.get("cm_ok")) if sig else None,
         "pctr_ok": bool(sig.get("pctr_ok")) if sig else None,

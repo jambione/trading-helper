@@ -60,7 +60,13 @@ LOGS = {
 # Fields a decision was made on. If a gate reads it, the record must carry it
 # — a gate scored on absent inputs produces a confident, fake verdict.
 DECISION_FIELDS = {
-    "shadow": ["score", "rvol", "pct_change", "look_reason", "arm_why"],
+    # pctr_slow and cm_rsi are the levels the live buy rule compares against
+    # rte_threshold / rte_confluence_max / cm_rsi_buy_max. They belong here
+    # rather than among the nice-to-haves: _tv_exh_rsi_allows_buy refuses with
+    # "wait_rsi" when cm_rsi is None, so a session that never records one is a
+    # session the desk could not have bought in, whatever the watch looked like.
+    "shadow": ["score", "rvol", "pct_change", "look_reason", "arm_why",
+               "pctr", "pctr_slow", "cm_rsi"],
     "rejects": ["reason", "price", "score", "rvol", "pct_change", "look_reason"],
 }
 
