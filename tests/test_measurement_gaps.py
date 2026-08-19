@@ -350,3 +350,50 @@ def test_shadow_row_keeps_the_columns_when_there_is_no_bid():
                          arm_ok=False, arm_why="wait_exh", now=1_000_000.0)
     assert "bid" in row and row["bid"] is None
     assert "spread_r" in row and row["spread_r"] is None
+
+
+# ── the free feed's own timing has to be on disk to be judged ────────────
+#
+# Alpaca IEX bars are one exchange with a small share of the tape and paid SIP
+# is out of scope, so Finnhub is the only real-time option left. Whether a
+# dense 1-minute bar can be built from it depends on how often it prints — and
+# live_print handed back an age that went nowhere.
+
+def test_shadow_row_records_the_tape_age(monkeypatch):
+    monkeypatch.setattr(ew, "live_print", lambda s: (10.05, 0.8))
+    rec = {"symbol": "AAA", "status": "watching",
+           "structure": {"stop_price": 9.5}, "indicator": {}}
+    row = ew._shadow_row(rec, price=10.0, price_src="quote",
+                         arm_ok=True, arm_why="last_heating", now=1_000_000.0)
+    assert row["tape_age_sec"] == 0.8
+
+
+def test_unprovable_age_records_none_not_zero(monkeypatch):
+    """Age None means the desk has a number but cannot prove it is live.
+    Zero would read as a fresh print, which is the opposite of the truth."""
+    monkeypatch.setattr(ew, "live_print", lambda s: (10.05, None))
+    rec = {"symbol": "AAA", "status": "watching",
+           "structure": {"stop_price": 9.5}, "indicator": {}}
+    row = ew._shadow_row(rec, price=10.0, price_src="quote",
+                         arm_ok=True, arm_why="x", now=1_000_000.0)
+    assert "tape_age_sec" in row and row["tape_age_sec"] is None
+
+
+def test_no_tape_at_all_records_none(monkeypatch):
+    monkeypatch.setattr(ew, "live_print", lambda s: None)
+    rec = {"symbol": "AAA", "status": "watching",
+           "structure": {"stop_price": 9.5}, "indicator": {}}
+    row = ew._shadow_row(rec, price=10.0, price_src="quote",
+                         arm_ok=True, arm_why="x", now=1_000_000.0)
+    assert row["tape_age_sec"] is None
+
+
+def test_a_throwing_tape_lookup_does_not_break_logging(monkeypatch):
+    def boom(_s):
+        raise RuntimeError("stream down")
+    monkeypatch.setattr(ew, "live_print", boom)
+    rec = {"symbol": "AAA", "status": "watching",
+           "structure": {"stop_price": 9.5}, "indicator": {}}
+    row = ew._shadow_row(rec, price=10.0, price_src="quote",
+                         arm_ok=True, arm_why="x", now=1_000_000.0)
+    assert row["tape_age_sec"] is None

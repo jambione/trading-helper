@@ -5680,6 +5680,23 @@ def _spread_r(ask: float | None, bid: float | None,
     return round(2.0 * (a - b) / risk, 5)
 
 
+def _tape_age_for_shadow(rec: dict) -> float | None:
+    """Age of the live tape print for this record, or None if unprovable."""
+    try:
+        got = live_print(str((rec or {}).get("symbol") or ""))
+    except Exception:  # noqa: BLE001
+        return None
+    if not got:
+        return None
+    age = got[1]
+    if age is None:
+        return None
+    try:
+        return round(max(0.0, float(age)), 2)
+    except (TypeError, ValueError):
+        return None
+
+
 def _shadow_row(
     rec: dict,
     *,
@@ -5770,6 +5787,22 @@ def _shadow_row(
         # it is off, because nothing on disk said what crossing actually costs.
         # This is that record; the threshold stays 0 until it can be set from
         # these rows rather than guessed.
+        # How stale the Finnhub print was when this row was written. The stream
+        # is the only free real-time source on the table — Alpaca's IEX bars are
+        # one exchange with a small share of the tape, and paid SIP is out of
+        # scope — so whether a dense 1-minute bar can be built from it is the
+        # question that decides the whole data plan. Nothing was recording it:
+        # live_print hands back an age and it went nowhere.
+        #
+        # This is age-at-observation, not a print arrival stamp, but the poll
+        # samples every book name every couple of seconds, so its distribution
+        # is the inter-print interval. Ages clustered under a second or two mean
+        # a bar is constructible; a median in the tens of seconds means the
+        # instrument does not trade often enough for any feed to fix.
+        #
+        # None when the desk has a number but cannot prove it is live — that is
+        # not zero, and must not be read as fresh.
+        "tape_age_sec": _tape_age_for_shadow(rec),
         "bid": _f_or_none(bid),
         "spread_r": _spread_r(price, bid, stru.get("stop_price")),
         "pctr_slow": _f_or_none(sig.get("pctr_slow")) if sig else None,
