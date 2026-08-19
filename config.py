@@ -614,6 +614,10 @@ DEFAULT_CONFIG = {
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
     "ai_local_trail_arm_r":            0.5,
+    # ...or this much percent of price, whichever comes first. Same reason
+    # as be_at_pct: 1R is ~5% of price here, so an R-only arm freezes the
+    # shelf through moves that are plainly real.
+    "ai_local_trail_arm_pct":       0.0,
     "ai_local_trail_give_r":           0.10,
     "ai_local_trail_give_open_r":      0.20,
     "ai_local_trail_tighten_mfe_r":    0.25,

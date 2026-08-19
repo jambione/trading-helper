@@ -71,6 +71,7 @@ OVERLAY_KEYS = {
     # meant to test.
     "give_open_r": "ai_local_trail_give_open_r",
     "arm_r": "ai_local_trail_arm_r",
+    "arm_pct": "ai_local_trail_arm_pct",
     "give_max_pct": "ai_local_trail_give_max_pct",
     "be_at_r": "ai_local_trail_be_at_r",
     "be_at_pct": "ai_local_trail_be_at_pct",

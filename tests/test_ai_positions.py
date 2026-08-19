@@ -3178,3 +3178,31 @@ def test_percent_floor_not_armed_on_a_name_that_barely_moved():
            "ai_local_trail_arm_r": 0.15, "ai_local_trail_be_at_r": 0.10,
            "ai_local_trail_be_at_pct": 0.25}
     assert cp.local_profit_stop(pos, cfg) < 40.96
+
+
+def test_trail_arms_on_percent_when_r_is_too_wide_to_reach():
+    """HOOD 2026-08-19: +0.42% off the fill was 0.084R against a 0.15R arm, so
+    the shelf stayed frozen at the seed through a real move."""
+    pos = {"entry_price": 98.20, "risk_per_share": 4.915,
+           "entry_stop_price": 93.29, "local_stop_price": None,
+           "last_seen_price": 98.61, "trail_prints": [98.61] * 3,
+           "peak_price": 98.61, "mfe_r": 0.0834}
+    r_only = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.10,
+              "ai_local_trail_give_max_pct": 0.35, "ai_local_trail_arm_r": 0.15}
+    frozen = cp.local_profit_stop(pos, r_only)
+    tracking = cp.local_profit_stop(dict(r_only, ai_local_trail_arm_pct=0.20)
+                                    and pos, dict(r_only, ai_local_trail_arm_pct=0.20))
+    # Armed on percent, the shelf is last - give instead of the seed.
+    assert tracking > frozen
+    assert tracking == pytest.approx(98.61 - 98.61 * 0.0035, rel=1e-6)
+
+
+def test_percent_arm_does_not_fire_on_a_name_that_barely_moved():
+    pos = {"entry_price": 40.96, "risk_per_share": 2.048,
+           "entry_stop_price": 38.91, "local_stop_price": None,
+           "last_seen_price": 40.98, "trail_prints": [40.98] * 3,
+           "peak_price": 40.98, "mfe_r": 0.0098}
+    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.10,
+           "ai_local_trail_arm_r": 0.15, "ai_local_trail_arm_pct": 0.20}
+    # +0.049% is nowhere near 0.20%, so this is still the seed.
+    assert cp.local_profit_stop(pos, cfg) < 40.96

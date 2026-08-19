@@ -2402,7 +2402,20 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
         arm_need = 0.0
-    if arm_need > 0 and float(mfe) + 1e-9 < arm_need:
+    # Same argument as the breakeven floor: on a zone that makes 1R about 5% of
+    # price, an R-only arm keeps the shelf frozen through moves that are plainly
+    # real. HOOD ran +0.42% off a 98.20 fill and stayed parked because 0.42% was
+    # 0.084R against a 0.15R arm — the trail would not have started tracking
+    # until price moved three quarters of a percent.
+    try:
+        arm_pct = float(cfg.get("ai_local_trail_arm_pct", 0) or 0)
+    except (TypeError, ValueError):
+        arm_pct = 0.0
+    armed = arm_need <= 0 or float(mfe) + 1e-9 >= arm_need
+    if not armed and arm_pct > 0 and entry and risk and float(risk) > 0:
+        gain_pct = float(mfe) * float(risk) / float(entry) * 100.0
+        armed = gain_pct + 1e-9 >= arm_pct
+    if not armed:
         # Hold the 0.10R working shelf. Do not fall back to the 5% plan
         # stop — that is the disaster floor, not the live rstop.
         seed = initial_local_stop(entry, risk, cfg)
