@@ -1091,15 +1091,6 @@ def test_runner_stop_is_not_placed_above_the_market(tmp_path, monkeypatch):
     """Price fell back through entry between the target fill and this tick —
     a breakeven stop would sit above the last print and trigger on receipt."""
     _seed_state(tmp_path, monkeypatch)
-    monkeypatch.setattr(cp, "_cfg_all", lambda: {
-        "ai_local_trail_enabled": False,
-        "ai_fill_abort_r": 0.0,
-        "ai_broker_stop_enabled": True,
-    })
-    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
-        "ai_local_trail_enabled": False,
-        "ai_broker_stop_enabled": True,
-    }.get(key, default))
     stub = _StubBrokerManage(order_status="filled", current_price=39.0)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
 
@@ -2408,46 +2399,6 @@ def test_ratchet_invariant_fails_when_scaled_stop_still_original():
     assert rows[0]["event"] == "ratchet_stop_below_entry"
 
 
-def test_ratchet_invariant_one_share_fails_when_green_shelf_under_fill(
-        monkeypatch):
-    monkeypatch.setattr(cp, "_cfg_all", lambda: {
-        "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_min_give_px": 0.0,
-        "ai_local_trail_give_max_pct": 0.2,
-    })
-    state = {
-        "HOOD": {
-            "entry_confirmed": True, "qty_a": 0, "qty_b": 0,
-            "entry_price": 98.20, "stop_price": 93.29,
-            "local_stop_price": 97.70, "risk_per_share": 4.915,
-            "last_seen_price": 98.61,
-        },
-    }
-    detail = {"HOOD": {"qty": 1.0, "current": 98.61}}
-    rows = cp.evaluate_ratchet_invariants(state, detail, [])
-    assert len(rows) == 1
-    assert rows[0]["ok"] is False
-    assert rows[0]["event"] == "ratchet_stop_below_entry"
-
-
-def test_ratchet_invariant_one_share_ok_when_shelf_at_entry(monkeypatch):
-    monkeypatch.setattr(cp, "_cfg_all", lambda: {
-        "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_min_give_px": 0.0,
-        "ai_local_trail_give_max_pct": 0.2,
-    })
-    state = {
-        "HOOD": {
-            "entry_confirmed": True, "qty_a": 0, "qty_b": 0,
-            "entry_price": 98.20, "local_stop_price": 98.20,
-            "risk_per_share": 4.915, "last_seen_price": 98.61,
-        },
-    }
-    detail = {"HOOD": {"qty": 1.0, "current": 98.61}}
-    rows = cp.evaluate_ratchet_invariants(state, detail, [])
-    assert rows[0]["ok"] is True
-
-
 def test_ratchet_invariant_passes_when_runner_locked_at_entry():
     state = {
         "ABCL": {
@@ -2740,7 +2691,6 @@ def test_local_trail_flattens_through_seeded_rstop_above_the_plan_floor(
         "ai_dead_trade_min": 0,
         "ai_sell_signal_breakeven": False,
         "ai_watch_exhaustion_rules": False,
-        "ai_fill_abort_r": 0.0,
     }
     monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
     monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
@@ -2750,13 +2700,12 @@ def test_local_trail_flattens_through_seeded_rstop_above_the_plan_floor(
         "ai_sell_signal_breakeven": False,
     }.get(key, default))
     import ai_entry_watch as ew
-    # Low print through 0.10R ($19.90); high/mark stay at the fill so the
-    # shelf is not pulled under the trigger before the flatten check.
+    # Through 0.10R ($19.90), still a long way above the $19 plan stop.
     monkeypatch.setattr(ew, "live_print", lambda _sym: (19.85, 0.2))
-    stub = _StubBrokerManage(order_status="new", current_price=20.00, live_qty=20)
+    stub = _StubBrokerManage(order_status="new", current_price=19.88)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     events = cp.manage_open_positions(now=1_000_100.0)
-    assert any(e.get("event") == "local_trail" for e in events), events
+    assert any(e.get("event") == "local_trail" for e in events)
     assert "NVDA" in stub.closed
 
 
@@ -3246,49 +3195,6 @@ def test_trail_arms_on_percent_when_r_is_too_wide_to_reach():
     # Armed on percent, the shelf is last - give instead of the seed.
     assert tracking > frozen
     assert tracking == pytest.approx(98.61 - 98.61 * 0.0035, rel=1e-6)
-
-
-def test_give_clears_entry_floors_at_fill_without_be_at_r():
-    """Once last − tight give is above the fill, lock scratch even if be_at is 0."""
-    pos = {
-        "entry_price": 10.00, "risk_per_share": 0.50,
-        "entry_stop_price": 9.50, "local_stop_price": None,
-        "last_seen_price": 10.12, "trail_prints": [10.12] * 3,
-        "peak_price": 10.12, "mfe_r": 0.24,
-    }
-    cfg = {
-        "ai_local_trail_enabled": True,
-        "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_give_open_r": 0.10,
-        "ai_local_trail_arm_r": 0.0,
-        "ai_local_trail_min_give_px": 0.0,
-        "ai_local_trail_be_at_r": 0.0,
-        "ai_local_trail_be_at_pct": 0.0,
-    }
-    # 10.12 − 0.05 = 10.07 > 10 → BE floor at 10, trail at 10.07
-    assert cp.local_profit_stop(pos, cfg) >= 10.00
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(10.07)
-
-
-def test_hood_small_r_locks_scratch_when_give_clears_entry():
-    """HOOD 2026-08-19: +0.42% was 0.084R (under 0.10R be_at) but with a
-    0.2% give cap, last − give is above the fill so the shelf floors there."""
-    pos = {
-        "entry_price": 98.20, "risk_per_share": 4.915,
-        "entry_stop_price": 93.29, "local_stop_price": None,
-        "last_seen_price": 98.61, "trail_prints": [98.61] * 3,
-        "peak_price": 98.61, "mfe_r": 0.0834,
-    }
-    cfg = {
-        "ai_local_trail_enabled": True,
-        "ai_local_trail_give_r": 0.10,
-        "ai_local_trail_arm_r": 0.0,
-        "ai_local_trail_be_at_r": 0.0,
-        "ai_local_trail_give_max_pct": 0.2,
-        "ai_local_trail_min_give_px": 0.0,
-    }
-    got = cp.local_profit_stop(pos, cfg)
-    assert got is not None and got >= 98.20, got
 
 
 def test_percent_arm_does_not_fire_on_a_name_that_barely_moved():

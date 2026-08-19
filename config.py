@@ -608,13 +608,12 @@ DEFAULT_CONFIG = {
     # floored at breakeven, so a trade that reaches T1 cannot finish red.
     "ai_runner_trail_r":               1.0,
     # Local profit trail: stop = last − give, only ratchets up.
-    # arm_r 0 = track from the first damped print. The seed is still
-    # entry − give (disaster shelf). Once last − give ≥ entry the shelf
-    # floors at the fill so a green name cannot close red.
+    # Armed only after +arm_r MFE so the structure stop owns the open.
+    # 0.10R from tick one shook out 60 names last week at mean MFE 0.19R.
     # Flatten if last prints through. This is the stop of record when
     # ai_broker_stop_enabled is False — broker buys may sit naked.
     "ai_local_trail_enabled":         True,
-    "ai_local_trail_arm_r":            0.0,
+    "ai_local_trail_arm_r":            0.5,
     # ...or this much percent of price, whichever comes first. Same reason
     # as be_at_pct: 1R is ~5% of price here, so an R-only arm freezes the
     # shelf through moves that are plainly real.

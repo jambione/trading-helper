@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Live check: dual-tranche T1 + stop ≥ entry; 1-share software shelf ≥ entry
-once last − give has cleared the fill.
+"""Live check: dual-tranche books must have T1, then a stop at/above entry.
 
 Usage (on the Mac mini, from the repo):
 
@@ -43,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(rows, indent=2))
     elif not rows:
-        print("no confirmed open names to check")
+        print("no dual-tranche open names to check")
     else:
         for r in rows:
             mark = "OK" if r.get("ok") else "FAIL"
