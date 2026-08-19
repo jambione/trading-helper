@@ -271,9 +271,9 @@
   "ai_watch_require_exhaustion_data": true,
   "ai_watch_exhaustion_fallback": true,
   "ai_trading_host": "Jonathans-Mac-mini.local",
-  "ai_local_trail_give_max_pct": 0.35,
+  "ai_local_trail_give_max_pct": 0.2,
   "ai_local_trail_be_at_r": 0.1,
-  "ai_local_trail_arm_pct": 0.15,
-  "ai_local_trail_be_at_pct": 0.25,
+  "ai_local_trail_arm_pct": 0.1,
+  "ai_local_trail_be_at_pct": 0.15,
   "ai_watch_min_price": 20.0
 }
