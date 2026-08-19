@@ -1103,8 +1103,6 @@ def main() -> None:
     book_state = {
         "watch_poll_sec": watch_poll_sec,
         "positions_poll": positions_poll,
-        "watch_seen_open": False,
-        "watch_expired_day": "",
         "last_watch_poll": 0.0,
         "last_positions_tick": 0.0,
     }
@@ -1243,21 +1241,26 @@ def main() -> None:
                         day_key = datetime.fromtimestamp(
                             t0, tz=ZoneInfo("America/New_York")
                         ).strftime("%Y-%m-%d")
+                        seen_prev, exp_prev = ew.load_watch_close_state(
+                            day_key)
                         do_expire, seen, exp_day = (
                             ew.should_expire_watches_on_close(
                                 market_open=market_open,
                                 day_key=day_key,
-                                seen_open=bool(book_state["watch_seen_open"]),
-                                expired_day=str(
-                                    book_state["watch_expired_day"] or ""),
+                                seen_open=seen_prev,
+                                expired_day=exp_prev,
                             )
                         )
-                        book_state["watch_seen_open"] = seen
-                        book_state["watch_expired_day"] = exp_day
                         if do_expire:
                             ew.expire_open_watches(now=t0)
                             ai_positions.log_event(
                                 "watch_expire_at_close", day=day_key)
+                        # Latch only after the expiry actually lands. Stamping
+                        # first is what retires the retry, the same trap
+                        # _run_eod_liquidate documents: a raise here leaves
+                        # expired_day unset so the next tick tries again.
+                        if (seen, exp_day) != (seen_prev, exp_prev):
+                            ew.save_watch_close_state(day_key, seen, exp_day)
                     except Exception as e:  # noqa: BLE001
                         print(f"[ai] watch_expire failed: {e}", flush=True)
 

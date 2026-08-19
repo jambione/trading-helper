@@ -2747,12 +2747,28 @@ def call_claude(
                 except Exception as e:  # noqa: BLE001
                     print(f"[ai] duel champion register failed: {e}", flush=True)
 
-                # Watch rebuild only for the trading owner.
+                # Watch rebuild only for the trading owner, and only inside the
+                # watch window — the same gate _publish_book puts on its own
+                # sync. rebuild_watch_from_book is a full re-mirror of the
+                # source panels, so outside the window it does not refresh a
+                # book, it recreates one. research_times ends at 14:30 but
+                # *_research_catchup_min is 120, so a run that starts late (or
+                # a restart that finds the slot missed) can land after the
+                # 15:50 EOD wipe. On 2026-08-18 a catch-up run at 16:28 seeded
+                # 10 fresh "watching" rows two minutes after EOD had cleared
+                # them, and they pinned the dashboard watchlist open all
+                # evening. Research output still reaches the book: it goes to
+                # the suggestions files, which the 09:00 sync mirrors.
                 if trading and cfg.get("ai_watch_enabled", True):
                     import ai_entry_watch as ew
-                    book_rows = tag_agreement_on_rows(list(rows))
-                    ew.rebuild_watch_from_book(
-                        book_rows, cfg=cfg, now=_time.time())
+                    _watch_now = _time.time()
+                    if ew.watch_session_active(cfg, _watch_now):
+                        book_rows = tag_agreement_on_rows(list(rows))
+                        ew.rebuild_watch_from_book(
+                            book_rows, cfg=cfg, now=_watch_now)
+                    else:
+                        print("[ai] watch rebuild skipped — outside watch "
+                              "session (research ran off-window)", flush=True)
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] post-research book/duel hook failed: {e}", flush=True)
 

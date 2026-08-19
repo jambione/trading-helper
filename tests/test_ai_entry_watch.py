@@ -968,6 +968,100 @@ def test_should_expire_watches_on_close_edge():
     assert do is True and exp == day2
 
 
+def test_watch_close_latch_survives_a_restart_after_the_bell(tmp_path, monkeypatch):
+    """The open→closed edge must still be visible to a process born after close.
+
+    2026-08-18: the desk restarted at 19:31, seen_open started False, the edge
+    could never be observed, and 10 watching rows held the dashboard watchlist
+    open all evening.
+    """
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_CLOSE_STATE_PATH", tmp_path / "close.json")
+
+    day = "2026-08-18"
+    # Morning process sees RTH open and latches.
+    seen, exp = ew.load_watch_close_state(day)
+    assert (seen, exp) == (False, "")
+    do, seen, exp = ew.should_expire_watches_on_close(
+        market_open=True, day_key=day, seen_open=seen, expired_day=exp)
+    assert do is False and seen is True
+    ew.save_watch_close_state(day, seen, exp)
+
+    # Restart after the bell: the latch comes back off disk, not from memory.
+    seen2, exp2 = ew.load_watch_close_state(day)
+    assert seen2 is True and exp2 == ""
+
+    do, seen3, exp3 = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day, seen_open=seen2, expired_day=exp2)
+    assert do is True and exp3 == day
+    ew.save_watch_close_state(day, seen3, exp3)
+
+    # And it stays expired across a second restart — once per day, still.
+    seen4, exp4 = ew.load_watch_close_state(day)
+    do, _, _ = ew.should_expire_watches_on_close(
+        market_open=False, day_key=day, seen_open=seen4, expired_day=exp4)
+    assert do is False
+
+
+def test_watch_close_latch_does_not_carry_across_days(tmp_path, monkeypatch):
+    """Yesterday's 'market was open' must not expire today's book pre-market."""
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "WATCH_CLOSE_STATE_PATH", tmp_path / "close.json")
+
+    ew.save_watch_close_state("2026-08-17", True, "2026-08-17")
+    seen, exp = ew.load_watch_close_state("2026-08-18")
+    assert seen is False, "seen_open leaked across the day roll"
+    # expired_day is still readable — should_expire compares it to day_key.
+    assert exp == "2026-08-17"
+
+    # Pre-market on the new day: closed, no latch → nothing expires.
+    do, _, _ = ew.should_expire_watches_on_close(
+        market_open=False, day_key="2026-08-18", seen_open=seen, expired_day=exp)
+    assert do is False
+
+
+def test_watch_close_latch_fails_open(tmp_path, monkeypatch):
+    """Missing or corrupt latch must not be able to expire the book by itself."""
+    import ai_entry_watch as ew
+    path = tmp_path / "close.json"
+    monkeypatch.setattr(ew, "WATCH_CLOSE_STATE_PATH", path)
+
+    assert ew.load_watch_close_state("2026-08-18") == (False, "")
+
+    path.write_text("{ not json", encoding="utf-8")
+    assert ew.load_watch_close_state("2026-08-18") == (False, "")
+
+    path.write_text('["a", "list"]', encoding="utf-8")
+    assert ew.load_watch_close_state("2026-08-18") == (False, "")
+
+
+def test_research_rebuild_gate_closes_over_the_catchup_window():
+    """The post-research book rebuild is gated on this window.
+
+    research_times ends at 14:30 but *_research_catchup_min is 120, so a late
+    or restarted run can land past the 15:50 EOD wipe — which is how a 16:28
+    catch-up reseeded a freshly cleared book on 2026-08-18.
+    """
+    import ai_entry_watch as ew
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    cfg = {
+        "ai_watch_enabled": True,
+        "ai_watch_start_time": "09:00",
+        "ai_eod_liquidate_enabled": True,
+        "ai_eod_liquidate_time": "15:50",
+    }
+    on_time = datetime(2026, 8, 18, 14, 30, tzinfo=et).timestamp()
+    catchup = datetime(2026, 8, 18, 16, 28, tzinfo=et).timestamp()
+    evening = datetime(2026, 8, 18, 19, 31, tzinfo=et).timestamp()
+
+    assert ew.watch_session_active(cfg, on_time) is True
+    assert ew.watch_session_active(cfg, catchup) is False
+    assert ew.watch_session_active(cfg, evening) is False
+
+
 def test_ask_in_zone_with_pad():
     import ai_entry_watch as ew
     assert ew.ask_in_zone(28.0, 27.0, 28.5, 0.15) is True

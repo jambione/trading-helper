@@ -27,6 +27,10 @@ from ai_paths import resolve_report_dir  # noqa: E402
 
 REPORT_DIR = resolve_report_dir()
 WATCH_STATE_PATH = REPORT_DIR / "entry_watch_state.json"
+# Close-edge latch for watch expiry. On disk for the same reason the EOD and
+# SOD liquidate stamps are: it has to survive a restart. See
+# load_watch_close_state.
+WATCH_CLOSE_STATE_PATH = REPORT_DIR / "watch_close_state.json"
 
 _EMPTY_RECORD_DEFAULTS: dict[str, Any] = {
     "structure": None,
@@ -1444,6 +1448,58 @@ def drop_missing(
         if key != sym:
             state.pop(sym, None)
     return state
+
+
+def load_watch_close_state(day_key: str) -> tuple[bool, str]:
+    """Persisted close-edge latch as ``(seen_open, expired_day)``.
+
+    ``seen_open`` used to live only in the trader's in-memory ``book_state``,
+    which meant a restart after the closing bell started it at False — the
+    open→closed edge could then never be observed, so ``expire_open_watches``
+    never ran and every ``watching`` row stayed live. The dashboard treats
+    those rows as committed (``_committed_symbols``), so the momentum
+    watchlist mirrored them all evening and re-stamped their ``added`` times.
+    Observed 2026-08-18: the desk restarted at 19:31 and 10 names sat on the
+    watchlist until the next day's first poll.
+
+    ``seen_open`` is only meaningful for the day it was observed, so a latch
+    stored under a different day reads back False. Otherwise a process started
+    pre-market would inherit yesterday's "the market was open" and expire
+    today's watches before the bell.
+
+    Fails open — a missing or unreadable file must not be able to expire the
+    book by itself.
+    """
+    day = str(day_key or "")
+    try:
+        raw = json.loads(WATCH_CLOSE_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, ""
+    if not isinstance(raw, dict):
+        return False, ""
+    seen = bool(raw.get("seen_open")) and str(raw.get("day") or "") == day
+    return seen, str(raw.get("expired_day") or "")
+
+
+def save_watch_close_state(
+    day_key: str,
+    seen_open: bool,
+    expired_day: str,
+) -> None:
+    """Write the close-edge latch. Atomic, and never raises."""
+    payload = {
+        "day": str(day_key or ""),
+        "seen_open": bool(seen_open),
+        "expired_day": str(expired_day or ""),
+        "ts": time.time(),
+    }
+    try:
+        WATCH_CLOSE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = WATCH_CLOSE_STATE_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(WATCH_CLOSE_STATE_PATH)
+    except OSError:
+        pass
 
 
 def should_expire_watches_on_close(
