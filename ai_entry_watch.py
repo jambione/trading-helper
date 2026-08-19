@@ -5640,6 +5640,25 @@ def _log_rejects(
             pass
 
 
+def _spread_r(ask: float | None, bid: float | None,
+              stop: float | None) -> float | None:
+    """Round-trip spread as a fraction of R, or None when unknowable.
+
+    Crossing is paid twice: buy at the ask, sell at the bid. Mirrors the
+    max_spread_r arithmetic in ai_positions.pre_entry_gate so a threshold set
+    off these rows means the same thing the gate will enforce.
+    """
+    a, b, st = _f_or_none(ask), _f_or_none(bid), _f_or_none(stop)
+    if a is None or b is None or st is None:
+        return None
+    if not (a > 0 and b > 0 and 0 < st < a):
+        return None
+    risk = a - st
+    if risk <= 0:
+        return None
+    return round(2.0 * (a - b) / risk, 5)
+
+
 def _shadow_row(
     rec: dict,
     *,
@@ -5648,6 +5667,7 @@ def _shadow_row(
     arm_ok: bool | None,
     arm_why: str,
     now: float,
+    bid: float | None = None,
 ) -> dict[str, Any]:
     """One counterfactual sample: the decision, and the price that tested it.
 
@@ -5720,6 +5740,17 @@ def _shadow_row(
         # — the same hole that made the heat floor a guess (see the comment on
         # "exhaustion" above). Booleans are not enough: cm_ok says the gate
         # passed, never what it would have done at a different cutoff.
+        # Crossing cost, in the unit that decides whether it matters. The
+        # percent-of-mid spread answers "is this book wide for a $50 stock",
+        # which is not the question — the question is what fraction of the
+        # money at risk the round trip eats, and on these zones 1R is ~5% of
+        # price so the two readings differ by an order of magnitude.
+        # ai_max_spread_r is the one spread gate wired into the fill path and
+        # it is off, because nothing on disk said what crossing actually costs.
+        # This is that record; the threshold stays 0 until it can be set from
+        # these rows rather than guessed.
+        "bid": _f_or_none(bid),
+        "spread_r": _spread_r(price, bid, stru.get("stop_price")),
         "pctr_slow": _f_or_none(sig.get("pctr_slow")) if sig else None,
         "pctr_gap": _f_or_none(sig.get("pctr_gap")) if sig else None,
         "pctr_ob": bool(sig.get("pctr_ob")) if sig else None,
@@ -7068,7 +7099,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if shadow_on:
             try:
                 cp.log_shadow_sample(_shadow_row(
-                    rec, price=ask_f, price_src="quote",
+                    rec, price=ask_f, price_src="quote", bid=bid_f,
                     arm_ok=bool(ok_arm), arm_why=why or "", now=t0))
             except Exception:
                 pass

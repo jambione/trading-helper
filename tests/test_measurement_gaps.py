@@ -309,3 +309,44 @@ def test_instrumentation_check_watches_the_buy_rule_inputs():
     import instrumentation_check as ic
     for field in ("pctr", "pctr_slow", "cm_rsi"):
         assert field in ic.DECISION_FIELDS["shadow"], field
+
+
+# ── the spread gate's own input has to be on disk before it can be set ───
+#
+# ai_max_spread_r is the one spread gate wired into the fill path, and it is 0
+# because nothing recorded what crossing costs. pre_entry_gate's own comment
+# says to turn it on "once the server's realized entry_slippage_r says what
+# crossing actually costs" — but no bid was ever written, so the round-trip
+# figure the gate enforces could not be computed from history at all.
+
+def test_spread_r_matches_the_gate_arithmetic():
+    # ask 10.00, bid 9.98, stop 9.50 -> risk 0.50, round trip 2 x 0.02 = 0.04
+    assert ew._spread_r(10.00, 9.98, 9.50) == 0.08
+
+
+def test_spread_r_is_none_rather_than_zero_when_unknowable():
+    assert ew._spread_r(10.0, None, 9.5) is None
+    assert ew._spread_r(None, 9.98, 9.5) is None
+    assert ew._spread_r(10.0, 9.98, None) is None
+    # A stop at or above the ask is not a risk unit.
+    assert ew._spread_r(10.0, 9.98, 10.0) is None
+
+
+def test_shadow_row_records_bid_and_spread_r():
+    rec = {"symbol": "AAA", "status": "watching",
+           "structure": {"entry_low": 9.9, "entry_high": 10.1,
+                         "stop_price": 9.50, "target_1": 11.0},
+           "indicator": {}}
+    row = ew._shadow_row(rec, price=10.00, price_src="quote", bid=9.98,
+                         arm_ok=True, arm_why="last_heating", now=1_000_000.0)
+    assert row["bid"] == 9.98
+    assert row["spread_r"] == 0.08
+
+
+def test_shadow_row_keeps_the_columns_when_there_is_no_bid():
+    rec = {"symbol": "AAA", "status": "watching",
+           "structure": {"stop_price": 9.50}, "indicator": {}}
+    row = ew._shadow_row(rec, price=10.00, price_src="quote",
+                         arm_ok=False, arm_why="wait_exh", now=1_000_000.0)
+    assert "bid" in row and row["bid"] is None
+    assert "spread_r" in row and row["spread_r"] is None
