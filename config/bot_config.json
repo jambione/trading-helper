@@ -175,7 +175,7 @@
   "ai_watch_in_zone_ignore_fade": false,
   "ai_watch_zone_exh_window_sec": 20.0,
   "ai_min_reward_risk": 0.5,
-  "ai_positions_poll_sec": 5.0,
+  "ai_positions_poll_sec": 3.0,
   "ai_prompt_file": "ai_prompt.txt",
   "ai_trading_source": "grok",
   "ai_entry_unconfirmed_ttl_sec": 900.0,
