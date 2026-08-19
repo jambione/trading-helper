@@ -332,8 +332,10 @@ DEFAULTS = {
     "stop_pct": 0.40,                  # % below entry for initial stop
     "reward_r": 2.0,                   # TP distance in R
     "be_at_r": 1.0,                    # move stop to breakeven at +1R
-    "lock_at_r": 2.0,                  # lock +1R at +2R unrealized
+    "lock_at_r": 2.0,                  # start trailing at +2R unrealized
     "trail_pct": 0.0,                  # >0 swaps to broker trail after lock
+    "trail_r": 1.0,                    # trail this many R under the peak
+    "trail_step_r": 0.10,              # min R gain before rewriting the stop
     "max_notional": None,              # optional $ cap on entry notional
     "daily_loss_r": 2.0,               # halt auto when session R <= -this
     "daily_loss_halt_auto": True,

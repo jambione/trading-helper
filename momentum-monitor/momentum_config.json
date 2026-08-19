@@ -58,6 +58,8 @@
   "be_at_r": 1.0,
   "lock_at_r": 2.0,
   "trail_pct": 0.0,
+  "trail_r": 1.0,
+  "trail_step_r": 0.1,
   "daily_loss_r": 2.0,
   "daily_loss_halt_auto": true
 }

@@ -101,6 +101,9 @@ def register_open(
         "buy_order_id": buy_order_id,
         "opened_ts": time.time() if now is None else now,
         "initial_stop": plan.get("stop"),
+        # High water mark for the R-trail. Seeded at entry so the first manage
+        # tick trails from a real price rather than from 0.
+        "peak": plan.get("entry"),
     }
     return book
 
@@ -154,6 +157,8 @@ def manage_open(
     be_at = float(cfg.get("be_at_r", 1.0))
     lock_at = float(cfg.get("lock_at_r", 2.0))
     trail_pct = float(cfg.get("trail_pct", 0) or 0)
+    trail_r = float(cfg.get("trail_r", dr.DEFAULT_TRAIL_R))
+    trail_step_r = float(cfg.get("trail_step_r", dr.DEFAULT_TRAIL_STEP_R))
     daily_loss_r = float(cfg.get("daily_loss_r", 2.0))
     live_map = {str(k).upper(): v for k, v in (live_positions or {}).items()}
 
@@ -181,9 +186,26 @@ def manage_open(
         phase = str(pos.get("phase") or "initial")
         init_stop = float(pos.get("initial_stop") or pos.get("stop") or 0)
 
-        # Locked / trail first (skip if already there)
-        if ur >= lock_at and phase not in ("locked", "trail"):
-            if trail_pct > 0 and trail_fn is not None:
+        # High water mark, updated before any stop math: the R-trail is measured
+        # from the peak, so a tick that moved the stop off a stale peak would
+        # trail the wrong price. Recorded on the position because the manage tick
+        # only ever sees the current print — nothing else remembers the high.
+        cur_px = float(current or entry)
+        peak = max(float(pos.get("peak") or entry), cur_px)
+        pos["peak"] = peak
+
+        # A broker-side trail owns the stop once placed; leave it alone.
+        if phase == "trail":
+            continue
+
+        # At/after lock_at the position trails for the rest of its life. The old
+        # code wrote entry+1R here, marked the position "locked", and excluded
+        # that phase from further ratcheting — so the stop never moved again and
+        # a name that ran to +8R still exited at +1R. Entering the trail is
+        # unchanged (at exactly lock_at, peak-1R == entry+1R); what is new is
+        # that it keeps climbing on every later tick.
+        if ur >= lock_at or phase == "r_trail":
+            if trail_pct > 0 and trail_fn is not None and phase != "r_trail":
                 res = trail_fn(sym, trail_pct)
                 if res.get("ok"):
                     pos["phase"] = "trail"
@@ -193,17 +215,25 @@ def manage_open(
                         "unreal_r": round(ur, 2),
                     })
                     continue
-            new_stop = dr.stop_for_phase(
-                "locked", entry=entry, initial_stop=init_stop, r_per_share=r_ps)
-            res = replace_stop_fn(sym, new_stop)
-            if res.get("ok"):
-                pos["phase"] = "locked"
-                pos["stop"] = new_stop
-                events.append({
-                    "kind": "stop_ratchet", "symbol": sym,
-                    "phase": "locked", "stop": new_stop,
-                    "unreal_r": round(ur, 2),
-                })
+            want = dr.trail_stop_level(
+                entry=entry, peak=peak, r_per_share=r_ps, trail_r=trail_r)
+            cur_stop = float(pos.get("stop") or 0)
+            # Raise-only, and only when the move is worth a cancel + submit.
+            if want is not None and want >= cur_stop + trail_step_r * r_ps:
+                res = replace_stop_fn(sym, want)
+                if res.get("ok"):
+                    pos["phase"] = "r_trail"
+                    pos["stop"] = want
+                    events.append({
+                        "kind": "stop_ratchet", "symbol": sym,
+                        "phase": "r_trail", "stop": want,
+                        "peak": round(peak, 2), "trail_r": trail_r,
+                        "unreal_r": round(ur, 2),
+                    })
+            elif phase != "r_trail":
+                # Already high enough to be in the trail; record the phase so the
+                # next tick keeps trailing even if this one had nothing to move.
+                pos["phase"] = "r_trail"
             continue
 
         if ur >= be_at and phase == "initial":

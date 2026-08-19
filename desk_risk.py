@@ -114,6 +114,52 @@ def next_phase(unreal_r: float, *, be_at_r: float = 1.0, lock_at_r: float = 2.0)
     return "initial"
 
 
+# Distance the runner gives back from the high water mark, in R — NOT percent.
+# A fixed percent trail is a different trade on every name: at 2.5% it is 2.5R
+# behind a 1%-wide stop and 0.5R behind a 5%-wide one. Denominated in R it is
+# the same trade everywhere. ai_positions uses the same rule for tranche B.
+DEFAULT_TRAIL_R = 1.0
+# Only rewrite a resting stop when the trail gains at least this much R. The
+# monitor's manage tick runs every few seconds and each move is a cancel plus a
+# submit, so an ungated trail is a cancel/submit storm for pennies of give.
+DEFAULT_TRAIL_STEP_R = 0.10
+
+
+def trail_stop_level(
+    *,
+    entry: float,
+    peak: float,
+    r_per_share: float,
+    trail_r: float = DEFAULT_TRAIL_R,
+) -> float | None:
+    """Where a trailing stop belongs right now: ``max(entry, peak - trail_r*R)``.
+
+    This is the phase model's missing terminal state. ``stop_for_phase("locked")``
+    returns ``entry + 1R`` and the caller then marks the position locked, which
+    read as "profit captured" but is a stop that never moves again — a name that
+    ran to +8R still exited at +1R. Measuring from *peak* instead of from entry
+    is what makes the stop follow price up.
+
+    The breakeven floor matters on the way in: until price has run far enough
+    that ``peak - trail_r*R`` clears entry, the trail would otherwise sit below
+    the entry price and hand back a winner as a loss.
+
+    Returns None when there is no basis to compute one (no entry, no risk).
+    """
+    try:
+        e = float(entry)
+        pk = float(peak)
+        risk = float(r_per_share)
+        give = max(0.0, float(trail_r))
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or risk <= 0:
+        return None
+    # The entry floor also covers a peak below entry: peak - give*R is then
+    # under entry too, so the max() returns entry either way.
+    return round(max(e, pk - give * risk), 2)
+
+
 def trade_r(realized_pnl: float, risk_dollars: float) -> float | None:
     if risk_dollars is None or float(risk_dollars) <= 0:
         return None
