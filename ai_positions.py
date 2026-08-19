@@ -2397,6 +2397,11 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
             # expressed against price — no extra state to keep in step.
             gain_pct = float(mfe) * float(risk) / float(entry) * 100.0
             be_hit = gain_pct + 1e-9 >= be_at_pct
+        # Capture from the fill: once last − tight give sits at/above entry,
+        # the shelf never goes back under it. Independent of be_at_r / be_at_pct
+        # so a wide-R name (HOOD 0.084R on +0.42%) still locks scratch.
+        if not be_hit and _tight_give_clears_entry(last, entry, risk, cfg):
+            be_hit = True
     be_floor = float(entry) if be_hit else None
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
@@ -2604,16 +2609,48 @@ def evaluate_ratchet_invariants(
 
     After T1 the runner stop must be at or above entry. Before T1 a name
     that is confirmed open must have a resting T1 (or attach still pending
-    on this tick). Used by manage_open_positions and tools/ratchet_check.py.
+    on this tick). Single-share books have no T1; the software shelf must
+    sit at/above entry once last − give has cleared the fill.
+    Used by manage_open_positions and tools/ratchet_check.py.
     """
     orders = open_orders or []
     out: list[dict[str, Any]] = []
+    cfg = _cfg_all()
     for ticker, pos in state.items():
         if not pos.get("entry_confirmed") or pos.get("closing_reason"):
             continue
         qty_a = int(pos.get("qty_a") or 0)
         qty_b = int(pos.get("qty_b") or 0)
         if qty_a < 1 or qty_b < 1:
+            live = detail.get(str(ticker).upper()) or {}
+            live_qty = _num(live.get("qty"))
+            if live_qty is None:
+                continue
+            entry = _num(pos.get("entry_price"))
+            last = _num(pos.get("last_seen_price")) or _num(live.get("current"))
+            loc = _num(pos.get("local_stop_price")) or _num(pos.get("stop_price"))
+            row: dict[str, Any] = {
+                "symbol": str(ticker).upper(),
+                "live_qty": live_qty,
+                "qty_a": qty_a,
+                "qty_b": qty_b,
+                "entry": entry,
+                "best_stop": loc,
+                "has_t1": False,
+                "scaled": False,
+            }
+            if (
+                entry
+                and loc is not None
+                and last
+                and _tight_give_clears_entry(
+                    last, entry, _risk_basis(pos), cfg)
+                and loc + 1e-6 < entry
+            ):
+                row.update({"ok": False, "event": "ratchet_stop_below_entry"})
+            else:
+                row.update({"ok": True, "event": "ratchet_ok"})
+            out.append(row)
             continue
         live = detail.get(str(ticker).upper()) or {}
         live_qty = _num(live.get("qty"))
