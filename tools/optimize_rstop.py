@@ -63,6 +63,14 @@ DEFAULT_POOL = [
 ]
 OVERLAY_KEYS = {
     "give_r": "ai_local_trail_give_r",
+    # Declare these two so a grid can hold them still. Sweeping give_r alone
+    # cannot answer "how wide should the trail be": give_r moves the open-period
+    # give with it (see apply_overlay), so a give_r column is really two knobs
+    # at once, and on 2026-08-19 the only cell that beat baseline did so by
+    # narrowing give_open_r from the live 0.2 — a variable that sweep never
+    # meant to test.
+    "give_open_r": "ai_local_trail_give_open_r",
+    "arm_r": "ai_local_trail_arm_r",
     "synth_rr": "ai_watch_synth_rr",
     "heat_min_pct": "ai_watch_exhaustion_heat_min_pct",
     "dead_trade_min": "ai_dead_trade_min",
@@ -85,7 +93,15 @@ def live_cfg(**over) -> dict[str, Any]:
 
 
 def apply_overlay(base: dict, overlay: dict) -> dict:
-    """Copy *base* and apply a search cell. Does not mutate *base*."""
+    """Copy *base* and apply a search cell. Does not mutate *base*.
+
+    ``give_r`` deliberately moves the open-period give with it, so a grid that
+    names only ``give_r`` sweeps the whole trail the way the desk ships it. That
+    coupling is also a trap: it means such a grid cannot attribute a win to the
+    trail width rather than to the open give. Naming ``give_open_r`` explicitly
+    pins it — the OVERLAY_KEYS loop runs after this block, so an explicit value
+    wins. To vary trail width alone, hold ``give_open_r`` at its live value.
+    """
     cfg = dict(base)
     if "give_r" in overlay and overlay["give_r"] is not None:
         g = float(overlay["give_r"])

@@ -1,0 +1,8 @@
+{
+  "min_n": 30,
+  "description": "Trail width, isolated. give_open_r is named explicitly so it stays put while give_r moves — without that pin, a give_r column moves both knobs and a win cannot be attributed (2026-08-19: the only cell that beat baseline did it by narrowing give_open_r from the live 0.2, not by changing trail width). Live pair is give_r=0.1 / give_open_r=0.2, included as a cell so it reproduces baseline and the harness can be checked against itself. arm_r is left at the live 0.5 on purpose: one question per run.",
+  "search": {
+    "give_r": [0.10, 0.20, 0.40],
+    "give_open_r": [0.10, 0.15, 0.20, 0.30]
+  }
+}
