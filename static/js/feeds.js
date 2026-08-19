@@ -765,7 +765,7 @@ function _updateBookRow(el, r) {
         'price-flash--up', 'price-flash--down'), 600);
     }
     if (exhN != null) _bookPrevExh[symKey] = exhN;
-    _setText(exhEl, _fmtExhPair(r));
+    _setText(exhEl, _bookExhText(r));
     exhEl.classList.add('cell-exh');
     exhEl.classList.toggle('exh--ob', !!r.pctr_ob || r.exhaustion_state === 'overbought');
     exhEl.classList.toggle('exh--tight', !!r.pctr_tight);
@@ -816,7 +816,7 @@ function _bookRowHtml(r) {
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
-    + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_fmtExhPair(r))}</div>`
+    + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-rsi${_rsiClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_fmtRsi(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
@@ -933,13 +933,25 @@ function _fmtPr(v) {
 }
 
 /** TradingView-style pair: fast / slow on the %R scale (0 at the top). */
-function _fmtExhPair(r) {
+/** The book's EXH cell: the 0-100 exhaustion the gate compares, with its
+ *  direction — _fmtExh already renders exactly that, so this only picks the
+ *  arguments off a book row and fills in the scale when the snapshot carried
+ *  the raw line but not the derived percentage.
+ *
+ *  It used to print "fast / slow". The slow line is a 112-bar window and the
+ *  book's names carry a few dozen bars — 0 of 14 live records had one at
+ *  09:42 — so half the column was a permanent em dash, and the half that
+ *  mattered was drawn on a scale (-6.5) that does not match the threshold the
+ *  operator sets (40). Both raw lines stay in the hover.
+ */
+function _bookExhText(r) {
   if (!r) return '—';
-  if (r.pctr_src === 'sparse_window' && r.pctr == null && r.pctr_slow == null) {
-    return 'thin';
+  let ex = r.exhaustion;
+  if ((ex == null || !Number.isFinite(Number(ex)))
+      && r.pctr != null && Number.isFinite(Number(r.pctr))) {
+    ex = Math.max(0, Math.min(100, 100 + Number(r.pctr)));
   }
-  if (r.pctr == null && r.pctr_slow == null) return '—';
-  return `${_fmtPr(r.pctr)} / ${_fmtPr(r.pctr_slow)}`;
+  return _fmtExh(ex, r.exhaustion_state, r.pctr_src);
 }
 
 function _exhPairClass(r) {
@@ -972,15 +984,19 @@ function _fmtRsiTitle(r) {
   return bits.join(' · ');
 }
 
-/** Hover: both %R lines plus the window used. */
+/** Hover: the raw %R lines behind the cell's 0-100 reading, plus the window.
+ *  The slow line needs a 112-bar window, so on a name admitted today it is
+ *  usually absent — the cell shows the fast-line exhaustion either way. */
 function _fmtExhTitle(r) {
   if (!r) return '';
-  const bits = ['%R fast(21) / slow(112)'];
+  const bits = ['EXH = 100 + fast %R'];
   if (r.pctr != null && Number.isFinite(Number(r.pctr))) {
     bits.push(`fast ${Number(r.pctr).toFixed(1)}`);
   }
   if (r.pctr_slow != null && Number.isFinite(Number(r.pctr_slow))) {
     bits.push(`slow ${Number(r.pctr_slow).toFixed(1)}`);
+  } else {
+    bits.push('slow n/a (needs 112 bars)');
   }
   if (r.pctr_ob) bits.push('red boxes');
   if (r.pctr_tight) bits.push('tight');

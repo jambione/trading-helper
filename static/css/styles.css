@@ -2398,16 +2398,17 @@ body.mobile .icon-btn {
      Seven tracks, not eight: Qty is display:none, and a hidden grid item does
      not occupy one. Declaring a track for it pushed every later cell one slot
      left and left the last track empty.
-     EXH is the widest column by content — it prints both %R lines, so its worst
-     case is "-100.0 / -100.0" — and is sized to hold that without ellipsis. */
+     EXH now prints one 0-100 reading plus a direction mark ("93.5%↑") rather
+     than a fast/slow pair, so it no longer needs the widest track — that space
+     goes back to State, Last and P&L. */
   grid-template-columns:
     minmax(52px, 0.9fr)
-    minmax(5rem, 1.0fr)
-    minmax(64px, 0.85fr)
-    minmax(60px, 0.8fr)
-    minmax(104px, 1.45fr)
-    minmax(46px, 0.55fr)
-    minmax(64px, 0.85fr);
+    minmax(5rem, 1.1fr)
+    minmax(64px, 0.95fr)
+    minmax(60px, 0.9fr)
+    minmax(76px, 1.0fr)
+    minmax(46px, 0.6fr)
+    minmax(64px, 0.95fr);
   width: 100%;
   box-sizing: border-box;
 }
