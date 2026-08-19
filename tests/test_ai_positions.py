@@ -2233,6 +2233,113 @@ def test_heal_dual_tranche_keeps_t1_and_places_runner_stop(tmp_path, monkeypatch
     assert any(c.get("qty") == 121 for c in stub.replace_calls)
 
 
+# Real Alpaca refusal body, from the 2026-08-13 LUNR heal loop.
+_INSUFFICIENT = (
+    '{"available":"8","code":40310000,"existing_qty":"30",'
+    '"held_for_orders":"22","message":"insufficient qty available for order '
+    '(requested: 30, available: 8)"}'
+)
+
+
+def test_available_qty_read_from_alpaca_refusal():
+    assert cp._available_qty_from_error({"error": _INSUFFICIENT}) == 8
+    # Truncated body — the desk logs these clipped, so regex not json.loads.
+    assert cp._available_qty_from_error(
+        {"error": _INSUFFICIENT[:40]}) == 8
+    # Message form, no JSON field.
+    assert cp._available_qty_from_error(
+        {"error": "insufficient qty available for order "
+                  "(requested: 30, available: 5)"}) == 5
+    # Not this refusal, or nothing free.
+    assert cp._available_qty_from_error({"error": "some other failure"}) == 0
+    assert cp._available_qty_from_error({}) == 0
+    assert cp._available_qty_from_error(
+        {"error": _INSUFFICIENT.replace('"available":"8"',
+                                        '"available":"0"')}) == 0
+
+
+def test_heal_retries_at_available_qty_when_t1_holds_shares(tmp_path, monkeypatch):
+    """A full-size stop is refused while T1 holds part of the position.
+
+    183 of 193 heal failures through 2026-08-13 were one name retrying the same
+    full-size stop every poll and staying naked. The refusal names the free
+    quantity; the heal must use it.
+    """
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=0, qty_b=0, total_qty=30,
+        entry_price=10.0, stop_price=9.5,
+        last_seen_price=9.9, entry_confirmed=True,
+    )
+    state = json.loads(_state_path(tmp_path).read_text())
+
+    class _RefuseFullSize(_StubBrokerManage):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.stop_sell_calls = []
+
+        def get_open_orders(self, *a, **k):
+            return []
+
+        def replace_stop(self, ticker, old_id, **kw):
+            return {"ok": False, "error": _INSUFFICIENT}
+
+        def place_stop_sell(self, ticker, stop_price, qty=None):
+            self.stop_sell_calls.append(qty)
+            return {"ok": True, "order_id": "healed_8", "qty": qty}
+
+    stub = _RefuseFullSize(current_price=9.9)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    monkeypatch.setattr(
+        cp, "_cfg_flag",
+        lambda key, default=True: True
+        if key in ("ai_heal_unprotected", "ai_broker_stop_enabled")
+        else default)
+
+    ev = cp._heal_unprotected([{"symbol": "NVDA", "managed": True}], state)
+    assert stub.stop_sell_calls == [8], "must retry at the free quantity"
+    assert ev and ev[0]["event"] == "unprotected_healed"
+
+
+def test_heal_does_not_retry_when_nothing_is_available(tmp_path, monkeypatch):
+    """available=0 means resting orders already cover it — leave it alone."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        qty_a=0, qty_b=0, total_qty=30,
+        entry_price=10.0, stop_price=9.5,
+        last_seen_price=9.9, entry_confirmed=True,
+    )
+    state = json.loads(_state_path(tmp_path).read_text())
+    none_free = _INSUFFICIENT.replace('"available":"8"', '"available":"0"')
+
+    class _NothingFree(_StubBrokerManage):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.stop_sell_calls = []
+
+        def get_open_orders(self, *a, **k):
+            return []
+
+        def replace_stop(self, ticker, old_id, **kw):
+            return {"ok": False, "error": none_free}
+
+        def place_stop_sell(self, ticker, stop_price, qty=None):
+            self.stop_sell_calls.append(qty)
+            return {"ok": True}
+
+    stub = _NothingFree(current_price=9.9)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    monkeypatch.setattr(
+        cp, "_cfg_flag",
+        lambda key, default=True: True
+        if key in ("ai_heal_unprotected", "ai_broker_stop_enabled")
+        else default)
+
+    ev = cp._heal_unprotected([{"symbol": "NVDA", "managed": True}], state)
+    assert stub.stop_sell_calls == []
+    assert not any(e.get("event") == "unprotected_healed" for e in ev)
+
+
 def test_qty_drop_infers_t1_and_raises_runner_to_breakeven(tmp_path, monkeypatch):
     """Broker half-size with lost T1 order id still ratchets (IONQ/ABCL)."""
     _seed_state(

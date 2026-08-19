@@ -25,6 +25,7 @@ Safety additions:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import time
@@ -2770,6 +2771,57 @@ def _adopt_unmanaged(
     return events
 
 
+def _available_qty_from_error(failed: Any) -> int:
+    """Shares Alpaca says are actually free, read off an insufficient-qty refusal.
+
+    The heal asks for the whole position while a resting T1 still holds part of
+    it, so Alpaca refuses the protective stop outright (code 40310000) and the
+    name stays naked. That is not a rare race: 183 of the 193 heal failures
+    through 2026-08-13 were one position retrying the same full-size stop every
+    poll, each time told ``requested: 30, available: 8``.
+
+    The refusal already carries the free quantity, so read it from there rather
+    than spending another API call on a desk that is at its rate limit. Regex
+    rather than json.loads because the broker body is sometimes truncated
+    before its closing brace.
+
+    Returns 0 when this is not that refusal, or nothing is free.
+    """
+    raw = str((failed or {}).get("error") or (failed or {}).get("status") or "")
+    if "40310000" not in raw and "insufficient qty" not in raw.lower():
+        return 0
+    m = re.search(r'"available"\s*:\s*"?(\d+(?:\.\d+)?)', raw)
+    if not m:
+        m = re.search(r"available:\s*(\d+(?:\.\d+)?)", raw)
+    if not m:
+        return 0
+    try:
+        return max(0, int(float(m.group(1))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _restop_at_available(sym: str, stop_price: float, failed: Any) -> dict | None:
+    """Re-place a refused protective stop at the quantity that is actually free.
+
+    ``available == 0`` means every share is already held by a resting order, so
+    there is nothing to protect and nothing to do — returning None leaves the
+    original refusal to be logged rather than inventing a second failure.
+    """
+    qty = _available_qty_from_error(failed)
+    if qty <= 0:
+        return None
+    import alpaca_trader
+    try:
+        out = alpaca_trader.place_stop_sell(sym, stop_price, qty=qty) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    if out.get("ok"):
+        log_event("unprotected_heal_resized", symbol=sym, qty=qty,
+                  stop_price=stop_price)
+    return out
+
+
 def _heal_unprotected(
     unprotected: list[dict[str, Any]], state: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -2858,6 +2910,8 @@ def _heal_unprotected(
                 out = {}
             if not out.get("ok"):
                 out = alpaca_trader.replace_stop(sym, None, stop_price=want) or {}
+            if not out.get("ok"):
+                out = _restop_at_available(sym, want, out) or out
             if isinstance(out, dict) and out.get("ok"):
                 pos["tranche_b_stop_order_id"] = out.get("order_id") or pos.get(
                     "tranche_b_stop_order_id")
@@ -2904,6 +2958,10 @@ def _heal_unprotected(
             except Exception:  # noqa: BLE001
                 pass
         out = alpaca_trader.replace_stop(sym, None, stop_price=stop)
+        # replace_stop always sizes to the full open quantity, which is exactly
+        # what Alpaca refuses while any of it is held for another order.
+        if not (isinstance(out, dict) and out.get("ok")):
+            out = _restop_at_available(sym, stop, out) or out
         if isinstance(out, dict) and out.get("ok"):
             pos["tranche_b_stop_order_id"] = out.get("order_id") or pos.get(
                 "tranche_b_stop_order_id")
