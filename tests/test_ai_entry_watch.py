@@ -4292,3 +4292,50 @@ def test_rvol_ranked_keeps_every_record():
     state = {f"S{i}": {"symbol": f"S{i}", "rvol": i % 3} for i in range(12)}
     assert len(ew.rvol_ranked(state)) == 12
     assert {s for s, _ in ew.rvol_ranked(state)} == set(state)
+
+
+def test_rvol_ranked_uses_the_live_reading_over_the_record(monkeypatch):
+    """rec["rvol"] is only stamped once the poll reaches a symbol — after this
+    sort runs — so ranking off the record alone always used the admit stamp."""
+    import ai_entry_watch as ew
+    state = {
+        "AAA": {"symbol": "AAA", "admit_rvol": 9.0},
+        "BBB": {"symbol": "BBB", "admit_rvol": 1.0},
+    }
+    # AAA has cooled off since admission; BBB is the live mover.
+    live = {"AAA": 0.8, "BBB": 6.5}
+    order = [s for s, _ in ew.rvol_ranked(state, live_lookup=live.get)]
+    assert order == ["BBB", "AAA"]
+
+
+def test_rvol_ranked_treats_an_impossible_reading_as_unknown():
+    """The log carries readings in the tens of thousands. Clamping one to the
+    ceiling would hand it the seat; absent is the honest answer."""
+    import ai_entry_watch as ew
+    state = {
+        "BROKEN": {"symbol": "BROKEN", "admit_rvol": 80785.46},
+        "REAL": {"symbol": "REAL", "admit_rvol": 2.4},
+    }
+    order = [s for s, _ in ew.rvol_ranked(state, live_lookup=lambda s: None)]
+    assert order == ["REAL", "BROKEN"]
+
+
+def test_rvol_ranked_falls_back_when_live_is_missing():
+    import ai_entry_watch as ew
+    state = {
+        "AAA": {"symbol": "AAA", "admit_rvol": 1.5},
+        "BBB": {"symbol": "BBB", "rvol": 4.0},
+    }
+    order = [s for s, _ in ew.rvol_ranked(state, live_lookup=lambda s: None)]
+    assert order == ["BBB", "AAA"]
+
+
+def test_rvol_ranked_survives_a_throwing_lookup():
+    import ai_entry_watch as ew
+
+    def boom(_sym):
+        raise RuntimeError("quote cache down")
+
+    state = {"AAA": {"symbol": "AAA", "admit_rvol": 3.0},
+             "BBB": {"symbol": "BBB", "admit_rvol": 1.0}}
+    assert [s for s, _ in ew.rvol_ranked(state, live_lookup=boom)] == ["AAA", "BBB"]

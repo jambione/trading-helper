@@ -6529,7 +6529,41 @@ def ensure_structure(
     return event
 
 
-def rvol_ranked(state: dict) -> list[tuple[str, dict]]:
+# Above this, a relative-volume reading is a broken ratio rather than a hot
+# name — the historical log carries values into the tens of thousands, and the
+# two sides of that ratio have to come off one feed at one bar size to mean
+# anything. Treated as unknown rather than clamped: a wrong number that looks
+# plausible is worse than an absent one, and clamping 80,000x to the ceiling
+# would hand it the seat.
+_RVOL_SANE_MAX = 100.0
+
+
+def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
+    """Best trustworthy relative volume for *rec*, or None.
+
+    Live first: a name can cool off between admission and the poll that would
+    buy it, so the admit-time stamp is the fallback, not the answer.
+    """
+    lookup = live_lookup if live_lookup is not None else _desk_rvol
+    sym = str(rec.get("symbol") or "").upper().strip()
+    vals = []
+    if sym:
+        try:
+            vals.append(_f_or_none(lookup(sym)))
+        except Exception:  # noqa: BLE001
+            vals.append(None)
+    vals.append(_f_or_none(rec.get("rvol")))
+    vals.append(_f_or_none(rec.get("admit_rvol")))
+    for v in vals:
+        if v is None:
+            continue
+        if v <= 0 or v > _RVOL_SANE_MAX:
+            continue
+        return float(v)
+    return None
+
+
+def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
     """Watch records, strongest relative volume first.
 
     Seats are scarce — ``ai_max_buys_per_poll`` is 1 and the book holds two on
@@ -6538,10 +6572,15 @@ def rvol_ranked(state: dict) -> list[tuple[str, dict]]:
     qualified in the same poll the seat went to whichever the loop reached
     first, so admission order decided the trade rather than the tape.
 
-    Live ``rvol`` is preferred over the admit-time stamp because a name can
-    cool off between admission and the poll that would buy it. A record with no
-    usable reading sorts last rather than first: unknown is not strong, and
-    scoring it as 0 would be the same mistake exhaustion_pct refuses to make.
+    The live reading is looked up here rather than read off the record, because
+    ``rec["rvol"]`` is only stamped once the poll reaches that symbol — after
+    this sort has already run. Ranking off the record alone therefore always
+    ordered by the admit-time stamp, which is the staleness this exists to
+    avoid. ``_desk_rvol`` reads the cached dashboard row, so this costs no
+    quote call.
+
+    A record with no usable reading sorts last rather than first: unknown is
+    not strong, and scoring it 0 would rank it above a name at 0.5x.
 
     Ordering only. Every record is still evaluated, so shadow, reject and
     blocker rows are unchanged — this decides who gets the seat, not who is
@@ -6549,11 +6588,8 @@ def rvol_ranked(state: dict) -> list[tuple[str, dict]]:
     """
     def rank(item: tuple[str, Any]) -> tuple[int, float]:
         rec = item[1] if isinstance(item[1], dict) else {}
-        for key in ("rvol", "admit_rvol"):
-            v = _f_or_none(rec.get(key))
-            if v is not None:
-                return (0, -float(v))
-        return (1, 0.0)
+        v = _rank_rvol(rec, live_lookup)
+        return (1, 0.0) if v is None else (0, -v)
 
     return sorted(list(state.items()), key=rank)
 
