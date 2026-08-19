@@ -4246,3 +4246,49 @@ def test_live_exhaustion_pair_writes_slow_when_112_bars(monkeypatch):
     assert ew.apply_live_exhaustion(rec, px, cfg, now) is True
     assert rec["indicator"]["pctr"] is not None
     assert rec["indicator"]["pctr_slow"] is not None
+
+
+# ── the scarce seat goes to the strongest tape, not to whoever was first ──
+#
+# ai_max_buys_per_poll is 1 and a $240 book holds two seats, but poll_once
+# walked state.items() — watch-file insertion order — so admission order
+# decided which qualifying name got bought.
+
+def test_rvol_ranked_puts_the_strongest_first():
+    import ai_entry_watch as ew
+    state = {
+        "AAA": {"symbol": "AAA", "rvol": 1.2},
+        "BBB": {"symbol": "BBB", "rvol": 9.4},
+        "CCC": {"symbol": "CCC", "rvol": 3.1},
+    }
+    assert [s for s, _ in ew.rvol_ranked(state)] == ["BBB", "CCC", "AAA"]
+
+
+def test_rvol_ranked_prefers_live_rvol_over_the_admit_stamp():
+    """A name can cool off between admission and the poll that would buy it."""
+    import ai_entry_watch as ew
+    state = {
+        "AAA": {"symbol": "AAA", "rvol": 8.0, "admit_rvol": 1.0},
+        "BBB": {"symbol": "BBB", "rvol": 1.0, "admit_rvol": 99.0},
+    }
+    assert [s for s, _ in ew.rvol_ranked(state)] == ["AAA", "BBB"]
+
+
+def test_rvol_ranked_sorts_unknown_last_not_first():
+    """Unknown is not strong, and scoring it 0 would rank it above nothing."""
+    import ai_entry_watch as ew
+    state = {
+        "NONE": {"symbol": "NONE"},
+        "BAD": {"symbol": "BAD", "rvol": "n/a"},
+        "GOOD": {"symbol": "GOOD", "rvol": 0.4},
+    }
+    order = [s for s, _ in ew.rvol_ranked(state)]
+    assert order[0] == "GOOD"
+    assert set(order[1:]) == {"NONE", "BAD"}
+
+
+def test_rvol_ranked_keeps_every_record():
+    import ai_entry_watch as ew
+    state = {f"S{i}": {"symbol": f"S{i}", "rvol": i % 3} for i in range(12)}
+    assert len(ew.rvol_ranked(state)) == 12
+    assert {s for s, _ in ew.rvol_ranked(state)} == set(state)

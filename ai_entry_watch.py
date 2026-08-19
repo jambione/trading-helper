@@ -6529,6 +6529,35 @@ def ensure_structure(
     return event
 
 
+def rvol_ranked(state: dict) -> list[tuple[str, dict]]:
+    """Watch records, strongest relative volume first.
+
+    Seats are scarce — ``ai_max_buys_per_poll`` is 1 and the book holds two on
+    a small account — but the poll walked ``state.items()``, which is the order
+    symbols happened to be written to the watch file. When several names
+    qualified in the same poll the seat went to whichever the loop reached
+    first, so admission order decided the trade rather than the tape.
+
+    Live ``rvol`` is preferred over the admit-time stamp because a name can
+    cool off between admission and the poll that would buy it. A record with no
+    usable reading sorts last rather than first: unknown is not strong, and
+    scoring it as 0 would be the same mistake exhaustion_pct refuses to make.
+
+    Ordering only. Every record is still evaluated, so shadow, reject and
+    blocker rows are unchanged — this decides who gets the seat, not who is
+    looked at.
+    """
+    def rank(item: tuple[str, Any]) -> tuple[int, float]:
+        rec = item[1] if isinstance(item[1], dict) else {}
+        for key in ("rvol", "admit_rvol"):
+            v = _f_or_none(rec.get(key))
+            if v is not None:
+                return (0, -float(v))
+        return (1, 0.0)
+
+    return sorted(list(state.items()), key=rank)
+
+
 def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     """One RTH watch poll: refresh quotes, restructure if needed, arm/buy.
 
@@ -6662,7 +6691,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         pass
 
-    for sym_key, rec in list(state.items()):
+    for sym_key, rec in rvol_ranked(state):
         if not isinstance(rec, dict):
             continue
         sym = str(rec.get("symbol") or sym_key or "").upper().strip()
