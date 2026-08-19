@@ -3119,3 +3119,62 @@ def test_breakeven_floor_never_lowers_an_already_higher_shelf():
                 last_seen_price=10.60, trail_prints=[10.60, 10.60, 10.60]),
         _BE_CFG)
     assert got >= 10.40, got
+
+
+# ── the shelf must ratchet off the tape, not the broker mark ─────────────
+#
+# NKE and TEM, 2026-08-19: both carried three identical trail_prints while the
+# stream had already moved. note_trail_print was fed live["current"], which
+# only changes when the positions poll refreshes, so the damped median was
+# averaging repeats of a stale number and the shelf lagged price by a poll.
+
+def test_fresh_tape_px_prefers_the_stream_inside_the_stale_window(monkeypatch):
+    import types
+    stub = types.SimpleNamespace(live_print=lambda s: (10.55, 2.0))
+    monkeypatch.setitem(sys.modules, "ai_entry_watch", stub)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {"ai_stale_data_max_age_sec": 15.0})
+    assert cp._fresh_tape_px("AAA") == 10.55
+
+
+def test_fresh_tape_px_refuses_a_stale_print(monkeypatch):
+    import types
+    stub = types.SimpleNamespace(live_print=lambda s: (10.55, 90.0))
+    monkeypatch.setitem(sys.modules, "ai_entry_watch", stub)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {"ai_stale_data_max_age_sec": 15.0})
+    assert cp._fresh_tape_px("AAA") is None
+
+
+def test_fresh_tape_px_none_when_there_is_no_print(monkeypatch):
+    import types
+    monkeypatch.setitem(sys.modules, "ai_entry_watch",
+                        types.SimpleNamespace(live_print=lambda s: None))
+    assert cp._fresh_tape_px("AAA") is None
+    monkeypatch.setitem(sys.modules, "ai_entry_watch",
+                        types.SimpleNamespace(live_print=lambda s: (0.0, 1.0)))
+    assert cp._fresh_tape_px("AAA") is None
+
+
+def test_breakeven_floor_can_arm_on_percent_of_price():
+    """HOOD 2026-08-19: +0.42% off the fill was only 0.084R, under a 0.10R
+    floor, because the zone made 1R about 5% of price."""
+    pos = {"entry_price": 98.20, "risk_per_share": 4.915,
+           "entry_stop_price": 93.29, "local_stop_price": None,
+           "last_seen_price": 98.415, "trail_prints": [98.415] * 3,
+           "peak_price": 98.61, "mfe_r": 0.0834}
+    r_only = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.10,
+              "ai_local_trail_arm_r": 0.15, "ai_local_trail_be_at_r": 0.10}
+    assert cp.local_profit_stop(pos, r_only) < 98.20      # R floor misses it
+    pct = dict(r_only, ai_local_trail_be_at_pct=0.25)
+    assert cp.local_profit_stop(pos, pct) >= 98.20        # percent floor catches
+
+
+def test_percent_floor_not_armed_on_a_name_that_barely_moved():
+    # NKE: peak 40.98 off a 40.96 fill is +0.05%, nowhere near 0.25%.
+    pos = {"entry_price": 40.96, "risk_per_share": 2.048,
+           "entry_stop_price": 38.91, "local_stop_price": None,
+           "last_seen_price": 40.865, "trail_prints": [40.865] * 3,
+           "peak_price": 40.98, "mfe_r": 0.0098}
+    cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.10,
+           "ai_local_trail_arm_r": 0.15, "ai_local_trail_be_at_r": 0.10,
+           "ai_local_trail_be_at_pct": 0.25}
+    assert cp.local_profit_stop(pos, cfg) < 40.96

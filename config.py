@@ -626,6 +626,9 @@ DEFAULT_CONFIG = {
     # again. 0 = off. The runner stop already floors at breakeven; this is
     # the same guarantee for the pre-scale-out shelf.
     "ai_local_trail_be_at_r":       0.0,
+    # ...or this much percent of price, whichever comes first. 1R is ~5% of
+    # price on these zones, so an R-only floor needs a half-percent move.
+    "ai_local_trail_be_at_pct":     0.0,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.

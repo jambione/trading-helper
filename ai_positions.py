@@ -2377,11 +2377,27 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         be_at = float(cfg.get("ai_local_trail_be_at_r", 0) or 0)
     except (TypeError, ValueError):
         be_at = 0.0
-    be_floor = (
-        float(entry)
-        if (be_at > 0 and entry and float(mfe) + 1e-9 >= be_at)
-        else None
-    )
+    # ...or a percent of price, whichever comes first. R is the wrong yardstick
+    # for this on its own: these zones make 1R about 5% of price, so HOOD ran
+    # +0.42% off a 98.20 fill on 2026-08-19 and that was only 0.084R — under a
+    # 0.10R floor, which would not have engaged until price moved half a
+    # percent. The operator's question is "am I up enough to stop risking the
+    # fill", and that is asked in percent, not in a risk unit the zone happened
+    # to choose.
+    try:
+        be_at_pct = float(cfg.get("ai_local_trail_be_at_pct", 0) or 0)
+    except (TypeError, ValueError):
+        be_at_pct = 0.0
+    be_hit = False
+    if entry:
+        if be_at > 0 and float(mfe) + 1e-9 >= be_at:
+            be_hit = True
+        if not be_hit and be_at_pct > 0 and risk and float(risk) > 0:
+            # mfe is the high-water mark in R, so this is the same excursion
+            # expressed against price — no extra state to keep in step.
+            gain_pct = float(mfe) * float(risk) / float(entry) * 100.0
+            be_hit = gain_pct + 1e-9 >= be_at_pct
+    be_floor = float(entry) if be_hit else None
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
@@ -2421,6 +2437,43 @@ def never_lower_rstop(*levels: float | None) -> float | None:
         if v > 0:
             xs.append(v)
     return max(xs) if xs else None
+
+
+def _fresh_tape_px(ticker: str) -> float | None:
+    """Stream print for *ticker* when it is inside the stale window, else None.
+
+    The positions tick already pulls this for _tick_prints. It is the fastest
+    price the desk has — the stream updates continuously, while the broker mark
+    on ``live["current"]`` only moves when the positions poll refreshes.
+    """
+    try:
+        import ai_entry_watch as ew
+        tape = ew.live_print(ticker)
+    except Exception:  # noqa: BLE001
+        return None
+    if tape is None or not tape[0]:
+        return None
+    try:
+        px = float(tape[0])
+    except (TypeError, ValueError):
+        return None
+    if px <= 0:
+        return None
+    age = tape[1]
+    if age is None:
+        return px
+    try:
+        stale = float(
+            _cfg_all().get(
+                "ai_stale_data_max_age_sec", DEFAULT_STALE_DATA_MAX_AGE_SEC)
+            or DEFAULT_STALE_DATA_MAX_AGE_SEC
+        )
+    except (TypeError, ValueError):
+        stale = DEFAULT_STALE_DATA_MAX_AGE_SEC
+    try:
+        return px if float(age) <= stale else None
+    except (TypeError, ValueError):
+        return px
 
 
 def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | None]:
@@ -3308,7 +3361,15 @@ def manage_open_positions(
             # trigger so a tape dip through TRAIL sells even if the broker
             # mark is still above.
             hi, lo = _tick_prints(ticker, live)
-            raw = _num((live or {}).get("current"))
+            # Raise the shelf off the freshest print available, not the broker
+            # mark. live["current"] only moves when the positions poll refreshes,
+            # so the damped median was averaging repeats of a stale number and
+            # the shelf trailed price by a poll or more — NKE/TEM 2026-08-19 both
+            # carried three identical trail_prints while the tape had moved.
+            # The median damping is unchanged; this only changes what it damps.
+            raw = _fresh_tape_px(ticker)
+            if raw is None:
+                raw = _num((live or {}).get("current"))
             if raw is None:
                 raw = _num((live or {}).get("current_price"))
             if raw is None:
