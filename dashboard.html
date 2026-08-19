@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=141" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=142" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -340,6 +340,7 @@
                         <div class="th">Ticker</div>
                         <div class="th th-state">State</div>
                         <div class="th">Last</div>
+                        <div class="th" title="Average fill price. Open positions only.">Entry</div>
                         <div class="th" title="Open longs only. Raise-only shelf; flatten if last prints through.">Stop</div>
                         <div class="th" title="Exhaustion = 100 + fast %R (0-100). Arms when it is at/above ai_watch_exhaustion_heat_min_pct and rising. Hover a row for the raw %R lines.">EXH</div>
                         <div class="th" title="CM RSI-2, informational. The live entry rule gates on EXH, not this. Green is the Connors pop.">RSI</div>
@@ -770,7 +771,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=140"></script>
+        <script type="module" src="/static/js/app.js?v=141"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

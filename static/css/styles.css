@@ -2350,7 +2350,9 @@ body.mobile .icon-btn {
 .panel-ai-watch .ai-book-table-header .th:nth-child(4),
 .panel-ai-watch .ai-book-table-header .th:nth-child(5),
 .panel-ai-watch .ai-book-table-header .th:nth-child(6),
-.panel-ai-watch .ai-book-table-header .th:nth-child(8) { text-align: right; }
+.panel-ai-watch .ai-book-table-header .th:nth-child(7),
+/* 8 is Qty (display:none); P&L is the 9th child once Entry is in. */
+.panel-ai-watch .ai-book-table-header .th:nth-child(9) { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
@@ -2394,21 +2396,21 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Stop | EXH | RSI | P&L
-     Seven tracks, not eight: Qty is display:none, and a hidden grid item does
-     not occupy one. Declaring a track for it pushed every later cell one slot
-     left and left the last track empty.
-     EXH now prints one 0-100 reading plus a direction mark ("93.5%↑") rather
-     than a fast/slow pair, so it no longer needs the widest track — that space
-     goes back to State, Last and P&L. */
+  /* Ticker | State | Last | Entry | Stop | EXH | RSI | P&L
+     Eight tracks for eight rendered cells. Qty is display:none and a hidden
+     grid item does not occupy a track, so it gets none — declaring one for it
+     pushed every later cell a slot left and stranded the last track.
+     EXH prints one 0-100 reading plus a direction mark ("93.5%↑"), not a
+     fast/slow pair, so it does not need the widest track. */
   grid-template-columns:
-    minmax(52px, 0.9fr)
-    minmax(5rem, 1.1fr)
-    minmax(64px, 0.95fr)
-    minmax(60px, 0.9fr)
-    minmax(76px, 1.0fr)
-    minmax(46px, 0.6fr)
-    minmax(64px, 0.95fr);
+    minmax(50px, 0.85fr)
+    minmax(4.5rem, 0.95fr)
+    minmax(60px, 0.85fr)
+    minmax(60px, 0.85fr)
+    minmax(58px, 0.8fr)
+    minmax(72px, 0.95fr)
+    minmax(44px, 0.55fr)
+    minmax(62px, 0.9fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2428,6 +2430,7 @@ body.mobile .icon-btn {
 }
 .panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: right; }
 .panel-ai-watch .feed-cols--ai-book .cell-price,
+.panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-rsi,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,

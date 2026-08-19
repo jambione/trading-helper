@@ -719,7 +719,10 @@ function _updateBookRow(el, r) {
       ? Number(r.last_ask) : null);
   const px = rawPx != null ? `$${rawPx.toFixed(2)}` : '—';
   const qty = isOpen ? _fmtQty(r.qty) : '—';
+  const entryTxt = _fmtEntry(r);
   const pl = isOpen ? _fmtPl(r) : '—';
+  const entryEl = el.querySelector('.cell-entry');
+  if (entryEl) _setText(entryEl, entryTxt);
   const trailEl = el.querySelector('.cell-trail') || el.querySelector('.cell-src');
   if (trailEl) {
     trailEl.classList.remove('cell-src');
@@ -815,6 +818,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-ticker">${_esc(sym)}</div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
+    + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-rsi${_rsiClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_fmtRsi(r))}</div>`
@@ -843,6 +847,19 @@ function _bookStopPx(r) {
     return v;
   }
   return prev != null ? prev : null;
+}
+
+/** Average fill price — open positions only. A watch row has no entry yet, and
+ *  showing the zone's planned entry there would read as a fill that never
+ *  happened. */
+function _fmtEntry(r) {
+  if (!r) return '—';
+  const open = !!(r.is_position || r.phase === 'open' || r.phase === 'submitted'
+    || r.status === 'filled' || r.status === 'submitted');
+  if (!open) return '—';
+  const v = r.avg_entry != null ? Number(r.avg_entry)
+    : (r.entry_price != null ? Number(r.entry_price) : NaN);
+  return Number.isFinite(v) && v > 0 ? `$${v.toFixed(2)}` : '—';
 }
 
 function _fmtTrail(v) {

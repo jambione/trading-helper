@@ -618,6 +618,10 @@ DEFAULT_CONFIG = {
     "ai_local_trail_give_open_r":      0.20,
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
+    # Ceiling on the local trail cushion, percent of price. 0 = off.
+    # Guards wide-R names: give_r x R is huge in dollars when the zone put
+    # the stop 5% under entry, and the shelf stops being close support.
+    "ai_local_trail_give_max_pct":  0.0,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.

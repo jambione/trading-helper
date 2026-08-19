@@ -3039,3 +3039,36 @@ def test_infer_t1_refuses_qty_drop_unless_price_reached_t1():
     assert cp._infer_t1_fill(pos, 143.0) is False
     pos["peak_price"] = 8.50
     assert cp._infer_t1_fill(pos, 143.0) is True
+
+
+# ── the trail cushion needs a ceiling, not just a floor ──────────────────
+#
+# CRSP 2026-08-19: the zone put the stop 5% under a $57.39 entry, so 1R was
+# $2.87 and "give 0.10R" trailed 29 cents behind the print. Tight in R, far
+# enough in dollars that the shelf was not close support.
+
+def test_give_is_capped_at_a_percent_of_price_on_wide_r_names():
+    cfg = {"ai_local_trail_give_r": 0.10, "ai_local_trail_give_open_r": 0.10,
+           "ai_local_trail_give_max_pct": 0.35}
+    # 1R = $2.873 on a $58 name -> 0.10R is $0.287, over the 0.35% ceiling.
+    give = cp.local_trail_give(58.065, 2.873, cfg, mfe_r=1.0)
+    assert give == pytest.approx(58.065 * 0.0035, rel=1e-6)
+    assert give < 0.287
+
+
+def test_cap_does_not_bite_when_r_is_already_tight():
+    cfg = {"ai_local_trail_give_r": 0.10, "ai_local_trail_give_open_r": 0.10,
+           "ai_local_trail_give_max_pct": 0.35}
+    # 1R = $0.15 on a $10 name -> 0.10R is 1.5c, well inside a 3.5c ceiling.
+    # The existing min-give floor lifts it to 3c first (the 6c floor is itself
+    # held to min_give_max_r x R = 0.20 x 0.15), and the ceiling leaves that
+    # alone — which is the point: the cap only bites where R is wide.
+    give = cp.local_trail_give(10.0, 0.15, cfg, mfe_r=1.0)
+    assert give == pytest.approx(0.03)
+
+
+def test_cap_off_by_default_leaves_the_r_cushion_alone():
+    cfg = {"ai_local_trail_give_r": 0.10, "ai_local_trail_give_open_r": 0.10}
+    assert cp.local_trail_give(58.065, 2.873, cfg, mfe_r=1.0) == pytest.approx(0.2873)
+    cfg["ai_local_trail_give_max_pct"] = 0.0
+    assert cp.local_trail_give(58.065, 2.873, cfg, mfe_r=1.0) == pytest.approx(0.2873)

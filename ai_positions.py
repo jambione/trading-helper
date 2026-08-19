@@ -2237,6 +2237,24 @@ def local_trail_give(
             if max_r > 0:
                 cap = min(floor, max_r * r)
         give = max(give, cap)
+    # Ceiling, in percent of price. R is the plan's risk unit, not a statement
+    # about how close support should sit: a zone that puts the stop 5% under
+    # entry (CRSP 2026-08-19, 1R = $2.87 on a $57 name) turns "give 0.10R" into
+    # a 29-cent cushion, and the shelf trails far enough behind the print that
+    # it is not support at all. This keeps the shelf near the tape on wide-R
+    # names and does nothing on tight ones, where give_r × R is already the
+    # smaller number. 0 disables it, which is the shipped default.
+    try:
+        max_pct = float(cfg.get("ai_local_trail_give_max_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        max_pct = 0.0
+    if max_pct > 0:
+        try:
+            px = float(last) if last is not None else 0.0
+        except (TypeError, ValueError):
+            px = 0.0
+        if px > 0:
+            give = min(give, px * max_pct / 100.0)
     return max(0.01, give)
 
 
