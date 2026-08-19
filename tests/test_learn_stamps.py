@@ -104,3 +104,30 @@ def test_shadow_sample_gets_stamp(tmp_path, monkeypatch):
     row = json.loads((tmp_path / "shadow.jsonl").read_text().strip())
     assert row["symbol"] == "ZZZ"
     assert row.get("edge_mode") is not None or row.get("config_fp")
+
+
+def test_fingerprint_covers_the_knobs_that_decide_what_a_trade_banks():
+    """2026-08-19: eight of twelve knobs changed that day were not in the
+    fingerprint, so the ledger would have called it the same regime."""
+    import learn_stamps as ls
+    keys = set(ls._FINGERPRINT_KEYS)
+    for k in ("ai_watch_tv_exh_rsi", "ai_watch_min_price",
+              "ai_local_trail_arm_r", "ai_local_trail_arm_pct",
+              "ai_local_trail_be_at_r", "ai_local_trail_be_at_pct",
+              "ai_local_trail_give_r", "ai_local_trail_give_open_r",
+              "ai_local_trail_give_max_pct"):
+        assert k in keys, k
+
+
+def test_changing_a_trail_knob_changes_the_fingerprint():
+    import learn_stamps as ls
+    base = {"ai_local_trail_arm_pct": 0.15, "paper": True}
+    moved = dict(base, ai_local_trail_arm_pct=0.40)
+    assert ls.config_fingerprint(base) != ls.config_fingerprint(moved)
+
+
+def test_changing_the_entry_rule_changes_the_fingerprint():
+    import learn_stamps as ls
+    a = {"ai_watch_tv_exh_rsi": True, "paper": True}
+    b = {"ai_watch_tv_exh_rsi": False, "paper": True}
+    assert ls.config_fingerprint(a) != ls.config_fingerprint(b)

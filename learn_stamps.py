@@ -44,6 +44,24 @@ _FINGERPRINT_KEYS = (
     "ai_heal_unprotected",
     "paper",
     "ai_trading_source",
+    # Which entry rule is live. ai_watch_tv_exh_rsi routes exhaustion_allows_buy
+    # to the two-%R-lines-then-CM-RSI-2 test or to the legacy heat path, and
+    # those are different strategies — a ledger that cannot tell them apart
+    # pools them into one meaningless mean.
+    "ai_watch_tv_exh_rsi",
+    "ai_watch_min_price",
+    # The whole local trail. These decide when the shelf starts tracking, how
+    # far behind it sits, and when it stops going under the fill — which is to
+    # say they decide what every trade banks. Eight of the twelve knobs changed
+    # on 2026-08-19 were not fingerprinted, so that day's rows would have
+    # claimed the same regime as the day before it.
+    "ai_local_trail_arm_r",
+    "ai_local_trail_arm_pct",
+    "ai_local_trail_be_at_r",
+    "ai_local_trail_be_at_pct",
+    "ai_local_trail_give_r",
+    "ai_local_trail_give_open_r",
+    "ai_local_trail_give_max_pct",
 )
 
 _fp_cache: tuple[float, str] | None = None  # (mtime, hex)
