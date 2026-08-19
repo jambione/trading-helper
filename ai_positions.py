@@ -2363,6 +2363,25 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         mfe = max(float(mfe or 0.0), from_last)
     elif mfe is None:
         mfe = 0.0
+    # Breakeven floor. Once the trade has earned ai_local_trail_be_at_r, the
+    # shelf never sits under the fill again — the same rule _runner_stop_level
+    # already applies to tranche B, where the floor is the whole point: a name
+    # that ran and came back must not be handed over as a loss.
+    #
+    # It has to be computed before the arm gate below, because that gate is
+    # exactly where the hole was: under arm_r the function returns the seed,
+    # which is entry − give, so a position in profit kept a stop below its own
+    # entry (ASST/TEM 2026-08-19, both parked at −0.070R with price above the
+    # fill). 0 disables it.
+    try:
+        be_at = float(cfg.get("ai_local_trail_be_at_r", 0) or 0)
+    except (TypeError, ValueError):
+        be_at = 0.0
+    be_floor = (
+        float(entry)
+        if (be_at > 0 and entry and float(mfe) + 1e-9 >= be_at)
+        else None
+    )
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
@@ -2371,7 +2390,10 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         # Hold the 0.10R working shelf. Do not fall back to the 5% plan
         # stop — that is the disaster floor, not the live rstop.
         seed = initial_local_stop(entry, risk, cfg)
-        return prev or seed or floor
+        out = prev or seed or floor
+        if be_floor is not None and out is not None:
+            out = max(float(out), be_floor)
+        return out
     give_mfe = mfe
     if not _tight_give_clears_entry(last, entry, risk, cfg):
         give_mfe = 0.0
@@ -2381,6 +2403,8 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         want = float(last) - 0.01
     if floor is not None:
         want = max(float(floor), want)
+    if be_floor is not None:
+        want = max(want, be_floor)
     if prev is not None:
         want = max(want, float(prev))
     return round(want, 6)

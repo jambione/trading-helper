@@ -3072,3 +3072,50 @@ def test_cap_off_by_default_leaves_the_r_cushion_alone():
     assert cp.local_trail_give(58.065, 2.873, cfg, mfe_r=1.0) == pytest.approx(0.2873)
     cfg["ai_local_trail_give_max_pct"] = 0.0
     assert cp.local_trail_give(58.065, 2.873, cfg, mfe_r=1.0) == pytest.approx(0.2873)
+
+
+# ── a position in profit must not keep a stop under its own fill ─────────
+#
+# ASST / TEM 2026-08-19: both sat at -0.070R with price above the entry. Under
+# arm_r the shelf is the seed (entry - give), and nothing floored it at the
+# fill, so a winner could be handed back as a loss.
+
+def _be_pos(**over):
+    p = {"entry_price": 10.00, "risk_per_share": 0.50,
+         "entry_stop_price": 9.50, "local_stop_price": None,
+         "last_seen_price": 10.06, "trail_prints": [10.06, 10.06, 10.06],
+         "peak_price": 10.06, "mfe_r": 0.12}
+    p.update(over)
+    return p
+
+
+_BE_CFG = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.10,
+           "ai_local_trail_give_open_r": 0.10, "ai_local_trail_arm_r": 0.50,
+           "ai_local_trail_tighten_mfe_r": 0.25, "ai_local_trail_be_at_r": 0.10}
+
+
+def test_breakeven_floor_holds_under_the_arm_threshold():
+    """MFE 0.12 is under arm_r 0.50, so this is the seed path — the hole."""
+    got = cp.local_profit_stop(_be_pos(), _BE_CFG)
+    assert got is not None and got >= 10.00, got
+
+
+def test_breakeven_floor_not_applied_before_it_is_earned():
+    cfg = dict(_BE_CFG, ai_local_trail_be_at_r=0.30)
+    got = cp.local_profit_stop(_be_pos(mfe_r=0.12), cfg)
+    assert got is not None and got < 10.00, got
+
+
+def test_breakeven_floor_off_by_default_keeps_old_behaviour():
+    cfg = dict(_BE_CFG)
+    cfg.pop("ai_local_trail_be_at_r")
+    got = cp.local_profit_stop(_be_pos(), cfg)
+    assert got is not None and got < 10.00, got
+
+
+def test_breakeven_floor_never_lowers_an_already_higher_shelf():
+    got = cp.local_profit_stop(
+        _be_pos(mfe_r=1.2, local_stop_price=10.40,
+                last_seen_price=10.60, trail_prints=[10.60, 10.60, 10.60]),
+        _BE_CFG)
+    assert got >= 10.40, got

@@ -72,6 +72,7 @@ OVERLAY_KEYS = {
     "give_open_r": "ai_local_trail_give_open_r",
     "arm_r": "ai_local_trail_arm_r",
     "give_max_pct": "ai_local_trail_give_max_pct",
+    "be_at_r": "ai_local_trail_be_at_r",
     "synth_rr": "ai_watch_synth_rr",
     "heat_min_pct": "ai_watch_exhaustion_heat_min_pct",
     "dead_trade_min": "ai_dead_trade_min",
