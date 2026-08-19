@@ -707,12 +707,6 @@ function _updateBookRow(el, r) {
     statusEl.title = _bookBlockerTitle(r);
   }
   const trail = _fmtTrail(_bookStopPx(r));
-  const rsiEl = el.querySelector('.cell-rsi');
-  if (rsiEl) {
-    _setText(rsiEl, _fmtRsi(r));
-    rsiEl.className = `cell-rsi${_rsiClass(r)}`.trim();
-    rsiEl.title = _fmtRsiTitle(r);
-  }
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -821,7 +815,6 @@ function _bookRowHtml(r) {
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-rsi${_rsiClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_fmtRsi(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;

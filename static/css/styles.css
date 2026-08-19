@@ -2350,9 +2350,8 @@ body.mobile .icon-btn {
 .panel-ai-watch .ai-book-table-header .th:nth-child(4),
 .panel-ai-watch .ai-book-table-header .th:nth-child(5),
 .panel-ai-watch .ai-book-table-header .th:nth-child(6),
-.panel-ai-watch .ai-book-table-header .th:nth-child(7),
-/* 8 is Qty (display:none); P&L is the 9th child once Entry is in. */
-.panel-ai-watch .ai-book-table-header .th:nth-child(9) { text-align: right; }
+/* 7 is Qty (display:none); P&L is the 8th child. */
+.panel-ai-watch .ai-book-table-header .th:nth-child(8) { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
@@ -2396,21 +2395,22 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | EXH | RSI | P&L
-     Eight tracks for eight rendered cells. Qty is display:none and a hidden
+  /* Ticker | State | Last | Entry | Stop | EXH | P&L
+     Seven tracks for seven rendered cells. Qty is display:none and a hidden
      grid item does not occupy a track, so it gets none — declaring one for it
      pushed every later cell a slot left and stranded the last track.
-     EXH prints one 0-100 reading plus a direction mark ("93.5%↑"), not a
-     fast/slow pair, so it does not need the widest track. */
+     RSI is gone from the book: CM RSI-2 stopped gating entries when
+     ai_watch_tv_exh_rsi went off, and live_cm_rsi will return a value off as
+     few as three bars, so it was a number the desk did not act on and could
+     not trust. Still logged to shadow for later study, just not shown. */
   grid-template-columns:
-    minmax(50px, 0.85fr)
-    minmax(4.5rem, 0.95fr)
-    minmax(60px, 0.85fr)
-    minmax(60px, 0.85fr)
-    minmax(58px, 0.8fr)
-    minmax(72px, 0.95fr)
-    minmax(44px, 0.55fr)
-    minmax(62px, 0.9fr);
+    minmax(52px, 0.9fr)
+    minmax(5rem, 1.0fr)
+    minmax(64px, 0.95fr)
+    minmax(64px, 0.95fr)
+    minmax(62px, 0.85fr)
+    minmax(78px, 1.0fr)
+    minmax(66px, 0.95fr);
   width: 100%;
   box-sizing: border-box;
 }
