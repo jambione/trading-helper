@@ -626,6 +626,10 @@ DEFAULT_CONFIG = {
     # Guards wide-R names: give_r x R is huge in dollars when the zone put
     # the stop 5% under entry, and the shelf stops being close support.
     "ai_local_trail_give_max_pct":  0.0,
+    # Prints the shelf damps over before it raises. 3 = up to two extra
+    # polls of lag on a new high; 2 halves that and still needs a second
+    # print to agree, so one IEX spike cannot lift the shelf.
+    "ai_local_trail_print_ring":    3,
     # Once MFE reaches this, the local shelf never sits under the fill
     # again. 0 = off. The runner stop already floors at breakeven; this is
     # the same guarantee for the pre-scale-out shelf.

@@ -3206,3 +3206,44 @@ def test_percent_arm_does_not_fire_on_a_name_that_barely_moved():
            "ai_local_trail_arm_r": 0.15, "ai_local_trail_arm_pct": 0.20}
     # +0.049% is nowhere near 0.20%, so this is still the seed.
     assert cp.local_profit_stop(pos, cfg) < 40.96
+
+
+# ── the safety floor must survive the percent ceiling ────────────────────
+#
+# The ceiling added on 2026-08-19 was applied after the min-give floor, so it
+# won outright. On a cheap name a 0.10% ceiling is one tick, which is a stop
+# inside the spread — exactly what the floor exists to prevent.
+
+def test_percent_ceiling_cannot_undercut_the_min_give_floor():
+    cfg = {"ai_local_trail_give_r": 0.10, "ai_local_trail_give_open_r": 0.10,
+           "ai_local_trail_give_max_pct": 0.10}
+    # $10 name, 1R = $0.15. Ceiling says 1c; floor is min(6c, 0.20R) = 3c.
+    assert cp.local_trail_give(10.0, 0.15, cfg, mfe_r=1.0) == pytest.approx(0.03)
+
+
+def test_percent_ceiling_still_binds_where_r_is_wide():
+    cfg = {"ai_local_trail_give_r": 0.10, "ai_local_trail_give_open_r": 0.10,
+           "ai_local_trail_give_max_pct": 0.10}
+    # $58 name, 1R = $2.90. 0.10R is 29c; the ceiling cuts it to 5.8c, which is
+    # still above the 6c-capped-at-0.20R floor's binding value.
+    assert cp.local_trail_give(58.0, 2.90, cfg, mfe_r=1.0) == pytest.approx(0.06)
+
+
+def test_trail_print_ring_is_configurable():
+    pos = {}
+    for px in (10.00, 10.10, 10.20):
+        cp.note_trail_print(pos, px, n=2)
+    assert pos["trail_prints"] == [10.10, 10.20]
+    pos2 = {}
+    for px in (10.00, 10.10, 10.20):
+        cp.note_trail_print(pos2, px, n=3)
+    assert pos2["trail_prints"] == [10.00, 10.10, 10.20]
+
+
+def test_smaller_ring_reaches_a_new_high_sooner():
+    """The point of the change: fewer prints to damp means less lag."""
+    two, three = {}, {}
+    for px in (10.00, 10.00, 10.30):
+        cp.note_trail_print(two, px, n=2)
+        cp.note_trail_print(three, px, n=3)
+    assert two["trail_last"] > three["trail_last"]
