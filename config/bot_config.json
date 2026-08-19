@@ -218,7 +218,7 @@
     "double_bottom",
     "pullback_band"
   ],
-  "ai_reentry_cooldown_sec": 23400.0,
+  "ai_reentry_cooldown_sec": 300.0,
   "ai_watch_min_stop_pct": 1.5,
   "ai_watch_db_above_pct": 1.25,
   "ai_watch_db_below_pct": 0.25,
