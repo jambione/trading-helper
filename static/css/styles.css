@@ -1226,17 +1226,13 @@ body.mobile .icon-btn {
 .panel-claude .th[data-sort-col="chg"] {
   padding-right: 8px;
 }
-.feed-cols--ai-book {
-  grid-template-columns:
-    minmax(52px, 1.0fr)
-    minmax(5.5rem, 1.15fr)
-    minmax(88px, 1.15fr)
-    minmax(56px, 0.75fr)
-    minmax(52px, 0.7fr)
-    minmax(48px, 0.55fr)
-    minmax(36px, 0.45fr)
-    minmax(56px, 0.8fr) !important;
-}
+/* The book's tracks are defined once, further down with the rest of the
+   ai-book rules. A second !important copy used to live here from the six-column
+   layout named in the comment above; it outranked the real one, so its third
+   track (88px, sized for EXH) landed on Last while EXH got 52px and truncated
+   its second %R line to an ellipsis — and its eighth track went to a Qty cell
+   that is display:none, pushing P&L into the 36px slot and stranding the
+   remainder as dead space on the right. */
 
 /* Remove stays available on hover without a permanent column */
 .watchlist-cols { position: relative; }
@@ -2398,16 +2394,20 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Stop | EXH | RSI | Qty | P&L */
+  /* Ticker | State | Last | Stop | EXH | RSI | P&L
+     Seven tracks, not eight: Qty is display:none, and a hidden grid item does
+     not occupy one. Declaring a track for it pushed every later cell one slot
+     left and left the last track empty.
+     EXH is the widest column by content — it prints both %R lines, so its worst
+     case is "-100.0 / -100.0" — and is sized to hold that without ellipsis. */
   grid-template-columns:
-    minmax(52px, 1.0fr)
-    minmax(5.5rem, 1.15fr)
-    minmax(56px, 0.75fr)
-    minmax(52px, 0.7fr)
-    minmax(88px, 1.2fr)
-    minmax(44px, 0.55fr)
-    minmax(36px, 0.45fr)
-    minmax(56px, 0.8fr);
+    minmax(52px, 0.9fr)
+    minmax(5rem, 1.0fr)
+    minmax(64px, 0.85fr)
+    minmax(60px, 0.8fr)
+    minmax(104px, 1.45fr)
+    minmax(46px, 0.55fr)
+    minmax(64px, 0.85fr);
   width: 100%;
   box-sizing: border-box;
 }
