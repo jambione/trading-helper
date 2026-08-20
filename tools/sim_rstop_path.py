@@ -163,6 +163,16 @@ def walk_symbol(
     *fill* ``next_open`` (default) arms on bar i close and fills at i+1 open.
     ``close`` fills on the same bar's close (optimistic).
     """
+    # There is no signal engine behind a replay. The desk runs with
+    # ai_watch_cm_rsi_local=False because the engine publishes CM RSI-2 for it,
+    # and carrying that setting into the sim makes should_arm_buy answer
+    # no_rsi_data on every single bar — which is exactly what it did: every
+    # sweep and every replay produced zero trades and reported "no candidate,
+    # keep live config", a verdict that read like evidence and contained none.
+    # Bars are the only source here, so compute it from them.
+    cfg = dict(cfg)
+    cfg["ai_watch_cm_rsi_local"] = True
+
     stop_pct = float(cfg.get("ai_watch_synth_stop_pct", 5.0) or 5.0) / 100.0
     if t1_rr is None:
         t1_rr = float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0)
