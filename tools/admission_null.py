@@ -17,6 +17,13 @@ Two controls, both matched to the admission by construction:
            picking a MOMENT from picking a NAME.
   ACROSS   the other names on the watchlist at the same instant. Catches the
            whole list moving together.
+  OUTSIDE  liquid names the desk never watched, same instant, matched on
+           price. This is the one that bounds the SCANNER. WITHIN and ACROSS
+           are both drawn from names the desk chose, so they can only grade
+           decisions made inside the watchlist — if the scanner selects names
+           with no exploitable structure, both controls stay silent about it
+           and every downstream result is bounded by something nobody
+           measured.
 
 Forward returns come from 1-minute bars, deliberately NOT from the shadow
 series. Scoring off shadow samples — which is what desk_report and
@@ -48,6 +55,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 ET = ZoneInfo("America/New_York")
 
 import shadow_report as sr  # noqa: E402
+import bars  # noqa: E402
 
 # How close another symbol's bar must sit to count as "the same instant".
 ACROSS_TOL_SEC = 90.0
@@ -55,9 +63,19 @@ ACROSS_TOL_SEC = 90.0
 WITHIN_DRAWS = 8
 RTH_START_MIN = 9 * 60 + 35
 RTH_END_MIN = 15 * 60 + 30
+# OUTSIDE universe: random names per session, then filtered to ones the desk
+# could actually have traded. A control made of illiquid tickers would be a
+# comparison against something untradeable, which proves nothing either way.
+OUTSIDE_POOL = 150
+OUTSIDE_MIN_BARS = 200        # roughly half an RTH session of 1m prints
+OUTSIDE_MIN_PRICE = 5.0       # matches ai_watch_min_price
+# Price band for matching, as a multiple of the admitted name's price. A $6
+# name and a $300 name do not have the same percent-move distribution.
+OUTSIDE_BAND = (0.5, 2.0)
+UNIVERSE = os.path.join(ROOT, "valid_tickers.txt")
 
 
-def _day(ts) -> str:
+def _day(ts) -> str:  # noqa: D401
     return datetime.fromtimestamp(
         float(ts), timezone.utc).astimezone(ET).strftime("%Y-%m-%d")
 
@@ -67,68 +85,41 @@ def _et_minutes(ts: float) -> int:
     return dt.hour * 60 + dt.minute
 
 
-def _client():
-    sec = json.load(open(os.path.join(ROOT, "config", "secrets.json")))
-    import alpaca_api as aa
-    return aa.connect_data_client(
-        {"api_key": sec["api_key"], "secret_key": sec["secret_key"]})
-
-
-def _fetch(client, sym: str, day: str, feed: str, cache: dict):
-    """(stamps, closes) of 1m RTH bars for sym/day, or (None, None)."""
-    key = (sym, day)
-    if key in cache:
-        return cache[key]
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-    from alpaca.data.enums import DataFeed
-
-    d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
-    out = (None, None)
+def load_universe() -> list[str]:
     try:
-        df = client.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=sym,
-            timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-            start=d.replace(hour=9, minute=25).astimezone(timezone.utc),
-            end=d.replace(hour=16, minute=5).astimezone(timezone.utc),
-            limit=10000, extended_hours=False,
-            feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX,
-        )).df
-        import pandas as pd
-        if df is not None and not df.empty:
-            if isinstance(df.index, pd.MultiIndex):
-                df = df.xs(sym, level="symbol")
-            df = df.sort_index()
-            out = ([t.timestamp() for t in df.index],
-                   [float(v) for v in df["close"]])
-    except Exception:
-        out = (None, None)
-    cache[key] = out
-    return out
+        with open(UNIVERSE, encoding="utf-8") as fh:
+            return [ln.strip().upper() for ln in fh if ln.strip()]
+    except OSError:
+        return []
 
 
-def _fwd(stamps, closes, t0: float, horizon: float) -> float | None:
-    """Pct change from the bar at/just before t0 to the bar horizon later."""
-    if not stamps:
-        return None
-    i = None
-    for k, s in enumerate(stamps):
-        if s <= t0:
-            i = k
-        else:
-            break
-    if i is None:
-        return None
-    j = None
-    for k in range(i + 1, len(stamps)):
-        if stamps[k] <= t0 + horizon:
-            j = k
-        else:
-            break
-    if j is None or stamps[j] - stamps[i] < horizon * 0.5:
-        return None
-    p0 = closes[i]
-    return None if not p0 else (closes[j] - p0) / p0 * 100.0
+def build_outside_pool(day: str, watched: set[str], rng, feed: str) -> dict:
+    """symbol -> (stamps, closes) for tradeable names the desk never watched.
+
+    Filtered to names that actually printed through the session and sit above
+    the desk's own price floor, so the control is a set of trades that could
+    have been taken rather than a set of tickers.
+    """
+    universe = [s for s in load_universe() if s not in watched]
+    if not universe:
+        return {}
+    pick = rng.sample(universe, min(OUTSIDE_POOL, len(universe)))
+    bars.fetch_many(pick, day, feed)
+    pool = {}
+    for s in pick:
+        stamps, closes = bars.fetch(s, day, feed)
+        if not stamps or len(stamps) < OUTSIDE_MIN_BARS:
+            continue
+        if closes[0] < OUTSIDE_MIN_PRICE:
+            continue
+        pool[s] = (stamps, closes)
+    return pool
+
+
+def _index_at(stamps, t0: float) -> int:
+    """Index of the bar at or just before t0, or -1."""
+    import bisect
+    return bisect.bisect_right(stamps, t0) - 1
 
 
 def _stat(label: str, vals: list[float]) -> str:
@@ -188,17 +179,24 @@ def main() -> int:
                 watched_at[_day(ts)].add((ts, str(r.get("symbol") or "").upper()))
     print(f"{len(admissions)} admissions in RTH across {days[0]}..{days[-1]}")
 
-    client = _client()
-    cache: dict = {}
-    admitted, within_pairs, across_pairs = [], [], []
+    # One OUTSIDE pool per session, built before the loop so the batch fetch
+    # happens once per day rather than once per admission.
+    pools = {}
+    for day in days:
+        watched = {s for _ts, s in watched_at.get(day, ())}
+        pools[day] = build_outside_pool(day, watched, rng, args.feed)
+        print(f"  {day}: {len(pools[day])} tradeable outside names "
+              f"(of {OUTSIDE_POOL} drawn)")
+
+    admitted, within_pairs, across_pairs, outside_pairs = [], [], [], []
     no_bars = 0
 
     for t0, sym, day in admissions:
-        stamps, closes = _fetch(client, sym, day, args.feed, cache)
+        stamps, closes = bars.fetch(sym, day, args.feed)
         if not stamps:
             no_bars += 1
             continue
-        a = _fwd(stamps, closes, t0, horizon)
+        a = bars.forward_return(stamps, closes, t0, horizon)
         if a is None:
             continue
         admitted.append(a)
@@ -210,7 +208,7 @@ def main() -> int:
         draws = []
         if pool:
             for s in rng.sample(pool, min(WITHIN_DRAWS, len(pool))):
-                v = _fwd(stamps, closes, s, horizon)
+                v = bars.forward_return(stamps, closes, s, horizon)
                 if v is not None:
                     draws.append(v)
         if draws:
@@ -223,14 +221,34 @@ def main() -> int:
             if other == sym or other in seen or abs(ts - t0) > ACROSS_TOL_SEC:
                 continue
             seen.add(other)
-            o_st, o_cl = _fetch(client, other, day, args.feed, cache)
+            o_st, o_cl = bars.fetch(other, day, args.feed)
             if not o_st:
                 continue
-            v = _fwd(o_st, o_cl, t0, horizon)
+            v = bars.forward_return(o_st, o_cl, t0, horizon)
             if v is not None:
                 peers.append(v)
         if len(peers) >= 3:
             across_pairs.append((a, statistics.median(peers)))
+
+        # OUTSIDE — names the desk never watched, same instant, price-matched.
+        # Price matching matters: a $6 name and a $300 name do not share a
+        # percent-move distribution, and the watchlist skews cheap.
+        p0 = closes[max(0, min(len(closes) - 1,
+                               _index_at(stamps, t0)))] if closes else None
+        others = []
+        for o_st, o_cl in pools.get(day, {}).values():
+            i = _index_at(o_st, t0)
+            if i < 0:
+                continue
+            if p0:
+                ratio = o_cl[i] / p0
+                if not (OUTSIDE_BAND[0] <= ratio <= OUTSIDE_BAND[1]):
+                    continue
+            v = bars.forward_return(o_st, o_cl, t0, horizon)
+            if v is not None:
+                others.append(v)
+        if len(others) >= 3:
+            outside_pairs.append((a, statistics.median(others)))
 
     if not admitted:
         print("no admission scored — nothing to say")
@@ -243,17 +261,27 @@ def main() -> int:
                 [w for _a, w in within_pairs]))
     print(_stat("ACROSS  other names, same moment",
                 [c for _a, c in across_pairs]))
+    print(_stat("OUTSIDE never watched, same moment",
+                [o for _a, o in outside_pairs]))
     print()
+    print(_paired("admitted - outside (paired)",
+                  [a - o for a, o in outside_pairs]))
     print(_paired("admitted - within  (paired)",
                   [a - w for a, w in within_pairs]))
     print(_paired("admitted - across  (paired)",
                   [a - c for a, c in across_pairs]))
 
-    print("\nThe paired rows are the whole point. A stack that picks MOMENTS")
-    print("earns a positive 'admitted - within'; one that only picks NAMES")
-    print("does not, however good the ADMITTED row looks alone. These are")
-    print("volatile small caps — the mean is outlier-driven, so read the")
-    print("median and the beat rate, and read the sigma before believing it.")
+    print("\nThe paired rows are the whole point.")
+    print("  outside  bounds the SCANNER — negative means the desk would have")
+    print("           done as well or better on names it never looked at, and")
+    print("           nothing downstream of selection can recover that.")
+    print("  within   bounds the TIMING — negative means the moment was worse")
+    print("           than an arbitrary one in the same name.")
+    print("These are volatile small caps: the mean is outlier-driven, so read")
+    print("the median and the beat rate, and read the sigma before believing")
+    print("either. Outside names are price-matched but not matched on volume,")
+    print("volatility or news, so a negative outside row is a reason to test")
+    print("the scanner properly, not a finished verdict on it.")
     return 0
 
 

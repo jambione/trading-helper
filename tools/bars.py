@@ -105,6 +105,58 @@ def fetch(sym: str, day: str, feed: str = "sip") -> tuple[list | None, list | No
     return out
 
 
+def fetch_many(syms, day: str, feed: str = "sip", chunk: int = 100) -> None:
+    """Warm the cache for many symbols with few requests.
+
+    Alpaca returns a MultiIndex frame for a symbol list, so a universe control
+    that needs a hundred names per day costs a handful of round trips instead
+    of a hundred. Symbols the response omits are cached as (None, None) so a
+    later fetch() does not retry them one at a time.
+    """
+    want = [str(s).upper() for s in syms]
+    want = [s for s in want if (s, day, feed) not in _CACHE]
+    if not want:
+        return
+    cl = client()
+    if cl is None:
+        for s in want:
+            _CACHE[(s, day, feed)] = (None, None)
+        return
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
+    import pandas as pd
+
+    d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+    for i in range(0, len(want), chunk):
+        batch = want[i:i + chunk]
+        got: dict[str, tuple] = {}
+        try:
+            df = cl.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols=batch,
+                timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                start=d.replace(hour=9, minute=25).astimezone(timezone.utc),
+                end=d.replace(hour=16, minute=5).astimezone(timezone.utc),
+                limit=1000000, extended_hours=False,
+                feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX,
+            )).df
+            if df is not None and not df.empty:
+                if isinstance(df.index, pd.MultiIndex):
+                    for sym in df.index.get_level_values("symbol").unique():
+                        sub = df.xs(sym, level="symbol").sort_index()
+                        got[str(sym).upper()] = (
+                            [t.timestamp() for t in sub.index],
+                            [float(v) for v in sub["close"]])
+                elif len(batch) == 1:
+                    sub = df.sort_index()
+                    got[batch[0]] = ([t.timestamp() for t in sub.index],
+                                     [float(v) for v in sub["close"]])
+        except Exception:
+            got = {}
+        for s in batch:
+            _CACHE[(s, day, feed)] = got.get(s, (None, None))
+
+
 def forward_return(stamps, closes, t0: float, horizon: float) -> float | None:
     """Pct change from the bar at/just before t0 to the last bar within horizon.
 
