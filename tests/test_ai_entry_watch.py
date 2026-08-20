@@ -4768,7 +4768,7 @@ def test_rsi_block_is_restamped_when_the_rsi_moves():
     assert rec4["block_code"] == "no_rsi_data"
 
 
-def test_row_arm_refuse_carries_the_rsi():
+def test_row_arm_refuse_carries_the_rsi(monkeypatch):
     """The wire-row reconstruction must carry CM RSI-2, not just %R.
 
     _row_arm_refuse rebuilds a record from a book row to paint the State
@@ -4777,6 +4777,16 @@ def test_row_arm_refuse_carries_the_rsi():
     refusals behind a reason that was never true.
     """
     import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_live_pctr": True,
+        "ai_watch_arm_require_cm_rsi": True,
+        "ai_watch_arm_cm_rsi_max": 50.0,
+        "ai_watch_require_realtime_rsi": False,
+        "ai_watch_min_stop_pct": 0.0,
+        "ai_max_spread_pct": 100.0,
+    })
 
     row = {
         "symbol": "TEM", "entry_low": 9.9, "entry_high": 10.1,
@@ -4787,6 +4797,10 @@ def test_row_arm_refuse_carries_the_rsi():
     }
     why = ew._row_arm_refuse(row, 10.0)
     assert why != "no_rsi_data", "reconstruction lost the RSI again"
+    # And it must not lose pctr_src either: without it, require_live_pctr
+    # reports "missing" for every row while the book holds live/clock_range,
+    # hiding the real refusal behind a cause that was never true.
+    assert why != "pctr_not_live_missing", "reconstruction lost pctr_src"
 
     # A row with no usable %R still carries its RSI — independent gates.
     thin = {
@@ -4796,3 +4810,35 @@ def test_row_arm_refuse_carries_the_rsi():
         "cm_rsi": 22.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime",
     }
     assert ew._row_arm_refuse(thin, 10.0) != "no_rsi_data"
+
+
+def test_row_arm_refuse_reports_the_real_pctr_source(monkeypatch):
+    """A clock_range row must say clock_range, not "missing"."""
+    import ai_entry_watch as ew
+
+    # Pin the config: _row_arm_refuse reads _push_cfg(), so without this the
+    # result depends on whichever bot_config.json the machine happens to have.
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_live_pctr": True,
+        "ai_watch_arm_require_cm_rsi": True,
+        "ai_watch_arm_cm_rsi_max": 50.0,
+        "ai_watch_require_realtime_rsi": False,
+        "ai_watch_min_stop_pct": 0.0,
+        "ai_max_spread_pct": 100.0,
+    })
+
+    row = {
+        "symbol": "AUPH", "entry_low": 16.9, "entry_high": 17.2,
+        "stop_price": 16.0, "target_1": 19.0, "reward_risk": 2.0,
+        "zone_kind": "double_bottom",
+        "pctr": -76.19, "pctr_src": "clock_range",
+        "exhaustion_state": "heating",
+        "cm_rsi": 28.8, "cm_rsi_rising": True, "cm_rsi_src": "alpaca",
+    }
+    why = ew._row_arm_refuse(row, 17.05)
+    assert why == "pctr_not_live_clock_range", why
+
+    # A live source gets past that gate and is judged on the reading itself.
+    row_live = dict(row, pctr_src="live")
+    assert ew._row_arm_refuse(row_live, 17.05) != "pctr_not_live_live"

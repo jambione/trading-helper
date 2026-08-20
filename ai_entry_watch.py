@@ -496,12 +496,21 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
     # regardless of what the book actually held, masking the real refusals
     # (rsi_extended, rsi_not_rising, rsi_not_realtime_*) behind a reason that
     # was never true. Observed on the whole book at 11:52 on 2026-08-20.
+    # Copy every indicator field the wire carries, by prefix, rather than
+    # listing them. Hand-listing has now failed twice in one session: the RSI
+    # fields were missing, so every row read "no rsi data"; then pctr_src was
+    # missing, so every row read "pctr not live missing" while the records
+    # actually held live / clock_range and were refusing for real reasons
+    # (heating_too_low, rsi_extended). Both times the State column reported a
+    # cause that was never true and hid the one that was.
+    #
+    # The wire uses the same names as the indicator dict — _exhaustion_wire_fields
+    # copies them straight across — so a prefix sweep keeps this in step with
+    # any gate added later, which a literal list cannot.
     rsi_fields = {
-        "cm_rsi": _f_or_none(row.get("cm_rsi")),
-        "cm_rsi_rising": bool(row.get("cm_rsi_rising")),
-        "cm_rsi_low": bool(row.get("cm_rsi_low")),
-        "cm_rsi_src": row.get("cm_rsi_src"),
-        "cm_rsi_age_sec": _f_or_none(row.get("cm_rsi_age_sec")),
+        k: row.get(k) for k in row
+        if k.startswith(("cm_rsi", "pctr_")) and k not in (
+            "pctr_rising", "pctr_falling")
     }
     if src == "thin" or (pctr is None and state in ("", "unknown")):
         rec["indicator"] = dict(rsi_fields)
