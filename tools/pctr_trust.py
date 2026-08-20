@@ -35,7 +35,48 @@ ET = ZoneInfo("America/New_York")
 SHADOW = os.path.join(ROOT, "ai_reports", "shadow.jsonl")
 
 FAST_LENGTH = 21          # rte_fast_length
+EWM_SPAN = 7.0            # rte_fast_ewm_span
 MATERIAL = 10.0           # EXH points; below this the two agree for our purpose
+
+
+def _raw_r(hh: float, ll: float, close: float) -> float | None:
+    span = hh - ll
+    return None if span <= 0 else -100.0 * (hh - close) / span
+
+
+def _smoothed_exh(highs, lows, closes, i: int, px: float,
+                  length: int = FAST_LENGTH, span: float = EWM_SPAN):
+    """EXH (100 + smoothed %R) at bar *i*, closing on the live print *px*.
+
+    Mirrors _live_percent_r_line: build the %R series over rolling windows,
+    EWM it, then blend the live raw value against the running mean. Anything
+    less faithful measures the difference between two indicators rather than
+    the difference between two data sources.
+    """
+    start = i - length * 3
+    if start < length:
+        return None
+    series = []
+    for k in range(start, i + 1):
+        w_h = highs[k - length + 1:k + 1]
+        w_l = lows[k - length + 1:k + 1]
+        if not w_h:
+            continue
+        v = _raw_r(max(w_h), min(w_l), closes[k])
+        if v is not None:
+            series.append(v)
+    if not series:
+        return None
+    alpha = 2.0 / (max(1.0, float(span)) + 1.0)
+    sm = series[0]
+    for v in series[1:]:
+        sm = alpha * v + (1.0 - alpha) * sm
+    win_h = highs[i - length + 2:i + 1] + [px]
+    win_l = lows[i - length + 2:i + 1] + [px]
+    live_raw = _raw_r(max(win_h), min(win_l), px)
+    if live_raw is None:
+        return None
+    return 100.0 + (alpha * live_raw + (1.0 - alpha) * sm)
 
 
 def _load_arms(days: int) -> list[dict]:
@@ -152,15 +193,16 @@ def main() -> int:
             if i < FAST_LENGTH:
                 skipped += 1
                 continue
-            # %R(21) with this print as the live close — live_exhaustion's own
-            # construction, minus the sparse-window filter.
-            win_h = highs[i - FAST_LENGTH + 2:i + 1] + [px]
-            win_l = lows[i - FAST_LENGTH + 2:i + 1] + [px]
-            hh, ll = max(win_h), min(win_l)
-            if hh - ll <= 0:
+            # %R(21) with this print as the live close, EWM-smoothed exactly
+            # as _live_percent_r_line's live branch does. The smoothing is not
+            # optional detail: comparing the desk's smoothed value against a
+            # raw reconstruction makes every "live" row look wrong and every
+            # unsmoothed clock_range row look right, which is the opposite of
+            # what is being asked and is what this tool did on its first run.
+            honest_exh = _smoothed_exh(highs, lows, closes, i, px)
+            if honest_exh is None:
                 skipped += 1
                 continue
-            honest_exh = 100.0 + (-100.0 * (hh - px) / (hh - ll))
             local_exh = float(r["exhaustion"])
             d = abs(local_exh - honest_exh)
             diffs.append(d)
