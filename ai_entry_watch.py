@@ -3624,17 +3624,43 @@ def _live_percent_r_line(
     )
 
 
+def cm_rsi_trend_lookback(cfg: dict) -> int:
+    """Bars back that "rising" is judged over. The engine's trend_lookback.
+
+    strategy_three_indicator.DEFAULT_PARAMS["trend_lookback"] is 2 and the
+    engine overrides it from THREE_IND_TREND_LOOKBACK, which load_config()
+    never sees. So this defaults to 2 and takes an override off the desk
+    config for the sims, which run with no engine at all.
+    """
+    for key in ("cm_rsi_trend_lookback", "trend_lookback"):
+        raw = cfg.get(key)
+        if raw is None:
+            continue
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            continue
+    return 2
+
+
 def live_cm_rsi(
     symbol: str,
     price: float,
     cfg: dict,
     now: float,
-) -> tuple[float, bool] | None:
-    """(RSI-2, green) with the live print as the latest close.
+) -> tuple[float, bool, bool] | None:
+    """(RSI-2, green, rising) with the live print as the latest close.
 
     Green is Connors: close > SMA(200) and close < SMA(5) and RSI < 10.
     SMA(200) needs a full window; without it green is False but RSI still
     publishes so the 30-second trigger can fire.
+
+    ``rising`` is the LEVEL's own direction — RSI now against RSI
+    ``trend_lookback`` bars back on this same series, which is what
+    strategy_three_indicator._rising does to publish cm_rsi_rising. It is
+    returned here rather than derived by the caller because the whole point of
+    the local path is that level and direction come off one series; splitting
+    them across two frames is the bug the caller's comment describes.
     """
     try:
         px = float(price)
@@ -3653,7 +3679,10 @@ def live_cm_rsi(
     alpha = 1.0 / period
     up = 0.0
     down = 0.0
-    rsi = None
+    # The whole RSI series, not just its last value: "rising" needs the reading
+    # from trend_lookback bars back, and recomputing it from a shorter slice
+    # would not reproduce it — RMA smoothing carries the entire history.
+    series: list[float] = []
     for i in range(1, len(closes)):
         delta = closes[i] - closes[i - 1]
         gain = delta if delta > 0 else 0.0
@@ -3664,20 +3693,25 @@ def live_cm_rsi(
             up = alpha * gain + (1.0 - alpha) * up
             down = alpha * loss + (1.0 - alpha) * down
         if down == 0:
-            rsi = 100.0
+            series.append(100.0)
         elif up == 0:
-            rsi = 0.0
+            series.append(0.0)
         else:
-            rsi = 100.0 - (100.0 / (1.0 + up / down))
-    if rsi is None:
+            series.append(100.0 - (100.0 / (1.0 + up / down)))
+    if not series:
         return None
+    rsi = series[-1]
     sma5 = sum(closes[-5:]) / 5.0 if len(closes) >= 5 else None
     sma200 = sum(closes[-200:]) / 200.0 if len(closes) >= 200 else None
     green = bool(
         sma200 is not None and sma5 is not None
         and px > sma200 and px < sma5 and rsi < 10.0
     )
-    return float(rsi), green
+    # Flat is not rising, and too short a series is not rising either — both
+    # match _rising (strict >, and False when the lookback index is negative).
+    look = cm_rsi_trend_lookback(cfg)
+    rising = len(series) > look and series[-1] > series[-1 - look]
+    return float(rsi), green, bool(rising)
 
 
 def live_exhaustion_pair(
@@ -3884,12 +3918,25 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
     # engine's reading stands whole. live_cm_rsi also has no clock window —
     # unlike live_exhaustion it reads raw symbol_ohlc rows, so its closes can
     # be stitched across the overnight gap — which is the second reason not to
-    # prefer it. True restores the old overwrite.
+    # prefer it. True restores the local recompute — and when it is on, the
+    # DIRECTION moves with the level. It used to not: this block overwrote
+    # cm_rsi and left cm_rsi_rising alone, which is the same two-frame pairing
+    # the paragraph above rejects, only inverted. Behind an engine it merely
+    # mixed frames; in a replay there is no engine, so cm_rsi_rising was never
+    # written by anything, stayed falsy on every bar, and cm_rsi_allows_buy
+    # answered rsi_not_rising forever. Every sweep that ever ran placed zero
+    # trades and reported "no candidate, keep live config" off that.
+    #
+    # cm_ok is deliberately still the engine's and is NOT synthesised here —
+    # it is a windowed composite, not a restatement of this reading. A replay
+    # has none, so a sim that turns on ai_watch_arm_require_indicators (which
+    # names cm_ok) will refuse everything; the sims run with it False.
     if bool(cfg.get("ai_watch_cm_rsi_local", False)):
         rsi_got = live_cm_rsi(sym, price, cfg, now)
         if rsi_got is not None:
             ind["cm_rsi"] = round(float(rsi_got[0]), 1)
             ind["cm_rsi_green"] = bool(rsi_got[1])
+            ind["cm_rsi_rising"] = bool(rsi_got[2])
             ind["cm_rsi_src"] = "local_iex"
             ind["cm_rsi_age_sec"] = None
             try:

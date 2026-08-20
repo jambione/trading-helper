@@ -123,12 +123,32 @@ def make_rec(
     }
 
 
+def replay_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Desk config with the knobs a replay cannot honour turned to bars.
+
+    There is no signal engine behind a replay. The desk runs with
+    ai_watch_cm_rsi_local=False because the engine publishes CM RSI-2 for it;
+    carried into a sim that setting makes should_arm_buy answer no_rsi_data on
+    every single bar. Bars are the only source here, so compute it from them.
+
+    Idempotent, and applied inside try_arm so that every caller gets it —
+    tools/optimize_rstop.py drives its own book walk and only shares this
+    function, so a fix parked in walk_symbol left the sweep still armless.
+    """
+    if cfg.get("ai_watch_cm_rsi_local") is True:
+        return cfg
+    out = dict(cfg)
+    out["ai_watch_cm_rsi_local"] = True
+    return out
+
+
 def try_arm(
     rec: dict,
     px: float,
     cfg: dict,
     now: float,
 ) -> tuple[bool, str]:
+    cfg = replay_cfg(cfg)
     try:
         ew.apply_live_exhaustion(rec, px, cfg, now)
     except Exception:
@@ -163,15 +183,9 @@ def walk_symbol(
     *fill* ``next_open`` (default) arms on bar i close and fills at i+1 open.
     ``close`` fills on the same bar's close (optimistic).
     """
-    # There is no signal engine behind a replay. The desk runs with
-    # ai_watch_cm_rsi_local=False because the engine publishes CM RSI-2 for it,
-    # and carrying that setting into the sim makes should_arm_buy answer
-    # no_rsi_data on every single bar — which is exactly what it did: every
-    # sweep and every replay produced zero trades and reported "no candidate,
-    # keep live config", a verdict that read like evidence and contained none.
-    # Bars are the only source here, so compute it from them.
-    cfg = dict(cfg)
-    cfg["ai_watch_cm_rsi_local"] = True
+    # try_arm does this too; doing it here as well keeps the rest of the walk
+    # reading the same config the gates do. See replay_cfg.
+    cfg = replay_cfg(cfg)
 
     stop_pct = float(cfg.get("ai_watch_synth_stop_pct", 5.0) or 5.0) / 100.0
     if t1_rr is None:

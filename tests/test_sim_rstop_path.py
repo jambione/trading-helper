@@ -34,12 +34,29 @@ def _bars(pxs: list[float], *, start_h: int = 10, start_m: int = 0) -> list:
 
 
 def _cfg(**over):
+    """Config for the tests below, which are about the TRAIL, not the gates.
+
+    Both entry filters are off. The exhaustion one always was; the CM RSI-2 one
+    is off for the same reason and had to be named once the local RSI path
+    started publishing a direction: these fixtures are three and four bars long,
+    which is under the RSI-2 warmup, so every bar answered no_rsi_data and no
+    trade ever opened to trail. Arm-gate behaviour is covered in
+    test_ai_entry_watch.py against a series long enough to have one.
+    """
     return path_cfg(
         ai_watch_exhaustion_rules=False,
+        ai_watch_arm_require_cm_rsi=False,
         ai_watch_synth_stop_pct=5.0,
         ai_local_trail_give_r=0.10,
         ai_local_trail_give_open_r=0.10,
         ai_local_trail_min_give_px=0.0,
+        # The give these tests arithmetic against is 0.10R = $0.05 on a $10
+        # name. The live percent cap is 0.1% = $0.01, which overrides it and
+        # parks the shelf one cent under entry — and _bars() draws every low
+        # one cent under the previous close, so every fixture stopped out on
+        # the bar after entry. The R knobs above are only the whole give with
+        # the percent sibling named too (see ai_positions._trail_give).
+        ai_local_trail_give_max_pct=0.0,
         ai_dead_trade_min=0,
         ai_reentry_cooldown_sec=0,
         **over,
@@ -48,7 +65,10 @@ def _cfg(**over):
 
 def test_flatten_through_seeded_rstop_same_session():
     # $10, 5% R=$0.50, 0.10R give=$0.05, shelf=$9.95.
-    pxs = [10.00, 10.01, 10.02, 10.00]
+    # Flat on purpose: the shelf under test is the SEEDED one, so the tape must
+    # not ratchet it. The old fixture drifted up a cent a bar, which raised the
+    # shelf above entry before the flush and made the exit a winner.
+    pxs = [10.00, 10.00, 10.00, 10.00]
     bars = _bars(pxs)
     # Third-to-last stays above; last bar spikes the low through 9.95.
     ts, o, h, _l, c = bars[-1]

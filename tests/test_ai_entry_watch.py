@@ -4612,12 +4612,17 @@ def test_cm_rsi_gate_is_off_by_default():
 
 
 def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
-    """The local IEX recompute must not overwrite the engine's level while
-    cm_rsi_rising / cm_ok still describe the engine's series.
+    """Whichever series owns the level owns the direction too.
 
     2026-08-20: BMNR was 5.5 / low=True on the wire and 20.1 / low=False in
     the book at the same second, and the book kept the engine's rising bit —
     so "in the band and turning up" was mixing two different RSIs.
+
+    Off (the default) that means the engine's whole reading stands. On, it
+    means the local recompute supplies the turn as well: it used to overwrite
+    only the level and leave cm_rsi_rising to the engine, which is the same
+    mixing inverted, and in a replay — no engine, nothing ever writing that
+    key — pinned it falsy on every bar and armed nothing all session.
     """
     import ai_entry_watch as ew
 
@@ -4625,7 +4630,7 @@ def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
     rows = _falling_ohlc(40)
     _seed_ohlc(monkeypatch, "BMNR", rows)
     monkeypatch.setattr(ew, "live_print", lambda sym: None)
-    monkeypatch.setattr(ew, "live_cm_rsi", lambda *a, **k: (20.1, False))
+    monkeypatch.setattr(ew, "live_cm_rsi", lambda *a, **k: (20.1, False, False))
 
     cfg = _exh_cfg()
     engine_view = {"cm_rsi": 5.5, "cm_rsi_rising": True, "cm_ok": True,
@@ -4637,8 +4642,10 @@ def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
     # Default: the engine's reading stands whole.
     assert rec["indicator"]["cm_rsi"] == 5.5
     assert rec["indicator"]["cm_rsi_src"] == "realtime"
+    assert rec["indicator"]["cm_rsi_rising"] is True
 
-    # Opt back in and the old split reappears — level local, direction engine.
+    # Opt in and BOTH halves come off the local series — the engine's True is
+    # overwritten by the local series' own False.
     cfg2 = dict(cfg)
     cfg2["ai_watch_cm_rsi_local"] = True
     rec2 = {"symbol": "BMNR", "last_trade": rows[-1][2],
@@ -4646,7 +4653,54 @@ def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
     assert ew.ensure_live_exhaustion(rec2, rows[-1][2], cfg2, now) is True
     assert rec2["indicator"]["cm_rsi"] == 20.1
     assert rec2["indicator"]["cm_rsi_src"] == "local_iex"
-    assert rec2["indicator"]["cm_rsi_rising"] is True   # still the engine's
+    assert rec2["indicator"]["cm_rsi_rising"] is False
+
+
+def test_local_cm_rsi_publishes_a_direction_off_its_own_series(monkeypatch):
+    """live_cm_rsi's third value is _rising over the same closes it levelled.
+
+    Without it nothing writes cm_rsi_rising in a replay: apply_live_exhaustion
+    set the level and left the turn to a signal engine that is not there, so
+    cm_rsi_allows_buy answered rsi_not_rising on every bar of every session and
+    tools/optimize_rstop.py placed zero trades while reporting "no candidate".
+    """
+    import pandas as pd
+
+    import ai_entry_watch as ew
+    import strategy_three_indicator as ti
+    from signals import compute_cm_rsi_lower
+
+    now = 1_700_000_000.0
+    # A dip and a recovery, so the turn is genuinely both ways across the day.
+    closes = [10.0 + (0.04 * i if i < 12 else 0.04 * (24 - i)) for i in range(20)]
+    closes += [closes[-1] + 0.03 * i for i in range(1, 9)]
+
+    def prime(rows):
+        # symbol_ohlc never fetches on its own — fill the cache the way the
+        # structure scan (and tools/sim_rstop_path.prime_ohlc) does.
+        with ew._ohlc_cache_lock:
+            ew._ohlc_cache["SIM"] = (now, list(rows))
+            ew._ohlc_ts_cache["SIM"] = (
+                now, [now - 60.0 * (len(rows) - 1 - i) for i in range(len(rows))])
+
+    seen = set()
+    for cut in range(4, len(closes)):
+        prime([(c + 0.02, c - 0.02, c) for c in closes[:cut]])
+        px = closes[cut]
+        got = ew.live_cm_rsi("SIM", px, {"cm_rsi_length": 2}, now)
+        assert got is not None
+        _lvl, _green, rising = got
+
+        # Same definition the engine publishes: RSI-2 now vs trend_lookback
+        # bars back, on the identical close series.
+        df = pd.DataFrame({"close": closes[:cut] + [px]})
+        df = compute_cm_rsi_lower(df, {"cm_rsi_length": 2})
+        want = ti._rising(df["cm_rsi"].to_numpy(dtype=float), len(df) - 1, 2)
+        assert rising is want, (cut, rising, want)
+        seen.add(rising)
+
+    # The fixture has to exercise both answers or it proves nothing.
+    assert seen == {True, False}
 
 
 def test_arm_requires_both_exhaustion_and_rsi(monkeypatch):

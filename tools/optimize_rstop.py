@@ -611,13 +611,21 @@ def run_search(
     def eval_overlay(name: str, overlay: dict, skipped: bool = False) -> dict:
         cfg = apply_overlay(base, overlay)
         by_day: dict[str, list[dict]] = {d: [] for d in days}
+        # Why the arms that did NOT happen did not happen. walk_book has always
+        # counted this and the caller has always dropped it, which is how a run
+        # that armed nothing at all could still print "no candidate, keep live
+        # config" — a sentence about the grid, from a walk that never tested it.
+        refuse: dict[str, int] = {}
         if not skipped:
             for day in days:
                 book = {s: cache.get((s, day), []) for s in symbols}
-                for t in walk_book(
+                walked = walk_book(
                     book, cfg, wash=wash, enforce_book=enforce_book,
                     admit_windows=windows_for_day(admit_windows, day),
-                )["trades"]:
+                )
+                for k, v in (walked.get("refuse") or {}).items():
+                    refuse[k] = refuse.get(k, 0) + int(v)
+                for t in walked["trades"]:
                     t["day"] = day
                     by_day[day].append(t)
         all_tr = [t for d in days for t in by_day[d]]
@@ -644,6 +652,7 @@ def run_search(
             "folds": fold_rows,
             "fold_wins": fold_wins,
             "n_folds": len(folds),
+            "refuse": refuse,
         }
 
     # Baseline first so fold_wins can compare.
@@ -725,6 +734,18 @@ def render(payload: dict) -> str:
             f"{(p['mean_dollar'] or 0):+8.2f}{p['max_dd_dollar']:8.1f}"
             f"{r['fold_wins']:3d}/{r['n_folds']:<3}  {ov}"
         )
+    # The reason behind the n column. The EMPTY RUN refusal below tells the
+    # reader to go check these counts; print them here so there is nothing to
+    # go and check. One reason holding nearly every bar-decision is the shape
+    # of a broken sim — the armless weeks were 100% rsi_not_rising.
+    base_row = next(
+        (r for r in payload["cells"] if r["name"] == "baseline"), None)
+    refuse = (base_row or {}).get("refuse") or {}
+    if refuse:
+        lines.append("")
+        lines.append(f"baseline arm refusals ({sum(refuse.values())} bar-decisions):")
+        for why, cnt in sorted(refuse.items(), key=lambda kv: -kv[1])[:10]:
+            lines.append(f"  {cnt:>6}x  {why}")
     cands = [r for r in payload["cells"] if r["verdict"] == VERDICT_CANDIDATE]
     lines.append("")
     # A run that placed no trades has no verdict to give. Saying "keep live
@@ -751,6 +772,8 @@ def write_artifacts(payload: dict, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(ET).strftime("%Y-%m-%d")
     path = out_dir / f"optimize_rstop_{stamp}.json"
+    base_cell = next(
+        (c for c in payload["cells"] if c["name"] == "baseline"), {})
     slim = {
         "days": payload["days"],
         "symbols": payload["symbols"],
@@ -768,6 +791,10 @@ def write_artifacts(payload: dict, out_dir: Path) -> Path:
             }
             for c in payload["cells"]
         ],
+        # Baseline only — the reason an archived run armed what it armed. A
+        # stored verdict with n=0 and no refusal counts cannot be audited later.
+        "baseline_refuse": dict(sorted(
+            (base_cell.get("refuse") or {}).items(), key=lambda kv: -kv[1])),
     }
     path.write_text(json.dumps(slim, indent=2))
     csv_path = out_dir / f"optimize_rstop_{stamp}.csv"
