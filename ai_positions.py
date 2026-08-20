@@ -116,6 +116,11 @@ DEFAULT_LOCAL_TRAIL_ARM_R = 0.05
 DEFAULT_LOCAL_TRAIL_GIVE_R = 0.10
 # Legacy fixed-dollar cushion. 0 = use give_r × R (preferred).
 DEFAULT_LOCAL_TRAIL_GIVE_PX = 0.0
+# How many seconds of tape sit under the median that lifts the shelf. The ring
+# guards against one bad print lifting the shelf into the market, and that
+# protection is a span of TIME, not a count of samples — sizing it in ticks
+# means every change to the tick rate silently retunes the spike guard.
+DEFAULT_LOCAL_TRAIL_DAMP_SEC = 2.0
 # Breakeven is not flat. A shelf parked exactly at the fill scratches — the
 # round-trip costs the spread twice and books zero. Park it this many cents
 # ABOVE the fill instead, so a name that ran and came back is still green.
@@ -2471,6 +2476,182 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     return round(want, 6)
 
 
+def apply_local_trail(
+    ticker: str,
+    pos: dict[str, Any],
+    trigger: float | None,
+    events: list[dict[str, Any]],
+    exit_why: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Raise the software shelf, or flatten if *trigger* prints at/under it.
+
+    Returns ``(changed, closed)``. ``closed`` means the caller must stop
+    working this position on this pass — it has been handed to close_out.
+
+    Split out of manage_open_positions so the shelf can run on its own
+    cadence. Everything here is the tape and local state; the only broker call
+    is the close itself. That is what lets it tick at ai_shelf_tick_sec while
+    fills, dead-trade, T1 and EOD stay on the slower book tick, which costs a
+    get_positions_detail every time.
+    """
+    import alpaca_trader
+
+    if not (
+        pos.get("entry_confirmed")
+        and not pos.get("closing_reason")
+        and _cfg_flag("ai_local_trail_enabled", True)
+    ):
+        return False, False
+
+    changed = False
+    last = _num(pos.get("last_seen_price"))
+    floor = _orig_stop(pos)
+    loc = _num(pos.get("local_stop_price"))
+    seed = initial_local_stop(
+        _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all())
+    if loc is None:
+        loc = seed or floor
+    elif seed is not None and loc + 1e-9 < seed:
+        # Plan-stop leftover (5% floor) is not the working shelf.
+        loc = seed
+        # Do not lift through the live print — that would flatten
+        # an open name that is already more than 0.10R off entry.
+        if last is not None and last > 0 and loc + 1e-9 >= last:
+            give = local_trail_give(
+                last, _risk_basis(pos), _cfg_all(), mfe_r=0.0)
+            under = round(float(last) - give, 6)
+            if under > 0 and under < last:
+                loc = under
+        pos["local_stop_price"] = loc
+        changed = True
+    if trigger is None:
+        trigger = last
+    # Hit the *existing* board stop first. Raising on this tick's high
+    # and then testing the low would skip a sale through the old shelf.
+    if trigger is not None and loc is not None and trigger <= loc + 1e-9:
+        last = trigger
+        alpaca_trader.cancel_open_orders(ticker)
+        out = alpaca_trader.close_out(ticker) or {}
+        if isinstance(out, dict) and out.get("order_id"):
+            pos["close_order_id"] = str(out["order_id"])
+        pos["closing_reason"] = "local_trail"
+        exit_why[ticker] = "local_trail"
+        events.append({
+            "ticker": ticker, "event": "local_trail",
+            "last": last, "stop": loc,
+            "peak": pos.get("peak_price"),
+        })
+        log_event(
+            "local_trail", symbol=ticker,
+            last=last, stop=loc, peak=pos.get("peak_price"),
+        )
+        return True, True
+
+    want = local_profit_stop(pos, _cfg_all())
+    prev_local = _num(pos.get("local_stop_price"))
+    if want is not None and (
+        prev_local is None or want > prev_local + 1e-9
+    ):
+        pos["local_stop_price"] = want
+        changed = True
+        raised = floor is None or want > floor + 1e-9
+        if raised and prev_local is not None:
+            events.append({
+                "ticker": ticker, "event": "local_trail_raised",
+                "from_stop": prev_local, "to_stop": want,
+                "peak": pos.get("peak_price"),
+                "mfe_r": pos.get("mfe_r"),
+            })
+            log_event(
+                "local_trail_raised", symbol=ticker,
+                from_stop=prev_local, to_stop=want,
+                peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
+                give_r=local_trail_give_r(pos.get("mfe_r"), _cfg_all()),
+            )
+    return changed, False
+
+
+def local_trail_ring(tick_sec: float, cfg: dict | None = None) -> int:
+    """Ring size that holds the shelf's damping window constant in seconds.
+
+    Two prints 3s apart is a 6-second median; two prints 250ms apart is half a
+    second of protection against the same spike. Deriving the count from
+    ai_local_trail_damp_sec and the actual tick keeps the guard worth the same
+    whatever cadence the shelf runs at. Never fewer than two — a one-print ring
+    cannot damp anything. Falls back to ai_local_trail_print_ring when the tick
+    is unknown, which is what manage_open_positions passes.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        ring = int(cfg.get("ai_local_trail_print_ring", 3) or 3)
+    except (TypeError, ValueError):
+        ring = 3
+    try:
+        t = float(tick_sec or 0.0)
+    except (TypeError, ValueError):
+        t = 0.0
+    if t <= 0:
+        return max(2, ring)
+    try:
+        damp = float(
+            cfg.get("ai_local_trail_damp_sec", DEFAULT_LOCAL_TRAIL_DAMP_SEC)
+            if cfg.get("ai_local_trail_damp_sec") is not None
+            else DEFAULT_LOCAL_TRAIL_DAMP_SEC)
+    except (TypeError, ValueError):
+        damp = DEFAULT_LOCAL_TRAIL_DAMP_SEC
+    if damp <= 0:
+        return max(2, ring)
+    return max(2, min(64, round(damp / t)))
+
+
+def tick_local_trail(tick_sec: float = 0.0) -> list[dict[str, Any]]:
+    """Shelf-only pass: read the tape, ratchet, flatten if it printed through.
+
+    manage_open_positions is the full desk tick — fills, dead-trade, T1, EOD —
+    and it costs a get_positions_detail on every call, which is why it runs on
+    the book tick. The shelf needs none of that: the freshest print is already
+    in process from the stream and the shelf is local state, so this pass does
+    no broker round trip at all unless it fires. Running just this part on a
+    short cadence is what puts the stop next to the tape instead of a book tick
+    behind it.
+
+    MUST be called from the same thread as manage_open_positions. Both do
+    load → mutate → save on the state file, so running them concurrently would
+    let one pass silently drop the other's writes — and both can call
+    close_out. Sequential execution in one thread is the whole safety argument.
+    """
+    events: list[dict[str, Any]] = []
+    exit_why: dict[str, Any] = {}
+    if not _cfg_flag("ai_local_trail_enabled", True):
+        return events
+    cfg = _cfg_all()
+    ring = local_trail_ring(tick_sec, cfg)
+    changed = False
+    with _state_lock:
+        state = _load_state()
+        for ticker, pos in list(state.items()):
+            if not isinstance(pos, dict):
+                continue
+            if not pos.get("entry_confirmed") or pos.get("closing_reason"):
+                continue
+            px = _fresh_tape_px(ticker)
+            if px is None:
+                # No fresh stream print. The book tick owns the REST fallback
+                # and the stale-data flatten; this pass simply has nothing to
+                # say, and must not ratchet off a stale number.
+                continue
+            pos["last_seen_price"] = px
+            note_trail_print(pos, px, n=ring)
+            _update_excursions(pos, px)
+            changed = True
+            ch, _closed = apply_local_trail(ticker, pos, px, events, exit_why)
+            if ch:
+                changed = True
+        if changed:
+            _save_state(state)
+    return events
+
+
 def never_lower_rstop(*levels: float | None) -> float | None:
     """Highest positive stop among *levels*. RSTOP must not print lower."""
     xs: list[float] = []
@@ -3428,11 +3609,7 @@ def manage_open_positions(
             # shelf; two keeps the "one spike cannot lift it" guarantee, since
             # a lone outlier still has to survive a median against its
             # neighbour, at half the lag.
-            try:
-                _ring = int(_cfg_all().get("ai_local_trail_print_ring", 3) or 3)
-            except (TypeError, ValueError):
-                _ring = 3
-            note_trail_print(pos, raw, n=max(2, _ring))
+            note_trail_print(pos, raw, n=local_trail_ring(0.0, _cfg_all()))
             if hi is not None:
                 pos["last_seen_price"] = hi
             elif live.get("current") is not None:
@@ -3657,80 +3834,13 @@ def manage_open_positions(
 
         # Local profit trail: raise a software shelf under the high and
         # market-flatten if last prints through it. Does not wait for T1.
-        if (
-            pos.get("entry_confirmed")
-            and not pos.get("closing_reason")
-            and _cfg_flag("ai_local_trail_enabled", True)
-        ):
-            last = _num(pos.get("last_seen_price"))
-            floor = _orig_stop(pos)
-            loc = _num(pos.get("local_stop_price"))
-            seed = initial_local_stop(
-                _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all())
-            if loc is None:
-                loc = seed or floor
-            elif seed is not None and loc + 1e-9 < seed:
-                # Plan-stop leftover (5% floor) is not the working shelf.
-                loc = seed
-                # Do not lift through the live print — that would flatten
-                # an open name that is already more than 0.10R off entry.
-                if last is not None and last > 0 and loc + 1e-9 >= last:
-                    give = local_trail_give(
-                        last, _risk_basis(pos), _cfg_all(), mfe_r=0.0)
-                    under = round(float(last) - give, 6)
-                    if under > 0 and under < last:
-                        loc = under
-                pos["local_stop_price"] = loc
-            trigger = flatten_px.get(str(ticker).upper())
-            if trigger is None:
-                trigger = last
-            # Hit the *existing* board stop first. Raising on this tick's high
-            # and then testing the low would skip a sale through the old shelf.
-            if (
-                trigger is not None
-                and loc is not None
-                and trigger <= loc + 1e-9
-            ):
-                last = trigger
-                alpaca_trader.cancel_open_orders(ticker)
-                out = alpaca_trader.close_out(ticker) or {}
-                if isinstance(out, dict) and out.get("order_id"):
-                    pos["close_order_id"] = str(out["order_id"])
-                pos["closing_reason"] = "local_trail"
-                exit_why[ticker] = "local_trail"
-                events.append({
-                    "ticker": ticker, "event": "local_trail",
-                    "last": last, "stop": loc,
-                    "peak": pos.get("peak_price"),
-                })
-                log_event(
-                    "local_trail", symbol=ticker,
-                    last=last, stop=loc, peak=pos.get("peak_price"),
-                )
-                changed = True
-                continue
-
-            want = local_profit_stop(pos, _cfg_all())
-            prev_local = _num(pos.get("local_stop_price"))
-            if want is not None and (
-                prev_local is None or want > prev_local + 1e-9
-            ):
-                pos["local_stop_price"] = want
-                changed = True
-                raised = floor is None or want > floor + 1e-9
-                if raised and prev_local is not None:
-                    events.append({
-                        "ticker": ticker, "event": "local_trail_raised",
-                        "from_stop": prev_local, "to_stop": want,
-                        "peak": pos.get("peak_price"),
-                        "mfe_r": pos.get("mfe_r"),
-                    })
-                    log_event(
-                        "local_trail_raised", symbol=ticker,
-                        from_stop=prev_local, to_stop=want,
-                        peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
-                        give_r=local_trail_give_r(pos.get("mfe_r"), _cfg_all()),
-                    )
+        _ch, _closed = apply_local_trail(
+            ticker, pos, flatten_px.get(str(ticker).upper()),
+            events, exit_why)
+        if _ch:
+            changed = True
+        if _closed:
+            continue
 
         # Dual profit bank: free shares held by the full-size stop, then either
         # market-scale at/through T1 or rest a partial T1 + stop on the runner.

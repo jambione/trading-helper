@@ -1165,22 +1165,41 @@ def main() -> None:
         print("[ai] book maintenance thread started "
               f"(publish ~{positions_poll}s, watch poll ~{watch_poll_sec}s)",
               flush=True)
-        # How often the software shelf re-reads the tape. This is the rstop's
-        # real cadence — manage_open_positions runs every tick, not on
-        # ai_positions_poll_sec — so it is the lag between a new high and the
-        # shelf moving under it. Everything expensive in this loop is gated by
-        # its own timer (watch poll, sod/duel liquidate), so shortening it adds
-        # one get_positions_detail per tick and nothing else.
+        # Two cadences, one thread. The shelf pass is tape + local state and
+        # runs every iteration; the heavy pass (publish, fills, T1, dead-trade,
+        # EOD) costs a get_positions_detail and stays on the book tick. They
+        # share the state file and can both call close_out, so they must not be
+        # split across threads — sequential execution here is what stops one
+        # pass dropping the other's writes.
         tick_sec = 2.0
+        shelf_sec = 0.25
+        last_book = 0.0
         while True:
             t0 = time.time()
             try:
                 live_cfg = load_config()
                 try:
-                    tick_sec = max(0.25, float(
+                    tick_sec = max(0.05, float(
                         live_cfg.get("ai_book_tick_sec", 2.0) or 2.0))
                 except (TypeError, ValueError):
                     tick_sec = 2.0
+                try:
+                    shelf_sec = max(0.0, float(
+                        live_cfg.get("ai_shelf_tick_sec", 0.0) or 0.0))
+                except (TypeError, ValueError):
+                    shelf_sec = 0.0
+                # 0 folds the shelf back into the book tick.
+                if shelf_sec <= 0 or shelf_sec > tick_sec:
+                    shelf_sec = tick_sec
+                if shelf_sec < tick_sec:
+                    try:
+                        ai_positions.tick_local_trail(shelf_sec)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[ai] tick_local_trail failed: {e}", flush=True)
+                    if (t0 - last_book) < tick_sec:
+                        time.sleep(shelf_sec)
+                        continue
+                last_book = t0
                 wps = float(
                     live_cfg.get("ai_watch_poll_sec", book_state["watch_poll_sec"])
                     or book_state["watch_poll_sec"]
@@ -1292,7 +1311,7 @@ def main() -> None:
                         ).start()
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] book thread error: {e}", flush=True)
-            time.sleep(tick_sec)
+            time.sleep(shelf_sec if 0 < shelf_sec < tick_sec else tick_sec)
 
     if trading:
         # Immediate publish + background book loop (independent of research).

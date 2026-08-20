@@ -693,9 +693,16 @@ DEFAULT_CONFIG = {
     # Breakeven parks this many cents ABOVE the fill, not on it — flat on
     # paper is red after paying the spread twice. 0 = old flat-at-fill.
     "ai_breakeven_offset_px":          0.01,
-    # Book-thread tick. The software shelf re-reads the tape once per tick, so
-    # this is the rstop's ratchet cadence — not ai_positions_poll_sec.
+    # Book-thread tick: how often the heavy pass runs (publish, fills, T1,
+    # dead-trade, EOD) — one get_positions_detail each time.
     "ai_book_tick_sec":                2.0,
+    # Shelf tick: how often the rstop alone re-reads the tape and ratchets.
+    # No broker call, so this can be far shorter than the book tick. 0 folds
+    # the shelf back into the book tick (the old behaviour).
+    "ai_shelf_tick_sec":               0.25,
+    # Seconds of tape under the median that lifts the shelf. Sized in time so
+    # the spike guard is worth the same at any tick rate.
+    "ai_local_trail_damp_sec":         2.0,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
@@ -1240,6 +1247,8 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_min_give_max_r",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
+    "ai_shelf_tick_sec",
+    "ai_local_trail_damp_sec",
     "ai_fill_abort_r",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",

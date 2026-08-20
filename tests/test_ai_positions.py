@@ -3279,3 +3279,120 @@ def test_smaller_ring_reaches_a_new_high_sooner():
         cp.note_trail_print(two, px, n=2)
         cp.note_trail_print(three, px, n=3)
     assert two["trail_last"] > three["trail_last"]
+
+
+def test_damping_window_is_seconds_not_samples():
+    """The spike guard must be worth the same at any shelf cadence.
+
+    Two prints 3s apart is a 6-second median; two prints 250ms apart is half a
+    second of protection against the same bad tick. Sizing the ring in samples
+    meant every change to the tick rate silently retuned the guard.
+    """
+    cfg = {"ai_local_trail_damp_sec": 2.0, "ai_local_trail_print_ring": 2}
+    # 2s of tape, whatever the tick.
+    assert cp.local_trail_ring(0.25, cfg) == 8
+    assert cp.local_trail_ring(0.5, cfg) == 4
+    assert cp.local_trail_ring(1.0, cfg) == 2
+    # A slow tick still never drops below two — one print cannot damp.
+    assert cp.local_trail_ring(10.0, cfg) == 2
+    # Unknown tick falls back to the configured sample count.
+    assert cp.local_trail_ring(0.0, cfg) == 2
+    # Damping disabled falls back too, rather than collapsing the ring.
+    assert cp.local_trail_ring(0.25, {"ai_local_trail_damp_sec": 0,
+                                      "ai_local_trail_print_ring": 3}) == 3
+
+
+def test_shelf_tick_ratchets_off_the_tape_without_a_broker_call(
+        tmp_path, monkeypatch):
+    """The whole point of the fast pass: shelf moves, broker untouched."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=20.00, entry_stop_price=19.00, stop_price=19.00,
+        risk_per_share=1.00, target_1=20.60,
+        last_seen_price=20.40, peak_price=20.40, mfe_r=0.40,
+        local_stop_price=20.30, tranche_a_filled=False, entry_confirmed=True,
+        qty_a=10, qty_b=10, total_qty=20,
+    )
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+        "ai_local_trail_damp_sec": 0,
+        "ai_local_trail_print_ring": 2,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: cfg.get(key, default))
+    stub = _StubBrokerManage(current_price=20.60)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (20.60, 0.1))
+
+    # Two ticks: the ring needs two prints before the median can lift.
+    cp.tick_local_trail(0.25)
+    cp.tick_local_trail(0.25)
+
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["local_stop_price"] > 20.30, "shelf must ratchet up"
+    assert stub.closed == [], "fast pass must not close on a rising tape"
+    assert state["NVDA"]["closing_reason"] is None
+
+
+def test_shelf_tick_flattens_when_the_tape_prints_through(
+        tmp_path, monkeypatch):
+    """A dip through the shelf sells on the fast pass, not a book tick later."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=20.00, entry_stop_price=19.00, stop_price=19.00,
+        risk_per_share=1.00, target_1=20.60,
+        last_seen_price=20.40, peak_price=20.40, mfe_r=0.40,
+        local_stop_price=20.30, tranche_a_filled=False, entry_confirmed=True,
+        qty_a=10, qty_b=10, total_qty=20,
+    )
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: cfg.get(key, default))
+    stub = _StubBrokerManage(current_price=20.25)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (20.25, 0.1))
+
+    events = cp.tick_local_trail(0.25)
+
+    assert any(e.get("event") == "local_trail" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "local_trail"
+
+
+def test_shelf_tick_ignores_a_stale_tape(tmp_path, monkeypatch):
+    """No fresh print means nothing to say — never ratchet off a stale number.
+
+    The book tick owns the REST fallback and the stale-data flatten; if the
+    fast pass ratcheted on a stale price it would move the stop on data the
+    desk has already decided not to trust.
+    """
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=20.00, entry_stop_price=19.00, stop_price=19.00,
+        risk_per_share=1.00, last_seen_price=20.40, peak_price=20.40,
+        local_stop_price=20.30, entry_confirmed=True,
+        qty_a=10, qty_b=10, total_qty=20,
+    )
+    cfg = {"ai_local_trail_enabled": True, "ai_stale_data_max_age_sec": 15.0}
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: cfg.get(key, default))
+    stub = _StubBrokerManage(current_price=20.25)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (19.00, 900.0))
+
+    events = cp.tick_local_trail(0.25)
+
+    assert events == []
+    assert stub.closed == []
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["local_stop_price"] == 20.30, "shelf unmoved"
+    assert state["NVDA"]["closing_reason"] is None
