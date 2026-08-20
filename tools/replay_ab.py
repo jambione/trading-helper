@@ -740,7 +740,9 @@ def run_search(
     ranked = sorted(scored, key=_sort_key)
     best_c = next((c for c in ranked if c.get("verdict") == VERDICT_CANDIDATE), None)
     best_h = next((c for c in ranked if c.get("verdict") == VERDICT_HYPOTHESIS), None)
-    if best_c is not None:
+    if is_empty_run(scored):
+        action = EMPTY_RUN_ACTION
+    elif best_c is not None:
         action = (
             "candidate survived halves + min_n — still do not auto-write "
             f"config; review {best_c['settings']}"
@@ -875,6 +877,27 @@ def run_experiment(tape: dict[str, Any], spec: dict[str, Any], *, min_n: int) ->
     return result
 
 
+EMPTY_RUN_ACTION = (
+    "EMPTY RUN — nothing scored a trade, live included. This is not evidence "
+    "that the config is tuned; it is a broken replay. Say nothing about the "
+    "config until a run scores trades."
+)
+
+
+def is_empty_run(rows: list[dict[str, Any]]) -> bool:
+    """True when nothing in *rows* scored a single trade.
+
+    A replay that placed no trades has no verdict to give, and "do not change
+    config" is the most misleading sentence it could emit — it reads as a
+    finding that the config is already right. On 2026-08-20 the simulator could
+    not arm a single bar (the desk runs ai_watch_cm_rsi_local=False because the
+    signal engine publishes CM RSI-2, and a replay has no engine), so that is
+    what every run had been saying, into the EOD roll-up, for weeks.
+    """
+    return not any(
+        int(r.get("n_scored") or r.get("n") or 0) > 0 for r in rows)
+
+
 def rank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Session-$ experiments only, candidates first, then Δ$ descending."""
     money = [r for r in results if r.get("metric") == "session_usd" and r.get("delta_usd") is not None]
@@ -896,6 +919,8 @@ def pick(results: list[dict[str, Any]]) -> dict[str, Any]:
             "n_scored": best_h.get("n_scored"), "verdict": best_h["verdict"],
         },
         "action": (
+            EMPTY_RUN_ACTION
+            if is_empty_run(results) else
             f"candidate {best_c['name']} survived halves + min_n — still do not "
             f"auto-write config; review {best_c['name']} then change by hand"
             if best_c is not None else
