@@ -279,5 +279,5 @@
   "ai_local_trail_print_ring": 2,
   "ai_watch_require_live_pctr": true,
   "ai_watch_arm_require_cm_rsi": true,
-  "ai_watch_require_realtime_rsi": true
+  "ai_watch_require_realtime_rsi": false
 }
