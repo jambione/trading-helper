@@ -1682,7 +1682,9 @@ class SignalEngine:
                     # source flips constantly — 20 recoveries and 27 fallbacks
                     # across 18 symbols on 2026-08-20 alone.
                     ts._bars_src = "realtime"
-                    ts._bars_age_sec = float(age)
+                    # Rounded: this goes on the wire and into the book's RSI
+                    # tooltip, where "0.76976708984375s" is noise, not detail.
+                    ts._bars_age_sec = round(float(age), 1)
                     return rt
             elif ts.ticker not in self._rt_stale:
                 # Log the transition only — this runs on every bar close.
