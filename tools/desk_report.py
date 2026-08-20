@@ -59,8 +59,17 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "tools"))
 
 import shadow_report as sr  # noqa: E402
+import bars  # noqa: E402
 
 from ai_paths import find_report_file, resolve_report_dir  # noqa: E402
+
+# Forward returns come from 1m bars, not from the shadow series. Scoring off
+# shadow samples can only measure an episode that outlived half the horizon,
+# and how long the desk keeps watching a name is decided AFTER the decision
+# being scored — so the old numbers here kept the longest fifth of episodes and
+# called it the gate scorecard. On 2026-08-14..20 the median episode ran 383
+# seconds against this report's 30-minute default.
+FEED = "sip"
 
 
 def _report(name: str) -> Path:
@@ -196,7 +205,8 @@ def reject_episodes(rows: list[dict], horizon_sec: float) -> list[dict]:
     eps = []
     for sym, series in by.items():
         series.sort(key=lambda r: r.get("ts") or 0)
-        fwd = sr.forward_return(series, 0, horizon_sec)
+        t0 = float(series[0].get("ts") or 0)
+        fwd = bars.fwd(sym, t0, horizon_sec, FEED) if t0 else None
         prices = [float(r["price"]) for r in series]
         eps.append({
             "symbol": sym,
@@ -482,11 +492,14 @@ def exhaustion_stats(shadow: list[dict], horizon_sec: float) -> dict:
         vals = []
         for series in by_sym.values():
             series.sort(key=lambda r: r.get("ts") or 0)
-            for i, r in enumerate(series):
+            for r in series:
                 e = r.get("exhaustion")
                 if e is None or not (lo <= float(e) < hi):
                     continue
-                f = sr.forward_return(series, i, horizon_sec)
+                ts = float(r.get("ts") or 0)
+                if not ts:
+                    continue
+                f = bars.fwd(str(r.get("symbol") or ""), ts, horizon_sec, FEED)
                 if f is not None:
                     vals.append(f)
         if vals:
@@ -510,8 +523,19 @@ def build_report(day, hz: float) -> dict:
     events = _jsonl(EVENTS, day)
     outcomes = _jsonl(OUTCOMES, day)
 
-    shadow_eps = [sr.episode_summary(s, hz)
-                  for s in sr.by_episode(shadow_rows).values() if s]
+    # episode_summary scores fwd off the shadow series; re-score off bars so
+    # the admitted column is measured the same way as the reject column and
+    # the exhaustion buckets, and does not silently drop short episodes.
+    shadow_eps = []
+    for s in sr.by_episode(shadow_rows).values():
+        if not s:
+            continue
+        e = sr.episode_summary(s, hz)
+        t0 = float(s[0].get("ts") or 0)
+        e["fwd_return_pct"] = (
+            bars.fwd(str(s[0].get("symbol") or ""), t0, hz, FEED)
+            if t0 else None)
+        shadow_eps.append(e)
     rej_eps = reject_episodes(reject_rows, hz)
 
     kinds = Counter(e.get("kind") for e in events)
@@ -628,6 +652,10 @@ def main() -> None:
             break
 
     print("\n2. GATE SCORECARD  (what the desk turned away, and what it did next)")
+    if bars.client() is None:
+        print("   NO BARS — forward returns need config/secrets.json. Every")
+        print("   number in this section and in EXHAUSTION below is missing,")
+        print("   not zero. Do not read a gate as harmless because it is blank.")
     am = report["admitted_fwd_mean_pct"]
     by_reason = report["reject_by_reason"]
     print(f"   admitted        n={report['admitted_fwd_n']:<4} fwd "
