@@ -458,6 +458,37 @@ def _load_finnhub_key() -> str:
             "[CFG] WARNING: FINNHUB_API_KEY not set.\n"
             "       PRICE_SOURCE wants Finnhub — set FINNHUB_API_KEY or use PRICE_SOURCE=alpaca."
         )
+    # One key, two processes, one connection allowed.
+    #
+    # The dashboard opens its own Finnhub socket from secrets.json
+    # ('finnhub_key') at startup and the engine opens one from here. Finnhub's
+    # free tier permits a single concurrent connection per key, so sharing one
+    # means a race: on 2026-08-20 the dashboard won it and the engine's stream
+    # never connected, its bar aggregator was never fed, and every CM RSI-2 /
+    # %R reading in the book silently came off Alpaca REST fallback bars
+    # instead of the live tape — for the whole session, with no error anywhere.
+    #
+    # Detectable before either socket is opened, so say it here. Give the
+    # engine its own key in signal_engine.env (FINNHUB_API_KEY) to fix it.
+    if key and PRICE_SOURCE in ("finnhub", "both"):
+        try:
+            secrets_path = _HERE / "config" / "secrets.json"
+            if secrets_path.exists():
+                dash_key = json.loads(secrets_path.read_text()).get("finnhub_key", "")
+            else:
+                dash_key = ""
+        except Exception:
+            dash_key = ""
+        if dash_key and dash_key == key:
+            print(
+                "[CFG] WARNING: engine and dashboard share one Finnhub key.\n"
+                "       Free tier allows ONE connection per key, so one of the\n"
+                "       two streams will get no trades — and if it is this one,\n"
+                "       realtime bars never form and every indicator quietly\n"
+                "       falls back to Alpaca REST bars.\n"
+                "       Fix: put a second key in signal_engine.env as "
+                "FINNHUB_API_KEY."
+            )
     return key
 
 
@@ -1646,8 +1677,17 @@ class SignalEngine:
                 # Log the transition only — this runs on every bar close.
                 self._rt_stale.add(ts.ticker)
                 stale_for = "no trades yet" if age is None else f"{age:.0f}s stale"
+                # Say whether the socket is even up. "No trades yet" reads like
+                # a quiet symbol, but it is also exactly what a dead stream
+                # looks like, and on 2026-08-20 that was the actual cause for
+                # every ticker in the book for a full session: the dashboard
+                # and the engine each opened a Finnhub connection on the same
+                # free-tier key, which allows one, and the engine's got
+                # nothing. The only visible tell was an ellipsis in a subscribe
+                # tag. Never again — name it where someone is already looking.
+                sock = "" if FINNHUB_STATE.connected else "  [SOCKET DOWN]"
                 print(f"  [{ticker_tag(ts.ticker)}] ⏸ realtime bars {stale_for} — "
-                      f"falling back to Alpaca bars")
+                      f"falling back to Alpaca bars{sock}")
         ts._bars_src = getattr(ts, "_data_source", "alpaca")
         ts._bars_age_sec = None
         return fallback_df
