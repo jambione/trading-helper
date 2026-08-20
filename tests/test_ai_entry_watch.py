@@ -4715,3 +4715,54 @@ def test_refresh_engine_rsi_leaves_the_record_alone_without_a_reading():
     assert ew.refresh_engine_rsi(rec, {"cm_rsi": None}) is False
     assert ew.refresh_engine_rsi(rec, None) is False
     assert rec["indicator"]["cm_rsi"] == 22.0
+
+
+def test_rsi_block_is_restamped_when_the_rsi_moves():
+    """The State column must not contradict the RSI column beside it.
+
+    Screenshot 2026-08-20 11:44: four rows reading "no rsi data" while the RSI
+    column showed 89.9, 73.1, 18.1 and 53.4. The block was decided one poll
+    earlier, when the engine had not computed those names yet, and the 2s sync
+    carried it forward while refreshing the RSI underneath it.
+    """
+    import ai_entry_watch as ew
+
+    cfg = _rsi_cfg()
+
+    # Blocked for no data, but a reading has since arrived and it qualifies.
+    rec = {
+        "symbol": "ASST",
+        "block_code": "no_rsi_data",
+        "block_reason": "no rsi data",
+        "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True},
+    }
+    ew._restamp_rsi_block(rec, cfg, 1_700_000_000.0)
+    assert rec["block_code"] is None, rec["block_code"]
+
+    # Reading arrived but is extended — the label follows the new reason.
+    rec2 = {
+        "symbol": "ASST",
+        "block_code": "no_rsi_data",
+        "indicator": {"cm_rsi": 89.9, "cm_rsi_rising": True},
+    }
+    ew._restamp_rsi_block(rec2, cfg, 1_700_000_000.0)
+    assert rec2["block_code"] == "rsi_extended"
+    assert rec2["blocker"]
+
+    # A non-RSI block is left alone — this only owns its own family.
+    rec3 = {
+        "symbol": "TEM",
+        "block_code": "reentry_cooldown",
+        "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True},
+    }
+    ew._restamp_rsi_block(rec3, cfg, 1_700_000_000.0)
+    assert rec3["block_code"] == "reentry_cooldown"
+
+    # Gate disabled: nothing is restamped at all.
+    rec4 = {
+        "symbol": "TEM",
+        "block_code": "no_rsi_data",
+        "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True},
+    }
+    ew._restamp_rsi_block(rec4, {}, 1_700_000_000.0)
+    assert rec4["block_code"] == "no_rsi_data"

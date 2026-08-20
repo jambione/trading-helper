@@ -2836,6 +2836,45 @@ def refresh_engine_rsi(rec: dict, sig: dict | None) -> bool:
     return True
 
 
+# Block codes cm_rsi_allows_buy can produce. Carried-forward values for these
+# go stale the moment the RSI behind them moves.
+_RSI_BLOCK_PREFIXES = ("no_rsi_data", "rsi_extended", "rsi_not_rising",
+                       "rsi_below_band", "rsi_not_realtime")
+
+
+def _restamp_rsi_block(rec: dict, cfg: dict, now: float) -> None:
+    """Re-decide an RSI block against the RSI the row is now showing.
+
+    The arm gate only runs in poll_once, on ai_watch_poll_sec (20s), and the
+    2s sync carries block_code forward untouched. Once the sync started
+    refreshing the RSI every 2s, that left a window where the State column
+    contradicted the RSI column beside it: a row could read "no rsi data" next
+    to a perfectly good 89.9, because the block was decided one cycle earlier
+    when the engine had not computed the name yet.
+
+    Only RSI-family codes are restamped, and only when the gate is enabled —
+    this is not a place to re-run the whole arm decision, just to stop one
+    label outliving the number it describes.
+    """
+    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
+        return
+    code = str(rec.get("block_code") or "").strip().lower()
+    if not code.startswith(_RSI_BLOCK_PREFIXES):
+        return
+    ok, why = cm_rsi_allows_buy(rec, cfg)
+    if ok:
+        # The reason it was held on no longer applies. Clear rather than
+        # invent a new one — the next poll runs the full gate.
+        rec["block_code"] = None
+        rec["block_reason"] = None
+        rec["blocker"] = None
+    elif why != code:
+        rec["block_code"] = why
+        rec["blocker"] = format_blocker(why)
+        rec["block_reason"] = rec["blocker"]
+        rec["block_ts"] = float(now)
+
+
 def _engine_indicator_map() -> dict[str, dict]:
     """symbol -> signal-engine indicator record, off the /api/state wire."""
     out: dict[str, dict] = {}
@@ -3310,7 +3349,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             # second. Without this the book's RSI is a poll_once artefact,
             # up to ai_watch_poll_sec (20s) behind the reading the operator
             # is watching move on the chart.
-            refresh_engine_rsi(rec, _sync_indicators.get(sym))
+            if refresh_engine_rsi(rec, _sync_indicators.get(sym)):
+                _restamp_rsi_block(rec, cfg_z, t0)
         except Exception:
             pass
         new_state[sym] = rec
