@@ -52,6 +52,12 @@ benchmarks/mention_bursts.jsonl
 benchmarks/price_spikes.jsonl
 # Rebuildable vendor bars — desk_replay_bench --bars refetches on demand.
 benchmarks/replay_bars_cache.json
+# Parameter-sweep output, one dated pair per tools/optimize_rstop.py run. It is
+# a few hundred KB of every combination tried on one machine's trade log, not a
+# result — the conclusion a sweep reaches goes in the commit message that
+# changes the config. The 2026-08-16 pair predates this rule and stays tracked.
+benchmarks/optimize_rstop_*.json
+benchmarks/optimize_rstop_*.csv
 # Note: benchmarks/ab_bench_*.csv stays TRACKED — those are A/B results worth
 # keeping in history, unlike the raw feeds above.
 scratch-pad
