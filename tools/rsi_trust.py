@@ -136,6 +136,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=DEFAULT_PATH)
     ap.add_argument("--days", type=int, default=5)
+    ap.add_argument(
+        "--since",
+        help="ET clock time (HH:MM) to start from on the most recent day. Use "
+             "this to isolate the window after a restart or a config change — "
+             "a whole-day number mixes the before and the after and reports "
+             "neither.")
     args = ap.parse_args()
 
     rows = _load(args.path)
@@ -146,6 +152,18 @@ def main() -> int:
     by_day: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_day[_day(float(r["ts"]))].append(r)
+
+    if args.since:
+        newest = sorted(by_day)[-1]
+        hh, _, mm = args.since.partition(":")
+        cutoff = int(hh) * 60 + int(mm or 0)
+        kept = []
+        for r in by_day[newest]:
+            d = datetime.fromtimestamp(
+                float(r["ts"]), timezone.utc).astimezone(ET)
+            if d.hour * 60 + d.minute >= cutoff:
+                kept.append(r)
+        by_day = {f"{newest} (from {args.since} ET)": kept}
 
     print("CM RSI-2 TRUST REPORT")
     print("=" * 72)

@@ -5946,6 +5946,11 @@ def _shadow_row(
         "cm_ok": bool(sig.get("cm_ok")) if sig else None,
         "pctr_ok": bool(sig.get("pctr_ok")) if sig else None,
         "cm_rsi_rising": bool(sig.get("cm_rsi_rising")) if sig else None,
+        # Which pipe drew the bars behind the RSI. Without it the trust report
+        # can only say "unknown" for every row, and the realtime-vs-fallback
+        # split — the thing that decides whether this reading may gate an
+        # entry — is unmeasurable after the fact. See tools/rsi_trust.py.
+        "cm_rsi_src": (sig.get("cm_rsi_src") or None) if sig else None,
         "sell_signal": bool(sig.get("sell_signal")) if sig else None,
         "proximity_pct": _f_or_none(sig.get("proximity_pct")) if sig else None,
         "entry_hour_et": _et_hour_decimal(now),
