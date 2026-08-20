@@ -4318,9 +4318,19 @@ def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, "rsi_extended"
     if rsi < band_min:
         return False, "rsi_below_band"
-    if not bool(ind.get("cm_rsi_rising")):
-        return False, "rsi_not_rising"
-    return True, "rsi_turning_up"
+    # Direction is optional because it is the weaker half. Replayed over 4,585
+    # arms at a 15m horizon (tools/rsi_counterfactual.py):
+    #   0-50 AND rising   7% of arms   +0.305%   win 54.8%
+    #   0-50 only        37% of arms   +0.233%   win 49.3%
+    #   rising only      54% of arms   +0.019%   win 49.8%
+    # The band carries the edge. Requiring the turn as well buys a little more
+    # per trade and a better win rate, at a fifth of the opportunities; the
+    # turn on its own is indistinguishable from taking every arm.
+    if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
+        if not bool(ind.get("cm_rsi_rising")):
+            return False, "rsi_not_rising"
+        return True, "rsi_turning_up"
+    return True, "rsi_in_band"
 
 
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:

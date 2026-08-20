@@ -4842,3 +4842,22 @@ def test_row_arm_refuse_reports_the_real_pctr_source(monkeypatch):
     # A live source gets past that gate and is judged on the reading itself.
     row_live = dict(row, pctr_src="live")
     assert ew._row_arm_refuse(row_live, 17.05) != "pctr_not_live_live"
+
+
+def test_cm_rsi_rising_requirement_can_be_dropped():
+    """Level-only: the band is the load-bearing half of the rule."""
+    import ai_entry_watch as ew
+
+    falling_in_band = {"indicator": {"cm_rsi": 22.0, "cm_rsi_rising": False}}
+    cfg = _rsi_cfg(ai_watch_arm_cm_rsi_require_rising=False)
+    ok, why = ew.cm_rsi_allows_buy(falling_in_band, cfg)
+    assert ok is True and why == "rsi_in_band"
+
+    # The band still binds — dropping direction is not dropping the rule.
+    extended = {"indicator": {"cm_rsi": 88.0, "cm_rsi_rising": True}}
+    ok, why = ew.cm_rsi_allows_buy(extended, cfg)
+    assert ok is False and why == "rsi_extended"
+
+    # Default keeps requiring the turn.
+    ok, why = ew.cm_rsi_allows_buy(falling_in_band, _rsi_cfg())
+    assert ok is False and why == "rsi_not_rising"

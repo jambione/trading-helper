@@ -546,6 +546,10 @@ DEFAULT_CONFIG = {
     # The band. 50 is the operator's ceiling; above it the entry is chasing.
     "ai_watch_arm_cm_rsi_max":       50.0,
     "ai_watch_arm_cm_rsi_min":        0.0,
+    # Require the turn as well as the band. The band is the load-bearing half
+    # — see the numbers in cm_rsi_allows_buy. False trades a little edge per
+    # trade for five times the opportunities.
+    "ai_watch_arm_cm_rsi_require_rising": True,
     # Refuse an RSI the engine drew on the REST fallback instead of the
     # Finnhub tape. bars_src flips per ticker mid-session (20 recoveries and
     # 27 fallbacks across 18 symbols on 2026-08-20), so without this the same
