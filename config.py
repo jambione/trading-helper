@@ -693,6 +693,9 @@ DEFAULT_CONFIG = {
     # Breakeven parks this many cents ABOVE the fill, not on it — flat on
     # paper is red after paying the spread twice. 0 = old flat-at-fill.
     "ai_breakeven_offset_px":          0.01,
+    # Book-thread tick. The software shelf re-reads the tape once per tick, so
+    # this is the rstop's ratchet cadence — not ai_positions_poll_sec.
+    "ai_book_tick_sec":                2.0,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
@@ -1236,6 +1239,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_min_give_px",
     "ai_local_trail_min_give_max_r",
     "ai_breakeven_offset_px",
+    "ai_book_tick_sec",
     "ai_fill_abort_r",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",

@@ -1165,10 +1165,22 @@ def main() -> None:
         print("[ai] book maintenance thread started "
               f"(publish ~{positions_poll}s, watch poll ~{watch_poll_sec}s)",
               flush=True)
+        # How often the software shelf re-reads the tape. This is the rstop's
+        # real cadence — manage_open_positions runs every tick, not on
+        # ai_positions_poll_sec — so it is the lag between a new high and the
+        # shelf moving under it. Everything expensive in this loop is gated by
+        # its own timer (watch poll, sod/duel liquidate), so shortening it adds
+        # one get_positions_detail per tick and nothing else.
+        tick_sec = 2.0
         while True:
             t0 = time.time()
             try:
                 live_cfg = load_config()
+                try:
+                    tick_sec = max(0.25, float(
+                        live_cfg.get("ai_book_tick_sec", 2.0) or 2.0))
+                except (TypeError, ValueError):
+                    tick_sec = 2.0
                 wps = float(
                     live_cfg.get("ai_watch_poll_sec", book_state["watch_poll_sec"])
                     or book_state["watch_poll_sec"]
@@ -1280,7 +1292,7 @@ def main() -> None:
                         ).start()
             except Exception as e:  # noqa: BLE001
                 print(f"[ai] book thread error: {e}", flush=True)
-            time.sleep(2.0)
+            time.sleep(tick_sec)
 
     if trading:
         # Immediate publish + background book loop (independent of research).
