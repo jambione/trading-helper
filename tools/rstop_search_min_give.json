@@ -1,0 +1,11 @@
+{
+  "min_n": 30,
+  "description": "Does the 6-cent give floor cost the day? 2026-08-20 closed 59 trades, 55 of them on local_trail, at median -0.015R. trail_exits.py says the trail is not cutting winners short — after an exit the stock drifts +0.13% at 5m and fades to -0.23% by 30m. The problem is arithmetic: median run-up before exit was +0.23% and median give-back from the peak was also +0.23%, so the trail hands back the entire typical move and books the spread. A trail can only bank when its give is smaller than the move, and ai_local_trail_min_give_px = $0.06 is 0.35-0.67% on these names — wider than the run it is supposed to protect. give_r and give_max_pct are pinned at live so this attributes the result to the floor alone; min_give_max_r is swept with it because it caps the floor in R and would otherwise silently bound the tighter cells.",
+  "search": {
+    "min_give_px": [0.06, 0.04, 0.03, 0.02, 0.01],
+    "min_give_max_r": [0.20, 0.10],
+    "give_r": [0.10],
+    "give_open_r": [0.10],
+    "give_max_pct": [0.10]
+  }
+}

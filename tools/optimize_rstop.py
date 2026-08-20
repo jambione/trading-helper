@@ -73,6 +73,14 @@ OVERLAY_KEYS = {
     "arm_r": "ai_local_trail_arm_r",
     "arm_pct": "ai_local_trail_arm_pct",
     "give_max_pct": "ai_local_trail_give_max_pct",
+    # The dollar floor under the give, and the R cap on that floor. Neither was
+    # sweepable, and on the live book the floor is what BINDS: give_r × R and
+    # the give_max_pct ceiling both ask for 1-2 cents on a $9-17 name, and the
+    # 6-cent floor overrides them on essentially every raise. Every sweep run
+    # so far held it fixed, which is why they kept reporting that no overlay
+    # beat live — the constraining knob was the same in every cell.
+    "min_give_px": "ai_local_trail_min_give_px",
+    "min_give_max_r": "ai_local_trail_min_give_max_r",
     "print_ring": "ai_local_trail_print_ring",
     "be_at_r": "ai_local_trail_be_at_r",
     "be_at_pct": "ai_local_trail_be_at_pct",
