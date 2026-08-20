@@ -4684,3 +4684,34 @@ def test_arm_requires_both_exhaustion_and_rsi(monkeypatch):
     base["indicator"]["cm_rsi"] = 22.0
     ok, why = ew.should_arm_buy(base, ask=10.0, bid=9.99, cfg=cfg)
     assert why != "rsi_extended"
+
+
+def test_refresh_engine_rsi_stamps_the_wire_value():
+    """The 2s sync must pick up the engine's 1s RSI, not carry a stale one."""
+    import ai_entry_watch as ew
+
+    rec = {"symbol": "TEM", "indicator": {"cm_rsi": 90.0, "cm_rsi_rising": False}}
+    sig = {
+        "cm_rsi": 22.5, "cm_rsi_rising": True, "cm_rsi_low": False,
+        "cm_rsi_green": False, "cm_ok": True,
+        "bars_src": "realtime", "bars_age_sec": 3.4,
+    }
+    assert ew.refresh_engine_rsi(rec, sig) is True
+    ind = rec["indicator"]
+    assert ind["cm_rsi"] == 22.5
+    assert ind["cm_rsi_rising"] is True
+    assert ind["cm_rsi_src"] == "realtime"
+    assert ind["cm_rsi_age_sec"] == 3.4
+    # And that reading now satisfies the arm band it previously failed.
+    ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
+    assert ok is True and why == "rsi_turning_up"
+
+
+def test_refresh_engine_rsi_leaves_the_record_alone_without_a_reading():
+    """No engine value is not a reason to blank what the book already has."""
+    import ai_entry_watch as ew
+
+    rec = {"symbol": "TEM", "indicator": {"cm_rsi": 22.0, "cm_rsi_rising": True}}
+    assert ew.refresh_engine_rsi(rec, {"cm_rsi": None}) is False
+    assert ew.refresh_engine_rsi(rec, None) is False
+    assert rec["indicator"]["cm_rsi"] == 22.0

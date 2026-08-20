@@ -2802,6 +2802,40 @@ def stream_says_far_from_zone(
     return False, px
 
 
+def refresh_engine_rsi(rec: dict, sig: dict | None) -> bool:
+    """Stamp the engine's current CM RSI-2 onto a watch record.
+
+    The engine recomputes RSI-2 every second — _check_proximity injects the
+    live price as the forming bar's close, which is what stops the reading
+    freezing until the next bar closes. But the book only picked that up in
+    poll_once, on ai_watch_poll_sec (20s), because the 2s desk sync carries
+    the previous indicator dict forward untouched. So the arm gate was reading
+    an RSI up to twenty seconds stale while a current one sat on the wire.
+
+    %R already avoids this: the sync calls ensure_live_exhaustion every cycle.
+    This is the same idea for the RSI half, and it is cheap — the wire is
+    already cached for 1.5s, so a sync costs one dict lookup per symbol.
+
+    Returns True when a value was written.
+    """
+    if not isinstance(rec, dict) or not isinstance(sig, dict):
+        return False
+    if sig.get("cm_rsi") is None:
+        return False
+    ind = rec.get("indicator")
+    if not isinstance(ind, dict):
+        ind = {}
+        rec["indicator"] = ind
+    ind["cm_rsi"] = sig.get("cm_rsi")
+    ind["cm_rsi_rising"] = bool(sig.get("cm_rsi_rising"))
+    ind["cm_rsi_low"] = bool(sig.get("cm_rsi_low"))
+    ind["cm_rsi_green"] = bool(sig.get("cm_rsi_green"))
+    ind["cm_ok"] = bool(sig.get("cm_ok"))
+    ind["cm_rsi_src"] = sig.get("bars_src")
+    ind["cm_rsi_age_sec"] = sig.get("bars_age_sec")
+    return True
+
+
 def _engine_indicator_map() -> dict[str, dict]:
     """symbol -> signal-engine indicator record, off the /api/state wire."""
     out: dict[str, dict] = {}
@@ -3202,6 +3236,11 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             save_watch(cleaned)
         return cleaned
 
+    # One wire read for the whole sync, not one per symbol. _dashboard_tickers
+    # is cached for _DASH_CACHE_TTL anyway, so this is a dict build, but doing
+    # it inside the loop would rebuild it for every candidate.
+    _sync_indicators = _engine_indicator_map()
+
     new_state: dict[str, Any] = {}
     for sym, row in merged.items():
         prev = old.get(sym) if isinstance(old.get(sym), dict) else {}
@@ -3267,6 +3306,11 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             # Refresh %R on the same print we would arm with, every 2s sync.
             if ask_for_zone:
                 ensure_live_exhaustion(rec, ask_for_zone, cfg_z, t0)
+            # And the RSI half, from the wire the engine refreshes every
+            # second. Without this the book's RSI is a poll_once artefact,
+            # up to ai_watch_poll_sec (20s) behind the reading the operator
+            # is watching move on the chart.
+            refresh_engine_rsi(rec, _sync_indicators.get(sym))
         except Exception:
             pass
         new_state[sym] = rec
