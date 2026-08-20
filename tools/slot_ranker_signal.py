@@ -38,13 +38,16 @@ ET = ZoneInfo("America/New_York")
 EVENTS = os.path.join(ROOT, "ai_reports", "events.jsonl")
 OUTCOMES = os.path.join(ROOT, "ai_reports", "outcomes.jsonl")
 SHADOW = os.path.join(ROOT, "ai_reports", "shadow.jsonl")
+POS_SHADOW = os.path.join(ROOT, "ai_reports", "position_shadow.jsonl")
 
-# Numeric candidate features carried on every shadow row. Booleans are folded
-# to 0/1 so one comparison covers both kinds.
+# Only features BOTH sides carry can be compared. shadow.jsonl is the watch
+# candidate shadow — a name leaves it once it is bought — so the held book is
+# described by position_shadow.jsonl instead. Requiring the candidate shadow
+# for both sides silently kept only the ~13% of moments where a held name
+# happened to still be on the watch list, and that subsample carries a base
+# rate opposite to the full one. These six are on both rows.
 FEATURES = [
-    "score", "rvol", "pct_change", "cm_rsi", "pctr", "proximity_pct",
-    "exhaustion", "spread_r", "window_span_min", "tape_age_sec",
-    "cm_ok", "pctr_ok", "cm_rsi_rising", "in_zone",
+    "cm_rsi", "pctr", "proximity_pct", "cm_ok", "pctr_ok", "cm_rsi_rising",
 ]
 # How far from the skip a shadow row may sit and still describe that instant.
 MATCH_TOL_SEC = 45.0
@@ -81,16 +84,16 @@ def _num(v):
     return f if f == f else None  # drop NaN
 
 
-def load_shadow(days: set[str]) -> dict[str, tuple[list[float], list[dict]]]:
+def load_shadow(path: str, days: set[str]) -> dict[str, tuple[list[float], list[dict]]]:
     """symbol -> (sorted timestamps, feature rows) for the days in range.
 
-    Only the columns in FEATURES are kept; the raw file is tens of MB and the
+    Only the columns in FEATURES are kept; the raw files are tens of MB and the
     rest of each row is not part of this question.
     """
     by_sym: dict[str, list[tuple[float, dict]]] = {}
-    if not os.path.exists(SHADOW):
+    if not os.path.exists(path):
         return {}
-    with open(SHADOW, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -217,8 +220,10 @@ def main() -> int:
         return 1
     print(f"{len(skips)} max_positions skips across {days[0]}..{days[-1]}")
 
-    shadow = load_shadow(dayset)
-    print(f"shadow rows indexed for {len(shadow)} symbols")
+    cand_shadow = load_shadow(SHADOW, dayset)
+    held_shadow = load_shadow(POS_SHADOW, dayset)
+    print(f"candidate shadow: {len(cand_shadow)} symbols   "
+          f"position shadow: {len(held_shadow)} symbols")
 
     sec = json.load(open(os.path.join(ROOT, "config", "secrets.json")))
     import alpaca_api as aa
@@ -238,7 +243,7 @@ def main() -> int:
         s_fwd = _fwd(_fetch(client, sym, day, cache), ts, horizon)
         if s_fwd is None:
             continue
-        s_feat = features_at(shadow, sym, ts)
+        s_feat = features_at(cand_shadow, sym, ts)
         if not s_feat:
             no_feat += 1
             continue
@@ -248,7 +253,7 @@ def main() -> int:
         for o in held:
             hs = str(o["symbol"]).upper()
             v = _fwd(_fetch(client, hs, day, cache), ts, horizon)
-            f = features_at(shadow, hs, ts)
+            f = features_at(held_shadow, hs, ts)
             if v is not None and f:
                 h_rets.append(v)
                 h_feats.append(f)
@@ -274,39 +279,41 @@ def main() -> int:
     print("\nThat row is the number to beat. A feature only earns a ranker if")
     print("preferring it does better than taking the skipped name every time.\n")
 
-    print(f"{'feature':<18} {'n':>5} {'rule':<8} {'median':>9} {'mean':>9} {'win':>6}")
+    # Score only the moments a rule actually acts on. Padding the rest with
+    # zeros drags every median to 0.000% and ranks by a mean that a handful of
+    # large losers dominates — the question is whether the moments a rule
+    # PICKS beat the base rate, not what its zero-padded average looks like.
+    base_med = statistics.median(base)
+    base_win = 100.0 * sum(1 for x in base if x > 0) / len(base)
+    print(f"{'feature':<16} {'rule':<7} {'swaps':>6} {'median':>9} "
+          f"{'win':>6}  vs base")
     print("-" * 62)
     rows = []
     for feat in FEATURES:
-        # Gain from preferring the higher-valued name: when the skipped name
-        # ranks higher we take it (+ret_diff); when the book ranks higher we
-        # keep the book (0 — no swap, no gain).
         for rule, sign in (("higher", 1.0), ("lower", -1.0)):
-            gains = []
+            picked = []
             for m in moments:
                 s = m["skipped"].get(feat)
                 hv = [h.get(feat) for h in m["held"] if h.get(feat) is not None]
                 if s is None or not hv:
                     continue
                 if sign * s > sign * statistics.fmean(hv):
-                    gains.append(m["ret_diff"])   # swap in the skipped name
-                else:
-                    gains.append(0.0)             # keep the book
-            if len(gains) < 30:
+                    picked.append(m["ret_diff"])
+            if len(picked) < 30:
                 continue
-            rows.append((feat, rule, len(gains), statistics.median(gains),
-                         statistics.fmean(gains),
-                         100.0 * sum(1 for x in gains if x > 0) / len(gains)))
-    # Rank by mean gain — the median is 0 for any rule that swaps under half
-    # the time, so it cannot order them.
-    rows.sort(key=lambda r: -r[4])
-    for feat, rule, n, med, mean, win in rows:
-        print(f"{feat:<18} {n:>5} {rule:<8} {med:>+8.3f}% {mean:>+8.3f}% {win:>5.0f}%")
+            med = statistics.median(picked)
+            win = 100.0 * sum(1 for x in picked if x > 0) / len(picked)
+            rows.append((feat, rule, len(picked), med, win,
+                         med - base_med, win - base_win))
+    rows.sort(key=lambda r: -r[6])
+    for feat, rule, n, med, win, dmed, dwin in rows:
+        print(f"{feat:<16} {rule:<7} {n:>6} {med:>+8.3f}% {win:>5.0f}%  "
+              f"{dwin:>+5.1f}pp win {dmed:>+.3f}% med")
 
-    print("\nRead it against the unconditional row: a rule that swaps on half")
-    print("the moments and captures about half the unconditional mean is")
-    print("splitting the base rate, not finding signal. A rule worth building")
-    print("has a mean gain at or above the unconditional one on fewer swaps.")
+    print(f"\nBase rate to beat: median {base_med:+.3f}%, win {base_win:.0f}%.")
+    print("A rule earns a ranker only if the moments it picks beat that by")
+    print("more than sampling noise — at n swaps, one standard error on the")
+    print("win rate is about 50/sqrt(n) pp.")
     return 0
 
 
