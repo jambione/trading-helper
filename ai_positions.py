@@ -116,6 +116,11 @@ DEFAULT_LOCAL_TRAIL_ARM_R = 0.05
 DEFAULT_LOCAL_TRAIL_GIVE_R = 0.10
 # Legacy fixed-dollar cushion. 0 = use give_r × R (preferred).
 DEFAULT_LOCAL_TRAIL_GIVE_PX = 0.0
+# Breakeven is not flat. A shelf parked exactly at the fill scratches — the
+# round-trip costs the spread twice and books zero. Park it this many cents
+# ABOVE the fill instead, so a name that ran and came back is still green.
+# 0 restores the old flat-at-fill behaviour.
+DEFAULT_BREAKEVEN_OFFSET_PX = 0.01
 # Flatten longs if stream+REST stay dark this long during RTH.
 DEFAULT_STALE_DATA_MAX_AGE_SEC = 15.0
 # Keep a small ring of recent events for /api/state.
@@ -2021,6 +2026,32 @@ def _update_excursions(pos: dict[str, Any], price: float | None) -> None:
     pos["mfe_r"] = r if mfe is None else max(mfe, r)
 
 
+def breakeven_floor(entry: float | None, cfg: dict | None = None) -> float | None:
+    """The fill plus ``ai_breakeven_offset_px`` — never the bare fill.
+
+    Every "protect the fill" rule on the desk used ``entry`` itself, which
+    books a scratch: the round trip pays the spread twice, so flat on paper is
+    red in the account. A penny above the fill is the smallest level that is
+    unambiguously green and is still far inside the 0.10R working shelf, so it
+    changes which trades scratch, not which trades stop out.
+    """
+    try:
+        e = float(entry or 0)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0:
+        return None
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        off = float(
+            cfg.get("ai_breakeven_offset_px", DEFAULT_BREAKEVEN_OFFSET_PX)
+            if cfg.get("ai_breakeven_offset_px") is not None
+            else DEFAULT_BREAKEVEN_OFFSET_PX)
+    except (TypeError, ValueError):
+        off = DEFAULT_BREAKEVEN_OFFSET_PX
+    return round(e + max(0.0, off), 6)
+
+
 def _runner_stop_level(pos: dict[str, Any]) -> float | None:
     """Where tranche B's stop belongs right now: max(breakeven, peak - nR).
 
@@ -2042,7 +2073,8 @@ def _runner_stop_level(pos: dict[str, Any]) -> float | None:
     if trail_r is None:
         trail_r = DEFAULT_RUNNER_TRAIL_R
     trail_r = max(0.0, trail_r)
-    return max(float(entry), float(peak) - trail_r * risk)
+    be = breakeven_floor(entry, _cfg_all()) or float(entry)
+    return max(be, float(peak) - trail_r * risk)
 
 
 def _orig_stop(pos: dict[str, Any]) -> float | None:
@@ -2397,7 +2429,7 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
             # expressed against price — no extra state to keep in step.
             gain_pct = float(mfe) * float(risk) / float(entry) * 100.0
             be_hit = gain_pct + 1e-9 >= be_at_pct
-    be_floor = float(entry) if be_hit else None
+    be_floor = (breakeven_floor(entry, cfg) or float(entry)) if be_hit else None
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
@@ -3001,7 +3033,11 @@ def _heal_unprotected(
         scaled = bool(pos.get("tranche_a_filled"))
         if dual:
             if scaled:
-                want = _runner_stop_level(pos) or _num(pos.get("entry_price")) or stop
+                want = (
+                    _runner_stop_level(pos)
+                    or breakeven_floor(pos.get("entry_price"), _cfg_all())
+                    or stop
+                )
             else:
                 want = stop
             last = _num(pos.get("last_seen_price"))
@@ -3564,7 +3600,11 @@ def manage_open_positions(
             # A stop is only a stop while it sits BELOW the market. Underwater,
             # "move it to breakeven" places it above the last print, which
             # Alpaca triggers on receipt — leave the original stop to work.
-            if last <= entry:
+            # Tested against the breakeven level itself, not the bare fill:
+            # with the penny offset, a print between entry and entry+0.01 is
+            # still "underwater" for this purpose.
+            be = breakeven_floor(entry, _cfg_all()) or entry
+            if last <= be:
                 events.append({
                     "ticker": ticker, "event": "sell_signal_underwater",
                     "entry": entry, "last": last, "stop": cur_stop,
@@ -3584,22 +3624,22 @@ def manage_open_positions(
                  if x is not None],
                 default=None,
             )
-            if best_stop is not None and best_stop >= entry:
+            if best_stop is not None and best_stop >= be:
                 pos["sell_signal_stop_done"] = True
                 changed = True
                 continue
             out = alpaca_trader.replace_stop(
-                ticker, _resting_stop_order_id(ticker), stop_price=entry)
+                ticker, _resting_stop_order_id(ticker), stop_price=be)
             if isinstance(out, dict) and out.get("ok"):
-                pos["stop_price"] = entry
+                pos["stop_price"] = be
                 pos["sell_signal_stop_done"] = True
                 changed = True
                 events.append({
                     "ticker": ticker, "event": "sell_signal_breakeven",
-                    "from_stop": cur_stop, "to_stop": entry, "last": last,
+                    "from_stop": cur_stop, "to_stop": be, "last": last,
                 })
                 log_event("sell_signal_breakeven", symbol=ticker,
-                          from_stop=cur_stop, to_stop=entry, last=last)
+                          from_stop=cur_stop, to_stop=be, last=last)
                 exit_why[ticker] = "sell_signal_breakeven"
 
     # Pass 2: tranche-A fill, dead-trade, day time-stop.

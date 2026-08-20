@@ -1058,9 +1058,10 @@ def test_runner_stop_floors_at_breakeven_so_a_target_hit_cannot_finish_red(
 
     cp.manage_open_positions(now=1_000_100.0)
 
-    assert stub.replace_calls[0]["stop_price"] == 40.5     # breakeven, not 38.5
+    # Breakeven, not 38.5 — and a penny above the 40.5 fill, not on it.
+    assert stub.replace_calls[0]["stop_price"] == 40.51
     state = json.loads(_state_path(tmp_path).read_text())
-    assert state["NVDA"]["runner_stop_price"] == 40.5
+    assert state["NVDA"]["runner_stop_price"] == 40.51
 
 
 def test_runner_stop_ratchets_up_with_the_peak_and_never_back_down(
@@ -1570,6 +1571,37 @@ def test_sell_signal_underwater_never_places_a_stop_above_the_market(
     assert state["NVDA"]["stop_price"] == 46.217, "original stop left working"
 
 
+def test_breakeven_penny_does_not_place_a_stop_above_the_market(
+        tmp_path, monkeypatch):
+    """The hazard the penny offset introduces.
+
+    Breakeven now sits at the fill + $0.01, so a print in the gap between the
+    fill and that penny is still underwater for this purpose: moving the stop
+    "to breakeven" there would put it above the last print and trigger on
+    receipt. The underwater gate has to test the breakeven level, not the fill.
+    """
+    _seed_state(tmp_path, monkeypatch, entry_price=19.94,
+                last_seen_price=19.945, stop_price=18.943)
+    _sell_sig(monkeypatch)
+    stub = _StubBrokerManage(current_price=19.945)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+
+    assert stub.replace_calls == [], "19.95 stop would sit above a 19.945 print"
+    assert any(e["event"] == "sell_signal_underwater" for e in events)
+
+
+def test_breakeven_floor_is_a_penny_above_the_fill():
+    """Flat on paper is red after paying the spread twice."""
+    assert cp.breakeven_floor(19.94) == 19.95
+    assert cp.breakeven_floor(10.03) == 10.04
+    # 0 restores the old flat-at-fill behaviour.
+    assert cp.breakeven_floor(19.94, {"ai_breakeven_offset_px": 0}) == 19.94
+    assert cp.breakeven_floor(None) is None
+    assert cp.breakeven_floor(0) is None
+
+
 def test_sell_signal_in_profit_tightens_the_stop_to_entry(tmp_path, monkeypatch):
     """In profit the move is safe and is the point: cap the trade at a scratch
     while leaving the target live in case the signal is wrong."""
@@ -1583,11 +1615,11 @@ def test_sell_signal_in_profit_tightens_the_stop_to_entry(tmp_path, monkeypatch)
 
     assert len(stub.replace_calls) == 1
     call = stub.replace_calls[0]
-    assert call["stop_price"] == 19.94
+    assert call["stop_price"] == 19.95           # 19.94 fill + a penny
     assert call["old"] == "stop_leg_1", "must cancel the resting leg, not stack"
     assert any(e["event"] == "sell_signal_breakeven" for e in events)
     state = json.loads(_state_path(tmp_path).read_text())
-    assert state["NVDA"]["stop_price"] == 19.94
+    assert state["NVDA"]["stop_price"] == 19.95
 
 
 def test_sell_signal_never_loosens_a_stop_already_past_entry(tmp_path, monkeypatch):
@@ -2376,8 +2408,8 @@ def test_qty_drop_infers_t1_and_raises_runner_to_breakeven(tmp_path, monkeypatch
     assert any(e.get("event") == "scaled_out" for e in events)
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["tranche_a_filled"] is True
-    assert state["NVDA"]["runner_stop_price"] == 10.03
-    assert stub.replace_calls[-1]["stop_price"] == 10.03
+    assert state["NVDA"]["runner_stop_price"] == 10.04   # 10.03 fill + a penny
+    assert stub.replace_calls[-1]["stop_price"] == 10.04
 
 
 def test_ratchet_invariant_fails_when_scaled_stop_still_original():

@@ -690,6 +690,9 @@ DEFAULT_CONFIG = {
     # ...or this much percent of price, whichever comes first. 1R is ~5% of
     # price on these zones, so an R-only floor needs a half-percent move.
     "ai_local_trail_be_at_pct":     0.0,
+    # Breakeven parks this many cents ABOVE the fill, not on it — flat on
+    # paper is red after paying the spread twice. 0 = old flat-at-fill.
+    "ai_breakeven_offset_px":          0.01,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
@@ -1232,6 +1235,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_give_px",
     "ai_local_trail_min_give_px",
     "ai_local_trail_min_give_max_r",
+    "ai_breakeven_offset_px",
     "ai_fill_abort_r",
     "ai_runner_step_r",
     "ai_day_scalp_dual_tranche",
