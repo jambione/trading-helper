@@ -4766,3 +4766,33 @@ def test_rsi_block_is_restamped_when_the_rsi_moves():
     }
     ew._restamp_rsi_block(rec4, {}, 1_700_000_000.0)
     assert rec4["block_code"] == "no_rsi_data"
+
+
+def test_row_arm_refuse_carries_the_rsi():
+    """The wire-row reconstruction must carry CM RSI-2, not just %R.
+
+    _row_arm_refuse rebuilds a record from a book row to paint the State
+    column. It populated only the %R fields, so once cm_rsi_allows_buy shipped,
+    every row rendered "no rsi data" whatever the book held — masking the real
+    refusals behind a reason that was never true.
+    """
+    import ai_entry_watch as ew
+
+    row = {
+        "symbol": "TEM", "entry_low": 9.9, "entry_high": 10.1,
+        "stop_price": 9.0, "target_1": 12.0, "reward_risk": 2.0,
+        "zone_kind": "double_bottom",
+        "pctr": -20.0, "exhaustion_state": "heating",
+        "cm_rsi": 88.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime",
+    }
+    why = ew._row_arm_refuse(row, 10.0)
+    assert why != "no_rsi_data", "reconstruction lost the RSI again"
+
+    # A row with no usable %R still carries its RSI — independent gates.
+    thin = {
+        "symbol": "TEM", "entry_low": 9.9, "entry_high": 10.1,
+        "stop_price": 9.0, "target_1": 12.0, "reward_risk": 2.0,
+        "zone_kind": "double_bottom", "pctr_src": "thin",
+        "cm_rsi": 22.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime",
+    }
+    assert ew._row_arm_refuse(thin, 10.0) != "no_rsi_data"

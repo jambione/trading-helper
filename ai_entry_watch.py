@@ -486,14 +486,32 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
             pctr = exh - 100.0
     src = str(row.get("pctr_src") or "").lower()
     state = str(row.get("exhaustion_state") or "").lower()
+    # CM RSI-2 travels separately from %R and must be carried either way: it
+    # is an independent gate, so a row with no usable %R can still have a
+    # perfectly good RSI, and vice versa.
+    #
+    # Leaving it out is not a missing nicety, it is a wrong answer. This
+    # reconstruction is what paints the State column, and cm_rsi_allows_buy
+    # reads indicator["cm_rsi"] — so every row rendered as "no rsi data"
+    # regardless of what the book actually held, masking the real refusals
+    # (rsi_extended, rsi_not_rising, rsi_not_realtime_*) behind a reason that
+    # was never true. Observed on the whole book at 11:52 on 2026-08-20.
+    rsi_fields = {
+        "cm_rsi": _f_or_none(row.get("cm_rsi")),
+        "cm_rsi_rising": bool(row.get("cm_rsi_rising")),
+        "cm_rsi_low": bool(row.get("cm_rsi_low")),
+        "cm_rsi_src": row.get("cm_rsi_src"),
+        "cm_rsi_age_sec": _f_or_none(row.get("cm_rsi_age_sec")),
+    }
     if src == "thin" or (pctr is None and state in ("", "unknown")):
-        rec["indicator"] = {}
+        rec["indicator"] = dict(rsi_fields)
     else:
         rec["indicator"] = {
             "pctr": pctr,
             "pctr_rising": state in ("heating", "overbought")
             or bool(row.get("pctr_rising")),
             "pctr_falling": state == "cooling" or bool(row.get("pctr_falling")),
+            **rsi_fields,
         }
     try:
         ok, why = should_arm_buy(rec, ask=float(px), bid=None, cfg=_push_cfg())
