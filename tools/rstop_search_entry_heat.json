@@ -1,9 +1,9 @@
 {
   "min_n": 30,
-  "description": "Question 1 of 3 for 2026-08-21: is the desk entering at the end of the move? On 2026-08-20, 29 of 59 entries were taken with entry_exhaustion_state=overbought, and desk_report's forward-return-by-exhaustion table falls off a cliff there: 0-25% +0.315%, 25-50% +0.364%, 50-75% -0.248%, 75-90% +0.462%, 90-100% -0.797%. ai_watch_exhaustion_heat_max_pct is the ceiling that would refuse a hot entry and ships disabled at 0. ob_allow_hot is already False live, so it is swept only to confirm it is not the thing doing the work. Exit knobs are pinned at live values throughout: this grid must not be able to win by retuning the trail. RUN THIS FIRST — it is the largest lever the 2026-08-20 reports exposed.",
+  "description": "Is the exhaustion gate pointing the wrong way? Live config requires heat >= 40 (ai_watch_exhaustion_heat_min_pct) with no ceiling, so the desk only enters names that are already hot. desk_report scored off 1m bars on 2026-08-20 says that is backwards: 0-25% exhaustion +0.309% (n=963) and 25-50% +0.334% (n=815) forward 30m, against 50-75% -0.626% (n=949) and 90-100% -0.591% (n=234). Admitted episodes overall came in at -0.623%. The floor excludes the only range with positive forward returns, and heating_too_low refused 527 arms that day. Corroborated by admission_null: the admission moment underperforms a random moment in the same name by 0.35% at 30m, 4.4 sigma. So sweep the floor DOWN as well as adding a ceiling. Exit knobs pinned at live so nothing can win through the trail. CAVEAT: the buckets are not monotonic (75-90% is +0.511%), the desk chose what it watched, and the sim has no spread — a win here is a forward-test hypothesis, not a config change.",
   "search": {
-    "heat_max_pct": [0.0, 90.0, 75.0, 50.0],
-    "ob_allow_hot": [false],
+    "heat_min_pct": [40.0, 20.0, 0.0],
+    "heat_max_pct": [0.0, 75.0, 50.0],
     "give_r": [0.10],
     "give_open_r": [0.10],
     "min_give_px": [0.06]
