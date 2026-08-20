@@ -143,9 +143,21 @@ def main() -> int:
     ap.add_argument("--horizon-min", type=float, default=30.0)
     ap.add_argument("--band-max", type=float, default=50.0)
     ap.add_argument("--band-min", type=float, default=0.0)
+    ap.add_argument("--price-min", type=float, default=None,
+                    help="only replay arms at or above this price")
+    ap.add_argument("--price-max", type=float, default=None,
+                    help="only replay arms below this price. With --price-min, "
+                         "answers whether the filter works on one price cohort "
+                         "— e.g. the sub-$20 names ai_watch_min_price excludes.")
     args = ap.parse_args()
 
     arms = _load_arms(args.days)
+    if args.price_min is not None or args.price_max is not None:
+        lo = args.price_min if args.price_min is not None else 0.0
+        hi = args.price_max if args.price_max is not None else float("inf")
+        arms = [r for r in arms
+                if r.get("price") is not None and lo <= float(r["price"]) < hi]
+        print(f"price cohort: {lo:g} <= price < {hi:g}")
     if not arms:
         print("no arms found in shadow.jsonl")
         return 1
