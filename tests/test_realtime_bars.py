@@ -270,3 +270,42 @@ def test_disabled_flag_always_uses_alpaca(monkeypatch):
     eng.rt_bars.on_trade("X", 99.0, 10, int(_t.time() * 1000))
     out = se.SignalEngine._strategy_df(eng, _ts_stub(), _wide_frame(tag=2.0))
     assert float(out["close"].iloc[-1]) == 2.0
+
+
+def test_trade_ts_ms_normalises_both_feeds():
+    """Finnhub sends milliseconds, the Alpaca poller sends seconds.
+
+    2026-08-20: feeding seconds straight into on_trade made age_seconds report
+    decades (never fresh) and bucketed bars near 1970, so a ticker fed by both
+    sources sealed a garbage bar on every alternation. Coverage went DOWN when
+    the second feed was enabled.
+    """
+    import signal_engine as se
+
+    secs = 1_787_240_000.0          # what alpaca_price_poll passes
+    ms = 1_787_240_000_000          # what the Finnhub socket passes
+
+    assert se._trade_ts_ms(secs) == ms
+    assert se._trade_ts_ms(ms) == ms
+    # Both feeds must land in the same minute bucket for the same instant.
+    from realtime_bars import _epoch_minute
+    assert _epoch_minute(se._trade_ts_ms(secs)) == _epoch_minute(se._trade_ts_ms(ms))
+    # Junk is refused rather than turned into a 1970 bar.
+    assert se._trade_ts_ms(None) == 0
+    assert se._trade_ts_ms(-1) == 0
+    assert se._trade_ts_ms("nonsense") == 0
+
+
+def test_aggregator_stays_fresh_when_fed_seconds_style_input():
+    """End to end: a seconds timestamp must not make a ticker look ancient."""
+    import time
+
+    import signal_engine as se
+    from realtime_bars import RealtimeBarAggregator
+
+    agg = RealtimeBarAggregator()
+    now_s = time.time()
+    agg.on_trade("TEM", 67.9, 100, se._trade_ts_ms(now_s))
+    age = agg.age_seconds("TEM")
+    assert age is not None
+    assert age < 5, f"seconds input reported as {age}s old"

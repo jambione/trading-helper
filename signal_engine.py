@@ -431,6 +431,36 @@ def request_subscribe(tickers: list):
         fh_request_subscribe(tickers)
 
 
+# Below this, a timestamp cannot be milliseconds: 1e11 ms is 1973, and 1e11
+# seconds is the year 5138. Anything smaller arrived as seconds.
+_MS_FLOOR = 1e11
+
+
+def _trade_ts_ms(ts) -> int:
+    """Normalise a trade timestamp to milliseconds.
+
+    The two feeds disagree and RealtimeBarAggregator.on_trade takes ms.
+    Finnhub's socket carries the trade's own `t` in milliseconds; the Alpaca
+    poller hands its callbacks `time.time()`, in seconds. Feeding seconds in
+    is not a rounding error, it breaks the aggregator two ways: _last_ts lands
+    ~1000x too small so age_seconds reports decades and the ticker can never
+    be fresh, and _epoch_minute buckets the bar near 1970 so a ticker fed by
+    both sources flips between two minute numbers and seals a garbage bar on
+    every alternation.
+
+    Observed 2026-08-20 on flipping PRICE_SOURCE to "both": realtime coverage
+    went DOWN, 4/13 to 1/12, because the second feed was corrupting the very
+    history it was added to fill.
+    """
+    try:
+        v = float(ts)
+    except (TypeError, ValueError):
+        return 0
+    if v <= 0:
+        return 0
+    return int(v * 1000.0) if v < _MS_FLOOR else int(v)
+
+
 def register_trade_callback(cb):
     if PRICE_SOURCE in ("alpaca", "both", "auto"):
         alpaca_px.register_trade_callback(cb)
@@ -1331,7 +1361,8 @@ class SignalEngine:
                   f"(realtime_bars={'on' if REALTIME_BARS else 'off'})")
             if REALTIME_BARS:
                 register_trade_callback(
-                    lambda sym, price, vol, ts: self.rt_bars.on_trade(sym, price, vol, ts)
+                    lambda sym, price, vol, ts: self.rt_bars.on_trade(
+                        sym, price, vol, _trade_ts_ms(ts))
                 )
                 print("[STRATEGY] realtime bars: aggregating live OHLCV from price poll/stream")
         elif STRATEGY_MODE == "alert":
