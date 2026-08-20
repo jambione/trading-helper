@@ -2395,14 +2395,16 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | EXH | P&L
-     Seven tracks for seven rendered cells. Qty is display:none and a hidden
+  /* Ticker | State | Last | Entry | Stop | EXH | RSI | P&L
+     Eight tracks for eight rendered cells. Qty is display:none and a hidden
      grid item does not occupy a track, so it gets none — declaring one for it
      pushed every later cell a slot left and stranded the last track.
-     RSI is gone from the book: CM RSI-2 stopped gating entries when
-     ai_watch_tv_exh_rsi went off, and live_cm_rsi will return a value off as
-     few as three bars, so it was a number the desk did not act on and could
-     not trust. Still logged to shadow for later study, just not shown. */
+     RSI was pulled from the book when CM RSI-2 stopped gating entries and
+     while live_cm_rsi would publish a value off as few as three bars — a
+     number the desk did not act on and could not trust. Both halves changed:
+     it gates again under ai_watch_arm_require_cm_rsi, and the reading now
+     comes from the engine's series with its source attached, so the column
+     can say which feed drew it. */
   grid-template-columns:
     minmax(52px, 0.9fr)
     minmax(5rem, 1.0fr)
@@ -2410,6 +2412,7 @@ body.mobile .icon-btn {
     minmax(64px, 0.95fr)
     minmax(62px, 0.85fr)
     minmax(78px, 1.0fr)
+    minmax(58px, 0.8fr)
     minmax(66px, 0.95fr);
   width: 100%;
   box-sizing: border-box;
@@ -2448,6 +2451,21 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-exh.exh--tight { font-weight: 600; }
 .panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--low { color: #6ee7b7; }
 .panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--green { color: #4ade80; font-weight: 600; }
+/* The entry condition itself: inside the 0-50 band AND turning up. Brightest
+   state in the column, because this is the one the operator is waiting for. */
+.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--arm {
+  color: #4ade80;
+  font-weight: 700;
+}
+/* Drawn on REST fallback bars rather than the live Finnhub tape. Same
+   treatment as a non-live %R: dimmed and dashed, so a reading the desk should
+   not act on cannot be mistaken for one it should. */
+.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--stale {
+  color: #6b7280;
+  font-style: italic;
+  font-weight: 400;
+  text-decoration: underline dotted rgba(148, 163, 184, 0.55);
+}
 
 /* Mobile + an open long: drop State so Last, Stop, EXH, RSI, P&L can breathe. */
 body.mobile .panel-ai-watch.ai-book--has-open .th-state,

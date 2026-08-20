@@ -889,6 +889,10 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "last_ask", "score", "rvol", "exhaustion", "exhaustion_state",
         "pctr", "pctr_slow", "pctr_raw", "pctr_src", "pctr_ob", "pctr_tight",
         "pctr_gap", "cm_rsi", "cm_rsi_green", "cm_rsi_low",
+        # Direction and provenance ride with the RSI level: the entry rule is
+        # a band AND a turn, and the book has to be able to say which feed
+        # drew the reading it is showing.
+        "cm_rsi_rising", "cm_rsi_src", "cm_rsi_age_sec",
         "exh_bars", "exh_window_min",
         "exh_hh", "exh_ll",
         "agreement", "reason", "source", "ready", "in_zone",
@@ -4529,3 +4533,154 @@ def test_exhaustion_trade_price_only_can_be_turned_off(monkeypatch):
     assert rec["indicator"]["pctr"] == 0.0
     assert ew.exhaustion_pct(rec) == 100.0
     assert ew.exhaustion_state(rec, cfg) == "overbought"
+
+
+def _rsi_cfg(**over) -> dict:
+    cfg = {
+        "ai_watch_arm_require_cm_rsi": True,
+        "ai_watch_arm_cm_rsi_max": 50.0,
+        "ai_watch_arm_cm_rsi_min": 0.0,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_cm_rsi_arms_inside_the_band_and_rising():
+    """The operator's rule: trending up from 0 to 50 is a good entry."""
+    import ai_entry_watch as ew
+
+    for level in (2.0, 10.0, 33.3, 50.0):
+        rec = {"indicator": {"cm_rsi": level, "cm_rsi_rising": True}}
+        ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
+        assert ok is True, (level, why)
+        assert why == "rsi_turning_up"
+
+
+def test_cm_rsi_refuses_when_trending_down():
+    """"Never trending down" — the level alone is not enough."""
+    import ai_entry_watch as ew
+
+    rec = {"indicator": {"cm_rsi": 12.0, "cm_rsi_rising": False}}
+    ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
+    assert ok is False and why == "rsi_not_rising"
+
+
+def test_cm_rsi_refuses_above_the_band():
+    """Rising is not enough either — above 50 the entry is chasing."""
+    import ai_entry_watch as ew
+
+    rec = {"indicator": {"cm_rsi": 67.7, "cm_rsi_rising": True}}
+    ok, why = ew.cm_rsi_allows_buy(rec, _rsi_cfg())
+    assert ok is False and why == "rsi_extended"
+
+
+def test_cm_rsi_refuses_a_missing_reading():
+    """No reading refuses rather than passing through — same rule as %R."""
+    import ai_entry_watch as ew
+
+    ok, why = ew.cm_rsi_allows_buy({"indicator": {}}, _rsi_cfg())
+    assert ok is False and why == "no_rsi_data"
+
+
+def test_cm_rsi_can_require_the_live_tape():
+    """A reading off the REST fallback is not the live tape and can refuse."""
+    import ai_entry_watch as ew
+
+    cfg = _rsi_cfg(ai_watch_require_realtime_rsi=True)
+    fallback = {"indicator": {
+        "cm_rsi": 20.0, "cm_rsi_rising": True, "cm_rsi_src": "alpaca"}}
+    ok, why = ew.cm_rsi_allows_buy(fallback, cfg)
+    assert ok is False and why == "rsi_not_realtime_alpaca"
+
+    live = {"indicator": {
+        "cm_rsi": 20.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime"}}
+    ok, why = ew.cm_rsi_allows_buy(live, cfg)
+    assert ok is True and why == "rsi_turning_up"
+
+    # Off by default, so the fallback still arms until the operator opts in.
+    ok, why = ew.cm_rsi_allows_buy(fallback, _rsi_cfg())
+    assert ok is True and why == "rsi_turning_up"
+
+
+def test_cm_rsi_gate_is_off_by_default():
+    """Absent the flag the gate is inert — no behaviour change on deploy."""
+    import ai_entry_watch as ew
+
+    rec = {"indicator": {"cm_rsi": 99.0, "cm_rsi_rising": False}}
+    ok, why = ew.cm_rsi_allows_buy(rec, {})
+    assert ok is True and why == "cm_rsi_off"
+
+
+def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
+    """The local IEX recompute must not overwrite the engine's level while
+    cm_rsi_rising / cm_ok still describe the engine's series.
+
+    2026-08-20: BMNR was 5.5 / low=True on the wire and 20.1 / low=False in
+    the book at the same second, and the book kept the engine's rising bit —
+    so "in the band and turning up" was mixing two different RSIs.
+    """
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _falling_ohlc(40)
+    _seed_ohlc(monkeypatch, "BMNR", rows)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    monkeypatch.setattr(ew, "live_cm_rsi", lambda *a, **k: (20.1, False))
+
+    cfg = _exh_cfg()
+    engine_view = {"cm_rsi": 5.5, "cm_rsi_rising": True, "cm_ok": True,
+                   "cm_rsi_src": "realtime"}
+
+    rec = {"symbol": "BMNR", "last_trade": rows[-1][2],
+           "indicator": dict(engine_view)}
+    assert ew.ensure_live_exhaustion(rec, rows[-1][2], cfg, now) is True
+    # Default: the engine's reading stands whole.
+    assert rec["indicator"]["cm_rsi"] == 5.5
+    assert rec["indicator"]["cm_rsi_src"] == "realtime"
+
+    # Opt back in and the old split reappears — level local, direction engine.
+    cfg2 = dict(cfg)
+    cfg2["ai_watch_cm_rsi_local"] = True
+    rec2 = {"symbol": "BMNR", "last_trade": rows[-1][2],
+            "indicator": dict(engine_view)}
+    assert ew.ensure_live_exhaustion(rec2, rows[-1][2], cfg2, now) is True
+    assert rec2["indicator"]["cm_rsi"] == 20.1
+    assert rec2["indicator"]["cm_rsi_src"] == "local_iex"
+    assert rec2["indicator"]["cm_rsi_rising"] is True   # still the engine's
+
+
+def test_arm_requires_both_exhaustion_and_rsi(monkeypatch):
+    """CM RSI-2 arms *along with* %R, not instead of it."""
+    import ai_entry_watch as ew
+
+    calls = {"exh": 0}
+
+    def fake_exh(record, cfg):
+        calls["exh"] += 1
+        return True, "heating"
+
+    monkeypatch.setattr(ew, "exhaustion_allows_buy", fake_exh)
+
+    base = {
+        "symbol": "TEM",
+        "status": "watching",
+        "structure": {
+            "decision": "BUY", "entry_low": 9.9, "entry_high": 10.1,
+            "stop_price": 9.0, "target_1": 12.0, "reward_risk": 2.0,
+            "zone_kind": "double_bottom",
+        },
+        "indicator": {"cm_rsi": 70.0, "cm_rsi_rising": True},
+    }
+    cfg = {
+        "ai_watch_arm_require_cm_rsi": True,
+        "ai_watch_arm_cm_rsi_max": 50.0,
+        "ai_watch_min_stop_pct": 0.0,
+        "ai_max_spread_pct": 100.0,
+    }
+    ok, why = ew.should_arm_buy(base, ask=10.0, bid=9.99, cfg=cfg)
+    assert ok is False and why == "rsi_extended"
+    assert calls["exh"] == 1, "exhaustion still evaluated; RSI is an AND"
+
+    base["indicator"]["cm_rsi"] = 22.0
+    ok, why = ew.should_arm_buy(base, ask=10.0, bid=9.99, cfg=cfg)
+    assert why != "rsi_extended"

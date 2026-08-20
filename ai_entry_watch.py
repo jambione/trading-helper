@@ -3758,15 +3758,34 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
         else (pair.get("fast_src") or ("live" if len(rows) >= length else "clock_range"))
     )
     ind["pctr_ts"] = float(now)
-    rsi_got = live_cm_rsi(sym, price, cfg, now)
-    if rsi_got is not None:
-        ind["cm_rsi"] = round(float(rsi_got[0]), 1)
-        ind["cm_rsi_green"] = bool(rsi_got[1])
-        try:
-            buy_max = float(cfg.get("cm_rsi_buy_max", 10) or 10)
-        except (TypeError, ValueError):
-            buy_max = 10.0
-        ind["cm_rsi_low"] = float(rsi_got[0]) <= buy_max
+    # The RSI LEVEL and the RSI DIRECTION have to come off the same series.
+    #
+    # This used to overwrite cm_rsi with a local recompute over Alpaca IEX
+    # REST bars while leaving cm_rsi_rising / cm_ok exactly as the engine
+    # published them — those are computed on the engine's frame, which with
+    # REALTIME_BARS on is the Finnhub trade stream. So "RSI is 20 and rising"
+    # was a level from one series paired with a turn from another, and the
+    # two disagreed hard: 2026-08-20 10:2x had BMNR at 5.5 / low=True on the
+    # wire and 20.1 / low=False in the book at the same second.
+    #
+    # A rule shaped like "in the 0-50 band and trending up" cannot be built on
+    # that pairing at all, so the local recompute is off by default and the
+    # engine's reading stands whole. live_cm_rsi also has no clock window —
+    # unlike live_exhaustion it reads raw symbol_ohlc rows, so its closes can
+    # be stitched across the overnight gap — which is the second reason not to
+    # prefer it. True restores the old overwrite.
+    if bool(cfg.get("ai_watch_cm_rsi_local", False)):
+        rsi_got = live_cm_rsi(sym, price, cfg, now)
+        if rsi_got is not None:
+            ind["cm_rsi"] = round(float(rsi_got[0]), 1)
+            ind["cm_rsi_green"] = bool(rsi_got[1])
+            ind["cm_rsi_src"] = "local_iex"
+            ind["cm_rsi_age_sec"] = None
+            try:
+                buy_max = float(cfg.get("cm_rsi_buy_max", 10) or 10)
+            except (TypeError, ValueError):
+                buy_max = 10.0
+            ind["cm_rsi_low"] = float(rsi_got[0]) <= buy_max
     try:
         px = float(price)
     except (TypeError, ValueError):
@@ -3934,6 +3953,7 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
             "pctr": None, "pctr_slow": None, "pctr_raw": None, "pctr_src": None,
             "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
             "cm_rsi": None, "cm_rsi_green": False, "cm_rsi_low": False,
+            "cm_rsi_rising": False, "cm_rsi_src": None, "cm_rsi_age_sec": None,
             "exh_bars": None, "exh_window_min": None,
             "exh_hh": None, "exh_ll": None,
         }
@@ -3949,6 +3969,12 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
         "cm_rsi": _f_or_none(ind.get("cm_rsi")),
         "cm_rsi_green": bool(ind.get("cm_rsi_green")),
         "cm_rsi_low": bool(ind.get("cm_rsi_low")),
+        # Direction and provenance travel with the level, so the column can
+        # show "22 and turning up, off the live tape" rather than a bare 22
+        # that might be either series or either feed.
+        "cm_rsi_rising": bool(ind.get("cm_rsi_rising")),
+        "cm_rsi_src": str(ind.get("cm_rsi_src") or "") or None,
+        "cm_rsi_age_sec": _f_or_none(ind.get("cm_rsi_age_sec")),
         "exh_bars": (
             int(ind["pctr_bars"])
             if isinstance(ind.get("pctr_bars"), (int, float))
@@ -4134,6 +4160,56 @@ def _tv_exh_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     if rsi > buy_max:
         return False, "wait_rsi"
     return True, "exh_rsi"
+
+
+def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
+    """CM RSI-2 entry filter: inside the band AND turning up.
+
+    The operator's rule, in their words: anything trending up from 0 to 50 is
+    a good entry, never trending down. So this is a LEVEL test and a
+    DIRECTION test, and both readings must come off the same series — see the
+    note in apply_live_exhaustion about why that was not true before.
+
+    Direction is the engine's ``cm_rsi_rising``, which is RSI-2 now against
+    RSI-2 ``trend_lookback`` bars back (2 by default, strategy_three_indicator
+    ``_rising``). Flat is not rising: on a 2-period RSI a flat print is
+    usually a name that is not trading, not one that is turning.
+
+    ``ai_watch_require_realtime_rsi`` additionally refuses a reading the
+    engine drew on the REST fallback rather than the Finnhub tape. The source
+    flips per ticker mid-session, so without the check the same gate is
+    sometimes reading the live tape and sometimes not, with nothing to say
+    which. Mirrors ai_watch_require_live_pctr on the %R side.
+    """
+    if not bool(cfg.get("ai_watch_arm_require_cm_rsi", False)):
+        return True, "cm_rsi_off"
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None:
+        return False, "no_rsi_data"
+
+    if bool(cfg.get("ai_watch_require_realtime_rsi", False)):
+        src = str(ind.get("cm_rsi_src") or "").strip().lower()
+        if src != "realtime":
+            return False, f"rsi_not_realtime_{src or 'missing'}"
+
+    try:
+        band_max = float(cfg.get("ai_watch_arm_cm_rsi_max", 50.0))
+    except (TypeError, ValueError):
+        band_max = 50.0
+    try:
+        band_min = float(cfg.get("ai_watch_arm_cm_rsi_min", 0.0))
+    except (TypeError, ValueError):
+        band_min = 0.0
+    if rsi > band_max:
+        return False, "rsi_extended"
+    if rsi < band_min:
+        return False, "rsi_below_band"
+    if not bool(ind.get("cm_rsi_rising")):
+        return False, "rsi_not_rising"
+    return True, "rsi_turning_up"
 
 
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -6033,6 +6109,14 @@ def should_arm_buy(
     # rule; local trail now locks the pop so we can arm earlier.
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
 
+    # CM RSI-2 band + turn. Its own gate, deliberately not folded into the
+    # ai_watch_arm_require triple above: that list is all-or-nothing and also
+    # demands pctr_ok, a different %R test than the EXH gate this desk arms
+    # on. Off by default; ai_watch_arm_require_cm_rsi turns it on.
+    rsi_ok, rsi_why = cm_rsi_allows_buy(record, cfg)
+    if not rsi_ok:
+        return False, rsi_why
+
     # Indicators: optional timing filter. Default off — book symbols often have
     # no engine indicator map, so requiring cm_ok/pctr_ok/cm_rsi_rising blocked
     # every in-zone arm. When present and enabled, still refuse sell_signal and
@@ -6927,6 +7011,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # pctr_ok collapses both into one bit that answers neither
                 # "how overbought" nor "which way is it going".
                 "pctr": sig.get("pctr"),
+                # Name the source on the way in. This dict REPLACES any
+                # previous indicator map, so leaving pctr_src out published an
+                # engine %R with no provenance until ensure_live_exhaustion
+                # re-stamped it later in the same poll — and any read landing
+                # in that window (the arm gate, the wire, the book) saw
+                # "pctr_not_live_missing" against a perfectly good number.
+                # _shadow_row already defaults this to "engine"; the record
+                # now agrees with the log instead of contradicting it.
+                "pctr_src": sig.get("pctr_src") or "engine",
                 "pctr_slow": sig.get("pctr_slow"),
                 "pctr_rising": sig.get("pctr_rising"),
                 "pctr_falling": sig.get("pctr_falling"),
@@ -6934,6 +7027,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "pctr_ob": sig.get("pctr_ob"),
                 "pctr_tight": sig.get("pctr_tight"),
                 "cm_rsi_green": sig.get("cm_rsi_green"),
+                # Copied for the same reason cm_rsi_rising is: it used to be
+                # set only by the local recompute in apply_live_exhaustion, so
+                # with that off it would read False for every name forever.
+                "cm_rsi_low": sig.get("cm_rsi_low"),
+                # Where the engine's bars came from, carried with the reading
+                # so the arm gate can refuse an RSI drawn on the REST fallback
+                # instead of the live tape. See cm_rsi_allows_buy.
+                "cm_rsi_src": sig.get("bars_src"),
+                "cm_rsi_age_sec": sig.get("bars_age_sec"),
                 "ts": t0,
             }
         elif "indicator" in rec:

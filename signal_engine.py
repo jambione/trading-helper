@@ -792,6 +792,17 @@ class TickerState:
         # Which API supplied the most recent bar data ("massive" or "alpaca")
         self._data_source: str = "alpaca"
 
+        # Which pipe the bars the STRATEGY was evaluated on came out of, and
+        # how stale the newest of them is. Distinct from _data_source, which
+        # only ever names the REST vendor: with REALTIME_BARS on, the frame
+        # handed to the indicators may instead be the Finnhub trade stream
+        # aggregated locally, and "realtime" vs "alpaca" is the difference
+        # between a reading drawn on the live tape and one drawn on the
+        # fallback. Consumers that gate trades on an indicator need to be able
+        # to tell those apart; see _strategy_df.
+        self._bars_src: str = "alpaca"
+        self._bars_age_sec: Optional[float] = None
+
         # Latest 3-indicator breakdown (set by _eval_three_indicator), surfaced
         # to the dashboard by proximity_state() when STRATEGY_MODE=three_indicator.
         self.three_ind_state: Optional[dict] = None
@@ -1057,6 +1068,12 @@ class TickerState:
             "mention_velocity": self.mention_velocity,
             "bars_fetched":   self.bars_fetched,
             "data_source":    getattr(self, "_data_source", "alpaca"),
+            # Provenance of the bars every indicator below was computed on.
+            # "realtime" = Finnhub trades aggregated locally; anything else is
+            # the REST fallback. Published beside the readings rather than
+            # inferred later, because the source flips per ticker mid-session.
+            "bars_src":       getattr(self, "_bars_src", "alpaca"),
+            "bars_age_sec":   getattr(self, "_bars_age_sec", None),
             # 3-indicator breakdown (drives the three condition pills)
             "cm_rsi":         s.get("cm_rsi"),
             "cm_ok":          bool(s.get("cm_ok")),
@@ -1615,6 +1632,15 @@ class SignalEngine:
                     if ts.ticker in self._rt_stale:
                         self._rt_stale.discard(ts.ticker)
                         print(f"  [{ticker_tag(ts.ticker)}] ▶ realtime bars live again")
+                    # Which pipe produced this frame, on the frame itself.
+                    # Without it a Finnhub-bar reading and an Alpaca-bar
+                    # reading are indistinguishable downstream, and the desk
+                    # cannot say whether an indicator it is about to trade on
+                    # came from the realtime tape or from the fallback. The
+                    # source flips constantly — 20 recoveries and 27 fallbacks
+                    # across 18 symbols on 2026-08-20 alone.
+                    ts._bars_src = "realtime"
+                    ts._bars_age_sec = float(age)
                     return rt
             elif ts.ticker not in self._rt_stale:
                 # Log the transition only — this runs on every bar close.
@@ -1622,6 +1648,8 @@ class SignalEngine:
                 stale_for = "no trades yet" if age is None else f"{age:.0f}s stale"
                 print(f"  [{ticker_tag(ts.ticker)}] ⏸ realtime bars {stale_for} — "
                       f"falling back to Alpaca bars")
+        ts._bars_src = getattr(ts, "_data_source", "alpaca")
+        ts._bars_age_sec = None
         return fallback_df
 
     def _eval_three_indicator(self, ts: TickerState, df):

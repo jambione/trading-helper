@@ -292,6 +292,9 @@ function _bookRows(book) {
       cm_rsi: w.cm_rsi != null ? w.cm_rsi : null,
       cm_rsi_green: !!w.cm_rsi_green,
       cm_rsi_low: !!w.cm_rsi_low,
+      cm_rsi_rising: !!w.cm_rsi_rising,
+      cm_rsi_src: w.cm_rsi_src || null,
+      cm_rsi_age_sec: w.cm_rsi_age_sec != null ? w.cm_rsi_age_sec : null,
       pctr_raw: w.pctr_raw != null ? w.pctr_raw : null,
       pctr_src: w.pctr_src || null,
       exh_bars: w.exh_bars != null ? w.exh_bars : null,
@@ -772,6 +775,13 @@ function _updateBookRow(el, r) {
     const tip = _fmtExhTitle(r);
     if (tip) exhEl.title = tip;
   }
+
+  const rsiEl = el.querySelector('.cell-rsi');
+  if (rsiEl) {
+    _setText(rsiEl, _bookRsiText(r));
+    rsiEl.className = `cell-rsi${_rsiPairClass(r)}`;
+    rsiEl.title = _fmtRsiTitle(r);
+  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -816,6 +826,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail">${_esc(trail)}</div>`
     + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
+    + `<div class="cell-rsi${_rsiPairClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_bookRsiText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -989,11 +1000,48 @@ function _fmtRsi(r) {
   return Number(r.cm_rsi).toFixed(1);
 }
 
+/** The book's RSI cell: CM RSI-2 with its direction, because the entry rule
+ *  is a band AND a turn — "trending up from 0 to 50" — and a bare level
+ *  answers only half of it. Arrow is the engine's cm_rsi_rising (RSI-2 now
+ *  against RSI-2 trend_lookback bars back). */
+function _bookRsiText(r) {
+  const v = _fmtRsi(r);
+  if (v === '—') return v;
+  return `${v}${r && r.cm_rsi_rising ? '↑' : '↓'}`;
+}
+
+/** True when this reading satisfies the arm condition on its own: inside the
+ *  0-50 band and turning up. Painted green so the column reads as a signal
+ *  rather than a number to interpret. */
+function _rsiArms(r) {
+  if (!r || r.cm_rsi == null || !Number.isFinite(Number(r.cm_rsi))) return false;
+  const v = Number(r.cm_rsi);
+  return v >= 0 && v <= 50 && !!r.cm_rsi_rising;
+}
+
+/** The engine draws its bars from the Finnhub trade stream when the tape is
+ *  covering a name and falls back to Alpaca REST when it is not — and it
+ *  flips per ticker, mid-session. A reading off the fallback is not wrong,
+ *  but it is not the live tape either, so it is marked rather than blended
+ *  in with the ones that are. */
+function _rsiStale(r) {
+  if (!r) return false;
+  const src = String(r.cm_rsi_src || '').toLowerCase().trim();
+  return src !== '' && src !== 'realtime';
+}
+
 function _rsiClass(r) {
   if (!r) return '';
+  if (_rsiArms(r)) return ' rsi--arm';
   if (r.cm_rsi_green) return ' rsi--green';
   if (r.cm_rsi_low) return ' rsi--low';
   return '';
+}
+
+function _rsiPairClass(r) {
+  let cls = _rsiClass(r);
+  if (_rsiStale(r)) cls += ' rsi--stale';
+  return cls;
 }
 
 function _fmtRsiTitle(r) {
@@ -1001,6 +1049,21 @@ function _fmtRsiTitle(r) {
   const bits = ['CM RSI-2'];
   if (r.cm_rsi != null && Number.isFinite(Number(r.cm_rsi))) {
     bits.push(Number(r.cm_rsi).toFixed(1));
+  } else {
+    return 'CM RSI-2 — no reading';
+  }
+  bits.push(r.cm_rsi_rising ? 'rising' : 'not rising');
+  bits.push(_rsiArms(r) ? 'in the 0-50 arm band' : 'outside the arm band');
+  const src = String(r.cm_rsi_src || '').toLowerCase().trim();
+  if (src === 'realtime') {
+    bits.push('live Finnhub tape');
+  } else if (src) {
+    bits.push(`NOT the live tape (${src}) — REST fallback bars`);
+  } else {
+    bits.push('source unknown');
+  }
+  if (r.cm_rsi_age_sec != null && Number.isFinite(Number(r.cm_rsi_age_sec))) {
+    bits.push(`newest bar ${Number(r.cm_rsi_age_sec).toFixed(0)}s old`);
   }
   if (r.cm_rsi_green) bits.push('green');
   else if (r.cm_rsi_low) bits.push('low');

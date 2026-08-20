@@ -343,6 +343,7 @@
                         <div class="th" title="Average fill price. Open positions only.">Entry</div>
                         <div class="th" title="Open longs only. Raise-only shelf; flatten if last prints through.">Stop</div>
                         <div class="th" title="Exhaustion = 100 + fast %R (0-100). Arms when it is at/above ai_watch_exhaustion_heat_min_pct and rising. Greyed + dotted = NOT a live rolling %R (clock_range / sparse_window) — a different measurement. Hover a row for detail.">EXH</div>
+                        <div class="th" title="CM RSI-2 from the engine's series. ↑ = rising (RSI-2 above where it was 2 bars back). Green = inside the arm band (ai_watch_arm_cm_rsi_min–max, 0–50) AND rising, which is the entry condition. Greyed + dotted = drawn on the REST fallback, not the live Finnhub tape.">RSI</div>
                         <div class="th desk-col-extra">Qty</div>
                         <div class="th">P&amp;L</div>
                     </div>

@@ -534,6 +534,34 @@ DEFAULT_CONFIG = {
     # whole book the constraint is the data feed (SIP), not this gate.
     # False: thin tape may still arm on zone; the ratchet does not need %R.
     "ai_watch_require_exhaustion_data": True,
+    # CM RSI-2 entry filter, as its own gate rather than a member of the
+    # ai_watch_arm_require triple (that list demands cm_ok AND pctr_ok AND
+    # cm_rsi_rising together, and blocked every in-zone arm when last tried).
+    #
+    # Operator's rule: anything trending up from 0 to 50 is a good entry,
+    # never trending down. A level test plus a direction test — so both have
+    # to come off the same RSI series, which is what ai_watch_cm_rsi_local
+    # below is about.
+    "ai_watch_arm_require_cm_rsi":  False,
+    # The band. 50 is the operator's ceiling; above it the entry is chasing.
+    "ai_watch_arm_cm_rsi_max":       50.0,
+    "ai_watch_arm_cm_rsi_min":        0.0,
+    # Refuse an RSI the engine drew on the REST fallback instead of the
+    # Finnhub tape. bars_src flips per ticker mid-session (20 recoveries and
+    # 27 fallbacks across 18 symbols on 2026-08-20), so without this the same
+    # gate silently alternates between two data sources. The %R side's
+    # equivalent is ai_watch_require_live_pctr.
+    "ai_watch_require_realtime_rsi": False,
+    # Recompute CM RSI-2 locally off Alpaca IEX REST bars, overwriting the
+    # engine's reading. False keeps ONE series: the level and the direction
+    # both come from the engine, which with REALTIME_BARS on is the Finnhub
+    # trade stream. True was the old behaviour and split them — the level from
+    # a local recompute, cm_rsi_rising / cm_ok still the engine's — which is
+    # not a pairing any "in the band and turning up" rule can be built on.
+    # 2026-08-20: BMNR read 5.5/low=True on the wire and 20.1/low=False in the
+    # book at the same second. The local path also has no clock window at all,
+    # unlike live_exhaustion, so its closes can span the overnight gap.
+    "ai_watch_cm_rsi_local":        False,
     # Only arm on a %R that is a real rolling reading (pctr_src == "live").
     # clock_range / sparse_window print in the same column and are a
     # different measurement. 0/False keeps the old behaviour.
@@ -1142,6 +1170,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_rules",
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_trade_price_only",
+    "ai_watch_arm_require_cm_rsi",
+    "ai_watch_arm_cm_rsi_max",
+    "ai_watch_require_realtime_rsi",
+    "ai_watch_cm_rsi_local",
     "ai_watch_exhaustion_exit_sec",
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
