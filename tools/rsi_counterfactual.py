@@ -143,6 +143,10 @@ def main() -> int:
     ap.add_argument("--horizon-min", type=float, default=30.0)
     ap.add_argument("--band-max", type=float, default=50.0)
     ap.add_argument("--band-min", type=float, default=0.0)
+    ap.add_argument("--no-require-rising", action="store_true",
+                    help="judge on the LEVEL band alone, ignoring direction. "
+                         "Isolates which half of 'in band and rising' carries "
+                         "the edge — they are not equally load-bearing.")
     ap.add_argument("--price-min", type=float, default=None,
                     help="only replay arms at or above this price")
     ap.add_argument("--price-max", type=float, default=None,
@@ -224,7 +228,7 @@ def main() -> int:
                 blocked_ext.append(fwd)
             elif level < args.band_min:
                 blocked_ext.append(fwd)
-            elif not rising:
+            elif not rising and not args.no_require_rising:
                 blocked_falling.append(fwd)
             else:
                 kept.append(fwd)
