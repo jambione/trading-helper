@@ -149,6 +149,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion gate (ai_watch_exhaustion_rules) — UI must name these or
     # in-zone names look "ready" while the poll refuses on missing %R.
     "no_exhaustion_data": "no %R",
+    # %R blanked because the desk had no trade to close it on — only an ask,
+    # which would have pinned the reading to EXH 100. See indicator_price.
+    "pctr_not_live_no_trade_price": "no trade px",
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
     "already_extended": "extended",
@@ -3701,7 +3704,7 @@ def _clear_stale_pctr(rec: dict, *, reason: str, now: float) -> None:
     ind["pctr_src"] = reason
     ind["pctr_ts"] = float(now)
     for k in ("pctr_raw", "pctr_hh", "pctr_ll", "pctr_bars", "pctr_window_sec",
-              "pctr_gap"):
+              "pctr_gap", "pctr_px_src"):
         ind.pop(k, None)
 
 
@@ -3813,6 +3816,42 @@ def ensure_symbol_ohlc(
     return symbol_ohlc(symbol, cfg, now)
 
 
+def indicator_price(rec: dict, cfg: dict, now: float) -> tuple[float | None, str]:
+    """The traded price %R should close on — never a quote.
+
+    Williams %R is position-in-range of *traded* price, and the live close is
+    folded into the window high (``max(bar_highs + [px])``), so handing it an
+    ask that sits above the range makes the ask the high: %R comes back as
+    exactly -0.0, EXH 100, "overbought", no matter where the stock is. The
+    ask can only raise the high, so the failure only ever invents overbought.
+
+    Order: the live tape, then the record's last tape print, then the newest
+    closed bar. ``last_trade`` is safe to reach for because
+    ``apply_decision_price`` only writes it for stream / stale_tape — a REST
+    ask never lands there. The bar close is one bar behind but is a real
+    trade, which is what the chart draws.
+
+    ``(None, "none")`` when the desk holds no trade for the name at all; the
+    caller blanks the column rather than drawing the line on an offer.
+    """
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if sym:
+        tape = live_print(sym)
+        if tape is not None and tape[0] and float(tape[0]) > 0:
+            age = tape[1]
+            if age is not None and age <= decision_max_age_sec(cfg):
+                return float(tape[0]), "stream"
+    last = _positive_price(rec.get("last_trade"))
+    if last is not None:
+        return last, "last_trade"
+    rows = symbol_ohlc(sym, cfg, now) if sym else []
+    if rows:
+        close = _positive_price(rows[-1][2])
+        if close is not None:
+            return close, "bar_close"
+    return None, "none"
+
+
 def ensure_live_exhaustion(
     rec: dict, price: float, cfg: dict, now: float,
 ) -> bool:
@@ -3822,6 +3861,11 @@ def ensure_live_exhaustion(
     The buy gate and the AI Watch exhaustion column both read
     ``rec['indicator']['pctr']``; without a warmer the column stays blank and
     the gate always sees ``unknown``.
+
+    *price* says a usable print exists; it does not decide what the line
+    closes on. Callers pass the decision price, which is the ask whenever the
+    tape is quiet — see ``indicator_price`` for why an ask cannot be allowed
+    to close a %R.
     """
     if not isinstance(rec, dict):
         return False
@@ -3839,7 +3883,19 @@ def ensure_live_exhaustion(
     if not sym:
         return False
     ensure_symbol_ohlc(sym, cfg, now)
-    return apply_live_exhaustion(rec, px, cfg, now)
+    px_src = "decision"
+    if bool(cfg.get("ai_watch_exhaustion_trade_price_only", True)):
+        got, px_src = indicator_price(rec, cfg, now)
+        if got is None:
+            _clear_stale_pctr(rec, reason="no_trade_price", now=now)
+            return False
+        px = got
+    if not apply_live_exhaustion(rec, px, cfg, now):
+        return False
+    ind = rec.get("indicator")
+    if isinstance(ind, dict):
+        ind["pctr_px_src"] = px_src
+    return True
 
 
 def _price_in_or_below_zone(rec: dict, price: float, *, pad_pct: float = 0.0) -> bool:

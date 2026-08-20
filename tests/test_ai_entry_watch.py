@@ -4385,3 +4385,147 @@ def test_gate_is_off_by_default_so_nothing_changes_unasked():
     import ai_entry_watch as ew
     ok, why = ew.exhaustion_allows_buy(_exh_rec("clock_range"), dict(_EXH_CFG))
     assert ok is True, why
+
+
+def _falling_ohlc(n: int = 16, *, base: float = 28.4) -> list[tuple[float, float, float]]:
+    """Falling closes so %R sits near the LOWS — the RARE shape on 2026-08-20.
+
+    16 bars, short of rte_fast_length, is the window the desk actually had at
+    09:47 that morning: the session was 17 minutes old, so the line came off
+    the unsmoothed clock_range branch, which is what let one bad price pin the
+    reading to exactly -0.0.
+    """
+    rows = []
+    for i in range(n):
+        c = base - i * 0.05
+        rows.append((c + 0.02, c - 0.02, c))
+    return rows
+
+
+def _seed_ohlc(monkeypatch, symbol: str, rows: list[tuple[float, float, float]]):
+    """Put *rows* in the bar cache with tight 1-min stamps."""
+    import ai_entry_watch as ew
+
+    def fake_fetch(sym, cfg, t):
+        with ew._ohlc_cache_lock:
+            ew._ohlc_cache[str(sym).upper()] = (t, list(rows))
+            ew._ohlc_ts_cache[str(sym).upper()] = (
+                t, [t - 60.0 * (len(rows) - 1 - i) for i in range(len(rows))])
+        return [r[1] for r in rows]
+
+    monkeypatch.setattr(ew, "_fetch_symbol_lows", fake_fetch)
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache.pop(symbol, None)
+        ew._ohlc_ts_cache.pop(symbol, None)
+
+
+def _exh_cfg() -> dict:
+    return {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_exhaustion_live": True,
+        "ai_watch_exhaustion_trade_price_only": True,
+        "ai_watch_require_exhaustion_data": True,
+        "rte_fast_length": 21,
+        "ai_watch_exhaustion_max_window_mult": 10.0,
+    }
+
+
+def test_exhaustion_never_closes_on_the_ask(monkeypatch):
+    """An ask above the window cannot become the window high.
+
+    2026-08-20: RARE's tape was 26.46 into a falling window while the REST ask
+    stood at 28.50. The ask was folded into ``max(bar_highs + [px])``, became
+    the high, and %R came back as exactly -0.0 — EXH 100, "overbought" — while
+    the chart read 5. TEM printed the same 100 off a 68.13 ask on a 66.15
+    tape. The error only ever runs one way: an ask can only raise the high.
+    """
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _falling_ohlc()
+    _seed_ohlc(monkeypatch, "RARE", rows)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+
+    tape = rows[-1][2]              # 26.45-ish: the real print
+    ask = max(r[0] for r in rows) + 2.0   # a wide, stale offer above the range
+    rec = {"symbol": "RARE", "last_trade": tape}
+    cfg = _exh_cfg()
+
+    assert ew.ensure_live_exhaustion(rec, ask, cfg, now) is True
+    ind = rec["indicator"]
+    assert ind["pctr_px_src"] == "last_trade"
+    assert ind["pctr_src"] == "clock_range"
+    # Closed on the trade, so the reading is near the LOWS, not pinned at 0.
+    assert ind["pctr"] < -50.0, ind["pctr"]
+    assert ind["pctr"] != 0.0
+    assert ew.exhaustion_pct(rec) < 50.0
+    assert ew.exhaustion_state(rec, cfg) != "overbought"
+    # The ask never enters the window's range.
+    if ind.get("pctr_hh") is not None:
+        assert ind["pctr_hh"] < ask
+
+
+def test_exhaustion_prefers_the_live_tape_over_last_trade(monkeypatch):
+    """A fresh stream print wins; the record's older trade is the fallback."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _falling_ohlc()
+    _seed_ohlc(monkeypatch, "RARE", rows)
+    monkeypatch.setattr(ew, "live_print", lambda sym: (rows[-1][2] + 0.01, 1.0))
+
+    rec = {"symbol": "RARE", "last_trade": rows[-1][2] - 5.0}
+    cfg = _exh_cfg()
+    assert ew.ensure_live_exhaustion(rec, 99.0, cfg, now) is True
+    assert rec["indicator"]["pctr_px_src"] == "stream"
+
+    # A tape print of unknown or stale age is not proof of live, so the
+    # record's own trade takes over rather than the caller's ask.
+    monkeypatch.setattr(ew, "live_print", lambda sym: (rows[-1][2], None))
+    rec2 = {"symbol": "RARE", "last_trade": rows[-1][2]}
+    assert ew.ensure_live_exhaustion(rec2, 99.0, cfg, now) is True
+    assert rec2["indicator"]["pctr_px_src"] == "last_trade"
+
+
+def test_exhaustion_blanks_when_there_is_no_trade_to_close_on(monkeypatch):
+    """No trade anywhere → publish nothing. Absence beats a 100 OB invented
+    from an offer, and the buy gate refuses on the blank."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    monkeypatch.setattr(ew, "_fetch_symbol_lows", lambda sym, cfg, t: [])
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache.pop("RARE", None)
+        ew._ohlc_ts_cache.pop("RARE", None)
+
+    rec = {"symbol": "RARE", "indicator": {"pctr": -0.0, "pctr_src": "live"}}
+    cfg = _exh_cfg()
+    assert ew.ensure_live_exhaustion(rec, 28.50, cfg, now) is False
+    assert rec["indicator"]["pctr"] is None
+    assert rec["indicator"]["pctr_src"] == "no_trade_price"
+    ok, why = ew.exhaustion_allows_buy(rec, cfg)
+    assert ok is False and why == "no_exhaustion_data"
+
+
+def test_exhaustion_trade_price_only_can_be_turned_off(monkeypatch):
+    """The kill switch restores the old behaviour without a deploy."""
+    import ai_entry_watch as ew
+
+    now = 1_700_000_000.0
+    rows = _falling_ohlc()
+    _seed_ohlc(monkeypatch, "RARE", rows)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+
+    ask = max(r[0] for r in rows) + 2.0
+    rec = {"symbol": "RARE", "last_trade": rows[-1][2]}
+    cfg = _exh_cfg()
+    cfg["ai_watch_exhaustion_trade_price_only"] = False
+
+    assert ew.ensure_live_exhaustion(rec, ask, cfg, now) is True
+    # Old behaviour, and the bug verbatim: the ask closes the line, becomes
+    # the window high, and pins the reading to -0.0 — EXH 100, "overbought" —
+    # on a name sitting at its lows.
+    assert rec["indicator"]["pctr"] == 0.0
+    assert ew.exhaustion_pct(rec) == 100.0
+    assert ew.exhaustion_state(rec, cfg) == "overbought"

@@ -465,6 +465,23 @@ DEFAULT_CONFIG = {
     # 60-120s-old copy. Closed bars give the window, the live quote gives the
     # close — no new market data, just no waiting for a bar to close.
     "ai_watch_exhaustion_live":       True,
+    # The close that recompute uses must be a TRADE, never the ask.
+    #
+    # The decision price falls back to a REST ask whenever the tape goes
+    # quiet, and the live price is folded into the window high
+    # (max(bar_highs + [px])), so an ask above the window's range becomes the
+    # high and %R lands on exactly -0.0 — EXH 100, "overbought" — wherever the
+    # stock actually is. The error is one-directional: an ask can only raise
+    # the high, so the fallback manufactures overbought and never oversold.
+    #
+    # 2026-08-20 09:50: RARE published EXH 100 off a 28.50 ask against a
+    # 26.46 tape while the chart read 5 (near oversold); TEM published EXH 100
+    # off a 68.13 ask against a 66.15 tape. BMNR, whose print came from the
+    # stream, was correct at 92.4. Exact -0.0 / -100.0 in the column is the
+    # signature: the price itself set the window extreme.
+    #
+    # False restores the old behaviour (draw %R on whatever price arrives).
+    "ai_watch_exhaustion_trade_price_only": True,
     # Fade must persist this long before selling. SECONDS, not polls: the
     # position loop runs every 5s against a 60s engine refresh, so a poll count
     # measured the same stale reading repeatedly and fired ~12x early.
@@ -1124,6 +1141,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_left_overbought",
     "ai_watch_exhaustion_rules",
     "ai_watch_exhaustion_live",
+    "ai_watch_exhaustion_trade_price_only",
     "ai_watch_exhaustion_exit_sec",
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
