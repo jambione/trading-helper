@@ -1,0 +1,11 @@
+{
+  "min_n": 30,
+  "description": "Question 3 of 3 for 2026-08-21, and the weakest of the three. ai_watch_min_price = 5.0 turned away 14 names on 2026-08-20 whose forward return was +4.799% against +0.63% for the 20 admitted — an eight-fold gap, but desk_report flags it UNDERPOWERED and nothing here is randomized. Treat a win with real suspicion: percent moves get larger as price falls precisely because the spread is a larger share of price, and the simulator models no spread at all, so cheap names are exactly where it flatters itself most. A win in this grid is a reason to measure spread_r on sub-$5 candidates, not a reason to lower the floor. Exit and frame knobs pinned at live.",
+  "search": {
+    "min_price": [5.0, 3.0, 2.0, 1.0],
+    "synth_stop_pct": [5.0],
+    "give_r": [0.10],
+    "give_open_r": [0.10],
+    "min_give_px": [0.06]
+  }
+}

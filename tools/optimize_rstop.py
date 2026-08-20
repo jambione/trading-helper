@@ -85,6 +85,24 @@ OVERLAY_KEYS = {
     "be_at_r": "ai_local_trail_be_at_r",
     "be_at_pct": "ai_local_trail_be_at_pct",
     "synth_rr": "ai_watch_synth_rr",
+    # The size of 1R itself. Everything the desk expresses in R — give_r,
+    # arm_r, be_at_r, and the T1 distance via synth_rr — is a fraction of this,
+    # so sweeping it moves the whole frame at once and a win cannot be
+    # attributed to any single knob. That is the point: on 2026-08-20 the
+    # median trade's best moment was 0.046R, so the stop and the target both
+    # sat ~20x further out than the move ever travelled and only the trail was
+    # calibrated anywhere near the tape. Whether the frame fits the signal is
+    # not answerable while the frame is pinned at 5%.
+    "synth_stop_pct": "ai_watch_synth_stop_pct",
+    # Entry side. 29 of 59 entries on 2026-08-20 were taken at overbought, and
+    # the 90-100% exhaustion bucket returned -0.80% forward. heat_max_pct is
+    # the ceiling that would refuse them and ships disabled at 0.
+    "heat_max_pct": "ai_watch_exhaustion_heat_max_pct",
+    "ob_allow_hot": "ai_watch_ob_allow_hot",
+    # The $5 floor. Its rejects returned +4.80% forward against +0.63% for
+    # admits (n=14, underpowered) — a hypothesis that needs a real fold, and
+    # one that cannot be tested while the floor is fixed.
+    "min_price": "ai_watch_min_price",
     "heat_min_pct": "ai_watch_exhaustion_heat_min_pct",
     "dead_trade_min": "ai_dead_trade_min",
     "exhaustion_rules": "ai_watch_exhaustion_rules",
@@ -709,7 +727,17 @@ def render(payload: dict) -> str:
         )
     cands = [r for r in payload["cells"] if r["verdict"] == VERDICT_CANDIDATE]
     lines.append("")
-    if cands:
+    # A run that placed no trades has no verdict to give. Saying "keep live
+    # config" there reads as evidence the config is tuned, and for weeks it was
+    # printed by a simulator that could not arm a single bar — the desk filled
+    # 69 orders on a tape this tool walked with n=0 in every cell. Refuse.
+    if not any(int(r["pooled"]["n"] or 0) > 0 for r in payload["cells"]):
+        lines.append("EMPTY RUN — no cell placed a trade, baseline included.")
+        lines.append("  This is not evidence that the live config is tuned; it")
+        lines.append("  is a broken simulation. Say nothing about the config")
+        lines.append("  until a baseline run reports n > 0. Check the refuse")
+        lines.append("  counts from sim_rstop_path.walk_symbol for the reason.")
+    elif cands:
         best = max(cands, key=lambda r: float(r["held"]["total_dollar"]))
         lines.append(f"BEST CANDIDATE  held ${best['held']['total_dollar']:+.2f}")
         lines.append(f"  overlay: {json.dumps(best['overlay'])}")

@@ -1,0 +1,11 @@
+{
+  "min_n": 30,
+  "description": "Question 2 of 3 for 2026-08-21: does the risk frame fit the signal? ai_watch_synth_stop_pct = 5.0 makes 1R five percent of price, and on 2026-08-20 the median trade's best moment (MFE) was 0.046R and its worst 0.02R. The hard stop and the T1 target both sat about 20x further out than the trade ever travelled: T1 attached 34 times and filled zero, and all 59 trades resolved on the trail, the only mechanism calibrated near the actual 0.23% move. Shrinking 1R moves give_r, arm_r, be_at_r and the T1 distance together — the frame is swept as a unit, which is the only honest way to ask this. min_give_px is swept with it because a fixed 6-cent floor becomes an ever larger share of R as R shrinks and would otherwise silently dominate the tight cells. WARNING: a narrower stop is not free — it converts give-back into stop-outs, and the sim has no spread, so read held$ against baseline and treat any win as a hypothesis for forward test, never a config change.",
+  "search": {
+    "synth_stop_pct": [5.0, 2.5, 1.5, 1.0],
+    "synth_rr": [1.0, 0.6],
+    "min_give_px": [0.06, 0.03, 0.01],
+    "give_r": [0.10],
+    "give_open_r": [0.10]
+  }
+}
