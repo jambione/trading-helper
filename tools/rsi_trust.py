@@ -71,7 +71,7 @@ def _day(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).astimezone(ET).strftime("%Y-%m-%d")
 
 
-def _consistency(rows: list[dict]) -> dict:
+def _consistency(rows: list[dict], min_move: float | None = None) -> dict:
     """Does cm_rsi_rising agree with what cm_rsi actually did?"""
     by_sym: dict[str, list[tuple[float, float, bool]]] = defaultdict(list)
     for r in rows:
@@ -103,7 +103,8 @@ def _consistency(rows: list[dict]) -> dict:
                 continue
             prev_lvl = series[best[1]][1]
             delta = lvl - prev_lvl
-            if abs(delta) < FLAT_EPS:
+            floor = FLAT_EPS if min_move is None else max(FLAT_EPS, min_move)
+            if abs(delta) < floor:
                 flat += 1
                 continue
             actually_rising = delta > 0
@@ -136,6 +137,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=DEFAULT_PATH)
     ap.add_argument("--days", type=int, default=5)
+    ap.add_argument(
+        "--min-move", type=float, default=None,
+        help="only count comparisons where the level moved at least this "
+             "much. cm_rsi_rising is computed against 2 BARS back on a forming "
+             "series while this tool compares two log samples ~120s apart, so "
+             "small moves can disagree purely from window misalignment. A "
+             "large move contradicting the direction bit cannot.")
     ap.add_argument(
         "--since",
         help="ET clock time (HH:MM) to start from on the most recent day. Use "
@@ -174,7 +182,7 @@ def main() -> int:
     for day in sorted(by_day)[-args.days:]:
         day_rows = by_day[day]
         withr = [r for r in day_rows if r.get("cm_rsi") is not None]
-        cons = _consistency(day_rows)
+        cons = _consistency(day_rows, args.min_move)
         checked = cons["agree"] + cons["contradict"]
         prov = _provenance(day_rows)
 
