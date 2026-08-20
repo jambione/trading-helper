@@ -441,10 +441,20 @@ def register_trade_callback(cb):
 def _load_finnhub_key() -> str:
     """
     Load the Finnhub API key.
-    Priority: FINNHUB_API_KEY env var → secrets.json 'finnhub_key' field.
-    Returns empty string if not found (Finnhub stream will be skipped).
+
+    Priority: FINNHUB_API_KEY_ENGINE → FINNHUB_API_KEY → secrets.json
+    'finnhub_key'. Returns empty string if not found (stream is skipped).
+
+    FINNHUB_API_KEY_ENGINE exists because FINNHUB_API_KEY cannot hold an
+    engine-specific value: desk_core.CREDENTIAL_ENV maps secrets.json's
+    finnhub_key onto it, and apply_secrets_to_env deliberately lets
+    secrets.json outrank signal_engine.env (shell > secrets > env file). So a
+    second key placed in signal_engine.env as FINNHUB_API_KEY is loaded and
+    then overwritten by the dashboard's key before this function ever runs —
+    which is exactly the collision it was meant to resolve. This name is in no
+    overlay table, so nothing rewrites it.
     """
-    key = os.getenv("FINNHUB_API_KEY", "")
+    key = os.getenv("FINNHUB_API_KEY_ENGINE", "") or os.getenv("FINNHUB_API_KEY", "")
     if not key:
         secrets_path = _HERE / "config" / "secrets.json"
         if secrets_path.exists():
@@ -487,7 +497,8 @@ def _load_finnhub_key() -> str:
                 "       realtime bars never form and every indicator quietly\n"
                 "       falls back to Alpaca REST bars.\n"
                 "       Fix: put a second key in signal_engine.env as "
-                "FINNHUB_API_KEY."
+                "FINNHUB_API_KEY_ENGINE\n"
+                "       (NOT FINNHUB_API_KEY — secrets.json overwrites that one)."
             )
     return key
 
