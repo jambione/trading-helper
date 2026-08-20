@@ -280,5 +280,5 @@
   "ai_watch_require_live_pctr": false,
   "ai_watch_arm_require_cm_rsi": true,
   "ai_watch_require_realtime_rsi": false,
-  "ai_watch_arm_cm_rsi_max": 100.0
+  "ai_watch_arm_cm_rsi_max": 50.0
 }
