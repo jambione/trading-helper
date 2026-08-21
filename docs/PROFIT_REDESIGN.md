@@ -328,6 +328,9 @@ They do not fire while `desk_product=observe`.
 
 ## 12. Operator commands
 
+Watch/shadow starts **04:00 ET** (premarket). Auto-buy stays off
+(`observe`) and still requires RTH even if the product flag changes.
+
 After hours (brackets will not accept; do not place paper orders):
 
 ```bash

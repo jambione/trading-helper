@@ -259,7 +259,7 @@ DEFAULT_CONFIG = {
     # Entry watch poller (agreement queue + structure TTL / arming)
     "ai_watch_enabled":                 True,   # enable entry-watch queue
     # Weekdays: seed/sync AI Watch from this ET time until EOD liquidate.
-    "ai_watch_start_time":           "09:00",   # ET — watching begins
+    "ai_watch_start_time":           "04:00",   # ET — watch/shadow from premarket; buys still RTH + desk_product
     "ai_watch_require_agreement":      False,   # only watch AX-agreed names
     "ai_watch_single_source":          False,   # allow single-source watch when True
     "ai_watch_poll_sec":                20.0,   # watch poll interval (seconds)
@@ -981,7 +981,7 @@ def validate_ai_config(cfg: dict) -> list[str]:
         except Exception:
             return None
 
-    start = _hhmm("ai_watch_start_time", "09:00")
+    start = _hhmm("ai_watch_start_time", "04:00")
     bell = _hhmm("ai_open_bell_time", "09:35")
     eod = _hhmm("ai_eod_liquidate_time", "15:50")
     if None not in (start, bell, eod) and not (start <= bell < eod):

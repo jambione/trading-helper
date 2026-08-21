@@ -1597,10 +1597,11 @@ def past_eod_liquidate_time(cfg: dict | None, now: float | None = None) -> bool:
 
 
 def watch_session_active(cfg: dict | None, now: float | None = None) -> bool:
-    """True on weekdays from ``ai_watch_start_time`` (default 09:00 ET) until EOD.
+    """True on weekdays from ``ai_watch_start_time`` (default 04:00 ET) until EOD.
 
-    AI Watch may seed/sync and refresh structure in this window. Paper *entries*
-    still require regular-session market hours (see ``trading_hours_active``).
+    AI Watch may seed/sync and refresh structure in this window (premarket
+    from 4:00). Paper *entries* still require regular-session market hours
+    (see ``trading_hours_active``) and ``desk_product``.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not cfg.get("ai_watch_enabled", True):
@@ -1611,7 +1612,7 @@ def watch_session_active(cfg: dict | None, now: float | None = None) -> bool:
     if past_eod_liquidate_time(cfg, now):
         return False
     start_h, start_m = _parse_hhmm(
-        str(cfg.get("ai_watch_start_time") or "09:00"), (9, 0))
+        str(cfg.get("ai_watch_start_time") or "04:00"), (4, 0))
     return (dt.hour, dt.minute) >= (start_h, start_m)
 
 
@@ -5097,7 +5098,7 @@ def _session_decay(cfg: dict, now: float) -> float:
         floor = 0.5
     floor = max(0.1, min(1.0, floor))
     try:
-        sh, sm = _parse_hhmm(str(cfg.get("ai_watch_start_time", "09:00")), (9, 0))
+        sh, sm = _parse_hhmm(str(cfg.get("ai_watch_start_time", "04:00")), (4, 0))
         eh, em = _parse_hhmm(str(cfg.get("ai_eod_liquidate_time", "15:50")), (15, 50))
         start, end = sh * 60 + sm, eh * 60 + em
         et = _et_now(now)
@@ -7117,7 +7118,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         pass
 
-    # Watching window: 09:00 ET → EOD liquidate (default 15:50). Structure /
+    # Watching window: 04:00 ET → EOD liquidate (default 15:50). Structure /
     # quotes refresh here; buys only when trading_hours_active (RTH).
     if not watch_session_active(cfg, t0):
         if past_eod_liquidate_time(cfg, t0):

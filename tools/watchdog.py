@@ -63,7 +63,7 @@ BACKOFF_BASE_SEC = 5.0
 BACKOFF_CAP_SEC  = 120.0
 
 # Learning-loop schedules (ET). Pure helpers below are unit-tested.
-DEFAULT_INSTR_START = "09:00"   # match ai_watch_start_time when config missing
+DEFAULT_INSTR_START = "04:00"   # match ai_watch_start_time when config missing
 DEFAULT_EOD_HHMM = "16:05"      # after cash close; outcomes settled
 
 

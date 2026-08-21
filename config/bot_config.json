@@ -141,7 +141,7 @@
   "ai_duel_close_before_research_min": 10,
   "ai_duel_trial_end_time": "",
   "ai_duel_chance3_time": "14:30",
-  "ai_watch_start_time": "09:00",
+  "ai_watch_start_time": "04:00",
   "use_rvol": true,
   "min_rvol": 2,
   "trending_max_price": 35.0,
