@@ -94,7 +94,7 @@ let _spikesPrimed   = false;
 // silence the interrupting alerts while keeping an audible cue for the desk
 // actually opening and closing money. A single mute could not express that.
 //
-// Toasts and their beeps default OFF; position sounds default ON.
+// Everything defaults OFF. The desk makes no noise unless asked.
 const _TOASTS_OFF_KEY = 'ss:toasts-off';        // in-page toast cards
 const _ALERT_SOUNDS_OFF_KEY = 'ss:alert-sounds-off';   // the _beep alerts
 const _POS_SOUNDS_OFF_KEY = 'ss:position-sounds-off';  // open / close chimes
@@ -108,8 +108,8 @@ function _flag(key, dflt) {
 export function toastsMuted() { return _flag(_TOASTS_OFF_KEY, true); }
 /** Alert beeps (burst / buy_zone / ax) suppressed. Default true. */
 export function alertSoundsMuted() { return _flag(_ALERT_SOUNDS_OFF_KEY, true); }
-/** Position open/close chimes suppressed. Default false — these stay on. */
-export function positionSoundsMuted() { return _flag(_POS_SOUNDS_OFF_KEY, false); }
+/** Position open/close chimes suppressed. Default true — the desk is silent. */
+export function positionSoundsMuted() { return _flag(_POS_SOUNDS_OFF_KEY, true); }
 
 export function setToastsMuted(on) {
   localStorage.setItem(_TOASTS_OFF_KEY, String(!!on));
