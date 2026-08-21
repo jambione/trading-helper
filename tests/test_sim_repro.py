@@ -37,22 +37,32 @@ def test_pinned_values_match_the_writeup():
     """
     want = json.loads((_FIXTURE / "expected.json").read_text())
 
-    # Hybrid arm gate is exactly exhaustion_scalp.
-    assert want["hybrid_arms"] == 148
+    # Re-pinned 2026-08-21 after the replay RSI fix. Until then the simulator
+    # could not write cm_rsi_rising, so should_arm_buy refused every bar in a
+    # replay and these numbers came from a sim that never armed on direction.
+    # The hybrid arm gate is still exactly exhaustion_scalp — that identity
+    # held — but the count moved once the gate could actually see a turn.
+    assert want["hybrid_arms"] == 194
     assert want["hybrid_scalp_mismatch"] == 0
     assert want["in_zone_n"] == 1076
 
     # Only half the left_overbought trades were overbought at entry.
     assert want["exit_n_scored"] == 8
     assert want["book_hybrid_n"] == 4
-    # Strict and loose admission agree — that agreement is the error bar.
-    assert want["book_hybrid_r"] == pytest.approx(want["book_hybrid_loose_r"])
-    assert want["book_hybrid_r"] == pytest.approx(1.783, abs=5e-3)
+    # Strict and loose admission NO LONGER agree: -0.72R vs -0.12R on the same
+    # four trades. That agreement was quoted as the error bar for the hybrid
+    # recommendation, so its collapse is the point — on four trades the
+    # admission rule alone moves the answer by 0.6R. Pinned apart deliberately
+    # so a future run that makes them agree again is loud, not invisible.
+    assert want["book_hybrid_r"] == pytest.approx(-0.724, abs=5e-3)
+    assert want["book_hybrid_loose_r"] == pytest.approx(-0.123, abs=5e-3)
 
-    # Books over those trades.
+    # Books over those trades. The hybrid was recommended at +$127.49 here;
+    # with the simulator fixed the same tape gives -$56.76, i.e. slightly
+    # worse than live rather than three times better. See BENCHMARKS.md.
     assert want["book_live_usd"] == pytest.approx(-56.15, abs=0.01)
     assert want["book_cont_usd"] == pytest.approx(70.73, abs=0.01)
-    assert want["book_hybrid_usd"] == pytest.approx(127.49, abs=0.01)
+    assert want["book_hybrid_usd"] == pytest.approx(-56.76, abs=0.01)
 
     # Whole session, day-filtered. The unfiltered read mixed in other
     # sessions and invented a cohort of blind entries; 08-11 has none.

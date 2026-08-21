@@ -79,6 +79,37 @@ is consistent across 17 configs and both halves.
 (`exhaustion_scalp` arm gate, continuation-style exit). Fixture:
 `tests/fixtures/sim_2026-08-11/`. Estimate: live −$117.60 → hybrid +$109.34.
 
+> **RETRACTED 2026-08-21 — the numbers above came from a simulator that could
+> not arm.** `apply_live_exhaustion` never wrote `cm_rsi_rising` on the local
+> path, so in a replay (no signal engine) `should_arm_buy` answered
+> `rsi_not_rising` on every bar. Fixed in `sim_rstop_path` / `live_cm_rsi`.
+> Re-running the same frozen fixture afterwards:
+>
+> | figure | as published | re-pinned 08-21 |
+> |---|---|---|
+> | `book_hybrid_usd` | **+$127.49** | **−$56.76** |
+> | `book_hybrid_r` | +1.783 | −0.724 |
+> | `book_hybrid_loose_r` | +1.783 | −0.123 |
+> | `hybrid_arms` | 148 | 194 |
+>
+> On the four trades the book is measured over, the hybrid goes from roughly
+> three times better than live to slightly worse than it. The strict/loose
+> agreement quoted as the error bar is also gone (−0.72R vs −0.12R), so on
+> n=4 the admission rule alone moves the answer by 0.6R.
+>
+> What survives: the arm gate is still exactly `exhaustion_scalp`
+> (`hybrid_scalp_mismatch` 0), and the day-filtered figures (`day_live_usd`
+> −$117.60, `day_hybrid_usd` +$109.34, `day_swing_usd` +$226.94) are
+> unchanged — they are scored off outcome rows, not off simulated arms. The
+> **book** figures are what moved, and they were the basis of the
+> recommendation.
+>
+> Treat the hybrid edge mode as unsupported until it is re-derived through
+> the current gates (`tools/desk_null.py` → `thesis_screen` → `optimize_rstop`).
+> The 2026-08-20 measurement work found no entry configuration on this
+> watchlist that clears friction; see `GROK_HANDOFF.md`. Every sweep verdict
+> printed before 2026-08-20 was produced by this same non-arming simulator.
+
 **Forward-test ops (shipped 2026-08-12):**
 
 1. Regime stamps on outcomes / trades / shadow / rejects:
