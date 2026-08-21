@@ -54,8 +54,13 @@ def main() -> int:
     days = sorted({bars.day_of(r["ts"]) for r in rows if r.get("ts")})[-args.days:]
     dayset = set(days)
 
-    per = defaultdict(lambda: {"eval": 0, "bid": 0, "sp": 0, "locked": 0})
-    vals = []
+    # Pre-market books are wide for reasons that have nothing to do with the
+    # names: at 07:00 a median spread of 1.75R is the session, not the symbol.
+    # Pooling the two makes the record look ruinous before the open and fine
+    # after it, so they are counted apart and only RTH prices the threshold.
+    per = defaultdict(lambda: {"eval": 0, "bid": 0, "sp": 0, "locked": 0,
+                               "pre": 0})
+    vals, pre_vals = [], []
     for r in rows:
         ts = r.get("ts")
         if not ts:
@@ -63,7 +68,10 @@ def main() -> int:
         day = bars.day_of(ts)
         if day not in dayset or r.get("arm_ok") is None:
             continue
+        rth = 9 * 60 + 30 <= bars.et_minutes(ts) < 16 * 60
         d = per[day]
+        if not rth:
+            d["pre"] += 1
         d["eval"] += 1
         bid, ask = r.get("bid"), r.get("price")
         if bid is not None:
@@ -77,7 +85,7 @@ def main() -> int:
         if sp is not None:
             d["sp"] += 1
             try:
-                vals.append(float(sp))
+                (vals if rth else pre_vals).append(float(sp))
             except (TypeError, ValueError):
                 pass
 
@@ -86,22 +94,32 @@ def main() -> int:
               "the desk has not started evaluating candidates")
         return 0
 
-    print(f"{'session':<12} {'arm-eval':>9} {'bid':>7} {'spread_r':>9} {'locked':>8}")
-    print("-" * 50)
+    print(f"{'session':<12} {'arm-eval':>9} {'pre-mkt':>8} {'bid':>7} "
+          f"{'spread_r':>9} {'locked':>8}")
+    print("-" * 58)
     for day in sorted(per):
         d = per[day]
         n = max(1, d["eval"])
-        print(f"{day:<12} {d['eval']:>9} {100*d['bid']/n:>6.0f}% "
+        print(f"{day:<12} {d['eval']:>9} {d['pre']:>8} {100*d['bid']/n:>6.0f}% "
               f"{100*d['sp']/n:>8.0f}% {d['locked']:>8}")
 
-    if vals:
-        vals.sort()
-        q = lambda p: vals[int(p * (len(vals) - 1))]  # noqa: E731
-        print(f"\nspread_r  n={len(vals)}  p10 {q(.1):.3f}  median {q(.5):.3f}  "
-              f"p90 {q(.9):.3f}  max {max(vals):.2f}   (R units)")
-        cheap = sum(1 for v in vals if v <= 0.01)
-        print(f"genuinely cheap moments (<= 0.01R): {100*cheap/len(vals):.0f}% "
-              f"— this is the tail a spread rule would trade")
+    def _dist(label, xs):
+        if not xs:
+            print(f"\n{label}: no rows yet")
+            return
+        xs = sorted(xs)
+        q = lambda p: xs[int(p * (len(xs) - 1))]  # noqa: E731
+        cheap = sum(1 for v in xs if v <= 0.01)
+        print(f"\n{label}  n={len(xs)}  p10 {q(.1):.3f}  median {q(.5):.3f}  "
+              f"p90 {q(.9):.3f}  max {max(xs):.2f}   (R units)")
+        print(f"  cheap moments (<= 0.01R): {100*cheap/len(xs):.0f}%")
+
+    _dist("RTH spread_r      ", vals)
+    _dist("PRE-MARKET spread_r", pre_vals)
+    if pre_vals and not vals:
+        print("\n  Only pre-market so far — those books are wide for reasons")
+        print("  that have nothing to do with these names. Re-run after 09:30;")
+        print("  the RTH line is the one that prices the threshold.")
 
     # The record the gate was actually waiting on: cost beside result.
     got = tot = 0
