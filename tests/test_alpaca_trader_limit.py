@@ -19,6 +19,19 @@ import mac_agent as ma  # noqa: E402  (repo root is on sys.path under `python -m
 
 
 @pytest.fixture(autouse=True)
+def _allow_this_host(monkeypatch):
+    """Order mechanics must not depend on which box runs the suite.
+
+    ai_trading_host names the Mac mini, so _host_allowed() is False anywhere
+    else and every mutating path returns trader_off — these files passed on
+    the desk and failed on a laptop, which reads as a broken test suite rather
+    than as the guard doing its job. The guard has its own coverage in
+    test_trading_host_guard.py; here it is noise.
+    """
+    monkeypatch.setattr(tr, "_host_allowed", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _restore_protection_guard():
     """_arm_trader rebinds module-level globals, which would otherwise leak
     into every later test file and silently disable the no-naked-buy policy.

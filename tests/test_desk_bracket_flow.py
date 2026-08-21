@@ -6,6 +6,8 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "momentum-monitor"))
 
@@ -13,6 +15,20 @@ import alpaca_trader as tr  # noqa: E402
 import desk_risk as dr  # noqa: E402
 from auto_limit import AutoLimitState, constructive_setup, process_rows  # noqa: E402
 import desk_actions as desk  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _allow_this_host(monkeypatch):
+    """Order mechanics must not depend on which box runs the suite.
+
+    ai_trading_host names the Mac mini, so _host_allowed() is False anywhere
+    else and every mutating path returns trader_off — these files passed on
+    the desk and failed on a laptop, which reads as a broken test suite rather
+    than as the guard doing its job. The guard has its own coverage in
+    test_trading_host_guard.py; here it is noise.
+    """
+    monkeypatch.setattr(tr, "_host_allowed", lambda: True)
+
 
 
 def _good_row(sym="SOFI", **sp_extra):

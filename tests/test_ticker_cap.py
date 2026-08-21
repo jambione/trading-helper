@@ -25,6 +25,14 @@ def _seed(tmp_path, monkeypatch, entries):
     monkeypatch.setattr(d, "TICKER_LOG", p)
     monkeypatch.setattr(d, "_ticker_cache",
                         {"mtime": -1.0, "tickers": [], "entries": []})
+    # These tests are about cap arithmetic. _committed_symbols() reads the
+    # shared temp report dir (entry_watch_state.json / positions_state.json)
+    # and protects whatever it finds from eviction, so any earlier test file
+    # that seeded a watch book made this one keep cap+1 names — the failures
+    # appeared only in a full run and never in isolation. Protection of held
+    # and watched names has its own file: test_held_positions_never_evicted.
+    monkeypatch.setattr(d, "_committed_symbols", frozenset)
+    monkeypatch.setattr(d, "_held_cache", (0.0, frozenset()))
     return p
 
 

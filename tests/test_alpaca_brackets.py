@@ -8,6 +8,20 @@ import alpaca_trader as tr
 
 
 @pytest.fixture(autouse=True)
+def _allow_this_host(monkeypatch):
+    """Order mechanics must not depend on which box runs the suite.
+
+    ai_trading_host names the Mac mini, so _host_allowed() is False anywhere
+    else and every mutating path returns trader_off — these files passed on
+    the desk and failed on a laptop, which reads as a broken test suite rather
+    than as the guard doing its job. The guard has its own coverage in
+    test_trading_host_guard.py; here it is noise.
+    """
+    monkeypatch.setattr(tr, "_host_allowed", lambda: True)
+
+
+
+@pytest.fixture(autouse=True)
 def _restore_protection_guard():
     """One test rebinds the module-level no-naked-buy guard; without this it
     leaks into every later test file and silently disables the policy."""
