@@ -3572,7 +3572,7 @@ def test_pos_spread_r_reads_the_entry_features():
 # the next tick sold it.
 
 
-def _be_pos(spread_r=0.283):
+def _be_spread_pos(spread_r=0.283):
     """BKKT-shaped: $8.47 fill, $0.41 risk, $0.116 round trip."""
     return {"entry_price": 8.47, "entry_stop_price": 8.06,
             "risk_per_share": 0.41, "peak_price": 8.4827,
@@ -3581,7 +3581,7 @@ def _be_pos(spread_r=0.283):
             "mfe_r": 0.031, "features": {"spread_r": spread_r}}
 
 
-def _be_cfg(**over):
+def _be_spread_cfg(**over):
     cfg = {"ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.10,
            "ai_local_trail_min_give_px": 0.06,
            "ai_local_trail_be_at_pct": 0.15}
@@ -3591,28 +3591,28 @@ def _be_cfg(**over):
 
 def test_breakeven_floor_arms_on_a_third_of_the_spread_today(monkeypatch):
     """The live behaviour, pinned so the fix is visibly a change."""
-    cfg = _be_cfg()
+    cfg = _be_spread_cfg()
     monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
     # Up 0.031R = $0.0127 = 0.15% of price, which trips be_at_pct... while the
     # round trip is $0.116, nine times that. The shelf goes to entry + $0.01.
-    got = cp.local_profit_stop(_be_pos(), cfg)
+    got = cp.local_profit_stop(_be_spread_pos(), cfg)
     assert got == pytest.approx(8.48), "shelf pinned a cent over the fill"
     assert got > 8.4827 - 0.02, "and that is inside the next tick"
 
 
 def test_spread_gate_refuses_to_protect_a_gain_under_the_round_trip(monkeypatch):
     """k round trips of real profit before breakeven is locked."""
-    cfg = _be_cfg(ai_local_trail_be_at_spread_k=1.0)
+    cfg = _be_spread_cfg(ai_local_trail_be_at_spread_k=1.0)
     monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
     # mfe 0.031R against a 0.283R round trip — nowhere near one spread.
-    got = cp.local_profit_stop(_be_pos(), cfg)
+    got = cp.local_profit_stop(_be_spread_pos(), cfg)
     assert got < 8.47, "must not lock breakeven on a third of the spread"
 
 
 def test_spread_gate_lets_the_floor_arm_once_the_trade_has_really_cleared(monkeypatch):
-    cfg = _be_cfg(ai_local_trail_be_at_spread_k=1.0)
+    cfg = _be_spread_cfg(ai_local_trail_be_at_spread_k=1.0)
     monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
-    pos = _be_pos()
+    pos = _be_spread_pos()
     pos["mfe_r"] = 0.40          # > 1 x 0.283R round trip
     pos["peak_price"] = 8.634
     pos["last_seen_price"] = pos["trail_last"] = 8.634
@@ -3623,12 +3623,12 @@ def test_spread_gate_lets_the_floor_arm_once_the_trade_has_really_cleared(monkey
 def test_be_spread_gate_is_off_by_default_and_needs_a_reading(monkeypatch):
     """Inert as shipped, and never guesses when the spread is unknown."""
     assert cp.DEFAULT_BE_AT_SPREAD_K == 0.0
-    cfg = _be_cfg()
+    cfg = _be_spread_cfg()
     monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
-    assert cp.local_profit_stop(_be_pos(), cfg) == pytest.approx(8.48)
+    assert cp.local_profit_stop(_be_spread_pos(), cfg) == pytest.approx(8.48)
     # k set but no spread on the row: old behaviour, not a guessed bar.
-    cfg2 = _be_cfg(ai_local_trail_be_at_spread_k=1.0)
+    cfg2 = _be_spread_cfg(ai_local_trail_be_at_spread_k=1.0)
     monkeypatch.setattr(cp, "_cfg_all", lambda: cfg2)
-    pos = _be_pos(spread_r=None)
+    pos = _be_spread_pos(spread_r=None)
     pos["features"] = {}
     assert cp.local_profit_stop(pos, cfg2) == pytest.approx(8.48)
