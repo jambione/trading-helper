@@ -1,0 +1,11 @@
+{
+  "min_n": 30,
+  "description": "Set the two spread-relative stop knobs from the record rather than from reasoning. 2026-08-21 was the first session with an honest crossing-cost log (90% coverage, RTH median spread 0.091R) and it showed two mechanisms ending trades before the market did. The breakeven floor armed at be_at_pct 0.15% of price against a 0.49% book — a third of the spread — and pinned the shelf to entry + $0.01 on 45% of every raise; the give sat at $0.06 inside an $0.08-0.18 round trip, so 62% of RTH moments had a spread wider than the whole cushion. 59% of the day's trades never moved further against the desk than one round trip: their entire adverse excursion fits inside what they paid to be there. give_spread_k floors the cushion at k round trips, be_at_spread_k refuses to protect a fill until it has cleared k round trips. Swept TOGETHER because fixing one alone only changes which mechanism ends the trade — widen the give and the breakeven floor still pins the shelf to the fill, raise the floor and the shelf falls back inside the book. Priors from first principles, not fitted: the quote oscillates half a spread, so give_spread_k 1.0 is the bare minimum and 1.5-2.0 leaves margin; be_at_spread_k 1.0 is the natural definition of 'has actually covered its costs'. 0 in both columns is the live config and must be in the grid as the thing to beat. CAVEAT: the sim charges no spread at all, so it flatters every cell equally and understates how much cushion is really needed; and paper exits are ~0.09R cheaper than live. Read the ranking, not the absolute dollars.",
+  "search": {
+    "give_spread_k": [0.0, 1.0, 1.5, 2.0, 3.0],
+    "be_at_spread_k": [0.0, 1.0, 2.0],
+    "give_r": [0.10],
+    "give_open_r": [0.10],
+    "min_give_px": [0.06]
+  }
+}
