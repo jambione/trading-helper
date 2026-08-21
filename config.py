@@ -709,6 +709,10 @@ DEFAULT_CONFIG = {
     # crossing its own spread tripped it without the market moving. Set from
     # the spread record, not guessed.
     "ai_local_trail_give_spread_k":    0.0,
+    # Breakeven floor may not arm until the trade has cleared this many
+    # round trips. 0 = off. be_at_pct alone armed on a third of the spread
+    # and pinned the shelf a cent over entry on 45% of raises.
+    "ai_local_trail_be_at_spread_k":   0.0,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
@@ -1261,6 +1265,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",
     "ai_local_trail_give_spread_k",
+    "ai_local_trail_be_at_spread_k",
     "ai_local_trail_min_give_px",
     "ai_local_trail_min_give_max_r",
     "ai_breakeven_offset_px",

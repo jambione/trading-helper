@@ -87,6 +87,10 @@ OVERLAY_KEYS = {
     # whole cushion and the quote tripped the stop without the market moving.
     # Sweepable from the start so k comes off the spread record, not a guess.
     "give_spread_k": "ai_local_trail_give_spread_k",
+    # Same idea on the breakeven side: do not protect a fill until it has
+    # cleared k round trips. Swept beside give_spread_k because fixing one
+    # without the other just changes which mechanism ends the trade.
+    "be_at_spread_k": "ai_local_trail_be_at_spread_k",
     "print_ring": "ai_local_trail_print_ring",
     "be_at_r": "ai_local_trail_be_at_r",
     "be_at_pct": "ai_local_trail_be_at_pct",

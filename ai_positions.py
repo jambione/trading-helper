@@ -135,6 +135,11 @@ DEFAULT_LOCAL_TRAIL_DAMP_SEC = 2.0
 # a percent of price cannot know that; both were set with no reference to the
 # book. Set from the record ai_max_spread_r was always waiting for, not guessed.
 DEFAULT_LOCAL_TRAIL_SPREAD_K = 0.0
+# Breakeven floor may not arm until the trade has cleared this many round
+# trips. 0 = off (shipped). Sibling of the give knob above and the same
+# lesson: be_at_pct is 0.15% of price against a 0.49% book, so the floor
+# fired on a third of the spread and parked the stop a cent above entry.
+DEFAULT_BE_AT_SPREAD_K = 0.0
 # Breakeven is not flat. A shelf parked exactly at the fill scratches — the
 # round-trip costs the spread twice and books zero. Park it this many cents
 # ABOVE the fill instead, so a name that ran and came back is still green.
@@ -2509,6 +2514,28 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
             # expressed against price — no extra state to keep in step.
             gain_pct = float(mfe) * float(risk) / float(entry) * 100.0
             be_hit = gain_pct + 1e-9 >= be_at_pct
+    # A gain smaller than the round trip is not a gain, and locking breakeven
+    # on it is how a trade dies. be_at_pct is 0.15% of price against a median
+    # book of 0.49%, so on 2026-08-21 the floor armed on roughly a third of the
+    # spread and slammed the shelf to entry + $0.01 — three tenths of a cent
+    # under the market on BKKT. 45% of every shelf raise that day landed
+    # exactly there, and the next tick sold it.
+    #
+    # This is a floor UNDER the other triggers, deliberately not another one
+    # beside them: be_at_r and be_at_pct are ORed, so a third OR would arm the
+    # floor even earlier, which is the opposite of the problem. Whatever they
+    # say, do not protect a fill until it has actually cleared k round trips.
+    # 0 = off, and no spread reading means no opinion.
+    if be_hit:
+        try:
+            be_k = float(cfg.get("ai_local_trail_be_at_spread_k",
+                                 DEFAULT_BE_AT_SPREAD_K) or 0.0)
+        except (TypeError, ValueError):
+            be_k = DEFAULT_BE_AT_SPREAD_K
+        sp = _pos_spread_r(pos)
+        if be_k > 0 and sp is not None and sp > 0:
+            if float(mfe) + 1e-9 < be_k * sp:
+                be_hit = False
     be_floor = (breakeven_floor(entry, cfg) or float(entry)) if be_hit else None
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
