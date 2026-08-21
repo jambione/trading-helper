@@ -1,344 +1,254 @@
-# Handoff: state of the desk, 2026-08-20 EOD
+# Handoff: state of the desk, 2026-08-21
 
-Audience: Grok, as book owner and research agent on this desk. You have no
-access to the session that produced this, so it is self-contained. It states
-what was measured today, what instruments now exist, what the options are, and
-where the current plan points — and it ends with specific questions, because
-the point of this document is your independent read, not your agreement.
-Challenge anything here; every claim carries its evidence and its weakness.
+Audience: Claude, picking up after Grok. You have no access to the sessions
+that produced this. It is self-contained. Challenge anything; claims carry
+evidence and weakness.
 
-## 1. What happened today, in one paragraph
+**Git:** `master-mac` @ `97120f6` — *Add honest entry nulls and a late-hold
+path that stays off.* MacBook, origin, and mini are on this HEAD.
 
-The desk's strategy — momentum continuation on the daily watchlist, ~86-second
-holds, mechanical trail exits — was measured against controls for the first
-time and showed **no positive edge at any layer**: entry timing is *negatively*
-predictive (4.2σ), name selection is indistinguishable from random liquid names
-(0.6σ), and no exit configuration clears friction. Separately, the tuning
-simulator turned out to have placed **zero trades ever** — every historical
-"no overlay beat live, do not change config" verdict was empty. The simulator
-is fixed, the measurement stack is rebuilt on 1m bars, and the open question
-has moved from "what settings" to "what entry thesis, if any, has edge".
+**Who built what**
 
-## 2. The evidence
-
-### 2a. The day's book (2026-08-20, paper)
-
-59 closed trades, **28.8% win rate**, sum −0.33R. 55 of 59 exits were
-`local_trail`, median hold 86 seconds, median MFE +0.04R / MAE −0.02R.
-Median run-up before a trail exit +0.23%; median give-back from peak +0.23% —
-the trail returns the whole typical move and pays the spread. Post-exit drift:
-+0.13% @5m, −0.09% @15m, −0.23% @30m, so the trail is *not* cutting winners;
-there is nothing to cut.
-
-### 2b. Admission timing is negative (`tools/admission_null.py`)
-
-593 RTH admissions, 2026-08-14..20, SIP 1m bars, paired per admission:
-
-| horizon | admitted − WITHIN (random instant, same name/day) | beat | σ |
-|---|---|---|---|
-| 5m | −0.038% | 46% | 2.0 |
-| 15m | −0.208% | 41% | 4.3 |
-| 30m | −0.355% | 41% | 4.2 |
-| 60m | −0.421% | 43% | 3.4 |
-
-The admission moment is reliably **worse than a random moment in the same
-name**. Meanwhile admitted − ACROSS (other watched names, same instant) ≈ 0,
-and admitted − OUTSIDE (price-matched liquid names never watched) is −0.019%,
-0.6σ: **selection adds nothing measurable either**. Caveat: OUTSIDE is
-price-matched but not volatility-matched, so it is a calmer pool; the paired
-direction stands, the magnitude comparison is soft.
-
-**A second caveat surfaced by the rule screen (§6): the WITHIN control is
-loaded with hindsight.** Its random instants span the whole session, but a
-name joins the watchlist *because* it moved that morning — so the dart gets to
-buy a run-up the desk could never have traded, because the name was not on the
-list yet. The magnitude of "worse than random" is therefore inflated by an
-unknown amount. The same-instant controls (ACROSS, OUTSIDE) carry no
-hindsight, and against them the desk is flat, not negative. The defensible
-claim is: **no positive timing edge against any same-instant alternative**,
-not "reliably destructive".
-
-### 2c. But the watched names themselves drift
-
-WITHIN — buy a watched name at a *random* RTH moment:
-
-| horizon | median | up% | mean |
-|---|---|---|---|
-| 5m | +0.000% | 49% | ~0 |
-| 30m | +0.099% | 59% | +0.309% |
-| 60m | +0.149% | 57% | **+0.681%** |
-
-Drift turns on past ~15m, and the 60m mean is 4–5× the median — fat right
-tail. The desk harvests at 86 seconds, where the median move is exactly zero.
-
-### 2d. The exhaustion gate points backwards (bar-scored, `tools/desk_report.py`)
-
-Forward 30m by %R-exhaustion at the decision moment:
-
-| bucket | n | fwd |
+| Who | When | What |
 |---|---|---|
-| 0–25% | 963 | **+0.309%** |
-| 25–50% | 815 | **+0.334%** |
-| 50–75% | 949 | −0.626% |
-| 75–90% | 607 | +0.511% ← non-monotonic; treat with suspicion |
-| 90–100% | 234 | −0.591% |
+| Claude (Opus) | 2026-08-20 day | First honest measurement of the scalp. Simulator-never-traded bug. 1m-bar scoring. `entry_rule_screen`. Original §§2–6 below. |
+| Grok | 2026-08-20 night → 21 | Independent read of that evidence. Measurement kernel (`desk_null`). `thesis_screen`. Late-hold sweep. Late-hold *code* (flag **off**). Commit + deploy. |
 
-Live config requires **heat ≥ 40** (`ai_watch_exhaustion_heat_min_pct=40`,
-no ceiling): the floor excludes the only consistently positive range, and
-`heating_too_low` refused 527 arms today. Corroboration: `replay_ab`'s
-overbought core, n=851, mean −0.67%. A 5-day sweep of the heat gate
-(`tools/rstop_search_entry_heat.json`) produced **no candidate**: best cell
-(heat_min=0, max=75) made +$23.90 on n=149 but won 1/5 held-out folds, with an
-incoherent response curve (min=20 → −$70) and friction larger than the gain.
-Important limit: every cell kept the live 86-second exits, so cool entries
-were never tested at a horizon where they could work. Entry and horizon are
-coupled; that grid varied only one.
+---
 
-### 2e. The risk frame does not fit the signal
+## 0. Where we are, in one page
 
-1R = 5% of price (`ai_watch_synth_stop_pct=5`). Median trade MFE is 0.046R —
-stop and T1 sit ~20× beyond anything the trade does. T1 attached 34 times
-today and filled zero. Every trade resolves on the trail, the only mechanism
-scaled anywhere near the tape.
+The live product is still the **daytime momentum scalp** (heat ≥ 40, 5% 1R,
+0.10R working shelf, ~86s holds, IEX, 2 slots, flatten 15:50, paper). Those
+knobs are **frozen**. Do not retune RSI / heat / trail on this watchlist at
+this horizon — that feature family is falsified.
 
-## 3. What was broken and is now fixed
+What changed is the **lab**:
 
-1. **The simulator never traded.** Two causes: the desk runs
-   `ai_watch_cm_rsi_local=False` (the engine publishes CM RSI-2; a replay has
-   no engine, so every bar refused `no_rsi_data`), and once forced local, the
-   `cm_rsi_rising` direction was never written, so every bar refused
-   `rsi_not_rising`. Fixed in `sim_rstop_path.try_arm` + `live_cm_rsi`. Same
-   command, same tape: n=0 → n=42 (1 day) / 225 (5 days). **Every config
-   decision ever justified by a sweep was justified by nothing.**
-2. **Empty runs now refuse to render a verdict** (`EMPTY RUN` guard in
-   `optimize_rstop` and `replay_ab`) and print arm-refusal counts. Before
-   quoting any sweep, check n > 0 including baseline.
-3. **`desk_report` forward returns were biased**: scored off the shadow
-   series, which only exists while the desk watches a name — conditioning on
-   a post-decision variable (median episode 383s vs 30m horizon). All forward
-   returns now come from 1m bars via `tools/bars.py` (one shared fetcher; four
-   tools use it).
-4. **Six knobs were unsweepable**, including the size of 1R
-   (`synth_stop_pct`), the heat ceiling, and the $0.06 min-give floor that
-   actually binds the trail. Now in `OVERLAY_KEYS`.
+1. Every new entry claim is graded against `tools/desk_null.py` (eligible-WITHIN, IWM residual, vol-matched outside, 20 bps vs cash). PASS = n≥30, median net of haircut > 0, **and** eligible-within > 0 at ≥2σ. A green day is not a pass.
+2. Screens look at **different information**, not another RSI permutation.
+3. One slice cleared gate 1+2: **names admitted 14:00–15:30, hold to 15:50, trail off, 2% hard stop, 30m dead-trade.** Thin after spread (~0.04%/trade in the sweep). Wired as `ai_late_hold_paper` and **left false** — the operator does not want morning arms blocked to collect that evidence.
 
-## 4. Live config that matters (bot_config.json on the mini)
+**Next step (do this, not more overlays):** after each close, on the mini,
+score yesterday's 14:00–15:30 *admissions* off bars. Accumulate sessions.
+If that slice stays PASS with more days, *then* discuss a paper book that
+does not sit out 9:30–14:00 (shadow-only, or late fills only when a slot is
+free). If it dies out of sample, fork to H3 (overnight) or H4 (slower swing,
+different universe).
+
+```bash
+# mini only (Alpaca keys + live shadow). MacBook cannot fetch bars.
+python3 tools/thesis_screen.py --days 1 --horizon-min 60 --slices late --flatten-et 15:50
+python3 tools/thesis_screen.py --days 5 --horizon-min 60 --slices late,chase,research --flatten-et 15:50
+```
+
+Do **not** set `ai_late_hold_paper=true` unless the operator explicitly
+accepts no auto-arms before 14:00.
+
+---
+
+## 1. Live config that matters (`config/bot_config.json` on the mini)
 
 | knob | value | note |
 |---|---|---|
-| CM RSI band | 0–50 | 75 was tried intraday, reverted on the evidence |
-| heat_min / heat_max | 40 / 0 (off) | **contradicts §2d; deliberately unchanged pending a real test** |
-| 1R (synth_stop_pct) | 5% | ~20× the median move |
-| min_give_px | $0.06 | 0.35–0.67% on these names; wider than the median run |
-| book / shelf tick | 1.0s / 0.25s | shelf ratchets on the tape now |
-| breakeven | fill + $0.01 | all four breakeven sites share `breakeven_floor()` |
-| feed | iex | **account has delayed SIP only — do not switch live feed**; 4/22 names were %R-blind all day (BYND, CDIG, WETO, ZSTK) |
+| `ai_late_hold_paper` | **false** | Late-hold *code* is loaded; path does not fire |
+| heat_min / heat_max | 40 / 0 | Contradicts the cool buckets; leave until a real test |
+| 1R (`synth_stop_pct`) | 5% | ~20× median scalp MFE |
+| trail | on, min_give $0.06 | What actually exits (~86s) |
+| feed | iex | Delayed SIP only — do not switch live feed |
 | slots / EOD | 2 / 15:50 | |
+| book / shelf tick | 1.0s / 0.25s | |
 
-Operational traps: live tunables live in `config/bot_config.json`
-(`load_config()` never reads `signal_engine.env`); the mini cannot `git push`
-(commit there, fetch from the MacBook); restart the stack from a Terminal on
-the mini itself, not over SSH (Keychain).
+Operational traps: tunables live in `bot_config.json` (`load_config()` never
+reads `signal_engine.env`); trader reloads config each poll; mini cannot
+`git push` (commit there, fetch from the MacBook); prefer `./trading restart`
+on the mini Terminal (Keychain). Deploy from MacBook: commit →
+`./scripts/deploy_mini.sh`.
 
-## 5. The options, ranked
+---
 
-**H1 — same universe, opposite posture.** Enter cool (exhaustion 0–50, the
-range the current floor refuses), hold 30–60m, exits sized to the actual move
-(dead-trade longer, trail wider or off, T1 near the realistic tail). Evidence:
-§2c + §2d. The dual-tranche book was built for exactly this shape — cut the
-flat majority, let the fat tail pay. Weakness: medians are below friction
-(~0.1–0.3% round trip); the edge, if any, lives in tail capture.
+## 2. Evidence (Claude, 2026-08-20) — still the baseline
 
-**H2 — fade the signal.** Shorting at admission earned +0.35% gross @30m this
-week by construction. But these are precisely the names that squeeze, borrow
-is scarce, and neither paper Alpaca nor the sim prices borrow. Statistically
-implied, practically hostile. Screen only.
+### 2a. That day's book (paper)
 
-**H3 — overnight/gap positioning.** Small-cap moves concentrate at the open;
-the desk flattens at 15:50 by design. Different risk class (gap risk, no
-working stop), different project.
+59 closed trades, 28.8% win rate, sum −0.33R. 55/59 `local_trail`, median
+hold 86s, median MFE +0.04R / MAE −0.02R. Trail gives back the typical
++0.23% run and pays the spread. Post-exit drift +0.13% @5m, −0.23% @30m:
+the trail is not cutting winners.
 
-**H4 — slower swing horizons or a different universe.** Friction amortizes;
-everything about the desk's architecture changes.
+### 2b. Admission vs controls (`tools/admission_null.py`)
 
-**Also open:** slot prioritization had one 2σ signal (prefer the lower-CM-RSI
-candidate, 57% beat) but the swap version does not survive costs; only the
-"two candidates, one free slot" variant is worth building, and only after an
-entry with edge exists.
+593 RTH admissions, 2026-08-14..20, SIP 1m. **Legacy WITHIN** (any RTH
+instant) made timing look −4.2σ @30m — **hindsight-loaded**: the dart can
+buy the morning run-up that put the name on the list. Same-instant
+controls (ACROSS, price-matched OUTSIDE) were ~flat. Defensible claim:
+**no positive timing edge against any same-instant alternative.**
 
-## 6. Where we are going — the pipeline
+### 2c. Watched-name drift (legacy WITHIN)
 
-Any entry hypothesis now runs through three kill gates, cheapest first:
+60m mean +0.681% vs median +0.149% — fat right tail. Desk harvests at 86s
+where the median is zero. Grok later showed IWM over the same windows is
+~0, so this is not "the tape was up."
 
-1. **Screen** — `tools/entry_rule_screen.py`: replay a predicate over every
-   watched shadow tick (first fire per symbol, then one full horizon of
-   silence so overlapping windows cannot manufacture sigma), score off bars,
-   paired against WITHIN and OUTSIDE. Bar to pass: `rule − within` positive
-   with real sigma — a green raw return is not the bar, these names drift.
-   Ships the H1 family plus two honesty checks (`hot_rising` should be
-   negative, `live_arm` should reproduce admission_null).
-2. **Sweep** — `optimize_rstop` with exits sized to the rule's horizon
-   (`rstop_search_risk_frame.json` is the frame grid). Candidate = beats
-   baseline on held-out days AND majority of folds AND n ≥ 30.
-3. **Forward paper test** — only sweep survivors touch live config, one change
-   at a time, graded by `admission_null` (did `admitted − within` go
-   positive?), not by a green day.
+### 2d. Exhaustion buckets point backwards
 
-### 6a. First screen results (ran tonight, 30m + 60m, 5 sessions)
+Cool 0–50% is the only consistently positive 30m range. Live `heat_min=40`
+excludes it. 75–90% is +0.511% between two deep-red neighbors — treat as
+noise until replicated. Heat sweep produced no candidate; every cell kept
+86s exits.
 
-The honesty checks passed — `live_arm` reproduces admission_null almost
-exactly (−0.211%/41%/2.8σ @30m vs −0.355%/41%/4.2σ), and `hot_rising` scored
-negative — so the screen measures what it claims to.
+### 2e. Simulator had never traded
 
-**No rule survived.** Best cell: `cool_rsi_band` @30m, +0.044% vs within,
-0.4σ, n=86 — indistinguishable from zero and it flips to −0.247% @60m. The
-pullback thesis proper (`cool_in_zone`) was the *worst* performer at both
-horizons (−0.208%/2.3σ, −0.529%/2.9σ). H1 as screened is dead.
+`no_rsi_data` / `rsi_not_rising` on every bar. Fixed in `sim_rstop_path`.
+Empty runs now refuse a verdict. Historical "no overlay beat live" was
+empty. Do not promote from a sweep with n=0.
 
-**The meta-finding matters more than any row: cool rules AND hot rules both
-lose to the within-dart.** When a predicate and its opposite both lose to the
-same control, suspect the control — that is what exposed the hindsight bias
-now documented in §2b. Against OUTSIDE, the clean same-instant control, all
-fourteen cells sit between 0.0σ and 1.4σ: **flat everywhere**. The refined
-conclusion is not "entries are destructive" but stronger in a different way:
-**none of the features the desk logs — exhaustion, RSI level, RSI direction,
-RVOL, zone membership, the live gates themselves — carries measurable
-information about forward returns at 30–60m on this tape.**
+H1 (cool pullback, 30–60m) as screened in `entry_rule_screen` is **dead**.
+Cool and hot both lost to WITHIN (that is what exposed hindsight). vs
+OUTSIDE, fourteen cells 0.0–1.4σ — **flat**. RSI / %R / RVOL / zone / live
+gates carry no 30–60m information on this tape. Do not permute them again.
 
-**Standing decision rule:** if no rule family ever clears gate 1 with
-reasonable power, the strategy family — momentum continuation on this
-watchlist at intraday horizons — is falsified, and the honest fork is H3/H4
-or a different universe, not more tuning. That rule has now fired for every
-family tested. The screens cost an evening each; the next one should test a
-*different information source*, not another arrangement of these features.
+H2 (short the admission) is screen-only: squeeze names, unpriced borrow.
+H3 overnight / H4 slower different universe remain the honest forks if
+late-hold dies out of sample.
 
-Caveats that bound everything above: five sessions, one regime, paper fills,
-no spread in any simulation, and a watchlist that churns daily.
+---
 
-## 7. Questions for you
+## 3. What Grok built (2026-08-20 night → 21)
 
-1. **The 75–90% exhaustion bucket is +0.511% while its neighbors are deeply
-   negative.** Noise, or a real second mode (blow-off continuation) worth its
-   own rule? Your research sees these names at admission time; ours only sees
-   the ticks.
-2. **H1 asks the desk to buy pullbacks in momentum names and hold 30–60m.**
-   From what you see in your idea flow, is that coherent with why these names
-   move, or does the drift in §2c look like beta to you (the whole tape rose
-   those five days) rather than structure?
-3. **Your ideas seed this watchlist.** `admitted − outside` at 0.6σ says the
-   watched pool performs like random liquid names. Does that match your prior?
-   If you were picking the universe fresh, what would you condition on that
-   the momentum scanner does not?
-4. **Would you kill the family now** on §2 as it stands, or spend the screens?
-   Argue either way — the cost of one more evening of screens is near zero,
-   which is itself an argument, but so is sunk-cost momentum.
-5. **What is this document missing?** You run the book. The mechanical layer's
-   gates carry no measurable information (§6a); if you have been assuming your
-   fills reflect your ideas' quality, that assumption is unsupported. What
-   else upstream of you should be re-checked against that?
-6. **Audit the controls.** The WITHIN-hindsight bias in §2b was caught only
-   because opposite rules both lost to it. OUTSIDE is price-matched but not
-   volatility- or news-matched. If you can name a cleaner null for "what
-   should buying this name at this moment have returned", that is worth more
-   to this project right now than any new entry rule.
+### Kernel — `tools/desk_null.py`
 
-## 8. Foundation, 2026-08-20 night (Grok)
+Shared by `admission_null`, `entry_rule_screen`, `thesis_screen`.
 
-The live scalp is frozen. `config/bot_config.json` is not to be edited for
-heat, 1R, trail, or feed until a thesis PASSes gate 1, a horizon-matched
-sweep, and a forward paper test — in that order, one change at a time.
+- **ELIGIBLE-WITHIN** — dart only after first watch that day (kills
+  pre-list run-up). Legacy WITHIN kept so the 4σ inflation is visible.
+- **IWM residual** — name minus small-cap beta over the same horizon.
+- **OUTSIDE vol+price** — skip rather than silently fall back to price-only.
+- **20 bps vs cash** — spread cancels in a paired same-cost row; this is
+  the bar versus sitting out.
+- `--flatten-et 15:50` so a 60m window from 15:10 is not scored past EOD.
 
-What shipped instead is the scoring kernel the next thesis has to beat.
+Screens run **on the mini**. MacBook `secrets.json` has no Alpaca keys.
 
-| tool | question |
-|---|---|
-| `tools/desk_null.py` | eligible-WITHIN, IWM residual, vol-matched outside, 20 bps vs cash, PASS/FAIL |
-| `tools/admission_null.py` | did *admission* mean anything, under the honest null? |
-| `tools/entry_rule_screen.py` | same H1/honesty rules, now graded on eligible-WITHIN |
-| `tools/thesis_screen.py` | **new information**: open-drive, research vs scanner, chase vs fresh, %R-blind |
+### Gate 1 — `tools/thesis_screen.py` (627 RTH admissions, 8/14..20)
+
+Every **30m** slice FAIL. Eligible-within milder than legacy (all: 3.5σ vs
+5.2σ). Vol-matched outside flat (0.5σ). Chase (already +2% from the open)
+worst common slice. IEX-blind names poison (−0.78% median). Research less
+bad than scanner, still FAIL.
+
+At **60m**, one slice PASS, and it survived flatten 15:50:
+
+| slice | 30m | 60m to 15:50 |
+|---|---|---|
+| all / open / chase / research | FAIL | FAIL |
+| **late 14:00–15:30** | FAIL | **PASS** n=136, net +0.35%, vs eligible +0.26% 2.3σ |
+
+Caveats: five sessions; IWM bid into the close (84% up) though residual
+still +0.38%; mean negative, median green (left tail); 2.3σ just over the
+bar. This is permission to sweep *that slice's exits*, not to retune the
+scalp.
+
+### Gate 2 — `optimize_rstop` late hold
 
 ```bash
-# On the mini only — MacBook has no Alpaca keys and no live shadow log.
-python3 tools/admission_null.py --days 5 --horizon-min 30
-python3 tools/thesis_screen.py --days 5 --horizon-min 30
-python3 tools/thesis_screen.py --days 5 --horizon-min 60
-```
-
-Gate 1 PASS = n≥30, median net of 20 bps > 0, *and* eligible-within paired
-median > 0 at ≥2σ. A green raw forward return is not a pass. PASS is
-permission to sweep exits for that slice's horizon, not a config change.
-
-Do not add another RSI / %R / RVOL / zone permutation. That family is
-falsified. If every thesis_screen slice FAILs at 30m and 60m, the fork is
-H3 (overnight) or H4 (slower swing, different universe).
-
-### First run (mini, 2026-08-20 night) — 627 RTH admissions, 8/14..20
-
-Every 30m slice **FAIL**. Eligible-within is milder than legacy (all:
-3.5σ vs 5.2σ) — hindsight was inflating the old dart, and the honest
-timing claim is still negative. Vol-matched outside is **flat** (0.5σ).
-IWM is ~0, so §2c drift is not "the tape was up." Chase (already +2%
-from the open) is the worst common slice. Feature-blind names are
-poison (−0.78% / −2.5% mean). Research is less bad than scanner and
-still FAIL.
-
-At 60m, one slice PASSed, and it **survived clipping to 15:50**:
-
-| slice | 30m | 60m unclipped | 60m flatten 15:50 |
-|---|---|---|---|
-| all | FAIL net −0.37% | FAIL | — |
-| open_drive | FAIL (gross +0.12%, net −0.08%) | FAIL | — |
-| chase | FAIL net −0.78% | FAIL | — |
-| research | FAIL | FAIL | — |
-| **late 14:00–15:30** | FAIL net −0.09% | **PASS** n=137 net +0.39% 2.7σ | **PASS** n=136 net +0.35% 2.3σ |
-
-Caveats on the late PASS: five sessions; IWM itself is bid (84% up) so
-part of it is last-hour tape, though residual is still +0.38%; mean is
-negative while median is green (left tail); 2.3σ is just over the bar.
-This is permission to **sweep exits for a 14:00–15:50 hold**, not a live
-config change, not an 86-second trail overlay.
-
-### Gate 2 — late-hold exit sweep (mini, same tape)
-
-```bash
-# mini only. Does not write bot_config.json.
 python3 tools/optimize_rstop.py --admitted --admit-tod 14:00-15:30 \
   --arm-at-admit --no-book --from 2026-08-14 --to 2026-08-20 --feed sip \
   --search tools/rstop_search_late_hold.json --tag late_hold
 ```
 
-48 symbol-days after the TOD filter (176 → 48). Entry = first in-window
-bar, no heat/RSI. Baseline = live 0.10R working shelf on those fills.
+`--arm-at-admit` buys the first in-window bar (matches the screen, skips
+heat/RSI). `--admit-tod` is admit clock, not "still on the list at 14:00."
+Trail off uses the **hard synth stop**, not the 0.10R shelf (that shelf
+*is* the 86s scalp).
 
-| cell | n | win | held $ | mean $ | folds | notes |
-|---|---|---|---|---|---|---|
-| baseline (live trail) | 35 | 46% | +9.18 | +0.26 | — | ~0.03%/trade; **dead after 20bps** |
-| **trail off, 2% stop, dead 30** | 34 | 53% | **+79.76** | **+2.35** | **3/5** | candidate. give knobs inert |
-| trail off, 2% stop, dead 0 | 34 | 53% | +76.55 | +2.25 | 3/5 | almost the same |
-| trail off, 1% stop, dead 0 | 34 | 44% | +9.66 | +0.28 | 4/5 | more folds, no money |
-| any trail-on overlay | 35 | 46% | +9.18 | +0.26 | 0/5 | do not promote |
+| cell | n | win | held $ | mean $ | folds |
+|---|---|---|---|---|---|
+| baseline (live trail) | 35 | 46% | +$9 | $0.26 | — |
+| **trail off, 2% stop, dead 30** | 34 | 53% | **+$80** | **$2.35** | **3/5** |
+| any trail still on | 35 | 46% | +$9 | $0.26 | 0/5 |
 
-`$2.35` on a `$1000` stake is **0.24% per trade**. After the 20 bps
-haircut that is ~0.04% — still the only cell that is not negative vs
-cash, and it beats the live shelf on 3/5 held-out days. Max DD $70 on
-$80 gross. n=34 just clears min_n.
+$2.35 on $1k = **0.24%/trade**. After 20 bps ≈ **0.04%**. Live shelf is
+**negative** after the same haircut. Max DD $70 on $80 gross. n=34 just
+clears 30. Give knobs inert when trail is off. Artifact gitignored:
+`benchmarks/optimize_rstop_2026-08-20_late_hold.json`.
 
-**Do not write trail-off into the daytime scalp.** The candidate is a
-separate last-hour book. That book is **wired but off**
-(`ai_late_hold_paper=false` as of 2026-08-21) so morning arms are not
-blocked. Forward evidence without sitting out: after the close, on the mini,
+### Gate 3 — wired, then turned off
+
+`desk_late_hold.py` + hooks in `should_arm_buy`, `_decision_for_place`,
+`place_scaled_entry`, `apply_local_trail`. When `ai_late_hold_paper` is
+true: no arms outside 14:00–15:30; only names whose **admit_ts** is in that
+window; 2% hard stop; no shelf; no T1 scale-out; flatten through 2%; 30m
+dead; 15:50 EOD. Morning names keep morning `admit_ts` (`late_hold_not_late_admit`).
+
+The operator rejected sitting out 9:30–14:00 to collect fills. Flag is
+**false**. Daytime scalp runs. Late-hold evidence continues via
+`thesis_screen` on shadow+bars after the close. 9:30–14:00 is a **log**
+(shadow, research, tape), not a second entry thesis and not a reason to
+re-stamp `admit_ts` at 14:00.
+
+---
+
+## 4. Pipeline (unchanged)
+
+Cheapest gate first:
+
+1. **Screen** — `thesis_screen` / `entry_rule_screen` vs desk_null. Bar is
+   `rule − eligible-within` with sigma, net of 20 bps vs cash. Green `fwd`
+   is not enough.
+2. **Sweep** — `optimize_rstop` with exits sized to **that** horizon. Candidate
+   = beats baseline held-out $ AND majority of folds AND n≥30. EMPTY RUN is
+   not a verdict.
+3. **Forward paper** — only if the operator wants a live book change, one
+   experiment at a time, graded by the null, not a green day.
+
+Do not add RSI/%R/RVOL/zone permutations. That family is dead.
+
+---
+
+## 5. Next steps, in order
+
+1. **After each session (mini):** run late 60m flatten screen (`--days 1`
+   then `--days N` as days accrue). Log n, net median, vs eligible, vs IWM.
+   One more green day is not a promotion.
+2. **Do not change live scalp knobs.** heat 40, 5% 1R, trail, IEX stay.
+3. **Do not enable `ai_late_hold_paper`** without an explicit operator OK
+   that morning trading will pause.
+4. **If late 60m dies** as sample grows: stop this family. Honest forks are
+   H3 (overnight/gap — different risk class) or H4 (multi-day, liquid
+   universe — `swing_screener` / RS exist in config, both **off**).
+5. **If it holds** with more sessions: design a paper test that does **not**
+   block 9:30–14:00 — e.g. log-only `would_late_hold` on shadow, or arm
+   late-hold only when a slot is free after 14:00. Do not mix morning
+   leftover names into the late book; that is a different, unscreened bet.
+6. **Optional hygiene:** `outcome_slice` keys off `features`, not top-level
+   `strategy` / `entry_path`. Fine while the paper path is off.
+
+---
+
+## 6. How to run the lab (mini)
 
 ```bash
-python3 tools/thesis_screen.py --days 1 --horizon-min 60 --slices late --flatten-et 15:50
+python3 tools/admission_null.py --days 5 --horizon-min 30
+python3 tools/thesis_screen.py --days 5 --horizon-min 30
+python3 tools/thesis_screen.py --days 5 --horizon-min 60 --flatten-et 15:50
+python3 tools/entry_rule_screen.py --days 5 --horizon-min 30   # H1 family; expect FAIL
 ```
 
-That scores every 14:00–15:30 *admission* off SIP bars against eligible-WITHIN,
-whether or not we filled. Live fills stay the daytime scalp.
+Tests (no Alpaca): `tests/test_desk_null.py`, `test_thesis_screen.py`,
+`test_desk_late_hold.py`, `test_optimize_rstop.py`.
 
-To turn the paper book on later (blocks arms until 14:00): set
-`ai_late_hold_paper` true. The trader reloads `bot_config.json` each poll.
+---
 
-Artifact: `benchmarks/optimize_rstop_2026-08-20_late_hold.json`
+## 7. Weaknesses still open
 
-— Grok, 2026-08-20 night session, answering §7 and building the kernel
+- Five sessions, one regime, paper fills, no spread in the sim.
+- Late PASS just over 2σ; IWM last-hour bid; fat left tail.
+- OUTSIDE is still not news-matched. Eligible-WITHIN is the timing null.
+- Watchlist churns daily. Late admits must *join* 14:00–15:30; a dead
+  afternoon is n=0, which is a result.
+- Fills of the 86s scalp still do not measure research-idea quality.
 
+— Claude (Opus) 2026-08-20 day: measurement and H1 screen.
+— Grok 2026-08-20 night–21: kernel, late-hold gates, deploy, operator
+  rejected the 14:00 lock; this file rewritten for Claude pickup.
