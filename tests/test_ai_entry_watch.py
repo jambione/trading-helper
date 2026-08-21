@@ -4959,3 +4959,21 @@ def test_spread_r_scales_with_the_risk_it_is_measured_against():
     assert wide == pytest.approx(0.04)
     assert tight == pytest.approx(0.40)
     assert tight > wide, "percent-of-price would have called these identical"
+
+
+def test_locked_book_is_unknowable_not_free():
+    """ask == bid means the bid is missing, not that crossing is free.
+
+    All 856 zero-spread rows on 2026-08-11..20 had ask and bid identical to
+    the penny, on names like PFE and BMNR where a locked book would be
+    remarkable rather than routine — some quote paths return the last price
+    for both sides. Recorded as 0.000 those rows sort to the TOP of the
+    cheapest bucket, so a spread-priority rule would preferentially cross
+    exactly where the desk cannot see the book.
+    """
+    import ai_entry_watch as ew
+
+    assert ew._spread_r(10.0, 10.0, 9.50) is None      # locked / missing bid
+    assert ew._spread_r(10.0, 10.5, 9.50) is None      # crossed: nonsense
+    # A real book still prices normally, including a very tight one.
+    assert ew._spread_r(10.0, 9.999, 9.50) == pytest.approx(0.004)

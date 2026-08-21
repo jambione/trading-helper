@@ -5992,6 +5992,16 @@ def _spread_r(ask: float | None, bid: float | None,
         return None
     if not (a > 0 and b > 0 and 0 < st < a):
         return None
+    # ask == bid is not a free round trip, it is a missing bid. Every one of
+    # the 856 zero-spread rows on 2026-08-11..20 had them identical to the
+    # penny — including PFE and BMNR, where a genuinely locked book would be
+    # remarkable rather than routine. Some quote paths hand back the last
+    # price for both sides, and recording that as 0.000 puts the names whose
+    # book the desk CANNOT see at the top of the cheapest bucket, which is
+    # precisely where a spread-priority rule would go looking. Unknowable is
+    # None. A truly locked market is untradeable anyway.
+    if b >= a:
+        return None
     risk = a - st
     if risk <= 0:
         return None
