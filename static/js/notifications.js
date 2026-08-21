@@ -42,6 +42,7 @@ function _getContainer() {
  * @param {Function|null} onClickFn  - called when the toast is clicked
  */
 export function showToast(title, sub = '', type = 'info', duration = 6000, onClickFn = null) {
+  if (toastsMuted()) return null;
   const container = _getContainer();
   const icons = { buy: '▲', burst: '🔥', sell: '▼', info: 'ℹ', ax: '✦' };
   const el = document.createElement('div');
@@ -88,6 +89,38 @@ let _spikesPrimed   = false;
 // ── Event mode config ──────────────────────────────────────────
 // Per-event: off | toast | auto
 // Auto-Add checkbox forces auto for burst + buy_zone (legacy).
+// Master switches, one per KIND of alert rather than one for everything.
+// Toast noise and position sounds are opposite wants: the operator asked to
+// silence the interrupting alerts while keeping an audible cue for the desk
+// actually opening and closing money. A single mute could not express that.
+//
+// Toasts and their beeps default OFF; position sounds default ON.
+const _TOASTS_OFF_KEY = 'ss:toasts-off';        // in-page toast cards
+const _ALERT_SOUNDS_OFF_KEY = 'ss:alert-sounds-off';   // the _beep alerts
+const _POS_SOUNDS_OFF_KEY = 'ss:position-sounds-off';  // open / close chimes
+
+function _flag(key, dflt) {
+  const raw = localStorage.getItem(key);
+  return raw === null ? dflt : raw === 'true';
+}
+
+/** In-page toast cards suppressed. Default true. */
+export function toastsMuted() { return _flag(_TOASTS_OFF_KEY, true); }
+/** Alert beeps (burst / buy_zone / ax) suppressed. Default true. */
+export function alertSoundsMuted() { return _flag(_ALERT_SOUNDS_OFF_KEY, true); }
+/** Position open/close chimes suppressed. Default false — these stay on. */
+export function positionSoundsMuted() { return _flag(_POS_SOUNDS_OFF_KEY, false); }
+
+export function setToastsMuted(on) {
+  localStorage.setItem(_TOASTS_OFF_KEY, String(!!on));
+}
+export function setAlertSoundsMuted(on) {
+  localStorage.setItem(_ALERT_SOUNDS_OFF_KEY, String(!!on));
+}
+export function setPositionSoundsMuted(on) {
+  localStorage.setItem(_POS_SOUNDS_OFF_KEY, String(!!on));
+}
+
 const _AUTO_ADD_KEY = 'ss:auto-add';
 const _EVENT_KEYS = {
   burst:    'ss:event-burst',
@@ -511,7 +544,74 @@ function _notifyBurst(row) {
   }
 }
 
+
+// ── Position sounds ────────────────────────────────────────────
+// Separate from the alert beeps: those say "look at this", these say "the
+// desk just did something with money". Distinct enough to tell apart without
+// looking, quiet enough to sit under a working session.
+//
+// The close sound follows the RESULT rather than always sounding like profit.
+// A win chime on a loss would be the interface lying, which is the one thing
+// this desk cannot afford — the whole reason the P&L reads worse than it did
+// is that the numbers stopped flattering.
+
+/** Two-note rising major third, soft attack. Opening a position. */
+function _soundOpen() {
+  if (positionSoundsMuted()) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(523.25, t);          // C5
+    osc.frequency.setValueAtTime(659.25, t + 0.09);   // E5
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+    osc.addEventListener('ended', () => ctx.close());
+    osc.start(t); osc.stop(t + 0.35);
+  } catch { /* AudioContext unavailable */ }
+}
+
+/**
+ * Closing a position.
+ * win  — rising major triad, the "that paid" sound.
+ * flat/loss — same shape falling, unmistakably not a win.
+ */
+function _soundClose(win = true) {
+  if (positionSoundsMuted()) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    const notes = win
+      ? [523.25, 659.25, 783.99]     // C5 E5 G5 up
+      : [493.88, 415.30, 349.23];    // B4 G#4 F4 down
+    notes.forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = win ? 'sine' : 'triangle';
+      osc.connect(gain); gain.connect(ctx.destination);
+      const at = t + i * 0.085;
+      osc.frequency.setValueAtTime(f, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(win ? 0.17 : 0.11, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.26);
+      osc.start(at); osc.stop(at + 0.28);
+      if (i === notes.length - 1) osc.addEventListener('ended', () => ctx.close());
+    });
+  } catch { /* AudioContext unavailable */ }
+}
+
+/** Play the opening sound. Muted by setSoundsMuted(true). */
+export function positionOpened() { _soundOpen(); }
+
+/** Play the closing sound; *win* picks the up or down figure. */
+export function positionClosed(win = true) { _soundClose(!!win); }
+
 function _beep(type = 'buy') {
+  if (alertSoundsMuted()) return;
   try {
     const ctx  = new (window.AudioContext || window.webkitAudioContext)();
     const osc  = ctx.createOscillator();

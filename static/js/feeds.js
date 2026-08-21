@@ -11,6 +11,7 @@ import { subscribe, get } from './store.js?v=133';
 import { api }       from './api.js?v=133';
 import { copyTicker } from './tickers.js?v=137';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
+import * as notifications from './notifications.js?v=133';
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -531,9 +532,51 @@ function _paintBookDayPl(dayPlEl, book) {
  * Never wipe the whole list on membership churn (that flashed open rows away).
  * Quotes / P&L patch in place; add/remove/reorder only the rows that changed.
  */
+
+/**
+ * Fire the position sounds on real open/close transitions.
+ *
+ * Diffs against the SETTLED book, never the raw wire: _bookRows already holds
+ * the last-good positions through a transient empty frame, and a naive diff
+ * would announce a close every time a poll dropped the map — which it does.
+ * A symbol has to actually leave a populated book to count as closed.
+ *
+ * The close sound follows the last P&L the row carried, so a losing exit does
+ * not get a winning chime. Primed on first paint so a page refresh with
+ * positions already open is silent.
+ */
+let _prevOpenSyms = null;                 // null = not primed yet
+const _lastPl = /** @type {Record<string, number>} */ ({});
+
+function _announcePositions(rows) {
+  const open = rows.filter(r => r && r.phase === 'open' && r.ticker);
+  const now = new Set(open.map(r => String(r.ticker).toUpperCase()));
+  for (const r of open) {
+    const v = r.pl != null ? Number(r.pl) : (r.plpc != null ? Number(r.plpc) : null);
+    if (v != null && Number.isFinite(v)) _lastPl[String(r.ticker).toUpperCase()] = v;
+  }
+  if (_prevOpenSyms === null) { _prevOpenSyms = now; return; }   // prime, silent
+  try {
+    for (const sym of now) {
+      if (!_prevOpenSyms.has(sym)) notifications.positionOpened();
+    }
+    for (const sym of _prevOpenSyms) {
+      if (!now.has(sym)) {
+        const pl = _lastPl[sym];
+        notifications.positionClosed(Number.isFinite(pl) ? pl > 0 : false);
+        delete _lastPl[sym];
+      }
+    }
+  } catch (e) {
+    console.warn('[feeds] position sound failed', e);
+  }
+  _prevOpenSyms = now;
+}
+
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
+  _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;
   const countTxt = rows.length
