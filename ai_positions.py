@@ -2519,6 +2519,31 @@ def _flatten_late_hold_stop(
     return True, True
 
 
+def _shelf_under_print(loc: float | None, last: float | None,
+                       pos: dict[str, Any]) -> float | None:
+    """Never seed the working shelf at or above the live print.
+
+    A shelf placed above the market is a market-flatten wearing a stop's
+    name: the trigger test on the same tick sees price through it and closes
+    the position at whatever the tape is, not at the level the shelf claims.
+    The point of seeding is to start protecting a name, not to liquidate it
+    for having moved while the shelf was stale or absent.
+
+    Introduced (e02473d) for a leftover 5% plan stop, but the identical case
+    with no stored shelf at all — a fresh fill, or a position adopted
+    mid-move — skipped the check and flattened. The disaster floor still
+    catches a name that is genuinely through its risk; that is what it is
+    for, and it is a resting order rather than a market exit.
+    """
+    if loc is None or last is None or last <= 0:
+        return loc
+    if loc + 1e-9 < last:
+        return loc
+    give = local_trail_give(last, _risk_basis(pos), _cfg_all(), mfe_r=0.0)
+    under = round(float(last) - give, 6)
+    return under if 0 < under < last else loc
+
+
 def apply_local_trail(
     ticker: str,
     pos: dict[str, Any],
@@ -2556,18 +2581,13 @@ def apply_local_trail(
     seed = initial_local_stop(
         _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all())
     if loc is None:
-        loc = seed or floor
+        # No stored shelf: a fresh fill, or a name adopted mid-move. Same
+        # hazard as the stale-plan case below and it was missing the same
+        # guard — a seed above the print flattens on the very next trigger.
+        loc = _shelf_under_print(seed or floor, last, pos)
     elif seed is not None and loc + 1e-9 < seed:
         # Plan-stop leftover (5% floor) is not the working shelf.
-        loc = seed
-        # Do not lift through the live print — that would flatten
-        # an open name that is already more than 0.10R off entry.
-        if last is not None and last > 0 and loc + 1e-9 >= last:
-            give = local_trail_give(
-                last, _risk_basis(pos), _cfg_all(), mfe_r=0.0)
-            under = round(float(last) - give, 6)
-            if under > 0 and under < last:
-                loc = under
+        loc = _shelf_under_print(seed, last, pos)
         pos["local_stop_price"] = loc
         changed = True
     if trigger is None:

@@ -2702,9 +2702,25 @@ def test_local_profit_stop_never_lowers():
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.71)
 
 
-def test_local_trail_flattens_through_seeded_rstop_above_the_plan_floor(
+def test_seeded_rstop_goes_under_the_print_instead_of_flattening(
         tmp_path, monkeypatch):
-    """A 0.10R dip must sell even if the stored shelf is still the 5% plan."""
+    """A stale 5% plan stop is replaced by the working shelf — under the print.
+
+    This asserted the opposite until 2026-08-21: that a 0.10R dip must sell
+    even when the stored shelf was still the plan floor. e02473d deliberately
+    replaced that ("the shelf goes just under the print rather than flattening
+    an open name") and left this red for three days.
+
+    Seeding a shelf above the market is a market-flatten wearing a stop's
+    name — the trigger test on the same tick closes the position at whatever
+    the tape is, not at the level the shelf claims — and it fires precisely
+    when the shelf was stale, i.e. for a bookkeeping reason rather than a
+    price one. The disaster floor still catches a name genuinely through its
+    risk, as a resting order rather than a market exit.
+
+    What the original test was really guarding — that the 5% plan stop must
+    not survive as the working shelf — is still asserted below.
+    """
     _seed_state(
         tmp_path, monkeypatch,
         entry_price=20.00, entry_stop_price=19.00, stop_price=19.00,
@@ -2737,8 +2753,19 @@ def test_local_trail_flattens_through_seeded_rstop_above_the_plan_floor(
     stub = _StubBrokerManage(order_status="new", current_price=19.88)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     events = cp.manage_open_positions(now=1_000_100.0)
-    assert any(e.get("event") == "local_trail" for e in events)
-    assert "NVDA" in stub.closed
+
+    assert not any(e.get("event") == "local_trail" for e in events), (
+        "seeding the shelf must not liquidate a name for having moved while "
+        "the stored shelf was stale")
+    assert "NVDA" not in stub.closed
+    state = json.loads(_state_path(tmp_path).read_text())
+    shelf = state["NVDA"]["local_stop_price"]
+    # The 5% plan floor is gone — that was always this test's real subject.
+    assert shelf > 19.00, "plan floor must not survive as the working shelf"
+    # And the replacement sits under the live print (19.88 − 0.10R), not the
+    # 19.90 seed, which would have been above the market.
+    assert shelf == pytest.approx(19.78, abs=1e-6)
+    assert shelf < 19.85, "must sit under the tick low, or it sells on the spot"
 
 
 def test_local_trail_flattens_when_tape_prints_through_even_if_broker_is_above(
@@ -3396,3 +3423,76 @@ def test_shelf_tick_ignores_a_stale_tape(tmp_path, monkeypatch):
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"]["local_stop_price"] == 20.30, "shelf unmoved"
     assert state["NVDA"]["closing_reason"] is None
+
+
+def test_a_fresh_fill_seeds_under_the_print_too(tmp_path, monkeypatch):
+    """The no-stored-shelf path had the same hazard and skipped the guard.
+
+    e02473d added "do not seed above the live print" to the stale-plan-stop
+    branch only. A name with no stored shelf at all — a fresh fill, or one
+    adopted mid-move — took the other branch, seeded at entry − 0.10R above
+    the market, and the trigger test on the same tick market-closed it. That
+    is the exact liquidation the guard exists to prevent, reached by the other
+    door, and it also meant the runner-stop path below never ran.
+    """
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=20.00, entry_stop_price=19.00, stop_price=19.00,
+        risk_per_share=1.00, target_1=20.60,
+        last_seen_price=20.00, peak_price=20.00, mfe_r=0.0,
+        tranche_a_filled=False, entry_confirmed=True,
+        qty_a=10, qty_b=10, total_qty=20,
+    )
+    # No local_stop_price at all — the branch that was missing the guard.
+    state = json.loads(_state_path(tmp_path).read_text())
+    state["NVDA"].pop("local_stop_price", None)
+    _state_path(tmp_path).write_text(json.dumps(state))
+
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+        "ai_stale_data_max_age_sec": 15.0,
+        "ai_position_shadow_enabled": False,
+        "ai_dead_trade_min": 0,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+        "ai_sell_signal_breakeven": False,
+    }.get(key, default))
+    import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "live_print", lambda _sym: (19.85, 0.2))
+    stub = _StubBrokerManage(order_status="new", current_price=19.88)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_100.0)
+
+    assert not any(e.get("event") == "local_trail" for e in events)
+    assert "NVDA" not in stub.closed
+
+
+def test_shelf_under_print_leaves_a_shelf_already_below_alone(monkeypatch):
+    """The guard only lowers; it must never lift a good shelf to the print."""
+    # Pin the give. _shelf_under_print reads _cfg_all(), so without this the
+    # expected numbers come from whatever bot_config.json the machine has —
+    # the live $0.06 min-give makes it 19.82 rather than the 0.10R 19.78.
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+    })
+    pos = {"entry_price": 20.0, "entry_stop_price": 19.0,
+           "risk_per_share": 1.0}
+    # Already under the print: untouched.
+    assert cp._shelf_under_print(19.50, 19.88, pos) == 19.50
+    # At or above the print: pushed under it by one give (0.10R).
+    assert cp._shelf_under_print(19.90, 19.88, pos) == pytest.approx(19.78)
+    assert cp._shelf_under_print(25.00, 19.88, pos) == pytest.approx(19.78)
+    # Nothing to work with: pass the value through rather than inventing one.
+    assert cp._shelf_under_print(None, 19.88, pos) is None
+    assert cp._shelf_under_print(19.90, None, pos) == 19.90
+    assert cp._shelf_under_print(19.90, 0.0, pos) == 19.90

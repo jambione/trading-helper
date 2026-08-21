@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -243,7 +244,13 @@ def test_split_call_out_borrows_its_authors_time():
 def test_said_time_drives_display_and_freshness():
     """A call read at noon but stamped 8:21 AM is old, and must say so."""
     dash = _fresh_dashboard()
-    now  = time.time()
+    # Noon for real, not time.time(). "8:21 AM" carries no date, so it is
+    # anchored to the ET day it was read on — run the suite before 08:21 ET
+    # and it resolves into the future, where _bb_said_unix correctly refuses
+    # it and falls back to capture time. This test then failed for the wall
+    # clock's reasons rather than the code's, which is exactly the kind of red
+    # that teaches people to ignore a suite.
+    now = datetime(2026, 8, 20, 12, 0, tzinfo=dash.ET).timestamp()
     dash.ingest_discord_alerts([], [], {}, [
         {"ticker": "NRXP", "text": "NRXP pop", "ts": now, "said": "8:21 AM"},
     ])
