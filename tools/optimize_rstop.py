@@ -81,6 +81,12 @@ OVERLAY_KEYS = {
     # beat live — the constraining knob was the same in every cell.
     "min_give_px": "ai_local_trail_min_give_px",
     "min_give_max_r": "ai_local_trail_min_give_max_r",
+    # Trail width as a multiple of the round-trip spread. The knob the
+    # 2026-08-21 finding points at: the shelf sat $0.06 behind price against
+    # an $0.08-0.18 book, so 62% of RTH moments had a spread wider than the
+    # whole cushion and the quote tripped the stop without the market moving.
+    # Sweepable from the start so k comes off the spread record, not a guess.
+    "give_spread_k": "ai_local_trail_give_spread_k",
     "print_ring": "ai_local_trail_print_ring",
     "be_at_r": "ai_local_trail_be_at_r",
     "be_at_pct": "ai_local_trail_be_at_pct",

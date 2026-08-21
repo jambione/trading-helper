@@ -3496,3 +3496,70 @@ def test_shelf_under_print_leaves_a_shelf_already_below_alone(monkeypatch):
     assert cp._shelf_under_print(None, 19.88, pos) is None
     assert cp._shelf_under_print(19.90, None, pos) == 19.90
     assert cp._shelf_under_print(19.90, 0.0, pos) == 19.90
+
+
+# ── trail width vs the book it trades against ─────────────────────────────
+# 2026-08-21: the shelf sat $0.06 behind price while the round-trip book was
+# $0.08-0.18, so 62% of RTH moments had a spread wider than the whole cushion.
+# Every fill raised the shelf then exited 0.5-4s later a few cents under it —
+# tripped by the quote crossing its own spread, not by the market moving.
+
+
+def _give_cfg(**over):
+    cfg = {"ai_local_trail_give_r": 0.10, "ai_local_trail_min_give_px": 0.06,
+           "ai_local_trail_give_max_pct": 0.0}
+    cfg.update(over)
+    return cfg
+
+
+def test_spread_floor_is_off_by_default():
+    """Shipped inert: the knob changes nothing until it is set."""
+    cfg = _give_cfg()
+    assert cfg.get("ai_local_trail_give_spread_k") is None
+    # A ruinous spread is ignored while k is unset.
+    assert cp.local_trail_give(8.19, 0.41, cfg, mfe_r=0.0,
+                               spread_r=3.0) == pytest.approx(0.06)
+    assert cp.DEFAULT_LOCAL_TRAIL_SPREAD_K == 0.0
+
+
+def test_spread_floor_widens_the_cushion_past_the_book():
+    """k spreads of room, so the quote cannot trip the stop on its own."""
+    cfg = _give_cfg(ai_local_trail_give_spread_k=2.0)
+    # BKKT 2026-08-21: risk $0.41, spread 0.283R = $0.116 round trip.
+    # 2 spreads = $0.232, which must outrank the $0.06 dollar floor.
+    give = cp.local_trail_give(8.19, 0.41, cfg, mfe_r=0.0, spread_r=0.283)
+    assert give == pytest.approx(2.0 * 0.283 * 0.41)
+    assert give > 0.116, "a cushion inside the book is not a stop"
+
+
+def test_spread_floor_outranks_the_percent_ceiling():
+    """The ceiling must not put the shelf back inside the spread.
+
+    give_max_pct caps the cushion at a fraction of price with no reference to
+    the book — on CRCL that cap is ~$0.09 against a wider one. A ceiling that
+    reimposes a cushion narrower than the spread defeats the whole point, so
+    the spread floor is applied last.
+    """
+    cfg = _give_cfg(ai_local_trail_give_spread_k=2.0,
+                    ai_local_trail_give_max_pct=0.1)
+    give = cp.local_trail_give(91.84, 4.59, cfg, mfe_r=0.0, spread_r=0.30)
+    assert give == pytest.approx(2.0 * 0.30 * 4.59)
+    assert give > 91.84 * 0.001, "percent ceiling must not win here"
+
+
+def test_spread_floor_needs_a_reading_and_will_not_invent_one():
+    """No spread on the row means no floor — never a guessed one."""
+    cfg = _give_cfg(ai_local_trail_give_spread_k=2.0)
+    assert cp.local_trail_give(8.19, 0.41, cfg, mfe_r=0.0,
+                               spread_r=None) == pytest.approx(0.06)
+    assert cp.local_trail_give(8.19, 0.41, cfg, mfe_r=0.0,
+                               spread_r=0.0) == pytest.approx(0.06)
+
+
+def test_pos_spread_r_reads_the_entry_features():
+    assert cp._pos_spread_r({"features": {"spread_r": 0.283}}) == 0.283
+    assert cp._pos_spread_r({"spread_r": 0.19}) == 0.19
+    # Positions opened before 2026-08-21 carry no reading at all.
+    assert cp._pos_spread_r({"features": {}}) is None
+    assert cp._pos_spread_r({"features": {"spread_r": 0}}) is None
+    assert cp._pos_spread_r(None) is None

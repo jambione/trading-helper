@@ -703,6 +703,12 @@ DEFAULT_CONFIG = {
     # Seconds of tape under the median that lifts the shelf. Sized in time so
     # the spike guard is worth the same at any tick rate.
     "ai_local_trail_damp_sec":         2.0,
+    # Trail width as a multiple of the round-trip spread. 0 = off.
+    # A cushion narrower than the book is not a stop: on 2026-08-21 the
+    # shelf sat $0.06 behind price against an $0.08-0.18 book, so the quote
+    # crossing its own spread tripped it without the market moving. Set from
+    # the spread record, not guessed.
+    "ai_local_trail_give_spread_k":    0.0,
     "ai_local_trail_min_give_px":      0.06,
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
@@ -1254,6 +1260,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_give_open_r",
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",
+    "ai_local_trail_give_spread_k",
     "ai_local_trail_min_give_px",
     "ai_local_trail_min_give_max_r",
     "ai_breakeven_offset_px",

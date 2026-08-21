@@ -121,6 +121,20 @@ DEFAULT_LOCAL_TRAIL_GIVE_PX = 0.0
 # protection is a span of TIME, not a count of samples — sizing it in ticks
 # means every change to the tick rate silently retunes the spike guard.
 DEFAULT_LOCAL_TRAIL_DAMP_SEC = 2.0
+# Trail width as a multiple of the round-trip spread. 0 = off (shipped).
+#
+# The shelf is a fixed $0.06 behind price while the book it trades against is
+# $0.08-0.18 wide, so on 2026-08-21 the quote alternating between bid and ask
+# moved the printed price further than the entire cushion: 62% of RTH moments
+# had a spread wider than the trail, median 1.91x. Every fill that day raised
+# the shelf and then exited 0.5-4 seconds later a few cents under it — stopped
+# out by the quote rather than by the market.
+#
+# A cushion has to be wider than the noise it is meant to survive, and the
+# noise floor of any instrument is its own spread. Sizing the give off R or off
+# a percent of price cannot know that; both were set with no reference to the
+# book. Set from the record ai_max_spread_r was always waiting for, not guessed.
+DEFAULT_LOCAL_TRAIL_SPREAD_K = 0.0
 # Breakeven is not flat. A shelf parked exactly at the fill scratches — the
 # round-trip costs the spread twice and books zero. Park it this many cents
 # ABOVE the fill instead, so a name that ran and came back is still green.
@@ -2214,6 +2228,7 @@ def _tight_give_clears_entry(
     entry: float | None,
     risk: float | None,
     cfg: dict | None,
+    spread_r: float | None = None,
 ) -> bool:
     """True when last − tight give is still above the fill."""
     try:
@@ -2226,8 +2241,36 @@ def _tight_give_clears_entry(
         return False
     tight_cfg = dict(cfg or {})
     tight_cfg["ai_local_trail_give_open_r"] = 0.0
-    give = local_trail_give(last_f, risk_f, tight_cfg, mfe_r=99.0)
+    give = local_trail_give(last_f, risk_f, tight_cfg, mfe_r=99.0,
+                            spread_r=spread_r)
     return last_f - give > entry_f + 1e-9
+
+
+def _pos_spread_r(pos: dict[str, Any] | None) -> float | None:
+    """Round-trip spread this position crossed, as a fraction of R.
+
+    Recorded on the entry features from 2026-08-21. Deliberately the ENTRY
+    spread rather than a live one: the trail runs in ai_positions, which has
+    no quote of its own, and re-deriving one there would mean a broker call on
+    every tick of every name. The book a fill crossed is the honest estimate of
+    the book it will cross on the way out, and an old position with no reading
+    returns None rather than a guess — the k floor then simply does not apply.
+    """
+    if not isinstance(pos, dict):
+        return None
+    for src in (pos.get("features"), pos):
+        if not isinstance(src, dict):
+            continue
+        v = src.get("spread_r")
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f > 0:
+            return f
+    return None
 
 
 def local_trail_give(
@@ -2235,12 +2278,19 @@ def local_trail_give(
     risk: float | None,
     cfg: dict | None = None,
     mfe_r: float | None = None,
+    spread_r: float | None = None,
 ) -> float:
     """Dollar cushion under last for the local R-stop.
 
     Width is ``local_trail_give_r(mfe) × R``. ``ai_local_trail_give_px`` > 0
     is a legacy fixed dollar and wins only when set. With no usable R, give
     is ``give_r × last / 100`` so the cushion still scales with price.
+
+    ``ai_local_trail_give_spread_k`` > 0 additionally floors the cushion at
+    k × the round-trip spread, when *spread_r* is known. That floor is applied
+    last, on purpose: it outranks both the percent ceiling and the dollar
+    floor, because a cushion narrower than the book is not a stop — the quote
+    crossing its own spread trips it without the market moving at all.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
@@ -2302,6 +2352,20 @@ def local_trail_give(
             if max_r > 0:
                 cap = min(floor, max_r * r)
         give = max(give, cap)
+    # Last, and above every other rule. spread_r is the round trip as a
+    # fraction of R, so k × spread_r × R is k spreads in dollars.
+    try:
+        k = float(cfg.get("ai_local_trail_give_spread_k",
+                          DEFAULT_LOCAL_TRAIL_SPREAD_K) or 0.0)
+    except (TypeError, ValueError):
+        k = DEFAULT_LOCAL_TRAIL_SPREAD_K
+    if k > 0 and r > 0 and spread_r is not None:
+        try:
+            sp = float(spread_r)
+        except (TypeError, ValueError):
+            sp = 0.0
+        if sp > 0:
+            give = max(give, k * sp * r)
     return max(0.01, give)
 
 
@@ -2309,6 +2373,7 @@ def initial_local_stop(
     entry: float | None,
     risk: float | None,
     cfg: dict | None = None,
+    spread_r: float | None = None,
 ) -> float | None:
     """Working rstop at fill: entry − 0.10R (give_r), not the 5% plan stop.
 
@@ -2322,7 +2387,7 @@ def initial_local_stop(
         return None
     if e <= 0:
         return None
-    give = local_trail_give(e, risk, cfg, mfe_r=0.0)
+    give = local_trail_give(e, risk, cfg, mfe_r=0.0, spread_r=spread_r)
     want = e - give
     if want >= e:
         want = e - 0.01
@@ -2465,15 +2530,18 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     if not armed:
         # Hold the 0.10R working shelf. Do not fall back to the 5% plan
         # stop — that is the disaster floor, not the live rstop.
-        seed = initial_local_stop(entry, risk, cfg)
+        seed = initial_local_stop(entry, risk, cfg,
+                                  spread_r=_pos_spread_r(pos))
         out = prev or seed or floor
         if be_floor is not None and out is not None:
             out = max(float(out), be_floor)
         return out
     give_mfe = mfe
-    if not _tight_give_clears_entry(last, entry, risk, cfg):
+    if not _tight_give_clears_entry(last, entry, risk, cfg,
+                                    spread_r=_pos_spread_r(pos)):
         give_mfe = 0.0
-    give = local_trail_give(last, risk, cfg, mfe_r=give_mfe)
+    give = local_trail_give(last, risk, cfg, mfe_r=give_mfe,
+                            spread_r=_pos_spread_r(pos))
     want = float(last) - give
     if want >= float(last):
         want = float(last) - 0.01
@@ -2539,7 +2607,8 @@ def _shelf_under_print(loc: float | None, last: float | None,
         return loc
     if loc + 1e-9 < last:
         return loc
-    give = local_trail_give(last, _risk_basis(pos), _cfg_all(), mfe_r=0.0)
+    give = local_trail_give(last, _risk_basis(pos), _cfg_all(), mfe_r=0.0,
+                            spread_r=_pos_spread_r(pos))
     under = round(float(last) - give, 6)
     return under if 0 < under < last else loc
 
@@ -2579,7 +2648,8 @@ def apply_local_trail(
     floor = _orig_stop(pos)
     loc = _num(pos.get("local_stop_price"))
     seed = initial_local_stop(
-        _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all())
+        _num(pos.get("entry_price")), _risk_basis(pos), _cfg_all(),
+        spread_r=_pos_spread_r(pos))
     if loc is None:
         # No stored shelf: a fresh fill, or a name adopted mid-move. Same
         # hazard as the stale-plan case below and it was missing the same
