@@ -7716,6 +7716,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 equity,
                 risk_pct=risk_pct,
                 current_ask=ask_f,
+                # bid2_f is the same quote should_arm_buy was given, so a
+                # passive anchor prices off the book the gate actually saw.
+                current_bid=bid2_f,
                 duel_source=str(
                     rec.get("duel_source") or rec.get("source") or ""
                 ) or None,

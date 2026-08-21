@@ -3632,3 +3632,45 @@ def test_be_spread_gate_is_off_by_default_and_needs_a_reading(monkeypatch):
     pos = _be_spread_pos(spread_r=None)
     pos["features"] = {}
     assert cp.local_profit_stop(pos, cfg2) == pytest.approx(8.48)
+
+
+# ── where the entry limit is anchored ─────────────────────────────────────
+# Every fill opened showing a loss the size of the spread: FCX filled 76.26
+# against a 76.22 print, TGTX 56.21 against 56.17. That is the ask anchor
+# doing exactly what it was written to do — cross, and pad 0.15% beyond so it
+# stays marketable. Crossing buys immediacy, and immediacy is only worth its
+# price if the signal continues; on this tape no entry rule beat chance.
+
+
+def _anchor(monkeypatch, anchor, ask=76.26, bid=76.16):
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_entry_order_style": "limit", "ai_entry_limit_pad_pct": 0.15,
+        "ai_entry_limit_anchor": anchor})
+    return cp._entry_limit_price(ask, 0, 0, cap_at_zone=False, current_bid=bid)
+
+
+def test_ask_anchor_is_the_shipped_default_and_crosses(monkeypatch):
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_entry_order_style": "limit", "ai_entry_limit_pad_pct": 0.15})
+    got = cp._entry_limit_price(76.26, 0, 0, cap_at_zone=False, current_bid=76.16)
+    assert got == pytest.approx(76.37, abs=0.005), "default unchanged"
+    assert got > 76.26, "marketable: prices through the ask"
+
+
+def test_passive_anchors_do_not_pay_the_whole_book(monkeypatch):
+    # Half the 10c book, and none of it.
+    assert _anchor(monkeypatch, "mid") == pytest.approx(76.21)
+    assert _anchor(monkeypatch, "bid") == pytest.approx(76.16)
+
+
+def test_passive_anchor_drops_the_marketable_pad(monkeypatch):
+    """The pad is what makes an ask order fill; on a passive one it walks the
+    price back to the ask and buys nothing."""
+    assert _anchor(monkeypatch, "mid") < 76.26
+
+
+def test_anchor_falls_back_to_ask_when_the_book_is_unusable(monkeypatch):
+    # No bid, and a crossed/locked book: price the old way rather than guess.
+    assert _anchor(monkeypatch, "mid", bid=None) == pytest.approx(76.37, abs=0.005)
+    assert _anchor(monkeypatch, "mid", bid=76.30) == pytest.approx(76.37, abs=0.005)
+    assert _anchor(monkeypatch, "bid", bid=0.0) == pytest.approx(76.37, abs=0.005)

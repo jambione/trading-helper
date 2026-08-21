@@ -1001,6 +1001,7 @@ def _entry_limit_price(
     entry_low: float,
     *,
     cap_at_zone: bool = True,
+    current_bid: float | None = None,
 ) -> float | None:
     """Marketable limit for the entry, capped at the zone top. None = market.
 
@@ -1028,7 +1029,33 @@ def _entry_limit_price(
     except (TypeError, ValueError):
         pad = 0.0015
     top = max(float(entry_high or 0), float(entry_low or 0))
-    px = ask * (1.0 + pad)
+    # Where the limit is anchored. "ask" (default) is marketable and pays the
+    # whole book on the way in, which is why every fill opens showing a loss
+    # the size of the spread before the market has done anything: FCX filled
+    # 76.26 against a 76.22 print, TGTX 56.21 against 56.17.
+    #
+    # Crossing buys immediacy, and immediacy is worth its price only when the
+    # signal actually continues. On this tape it does not — every entry rule
+    # screened at chance — so the desk has been paying the spread for a
+    # certainty it gains nothing from. Median spread is 0.058R against a median
+    # MFE-minus-spread of -0.038R, so "mid" recovers roughly three quarters of
+    # the shortfall on its own, and "bid" pays nothing but only fills when
+    # someone comes to it.
+    #
+    # Sizing is unaffected either way: the caller still sizes off current_ask,
+    # so a passive anchor can only fill BETTER than the contract assumed.
+    anchor = str(cfg.get("ai_entry_limit_anchor", "ask") or "ask").lower().strip()
+    try:
+        bid = float(current_bid or 0)
+    except (TypeError, ValueError):
+        bid = 0.0
+    if anchor in ("mid", "bid") and bid > 0 and bid < ask:
+        # No pad here. The pad exists to make an ask-anchored order marketable;
+        # adding it to a passive anchor walks the price straight back to the
+        # ask and buys nothing. A passive order is supposed to wait.
+        px = (ask + bid) / 2.0 if anchor == "mid" else bid
+    else:
+        px = ask * (1.0 + pad)
     if cap_at_zone and top > 0:
         px = min(px, top)
     px = round(px, 2)
@@ -1181,6 +1208,7 @@ def place_scaled_entry(
     *,
     risk_pct: float = DEFAULT_RISK_PCT,
     current_ask: float | None = None,
+    current_bid: float | None = None,
     duel_source: str | None = None,
 ) -> dict[str, Any]:
     """Execute a qualifying BUY with stop (+ dual scale-out bookkeeping).
@@ -1423,7 +1451,8 @@ def place_scaled_entry(
         qty_b = 0
 
     entry_limit = _entry_limit_price(
-        current_ask, entry_high, entry_low, cap_at_zone=not skip_zone)
+        current_ask, entry_high, entry_low, cap_at_zone=not skip_zone,
+        current_bid=current_bid)
     broker_target = bool(cfg.get("ai_entry_broker_target", False))
     # Dual: stop-only parent; partial T1 after fill. Single: optional full TP.
     place_target = None if logical_dual else (target_1 if broker_target else None)

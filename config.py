@@ -708,6 +708,11 @@ DEFAULT_CONFIG = {
     # shelf sat $0.06 behind price against an $0.08-0.18 book, so the quote
     # crossing its own spread tripped it without the market moving. Set from
     # the spread record, not guessed.
+    # Where the entry limit is anchored: "ask" (marketable, pays the whole
+    # book and opens every fill down by the spread), "mid" (half), or "bid"
+    # (pays nothing, fills only when someone comes to it). Crossing buys
+    # immediacy, which is worth its price only if the signal continues.
+    "ai_entry_limit_anchor":           "ask",
     "ai_local_trail_give_spread_k":    0.0,
     # Breakeven floor may not arm until the trade has cleared this many
     # round trips. 0 = off. be_at_pct alone armed on a third of the spread
@@ -1264,6 +1269,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_give_open_r",
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",
+    "ai_entry_limit_anchor",
     "ai_local_trail_give_spread_k",
     "ai_local_trail_be_at_spread_k",
     "ai_local_trail_min_give_px",
