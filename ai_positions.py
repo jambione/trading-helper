@@ -3637,10 +3637,28 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
                 if _is_protective_stop_order(o)
             }
             equity = alpaca_trader.get_equity() or 0.0
+            # With ai_broker_stop_enabled off — the desk's deliberate setting —
+            # no long ever carries a resting stop, so this fired on every
+            # managed position on every reconcile: 62 alarms on 2026-08-21,
+            # all of them "managed": true and every one carrying a live
+            # software shelf. An alarm that cries wolf 62 times a day is worse
+            # than none, because the one real naked position is invisible
+            # inside it.
+            #
+            # The shelf IS the protection in that mode: apply_local_trail
+            # market-flattens on any print at or under local_stop_price, on the
+            # 0.25s shelf tick. A managed row without one is still genuinely
+            # unprotected and still alarms — that is the case worth seeing.
+            software_ok = not _cfg_flag("ai_broker_stop_enabled", True)
             for sym, p in detail_u.items():
                 s = str(sym).upper()
                 if s in protected:
                     continue
+                if software_ok:
+                    row = state.get(s) if isinstance(state, dict) else None
+                    shelf = _num((row or {}).get("local_stop_price"))
+                    if row is not None and shelf and shelf > 0:
+                        continue
                 try:
                     mv = abs(float(p.get("mkt_val") or 0.0))
                 except (TypeError, ValueError):

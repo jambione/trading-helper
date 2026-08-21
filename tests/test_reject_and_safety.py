@@ -271,3 +271,61 @@ def test_concurrent_update_state_keeps_both_symbols(tmp_path, monkeypatch):
     t1.join(); t2.join()
     st = json.loads((tmp_path / "state.json").read_text())
     assert set(st) == {"RUM", "MLTX"}
+
+
+# ── software shelf counts as protection when broker stops are off ─────────
+# ai_broker_stop_enabled=false is the desk's deliberate setting: no long ever
+# carries a resting stop, so this check fired on every managed position on
+# every reconcile — 62 alarms on 2026-08-21, all "managed": true and every one
+# carrying a live shelf. An alarm that cries wolf 62 times a day hides the one
+# real naked position inside itself.
+
+
+def test_shelf_counts_as_protection_when_broker_stops_are_off(
+        tmp_path, monkeypatch):
+    """A managed row with a live shelf is protected, not naked."""
+    rep, _ = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"BKKT": {"qty": 5.0, "mkt_val": 42.08}},
+        orders=[],                                  # no resting stop, by design
+        state={"BKKT": {"entry_price": 8.47, "local_stop_price": 8.40}},
+        ai_broker_stop_enabled=False,
+    )
+    assert rep["unprotected"] == [], "the shelf is the protection in this mode"
+
+
+def test_managed_row_without_a_shelf_still_alarms(tmp_path, monkeypatch):
+    """The case worth seeing, and the reason this is not a blanket mute."""
+    rep, _ = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"BKKT": {"qty": 5.0, "mkt_val": 42.08}},
+        orders=[],
+        state={"BKKT": {"entry_price": 8.47}},      # no shelf at all
+        ai_broker_stop_enabled=False,
+    )
+    assert [u["symbol"] for u in rep["unprotected"]] == ["BKKT"]
+
+
+def test_unmanaged_position_still_alarms_with_broker_stops_off(
+        tmp_path, monkeypatch):
+    """A position the desk knows nothing about has no shelf by definition."""
+    rep, _ = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"CELH": {"qty": 353.0, "mkt_val": 8403.0}},
+        orders=[],
+        state={},
+        ai_broker_stop_enabled=False,
+    )
+    assert [u["symbol"] for u in rep["unprotected"]] == ["CELH"]
+
+
+def test_broker_stop_mode_is_unchanged(tmp_path, monkeypatch):
+    """With broker stops ON, a shelf is not a substitute for a resting stop."""
+    rep, _ = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"BKKT": {"qty": 5.0, "mkt_val": 42.08}},
+        orders=[],
+        state={"BKKT": {"entry_price": 8.47, "local_stop_price": 8.40}},
+        ai_broker_stop_enabled=True,
+    )
+    assert [u["symbol"] for u in rep["unprotected"]] == ["BKKT"]
