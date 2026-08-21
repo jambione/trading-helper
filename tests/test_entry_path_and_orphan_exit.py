@@ -69,7 +69,12 @@ def test_entry_path_is_stamped_by_every_entry_path():
     import inspect
 
     watch = inspect.getsource(ew)
-    assert 'place_decision["entry_path"] = "watch"' in watch
+    # The desk stamps "watch", or "late_hold" when that path placed the row.
+    # Matched on the assignment plus both literals rather than one flat line:
+    # this assertion went red when the stamp became conditional, while the
+    # behaviour it guards — every path naming itself — was never lost.
+    assert 'place_decision["entry_path"] = (' in watch
+    assert '"late_hold" if place_decision.get("late_hold") else "watch"' in watch
 
     import ai_suggest
     suggest = inspect.getsource(ai_suggest)

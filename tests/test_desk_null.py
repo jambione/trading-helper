@@ -242,10 +242,18 @@ def test_load_research_by_day_from_dated_markdown(tmp_path):
 
 # ── verdict ──────────────────────────────────────────────────────────────
 
-def _scores(n, fwd, eligible, haircut=0.20):
+def _scores(n, fwd, eligible, haircut=0.20, sessions=6):
+    """Evenly spread across *sessions* days.
+
+    verdict() now asks whether a pooled edge survives being cut by session,
+    so a fixture that carries no day would collapse to one afternoon and read
+    UNDERPOWERED no matter how clean its numbers are. Spreading it keeps these
+    cases about the thing they were written to test.
+    """
     out = []
     for i in range(n):
         out.append({
+            "day": f"d{i % sessions}",
             "fwd": fwd, "net": fwd - haircut, "eligible": eligible,
             "within": None, "outside": None, "outside_vol": None,
             "bench": 0.0, "residual": fwd,
@@ -291,3 +299,77 @@ def test_collect_admissions_skips_preopen_and_keeps_rth():
     assert len(ads) == 1
     assert ads[0][1] == "BBB"
     assert ads[0][2] == DAY
+
+
+# ── session-level gate ────────────────────────────────────────────────────
+# The late 14:00-15:30 slice passed at a pooled 2.3-3.0σ on n=136 while 101 of
+# 147 admissions came from one session. These pin the fix.
+
+
+def _score(day, fwd, eligible, net=None):
+    return {"day": day, "fwd": fwd, "eligible": eligible,
+            "net": fwd if net is None else net}
+
+
+def _spread(day, n, fwd, eligible):
+    return [_score(day, fwd, eligible) for _ in range(n)]
+
+
+def test_sign_test_p_matches_the_binomial():
+    assert N.sign_test_p(5, 5) == pytest.approx(1 / 32)
+    assert N.sign_test_p(4, 5) == pytest.approx(6 / 32)     # the late slice
+    assert N.sign_test_p(0, 5) == pytest.approx(1.0)
+    assert N.sign_test_p(8, 10) == pytest.approx(56 / 1024)
+
+
+def test_session_stats_uses_the_day_as_the_unit():
+    scores = (_spread("d1", 100, 1.0, 0.5)      # one big positive session
+              + _spread("d2", 2, -1.0, 0.5)
+              + _spread("d3", 2, -1.0, 0.5))
+    st = N.session_stats(scores)
+    assert st["sessions"] == 3
+    assert st["positive"] == 1, "two sessions were negative regardless of size"
+    assert st["max_share"] == pytest.approx(100 / 104)
+
+
+def test_one_afternoon_cannot_pass_however_many_names_it_held():
+    """The exact shape that motivated this gate."""
+    scores = (_spread("d1", 101, 1.0, 0.5)      # 69% of the sample, positive
+              + _spread("d2", 12, 1.0, 0.5)
+              + _spread("d3", 12, 1.0, 0.5)
+              + _spread("d4", 12, 1.0, 0.5)
+              + _spread("d5", 10, -1.0, 0.5))   # 4/5 positive -> p=0.156
+    st = N.session_stats(scores)
+    assert st["positive"] == 4 and st["sessions"] == 5
+    assert st["p"] == pytest.approx(6 / 32)
+    assert N.verdict(scores) == "FAIL"
+    assert "sessions" in N.diagnose(scores)
+
+
+def test_concentration_alone_blocks_a_pass():
+    """Every session positive, but one of them IS the sample."""
+    scores = (_spread("d1", 200, 1.0, 0.5)
+              + _spread("d2", 8, 1.0, 0.5) + _spread("d3", 8, 1.0, 0.5)
+              + _spread("d4", 8, 1.0, 0.5) + _spread("d5", 8, 1.0, 0.5))
+    st = N.session_stats(scores)
+    assert st["p"] == pytest.approx(1 / 32), "5/5 clears the sign test"
+    assert st["max_share"] > N.MAX_DAY_SHARE
+    assert N.verdict(scores) == "FAIL"
+    assert "afternoon" in N.diagnose(scores)
+
+
+def test_too_few_sessions_is_underpowered_not_fail():
+    """Below 5 sessions even a perfect record cannot reach p<=0.05."""
+    scores = _spread("d1", 40, 1.0, 0.5) + _spread("d2", 40, 1.0, 0.5)
+    assert N.verdict(scores) == "UNDERPOWERED"
+    assert "keep collecting" in N.diagnose(scores)
+
+
+def test_a_broad_consistent_edge_still_passes():
+    """The gate must not make PASS unreachable."""
+    scores = []
+    for d in range(8):
+        scores += _spread(f"d{d}", 12, 1.0, 0.5)
+    st = N.session_stats(scores)
+    assert st["positive"] == 8 and st["max_share"] == pytest.approx(1 / 8)
+    assert N.verdict(scores) == "PASS"

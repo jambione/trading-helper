@@ -33,6 +33,7 @@ Read-only. Imported by admission_null, entry_rule_screen, thesis_screen.
 from __future__ import annotations
 
 import json
+import math
 import re
 import statistics
 from collections import defaultdict
@@ -59,6 +60,20 @@ HAIRCUT_PCT = 0.20
 BENCH = "IWM"
 MIN_N = 30
 MIN_SIGMA = 2.0
+# Session-level gate. Admissions inside one afternoon share that afternoon's
+# drift, so pooling them and dividing by sqrt(n) counts one market observation
+# many times. The late 14:00-15:30 slice passed at a pooled 2.3-3.0σ on n=136
+# while 101 of 147 of those admissions came from a single session (2026-08-14);
+# by session it was 4/5 positive, p=0.156 — not a finding.
+#
+# MIN_SESSIONS is not a taste: with D sessions the best possible one-sided sign
+# test is 1/2^D, so below D=5 even a perfect record cannot reach p<=0.05. Fewer
+# than that is UNDERPOWERED, never PASS.
+MIN_SESSIONS = 5
+SESSION_P = 0.05
+# One session may not BE the sample. A slice can clear the sign test and still
+# be one afternoon wearing four scraps as a disguise.
+MAX_DAY_SHARE = 0.50
 UNIVERSE = ROOT / "valid_tickers.txt"
 CHASE_PCT = 2.0
 FRESH_PCT = 1.0
@@ -356,6 +371,59 @@ def paired_stats(diffs: list[float]) -> dict:
     }
 
 
+def sign_test_p(positive: int, sessions: int) -> float | None:
+    """One-sided binomial p for *positive* of *sessions* under a coin flip."""
+    if sessions <= 0:
+        return None
+    return sum(math.comb(sessions, i)
+               for i in range(positive, sessions + 1)) / (2 ** sessions)
+
+
+def session_stats(scores, key: str = "eligible") -> dict:
+    """Per-session medians of the paired diff, and a sign test across them.
+
+    The pooled sigma in paired_stats treats every admission as an independent
+    draw. They are not: names admitted in the same afternoon share that
+    afternoon's drift, so a pooled n counts one market observation once per
+    name that happened to be on the list. Taking the SESSION as the unit of
+    independence is the conservative reading, and on five sessions it is also
+    the only honest one.
+
+    Returns sessions, positive, p (one-sided sign test), max_share (largest
+    session's fraction of the paired sample), and the per-day medians.
+    """
+    by_day: dict[str, list[float]] = {}
+    for s in scores:
+        v = s.get(key)
+        if v is None:
+            continue
+        by_day.setdefault(str(s.get("day")), []).append(s["fwd"] - v)
+    if not by_day:
+        return {"sessions": 0, "positive": 0, "p": None,
+                "max_share": None, "medians": {}}
+    total = sum(len(v) for v in by_day.values())
+    medians = {d: statistics.median(v) for d, v in by_day.items()}
+    positive = sum(1 for m in medians.values() if m > 0)
+    return {
+        "sessions": len(medians),
+        "positive": positive,
+        "p": sign_test_p(positive, len(medians)),
+        "max_share": max(len(v) for v in by_day.values()) / total if total else None,
+        "medians": medians,
+        "counts": {d: len(v) for d, v in by_day.items()},
+    }
+
+
+def format_sessions(st: dict) -> str:
+    if not st["sessions"]:
+        return "  sessions                                   n=0"
+    p = st["p"]
+    share = st["max_share"] or 0.0
+    return (f"  by session (unit of independence)          "
+            f"{st['positive']}/{st['sessions']} positive  "
+            f"p={p:.3f}  biggest session {100 * share:.0f}% of sample")
+
+
 def format_stat(label: str, vals: list[float]) -> str:
     if not vals:
         return f"  {label:<42} n=0"
@@ -389,12 +457,19 @@ def diffs(scores, key: str) -> list[float]:
     return out
 
 
-def verdict(scores, min_n: int = MIN_N, min_sigma: float = MIN_SIGMA) -> str:
+def verdict(scores, min_n: int = MIN_N, min_sigma: float = MIN_SIGMA,
+            min_sessions: int = MIN_SESSIONS, session_p: float = SESSION_P,
+            max_day_share: float = MAX_DAY_SHARE) -> str:
     """Gate 1: EMPTY / UNDERPOWERED / PASS / FAIL.
 
-    PASS = n large enough, median beats cash after haircut, and the
-    eligible-within paired median is positive at min_sigma. A green raw
-    forward return is not a pass — these names drift.
+    PASS needs all four: enough moments, a median that beats cash after the
+    haircut, a positive eligible-within paired median at min_sigma, AND
+    session-level support — because the pooled sigma alone will happily
+    certify one good afternoon (see session_stats).
+
+    UNDERPOWERED, not FAIL, when there are simply too few moments or too few
+    sessions to reach a verdict. The distinction matters: FAIL means the
+    evidence is against, UNDERPOWERED means keep collecting.
     """
     if not scores:
         return "EMPTY"
@@ -405,9 +480,18 @@ def verdict(scores, min_n: int = MIN_N, min_sigma: float = MIN_SIGMA) -> str:
     st = paired_stats(elig)
     timing = (st["n"] >= min_n and st["median"] is not None
               and st["median"] > 0 and st["sigma"] >= min_sigma)
-    if timing and net_med > 0:
-        return "PASS"
-    return "FAIL"
+    # Evidence AGAINST is a verdict; decide it before asking about sessions.
+    # A slice the eligible-within dart beats has failed on its own terms, and
+    # calling that "keep collecting" would launder a negative into a maybe.
+    if not (timing and net_med > 0):
+        return "FAIL"
+    # Pooled timing looks good — now ask whether it is one afternoon.
+    sess = session_stats(scores, "eligible")
+    if sess["sessions"] < min_sessions:
+        return "UNDERPOWERED"
+    clustered = (sess["p"] is not None and sess["p"] <= session_p
+                 and (sess["max_share"] or 1.0) <= max_day_share)
+    return "PASS" if clustered else "FAIL"
 
 
 def diagnose(scores) -> str:
@@ -418,12 +502,21 @@ def diagnose(scores) -> str:
     n = len(scores)
     net_med = statistics.median(s["net"] for s in scores)
     elig = paired_stats(diffs(scores, "eligible"))
+    sess = session_stats(scores, "eligible")
     bits = [f"n={n}", f"net median {net_med:+.3f}%"]
     if elig["n"]:
         bits.append(f"vs eligible {elig['median']:+.3f}% {elig['sigma']:.1f}σ")
+    if sess["sessions"]:
+        bits.append(f"{sess['positive']}/{sess['sessions']} sessions "
+                    f"p={sess['p']:.3f}")
     if v == "PASS":
-        return "beats cash after haircut AND beats eligible-within at ≥2σ — " + ", ".join(bits)
+        return ("beats cash after haircut, beats eligible-within at ≥2σ, and "
+                "holds across sessions — " + ", ".join(bits))
     if v == "UNDERPOWERED":
+        if sess["sessions"] and sess["sessions"] < MIN_SESSIONS:
+            return (f"only {sess['sessions']} sessions; below {MIN_SESSIONS} "
+                    f"even a perfect record cannot reach p≤{SESSION_P} — keep "
+                    "collecting — " + ", ".join(bits))
         return "too few paired moments for a verdict — " + ", ".join(bits)
     reasons = []
     if net_med <= 0:
@@ -431,6 +524,11 @@ def diagnose(scores) -> str:
     if not (elig["n"] >= MIN_N and elig["median"] is not None
             and elig["median"] > 0 and elig["sigma"] >= MIN_SIGMA):
         reasons.append("no timing edge vs eligible-within")
+    if sess["p"] is not None and sess["p"] > SESSION_P:
+        reasons.append(f"does not hold across sessions (p={sess['p']:.3f})")
+    if (sess["max_share"] or 0) > MAX_DAY_SHARE:
+        reasons.append(f"one session is {100 * sess['max_share']:.0f}% of the "
+                       "sample — that is an afternoon, not an edge")
     return ("; ".join(reasons) or "failed") + " — " + ", ".join(bits)
 
 
@@ -598,6 +696,7 @@ def print_scorecard(scores, haircut: float, title: str = "") -> str:
     print(format_paired("vs legacy-within (hindsight)", diffs(scores, "within")))
     print(format_paired("vs outside price-matched", diffs(scores, "outside")))
     print(format_paired("vs outside vol+price", diffs(scores, "outside_vol")))
+    print(format_sessions(session_stats(scores, "eligible")))
     v = verdict(scores)
     print(f"  verdict {v} — {diagnose(scores)}")
     return v
