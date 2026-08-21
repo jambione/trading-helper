@@ -242,4 +242,103 @@ no spread in any simulation, and a watchlist that churns daily.
    should buying this name at this moment have returned", that is worth more
    to this project right now than any new entry rule.
 
-— prepared by Claude (Opus), 2026-08-20 evening session
+## 8. Foundation, 2026-08-20 night (Grok)
+
+The live scalp is frozen. `config/bot_config.json` is not to be edited for
+heat, 1R, trail, or feed until a thesis PASSes gate 1, a horizon-matched
+sweep, and a forward paper test — in that order, one change at a time.
+
+What shipped instead is the scoring kernel the next thesis has to beat.
+
+| tool | question |
+|---|---|
+| `tools/desk_null.py` | eligible-WITHIN, IWM residual, vol-matched outside, 20 bps vs cash, PASS/FAIL |
+| `tools/admission_null.py` | did *admission* mean anything, under the honest null? |
+| `tools/entry_rule_screen.py` | same H1/honesty rules, now graded on eligible-WITHIN |
+| `tools/thesis_screen.py` | **new information**: open-drive, research vs scanner, chase vs fresh, %R-blind |
+
+```bash
+# On the mini only — MacBook has no Alpaca keys and no live shadow log.
+python3 tools/admission_null.py --days 5 --horizon-min 30
+python3 tools/thesis_screen.py --days 5 --horizon-min 30
+python3 tools/thesis_screen.py --days 5 --horizon-min 60
+```
+
+Gate 1 PASS = n≥30, median net of 20 bps > 0, *and* eligible-within paired
+median > 0 at ≥2σ. A green raw forward return is not a pass. PASS is
+permission to sweep exits for that slice's horizon, not a config change.
+
+Do not add another RSI / %R / RVOL / zone permutation. That family is
+falsified. If every thesis_screen slice FAILs at 30m and 60m, the fork is
+H3 (overnight) or H4 (slower swing, different universe).
+
+### First run (mini, 2026-08-20 night) — 627 RTH admissions, 8/14..20
+
+Every 30m slice **FAIL**. Eligible-within is milder than legacy (all:
+3.5σ vs 5.2σ) — hindsight was inflating the old dart, and the honest
+timing claim is still negative. Vol-matched outside is **flat** (0.5σ).
+IWM is ~0, so §2c drift is not "the tape was up." Chase (already +2%
+from the open) is the worst common slice. Feature-blind names are
+poison (−0.78% / −2.5% mean). Research is less bad than scanner and
+still FAIL.
+
+At 60m, one slice PASSed, and it **survived clipping to 15:50**:
+
+| slice | 30m | 60m unclipped | 60m flatten 15:50 |
+|---|---|---|---|
+| all | FAIL net −0.37% | FAIL | — |
+| open_drive | FAIL (gross +0.12%, net −0.08%) | FAIL | — |
+| chase | FAIL net −0.78% | FAIL | — |
+| research | FAIL | FAIL | — |
+| **late 14:00–15:30** | FAIL net −0.09% | **PASS** n=137 net +0.39% 2.7σ | **PASS** n=136 net +0.35% 2.3σ |
+
+Caveats on the late PASS: five sessions; IWM itself is bid (84% up) so
+part of it is last-hour tape, though residual is still +0.38%; mean is
+negative while median is green (left tail); 2.3σ is just over the bar.
+This is permission to **sweep exits for a 14:00–15:50 hold**, not a live
+config change, not an 86-second trail overlay.
+
+### Gate 2 — late-hold exit sweep (mini, same tape)
+
+```bash
+# mini only. Does not write bot_config.json.
+python3 tools/optimize_rstop.py --admitted --admit-tod 14:00-15:30 \
+  --arm-at-admit --no-book --from 2026-08-14 --to 2026-08-20 --feed sip \
+  --search tools/rstop_search_late_hold.json --tag late_hold
+```
+
+48 symbol-days after the TOD filter (176 → 48). Entry = first in-window
+bar, no heat/RSI. Baseline = live 0.10R working shelf on those fills.
+
+| cell | n | win | held $ | mean $ | folds | notes |
+|---|---|---|---|---|---|---|
+| baseline (live trail) | 35 | 46% | +9.18 | +0.26 | — | ~0.03%/trade; **dead after 20bps** |
+| **trail off, 2% stop, dead 30** | 34 | 53% | **+79.76** | **+2.35** | **3/5** | candidate. give knobs inert |
+| trail off, 2% stop, dead 0 | 34 | 53% | +76.55 | +2.25 | 3/5 | almost the same |
+| trail off, 1% stop, dead 0 | 34 | 44% | +9.66 | +0.28 | 4/5 | more folds, no money |
+| any trail-on overlay | 35 | 46% | +9.18 | +0.26 | 0/5 | do not promote |
+
+`$2.35` on a `$1000` stake is **0.24% per trade**. After the 20 bps
+haircut that is ~0.04% — still the only cell that is not negative vs
+cash, and it beats the live shelf on 3/5 held-out days. Max DD $70 on
+$80 gross. n=34 just clears min_n.
+
+**Do not write trail-off into the daytime scalp.** The candidate is a
+separate last-hour book. That book is **wired but off**
+(`ai_late_hold_paper=false` as of 2026-08-21) so morning arms are not
+blocked. Forward evidence without sitting out: after the close, on the mini,
+
+```bash
+python3 tools/thesis_screen.py --days 1 --horizon-min 60 --slices late --flatten-et 15:50
+```
+
+That scores every 14:00–15:30 *admission* off SIP bars against eligible-WITHIN,
+whether or not we filled. Live fills stay the daytime scalp.
+
+To turn the paper book on later (blocks arms until 14:00): set
+`ai_late_hold_paper` true. The trader reloads `bot_config.json` each poll.
+
+Artifact: `benchmarks/optimize_rstop_2026-08-20_late_hold.json`
+
+— Grok, 2026-08-20 night session, answering §7 and building the kernel
+

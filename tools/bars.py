@@ -22,6 +22,7 @@ from __future__ import annotations
 import bisect
 import json
 import os
+import statistics
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -155,6 +156,56 @@ def fetch_many(syms, day: str, feed: str = "sip", chunk: int = 100) -> None:
             got = {}
         for s in batch:
             _CACHE[(s, day, feed)] = got.get(s, (None, None))
+
+
+def index_at(stamps, t0: float) -> int:
+    """Index of the bar at or just before t0, or -1."""
+    if not stamps:
+        return -1
+    return bisect.bisect_right(stamps, t0) - 1
+
+
+def realized_vol(stamps, closes, t0: float, lookback: float = 900.0) -> float | None:
+    """Stdev of 1-minute pct returns in the lookback ending at t0.
+
+    None when there are fewer than five returns or the series is unusable.
+    Zero vol is returned as 0.0 (a flat tape), not None — callers that want
+    a vol *ratio* must reject zero themselves, because 0.5–2× of zero is
+    not a match band.
+    """
+    if not stamps or not closes:
+        return None
+    i = index_at(stamps, t0)
+    if i < 1:
+        return None
+    rets = []
+    for k in range(i, 0, -1):
+        if stamps[i] - stamps[k] > lookback:
+            break
+        prev, px = closes[k - 1], closes[k]
+        if prev:
+            rets.append((px - prev) / prev * 100.0)
+    if len(rets) < 5:
+        return None
+    return statistics.stdev(rets)
+
+
+def move_since_open(stamps, closes, t0: float, rth_open_min: int = 9 * 60 + 30) -> float | None:
+    """Pct change from the first RTH bar to the bar at t0.
+
+    Origin is the session open, not the 9:35 scoring floor: the question is
+    how much of the day's move has already happened by the time we look.
+    """
+    if not stamps or not closes:
+        return None
+    i0 = next((i for i, s in enumerate(stamps) if et_minutes(s) >= rth_open_min), None)
+    i = index_at(stamps, t0)
+    if i0 is None or i < i0:
+        return None
+    p0 = closes[i0]
+    if not p0:
+        return None
+    return (closes[i] - p0) / p0 * 100.0
 
 
 def forward_return(stamps, closes, t0: float, horizon: float) -> float | None:

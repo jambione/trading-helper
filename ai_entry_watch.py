@@ -142,6 +142,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "last_overbought": "buy",
     "last_heating": "buy",
     "last_in_zone_fade_ok": "buy",
+    "last_late_hold": "late hold",
+    "late_hold_closed": "late hold wait",
+    "late_hold_not_late_admit": "not late admit",
     "offset_zone": "no shelf",
     "stop_too_tight": "stop too tight",
     "cheap_ob_band": "cheap OB band",
@@ -6230,6 +6233,17 @@ def should_arm_buy(
 
     cfg = cfg if isinstance(cfg, dict) else {}
 
+    # Last-hour hold paper test: suppress daytime arms; in-window, skip
+    # heat/RSI and buy last — matching gate 2's --arm-at-admit. Names
+    # admitted before 14:00 stay on the book but do not get a slot.
+    import desk_late_hold as _lh
+    t_arm = float(now if now is not None else time.time())
+    late_why = _lh.arm_why(cfg, t_arm, record.get("admit_ts"))
+    if late_why:
+        return False, late_why
+    if _lh.enabled(cfg) and arm_at_last(cfg):
+        return True, "last_late_hold"
+
     # When the double-bottom detector finds no shelf, ensure_offset_zone_if_needed
     # silently substitutes a percentage band: a 5% stop, a target 2-6% below the
     # last print, no structural level anywhere in it. That is a different trade
@@ -6699,6 +6713,7 @@ def _decision_for_place(
     *,
     ask: float | None = None,
     cfg: dict | None = None,
+    late_hold: bool = False,
 ) -> dict[str, Any]:
     """Build a place_scaled_entry decision from stored structure levels.
 
@@ -6719,6 +6734,10 @@ def _decision_for_place(
     d["wait_kind"] = None
 
     cfg = cfg if isinstance(cfg, dict) else {}
+    if late_hold:
+        import desk_late_hold as _lh
+        cfg = dict(cfg)
+        cfg["ai_watch_synth_stop_pct"] = _lh.stop_pct(cfg)
     if arm_at_last(cfg):
         d["synthetic"] = True
         d["zone_kind"] = "at_last"
@@ -6785,6 +6804,9 @@ def _decision_for_place(
     if d.get("trail_pct") is None:
         d["trail_pct"] = _opt_float(cfg.get("ai_watch_synth_trail_pct"), 2.5)
     d.setdefault("strategy", "day_scalp_v0")
+    if late_hold:
+        import desk_late_hold as _lh
+        d = _lh.stamp_decision(d)
     return d
 
 
@@ -7490,7 +7512,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 pass
         if not ok_arm:
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
-                       "below_zone", "reward_risk", "no_structure"):
+                       "below_zone", "reward_risk", "no_structure",
+                       "late_hold_closed", "late_hold_not_late_admit"):
                 _skip(why)
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
@@ -7612,7 +7635,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip(f"recheck_{why2}")
             continue
 
-        place_decision = _decision_for_place(structure, ask=ask_f, cfg=cfg)
+        place_decision = _decision_for_place(
+            structure, ask=ask_f, cfg=cfg,
+            late_hold=(why2 == "last_late_hold"))
         if arm_at_last(cfg):
             place_decision["skip_zone"] = True
             if not place_decision.get("zone_kind"):
@@ -7624,7 +7649,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         place_decision["entry_exhaustion_state"] = exhaustion_state(rec, cfg)
         # This desk runs the exhaustion gate; ai_suggest's does not. Name the
         # path on the row so the two never average together again.
-        place_decision["entry_path"] = "watch"
+        place_decision["entry_path"] = (
+            "late_hold" if place_decision.get("late_hold") else "watch"
+        )
         if isinstance(place_decision, dict):
             place_decision = dict(place_decision)
             place_decision["source"] = rec.get("duel_source") or rec.get("source")

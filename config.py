@@ -726,6 +726,16 @@ DEFAULT_CONFIG = {
     # (S/CRCL on 2026-08-11) waiting for an exhaustion exit that is now off.
     "ai_dead_trade_min":               30.0,
     "ai_dead_trade_mfe_r":            0.10,
+    # Paper experiment: last-hour hold (gate 1+2, 2026-08-20). When on,
+    # daytime auto-arm is off. New entries only 14:00–15:30 ET on names
+    # admitted in that window; 2% hard stop, no 0.10R shelf, 30m dead,
+    # 15:50 flatten. Default off so a checkout does not silently kill the
+    # daytime scalp.
+    "ai_late_hold_paper":              False,
+    "ai_late_hold_start":              "14:00",
+    "ai_late_hold_end":                "15:30",
+    "ai_late_hold_stop_pct":           2.0,
+    "ai_late_hold_dead_trade_min":     30.0,
     # After a losing exit that never printed 0.5R MFE, do not re-arm that
     # symbol for the rest of the ET session. Off by default: a same-day
     # trade is not a lifetime ban — if the name still passes inclusion
@@ -1007,6 +1017,7 @@ _EFFECTIVE_KEYS = (
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
     "ai_local_trail_enabled",
+    "ai_late_hold_paper",
     "ai_local_trail_arm_r",
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
@@ -1254,6 +1265,11 @@ SAFE_CONFIG_KEYS = [
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
+    "ai_late_hold_paper",
+    "ai_late_hold_start",
+    "ai_late_hold_end",
+    "ai_late_hold_stop_pct",
+    "ai_late_hold_dead_trade_min",
     "ai_dead_reentry_block",
     "ai_reentry_min_mfe_r",
     "ai_position_shadow_enabled",

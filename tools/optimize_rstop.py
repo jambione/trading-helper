@@ -106,6 +106,10 @@ OVERLAY_KEYS = {
     "heat_min_pct": "ai_watch_exhaustion_heat_min_pct",
     "dead_trade_min": "ai_dead_trade_min",
     "exhaustion_rules": "ai_watch_exhaustion_rules",
+    # Off = hard synth stop is the only price exit (plus dead-trade / 15:50).
+    # The live 0.10R working shelf is what closed the 86-second scalp; a
+    # last-hour hold cannot be tested while that shelf is seeded on every fill.
+    "trail_enabled": "ai_local_trail_enabled",
 }
 VERDICT_CANDIDATE = "candidate"
 VERDICT_HYPOTHESIS = "hypothesis"
@@ -289,6 +293,38 @@ def in_admit_window(
     return False
 
 
+def parse_tod_range(spec: str) -> tuple[int, int]:
+    """'14:00-15:30' -> (minutes, minutes). End is exclusive."""
+    spec = (spec or "").strip()
+    if not spec:
+        raise ValueError("empty TOD range")
+    left, right = spec.split("-", 1)
+
+    def _hm(part: str) -> int:
+        hh, mm = part.strip().split(":")
+        return int(hh) * 60 + int(mm)
+
+    lo, hi = _hm(left), _hm(right)
+    if hi <= lo:
+        raise ValueError(f"TOD range end must be after start: {spec}")
+    return lo, hi
+
+
+def filter_windows_tod(
+    windows: dict[tuple[str, str], list[tuple[float, float]]],
+    start_min: int,
+    end_min: int,
+) -> dict[tuple[str, str], list[tuple[float, float]]]:
+    """Keep admit windows whose admit_ts clock is in [start, end)."""
+    out: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    for key, spans in windows.items():
+        kept = [(lo, hi) for lo, hi in spans
+                if start_min <= et_minutes(lo) < end_min]
+        if kept:
+            out[key] = kept
+    return out
+
+
 def days_between(start: str, end: str) -> list[str]:
     a = datetime.fromisoformat(start).date()
     b = datetime.fromisoformat(end).date()
@@ -310,6 +346,10 @@ def _open_pos(entry: float, ts: float, why: str, cfg: dict, t1_rr: float, scale:
         return None
     risk = entry - stop
     loc = cp.initial_local_stop(entry, risk, cfg) or stop
+    if not bool(cfg.get("ai_local_trail_enabled", True)):
+        # Hold-to-flatten: do not seed the 0.10R working shelf. That shelf is
+        # the 86-second scalp. Trail off = hard synth stop + EOD + dead-trade.
+        loc = stop
     target = entry + t1_rr * risk if t1_rr > 0 else 0.0
     return {
         "entry": entry,
@@ -385,8 +425,14 @@ def walk_book(
     wash: set[str] | None = None,
     enforce_book: bool = True,
     admit_windows: dict[str, list[tuple[float, float]]] | None = None,
+    arm_at_admit: bool = False,
 ) -> dict[str, Any]:
-    """One session, all symbols, optional live seat caps."""
+    """One session, all symbols, optional live seat caps.
+
+    ``arm_at_admit`` buys the first in-window bar and skips should_arm_buy.
+    That is the gate-1 screen (buy the admission, hold the horizon), not the
+    live heat/RSI scalp. Requires admit_windows.
+    """
     wash = wash or set()
     fill = "next_open"
     t1_rr = max(0.0, float(cfg.get("ai_watch_synth_rr", 0.6) or 0.0))
@@ -409,6 +455,7 @@ def walk_book(
             "pending": None,
             "cool": 0.0,
             "refuse": {},
+            "admit_taken": False,
         }
         for i, bar in enumerate(bars):
             by_ts[bar[0]].append((sym, i, bar))
@@ -513,6 +560,13 @@ def walk_book(
             if n_seats() >= max_pos or buys >= max_buys:
                 bump(sym, "book_full")
                 continue
+            if arm_at_admit:
+                if s["admit_taken"]:
+                    continue
+                s["admit_taken"] = True
+                s["pending"] = {"px": bar[4], "why": "admit"}
+                buys += 1
+                continue
             prime_ohlc(sym, s["bars"][:i], ts)
             look = "WASH" if sym.upper() in wash else None
             rec = make_rec(sym, bar[4], cfg, look=look)
@@ -604,6 +658,7 @@ def run_search(
     enforce_book: bool,
     only_baseline: bool,
     admit_windows: dict[tuple[str, str], list[tuple[float, float]]] | None = None,
+    arm_at_admit: bool = False,
 ) -> dict:
     folds = loo_folds(days)
     cells: list[dict] = []
@@ -622,6 +677,7 @@ def run_search(
                 walked = walk_book(
                     book, cfg, wash=wash, enforce_book=enforce_book,
                     admit_windows=windows_for_day(admit_windows, day),
+                    arm_at_admit=arm_at_admit,
                 )
                 for k, v in (walked.get("refuse") or {}).items():
                     refuse[k] = refuse.get(k, 0) + int(v)
@@ -768,9 +824,11 @@ def render(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def write_artifacts(payload: dict, out_dir: Path) -> Path:
+def write_artifacts(payload: dict, out_dir: Path, tag: str = "") -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(ET).strftime("%Y-%m-%d")
+    if tag:
+        stamp = f"{stamp}_{tag}"
     path = out_dir / f"optimize_rstop_{stamp}.json"
     base_cell = next(
         (c for c in payload["cells"] if c["name"] == "baseline"), {})
@@ -839,6 +897,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wash", default="")
     ap.add_argument("--admitted", action="store_true",
                     help="only arm names/windows the live shadow book admitted")
+    ap.add_argument("--admit-tod", default="",
+                    help="keep admit windows whose admit clock is in HH:MM-HH:MM ET "
+                         "(end exclusive). 14:00-15:30 is the late-hold PASS.")
+    ap.add_argument("--arm-at-admit", action="store_true",
+                    help="buy the first in-window bar; skip heat/RSI should_arm_buy. "
+                         "Matches thesis_screen, not the live scalp.")
+    ap.add_argument("--tag", default="",
+                    help="suffix on the benchmarks/optimize_rstop_DATE json/csv")
     ap.add_argument("--shadow", default="",
                     help="shadow.jsonl path (default: ai_reports/shadow.jsonl)")
     ap.add_argument("--json", action="store_true")
@@ -861,10 +927,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.symbols or args.default_pool:
             allow = {s.upper() for s in args.symbols} if args.symbols else set(DEFAULT_POOL)
             admit_windows = {k: v for k, v in admit_windows.items() if k[0] in allow}
+        if args.admit_tod:
+            lo, hi = parse_tod_range(args.admit_tod)
+            n_before = len(admit_windows)
+            admit_windows = filter_windows_tod(admit_windows, lo, hi)
+            print(f"admit TOD {args.admit_tod}: {n_before} symbol-days -> "
+                  f"{len(admit_windows)}", flush=True)
         symbols = sorted({s for s, d in admit_windows})
         if not symbols:
             print("no admitted names in shadow for those days", file=sys.stderr)
             return 2
+    elif args.admit_tod or args.arm_at_admit:
+        ap.error("--admit-tod / --arm-at-admit require --admitted")
     else:
         symbols = [s.upper() for s in args.symbols] or (
             DEFAULT_POOL if args.default_pool else [])
@@ -887,7 +961,9 @@ def main(argv: list[str] | None = None) -> int:
           f"give={base.get('ai_local_trail_give_r')}  "
           f"rr={base.get('ai_watch_synth_rr')}  "
           f"dead={base.get('ai_dead_trade_min')}  "
-          f"feed={args.feed}  cells={0 if args.only_baseline else len(grid)}",
+          f"trail={base.get('ai_local_trail_enabled')}  "
+          f"feed={args.feed}  cells={0 if args.only_baseline else len(grid)}  "
+          f"arm_at_admit={args.arm_at_admit}  book={not args.no_book}",
           flush=True)
 
     cache = fetch_cache(symbols, days, feed=args.feed, key=key, secret=secret)
@@ -898,6 +974,7 @@ def main(argv: list[str] | None = None) -> int:
         enforce_book=not args.no_book,
         only_baseline=args.only_baseline,
         admit_windows=admit_windows,
+        arm_at_admit=args.arm_at_admit,
     )
     if args.json:
         print(json.dumps({
@@ -908,7 +985,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(render(payload))
     if not args.no_write:
-        path = write_artifacts(payload, _ROOT / "benchmarks")
+        path = write_artifacts(payload, _ROOT / "benchmarks", tag=args.tag)
         print(f"\nwrote {path}")
     return 0
 

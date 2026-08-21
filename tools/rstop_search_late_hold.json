@@ -1,0 +1,11 @@
+{
+  "min_n": 30,
+  "description": "Gate-2 sweep for the late-hour hold that passed thesis_screen (14:00-15:30 admit, 60m / flatten 15:50, n=136, net +0.35% after 20bps, 2.3σ vs eligible-within). Run with --admitted --admit-tod 14:00-15:30 --arm-at-admit --no-book so the entry matches the screen (buy the admission, skip heat/RSI). Baseline is live exits on those same entries — the 0.10R working shelf that closed the 86-second scalp. trail_enabled=false seeds the hard synth stop instead of that shelf. Sim has no spread; a candidate whose mean $ is smaller than ~0.2% of notional is not a trade. Does not write bot_config.json.",
+  "search": {
+    "trail_enabled": [true, false],
+    "dead_trade_min": [0, 30],
+    "synth_stop_pct": [5.0, 2.0, 1.0],
+    "give_r": [0.10, 0.30],
+    "min_give_px": [0.06, 0.0]
+  }
+}

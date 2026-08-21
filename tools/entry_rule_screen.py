@@ -1,33 +1,27 @@
 #!/usr/bin/env python3
-"""Rank candidate ENTRY RULES against the same controls that failed the desk.
+"""Rank candidate ENTRY RULES against the desk_null controls.
 
-admission_null answered one question — do the desk's actual admissions beat a
-random moment / a random name? (No: −0.35% vs within at 30m, 4.2σ; 0.6σ vs
-outside.) But its sample is the entries the live gates produced, so it cannot
-say whether some OTHER rule over the same tape would have had edge. The heat
-sweep could not answer that either: every cell kept the live 86-second exits,
-so cool entries were only ever tested shackled to a horizon where the median
-move is zero.
+admission_null answers whether the live admissions beat no-decision.
+This answers whether some OTHER predicate over the same tape would have.
 
-This screens rules directly, with no trading machinery in the loop. A rule is
-a predicate over a shadow tick — the per-tick features the desk already logs
-(exhaustion, cm_rsi, cm_rsi_rising, rvol, in_zone, arm_ok…). For each rule:
+A rule is a predicate over a shadow tick. For each rule:
 
   1. Replay it over every watched tick of the last N sessions.
   2. Take the FIRST firing per symbol, then nothing again until a full
      horizon has passed — consecutive ticks fire together, and overlapping
-     windows on one name are one bet counted many times, which is how a fake
-     4σ gets manufactured.
-  3. Score each moment off 1m bars, paired against WITHIN (random instant,
-     same name and day) and OUTSIDE (price-matched names never watched).
+     windows on one name are one bet counted many times.
+  3. Score off 1m bars against desk_null: eligible-within (honest timing),
+     outside, IWM residual, haircut vs cash.
 
-A rule earns the simulator only if `rule − within` is positive with real
-sigma. `rule fwd` alone is not the bar: these names drift, so a rule can look
-green while being worse than throwing a dart at its own chart.
+A rule earns the simulator only if verdict() is PASS — n≥30, median net of
+haircut > 0, eligible-within paired median > 0 at ≥2σ. `rule fwd` alone is
+not the bar. Feature-missing ticks (exhaustion is None) do not fire a rule
+that reads exhaustion: the predicates already treat None as False.
 
-The pipeline this feeds: screen here → sweep in optimize_rstop with exits
-sized to the rule's horizon → forward paper test. Kill at the first gate that
-fails.
+The H1 family (cool_*) and the honesty checks (hot_rising, live_arm) stay
+here so a re-run is comparable. New information (open-drive, research vs
+scanner, chase vs fresh) lives in thesis_screen.py — do not add RSI/%R
+permutations to this file; that family is falsified.
 
 Read-only. Usage:
     python3 tools/entry_rule_screen.py [--days N] [--horizon-min N]
@@ -36,30 +30,19 @@ Read-only. Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import statistics
 import sys
-import os
 from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import shadow_report as sr  # noqa: E402
-import bars  # noqa: E402
-from admission_null import (  # noqa: E402
-    OUTSIDE_BAND,
-    RTH_END_MIN,
-    RTH_START_MIN,
-    WITHIN_DRAWS,
-    _day,
-    _et_minutes,
-    _index_at,
-    _paired,
-    _stat,
-    build_outside_pool,
-)
+import bars
+import desk_null as N
+import shadow_report as sr
 
 
 def _f(row: dict, key: str) -> float | None:
@@ -132,59 +115,16 @@ def collect_moments(rows, rule, horizon: float):
             ts = float(r.get("ts") or 0)
             if not ts or ts < quiet_until:
                 continue
-            if not (RTH_START_MIN <= _et_minutes(ts) <= RTH_END_MIN):
+            if not (N.RTH_START_MIN <= bars.et_minutes(ts) <= N.RTH_END_MIN):
                 continue
             try:
                 fired = bool(rule(r))
-            except Exception:
+            except Exception:  # noqa: BLE001 — a broken predicate must skip, not crash
                 fired = False
             if fired:
-                moments.append((ts, sym, _day(ts)))
+                moments.append((ts, sym, bars.day_of(ts)))
                 quiet_until = ts + horizon
     return moments
-
-
-def score_moments(moments, pools, horizon: float, feed: str, rng):
-    """(fwd, vs_within, vs_outside) lists for a set of (ts, sym, day)."""
-    fwd, within_d, outside_d = [], [], []
-    for t0, sym, day in moments:
-        stamps, closes = bars.fetch(sym, day, feed)
-        if not stamps:
-            continue
-        a = bars.forward_return(stamps, closes, t0, horizon)
-        if a is None:
-            continue
-        fwd.append(a)
-
-        pool = [s for s in stamps
-                if RTH_START_MIN <= _et_minutes(s) <= RTH_END_MIN
-                and abs(s - t0) > horizon]
-        draws = []
-        if pool:
-            for s in rng.sample(pool, min(WITHIN_DRAWS, len(pool))):
-                v = bars.forward_return(stamps, closes, s, horizon)
-                if v is not None:
-                    draws.append(v)
-        if draws:
-            within_d.append(a - statistics.median(draws))
-
-        i = _index_at(stamps, t0)
-        p0 = closes[i] if 0 <= i < len(closes) else None
-        others = []
-        for o_st, o_cl in pools.get(day, {}).values():
-            j = _index_at(o_st, t0)
-            if j < 0:
-                continue
-            if p0:
-                ratio = o_cl[j] / p0
-                if not (OUTSIDE_BAND[0] <= ratio <= OUTSIDE_BAND[1]):
-                    continue
-            v = bars.forward_return(o_st, o_cl, t0, horizon)
-            if v is not None:
-                others.append(v)
-        if len(others) >= 3:
-            outside_d.append(a - statistics.median(others))
-    return fwd, within_d, outside_d
 
 
 def main() -> int:
@@ -195,6 +135,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--rules", type=str, default="",
                     help="comma-separated subset of rule names")
+    ap.add_argument("--haircut", type=float, default=N.HAIRCUT_PCT)
+    ap.add_argument("--bench", default=N.BENCH)
     args = ap.parse_args()
     horizon = args.horizon_min * 60.0
     rng = random.Random(args.seed)
@@ -204,58 +146,49 @@ def main() -> int:
     if bad:
         print(f"unknown rules: {bad}; have {list(RULES)}")
         return 1
+    why = N.require_bars_client()
+    if why:
+        print(why)
+        return 1
 
     rows = sr.load()
     if not rows:
         print("no shadow log")
         return 1
-    days = sorted({_day(r["ts"]) for r in rows if r.get("ts")})[-args.days:]
+    days = sorted({bars.day_of(r["ts"]) for r in rows if r.get("ts")})[-args.days:]
     dayset = set(days)
-    rows = [r for r in rows if r.get("ts") and _day(r["ts"]) in dayset]
+    rows = [r for r in rows if r.get("ts") and bars.day_of(r["ts"]) in dayset]
     print(f"{len(rows)} watched ticks across {days[0]}..{days[-1]}, "
           f"horizon {args.horizon_min:g}m, cooldown = horizon")
 
-    watched_by_day: dict[str, set] = defaultdict(set)
-    for r in rows:
-        watched_by_day[_day(r["ts"])].add(str(r["symbol"]).upper())
-    pools = {}
-    for day in days:
-        pools[day] = build_outside_pool(day, watched_by_day[day], rng, args.feed)
-    print("outside pools: " + ", ".join(
-        f"{d}:{len(p)}" for d, p in pools.items()))
+    ctx = N.prepare_context(rows, days, args.feed, rng,
+                            haircut=args.haircut, bench=args.bench)
 
     ranked = []
     for name in names:
         desc, rule = RULES[name]
         moments = collect_moments(rows, rule, horizon)
-        syms = len({m[1] for m in moments})
-        fwd, w, o = score_moments(moments, pools, horizon, args.feed, rng)
+        scores = N.score_moments(moments, horizon, ctx)
         print(f"\n=== {name} — {desc}")
         print(f"  fired {len(moments)} de-correlated moments "
-              f"across {syms} symbols, scored {len(fwd)}")
-        if not fwd:
-            print("  nothing scored")
-            continue
-        print(_stat("rule fwd", fwd))
-        print(_paired("rule - within", w))
-        print(_paired("rule - outside", o))
-        if len(w) < 30:
-            print("  UNDERPOWERED — under 30 paired moments; direction only")
-        ranked.append((name, len(w),
-                       statistics.median(w) if w else float("nan"),
-                       100.0 * sum(1 for x in w if x > 0) / len(w) if w else 0))
+              f"across {len({m[1] for m in moments})} symbols, "
+              f"scored {len(scores)}")
+        v = N.print_scorecard(scores, args.haircut)
+        elig = N.diffs(scores, "eligible")
+        med = statistics.median(elig) if elig else None
+        ranked.append((name, v, len(scores), med))
 
-    ranked.sort(key=lambda r: -(r[2] if r[2] == r[2] else -99))
-    print(f"\n{'rule':<16} {'n':>5} {'median vs within':>17} {'beat':>6}")
-    print("-" * 48)
-    for name, n, med, beat in ranked:
-        print(f"{name:<16} {n:>5} {med:>+16.3f}% {beat:>5.0f}%")
+    ranked.sort(key=lambda r: -(r[3] if r[3] is not None else -99))
+    print(f"\n{'rule':<16} {'verdict':<13} {'n':>5} {'vs eligible':>12}")
+    print("-" * 50)
+    for name, v, n, med in ranked:
+        med_s = f"{med:+.3f}%" if med is not None else "n/a"
+        print(f"{name:<16} {v:<13} {n:>5} {med_s:>12}")
 
-    print("\nThe bar is `rule - within` positive with sigma, not a green")
-    print("`rule fwd` — these names drift, so any rule can look green while")
-    print("losing to a dart. Survivors go to optimize_rstop with exits sized")
-    print("to THIS horizon, then to forward paper; friction on these names is")
-    print("roughly 0.1-0.3% round trip and the medians here are gross of it.")
+    print("\nPASS = n≥30, median net of haircut > 0, eligible-within > 0 at ≥2σ.")
+    print("Survivors go to optimize_rstop with exits sized to THIS horizon.")
+    print("Do not add another RSI/%R arrangement; that family is falsified.")
+    print("New information (clock, research, chase) is tools/thesis_screen.py.")
     return 0
 
 

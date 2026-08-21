@@ -1381,6 +1381,12 @@ def place_scaled_entry(
     # protected buy (Alpaca wash 40310000). scale_out ≥99 or dual off → one
     # leg; optional full-size broker TP when not splitting.
     dual = bool(cfg.get("ai_day_scalp_dual_tranche", True))
+    late_hold = bool(decision.get("late_hold"))
+    if late_hold:
+        # Gate-2 candidate is a hold, not a scale-out. Dual T1 would cut
+        # the trade the screen measured as hold-to-flatten.
+        dual = False
+        scale_out_pct = 0.0
     logical_dual = (
         dual
         and scale_out_pct < 99.0
@@ -1506,6 +1512,8 @@ def place_scaled_entry(
         decision.get("strategy")
         or ("day_scalp_v0" if decision.get("synthetic") else "research")
     )
+    if late_hold:
+        strategy = "late_hold"
     row = {
         "qty_a": qty_a,
         "qty_b": qty_b,
@@ -1533,8 +1541,10 @@ def place_scaled_entry(
         # Disaster floor — never overwritten when stop_price ratchets.
         "entry_stop_price": stop_price,
         "local_stop_price": (
-            initial_local_stop(sizing_entry, risk_px, cfg) or stop_price
+            stop_price if late_hold
+            else (initial_local_stop(sizing_entry, risk_px, cfg) or stop_price)
         ),
+        "late_hold": late_hold,
         "target_1": target_1,
         "trail_pct": trail_pct,
         "runner_trail_r": runner_trail_r,
@@ -2476,6 +2486,39 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
     return round(want, 6)
 
 
+def _flatten_late_hold_stop(
+    ticker: str,
+    pos: dict[str, Any],
+    trigger: float | None,
+    events: list[dict[str, Any]],
+    exit_why: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Hard synth stop only — no 0.10R working shelf, no ratchet.
+
+    Broker stop is off on this desk; without this check a late-hold fill
+    would sit naked until dead-trade or 15:50.
+    """
+    if not pos.get("entry_confirmed") or pos.get("closing_reason"):
+        return False, False
+    floor = _num(pos.get("entry_stop_price")) or _num(pos.get("stop_price"))
+    last = trigger if trigger is not None else _num(pos.get("last_seen_price"))
+    if last is None or floor is None or last > floor + 1e-9:
+        return False, False
+    import alpaca_trader
+    alpaca_trader.cancel_open_orders(ticker)
+    out = alpaca_trader.close_out(ticker) or {}
+    if isinstance(out, dict) and out.get("order_id"):
+        pos["close_order_id"] = str(out["order_id"])
+    pos["closing_reason"] = "late_hold_stop"
+    exit_why[ticker] = "late_hold_stop"
+    events.append({
+        "ticker": ticker, "event": "late_hold_stop",
+        "last": last, "stop": floor,
+    })
+    log_event("late_hold_stop", symbol=ticker, last=last, stop=floor)
+    return True, True
+
+
 def apply_local_trail(
     ticker: str,
     pos: dict[str, Any],
@@ -2495,6 +2538,9 @@ def apply_local_trail(
     get_positions_detail every time.
     """
     import alpaca_trader
+
+    if pos.get("late_hold") or str(pos.get("strategy") or "") == "late_hold":
+        return _flatten_late_hold_stop(ticker, pos, trigger, events, exit_why)
 
     if not (
         pos.get("entry_confirmed")
@@ -3760,6 +3806,8 @@ def manage_open_positions(
         exh_on = _cfg_flag("ai_watch_exhaustion_rules", True)
         for ticker, pos in list(state.items()):
             if pos.get("sell_signal_stop_done") or pos.get("closing_reason"):
+                continue
+            if pos.get("late_hold"):
                 continue
             sig = indicators.get(ticker)
             if not isinstance(sig, dict) or not sig.get("sell_signal"):
