@@ -2567,6 +2567,16 @@ def _funnel_snapshot(f_rows: list, f_ts: float, now_ts: float,
     }
 
 
+def _lab_snapshot(cfg: dict, tickers: list, book: dict | None) -> dict:
+    """Observe ghost book. Never raises into /api/state."""
+    try:
+        import desk_lab
+        return desk_lab.build_lab(cfg, tickers, book if isinstance(book, dict) else {})
+    except Exception as e:
+        return {"product": "observe", "headline": "lab unavailable", "error": str(e)[:160],
+                "ghosts": [], "cheap": [], "wide": [], "refused": 0}
+
+
 def _snapshot() -> dict:
     tickers  = load_tickers()
     news     = load_news()
@@ -2756,6 +2766,7 @@ def _snapshot() -> dict:
                 "product_name":    version.PRODUCT_NAME,
                 "product_version": version.PRODUCT_VERSION,
             },
+            "lab": _lab_snapshot(STATE.cfg, rows, claude_positions),
         }
 
 

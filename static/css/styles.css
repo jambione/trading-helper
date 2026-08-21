@@ -1330,6 +1330,62 @@ body.mobile .icon-btn {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.lab-strip {
+  flex: 0 0 auto;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.45);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.lab-strip__head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.lab-strip__mode {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #fbbf24;
+}
+.lab-strip__headline {
+  color: #94a3b8;
+  min-width: 0;
+}
+.lab-strip__ghosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.lab-chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.lab-chip:hover { border-color: #67e8f9; }
+.lab-chip__sym { font-weight: 650; color: #e2e8f0; }
+.lab-chip__pnl { font-weight: 600; }
+.lab-chip--up .lab-chip__pnl { color: #4ade80; }
+.lab-chip--down .lab-chip__pnl { color: #f87171; }
+.lab-chip--stop {
+  border-color: rgba(248, 113, 113, 0.55);
+  opacity: 0.85;
+}
+.lab-chip--cheap { box-shadow: inset 3px 0 0 #34d399; }
+.lab-chip--wide { box-shadow: inset 3px 0 0 #f59e0b; }
+.lab-strip__note {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 10px;
+}
 
 /* New symbol joined this panel's list — cyan, 5s, same family as .flag-badge--new.
    Restarted from JS when another symbol arrives while still glowing. */
