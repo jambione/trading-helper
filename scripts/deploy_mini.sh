@@ -165,6 +165,19 @@ pgrep -fl 'dashboard.py|signal_engine.py|discord_source.py' | sed 's/^/  proc /'
 REMOTE
 
 echo ""
+# A stack restarted over SSH cannot read the mini's login Keychain, so the
+# Claude CLI comes back logged out even though the credential is present and
+# valid — Anthropic research then silently skips every scheduled run. Grok is
+# unaffected (its credential is a file). This is a property of macOS session
+# gating, not something the script can fix, so it reports rather than pretends.
+if ssh_mini "cd '$MINI_REPO' && grep -q 'claude_auth=fail' logs/ai_trader.log 2>/dev/null"; then
+  echo "⚠  claude_auth=fail — this SSH restart logged the Claude CLI out."
+  echo "   The credential is still in the mini's Keychain; \`claude /login\`"
+  echo "   is NOT the fix. To restore Anthropic research, restart the stack"
+  echo "   from a Terminal window ON THE MINI (scripts/session.command)."
+  echo "   Trading and Grok research are unaffected."
+  echo ""
+fi
 echo "Done. Hard-refresh the dashboard (Cmd+Shift+R): $BACKEND_LOCAL"
 echo "Public (if tunnel up): $PUBLIC_URL"
 echo ""

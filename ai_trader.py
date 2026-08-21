@@ -487,6 +487,43 @@ def _duel_public() -> dict:
         return {}
 
 
+def _claude_auth_remedy() -> str:
+    """What to actually DO about claude_auth=fail on this machine.
+
+    Two states wear the same error and want opposite fixes. macOS gates the
+    login Keychain on an interactive session, so a stack started over SSH — as
+    scripts/deploy_mini.sh does — cannot read a credential that is present and
+    perfectly valid. Telling the operator to run `claude /login` there sends
+    them to re-authenticate something that is already authenticated, and the
+    desk comes back failed again on the next SSH deploy.
+
+    So ask the Keychain directly. Credential present means the login is fine
+    and the session is the problem; absent means it really is a login.
+    """
+    try:
+        import subprocess
+        found = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", "Claude Code-credentials"],
+            capture_output=True, timeout=10,
+        ).returncode == 0
+    except Exception:  # noqa: BLE001 — non-macOS, no `security`, or a timeout
+        found = False
+    if found:
+        return (
+            "The credential IS in this machine's login Keychain — you are "
+            "logged in, but this process cannot read it because it was not "
+            "started from an interactive session (SSH, launchd, or "
+            "scripts/deploy_mini.sh). Do NOT run `claude /login`; it will not "
+            "help. Restart the stack from a Terminal window on this machine."
+        )
+    return (
+        "No Claude credential found in this machine's login Keychain. "
+        "Run `claude /login` from a Terminal on this machine, then restart "
+        "the stack from that same Terminal."
+    )
+
+
 def _cfg(cfg: dict, key: str, default=None):
     """Config read where an explicit null counts as unset, not as a value."""
     v = cfg.get(key)
@@ -1042,8 +1079,7 @@ def main() -> None:
                     print(
                         "[ai] WARNING: claude_auth=fail — "
                         f"{auth.get('error') or 'not logged in'}. "
-                        "Anthropic research will skip until: claude /login "
-                        "(on this machine) or ANTHROPIC_API_KEY is set.",
+                        f"{_claude_auth_remedy()}",
                         flush=True,
                     )
             except Exception as e:  # noqa: BLE001
