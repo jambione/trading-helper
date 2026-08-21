@@ -3884,10 +3884,14 @@ def test_decision_price_falls_back_to_rest_when_tape_unaged(monkeypatch):
     import ai_entry_watch as ew
     import ai_trading as gt
 
+    # Ask kept near the tape on purpose. This test is about the AGE fallback,
+    # and the old fixture's 10.28/11.69 pair is 13.7% apart — enough to trip
+    # the ask-deviation check added 2026-08-21 and make it fail for a reason
+    # it was never testing.
     monkeypatch.setattr(ew, "live_print", lambda s: (10.28, None))
-    monkeypatch.setattr(gt, "_latest_ask", lambda s: 11.69)
+    monkeypatch.setattr(gt, "_latest_ask", lambda s: 10.35)
     px, src, age = ew.decision_price("FGI", {"ai_watch_decision_max_age_sec": 8.0})
-    assert px == 11.69 and src == "rest"
+    assert px == 10.35 and src == "rest"
 
 
 def test_decision_price_stale_tape_when_no_rest(monkeypatch):
@@ -4977,3 +4981,52 @@ def test_locked_book_is_unknowable_not_free():
     assert ew._spread_r(10.0, 10.5, 9.50) is None      # crossed: nonsense
     # A real book still prices normally, including a very tight one.
     assert ew._spread_r(10.0, 9.999, 9.50) == pytest.approx(0.004)
+
+
+# ── a REST ask far from the tape is a wrong number, not a wide market ─────
+# 2026-08-21: the quote on thin names ran well above the tape — USDE asked
+# 7.97 against 7.18 traded, JUNS 9.40 against 8.52. The synth stop is ask x
+# 0.95, so it landed ABOVE the live print and the fill guard refused: 62 of
+# the day's 84 entry_fail rows, JUNS retrying 34 times. It also inflated
+# spread_r, the record ai_max_spread_r is about to be set from.
+
+
+def _dp(monkeypatch, symbol, tape, ask, dev=5.0, age=60.0):
+    import ai_entry_watch as ew
+    import ai_trading as gt
+    monkeypatch.setattr(ew, "live_print",
+                        lambda _s: (tape, age) if tape else None)
+    monkeypatch.setattr(gt, "_latest_ask", lambda _s: ask)
+    # age well past the decision window so the REST branch is the one tested
+    return ew.decision_price(symbol, {"ai_watch_decision_max_age_sec": 8.0,
+                                      "ai_decision_ask_max_dev_pct": dev})
+
+
+def test_rest_ask_far_above_the_tape_is_disbelieved(monkeypatch):
+    """USDE's shape: +12.9%. Must not arm, and must not become a stop."""
+    px, src, _age = _dp(monkeypatch, "USDE", tape=7.18, ask=7.97)
+    assert src == "stale_tape", "an ask 13% off the tape is not a price"
+    assert px == pytest.approx(7.18), "fall back to the print, not the quote"
+
+
+def test_a_normal_quote_still_arms(monkeypatch):
+    """BKKT +1.0% and TGTX +0.7% are ordinary and must be left alone."""
+    _px, src, _ = _dp(monkeypatch, "BKKT", tape=8.69, ask=8.78)
+    assert src == "rest"
+    _px, src, _ = _dp(monkeypatch, "TGTX", tape=55.38, ask=56.24)
+    assert src == "rest"
+
+
+def test_check_is_symmetric_and_disableable(monkeypatch):
+    # An ask far BELOW the tape is equally untrustworthy.
+    _px, src, _ = _dp(monkeypatch, "X", tape=10.00, ask=8.50)
+    assert src == "stale_tape"
+    # 0 restores the old unconditional trust.
+    _px, src, _ = _dp(monkeypatch, "USDE", tape=7.18, ask=7.97, dev=0.0)
+    assert src == "rest"
+
+
+def test_no_tape_means_no_cross_check(monkeypatch):
+    """With nothing to compare against, the ask is still the best we have."""
+    _px, src, _ = _dp(monkeypatch, "X", tape=None, ask=9.40)
+    assert src == "rest"

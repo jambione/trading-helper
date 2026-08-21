@@ -712,6 +712,11 @@ DEFAULT_CONFIG = {
     # book and opens every fill down by the spread), "mid" (half), or "bid"
     # (pays nothing, fills only when someone comes to it). Crossing buys
     # immediacy, which is worth its price only if the signal continues.
+    # A REST ask further than this from the last print is disbelieved rather
+    # than used: on thin names the quote ran 8-13% above the tape, which put
+    # the derived stop ABOVE the live price and inflated every spread reading
+    # taken from it. Percent of tape. 0 disables.
+    "ai_decision_ask_max_dev_pct":      5.0,
     "ai_entry_limit_anchor":           "ask",
     "ai_local_trail_give_spread_k":    0.0,
     # Breakeven floor may not arm until the trade has cleared this many
@@ -1269,6 +1274,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_give_open_r",
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",
+    "ai_decision_ask_max_dev_pct",
     "ai_entry_limit_anchor",
     "ai_local_trail_give_spread_k",
     "ai_local_trail_be_at_spread_k",

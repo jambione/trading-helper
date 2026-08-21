@@ -2734,6 +2734,21 @@ def decision_max_age_sec(cfg: dict | None) -> float:
     return v if v > 0 else 8.0
 
 
+def _ask_max_dev_pct(cfg: dict | None) -> float:
+    """How far a REST ask may sit from the last print before it is disbelieved.
+
+    Percent of the tape price. 5% is generous — a fast name genuinely moves
+    between a print and a quote — while still catching the 2026-08-21 failures
+    (USDE +12.9%, JUNS +8.3%) and leaving the honest ones alone (BKKT +1.0%,
+    TGTX +0.7%). 0 disables the check.
+    """
+    try:
+        v = float((cfg or {}).get("ai_decision_ask_max_dev_pct", 5.0))
+    except (TypeError, ValueError):
+        v = 5.0
+    return max(0.0, v)
+
+
 def decision_price(
     symbol: str,
     cfg: dict | None,
@@ -2762,6 +2777,25 @@ def decision_price(
     except Exception:
         ask_f = 0.0
     if ask_f > 0:
+        # Cross-check the REST ask against the last print before trusting it.
+        # Nothing did, and on 2026-08-21 the quote on thin names ran far above
+        # the tape: USDE asked 7.97 against 7.18 traded (+12.9%), JUNS 9.40
+        # against 8.52 (+8.3%). Everything downstream is derived from this
+        # number, so a bad one poisons the lot — the synth stop comes out at
+        # ask x 0.95 and lands ABOVE the live print, which is why 62 of the
+        # day's 84 entry_fail refusals read "tape $8.40 already through stop
+        # $8.93". JUNS retried 34 times because the quote never corrected.
+        # It also inflates spread_r, which is the record ai_max_spread_r is
+        # about to be set from: JUNS 5.96R and USDE 4.96R are mostly this
+        # artifact rather than genuinely 500%-wide books.
+        #
+        # A quote this far from the tape is not a wide market, it is a wrong
+        # number. Fall through to stale_tape, which already must not arm.
+        # 0 disables the check.
+        dev = _ask_max_dev_pct(cfg)
+        if (dev > 0 and tape is not None and tape[0] and tape[0] > 0
+                and abs(ask_f - tape[0]) / tape[0] * 100.0 > dev):
+            return tape[0], "stale_tape", tape[1]
         return ask_f, "rest", None
     if tape is not None and tape[0] > 0:
         return tape[0], "stale_tape", tape[1]
