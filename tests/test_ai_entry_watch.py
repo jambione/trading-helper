@@ -4915,3 +4915,47 @@ def test_cm_rsi_rising_requirement_can_be_dropped():
     # Default keeps requiring the turn.
     ok, why = ew.cm_rsi_allows_buy(falling_in_band, _rsi_cfg())
     assert ok is False and why == "rsi_not_rising"
+
+
+# ── crossing cost on the outcome row ──────────────────────────────────────
+# ai_max_spread_r sits at 0 "until it can be set from these rows rather than
+# guessed". The shadow log priced candidates; nothing priced consequences,
+# because outcome rows carried the ask alone and the round trip could not be
+# reconstructed after the fact.
+
+
+def test_entry_features_record_what_crossing_cost():
+    """bid and spread_r land on the row the outcome is written from."""
+    import ai_entry_watch as ew
+
+    f = ew._entry_features({}, ask=10.0, bid=9.90, stop=9.50)
+    assert f["bid"] == 9.90
+    # Crossing is paid twice: 2 * (10.00 - 9.90) / (10.00 - 9.50) = 0.40R.
+    assert f["spread_r"] == pytest.approx(0.40)
+
+
+def test_entry_features_refuse_to_invent_a_spread():
+    """Unknowable is None, never zero.
+
+    A missing bid recorded as a tight spread would make the names whose book
+    the desk cannot see look like the cheapest on the desk — exactly backwards,
+    and it would drag any threshold read off these rows toward zero.
+    """
+    import ai_entry_watch as ew
+
+    assert ew._entry_features({}, ask=10.0)["spread_r"] is None
+    assert ew._entry_features({}, ask=10.0, bid=9.90)["spread_r"] is None
+    assert ew._entry_features({}, ask=10.0, stop=9.50)["spread_r"] is None
+    # Nonsense geometry (stop at or above the ask) is refused, not clamped.
+    assert ew._entry_features({}, ask=10.0, bid=9.9, stop=10.5)["spread_r"] is None
+
+
+def test_spread_r_scales_with_the_risk_it_is_measured_against():
+    """The same penny book is cheap on a wide stop and ruinous on a tight one."""
+    import ai_entry_watch as ew
+
+    wide = ew._spread_r(10.0, 9.99, 9.50)     # 1c book, 50c risk
+    tight = ew._spread_r(10.0, 9.99, 9.95)    # 1c book, 5c risk
+    assert wide == pytest.approx(0.04)
+    assert tight == pytest.approx(0.40)
+    assert tight > wide, "percent-of-price would have called these identical"

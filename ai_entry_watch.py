@@ -5861,7 +5861,9 @@ def ensure_offset_zone_if_needed(
     }
 
 
-def _entry_features(rec: dict, *, ask: float | None = None) -> dict[str, Any]:
+def _entry_features(rec: dict, *, ask: float | None = None,
+                    bid: float | None = None,
+                    stop: float | None = None) -> dict[str, Any]:
     """Decision-time feature vector, for retrospective A/B slicing.
 
     Snapshotted at the moment of entry and carried onto the position, so the
@@ -5901,6 +5903,19 @@ def _entry_features(rec: dict, *, ask: float | None = None) -> dict[str, Any]:
         "entry_hour_et": _et_hour_decimal(now),
         "dwell_sec": round(now - admitted, 1) if admitted else None,
         "ask": _f_or_none(ask),
+        # What crossing cost on THIS fill. The shadow log prices candidates,
+        # but until now nothing priced consequences: ai_max_spread_r sits at 0
+        # "until it can be set from these rows rather than guessed", and the
+        # outcome rows — the only place cost meets result — carried the ask
+        # alone, so the round trip could not be reconstructed afterwards.
+        #
+        # It matters at this desk's scale. Across 2026-08-11..20 the median
+        # candidate spread was 0.048R and the p90 was 3.89R, against a median
+        # trade MFE of 0.046R: at the p90 the round trip is eighty times the
+        # move it is trying to capture. Same arithmetic the gate enforces, so
+        # a threshold read off these rows means what the gate will mean.
+        "bid": _f_or_none(bid),
+        "spread_r": _spread_r(ask, bid, stop),
     }
 
 
@@ -7468,6 +7483,27 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 bid_f = float(bid)
         except (TypeError, ValueError):
             bid_f = None
+        if bid_f is None:
+            # 82% of arm-evaluated rows reached the shadow log with no bid, so
+            # _spread_r could not be computed for them and the one gate that
+            # prices crossing (ai_max_spread_r) had 18% of the record it was
+            # waiting on. The cached quote is free — prime_quotes already
+            # filled it, and it self-expires on _QUOTE_TTL_SEC.
+            #
+            # Deliberately NOT gt._latest_bid(): that falls back to the ASK
+            # when no bid is known, which would record a zero spread — a name
+            # whose book we cannot see would read as the tightest on the desk,
+            # which is the opposite of true and would poison the threshold.
+            try:
+                hit = gt._cached_quote(sym)
+            except Exception:  # noqa: BLE001
+                hit = None
+            if hit is not None and hit[1] is not None:
+                try:
+                    cached_bid = float(hit[1])
+                    bid_f = cached_bid if cached_bid > 0 else None
+                except (TypeError, ValueError):
+                    bid_f = None
 
         # Session/capital refuses first so State never says "buy" / "above
         # zone" for a name we will not arm even if last sits in the band.
@@ -7656,7 +7692,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             place_decision = dict(place_decision)
             place_decision["source"] = rec.get("duel_source") or rec.get("source")
             place_decision["duel_source"] = place_decision.get("source")
-            place_decision["features"] = _entry_features(rec, ask=ask_f)
+            # bid2_f and the decision's own stop, so spread_r is measured
+            # against the R this trade actually takes — not the structure's.
+            place_decision["features"] = _entry_features(
+                rec, ask=ask_f, bid=bid2_f,
+                stop=place_decision.get("stop_price"))
         rec["status"] = "armed"
         set_block_reason(rec, "placing", now=t0)
         try:
