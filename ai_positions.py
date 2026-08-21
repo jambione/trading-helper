@@ -1243,6 +1243,16 @@ def place_scaled_entry(
     target_1 = float(decision.get("target_1") or 0)
     cfg = _entry_cfg()
     try:
+        import desk_product as _desk_product
+        _prod_block = _desk_product.arm_block_reason(cfg)
+    except Exception:
+        _prod_block = None
+    if _prod_block and not bool(decision.get("desk_force")):
+        log_event("entry_fail", symbol=ticker, reason=_prod_block)
+        return {"ok": False, "error": _prod_block, "action": "buy",
+                "symbol": ticker}
+
+    try:
         default_scale = float(cfg.get("ai_watch_synth_scale_out_pct", 50) or 50)
     except (TypeError, ValueError):
         default_scale = 50.0
@@ -1429,9 +1439,16 @@ def place_scaled_entry(
     # leg; optional full-size broker TP when not splitting.
     dual = bool(cfg.get("ai_day_scalp_dual_tranche", True))
     late_hold = bool(decision.get("late_hold"))
-    if late_hold:
-        # Gate-2 candidate is a hold, not a scale-out. Dual T1 would cut
-        # the trade the screen measured as hold-to-flatten.
+    try:
+        import desk_product as _desk_product
+        import desk_h4 as _desk_h4
+        if (_desk_product.product(cfg) == _desk_product.H4_SWING
+                and _desk_product.h4_paper(cfg)):
+            decision = _desk_h4.stamp_decision(decision, cfg)
+    except Exception:
+        pass
+    if late_hold or bool(decision.get("h4_swing")):
+        # Hold products: no T1 scale-out, no 0.10R shelf identity.
         dual = False
         scale_out_pct = 0.0
     logical_dual = (
@@ -1562,6 +1579,12 @@ def place_scaled_entry(
     )
     if late_hold:
         strategy = "late_hold"
+    h4_swing = bool(decision.get("h4_swing")) or str(strategy or "") == "h4_swing"
+    if h4_swing:
+        strategy = "h4_swing"
+        dual = False
+        scale_out_pct = 0.0
+        logical_dual = False
     row = {
         "qty_a": qty_a,
         "qty_b": qty_b,
@@ -1589,10 +1612,11 @@ def place_scaled_entry(
         # Disaster floor — never overwritten when stop_price ratchets.
         "entry_stop_price": stop_price,
         "local_stop_price": (
-            stop_price if late_hold
+            stop_price if (late_hold or h4_swing)
             else (initial_local_stop(sizing_entry, risk_px, cfg) or stop_price)
         ),
         "late_hold": late_hold,
+        "h4_swing": h4_swing,
         "target_1": target_1,
         "trail_pct": trail_pct,
         "runner_trail_r": runner_trail_r,
@@ -2691,6 +2715,13 @@ def apply_local_trail(
 
     if pos.get("late_hold") or str(pos.get("strategy") or "") == "late_hold":
         return _flatten_late_hold_stop(ticker, pos, trigger, events, exit_why)
+    try:
+        import desk_h4 as _desk_h4
+        if _desk_h4.is_h4_pos(pos):
+            return _flatten_late_hold_stop(
+                ticker, pos, trigger, events, exit_why)
+    except Exception:
+        pass
 
     if not (
         pos.get("entry_confirmed")
@@ -3973,6 +4004,12 @@ def manage_open_positions(
                 continue
             if pos.get("late_hold"):
                 continue
+            try:
+                import desk_h4 as _desk_h4
+                if _desk_h4.is_h4_pos(pos):
+                    continue
+            except Exception:
+                pass
             sig = indicators.get(ticker)
             if not isinstance(sig, dict) or not sig.get("sell_signal"):
                 continue

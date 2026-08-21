@@ -790,14 +790,28 @@ def _mark_eod_liquidate_done(now: float, result: dict | None = None) -> None:
         pass
 
 
+def _h4_held_symbols() -> set[str]:
+    try:
+        import desk_h4
+        return desk_h4.held_symbols(ai_positions._load_state())
+    except Exception:
+        return set()
+
+
 def _run_eod_liquidate(cfg: dict, now: float) -> dict:
-    """Cancel all open orders and close all positions (once per day)."""
+    """Cancel all open orders and close all positions (once per day).
+
+    H4 swings survive 15:50 — overnight is the trade. Their broker stops
+    stay on. See docs/PROFIT_REDESIGN.md.
+    """
     import alpaca_trader
 
-    print("[ai] EOD liquidate — cancel open orders + close all positions",
+    keep = _h4_held_symbols()
+    print("[ai] EOD liquidate — cancel open orders + close all positions"
+          + (f" (keeping H4 {sorted(keep)})" if keep else ""),
           flush=True)
     try:
-        result = alpaca_trader.liquidate_all()
+        result = alpaca_trader.liquidate_all(except_symbols=keep)
     except Exception as e:  # noqa: BLE001
         result = {
             "ok": False, "canceled": 0, "closed": 0,
@@ -901,10 +915,12 @@ def _run_sod_liquidate(cfg: dict, now: float) -> dict:
     """Start-of-day flatten: wipe broker book before any new paper entries."""
     import alpaca_trader
 
-    print("[ai] SOD liquidate — flatten overnight book before new trades",
+    keep = _h4_held_symbols()
+    print("[ai] SOD liquidate — flatten overnight book before new trades"
+          + (f" (keeping H4 {sorted(keep)})" if keep else ""),
           flush=True)
     try:
-        result = alpaca_trader.liquidate_all()
+        result = alpaca_trader.liquidate_all(except_symbols=keep)
     except Exception as e:  # noqa: BLE001
         result = {
             "ok": False, "canceled": 0, "closed": 0,
@@ -930,11 +946,17 @@ def _run_sod_liquidate(cfg: dict, now: float) -> dict:
             print("[ai] SOD liquidate — AI Watch cleared for reseed", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[ai] SOD clear watch failed: {e}", flush=True)
-    # Drop local managed state so we do not inherit overnight book metadata.
+    # Drop local scalp state. H4 names must remain or the next poll treats
+    # them as unmanaged and the overnight thesis is gone.
     try:
-        ai_positions._save_state({})
+        import desk_h4
+        keep_state, _drop = desk_h4.partition_state(ai_positions._load_state())
+        ai_positions._save_state(keep_state)
     except Exception:
-        pass
+        try:
+            ai_positions._save_state({})
+        except Exception:
+            pass
     # Re-apply today's A/X duel champions so SOD wipe does not blank the book
     # until the next research run.
     try:

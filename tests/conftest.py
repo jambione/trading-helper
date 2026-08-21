@@ -70,6 +70,32 @@ def column_cells(table, header):
 
 
 @pytest.fixture(autouse=True)
+def _test_book_keeps_scalp_geometry(monkeypatch, request):
+    """Live bot_config is desk_product=observe. Tests of the old arm path
+    still need that geometry. They pass partial cfg dicts (omitted key =
+    scalp_legacy) or they call load_config() which would now veto every
+    place_scaled_entry. Convert observe → scalp_legacy for those tests.
+    test_config / test_desk_product need the real default.
+    """
+    name = getattr(request.module, "__name__", "")
+    if name.endswith(("test_config", "test_desk_product")):
+        yield
+        return
+    import config as cfg_mod
+    orig = cfg_mod.load_config
+
+    def _load():
+        c = orig()
+        if isinstance(c, dict) and c.get("desk_product") == "observe":
+            c = dict(c)
+            c["desk_product"] = "scalp_legacy"
+        return c
+
+    monkeypatch.setattr(cfg_mod, "load_config", _load)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _permissive_tradability():
     """Let order-mechanics tests place buys without an asset lookup.
 

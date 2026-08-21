@@ -311,6 +311,15 @@ def test_instrumentation_check_watches_the_buy_rule_inputs():
         assert field in ic.DECISION_FIELDS["shadow"], field
 
 
+def test_instrumentation_required_fields_are_the_ones_that_fail_the_check():
+    import instrumentation_check as ic
+    assert "arm_why" in ic.REQUIRED_FIELDS["shadow"]
+    assert "score" in ic.REQUIRED_FIELDS["shadow"]
+    assert "look_reason" not in ic.REQUIRED_FIELDS["shadow"]
+    assert "pctr_slow" not in ic.REQUIRED_FIELDS["shadow"]
+    assert "reason" in ic.REQUIRED_FIELDS["rejects"]
+
+
 # ── the spread gate's own input has to be on disk before it can be set ───
 #
 # ai_max_spread_r is the one spread gate wired into the fill path, and it is 0

@@ -78,6 +78,12 @@ def test_corrupted_bot_config_falls_back_to_defaults(tmp_cfg):
 
 def test_stop_market_and_pdt_defaults():
     assert cfg_mod.DEFAULT_CONFIG["ai_stop_use_market"] is True
+
+
+def test_default_product_is_observe():
+    assert cfg_mod.DEFAULT_CONFIG["desk_product"] == "observe"
+    assert cfg_mod.DEFAULT_CONFIG["ai_h4_paper"] is False
+    assert cfg_mod.DEFAULT_CONFIG["ai_h3_paper"] is False
     assert cfg_mod.DEFAULT_CONFIG["ai_pdt_protect"] == "off"
     assert "ai_pdt_protect" in cfg_mod.SAFE_CONFIG_KEYS
 

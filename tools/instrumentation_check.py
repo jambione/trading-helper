@@ -70,6 +70,15 @@ DECISION_FIELDS = {
     "rejects": ["reason", "price", "score", "rvol", "pct_change", "look_reason"],
 }
 
+# Never-present is a fault only for fields the product still needs in order
+# to *log a decision*. look_reason / pctr_slow / cm_rsi are often sparse
+# (22% look_reason on 2026-08-21) and tripped rc=1 all day while 13k shadow
+# rows were writing. Coverage is still printed.
+REQUIRED_FIELDS = {
+    "shadow": ["score", "arm_why"],
+    "rejects": ["reason"],
+}
+
 # Logs that only grow on an event that may legitimately never happen today.
 # Silence here is information, not a fault.
 EVENT_DRIVEN = {"outcomes"}
@@ -160,10 +169,10 @@ def check(day: date, stale_sec: float, now: datetime) -> tuple[list[str], bool]:
             n = sum(1 for r in rows if r.get(f) is not None)
             pct = 100.0 * n / len(rows)
             parts.append(f"{f}={pct:.0f}%")
-            # A field that is NEVER present is the failure mode this exists
-            # for: it looks like a gate that never fired, and it is actually
-            # a gate that was never asked.
-            if n == 0:
+            required = REQUIRED_FIELDS.get(name, ())
+            # A required field that is NEVER present is the failure mode this
+            # exists for. Optional fields still print coverage.
+            if n == 0 and f in required:
                 failed = True
         lines.append(f"  {name:<10} " + "  ".join(parts))
 

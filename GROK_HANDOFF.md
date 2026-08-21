@@ -1,29 +1,40 @@
-# Handoff: state of the desk, 2026-08-21
+# Handoff: state of the desk, 2026-08-21 (evening)
 
-Audience: Claude, picking up after Grok. You have no access to the sessions
-that produced this. It is self-contained. Challenge anything; claims carry
-evidence and weakness.
+Audience: next agent. Challenge anything; claims carry evidence.
 
-**Git:** `master-mac` @ `97120f6` — *Add honest entry nulls and a late-hold
-path that stays off.* MacBook, origin, and mini are on this HEAD.
+**Product contract (read this first):** [docs/PROFIT_REDESIGN.md](docs/PROFIT_REDESIGN.md).
+The 86s scalp is falsified. Default book is `desk_product=observe` (no new
+auto-arms). Profit path is H4 (liquid, multi-day) via `tools/h4_screen.py`,
+paper off until gate 1 PASS.
+
+**Git at the close:** `master-mac` @ `4d71ef6` plus the profit-redesign
+commits after it. Mini runs the book.
+
+**8/21 data (mini, venv):** paper 49 trades −1.56 R; live-eq −3.98 R;
+median MFE−spread −0.032 R; go-live 2/10. Late 60m 8/14–21 **FAIL** on
+the session test (4/6, one day 71% of n). Spread-k grid inert.
 
 **Who built what**
 
 | Who | When | What |
 |---|---|---|
 | Claude (Opus) | 2026-08-20 day | First honest measurement of the scalp. Simulator-never-traded bug. 1m-bar scoring. `entry_rule_screen`. Original §§2–6 below. |
-| Grok | 2026-08-20 night → 21 | Independent read of that evidence. Measurement kernel (`desk_null`). `thesis_screen`. Late-hold sweep. Late-hold *code* (flag **off**). Commit + deploy. |
+| Grok | 2026-08-20 night → 21 | Independent read of that evidence. Measurement kernel (`desk_null`). `thesis_screen`. Late-hold sweep. Late-hold *code* (flag **off**). |
+| Grok | 2026-08-21 day | Crossing-cost, EOD live-eq, spread-k grid (null), sounds. |
+| Grok | 2026-08-21 evening | Late 60m re-screen FAIL. Profit redesign: observe default, H4 lab, fill_truth/instrumentation/watchdog. |
+
+Historical §§2–3 below are still the scalp baseline. They are **not** a
+license to retune it.
 
 ---
 
 ## 0. Where we are, in one page
 
-The live product is still the **daytime momentum scalp** (heat ≥ 40, 5% 1R,
-0.10R working shelf, ~86s holds, IEX, 2 slots, flatten 15:50, paper). Those
-knobs are **frozen**. Do not retune RSI / heat / trail on this watchlist at
-this horizon — that feature family is falsified.
+**Do not trade the daytime momentum scalp.** Heat ≥ 40, 5% 1R, 0.10R
+shelf, ~86s, IEX — frozen and **not the live money path**. Default
+`desk_product=observe`. See `docs/PROFIT_REDESIGN.md`.
 
-What changed is the **lab**:
+What remains from the 8/20–21 lab, and is still the kill-gate kernel:
 
 1. Every new entry claim is graded against `tools/desk_null.py` (eligible-WITHIN, IWM residual, vol-matched outside, 20 bps vs cash). PASS = n≥30, median net of haircut > 0, **and** eligible-within > 0 at ≥2σ. A green day is not a pass.
 2. Screens look at **different information**, not another RSI permutation.
@@ -208,21 +219,17 @@ Do not add RSI/%R/RVOL/zone permutations. That family is dead.
 
 ## 5. Next steps, in order
 
-1. **After each session (mini):** run late 60m flatten screen (`--days 1`
-   then `--days N` as days accrue). Log n, net median, vs eligible, vs IWM.
-   One more green day is not a promotion.
-2. **Do not change live scalp knobs.** heat 40, 5% 1R, trail, IEX stay.
-3. **Do not enable `ai_late_hold_paper`** without an explicit operator OK
-   that morning trading will pause.
-4. **If late 60m dies** as sample grows: stop this family. Honest forks are
-   H3 (overnight/gap — different risk class) or H4 (multi-day, liquid
-   universe — `swing_screener` / RS exist in config, both **off**).
-5. **If it holds** with more sessions: design a paper test that does **not**
-   block 9:30–14:00 — e.g. log-only `would_late_hold` on shadow, or arm
-   late-hold only when a slot is free after 14:00. Do not mix morning
-   leftover names into the late book; that is a different, unscreened bet.
-6. **Optional hygiene:** `outcome_slice` keys off `features`, not top-level
-   `strategy` / `entry_path`. Fine while the paper path is off.
+Superseded 2026-08-21 evening — late 60m **died** on the session test.
+Follow [docs/PROFIT_REDESIGN.md](docs/PROFIT_REDESIGN.md) §10:
+
+1. Deploy/restart so `desk_product=observe` is live (no new scalp fills).
+2. After each close on the mini, venv: `eod.py`, `h4_screen.py`, late
+   `thesis_screen` (autopsy only). Watchdog should do this.
+3. Do not enable `ai_h4_paper` / `ai_late_hold_paper` / spread-k.
+4. H4 FAIL with ≥5 sessions → do not loosen to squeeze names; fork H3 or
+   a longer H4 with the same null.
+5. H4 UNDERPOWERED → collect. H4 PASS → gate 2 sweep, then operator OK
+   for paper.
 
 ---
 

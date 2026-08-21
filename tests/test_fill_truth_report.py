@@ -5,7 +5,11 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
-from fill_truth_report import _pair_round_trips, tag_fills  # noqa: E402
+from datetime import date
+
+from fill_truth_report import (  # noqa: E402
+    _pair_round_trips, tag_fills, closed_on_day,
+)
 
 
 def test_pair_round_trips_fifo():
@@ -32,3 +36,19 @@ def test_tag_fills_source_priority():
     assert by["AI1"] == "ai"
     assert by["ENG1"] == "engine"
     assert by["ZZZ"] == "manual"
+
+
+def test_closed_on_day_uses_sell_time_not_exit_time():
+    fills = [
+        {"symbol": "AAA", "side": "buy", "filled_qty": 10, "filled_avg_price": 10.0,
+         "filled_at": "2026-08-21T14:00:00Z"},
+        {"symbol": "AAA", "side": "sell", "filled_qty": 10, "filled_avg_price": 11.0,
+         "filled_at": "2026-08-21T18:00:00Z"},
+    ]
+    closed = _pair_round_trips(fills)
+    assert closed[0].get("sell_time")
+    assert closed[0].get("exit_time") is None
+    hit = closed_on_day(closed, date(2026, 8, 21))
+    assert len(hit) == 1
+    miss = closed_on_day(closed, date(2026, 8, 20))
+    assert miss == []

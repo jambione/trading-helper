@@ -187,6 +187,14 @@ def main() -> int:
     print("=" * 66)
     print(f"  EOD — {today}")
     print("=" * 66)
+    try:
+        from config import load_config
+        import desk_product
+        cfg = load_config()
+        print(f"  desk_product={desk_product.product(cfg)}  "
+              f"h4_paper={desk_product.h4_paper(cfg)}")
+    except Exception:
+        pass
     print(f"\n  {t['n']} trades closed")
     print(f"  paper            {t['paper_r']:+.3f} R   ${t['paper_usd']:+.2f}")
     print(f"  LIVE-EQUIVALENT  {t['live_r']:+.3f} R   ${t['live_usd']:+.2f}"

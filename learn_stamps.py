@@ -22,6 +22,9 @@ _BOT_CONFIG = ROOT / "config" / "bot_config.json"
 # Knobs that change *what* the desk buys/sells/sizes — not credentials, not UI.
 _FINGERPRINT_KEYS = (
     "ai_edge_mode",
+    "desk_product",
+    "ai_h4_paper",
+    "ai_h3_paper",
     "ai_exit_left_overbought",
     "ai_entry_broker_target",
     "ai_watch_exhaustion_heat_min_pct",
@@ -126,6 +129,7 @@ def regime_stamp(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     data = _load_cfg(cfg)
     stamp = {
         "edge_mode": str(data.get("ai_edge_mode") or "") or None,
+        "desk_product": str(data.get("desk_product") or "") or None,
         "exit_left_overbought": bool(data.get("ai_exit_left_overbought", False)),
         "git_version": git_version(),
         "config_fp": config_fingerprint(data if cfg is not None else None),

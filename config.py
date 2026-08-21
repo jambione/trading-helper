@@ -453,6 +453,19 @@ DEFAULT_CONFIG = {
     #                      left_overbought is OFF (it was the small-loss factory).
     #   exhaustion_scalp — arm overbought-only; sell when %R leaves the band.
     "ai_edge_mode":              "continuation",
+    # Live money path. observe = no new auto-arms (docs/PROFIT_REDESIGN.md).
+    # Partial test cfg dicts that omit the key still behave as scalp_legacy.
+    "desk_product":              "observe",
+    "ai_h4_paper":               False,
+    "ai_h3_paper":               False,
+    "h4_min_price":              10.0,
+    "h4_min_dollar_vol":         5_000_000.0,
+    "h4_max_spread_pct":         0.10,   # percent of mid; round trip ≈ 20 bps
+    "h4_min_rs":                 80.0,
+    "h4_hold_days":              2,
+    "h4_stop_pct":               2.0,
+    "h4_haircut_pct":            0.20,   # vs cash, same units as desk_null
+
     # Explicit override for left_overbought software exit. None/absent → follow
     # edge mode (on only for exhaustion_scalp). Set false to force off.
     # "ai_exit_left_overbought": False,
@@ -1037,6 +1050,9 @@ _EFFECTIVE_KEYS = (
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
     "ai_local_trail_enabled",
+    "desk_product",
+    "ai_h4_paper",
+    "ai_h3_paper",
     "ai_late_hold_paper",
     "ai_local_trail_arm_r",
     "ai_watch_arm_mode",
@@ -1160,6 +1176,16 @@ SAFE_CONFIG_KEYS = [
     "ai_max_sells_per_poll",
     "ai_risk_pct",
     "ai_trade_style",
+    "desk_product",
+    "ai_h4_paper",
+    "ai_h3_paper",
+    "h4_min_price",
+    "h4_min_dollar_vol",
+    "h4_max_spread_pct",
+    "h4_min_rs",
+    "h4_hold_days",
+    "h4_stop_pct",
+    "h4_haircut_pct",
     "ai_min_reward_risk",
     "ai_positions_poll_sec",
     "ai_prompt_file",
@@ -1289,6 +1315,16 @@ SAFE_CONFIG_KEYS = [
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
+    "desk_product",
+    "ai_h4_paper",
+    "ai_h3_paper",
+    "h4_min_price",
+    "h4_min_dollar_vol",
+    "h4_max_spread_pct",
+    "h4_min_rs",
+    "h4_hold_days",
+    "h4_stop_pct",
+    "h4_haircut_pct",
     "ai_late_hold_paper",
     "ai_late_hold_start",
     "ai_late_hold_end",

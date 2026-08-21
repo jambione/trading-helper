@@ -120,20 +120,7 @@ def _fill_truth(day: date) -> dict[str, Any]:
         eng_syms = ft._engine_symbols()
         fills = ft.tag_fills(fills, ai_syms, eng_syms)
         closed = ft._pair_round_trips(fills)
-        # Keep only exits on *day* (ET)
-        day_closed = []
-        for t in closed:
-            ts = t.get("exit_time") or t.get("ts")
-            try:
-                if isinstance(ts, str):
-                    d = datetime.fromisoformat(
-                        ts.replace("Z", "+00:00")).astimezone(ET).date()
-                else:
-                    d = datetime.fromtimestamp(float(ts), tz=ET).date()
-            except Exception:
-                continue
-            if d == day:
-                day_closed.append(t)
+        day_closed = ft.closed_on_day(closed, day)
         return {
             "ok": True,
             "stats": ft._stats(day_closed),
@@ -222,6 +209,7 @@ def _md(payload: dict[str, Any]) -> str:
         "",
         "## Regime (live config at report time)",
         f"- edge_mode: `{reg.get('edge_mode')}`",
+        f"- desk_product: `{reg.get('desk_product')}`",
         f"- exit_left_overbought: `{reg.get('exit_left_overbought')}`",
         f"- git: `{reg.get('git_version')}` config_fp: `{reg.get('config_fp')}`",
         f"- paper: `{reg.get('paper')}` book_owner: `{reg.get('book_owner')}`",

@@ -325,14 +325,21 @@ def should_run_eod(
 
 
 def run_learn_job(py: str, *argv: str) -> int:
-    """Run a tools/*.py job; never raise into the supervisor loop."""
+    """Run a tools/*.py job; never raise into the supervisor loop.
+
+    Stdout used to go to DEVNULL, so EOD thesis/h4/eod results vanished
+    and a nonzero rc was a mystery (instrumentation_check rc=1 all of
+    2026-08-21). Append to logs/learn.log.
+    """
     script = ROOT / "tools" / argv[0]
     cmd = [py, str(script), *argv[1:]]
     try:
-        return subprocess.call(
-            cmd, cwd=str(ROOT),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        LOGDIR.mkdir(parents=True, exist_ok=True)
+        learn_log = LOGDIR / "learn.log"
+        with open(learn_log, "a", encoding="utf-8") as fh:
+            fh.write(f"\n===== {' '.join(argv)} {datetime.now(tz=ET)} =====\n")
+            fh.flush()
+            return subprocess.call(cmd, cwd=str(ROOT), stdout=fh, stderr=fh)
     except OSError as e:
         log(f"learn job failed to spawn: {e}")
         return 127
@@ -445,9 +452,17 @@ def main() -> int:
                     rc = run_learn_job(py, "daily_learn.py", "--day", day_key)
                     last_eod_day = day_key
                     log(f"daily_learn rc={rc} day={day_key}")
+                    rc_e = run_learn_job(py, "eod.py", "--days", "10")
+                    rc_t = run_learn_job(
+                        py, "thesis_screen.py",
+                        "--days", "1", "--horizon-min", "60",
+                        "--slices", "late", "--flatten-et", "15:50",
+                    )
+                    rc_h = run_learn_job(py, "h4_screen.py", "--days", "20")
+                    log(f"eod rc={rc_e}; thesis_late rc={rc_t}; h4_screen rc={rc_h}")
                     # Freeze the last 10 sessions and rank the declared
                     # settings grid. Incremental jsonl so a killed run
-                    # still leaves a morning brief.
+                    # still leaves a morning brief. Must not write config.
                     rc_p = run_learn_job(py, "desk_tape.py", "pack", "--days", "10")
                     rc_s = run_learn_job(
                         py, "replay_ab.py", "--search", "--days", "10")

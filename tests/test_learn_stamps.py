@@ -48,6 +48,7 @@ def test_regime_stamp_from_cfg():
         "ai_trading_source": "grok",
     })
     assert s["edge_mode"] == "exhaustion_scalp"
+    assert s.get("desk_product") in (None, "")
     assert s["exit_left_overbought"] is False
     assert s["paper"] is True
     assert s["book_owner"] == "grok"

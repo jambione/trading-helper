@@ -211,6 +211,36 @@ def fetch_alpaca_fills(days: int, limit: int) -> list[dict]:
     return alpaca_trader.get_filled_orders(limit=limit, days=days)
 
 
+def closed_on_day(closed: list[dict], day) -> list[dict]:
+    """FIFO trips whose *sell* landed on *day* (ET).
+
+    ``_pair_round_trips`` writes ``sell_time``, not ``exit_time`` / ``ts``.
+    Filtering on those missing keys dropped every round-trip (fill_truth
+    n=0 on every daily_learn line through 2026-08-21).
+    """
+    from datetime import date as _date, datetime
+    if isinstance(day, str):
+        want = _date.fromisoformat(day)
+    else:
+        want = day
+    out = []
+    for t in closed:
+        ts = t.get("sell_time") or t.get("exit_time") or t.get("ts")
+        if not ts:
+            continue
+        try:
+            if isinstance(ts, str):
+                d = datetime.fromisoformat(
+                    ts.replace("Z", "+00:00")).astimezone(ET).date()
+            else:
+                d = datetime.fromtimestamp(float(ts), tz=ET).date()
+        except Exception:
+            continue
+        if d == want:
+            out.append(t)
+    return out
+
+
 def _stats(closed: list[dict]) -> dict[str, Any]:
     if not closed:
         return {"trades": 0}

@@ -6292,6 +6292,27 @@ def should_arm_buy(
 
     cfg = cfg if isinstance(cfg, dict) else {}
 
+    # Product veto (docs/PROFIT_REDESIGN.md). Default observe blocks new
+    # arms. Omitted desk_product on a partial cfg is scalp_legacy so unit
+    # tests keep their old geometry.
+    _desk_product_mod = None
+    try:
+        import desk_product as _desk_product_mod
+        _prod_block = _desk_product_mod.arm_block_reason(cfg)
+    except Exception:
+        _prod_block = None
+        _desk_product_mod = None
+    if _prod_block:
+        return False, _prod_block
+    if (_desk_product_mod is not None
+            and _desk_product_mod.product(cfg) == _desk_product_mod.H4_SWING
+            and _desk_product_mod.h4_paper(cfg)):
+        try:
+            import desk_h4 as _desk_h4
+            return _desk_h4.should_arm(record, ask=ask, bid=bid, cfg=cfg)
+        except Exception:
+            return False, "h4_arm_error"
+
     # Last-hour hold paper test: suppress daytime arms; in-window, skip
     # heat/RSI and buy last — matching gate 2's --arm-at-admit. Names
     # admitted before 14:00 stay on the book but do not get a slot.

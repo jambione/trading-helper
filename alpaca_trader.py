@@ -829,7 +829,7 @@ _CANCEL_SETTLE_SEC = 2.0
 _LIQUIDATE_ATTEMPTS = 3
 
 
-def liquidate_all() -> dict:
+def liquidate_all(*, except_symbols: set | None = None) -> dict:
     """EOD flatten: cancel every open order, then close every open position.
 
     Returns ``{ok, canceled, closed, symbols, errors, still_open}``.
@@ -837,15 +837,42 @@ def liquidate_all() -> dict:
     ``ok`` is True only when the broker confirms no positions remain — not
     when the attempt merely ran. ``still_open`` names anything left behind, and
     is the field to alert on.
+
+    ``except_symbols`` are H4 (or other) names that must survive the session
+    flatten, *including their resting stops*. Cancel-all then skip-close would
+    leave those shares naked — the 2026-08-07 USAR failure mode.
     """
+    keep = {str(s).upper() for s in (except_symbols or set()) if s}
     if not _can_mutate():
         return {
             "ok": False, "canceled": 0, "closed": 0,
             "symbols": [], "errors": ["trader off"],
         }
-    cancel = cancel_open_orders(None)
-    canceled = int(cancel.get("canceled") or 0)
-    errors: list[str] = list(cancel.get("errors") or [])
+    if keep:
+        canceled = 0
+        errors: list[str] = []
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            open_orders = list(_client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)
+            ) or [])
+        except Exception as e:  # noqa: BLE001
+            errors.append(str(e))
+            open_orders = []
+        for o in open_orders:
+            sym = str(getattr(o, "symbol", "") or "").upper()
+            if not sym or sym in keep:
+                continue
+            try:
+                _client.cancel_order_by_id(o.id)
+                canceled += 1
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{getattr(o, 'id', '?')}: {e}")
+    else:
+        cancel = cancel_open_orders(None)
+        canceled = int(cancel.get("canceled") or 0)
+        errors = list(cancel.get("errors") or [])
     symbols: list[str] = []
     detail = get_positions_detail()
     if detail is None:
@@ -860,7 +887,7 @@ def liquidate_all() -> dict:
     # retry rather than accept one refusal.
     for attempt in range(_LIQUIDATE_ATTEMPTS):
         remaining = sorted(str(s).upper() for s in detail.keys() if s)
-        remaining = [s for s in remaining if s not in symbols]
+        remaining = [s for s in remaining if s not in symbols and s not in keep]
         if not remaining:
             break
         if canceled and attempt == 0:
@@ -894,7 +921,10 @@ def liquidate_all() -> dict:
         errors.append("post-liquidate position check failed")
         leftover = ["unverified"]
     else:
-        leftover = sorted(str(s).upper() for s in still_open.keys() if s)
+        leftover = sorted(
+            str(s).upper() for s in still_open.keys()
+            if s and str(s).upper() not in keep
+        )
     ok = not leftover
     print(
         f"  [TRADER] liquidate_all: canceled={canceled} closed={len(symbols)} "
