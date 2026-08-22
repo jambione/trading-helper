@@ -2314,6 +2314,44 @@ def _tight_give_clears_entry(
     return last_f - give > entry_f + 1e-9
 
 
+def soft_exit_held_back(pos: dict[str, Any] | None,
+                        now: float | None = None,
+                        cfg: dict[str, Any] | None = None) -> bool:
+    """True while a fill is too young for any *discretionary* exit.
+
+    Measured 2026-08-22 on 322 real fills: realized R is monotone in how
+    long the trade was allowed to live — hold <10s returns -0.088 R at a 2%
+    win rate, hold >10m returns +0.055 R at 52%. Replaying the same entries
+    with the shelf held back, and modelling the two slots so a parked slot
+    really does skip the next arrival, turns -6.46 R into +6.38 R and 2/13
+    green sessions into 9/13.
+
+    Survival is an outcome and cannot be chosen. The delay can: this gates
+    the shelf, dead-trade and left-overbought — the exits that end a trade
+    on the desk's opinion — and never the disaster stop or the 15:50
+    flatten, which are what make the wait survivable. Max loss per trade
+    becomes the 1R stop rather than the 0.10R shelf, which is the whole
+    trade being made and the reason this defaults to 0.
+
+    0 = shipped behaviour, every exit armed from the first tick.
+    """
+    try:
+        secs = float((cfg if cfg is not None else _cfg_all()).get(
+            "ai_exit_min_hold_sec", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if secs <= 0 or not isinstance(pos, dict):
+        return False
+    et = pos.get("entry_time")
+    if not et:
+        return False              # unknown age is not "young"; fail open
+    try:
+        age = float(now if now is not None else time.time()) - float(et)
+    except (TypeError, ValueError):
+        return False
+    return age < secs
+
+
 def _pos_spread_r(pos: dict[str, Any] | None) -> float | None:
     """Round-trip spread this position crossed, as a fraction of R.
 
@@ -2769,7 +2807,10 @@ def apply_local_trail(
         trigger = last
     # Hit the *existing* board stop first. Raising on this tick's high
     # and then testing the low would skip a sale through the old shelf.
-    if trigger is not None and loc is not None and trigger <= loc + 1e-9:
+    # The shelf keeps RAISING while held back — only the sale waits, so a
+    # trade that runs during the delay still banks the higher shelf after.
+    if (trigger is not None and loc is not None and trigger <= loc + 1e-9
+            and not soft_exit_held_back(pos)):
         last = trigger
         alpaca_trader.cancel_open_orders(ticker)
         out = alpaca_trader.close_out(ticker) or {}
@@ -4425,6 +4466,11 @@ def manage_open_positions(
                     hit, why = _ew2.exhaustion_exit_now(probe, cfg_exh)
                 except Exception:
                     hit, why = False, "error"
+                # An indicator opinion is a discretionary exit; hold it back
+                # with the shelf so the forward test measures one rule, not a
+                # shelf delay that left_overbought quietly steps around.
+                if hit and soft_exit_held_back(pos, now):
+                    hit, why = False, "min_hold"
                 if pos.get("last_exhaustion") != _num(sig.get("pctr")):
                     pctr_v = _num(sig.get("pctr"))
                     pos["last_exhaustion"] = (
@@ -4484,7 +4530,7 @@ def manage_open_positions(
             age_min = (now - float(pos.get("entry_time") or now)) / 60.0
             mfe = _num(pos.get("mfe_r"))
             mfe_ok = mfe is None or mfe < dead_mfe
-            if age_min >= dead_min and mfe_ok:
+            if age_min >= dead_min and mfe_ok and not soft_exit_held_back(pos, now):
                 alpaca_trader.cancel_open_orders(ticker)
                 out = alpaca_trader.close_out(ticker) or {}
                 if isinstance(out, dict) and out.get("order_id"):

@@ -737,6 +737,10 @@ DEFAULT_CONFIG = {
     # taken from it. Percent of tape. 0 disables.
     "ai_decision_ask_max_dev_pct":      5.0,
     "ai_entry_limit_anchor":           "ask",
+    # Discretionary exits (shelf, dead-trade, left-overbought) stay holstered
+    # for this many seconds after the fill. The 1R disaster stop and the 15:50
+    # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.
+    "ai_exit_min_hold_sec":            0,
     "ai_local_trail_give_spread_k":    0.0,
     # Ceiling on the spread floor, in R. Uncapped, k=1 on a p90
     # book (5.56R) parks the shelf 5.5R down, which is no stop.
@@ -1312,6 +1316,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_give_px",
     "ai_decision_ask_max_dev_pct",
     "ai_entry_limit_anchor",
+    "ai_exit_min_hold_sec",
     "ai_local_trail_give_spread_k",
     "ai_local_trail_give_spread_max_r",
     "ai_local_trail_be_at_spread_k",
