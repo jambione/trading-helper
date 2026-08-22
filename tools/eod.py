@@ -98,6 +98,68 @@ def load_sessions(days_back: int):
     return days, {k: rows[k] for k in days}
 
 
+def _desk_feed() -> str:
+    """Measure on the feed the desk trades, not the fullest one available.
+
+    SIP would report a high the shelf could never have been lifted to,
+    which turns "what we could have banked" into "what the market printed
+    somewhere". The honest denominator is the tape the book sees.
+    """
+    try:
+        from config import load_config
+        return str(load_config().get("alpaca_bar_feed") or "iex").lower()
+    except Exception:
+        return "iex"
+
+
+def capture_stats(trades, feed: str | None = None) -> dict:
+    """How much of the move that was there did the book actually take?
+
+    ``mfe_r`` on an outcome row is measured DURING the hold, so a shelf that
+    exits at 53 seconds records a small MFE and the ledger reads it as a
+    modest win — it cannot see the run that happened afterwards. TEM
+    2026-08-20 banked +0.040 R with 1.40 R still ahead of it and looked
+    fine. This measures MFE from the entry to the close instead, so the
+    number the desk optimises is the fraction of the available move it kept.
+
+    Capture can be negative, and usually is: the denominator is what the
+    name offered, the numerator is what came back. Trades where the name
+    never went favorable are excluded rather than counted as zero — they
+    have no denominator, and folding them in as 0% would tug the median
+    toward a flattering number.
+    """
+    feed = feed or _desk_feed()
+    caps, avail, big = [], [], 0
+    for d in trades:
+        r = d.get("realized_r_multiple")
+        e, st, ts = d.get("entry_price"), d.get("stop_price"), d.get("entry_time")
+        if r is None or not e or not st or not ts:
+            continue
+        risk = float(e) - float(st)
+        if risk <= 0:
+            continue
+        stamps, highs = bars.fetch_hl(str(d.get("symbol") or ""),
+                                      bars.day_of(ts), feed)
+        if not stamps or not highs:
+            continue
+        after = [h for t, h in zip(stamps, highs) if t >= float(ts)]
+        if len(after) < 2:
+            continue
+        mfe_r = (max(after) - float(e)) / risk
+        if mfe_r <= 0.01:      # never went favorable: no denominator
+            continue
+        avail.append(mfe_r)
+        caps.append(float(r) / mfe_r)
+        if mfe_r >= 1.0:
+            big += 1
+    return {
+        "n": len(caps),
+        "median_capture": statistics.median(caps) if caps else None,
+        "median_available_r": statistics.median(avail) if avail else None,
+        "n_ge_1r_available": big,
+    }
+
+
 def score_session(trades, trig):
     """Per-session totals, including the cost paper never charged."""
     paper_r = paper_usd = 0.0
@@ -218,15 +280,29 @@ def main() -> int:
           f"({100*spn/max(1,ev):.0f}%)"
           + (f", RTH median spread {med:.3f}R" if med is not None else ""))
 
-    print("\n" + "-" * 66)
+    print("\n" + "-" * 88)
     print(f"  {'session':<12} {'n':>4} {'paper R':>9} {'LIVE R':>9} "
-          f"{'live $':>9} {'MFE-spr':>9}")
-    print("-" * 66)
+          f"{'live $':>9} {'MFE-spr':>9} {'avail R':>9} {'CAPTURE':>9}")
+    print("-" * 88)
+    caps_all = []
     for d in days:
         s = scored[d]
         mfe = f"{s['mfe_less_spread']:+.3f}" if s["mfe_less_spread"] is not None else "—"
+        cs = capture_stats(sessions[d])
+        av = f"{cs['median_available_r']:+.3f}" if cs["median_available_r"] is not None else "—"
+        cp = f"{cs['median_capture']:.0%}" if cs["median_capture"] is not None else "—"
+        if cs["median_capture"] is not None:
+            caps_all.append(cs["median_capture"])
         print(f"  {d:<12} {s['n']:>4} {s['paper_r']:>+9.3f} {s['live_r']:>+9.3f} "
-              f"{s['live_usd']:>+9.2f} {mfe:>9}")
+              f"{s['live_usd']:>+9.2f} {mfe:>9} {av:>9} {cp:>9}")
+    if caps_all:
+        print(f"\n  CAPTURE across {len(caps_all)} sessions: median "
+              f"{statistics.median(caps_all):.0%} of the move that was there.")
+        print("  Realized R over MFE measured from entry to the close, on the")
+        print("  desk's own feed. Negative means the typical trade turned a")
+        print("  favorable move into a loss. mfe_r on the outcome row cannot")
+        print("  show this: it only spans the hold, so an early exit records a")
+        print("  small MFE and reads as a modest win.")
 
     # Go-live readout. Deliberately session-level: pooling lets one good day
     # carry a decision about real money.

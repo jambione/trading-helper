@@ -106,6 +106,57 @@ def fetch(sym: str, day: str, feed: str = "sip") -> tuple[list | None, list | No
     return out
 
 
+_HL_CACHE: dict = {}
+
+
+def fetch_hl(sym: str, day: str, feed: str = "sip") -> tuple[list | None, list | None]:
+    """(stamps, highs) of 1m RTH bars for sym/day. ([], []) is cached too.
+
+    ``fetch`` returns closes, which is the wrong series for a favorable
+    excursion: the intra-bar high is exactly the print a trailing shelf
+    would have been lifted to. Measuring MFE off closes understates what
+    was available and so flatters any capture ratio computed from it.
+
+    Separate cache and separate function on purpose — ``fetch``'s two-tuple
+    contract has callers, and widening it to carry highs would break them
+    for a metric that only one report needs.
+    """
+    sym = str(sym).upper()
+    key = (sym, day, feed)
+    if key in _HL_CACHE:
+        return _HL_CACHE[key]
+    cl = client()
+    if cl is None:
+        _HL_CACHE[key] = (None, None)
+        return _HL_CACHE[key]
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
+
+    out = (None, None)
+    try:
+        d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+        df = cl.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=sym,
+            timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+            start=d.replace(hour=9, minute=25).astimezone(timezone.utc),
+            end=d.replace(hour=16, minute=5).astimezone(timezone.utc),
+            limit=10000, extended_hours=False,
+            feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX,
+        )).df
+        import pandas as pd
+        if df is not None and not df.empty:
+            if isinstance(df.index, pd.MultiIndex):
+                df = df.xs(sym, level="symbol")
+            df = df.sort_index()
+            out = ([t.timestamp() for t in df.index],
+                   [float(v) for v in df["high"]])
+    except Exception:
+        out = (None, None)
+    _HL_CACHE[key] = out
+    return out
+
+
 def fetch_many(syms, day: str, feed: str = "sip", chunk: int = 100) -> None:
     """Warm the cache for many symbols with few requests.
 
