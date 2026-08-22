@@ -181,6 +181,28 @@ def audit_logs(days: int) -> None:
         print(f"  {tag} {fname:<18}{field:<22}{pct:>5.0f}%  (n={n}, floor {floor}%)")
 
 
+def _proc_start_epoch(pid: str) -> float | None:
+    """Epoch seconds a pid started, or None when it cannot be determined.
+
+    ``ps -o lstart=`` is the portable field here — BSD/macOS ps has no
+    ``etimes``. Returns None rather than a guess so the caller can raise.
+    """
+    import time
+    try:
+        raw = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    for fmt in ("%a %b %d %H:%M:%S %Y", "%a %b  %d %H:%M:%S %Y"):
+        try:
+            return time.mktime(time.strptime(" ".join(raw.split()), fmt))
+        except ValueError:
+            continue
+    return None
+
+
 def audit_freshness() -> None:
     print("\n=== CODE FRESHNESS ===")
     procs = {
@@ -199,16 +221,15 @@ def audit_freshness() -> None:
             print(f"  DOWN {proc}")
             WARN.append(f"{proc} not running")
             continue
-        try:
-            started = float(subprocess.run(
-                ["ps", "-o", "lstart=", "-p", pid[0]], capture_output=True,
-                text=True).stdout.strip() and
-                subprocess.run(["ps", "-o", "etimes=", "-p", pid[0]],
-                               capture_output=True, text=True).stdout.strip() or 0)
-        except (OSError, ValueError):
-            started = 0.0
-        import time
-        proc_start = time.time() - started
+        proc_start = _proc_start_epoch(pid[0])
+        if proc_start is None:
+            # Unmeasurable is not OK. The first version of this check used
+            # `ps -o etimes=`, which macOS does not have; the error text
+            # failed to parse, the fallback was 0, and every process read as
+            # fresh. A check that cannot measure must say so.
+            CRITICAL.append(f"cannot read start time for {proc}")
+            print(f"  CRITICAL {proc}: cannot determine process start time")
+            continue
         stale = [f for f in files
                  if (ROOT / f).exists() and (ROOT / f).stat().st_mtime > proc_start]
         if stale:

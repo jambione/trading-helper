@@ -70,3 +70,29 @@ def test_log_floors_are_set_above_a_coin_flip():
     """A field present half the time cannot support a verdict."""
     for _f, field, floor in sa.LOG_FIELDS:
         assert floor >= 80, f"{field} floor {floor}% is too permissive"
+
+
+def test_process_start_parses_the_field_that_exists():
+    """macOS ps has no etimes. The first version of this check used it,
+    got an error string, fell back to 0, and reported every process fresh."""
+    import time
+    now = time.time()
+    out = sa._proc_start_epoch(str(os.getpid()))
+    assert out is not None, "could not read this very process's start time"
+    assert 0 <= now - out < 86400
+
+
+def test_unreadable_start_time_is_none_not_a_guess():
+    assert sa._proc_start_epoch("0") is None
+    assert sa._proc_start_epoch("notapid") is None
+
+
+def test_unmeasurable_freshness_is_critical(monkeypatch):
+    """Cannot-measure must raise, never silently pass."""
+    monkeypatch.setattr(sa, "CRITICAL", [])
+    monkeypatch.setattr(sa, "WARN", [])
+    monkeypatch.setattr(sa, "_proc_start_epoch", lambda pid: None)
+    monkeypatch.setattr(sa.subprocess, "run", lambda *a, **k: type(
+        "R", (), {"stdout": "12345\n"})())
+    sa.audit_freshness()
+    assert sa.CRITICAL, "unmeasurable process age must be CRITICAL"
