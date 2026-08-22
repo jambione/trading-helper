@@ -107,7 +107,7 @@ is consistent across 17 configs and both halves.
 > Treat the hybrid edge mode as unsupported until it is re-derived through
 > the current gates (`tools/desk_null.py` → `thesis_screen` → `optimize_rstop`).
 > The 2026-08-20 measurement work found no entry configuration on this
-> watchlist that clears friction; see `GROK_HANDOFF.md`. Every sweep verdict
+> watchlist that clears friction; see `HANDOFF.md`. Every sweep verdict
 > printed before 2026-08-20 was produced by this same non-arming simulator.
 
 **Forward-test ops (shipped 2026-08-12):**

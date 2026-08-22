@@ -1,10 +1,24 @@
-# Profit redesign — contract
+# Profit redesign — contract  ⚠️ SUPERSEDED 2026-08-22
 
-**Pickup for Claude is [GROK_HANDOFF.md](../GROK_HANDOFF.md)** (more recent).
+> **Do not implement against this file.** Current state and direction are
+> in [HANDOFF.md](../HANDOFF.md).
+>
+> H4 was measured on 2026-08-22 over 16 months of daily bars using this
+> file's own `simulate_hold`: nine parameter cells, two universes,
+> **zero PASS**. At the designed config its gross edge vs SPY is
+> +0.116%/swing against a 0.20%/swing haircut, its 2% stop sits at 0.73σ
+> of the 2-day noise band, and on the RS universe — hindsight-picked, as
+> of 2026-07-27 — the edge is entirely in-sample and turns negative after
+> that date at zero cost. `desk_product` is back to `scalp_legacy`.
+>
+> Keep this file for §1 (what falsified the scalp), §9 (the fill_truth and
+> instrumentation fixes, which were real and are retained) and as the
+> record of *why* the book stopped buying on 8/21. Its H4 direction, its
+> gate sequence, and its "observe until PASS" posture are retired.
+
 This file is the H4/observe *architecture*. The operator's **intended
 product** is the 0.10R ratchet as profit capture (directional RSI/%R),
-not a two-week wait for H4 paper. Live book is still `observe`. Do not
-arm from this document alone.
+not a two-week wait for H4 paper.
 
 **Written 2026-08-21, after the close.** Evidence is on the mini
 (`ai_reports/eod_2026-08-21.log`, `ai_reports/daily/2026-08-21.*`,
@@ -29,7 +43,7 @@ paper. That family is **falsified**.
 | Typical scalp pays for the round trip | **No.** Median MFE − spread **−0.032 R** on 2026-08-21 | `tools/eod.py` |
 | Paper P&L is the number | **No.** 49 trades paper **−1.56 R / −$3.49**, live-equivalent **−3.98 R / −$8.77** | same |
 | Ten-session go-live | **Fail.** 2/10 sessions live-positive (need 7/10); MFE−spread not > 0 | `eod.py --days 10` |
-| RSI / heat / zone / RVOL as entry | **Fail** vs eligible-within (2026-08-20 `entry_rule_screen`) | `GROK_HANDOFF.md` §2 |
+| RSI / heat / zone / RVOL as entry | **Fail** vs eligible-within (2026-08-20 `entry_rule_screen`) | `HANDOFF.md` §4 |
 | Trail / spread-k overlays | **Null.** 15 cells on 8/17–21 identical to baseline, 0/5 folds | `optimize_rstop_2026-08-21_spread_k.csv` |
 | Late 14:00–15:30 hold to 15:50 | **Fail once 8/21 is in and the unit is the session.** n=143 net +0.315%, vs eligible +0.298% 3.2σ, **4/6 sessions p=0.344**, one day = 71% of sample | `thesis_screen` 16:50 ET 8/21 |
 | Chase (already +2% at admit) | **Fail 0/6 sessions**, net −0.564% | same |

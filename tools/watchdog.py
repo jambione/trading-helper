@@ -324,12 +324,17 @@ def should_run_eod(
     return True, day
 
 
-def run_learn_job(py: str, *argv: str) -> int:
+def run_learn_job(py: str, *argv: str, timeout: float = 900.0) -> int:
     """Run a tools/*.py job; never raise into the supervisor loop.
 
     Stdout used to go to DEVNULL, so EOD thesis/h4/eod results vanished
     and a nonzero rc was a mystery (instrumentation_check rc=1 all of
     2026-08-21). Append to logs/learn.log.
+
+    The supervisor is single-threaded, so a wedged job stops it restarting
+    dead services. The screens that pull minute bars for a hundred-plus
+    symbols are the ones that can hang on a slow broker, so every job gets
+    a wall clock and ``subprocess.run`` kills the child when it expires.
     """
     script = ROOT / "tools" / argv[0]
     cmd = [py, str(script), *argv[1:]]
@@ -339,7 +344,14 @@ def run_learn_job(py: str, *argv: str) -> int:
         with open(learn_log, "a", encoding="utf-8") as fh:
             fh.write(f"\n===== {' '.join(argv)} {datetime.now(tz=ET)} =====\n")
             fh.flush()
-            return subprocess.call(cmd, cwd=str(ROOT), stdout=fh, stderr=fh)
+            try:
+                return subprocess.run(
+                    cmd, cwd=str(ROOT), stdout=fh, stderr=fh,
+                    timeout=timeout).returncode
+            except subprocess.TimeoutExpired:
+                fh.write(f"TIMEOUT after {timeout:g}s — killed\n")
+                log(f"learn job {argv[0]} timed out after {timeout:g}s")
+                return 124
     except OSError as e:
         log(f"learn job failed to spawn: {e}")
         return 127
@@ -453,14 +465,25 @@ def main() -> int:
                     last_eod_day = day_key
                     log(f"daily_learn rc={rc} day={day_key}")
                     rc_e = run_learn_job(py, "eod.py", "--days", "10")
-                    rc_t = run_learn_job(
-                        py, "thesis_screen.py",
-                        "--days", "1", "--horizon-min", "60",
-                        "--slices", "late", "--flatten-et", "15:50",
-                    )
-                    rc_h = run_learn_job(py, "h4_screen.py", "--days", "20")
                     rc_v = run_learn_job(py, "harvest_screen.py", "--days", "10")
-                    log(f"eod rc={rc_e}; thesis_late rc={rc_t}; h4_screen rc={rc_h}; harvest rc={rc_v}")
+                    log(f"eod rc={rc_e}; harvest rc={rc_v}")
+                    # The open question is admission latency, not H4 and not
+                    # the late slice — both are measured out (see HANDOFF.md
+                    # §4). h4_screen came off this list with them; these three
+                    # track the thing the desk is actually trying to move.
+                    # --eligible-within is not optional: without it the same
+                    # universe reads DRIFT everywhere on pre-admission run-up.
+                    rc_d = run_learn_job(
+                        py, "drift_screen.py", "--days", "20",
+                        "--eligible-within",
+                        "--universe", "shadow:all,shadow:momentum",
+                    )
+                    rc_g = run_learn_job(
+                        py, "gate_screen.py", "--days", "20",
+                        "--horizons", "15,30,60")
+                    rc_l = run_learn_job(
+                        py, "admission_latency.py", "--days", "20")
+                    log(f"drift rc={rc_d}; gate rc={rc_g}; latency rc={rc_l}")
                     # Freeze the last 10 sessions and rank the declared
                     # settings grid. Incremental jsonl so a killed run
                     # still leaves a morning brief. Must not write config.
