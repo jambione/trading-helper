@@ -274,19 +274,53 @@ whole product question is now one sentence:
 
 > **Can the desk be admitted during the run instead of after it?**
 
-That is a latency and detection problem, not a signal problem. Next work,
-in order:
+That is a latency and detection problem, not a signal problem.
 
-1. **Instrument admission latency live.** Log, per admission, the time the
-   move began vs `admit_ts`, so the 0.71 becomes a number that can be
-   driven down and watched.
-2. **Attack the seed path, not the indicators.** `mom_open_soft` and the
-   feed cadence decide when a name lands. That is where the 71% lives.
-   Then the 31.7-minute admit-to-arm gap is the second target.
-3. **Re-run `gate_screen` after any latency change.** If `captured` drops
-   and `fresh_5m` starts clearing 2σ with a session majority, that is the
-   first real candidate this desk has had.
-4. Only then discuss arming anything new, and only with a cost test on top.
+### The queue, and why it is ordered this way
+
+**One live experiment at a time.** From 2026-08-24 the desk runs the
+min-hold exit test and **nothing else live changes**. Entry and exit moved
+together once already — 8/19 changed twelve knobs at once and that day
+cannot be compared to anything. If entry and exit both move now, an
+improvement has two authors and a regression has two suspects.
+
+**Lab work runs in parallel.** Building a catalyst feed and grading it with
+`gate_screen` happens entirely on shadow rows and never touches the book,
+so it cannot contaminate the running test. Only *arming* waits.
+
+**GATE 1 — the exit test (live now, ~10 sessions).**
+`ai_exit_min_hold_sec=900`, everything else frozen. Read `eod.py` nightly.
+
+| result after 10 sessions | conclusion |
+|---|---|
+| ≥7/10 live-positive **and** median CAPTURE > 0 | exit fixed. Unfreeze entry work. |
+| 5–6/10 | underpowered — extend to 15, do not tune |
+| ≤4/10 | the exit was not the problem. Back to the field. |
+
+CAPTURE is the diagnostic, not just the P&L: if sessions improve while
+capture stays negative, something other than the delay is doing the work
+and the result will not survive.
+
+**GATE 2 — entry, only after gate 1 passes.** In order:
+
+1. **Catalyst.** The one genuinely untested axis. The desk buys a +50%
+   mover with no idea *why* it moved — no filing, offering, halt, or news
+   is read anywhere in the stack. Every gate tested so far permuted the
+   same indicators on the same tape and every one landed at the null;
+   catalyst is new information rather than a rearrangement of old.
+2. **Detection latency.** `mom_open_seed_min_pct` is the dial; `captured`
+   is the scoreboard. 71% of the move is gone at admission.
+3. **Decision latency.** The 31.7-minute admit-to-arm gap. Only worth
+   attacking after 1 and 2 — arming faster into a name chosen badly just
+   loses money sooner.
+4. **Range, not direction.** If a gate must predict something, magnitude
+   is the easier target: a wide shelf on names with ≥1R of range coming
+   returned +0.53 R where the tight one returned +0.22 R. `gate_screen`
+   grades it by swapping the target from MFE−MAE to MFE+MAE.
+
+**Do not** arm anything from gate 2 while gate 1 is running, and do not
+retune the min-hold delay mid-test because a week looks bad. Ten sessions,
+then read it.
 
 ---
 
