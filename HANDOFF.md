@@ -303,20 +303,71 @@ and the result will not survive.
 
 **GATE 2 — entry, only after gate 1 passes.** In order:
 
-1. **Catalyst.** The one genuinely untested axis. The desk buys a +50%
-   mover with no idea *why* it moved — no filing, offering, halt, or news
-   is read anywhere in the stack. Every gate tested so far permuted the
-   same indicators on the same tape and every one landed at the null;
-   catalyst is new information rather than a rearrangement of old.
-2. **Detection latency.** `mom_open_seed_min_pct` is the dial; `captured`
-   is the scoreboard. 71% of the move is gone at admission.
-3. **Decision latency.** The 31.7-minute admit-to-arm gap. Only worth
-   attacking after 1 and 2 — arming faster into a name chosen badly just
-   loses money sooner.
-4. **Range, not direction.** If a gate must predict something, magnitude
-   is the easier target: a wide shelf on names with ≥1R of range coming
-   returned +0.53 R where the tight one returned +0.22 R. `gate_screen`
-   grades it by swapping the target from MFE−MAE to MFE+MAE.
+**1. Enforce the volume floor the operator already believes in.** This is
+a defect, not a hypothesis, and it is first because it needs no discovery.
+The operator does not trade a name without volume; `ai_watch_min_rvol=2.0`
+encodes that. It is enforced on **one path of three**. Of 344 fills, 94
+were below the floor:
+
+| source | fills under RVOL 2.0 | why |
+|---|---:|---|
+| momentum | 1 | enforced at `ai_entry_watch.py:2313` — working |
+| trending | 55 | separate lower floor, `ai_watch_trending_min_rvol=1.5` |
+| research (xai+anthropic) | **38 of 43 fills** | **no RVOL check at all** |
+
+Research is also the worst source in the book — `anthropic` at −0.055 R
+with **0/7 sessions green**, the only source that never had a green day.
+Two related defects fall out of the same check: the test is
+`if rv is not None and rv < floor: skip`, so a **missing** reading passes
+(19 fills had no RVOL at all — it must fail closed), and the field carries
+garbage (max value **3144.09**; a relative volume of 3,144x is not a
+number, and anything averaging RVOL has been eating it).
+
+This is not a new edge. It is removing trades the operator would never
+have taken by hand.
+
+**2. RVOL as the shelf-width input.** RVOL is anti-predictive for
+*returns* — monotonically worse: rvol<2 −0.027 R, 2–5 −0.020, 5–10 −0.108,
+>10 −0.128, and `gate_screen`'s `rvol_10` had median net −3.12%. But it is
+the strongest predictor of **range** measured anywhere in this work:
+
+| bucket | median 30m range |
+|---|---:|
+| rvol < 3 | 2.15% |
+| rvol 3–8 | 8.09% |
+| rvol ≥ 8 | **28.90%** |
+
+A 13x spread. That matters because a wide shelf on names with ≥1R of range
+available returned **+0.53 R** where the tight shelf returned +0.22 R — the
+problem was never the rule, it was identifying those names at entry. RVOL
+identifies them, costs nothing, and is already wired.
+
+**3. Catalyst — second order, and probably an interaction.**
+`tools/catalyst_screen.py`, Alpaca news, no new credentials. It does **not**
+predict direction: no gate cleared 2σ and `bullish_words` came back
+NO_DRIFT with a negative mean. It predicts range —
+no-catalyst 2.10 → has-catalyst 3.75 → news<60m 4.39 → news<15m 5.99, and
+fresh news beat the no-news median range in **11 of 12 sessions (p≈0.003)**,
+the most solid statistic in this file. But conditioned on RVOL the lift
+mostly vanishes (1.06x / 0.50x / 1.14x), so **RVOL is the better range
+input** and catalyst's value is likely the interaction:
+
+| median 30m direction | no fresh news | news < 60m |
+|---|---:|---:|
+| rvol < 3 | +0.112 | −0.109 |
+| rvol 3–8 | −1.016 | +0.167 |
+| **rvol ≥ 8** | **−0.531** | **+6.075** |
+
+Volume without a reason is a crowd; volume with a reason is a repricing.
+**n=10 in that cell** — a hypothesis with a mechanism, not a finding. Watch
+it as sessions accumulate.
+
+**4. Detection latency.** `ai_watch_open_seed_min_pct` is the dial;
+`captured` is the scoreboard. 71% of the move is gone at admission.
+
+**5. Decision latency.** The 31.7-minute admit-to-arm gap. Only worth
+attacking after the above — arming faster into a name chosen badly just
+loses money sooner.
 
 **Do not** arm anything from gate 2 while gate 1 is running, and do not
 retune the min-hold delay mid-test because a week looks bad. Ten sessions,
