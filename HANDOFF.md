@@ -369,6 +369,43 @@ it as sessions accumulate.
 attacking after the above — arming faster into a name chosen badly just
 loses money sooner.
 
+**6. A slot ranker — ranked on freshness, never on strength.** Two slots
+decide which candidates exist at all, and today the winner is whoever
+arrived first. `tools/slot_contention.py` over 8/10–8/21: on 3,799 contested
+moments the names the desk **turned away** beat the ones it kept by a median
+**+0.08% over 15m, winning 53%**. Allocation is currently worse than
+arbitrary, so there is something to capture.
+
+The obvious ranking key would capture it backwards. Every "strength" proxy
+is anti-predictive here — extension >30% is the worst bucket (−0.174 R),
+RVOL >10 the worst (−0.128 R), and trending score runs ρ=−0.209 against
+realized R. A ranker promoting the strongest name would concentrate two
+scarce slots in the trades that lose most.
+
+`tools/slot_ranker_signal.py` tested twelve rules against the base rate of
+taking the skipped name every time (+0.076%, 53%). One separates:
+
+| rule | swaps | median | win | vs base |
+|---|---:|---:|---:|---:|
+| **prefer LOWER cm_rsi** | 696 | +0.120% | **57%** | **+4.8pp** |
+| prefer rising cm_rsi | 1330 | +0.125% | 54% | +1.3pp |
+| prefer lower pctr_ok | 349 | −0.288% | 40% | −12.6pp |
+
+Lower CM RSI is the *less* overbought, *less* extended name — earlier in
+the move. At n=696 one standard error on the win rate is ~1.9pp, so +4.8pp
+is roughly 2.5σ, searched across twelve rules. A candidate, not a result.
+
+It is the fifth independent measurement pointing the same way: captured
+0.71, extension >30% worst, RVOL >10 worst, high score worst, and now
+contention favouring the least-extended candidate. **The desk's problem is
+that it buys things that have already moved**, and a ranker only helps if
+it ranks toward freshness.
+
+**Re-measure the ceiling before building it.** All of the above is from the
+86-second regime, where a slot freed every minute or two. Under the
+min-hold a slot is parked for 15, contention rises sharply, and the prize
+grows with it. Re-run `slot_contention.py --days 10` once gate 1 has tape.
+
 **Do not** arm anything from gate 2 while gate 1 is running, and do not
 retune the min-hold delay mid-test because a week looks bad. Ten sessions,
 then read it.
