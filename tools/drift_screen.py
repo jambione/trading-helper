@@ -88,6 +88,29 @@ def _day_of(ts: float) -> str:
     return datetime.fromtimestamp(float(ts), timezone.utc).strftime("%Y-%m-%d")
 
 
+def select_symbols(syms: list[str], limit: int, *, seed: int = 20260822) -> list[str]:
+    """Cap the fetch without letting the alphabet choose the sample.
+
+    ``sorted(syms)[:limit]`` looks harmless and is not: on 2026-08-22 it cut
+    a 314-name universe at KTOS and silently dropped 164 names — 52% of it —
+    so every screen ran on A-K only. TEM, the name that prompted the
+    latency-chain work, was never in the sample.
+
+    A seeded sample is representative and still reproducible; the warning
+    fires whenever the cap actually bites, because a screen quietly reading
+    half a universe is worse than one that refuses to run.
+    """
+    uniq = sorted(set(syms))
+    if limit <= 0 or len(uniq) <= limit:
+        return uniq
+    import random
+    picked = sorted(random.Random(seed).sample(uniq, limit))
+    print(f"  NOTE: universe is {len(uniq)} symbols, capped at {limit} — "
+          f"sampling {limit} at random (seed {seed}), not the first {limit} "
+          f"alphabetically. Raise --limit-symbols to screen all of them.")
+    return picked
+
+
 def load_shadow_universe(days: int, want_source: str | None) -> dict[str, dict[str, float]]:
     """day -> {symbol: earliest admit ts}. Empty when the log is absent."""
     path = Path(resolve_report_dir()) / "shadow.jsonl"
@@ -301,7 +324,9 @@ def main() -> int:
     ap.add_argument("--eligible-within", action="store_true",
                     help="only sample at/after that name's admit_ts")
     ap.add_argument("--include-premarket", action="store_true")
-    ap.add_argument("--limit-symbols", type=int, default=120)
+    ap.add_argument("--limit-symbols", type=int, default=400,
+                    help="0 = no cap; over the cap a seeded random sample "
+                         "is taken, never the alphabetical head")
     args = ap.parse_args()
 
     horizons = [int(x) for x in args.horizons.split(",") if x.strip()]
@@ -317,8 +342,9 @@ def main() -> int:
         if not plans[u]:
             print(f"  {u}: no universe resolved (log or file missing)")
 
-    syms = sorted({s for p in plans.values() for d in p.values() for s in d})
-    syms = syms[:args.limit_symbols]
+    syms = select_symbols(
+        [s for p in plans.values() for d in p.values() for s in d],
+        args.limit_symbols)
     if not syms:
         print("nothing to screen")
         return 0

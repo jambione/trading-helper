@@ -113,3 +113,25 @@ def test_excursions_are_measured_from_the_entry_open():
     assert out[0]["mfe"] == pytest.approx(3.0)   # 103 vs 100
     assert out[0]["mae"] == pytest.approx(2.0)   # 100 vs 98
     assert out[0]["net"] == pytest.approx(-1.0)  # close 99 vs 100
+
+
+def test_symbol_cap_does_not_let_the_alphabet_pick_the_sample():
+    """sorted()[:limit] cut a 314-name universe at KTOS and dropped 52%."""
+    syms = [f"{a}{b}" for a in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" for b in "AB"]
+    picked = drift_screen.select_symbols(syms, 20)
+    assert len(picked) == 20
+    assert picked != sorted(syms)[:20]
+    # a late-alphabet name must be reachable at all
+    assert any(s[0] > "M" for s in picked)
+
+
+def test_symbol_cap_is_deterministic():
+    syms = [f"SYM{i:03d}" for i in range(300)]
+    assert drift_screen.select_symbols(syms, 50) == \
+        drift_screen.select_symbols(syms, 50)
+
+
+def test_no_cap_returns_everything_deduped():
+    syms = ["B", "A", "B", "C"]
+    assert drift_screen.select_symbols(syms, 0) == ["A", "B", "C"]
+    assert drift_screen.select_symbols(syms, 99) == ["A", "B", "C"]

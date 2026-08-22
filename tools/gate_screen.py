@@ -169,7 +169,8 @@ def main() -> int:
     ap.add_argument("--source", default="all")
     ap.add_argument("--horizons", default="15,30,60")
     ap.add_argument("--gates", default=",".join(GATES))
-    ap.add_argument("--limit-symbols", type=int, default=150)
+    ap.add_argument("--limit-symbols", type=int, default=400,
+                    help="0 = no cap; seeded random sample over the cap")
     args = ap.parse_args()
 
     horizons = [int(x) for x in args.horizons.split(",") if x.strip()]
@@ -182,7 +183,7 @@ def main() -> int:
     if not rows:
         print("no shadow rows in that window")
         return 0
-    syms = sorted({r["_sym"] for r in rows})[:args.limit_symbols]
+    syms = DS.select_symbols([r["_sym"] for r in rows], args.limit_symbols)
     rows = [r for r in rows if r["_sym"] in set(syms)]
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=args.days + 5)

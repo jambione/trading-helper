@@ -202,15 +202,17 @@ def main() -> int:
     ap.add_argument("--days", type=int, default=20)
     ap.add_argument("--source", default="all",
                     help="all|momentum|trending|research")
-    ap.add_argument("--limit-symbols", type=int, default=150)
+    ap.add_argument("--limit-symbols", type=int, default=400,
+                    help="0 = no cap; seeded random sample over the cap")
     args = ap.parse_args()
 
     cfg = _cfg()
     sources = (["momentum", "trending", "research"]
                if args.source == "all" else [args.source])
     plans = {s: DS.load_shadow_universe(args.days, s) for s in sources}
-    syms = sorted({sym for p in plans.values() for d in p.values() for sym in d})
-    syms = syms[:args.limit_symbols]
+    syms = DS.select_symbols(
+        [sym for p in plans.values() for d in p.values() for sym in d],
+        args.limit_symbols)
     if not syms:
         print("no admitted names in shadow.jsonl for that window")
         return 0
