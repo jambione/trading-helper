@@ -459,7 +459,8 @@ def main() -> int:
                         "--slices", "late", "--flatten-et", "15:50",
                     )
                     rc_h = run_learn_job(py, "h4_screen.py", "--days", "20")
-                    log(f"eod rc={rc_e}; thesis_late rc={rc_t}; h4_screen rc={rc_h}")
+                    rc_v = run_learn_job(py, "harvest_screen.py", "--days", "10")
+                    log(f"eod rc={rc_e}; thesis_late rc={rc_t}; h4_screen rc={rc_h}; harvest rc={rc_v}")
                     # Freeze the last 10 sessions and rank the declared
                     # settings grid. Incremental jsonl so a killed run
                     # still leaves a morning brief. Must not write config.
