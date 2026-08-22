@@ -35,8 +35,9 @@ position:
 - **The field is neutral, not hostile.** After admission the watchlist is a
   driftless walk (MFE/MAE ≈ 1.0). Nothing is tilted against you; there is
   simply nothing to select.
-- **The drift is real but early.** 74% of the momentum move is over before
-  the name is admitted. The desk arrives at 10:33 with 2.9% left.
+- **The drift is real but early.** 71% of the momentum move is over before
+  the name is admitted. The desk arrives at 10:37 with 3.0% left, then the
+  gate deliberates for another 31.7 minutes.
 
 So the open problem is **admission latency**, not exit geometry and not
 another indicator permutation.
@@ -188,9 +189,24 @@ Two questions were run on 8/22, in order, and both are answered.
 
 | source | n | med admit ET | at admit | run banked | travel left | **captured** |
 |---|---:|---:|---:|---:|---:|---:|
-| momentum | 161 | 10:33 | +8.2% | 8.2% | 2.9% | **0.74** |
-| trending | 97 | 10:08 | +5.8% | 5.8% | 2.3% | **0.69** |
-| research | 31 | 09:33 | +3.6% | 3.6% | 3.7% | **0.48** |
+| momentum | 358 | 10:37 | +8.5% | 8.5% | 3.0% | **0.71** |
+| trending | 181 | 10:13 | +6.0% | 6.0% | 2.2% | **0.73** |
+| research | 65 | 09:32 | +2.0% | 2.0% | 3.0% | **0.51** |
+
+The delay splits into three legs with three different fixes, and only two
+of them are problems:
+
+| source | admit -> first arm | arm -> fill (RTH) | arm -> fill (pre-mkt arm) |
+|---|---:|---:|---:|
+| momentum | **31.7 min** | 0.2 min | 64.1 min (n=2) |
+| trending | 18.6 min | 0.2 min | 41.4 min (n=4) |
+| research | **101.1 min** | 0.2 min | 64.1 min (n=2) |
+
+**Execution is not the problem** — 12 seconds from arm to shares. Detection
+and decision are. Pre-market arms wait for the open because the book places
+market orders and pre-market takes limits only; that is a constraint, not a
+bug, and it is reported apart so it cannot be averaged into the fixable
+column.
 
 `captured` is the share of the day's up-move spent before the desk could
 act, computed in price space. Three-quarters of the momentum move is gone
@@ -198,7 +214,7 @@ by admission. Research arrives earliest with the most left — the only
 source admitted mid-move, and the one with the smallest loss share.
 
 **`ai_watch_min_pct_change=50` was not what admits names.** The median
-admission sits at +8.2% vs the prior close, and the threshold-crossing
+admission sits at +8.5% vs the prior close, and the threshold-crossing
 latency is *negative*: names are typically admitted before ever clearing
 +50%. There are two momentum seed paths, and that knob gates only
 `_big_mover_from_dashboard`; the soft open seed (`mom_open_soft`,
@@ -217,16 +233,28 @@ freshness. Raising it will cut volume; measure `captured` before and after.
 14 candidate gates × 3 horizons, anchored at the instants each gate
 actually fired in `shadow.jsonl`. **42 cells, zero DRIFT.**
 
-| gate | horiz | n | MFE/MAE | sigma | med net | green |
+| gate | horiz | n | med MFE/MAE | sigma | med net | green |
 |---|---:|---:|---:|---:|---:|---:|
-| `fresh_5m` | 60m | 243 | 0.78 | **1.69** | 0.000 | 6/12 |
-| `arm_ok` (incumbent) | 15m | 266 | **1.19** | 1.19 | +0.020 | 6/11 |
-| `arm_ok` | 30m | 183 | 1.20 | 0.44 | +0.048 | 6/11 |
-| `all` (baseline) | 15m | 1272 | 0.93 | −0.10 | −0.054 | 4/12 |
-| `rvol_10` | 15m | 82 | 0.79 | −0.02 | **−2.977** | 1/9 |
+| `fresh_15m` | 60m | 524 | 0.90 | **2.31** | −0.183 | 5/12 |
+| `all` (baseline) | 60m | 740 | 0.84 | 2.27 | −0.174 | 5/12 |
+| `fresh_5m` | 60m | 506 | 0.88 | 2.22 | −0.175 | 5/12 |
+| `rvol_5` | 30m | 288 | 1.07 | 2.25 | −0.324 | 5/11 |
+| **`arm_ok`** (incumbent) | 30m | 377 | 1.07 | **−0.07** | −0.070 | 4/11 |
+| `rvol_10` | 60m | 63 | 1.11 | 1.44 | **−5.517** | 1/9 |
 
-Nothing clears 2σ; every session sign is a coin flip. High RVOL is actively
-harmful. `in_zone` and `pctr_ok` are below the null at every horizon.
+Nothing clears the gates. Note what beats what: several cells now pass 2σ
+on **mean** MFE−MAE while their **median** MFE/MAE is below 1.0 and median
+net is negative. That is a right-skewed field — a few large up-moves drag
+the mean positive while the typical sample goes against you — and the
+session sign says the skew does not repeat week to week.
+
+Two things follow. `arm_ok`, the gate the desk is actually running, is at
+the null (−0.07σ) and **loses to no gate at all**. And a right-skewed field
+is precisely the shape a trailing stop should harvest — but only with a
+cushion wide enough to survive to the tail. A 0.10R shelf exits on the
+first wiggle, so it collects the negative median and never reaches the
+tail. TEM 2026-08-20 is that failure in one name: 1.40 R available after
+the fill, +0.040 R banked, exited in 53 seconds.
 
 ### The design criterion this produces
 
@@ -250,10 +278,11 @@ That is a latency and detection problem, not a signal problem. Next work,
 in order:
 
 1. **Instrument admission latency live.** Log, per admission, the time the
-   move began vs `admit_ts`, so the 0.74 becomes a number that can be
+   move began vs `admit_ts`, so the 0.71 becomes a number that can be
    driven down and watched.
 2. **Attack the seed path, not the indicators.** `mom_open_soft` and the
-   feed cadence decide when a name lands. That is where the 74% lives.
+   feed cadence decide when a name lands. That is where the 71% lives.
+   Then the 31.7-minute admit-to-arm gap is the second target.
 3. **Re-run `gate_screen` after any latency change.** If `captured` drops
    and `fresh_5m` starts clearing 2σ with a session majority, that is the
    first real candidate this desk has had.
@@ -362,7 +391,7 @@ whether a found edge survives.
 
 ```
 Live:  desk_product=scalp_legacy · ratchet armed · 04:00 watch · paper
-Open:  admission arrives after 74% of the move
+Open:  71% of the move gone at admit, then 31.7m to arm
 Next:  drive captured down, then re-run gate_screen
 ```
 
