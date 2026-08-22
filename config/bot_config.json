@@ -300,5 +300,6 @@
   "ai_local_trail_give_spread_k": 1.0,
   "ai_local_trail_give_spread_max_r": 0.5,
   "ai_local_trail_be_at_spread_k": 1.0,
-  "ai_watch_open_seed_min_pct": 0.0
+  "ai_watch_open_seed_min_pct": 0.0,
+  "ai_exit_min_hold_sec": 900
 }
