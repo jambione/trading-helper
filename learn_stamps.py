@@ -65,6 +65,42 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_give_r",
     "ai_local_trail_give_open_r",
     "ai_local_trail_give_max_pct",
+    # The spread-relative shelf and its cap. Both decide the width of the
+    # cushion a fill is protected by, which is to say what every trade
+    # banks — the same argument as the twelve knobs above.
+    "ai_local_trail_give_spread_k",
+    "ai_local_trail_give_spread_max_r",
+    "ai_local_trail_be_at_spread_k",
+    # How long the desk's discretionary exits stay holstered. This is the
+    # single largest change to what a fill returns that this desk has ever
+    # made: it moves max loss per position from ~0.10R to the 1R stop. Rows
+    # from a min-hold session must not claim the same regime as rows from a
+    # session where the shelf fired on the first tick.
+    "ai_exit_min_hold_sec",
+    # Which names are admitted at all. min_pct_change gates only the
+    # big-mover seed; this one gates the soft open seed, where most
+    # admissions actually come from.
+    "ai_watch_open_seed_min_pct",
+    # The rest of the shelf. Found by tools/setup_audit.py 2026-08-22, which
+    # is the point of having it: these were all missing while the file above
+    # was already documenting that eight unfingerprinted knobs once made a
+    # day claim the previous day's regime. Every one of them decides how
+    # wide the cushion is or when it tightens.
+    "ai_local_trail_give_px",
+    "ai_local_trail_min_give_px",
+    "ai_local_trail_min_give_max_r",
+    "ai_local_trail_tighten_mfe_r",
+    "ai_local_trail_damp_sec",
+    "ai_local_trail_print_ring",
+    # Dead-trade is a time-stop, so it decides holds the same way the
+    # min-hold gate does — and the two now interact.
+    "ai_dead_trade_min",
+    "ai_dead_trade_mfe_r",
+    # Entry gates and sizing.
+    "ai_max_spread_r",
+    "ai_max_position_pct_cheap",
+    "ai_watch_min_adx",
+    "ai_watch_min_proximity",
 )
 
 _fp_cache: tuple[float, str] | None = None  # (mtime, hex)
