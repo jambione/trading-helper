@@ -142,6 +142,61 @@ def _pct(vals: list[float], q: float) -> float:
     return s[min(int(q * len(s)), len(s) - 1)]
 
 
+def latency_chain(shadow_rows: list[dict], fill_ts: float | None,
+                  bars: list[dict], day: str) -> dict:
+    """admit -> first arm_ok -> fill, in minutes and in price given up.
+
+    Three separate delays get conflated as "we were late", and they have
+    different fixes. Detection is the seed path. Decision is the gate
+    deliberating. Execution is the gap between the gate saying yes and the
+    shares existing — on TEM 2026-08-20 that leg was 33.7 minutes and cost
+    more than the other two combined.
+
+    ``arm_premarket`` is reported apart because most of that gap is the desk
+    correctly refusing to buy before the open: the book places market orders
+    and pre-market takes limits only. Pooling the two would score a
+    constraint as if it were a bug.
+    """
+    admits = [float(r["admit_ts"]) for r in shadow_rows
+              if r.get("admit_ts") and float(r.get("admit_ts") or 0) > 0]
+    arms = [float(r["ts"]) for r in shadow_rows
+            if r.get("arm_ok") and r.get("ts")]
+    out: dict = {"admit_ts": min(admits) if admits else None,
+                 "arm_ts": min(arms) if arms else None,
+                 "fill_ts": fill_ts,
+                 "decision_min": None, "exec_min": None,
+                 "decision_pct": None, "exec_pct": None,
+                 "arm_premarket": None}
+    path = [b for b in bars if b["day"] == day]
+
+    def px_at(t):
+        c = [b for b in path if b["t"] >= t]
+        return c[0]["o"] if c and c[0]["o"] > 0 else None
+
+    if out["admit_ts"] and out["arm_ts"] and out["arm_ts"] >= out["admit_ts"]:
+        out["decision_min"] = (out["arm_ts"] - out["admit_ts"]) / 60.0
+        a, b = px_at(out["admit_ts"]), px_at(out["arm_ts"])
+        if a and b:
+            out["decision_pct"] = 100.0 * (b - a) / a
+    if out["arm_ts"] and fill_ts and fill_ts >= out["arm_ts"]:
+        out["exec_min"] = (fill_ts - out["arm_ts"]) / 60.0
+        a, b = px_at(out["arm_ts"]), px_at(fill_ts)
+        if a and b:
+            out["exec_pct"] = 100.0 * (b - a) / a
+        out["arm_premarket"] = not _is_rth_ts(out["arm_ts"])
+    return out
+
+
+def _is_rth_ts(ts: float) -> bool:
+    """RTH by the clock, not by whether a bar happens to exist.
+
+    A thin name can print no bar for minutes inside RTH; asking the tape
+    would then call a legitimate 10:15 arm pre-market.
+    """
+    d = datetime.fromtimestamp(float(ts), timezone.utc)
+    return DS.RTH_START_UTC <= (d.hour, d.minute) <= DS.RTH_END_UTC
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--days", type=int, default=20)
@@ -174,6 +229,26 @@ def main() -> int:
     daily = fetch_daily(syms, start.date().isoformat(), end.date().isoformat())
     print(f"  minute bars {len(minutes)}/{len(syms)}, daily {len(daily)}/{len(syms)}\n")
 
+    # Full shadow rows (arm_ok) and fills, for the decision/execution legs.
+    import gate_screen as GS
+    shadow_by_key: dict[tuple, list[dict]] = defaultdict(list)
+    for r in GS.load_shadow_rows(args.days, args.source):
+        shadow_by_key[(r["_sym"], r["_day"])].append(r)
+    fills_by_key: dict[tuple, float] = {}
+    try:
+        for ln in open(Path(DS.resolve_report_dir()) / "outcomes.jsonl",
+                       encoding="utf-8", errors="replace"):
+            if not ln.strip():
+                continue
+            o = json.loads(ln)
+            t, s = o.get("entry_time"), o.get("symbol")
+            if not t or not s:
+                continue
+            k = (str(s).upper(), DS._day_of(float(t)))
+            fills_by_key[k] = min(fills_by_key.get(k, float(t)), float(t))
+    except OSError:
+        pass
+
     rows_by_source: dict[str, list[dict]] = defaultdict(list)
     for src, plan in plans.items():
         thr = threshold_for(src, cfg)
@@ -188,6 +263,9 @@ def main() -> int:
                 r = analyse_day(b, day, admit, pc, thr)
                 if r:
                     r["symbol"] = sym
+                    key = (sym, day)
+                    r.update(latency_chain(shadow_by_key.get(key) or [],
+                                           fills_by_key.get(key), b, day))
                     rows_by_source[src].append(r)
 
     hdr = (f"{'source':<12}{'n':>5}{'medAdmit':>10}{'pct@admit':>11}"
@@ -216,6 +294,26 @@ def main() -> int:
             "median_latency_min": statistics.median(lat) if lat else None,
             "n_with_runup": len(cap),
         }
+        dec = [r["decision_min"] for r in rows if r["decision_min"] is not None]
+        dpct = [r["decision_pct"] for r in rows if r["decision_pct"] is not None]
+        rth = [r for r in rows if r["exec_min"] is not None
+               and not r.get("arm_premarket")]
+        pre = [r for r in rows if r["exec_min"] is not None
+               and r.get("arm_premarket")]
+        summary.update({
+            "n_decision": len(dec),
+            "median_decision_min": statistics.median(dec) if dec else None,
+            "median_decision_pct": statistics.median(dpct) if dpct else None,
+            "n_exec_rth": len(rth),
+            "median_exec_min_rth": (statistics.median(
+                r["exec_min"] for r in rth) if rth else None),
+            "median_exec_pct_rth": (statistics.median(
+                r["exec_pct"] for r in rth if r["exec_pct"] is not None)
+                if any(r["exec_pct"] is not None for r in rth) else None),
+            "n_exec_premarket_arm": len(pre),
+            "median_exec_min_premarket": (statistics.median(
+                r["exec_min"] for r in pre) if pre else None),
+        })
         payload[src] = summary
         print(f"{src:<12}{summary['n']:>5}{summary['median_admit_et']:>10}"
               f"{summary['median_pct_at_admit']:>10.1f}%"
@@ -228,6 +326,29 @@ def main() -> int:
 
     print("\ncaptured = share of the day's up-move banked BEFORE the desk could act.")
     print("1.00 means the whole move happened before admission; 0.50 is arriving halfway.")
+
+    # The three delays, separated because they have three different fixes.
+    print("\n--- latency chain: detection -> decision -> execution ---")
+    h2 = (f"{'source':<12}{'admit->arm':>12}{'moved':>8}{'n':>5}"
+          f"{'arm->fill RTH':>15}{'moved':>8}{'n':>5}"
+          f"{'arm->fill pre':>15}{'n':>5}")
+    print(h2)
+    print("-" * len(h2))
+    for src in sources:
+        s = payload.get(src)
+        if not s:
+            continue
+        f2 = lambda v, suf="": (f"{v:.1f}{suf}" if v is not None else "n/a")  # noqa: E731
+        print(f"{src:<12}{f2(s['median_decision_min'],'m'):>12}"
+              f"{f2(s['median_decision_pct'],'%'):>8}{s['n_decision']:>5}"
+              f"{f2(s['median_exec_min_rth'],'m'):>15}"
+              f"{f2(s['median_exec_pct_rth'],'%'):>8}{s['n_exec_rth']:>5}"
+              f"{f2(s['median_exec_min_premarket'],'m'):>15}"
+              f"{s['n_exec_premarket_arm']:>5}")
+    print("\ndecision = gate deliberating. execution = arm -> shares exist.")
+    print("Pre-market arms are split out: most of that wait is the desk")
+    print("correctly refusing to buy before the open (market orders only),")
+    print("which is a constraint, not a bug. The RTH column is the fixable one.")
     SCREEN_DIR.mkdir(parents=True, exist_ok=True)
     day = datetime.now().strftime("%Y-%m-%d")
     outp = SCREEN_DIR / f"admission_latency_{day}.json"

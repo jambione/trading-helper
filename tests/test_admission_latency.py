@@ -5,6 +5,7 @@ real problem is that admission arrives after the move.
 """
 import os
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -86,6 +87,73 @@ def test_prior_close_takes_the_session_before():
     assert al.prior_close(daily, "2026-08-20") == 9.0
     assert al.prior_close(daily, "2026-08-19") == 8.0
     assert al.prior_close(daily, "2026-08-18") is None
+
+
+def _rth_bar(t, o, day="2026-08-20"):
+    """A bar inside RTH (14:xx UTC == 10:xx ET)."""
+    return {"t": t, "day": day, "hm": (14, int(t // 60) % 60),
+            "o": o, "h": o, "l": o, "c": o}
+
+
+def test_decision_leg_is_admit_to_first_arm():
+    base = 1787320000.0
+    rows = [{"ts": base, "admit_ts": base, "arm_ok": False},
+            {"ts": base + 600, "admit_ts": base, "arm_ok": True},
+            {"ts": base + 900, "admit_ts": base, "arm_ok": True}]
+    bars = [_rth_bar(base + 60 * i, 10.0 + i * 0.1) for i in range(20)]
+    out = al.latency_chain(rows, None, bars, "2026-08-20")
+    assert out["decision_min"] == pytest.approx(10.0)   # first arm, not last
+    assert out["decision_pct"] > 0                       # price moved up
+
+
+def test_execution_leg_is_arm_to_fill():
+    base = 1787320000.0
+    rows = [{"ts": base + 300, "admit_ts": base, "arm_ok": True}]
+    bars = [_rth_bar(base + 60 * i, 10.0) for i in range(30)]
+    out = al.latency_chain(rows, base + 1200, bars, "2026-08-20")
+    assert out["exec_min"] == pytest.approx(15.0)
+
+
+def test_premarket_arm_is_flagged_separately():
+    """The wait for the open is a constraint, not a fixable delay."""
+    pre = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc).timestamp()
+    rth = datetime(2026, 8, 20, 15, 0, tzinfo=timezone.utc).timestamp()
+    bars = [_rth_bar(rth + 60 * i, 10.0) for i in range(10)]
+    out = al.latency_chain(
+        [{"ts": pre, "admit_ts": pre, "arm_ok": True}], rth, bars, "2026-08-20")
+    assert out["arm_premarket"] is True
+    out2 = al.latency_chain(
+        [{"ts": rth, "admit_ts": rth, "arm_ok": True}], rth + 600, bars,
+        "2026-08-20")
+    assert out2["arm_premarket"] is False
+
+
+def test_rth_check_uses_the_clock_not_the_tape():
+    """A thin name printing no bar at 10:15 must not read as pre-market."""
+    quiet = datetime(2026, 8, 20, 14, 15, tzinfo=timezone.utc).timestamp()
+    assert al._is_rth_ts(quiet) is True
+    early = datetime(2026, 8, 20, 11, 0, tzinfo=timezone.utc).timestamp()
+    assert al._is_rth_ts(early) is False
+
+
+def test_missing_arm_or_fill_yields_none_not_zero():
+    base = 1787320000.0
+    bars = [_rth_bar(base + 60 * i, 10.0) for i in range(10)]
+    never = al.latency_chain(
+        [{"ts": base, "admit_ts": base, "arm_ok": False}], None, bars,
+        "2026-08-20")
+    assert never["decision_min"] is None
+    assert never["exec_min"] is None
+
+
+def test_out_of_order_timestamps_are_refused():
+    """A fill before its arm is bad data, not a negative latency."""
+    base = 1787320000.0
+    bars = [_rth_bar(base + 60 * i, 10.0) for i in range(10)]
+    out = al.latency_chain(
+        [{"ts": base + 600, "admit_ts": base, "arm_ok": True}], base + 60,
+        bars, "2026-08-20")
+    assert out["exec_min"] is None
 
 
 def test_threshold_differs_by_source():
