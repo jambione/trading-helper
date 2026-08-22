@@ -7,65 +7,11 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get, selectTicker } from './store.js?v=133';
+import { subscribe, get } from './store.js?v=133';
 import { api }       from './api.js?v=133';
 import { copyTicker } from './tickers.js?v=137';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 import * as notifications from './notifications.js?v=133';
-
-function _escLab(s) {
-  return String(s ?? '').replace(/[&<>"]/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
-  ));
-}
-
-function _paintLab(lab) {
-  const strip = document.querySelector('[data-lab-strip]');
-  if (!strip) return;
-  const l = lab && typeof lab === 'object' ? lab : {};
-  const ghosts = Array.isArray(l.ghosts) ? l.ghosts : [];
-  const show = l.product === 'observe' || ghosts.length || l.refused;
-  strip.hidden = !show;
-  if (!show) return;
-  const mode = strip.querySelector('[data-lab-mode]');
-  const head = strip.querySelector('[data-lab-headline]');
-  const note = strip.querySelector('[data-lab-note]');
-  const box  = strip.querySelector('[data-lab-ghosts]');
-  if (mode) mode.textContent = String(l.product || 'observe').toUpperCase();
-  if (head) {
-    const extra = l.refused ? ` · ${l.refused} watch vetoes` : '';
-    head.textContent = (l.headline || 'Ghost H4') + extra;
-  }
-  if (note) note.textContent = l.note || 'Ghost H4 is a sim, not a fill.';
-  if (!box) return;
-  if (!ghosts.length) {
-    box.replaceChildren();
-    const span = document.createElement('span');
-    span.className = 'lab-strip__note';
-    span.textContent = 'No $10+ names with a day-open yet — tape starts 04:00.';
-    box.appendChild(span);
-    return;
-  }
-  box.replaceChildren();
-  for (const g of ghosts) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    const klass = g.spread_class === 'cheap' ? 'cheap'
-      : (g.spread_class === 'wide' ? 'wide' : '');
-    btn.className = 'lab-chip'
-      + (g.through_stop ? ' lab-chip--stop' : (g.pnl_pct >= 0 ? ' lab-chip--up' : ' lab-chip--down'))
-      + (klass ? ` lab-chip--${klass}` : '');
-    const pnl = (g.pnl_pct >= 0 ? '+' : '') + Number(g.pnl_pct).toFixed(2) + '%';
-    const vs = (g.vs_spy == null) ? '' : ` vsSPY ${(g.vs_spy >= 0 ? '+' : '')}${Number(g.vs_spy).toFixed(2)}`;
-    const stop = g.through_stop ? ' STOP' : '';
-    btn.innerHTML = `<span class="lab-chip__sym">${_escLab(g.symbol)}</span>`
-      + `<span class="lab-chip__pnl">${_escLab(pnl)}${_escLab(stop)}</span>`;
-    btn.title = `${g.symbol} ghost from open ${g.day_open} → last ${g.last}`
-      + ` stop ${g.stop}${vs}. Green bar = cheap spread. Not a fill.`;
-    btn.addEventListener('click', () => selectTicker(g.symbol));
-    box.appendChild(btn);
-  }
-}
 
 export function init(panelEl, kind) {
   if (!panelEl) return;
@@ -202,7 +148,6 @@ export function init(panelEl, kind) {
     _refresh(payload ?? {});
   });
   if (kind === 'claude') {
-    subscribe('lab', (lab) => _paintLab(lab));
     subscribe('ai_positions', () => _refresh(lastPayload));
     // Momentum ticker ticks → re-paint book PRICE without waiting for the next
     // ai_positions file write (server also overlays stream prices on the wire).

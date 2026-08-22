@@ -7,7 +7,7 @@
 
 import { connect, on, api }                      from './api.js?v=134';
 import { subscribe, set, selectTicker }          from './store.js?v=133';
-import { init as initFeeds }                     from './feeds.js?v=146';
+import { init as initFeeds }                     from './feeds.js?v=145';
 import { init as initTickers }                   from './tickers.js?v=139';
 import { init as initTradingView }               from './tradingview.js?v=133';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=133';
@@ -28,16 +28,12 @@ import { init as initMobilePager }                from './mobilePager.js?v=133';
 // text row. The connectivity/trader-on dots stay (they're live status, not
 // clutter); this is just the product's name + version, from a single
 // backend source of truth (version.py) so bumping it is a one-line change.
-function _renderProductBadge(v, lab) {
+function _renderProductBadge(v) {
   const el = document.querySelector('[data-product-badge]');
   if (!el) return;
   const name = v.product_name || 'Trader Bro';
   const ver  = v.product_version || '?';
-  const mode = (lab && lab.product) ? String(lab.product) : '';
-  el.textContent = (mode && mode !== 'scalp_legacy')
-    ? `${mode} · ${name} v${ver}`
-    : `${name} v${ver}`;
-  if (lab && lab.headline) el.title = lab.headline;
+  el.textContent = `${name} v${ver}`;
 }
 
 // Trader Bro's call-out suggestions — "Suggests: NRXP 8:28 AM" beside the
@@ -361,9 +357,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       update.ai_positions = snap.claude_positions;
     }
     if (snap.price_spikes      !== undefined) update.price_spikes      = snap.price_spikes;
-    if (snap.lab               !== undefined) update.lab               = snap.lab;
     if (Object.keys(update).length)      set(update);
-    if (snap.version) _renderProductBadge(snap.version, snap.lab);
+    if (snap.version) _renderProductBadge(snap.version);
     if (snap.bb_live !== undefined) _renderBbLive(snap.bb_live);
   });
 
