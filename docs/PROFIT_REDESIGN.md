@@ -1,5 +1,11 @@
 # Profit redesign — contract
 
+**Pickup for Claude is [GROK_HANDOFF.md](../GROK_HANDOFF.md)** (more recent).
+This file is the H4/observe *architecture*. The operator's **intended
+product** is the 0.10R ratchet as profit capture (directional RSI/%R),
+not a two-week wait for H4 paper. Live book is still `observe`. Do not
+arm from this document alone.
+
 **Written 2026-08-21, after the close.** Evidence is on the mini
 (`ai_reports/eod_2026-08-21.log`, `ai_reports/daily/2026-08-21.*`,
 `ai_reports/screens/thesis_2026-08-21.log`,
