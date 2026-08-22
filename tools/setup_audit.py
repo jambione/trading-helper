@@ -244,12 +244,17 @@ def audit_freshness() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--days", type=int, default=5)
+    ap.add_argument("--quick", action="store_true",
+                    help="skip log coverage (it reads a 70MB shadow log). "
+                         "Knobs, fingerprint and freshness only — the checks "
+                         "that go stale between deploys.")
     args = ap.parse_args()
     live = json.loads((ROOT / "config" / "bot_config.json").read_text("utf-8"))
     print(f"setup audit — {len(live)} live keys")
     audit_knobs(live)
     audit_fingerprint(live)
-    audit_logs(args.days)
+    if not args.quick:
+        audit_logs(args.days)
     audit_freshness()
     print("\n" + "=" * 60)
     if CRITICAL:

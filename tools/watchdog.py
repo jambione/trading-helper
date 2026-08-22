@@ -324,6 +324,13 @@ def should_run_eod(
     return True, day
 
 
+# Setup audit cadence. SETTLE lets a just-restarted service actually be up
+# before its age is judged; INTERVAL is the window a stale deploy can go
+# unnoticed. --quick skips the 70MB shadow scan, so this is a few seconds.
+AUDIT_SETTLE_SEC = 90.0
+AUDIT_INTERVAL_SEC = 1800.0
+
+
 def run_learn_job(py: str, *argv: str, timeout: float = 900.0) -> int:
     """Run a tools/*.py job; never raise into the supervisor loop.
 
@@ -403,6 +410,12 @@ def main() -> int:
 
     last_instr_key: str | None = None
     last_eod_day: str | None = None
+    # Setup audit. Staleness appears when code is deployed and nothing is
+    # restarted, so a restart-triggered check would look at the one moment
+    # the problem cannot exist. It has to be on a clock. 2026-08-22: the
+    # min-hold forward test was armed in config while the running trader
+    # had none of its code, and only a freshness check caught it.
+    audit_due = time.time() + AUDIT_SETTLE_SEC
     stopping = False
 
     def _stop(_sig, _frm):
@@ -447,6 +460,29 @@ def main() -> int:
 
             sync_pidfile(started)
 
+            # A restart re-arms the settle timer so the audit judges the new
+            # process, not the one it replaced.
+            if started:
+                audit_due = max(audit_due, now + AUDIT_SETTLE_SEC)
+
+            if not args.no_learn and now >= audit_due:
+                audit_due = now + AUDIT_INTERVAL_SEC
+                rc_a = run_learn_job(py, "setup_audit.py", "--quick",
+                                     timeout=180.0)
+                if rc_a == 0:
+                    log("setup_audit OK")
+                else:
+                    # Never block trading on this. The audit's own freshness
+                    # check shipped with a bug that reported a false OK, and a
+                    # false CRITICAL that halted the desk would be worse than
+                    # the staleness it guards against. Say it loudly instead.
+                    log("!" * 60)
+                    log(f"setup_audit CRITICAL (rc={rc_a}) — the desk may be "
+                        f"running code or config it does not think it is.")
+                    log("see logs/learn.log; re-run: "
+                        ".venv/bin/python tools/setup_audit.py")
+                    log("!" * 60)
+
             if not args.no_learn:
                 now_et = datetime.now(tz=ET)
                 run_i, last_instr_key = should_run_instrumentation(
@@ -484,6 +520,12 @@ def main() -> int:
                     rc_l = run_learn_job(
                         py, "admission_latency.py", "--days", "20")
                     log(f"drift rc={rc_d}; gate rc={rc_g}; latency rc={rc_l}")
+                    # Full audit once a day: the log-coverage scan is the
+                    # half --quick skips, and a field that quietly stopped
+                    # being written invalidates the screens above it.
+                    rc_sa = run_learn_job(py, "setup_audit.py", "--days", "5")
+                    log(f"setup_audit (full) rc={rc_sa}"
+                        + ("  <-- CRITICAL" if rc_sa else ""))
                     # Freeze the last 10 sessions and rank the declared
                     # settings grid. Incremental jsonl so a killed run
                     # still leaves a morning brief. Must not write config.

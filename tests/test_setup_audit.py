@@ -96,3 +96,51 @@ def test_unmeasurable_freshness_is_critical(monkeypatch):
         "R", (), {"stdout": "12345\n"})())
     sa.audit_freshness()
     assert sa.CRITICAL, "unmeasurable process age must be CRITICAL"
+
+
+def test_quick_mode_skips_the_expensive_scan(monkeypatch, capsys):
+    """The frequent path must not read a 70MB shadow log every 30 minutes."""
+    called = {"logs": False}
+    monkeypatch.setattr(sa, "audit_logs", lambda d: called.__setitem__("logs", True))
+    monkeypatch.setattr(sa, "audit_knobs", lambda live: None)
+    monkeypatch.setattr(sa, "audit_fingerprint", lambda live: None)
+    monkeypatch.setattr(sa, "audit_freshness", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["setup_audit.py", "--quick"])
+    sa.main()
+    assert called["logs"] is False
+    monkeypatch.setattr(sys, "argv", ["setup_audit.py"])
+    sa.main()
+    assert called["logs"] is True
+
+
+def test_critical_sets_a_nonzero_exit(monkeypatch):
+    """The watchdog gates on the return code, so it has to be real."""
+    monkeypatch.setattr(sa, "audit_knobs", lambda live: None)
+    monkeypatch.setattr(sa, "audit_fingerprint", lambda live: None)
+    monkeypatch.setattr(sa, "audit_freshness",
+                        lambda: sa.CRITICAL.append("boom"))
+    monkeypatch.setattr(sa, "CRITICAL", [])
+    monkeypatch.setattr(sa, "WARN", [])
+    monkeypatch.setattr(sys, "argv", ["setup_audit.py", "--quick"])
+    assert sa.main() == 1
+
+
+def test_watchdog_never_blocks_trading_on_the_audit():
+    """A false CRITICAL halting the desk is worse than the staleness.
+
+    The audit's own freshness check shipped reporting a false OK; the
+    opposite bug must not be able to stop the book from trading.
+    """
+    src = open(os.path.join(ROOT, "tools", "watchdog.py"), encoding="utf-8").read()
+    i = src.index("setup_audit CRITICAL")
+    window = src[i - 900:i + 400]
+    for stopper in ("sys.exit", "raise SystemExit", "stopping = True", "return 1"):
+        assert stopper not in window, (
+            f"watchdog must not {stopper} on a failed audit")
+
+
+def test_watchdog_runs_quick_periodically_and_full_at_eod():
+    src = open(os.path.join(ROOT, "tools", "watchdog.py"), encoding="utf-8").read()
+    assert '"setup_audit.py", "--quick"' in src
+    assert '"setup_audit.py", "--days", "5"' in src
+    assert "AUDIT_SETTLE_SEC" in src and "AUDIT_INTERVAL_SEC" in src
