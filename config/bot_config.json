@@ -172,11 +172,11 @@
   "ai_h3_paper": false,
   "h4_min_price": 10.0,
   "h4_min_dollar_vol": 5000000.0,
-  "h4_max_spread_pct": 0.10,
+  "h4_max_spread_pct": 0.1,
   "h4_min_rs": 80.0,
   "h4_hold_days": 2,
   "h4_stop_pct": 2.0,
-  "h4_haircut_pct": 0.20,
+  "h4_haircut_pct": 0.2,
   "ai_exit_left_overbought": false,
   "ai_entry_broker_target": true,
   "ai_watch_exhaustion_heat_min_pct": 40.0,
@@ -296,5 +296,9 @@
   "ai_watch_arm_require_cm_rsi": true,
   "ai_watch_require_realtime_rsi": false,
   "ai_watch_arm_cm_rsi_max": 50.0,
-  "ai_book_tick_sec": 1.0
+  "ai_book_tick_sec": 1.0,
+  "ai_local_trail_give_spread_k": 1.0,
+  "ai_local_trail_give_spread_max_r": 0.5,
+  "ai_local_trail_be_at_spread_k": 1.0,
+  "ai_watch_open_seed_min_pct": 0.0
 }

@@ -352,7 +352,13 @@ DEFAULT_CONFIG = {
     # Trending: score > min OR day chg / rvol claim; WASH never seeded.
     # EXT is optional unless ai_watch_require_look_ext is true.
     "ai_watch_trending_min_score":      5.0,  # Stocktwits score must be > this
+    # Gates _big_mover_from_dashboard ONLY. The soft open seed
+    # (mom_open_soft) has its own knob below and ignores this one.
     "ai_watch_min_pct_change":         50.0,  # day chg % for momentum big-mover seed
+    # Soft open seed floor. 0.0 = admit as shipped, which is where most
+    # admissions come from (median lands at +8.2%). Raise it to make the
+    # desk wait for a bigger move before seeding.
+    "ai_watch_open_seed_min_pct":      0.0,
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
     # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
@@ -732,6 +738,9 @@ DEFAULT_CONFIG = {
     "ai_decision_ask_max_dev_pct":      5.0,
     "ai_entry_limit_anchor":           "ask",
     "ai_local_trail_give_spread_k":    0.0,
+    # Ceiling on the spread floor, in R. Uncapped, k=1 on a p90
+    # book (5.56R) parks the shelf 5.5R down, which is no stop.
+    "ai_local_trail_give_spread_max_r": 0.50,
     # Breakeven floor may not arm until the trade has cleared this many
     # round trips. 0 = off. be_at_pct alone armed on a third of the spread
     # and pinned the shelf a cent over entry on 45% of raises.
@@ -1230,6 +1239,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_bb_live_fresh_sec",
     "ai_watch_trending_min_score",
     "ai_watch_min_pct_change",
+    "ai_watch_open_seed_min_pct",
     "ai_watch_min_rvol",
     "ai_watch_arm_min_rvol",
     "ai_watch_look_max",
@@ -1303,6 +1313,7 @@ SAFE_CONFIG_KEYS = [
     "ai_decision_ask_max_dev_pct",
     "ai_entry_limit_anchor",
     "ai_local_trail_give_spread_k",
+    "ai_local_trail_give_spread_max_r",
     "ai_local_trail_be_at_spread_k",
     "ai_local_trail_min_give_px",
     "ai_local_trail_min_give_max_r",

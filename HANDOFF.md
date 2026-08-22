@@ -56,8 +56,11 @@ a product change needs no restart.
 | `ai_watch_start_time` | **04:00** ET | premarket shadow; buys still RTH |
 | `ai_h4_paper` / `ai_h3_paper` / `ai_late_hold_paper` | false | keep them false, see §4 |
 | `ai_local_trail_give_r` | 0.10 | ≈0.497% of price, since 1R ≈ 4.97% |
-| `ai_local_trail_give_spread_k` | 0 (absent) | floors the give at k×spread. See §6 |
-| `ai_local_trail_be_at_spread_k` | 0 | won't protect a gain until it clears k round trips |
+| `ai_local_trail_give_spread_k` | **1.0** | floors the give at 1×spread — the shelf can no longer sit inside the book |
+| `ai_local_trail_give_spread_max_r` | **0.50** | caps that floor. RTH spread_r runs p90 **5.56R**, and uncapped k=1 would park the shelf 5.5R down, which is no stop at all |
+| `ai_local_trail_be_at_spread_k` | **1.0** | won't protect a gain until it clears one round trip |
+| `ai_max_spread_r` | 0.0 (off) | **open.** A book wider than the move is unwinnable, but n=28 fills cannot pick a threshold — kept and refused means are indistinguishable at every cap tried. Revisit when coverage gives real n |
+| `ai_watch_open_seed_min_pct` | 0.0 | new, and 0.0 = shipped behaviour. See §5 |
 | heat 40 / 1R 5% / 2 slots / IEX / flatten 15:50 | unchanged | |
 | `ai_watch_min_pct_change` | 50.0 | **not the operative gate** — see §5 |
 
@@ -194,12 +197,20 @@ act, computed in price space. Three-quarters of the momentum move is gone
 by admission. Research arrives earliest with the most left — the only
 source admitted mid-move, and the one with the smallest loss share.
 
-**`ai_watch_min_pct_change=50` is not what admits names.** The median
+**`ai_watch_min_pct_change=50` was not what admits names.** The median
 admission sits at +8.2% vs the prior close, and the threshold-crossing
 latency is *negative*: names are typically admitted before ever clearing
-+50%. The `mom_open_soft` seed path in `ai_entry_watch.py` sets
-`bypass_inclusion` and skips inclusion scoring. **The config knob does not
-describe the live gate.** Anyone tuning that number is tuning nothing.
++50%. There are two momentum seed paths, and that knob gates only
+`_big_mover_from_dashboard`; the soft open seed (`mom_open_soft`,
+`bypass_inclusion`) had **no percent gate at all**, and it is where most
+admissions come from.
+
+Fixed 8/22 by giving the soft path its own knob,
+**`ai_watch_open_seed_min_pct`**, defaulted to **0.0 = admit exactly as
+before**. This is a truthful name for existing behaviour, not a behaviour
+change — and it is the dial to raise when attacking latency, since making
+the desk wait for a bigger move is the one lever that trades admissions for
+freshness. Raising it will cut volume; measure `captured` before and after.
 
 ### B. Does any gate select drift? — **No.** `tools/gate_screen.py`
 
@@ -261,10 +272,15 @@ in order:
   `be_at_spread_k` are worth turning on for the wide-spread quarter of
   trades, but as risk hygiene, not as a profit change.
 - **Do not change live knobs mid-session** without the operator.
-- **Do not trust `optimize_rstop` right now.** Four tests in
-  `tests/test_sim_rstop_path.py` fail because `walk_symbol` places **zero
-  trades**. Any "do not change config" verdict it produced is empty, not
-  informative. Fix before using it to judge ratchet knobs.
+- **Do not read a replay verdict without checking `desk_product` first.**
+  `tools/sim_rstop_path.path_cfg()` calls `load_config()`, so the simulator
+  inherits the **live** product knob. While the desk sat in `observe` the
+  arm veto fired *inside the sim* and `walk_symbol` placed zero trades —
+  four of its seven tests failed for exactly that reason and went green the
+  moment the book went back to `scalp_legacy`, with no code change. Every
+  "do not change config" verdict produced during observe is empty rather
+  than informative. This is the likely explanation for the earlier note
+  about vacuous `optimize_rstop` runs.
 - **Do not run `drift_screen` without `--eligible-within`.** Without it the
   same universe reads DRIFT everywhere (MFE/MAE 1.13–2.83) purely from the
   pre-admission run-up. That gap is the finding, not a signal.

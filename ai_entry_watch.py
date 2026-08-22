@@ -2234,6 +2234,13 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
     except (TypeError, ValueError):
         min_pct = 50.0
+    # Gates the soft open seed below. Separate knob because min_pct governs
+    # _big_mover_from_dashboard only; 0.0 keeps the shipped behaviour.
+    try:
+        open_seed_min_pct = float(
+            cfg.get("ai_watch_open_seed_min_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        open_seed_min_pct = 0.0
     try:
         # Ratio units: 1.0 == 100% of average volume (same as desk RVOL display).
         min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 2.0)
@@ -2305,6 +2312,19 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     rv = None
                 if rv is not None and min_rvol > 0 and rv < min_rvol:
                     continue
+                # This path deliberately does NOT use ai_watch_min_pct_change:
+                # that knob gates _big_mover_from_dashboard, and this is the
+                # soft open seed (bypass_inclusion / mom_open_soft), which is
+                # where most admissions actually come from — the median one
+                # lands at +8.2% against a knob that reads 50. Anyone reading
+                # the config was reading a threshold that never applied here.
+                # Its own knob, defaulting to 0.0 = admit as before, so this
+                # is a truthful name for existing behaviour and a real dial
+                # for the admission-latency work (see HANDOFF.md §5).
+                if open_seed_min_pct > 0:
+                    seed_pct = _pct_change_value(r.get("pct_change"))
+                    if seed_pct is None or seed_pct < open_seed_min_pct:
+                        continue
                 if _is_wash_look(r):
                     continue
                 try:

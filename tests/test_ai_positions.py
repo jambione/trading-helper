@@ -3523,8 +3523,14 @@ def test_spread_floor_is_off_by_default():
 
 
 def test_spread_floor_widens_the_cushion_past_the_book():
-    """k spreads of room, so the quote cannot trip the stop on its own."""
-    cfg = _give_cfg(ai_local_trail_give_spread_k=2.0)
+    """k spreads of room, so the quote cannot trip the stop on its own.
+
+    Cap disabled: this pins the floor's PRECEDENCE over the dollar floor, and
+    2 x 0.283R = 0.566R would otherwise be clipped by the 0.50R default. The
+    cap itself is covered in tests/test_spread_knobs.py.
+    """
+    cfg = _give_cfg(ai_local_trail_give_spread_k=2.0,
+                    ai_local_trail_give_spread_max_r=0.0)
     # BKKT 2026-08-21: risk $0.41, spread 0.283R = $0.116 round trip.
     # 2 spreads = $0.232, which must outrank the $0.06 dollar floor.
     give = cp.local_trail_give(8.19, 0.41, cfg, mfe_r=0.0, spread_r=0.283)
@@ -3541,7 +3547,8 @@ def test_spread_floor_outranks_the_percent_ceiling():
     the spread floor is applied last.
     """
     cfg = _give_cfg(ai_local_trail_give_spread_k=2.0,
-                    ai_local_trail_give_max_pct=0.1)
+                    ai_local_trail_give_max_pct=0.1,
+                    ai_local_trail_give_spread_max_r=0.0)
     give = cp.local_trail_give(91.84, 4.59, cfg, mfe_r=0.0, spread_r=0.30)
     assert give == pytest.approx(2.0 * 0.30 * 4.59)
     assert give > 91.84 * 0.001, "percent ceiling must not win here"

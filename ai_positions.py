@@ -135,6 +135,16 @@ DEFAULT_LOCAL_TRAIL_DAMP_SEC = 2.0
 # a percent of price cannot know that; both were set with no reference to the
 # book. Set from the record ai_max_spread_r was always waiting for, not guessed.
 DEFAULT_LOCAL_TRAIL_SPREAD_K = 0.0
+# Ceiling on that spread floor, in R. The floor is applied last and outranks
+# every other rule, which is right when the book is 0.06R wide and dangerous
+# when it is not: RTH spread_r runs p90 5.56R and pre-market median 3.83R
+# (tools/spread_coverage.py, 2026-08-17..21), so an uncapped k=1 would park
+# the shelf 5.5R under the peak on exactly the names that need a stop most.
+# A cushion that wide is not a wide stop, it is no stop — the position then
+# rides to the synthetic 1R or to the 15:50 flatten with nothing in between.
+# Cap it: past this, the book is too wide to trade around and the answer is
+# to refuse the entry (ai_max_spread_r), not to widen the shelf.
+DEFAULT_LOCAL_TRAIL_SPREAD_MAX_R = 0.50
 # Breakeven floor may not arm until the trade has cleared this many round
 # trips. 0 = off (shipped). Sibling of the give knob above and the same
 # lesson: be_at_pct is 0.15% of price against a 0.49% book, so the floor
@@ -2423,7 +2433,15 @@ def local_trail_give(
         except (TypeError, ValueError):
             sp = 0.0
         if sp > 0:
-            give = max(give, k * sp * r)
+            floor_r = k * sp
+            try:
+                cap_r = float(cfg.get("ai_local_trail_give_spread_max_r",
+                                      DEFAULT_LOCAL_TRAIL_SPREAD_MAX_R) or 0.0)
+            except (TypeError, ValueError):
+                cap_r = DEFAULT_LOCAL_TRAIL_SPREAD_MAX_R
+            if cap_r > 0:
+                floor_r = min(floor_r, cap_r)
+            give = max(give, floor_r * r)
     return max(0.01, give)
 
 
