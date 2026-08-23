@@ -135,11 +135,24 @@ cmd_start() {
         claude_up=1
     fi
 
-    # Fully up — nothing to do (except ensure tunnel if requested).
+    # Fully up — nothing to do (except ensure tunnel and watchdog).
     if [ "$dash_up" = 1 ] && [ "$eng_up" = 1 ] && [ "$disc_up" = 1 ] \
        && [ "$trend_up" = 1 ] && [ "$claude_up" = 1 ]; then
         echo "Already running. Use './trading restart' to reload code, or './trading status'."
         [ "$want_tunnel" = 1 ] && _start_tunnel
+        # The watchdog is not in the "fully up" test above, so this branch
+        # used to return before ever reaching the block that starts it —
+        # meaning `./trading start`, the documented recovery, could not
+        # revive a dead watchdog while the rest of the stack was alive. It
+        # supervises everything else and nothing supervises it, so a silent
+        # no-op here leaves the desk unattended until someone notices.
+        # Found 2026-08-23 after bouncing the watchdog alone to pick up a
+        # code change: it stopped and never came back.
+        if ! _running "tools/watchdog.py"; then
+            echo "Watchdog was down — restarting it"
+            nohup "$PY" -u tools/watchdog.py >>"$LOGDIR/watchdog.log" 2>&1 &
+            echo "$!" >> "$PIDFILE"
+        fi
         cmd_status
         return 0
     fi
