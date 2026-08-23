@@ -1,4 +1,4 @@
-# Desk state — 2026-08-22
+# Desk state — 2026-08-23
 
 Replaces `GROK_HANDOFF.md`. Written for someone with none of the chat that
 produced it. **Challenge anything.** Every claim carries its anchor.
@@ -39,8 +39,23 @@ position:
   the name is admitted. The desk arrives at 10:37 with 3.0% left, then the
   gate deliberates for another 31.7 minutes.
 
-So the open problem is **admission latency**, not exit geometry and not
-another indicator permutation.
+On 8/22 that last point was read as the answer: the open problem is
+admission latency. **8/23 falsified it.** `captured` does not predict
+realized R (−1.03σ; 5/9 sessions, p=1.000), and the excursion available is
+flat in how far a name has already run (+0.62σ). Arriving earlier would not
+have helped.
+
+What replaced it is harder. A universe screen over six candidate
+watchlists — including the 804 name-days the gate **rejected** — found
+**zero drift and zero playable tape in 18 cells.** The desk's own watchlist
+offers a median favorable excursion of 0.49% at 15 minutes against a 0.79%
+round trip: **62% of what it costs to trade.** The rejects are
+statistically identical to the admissions.
+
+So the open problem is not the exit, not the entry gate, and not latency.
+**It is that the available tape does not clear its own costs**, and the
+selection machinery is choosing between names that do not differ. See §5C
+and §5D — they supersede the direction §5A implied.
 
 ---
 
@@ -183,9 +198,11 @@ live-equivalent.
 
 ## 5. Where we are going
 
-Two questions were run on 8/22, in order, and both are answered.
+Three questions have been run. A and B were answered on 8/22 and still
+stand as measurements. **C, run on 8/23, falsified the plan that was built
+on A.** Read them in order; do not act on A without reading C.
 
-### A. Is admission too late? — **Yes.** `tools/admission_latency.py`
+### A. Is admission late? — **Yes, and it does not matter.** `tools/admission_latency.py`
 
 | source | n | med admit ET | at admit | run banked | travel left | **captured** |
 |---|---:|---:|---:|---:|---:|---:|
@@ -213,6 +230,8 @@ act, computed in price space. Three-quarters of the momentum move is gone
 by admission. Research arrives earliest with the most left — the only
 source admitted mid-move, and the one with the smallest loss share.
 
+**All of that is true and none of it predicts money. See C.**
+
 **`ai_watch_min_pct_change=50` was not what admits names.** The median
 admission sits at +8.5% vs the prior close, and the threshold-crossing
 latency is *negative*: names are typically admitted before ever clearing
@@ -224,9 +243,14 @@ admissions come from.
 Fixed 8/22 by giving the soft path its own knob,
 **`ai_watch_open_seed_min_pct`**, defaulted to **0.0 = admit exactly as
 before**. This is a truthful name for existing behaviour, not a behaviour
-change — and it is the dial to raise when attacking latency, since making
-the desk wait for a bigger move is the one lever that trades admissions for
-freshness. Raising it will cut volume; measure `captured` before and after.
+change.
+
+**It was described here as "the dial for attacking latency." That was
+wrong twice over.** Raising a *cumulative percent* floor makes the desk
+wait for a **bigger** move before admitting, which mechanically **raises**
+`captured` — it is a volume dial, not a freshness dial, and it pushes the
+opposite way from what the text claimed. And per C, freshness does not pay
+anyway. Leave it at 0.0.
 
 ### B. Does any gate select drift? — **No.** `tools/gate_screen.py`
 
@@ -256,6 +280,91 @@ first wiggle, so it collects the negative median and never reaches the
 tail. TEM 2026-08-20 is that failure in one name: 1.40 R available after
 the fill, +0.040 R banked, exited in 53 seconds.
 
+### C. Does lateness cost money? — **No.** (8/23)
+
+A and B produced a plan — drive `captured` down — that rested on one link
+nobody had tested: that arriving late is *why* the desk loses. It is not.
+`scratchpad/captured_vs_r.py`, all 344 fills with realized R:
+
+| instrument | n | rho | sigma | |
+|---|---:|---:|---:|---|
+| pre-admission run-up % | 341 | −0.139 | −2.59 | clean — shares no term with R |
+| **`captured` at admission** | 328 | −0.057 | **−1.03** | **coupled** — shares the day high with R |
+| `captured` at fill | 326 | −0.047 | −0.85 | coupled |
+
+**`captured` is null**, and the way it is null matters: its denominator
+contains the post-admission day high, which is also what makes a trade
+profitable, so the arithmetic was working *in its favour* and it still did
+not show. Session-paired it is **5/9, p = 1.000, median delta +0.000 R**.
+
+Run-up looked alive at −2.6σ, so `scratchpad/runup_excursion.py` chased the
+mechanism — and killed it:
+
+| run-up bucket | n | medMFE | medMAE | MFE/MAE | medR |
+|---|---:|---:|---:|---:|---:|
+| −20.8..1.9% | 77 | 0.042 | 0.040 | 1.06 | −0.030 |
+| 2.1..6.2% | 77 | 0.051 | 0.035 | 1.46 | −0.022 |
+| 6.5..10.6% | 77 | 0.030 | 0.056 | **0.53** | **−0.074** |
+| 10.6..91.0% | 79 | **0.056** | 0.040 | 1.39 | −0.026 |
+
+**Run-up vs MFE: rho +0.035, +0.62σ — flat.** Extended names have *as much*
+favorable excursion available as fresh ones; the most extended bucket has
+the **highest** median MFE. "The move is gone by the time we arrive" is
+false. The relationship is also **not monotonic** — the worst bucket is the
+middle one — and session-paired it fails (7/9, p=0.18), with momentum
+running backwards at 2/6. Only `trending` holds (5/5, p=0.062, n=96).
+
+So the five "the desk buys what has already moved" measurements in the
+8/22 queue — captured 0.71, extension >30% worst, RVOL >10 worst, high
+score worst, contention favouring the least-extended — were **bucket-edge
+artifacts of a non-monotonic relationship with no mechanism underneath.**
+Latency is not the leak. Do not spend another session on it.
+
+Caveat kept honestly: `mfe_r` in `outcomes.jsonl` is measured over the
+actual hold (88–239s median by bucket), so it understates what the names
+offered. That weakens the absolute numbers, not the comparison across
+buckets, which is what carries the conclusion.
+
+### D. Does ANY universe hold playable moves? — **No.** `tools/universe_screen.py`
+
+C left the real question exposed: every screen in this lab is anchored on
+`shadow.jsonl`, so we had only ever measured **our own watchlist**. The
+universe screen builds candidates from *causes*, resolves each
+point-in-time, and grades on two separate bars — does it drift, and is the
+drift big enough to pay. The pay bar is pre-registered in the tool:
+**median MFE ≥ 2× the 0.79% round trip, MFE/MAE ≥ 1.2, ≥70% sessions
+green.** Symbol pool is shadow ∪ rejects = 562 names, 509 with bars.
+
+| universe | 15m payX | 30m payX | 60m payX | M/A @30m | verdict |
+|---|---:|---:|---:|---:|---|
+| **burst** (mention rate) | **3.79** | **5.90** | **10.27** | 0.94 | range, no direction |
+| desk (incumbent) | 0.62 | 1.00 | 1.46 | 1.03 | unplayable |
+| **rejects** (gate said no) | 0.59 | 0.91 | 1.33 | 0.99 | **identical to desk** |
+| gap_hold | 0.61 | 0.91 | 1.43 | 1.02 | unplayable |
+| early_rvol | 1.27 | 1.80 | 2.95 | **0.80** | anti-predictive |
+| liquid (control) | 0.15 | 0.23 | 0.35 | 1.00 | clean null |
+
+**18 cells, zero DRIFT, zero PLAYABLE.** Four things to take from it:
+
+- **The desk's own watchlist is unplayable at its own horizon.** payX 0.62
+  at 15m means the median name offers **62% of what the round trip costs**.
+  No gate fixes that — there is nothing to gate.
+- **`rejects` ≈ `desk` on 804 name-days vs 481.** The names the gate turned
+  down are statistically indistinguishable from the ones it kept. This is
+  `arm_ok`'s −0.07σ confirmed on a bigger, independent sample: **the gate
+  is not selecting.**
+- **`burst` is the only tape with real size** — 3.0% median MFE at 15m,
+  6× the desk's, clearing the pay bar 3.8×. And it is **directionless**
+  (M/A 0.91–0.94). A huge symmetric coin flip is the single worst shape for
+  a ratchet, and the `flag` path feeding on it is 28% of admissions.
+- **`liquid` behaves exactly as the null predicts** (M/A 1.00, sigma −0.23),
+  which is the evidence that the measurement itself is not broken.
+
+**Holding longer does not rescue it.** desk payX runs 0.62 → 1.00 → 1.46
+across 15/30/60m, but √4 = 2.0, so the growth is the noise band widening
+almost exactly as a driftless walk predicts — MFE/MAE only moves 0.97 →
+1.07. A longer hold buys a bigger wiggle, not a better one.
+
 ### The design criterion this produces
 
 For a driftless walk, expected favorable excursion is ≈ **0.8σ√t** — which
@@ -269,12 +378,23 @@ grows as **√t**. The crossover is `t > (σ/μ)²`. With the measured
 σ = 0.245%/√min, an intraday ratchet product needs roughly **μ ≥ 0.05%/min
 — about 3%/hour, sustained.**
 
-The names do exactly that — during the run-up, before admission. So the
-whole product question is now one sentence:
+The names do exactly that — during the run-up, before admission. On 8/22
+that produced the product question "can the desk be admitted during the run
+instead of after it?", read as a latency problem.
 
-> **Can the desk be admitted during the run instead of after it?**
+**8/23 answers it: being admitted earlier would not have helped.** C shows
+arriving fresher does not pay, and D shows the excursion available is flat
+in run-up. The derivation above survives — it is arithmetic, and D confirms
+it empirically with MFE/MAE ≈ 1.0 on every universe tried — but its
+consequence is harsher than the latency reading:
 
-That is a latency and detection problem, not a signal problem.
+> **No universe we can currently construct sustains μ ≥ 0.05%/min, so no
+> intraday ratchet product has a solution on any of them.**
+
+That is a statement about the tape available to this desk, not about
+admission speed. The honest options it leaves are a different instrument
+(bigger μ), a different holding period (where μt beats σ√t), or a cost
+structure where the 0.79% round trip stops dominating — not another gate.
 
 ### The queue, and why it is ordered this way
 
@@ -301,7 +421,14 @@ CAPTURE is the diagnostic, not just the P&L: if sessions improve while
 capture stays negative, something other than the delay is doing the work
 and the result will not survive.
 
-**GATE 2 — entry, only after gate 1 passes.** In order:
+**GATE 2 — entry, only after gate 1 passes.** In order — **but read the
+8/23 annotations first: items 4, 5 and 6 are dead, and 1–3 are now the
+whole list.** §5D reframes what is left: `rejects` matching `desk` means
+the gate is not selecting, and the desk's own watchlist is unplayable at
+its own horizon (payX 0.62 at 15m). Item 1 remains worth doing because it
+removes trades the operator would never have taken by hand; items 2 and 3
+remain *lab* questions. None of the three is an edge, and nothing in this
+queue is now expected to make the desk profitable.
 
 **1. Enforce the volume floor the operator already believes in.** This is
 a defect, not a hypothesis, and it is first because it needs no discovery.
@@ -362,12 +489,16 @@ Volume without a reason is a crowd; volume with a reason is a repricing.
 **n=10 in that cell** — a hypothesis with a mechanism, not a finding. Watch
 it as sessions accumulate.
 
-**4. Detection latency.** `ai_watch_open_seed_min_pct` is the dial;
-`captured` is the scoreboard. 71% of the move is gone at admission.
+**4. Detection latency — ~~queued~~ DEAD (8/23).** Was:
+`ai_watch_open_seed_min_pct` as the dial, `captured` as the scoreboard.
+§5C shows `captured` does not predict R (−1.03σ, 5/9 sessions, p=1.000)
+and §5D shows available excursion is flat in run-up. There is nothing here
+to win. Do not rebuild it under a new name.
 
-**5. Decision latency.** The 31.7-minute admit-to-arm gap. Only worth
-attacking after the above — arming faster into a name chosen badly just
-loses money sooner.
+**5. Decision latency — ~~queued~~ DEAD (8/23).** The 31.7-minute
+admit-to-arm gap is real and costs nothing measurable, for the same
+reason. Arming faster into a driftless name just reaches the same
+distribution sooner.
 
 **6. A slot ranker — ranked on freshness, never on strength.** Two slots
 decide which candidates exist at all, and today the winner is whoever
@@ -395,11 +526,17 @@ Lower CM RSI is the *less* overbought, *less* extended name — earlier in
 the move. At n=696 one standard error on the win rate is ~1.9pp, so +4.8pp
 is roughly 2.5σ, searched across twelve rules. A candidate, not a result.
 
-It is the fifth independent measurement pointing the same way: captured
-0.71, extension >30% worst, RVOL >10 worst, high score worst, and now
-contention favouring the least-extended candidate. **The desk's problem is
-that it buys things that have already moved**, and a ranker only helps if
-it ranks toward freshness.
+**The "freshness" reading of this is dead (8/23).** It was written as the
+fifth of five measurements pointing at "the desk buys things that have
+already moved" — and §5C shows all five were bucket-edge artifacts of a
+non-monotonic relationship with no mechanism. `rejects` matching `desk` in
+§5D says the same thing from the other side: allocation cannot be the leak
+when the pool is homogeneous.
+
+What survives is only the bare empirical rule — *prefer lower `cm_rsi`* —
+at 2.5σ **searched across twelve rules**, with its explanation removed. A
+searched candidate with no mechanism is the weakest thing in this file.
+Do not build on it.
 
 **Re-measure the ceiling before building it.** All of the above is from the
 86-second regime, where a slot freed every minute or two. Under the
@@ -409,6 +546,44 @@ grows with it. Re-run `slot_contention.py --days 10` once gate 1 has tape.
 **Do not** arm anything from gate 2 while gate 1 is running, and do not
 retune the min-hold delay mid-test because a week looks bad. Ten sessions,
 then read it.
+
+### What is actually left after 8/23
+
+The entry queue is gone and it is worth being blunt about what that means:
+**there is no longer a queued change that anyone expects to make this desk
+profitable.** GATE 1 is the last live candidate, and it is an *exit* test
+sitting at p=0.13 on a backtest of its own data.
+
+§5D says the constraint is the tape, not the selection. That leaves three
+honest directions, in the order their evidence supports:
+
+**i. Finish gate 1 and read it.** Ten sessions, unchanged. It is the only
+experiment running and the only new information arriving. Everything below
+waits on it.
+
+**ii. Attack the cost, not the signal.** The round trip is 0.79% of price
+and the desk's own tape offers 0.49% median MFE at 15m. Those two numbers
+are the whole problem, and only one of them is under our control. Nothing
+here has ever tested a cheaper instrument, a limit-order entry, or a
+higher-priced/tighter-spread universe. A universe with the same MFE/MAE
+and half the round trip is worth as much as a gate that never existed.
+
+**iii. Change the holding period, not the gate.** μt beats σ√t only for
+`t > (σ/μ)²`. Every screen in this file lives inside one session because
+the product does. That constraint has never been tested as a *variable* —
+H4 tested a specific bad multi-day design, not the timescale itself, and
+its failure was over-read as closing the whole direction.
+
+**What is NOT left:** another indicator permutation, another latency fix,
+another ranker. `gate_screen` covered the first (42 cells), §5C the second,
+§5D the third. If a proposal is one of those three wearing a new name, it
+has already been measured.
+
+**And the outcome the operator pre-committed to.** The standing rule is
+"stop if the data on the optimized system says there is no chance of a
+profitable system." That threshold has not been crossed — gate 1 is still
+running and (ii) and (iii) are genuinely untested — but it is closer than
+it was on 8/22, and nobody should be told otherwise.
 
 ---
 
@@ -435,6 +610,19 @@ then read it.
 - **Do not run `drift_screen` without `--eligible-within`.** Without it the
   same universe reads DRIFT everywhere (MFE/MAE 1.13–2.83) purely from the
   pre-admission run-up. That gap is the finding, not a signal.
+- **Do not reopen admission latency** in any form — earlier seeds, faster
+  arming, a freshness ranker, a `captured` target. §5C tested the premise
+  directly and it is null. It is a seductive story because the latency is
+  genuinely large; the size of the delay is not evidence that closing it
+  pays.
+- **Do not grade a universe on drift alone.** `burst` has 6× the desk's
+  range and would look magnificent on any MFE-only screen; its MFE/MAE is
+  0.91. Range without direction is the worst possible tape for a ratchet,
+  and it is what the desk is already 28% invested in via the `flag` path.
+- **Do not read a −2σ trade-level correlation as a finding.** Run-up vs R
+  was −2.59σ pooled and collapsed to 7/9 sessions (p=0.18) with the source
+  that dominates it running backwards. Trades inside a session are not
+  independent; the session test exists because pooling lies.
 
 ---
 
@@ -444,12 +632,19 @@ Mini only — the MacBook cannot fetch bars. Use the venv; system `python3`
 has no Alpaca client.
 
 ```bash
+.venv/bin/python tools/universe_screen.py --days 20 --horizons 15,30,60
 .venv/bin/python tools/drift_screen.py --eligible-within --days 20
 .venv/bin/python tools/gate_screen.py --days 20 --horizons 15,30,60
 .venv/bin/python tools/admission_latency.py --days 20
 .venv/bin/python tools/harvest_screen.py --days 10
 .venv/bin/python tools/eod.py --days 10
 ```
+
+`universe_screen` is the one to run first on any new idea. It asks whether
+a *watchlist rule* produces tradeable tape, before anyone spends a week
+building a gate to pick names off it. Its pay bar is pre-registered in the
+source (median MFE ≥ 2× the 0.79% round trip, MFE/MAE ≥ 1.2, ≥70% sessions)
+— **do not edit those constants to make a universe pass.**
 
 **Verdict gates, unchanged and not to be weakened:** n ≥ 30, ≥ 5 sessions,
 no session > 50% of the sample, paired ≥ 2σ, session sign p ≤ 0.05. The
@@ -482,6 +677,21 @@ whether a found edge survives.
   isolated.
 - **The oracle ceiling is tautological.** Sorting by outcome always looks
   good; it bounds the opportunity, it does not suggest it is reachable.
+- **The universe screen still cannot see outside our own scanner.** Its
+  pool is shadow ∪ rejects — 562 names, up from 314, but every one of them
+  was surfaced by the desk's own momentum/trending feeds. "No universe is
+  playable" therefore means *no universe we can currently construct*. A
+  genuinely external symbol source (a full-market gap/volume scan) has
+  never been tried and would be the honest way to close the question.
+- **Its thin cells are thin.** `early_rvol` is 45 name-days and `burst`
+  covers 9 sessions. Read those two rows as direction, not as verdicts.
+- **The pay bar assumes 1R = 5% of price uniformly**, which is the desk's
+  sizing rule rather than a property of each name. A universe of tighter
+  names would have a different R and a different bar; payX is the number
+  to compare across universes, not medMFE.
+- **`gap_hold` and `liquid` sample from a fixed clock**, so time-of-day is
+  confounded with the rule in those two rows. The log-derived universes
+  each carry their own eligibility instant and do not have this problem.
 
 ---
 
@@ -513,11 +723,17 @@ whether a found edge survives.
 
 ```
 Live:  desk_product=scalp_legacy · ratchet armed · 04:00 watch · paper
-Open:  71% of the move gone at admit, then 31.7m to arm
-Next:  drive captured down, then re-run gate_screen
+Open:  the tape does not clear its own costs — payX 0.62 at 15m
+Next:  finish gate 1 (10 sessions), then cost or timescale — not gates
 ```
 
 — 8/20 Claude: measurement, H1 dead, late candidate.
 — 8/21 Grok: observe, H4 lab, harvest split. Retired 8/22.
 — 8/22 Claude: ratchet vindicated as an exit, entries falsified, H4
   falsified, field measured driftless, latency identified as the problem.
+— 8/23 Claude: **latency falsified** — `captured` does not predict R and
+  available excursion is flat in run-up, so 8/22's five "buys what already
+  moved" measurements were bucket-edge artifacts. Universe screen built
+  (`tools/universe_screen.py`, pre-registered pay bar): 6 universes, 18
+  cells, zero playable. `rejects` ≈ `desk`, so the gate is not selecting;
+  `burst` has 6× the range and no direction. Entry queue items 4–6 retired.
