@@ -72,7 +72,14 @@ def _score(mfe, mae, sessions=10, green=8):
             "sessions": sessions, "sessions_green": green, "verdict": "DRIFT"}
 
 
-def test_the_pay_bar_is_two_round_trips_of_price():
+def _rows(mfe, mae, n=40, cost=None):
+    r = {"mfe": mfe, "mae": mae, "net": mfe - mae, "day": DAY}
+    if cost is not None:
+        r["cost"] = cost
+    return [dict(r) for _ in range(n)]
+
+
+def test_the_fixed_pay_bar_is_two_round_trips_of_price():
     assert us.COST_PCT == pytest.approx(0.79, abs=0.01)
     assert us.PLAYABLE_MIN_MFE_PCT == pytest.approx(1.58, abs=0.02)
 
@@ -83,40 +90,148 @@ def test_a_clean_drift_too_small_to_pay_is_unplayable():
     MFE/MAE of 2.0 looks like a strong edge. At 0.40% of price it cannot
     cover a 0.79% round trip, and trading it loses money on contact.
     """
-    rows = [{"mfe": 0.40, "mae": 0.20, "net": 0.1, "day": DAY}] * 40
-    p = us.playability(rows, _score(0.40, 0.20))
+    p = us.playability(_rows(0.40, 0.20), _score(0.40, 0.20))
     assert p["verdict"] == "UNPLAYABLE"
     assert p["pay_x"] < 1.0
     assert "medMFE" in p["why"]
 
 
 def test_a_big_range_with_no_direction_is_unplayable():
-    rows = [{"mfe": 4.0, "mae": 4.0, "net": 0.0, "day": DAY}] * 40
-    p = us.playability(rows, _score(4.0, 4.0))
+    p = us.playability(_rows(4.0, 4.0), _score(4.0, 4.0))
     assert p["verdict"] == "UNPLAYABLE"
     assert "MFE/MAE" in p["why"]
 
 
 def test_a_universe_carried_by_a_minority_of_sessions_is_unplayable():
-    rows = [{"mfe": 4.0, "mae": 2.0, "net": 1.0, "day": DAY}] * 40
-    p = us.playability(rows, _score(4.0, 2.0, sessions=10, green=5))
+    p = us.playability(_rows(4.0, 2.0), _score(4.0, 2.0, sessions=10, green=5))
     assert p["verdict"] == "UNPLAYABLE"
     assert "green" in p["why"]
 
 
 def test_clearing_every_gate_reads_playable():
-    rows = [{"mfe": 4.0, "mae": 2.0, "net": 1.0, "day": DAY}] * 40
-    p = us.playability(rows, _score(4.0, 2.0, sessions=10, green=8))
+    p = us.playability(_rows(4.0, 2.0), _score(4.0, 2.0, sessions=10, green=8))
     assert p["verdict"] == "PLAYABLE"
     assert p["pay_x"] == pytest.approx(4.0 / us.COST_PCT)
     assert p["mfe_r"] == pytest.approx(4.0 / us.R_PCT_OF_PRICE)
 
 
 def test_share_clearing_cost_counts_samples_not_the_median():
-    rows = ([{"mfe": 2.0, "mae": 1.0, "net": 0.5, "day": DAY}] * 3
-            + [{"mfe": 0.1, "mae": 1.0, "net": -0.5, "day": DAY}])
+    rows = _rows(2.0, 1.0, n=3) + _rows(0.1, 1.0, n=1)
     p = us.playability(rows, _score(1.05, 1.0))
     assert p["pct_clearing_cost"] == pytest.approx(0.75)
+
+
+def test_a_cheap_universe_is_charged_more_than_an_expensive_one():
+    """The whole point of the per-name model.
+
+    Identical excursion, different friction: the expensive names clear the
+    bar and the cheap ones do not, and before 8/23 both read the same.
+    """
+    cheap = us.playability(_rows(1.6, 0.8, cost=1.5), _score(1.6, 0.8))
+    rich = us.playability(_rows(1.6, 0.8, cost=0.6), _score(1.6, 0.8))
+    assert cheap["verdict"] == "UNPLAYABLE"
+    assert rich["verdict"] == "PLAYABLE"
+    assert rich["pay_x"] > cheap["pay_x"]
+
+
+def test_each_sample_is_charged_its_own_cost_not_the_pool_median():
+    """A cheap name must not borrow an expensive name's spread."""
+    rows = _rows(1.0, 0.5, n=2, cost=0.2) + _rows(1.0, 0.5, n=2, cost=5.0)
+    p = us.playability(rows, _score(1.0, 0.5))
+    assert p["pct_clearing_cost"] == pytest.approx(0.5)
+
+
+def test_the_bar_is_a_multiple_so_cheapness_alone_cannot_pass():
+    """Halving cost halves the bar; only the RATIO can clear it."""
+    p = us.playability(_rows(0.40, 0.20, cost=0.20), _score(0.40, 0.20))
+    assert p["bar_pct"] == pytest.approx(0.40)
+    assert p["verdict"] == "PLAYABLE"
+    thin = us.playability(_rows(0.30, 0.15, cost=0.20), _score(0.30, 0.15))
+    assert thin["verdict"] == "UNPLAYABLE"
+
+
+def test_rows_without_a_cost_fall_back_to_the_fixed_model():
+    p = us.playability(_rows(4.0, 2.0), _score(4.0, 2.0, sessions=10, green=8))
+    assert p["median_cost_pct"] == pytest.approx(us.COST_PCT)
+
+
+# ------------------------------------------------------------- cost model
+
+def test_one_tick_is_worth_a_hundred_times_more_on_a_cheap_stock():
+    assert us.tick_spread_pct(2.0) == pytest.approx(0.50)
+    assert us.tick_spread_pct(200.0) == pytest.approx(0.005)
+
+
+def test_a_zero_price_cannot_be_assigned_a_finite_cost():
+    assert us.tick_spread_pct(0.0) == float("inf")
+
+
+def test_roll_recovers_a_spread_from_bid_ask_bounce():
+    """Random buy/sell prints around a fixed mid are pure bounce, no news.
+
+    The direction must be i.i.d., which is Roll's actual assumption — see
+    the sibling test for what systematic alternation does to it.
+    """
+    import random
+    rnd = random.Random(7)
+    bars = []
+    for i in range(360):                            # 0.10 wide on a $10 mid
+        px = 10.0 + (0.05 if rnd.random() < 0.5 else -0.05)
+        bars.append(_bar(9, 30 + i, px, px, px, px))
+    est = us.roll_spread_pct(bars, DAY)
+    assert est is not None
+    assert est == pytest.approx(1.0, rel=0.15)
+
+
+def test_perfectly_alternating_prints_inflate_roll_twofold():
+    """A known limit, pinned so nobody rediscovers it as a bug.
+
+    Roll assumes trade direction is i.i.d. Strict alternation makes the
+    serial covariance -S^2 instead of -S^2/4, so the estimate doubles.
+    Real tape sits between the two, which is why the tick floor and the
+    quote validation both exist.
+    """
+    bars = []
+    for i in range(60):
+        px = 10.0 + (0.05 if i % 2 else -0.05)      # true spread 1.0%
+        bars.append(_bar(9, 30 + i, px, px, px, px))
+    assert us.roll_spread_pct(bars, DAY) == pytest.approx(2.0, rel=0.1)
+
+
+def test_roll_declines_to_guess_on_a_trending_tape():
+    """Positive serial covariance is drift, not bounce. None, not zero."""
+    bars = [_bar(9, 30 + i, 10 + i * 0.1, 10 + i * 0.1, 10 + i * 0.1,
+                 10 + i * 0.1) for i in range(60)]
+    assert us.roll_spread_pct(bars, DAY) is None
+
+
+def test_roll_refuses_a_sample_too_short_to_mean_anything():
+    bars = [_bar(9, 30 + i, 10, 10, 10, 10) for i in range(5)]
+    assert us.roll_spread_pct(bars, DAY) is None
+
+
+def test_cost_falls_back_to_the_tick_floor_and_says_so():
+    """Trending tape gives Roll nothing, so the floor must be labelled."""
+    bars = [_bar(9, 30 + i, 10 + i * 0.1, 10 + i * 0.1, 10 + i * 0.1,
+                 10 + i * 0.1) for i in range(60)]
+    cost, src = us.name_cost_pct(bars, DAY, "measured")
+    assert src == "tick"
+    assert cost > us.GIVE_PCT
+
+
+def test_the_fixed_model_ignores_the_name_entirely():
+    bars = [_bar(9, 30 + i, 2.0, 2.0, 2.0, 2.0) for i in range(60)]
+    assert us.name_cost_pct(bars, DAY, "fixed") == (us.COST_PCT, "fixed")
+
+
+def test_measured_cost_never_dips_below_give_plus_one_tick():
+    """Roll can under-read; the tick is arithmetic and cannot be argued with."""
+    bars = []
+    for i in range(60):
+        px = 3.0 + (0.0001 if i % 2 else -0.0001)   # implausibly tight
+        bars.append(_bar(9, 30 + i, px, px, px, px))
+    cost, _ = us.name_cost_pct(bars, DAY, "measured")
+    assert cost >= us.GIVE_PCT + us.tick_spread_pct(3.0) - 1e-9
 
 
 def test_empty_rows_do_not_produce_a_verdict():

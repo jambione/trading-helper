@@ -365,6 +365,54 @@ across 15/30/60m, but √4 = 2.0, so the growth is the noise band widening
 almost exactly as a driftless walk predicts — MFE/MAE only moves 0.97 →
 1.07. A longer hold buys a bigger wiggle, not a better one.
 
+### E. Is the cost lever real? — **Mostly no.** (8/23, same day)
+
+D charged every universe a flat 0.79%, which quietly assumes every
+watchlist costs what ours does. The obvious follow-up was that our cost
+problem is *the names we pick*: one tick is 0.50% of a $2 stock and 0.02%
+of a $50 one, a hundredfold structural difference. `universe_screen
+--cost-model measured` charges each name-day `give + its own spread`,
+estimated by Roll (1984) from bid-ask bounce and floored at one tick.
+
+**The hypothesis was wrong, and it was wrong for a reason worth keeping:**
+
+| universe | medPx | cost% | medMFE@30m | M/A@30m | payX@30m |
+|---|---:|---:|---:|---:|---:|
+| desk_px:0-10 | 4.83 | 0.693 | 1.059 | 0.97 | **1.53** |
+| desk_px:10-50 | 17.27 | 0.574 | 0.649 | 1.03 | 1.13 |
+| desk_px:50- | 71.02 | 0.549 | 0.608 | **1.31** | 1.11 |
+
+Cheap names have the **best** payX, not the worst. Their spread is wider
+but their moves are wider by more — cost differs 1.26× across the bands
+while MFE differs 1.74×.
+
+**Why: the desk's biggest trading cost is its own stop, not the market.**
+The give is 0.10R and 1R is 5% of price, so the give is **0.50% of price on
+every name by construction** and does not vary with price at all. Against
+it the spread contributes 0.09–0.31%. Sorting the watchlist by price moves
+the small term and leaves the big one untouched. Any real attack on cost
+has to go at the give, or at the number of round trips, not at the ticker.
+
+**The estimate is biased low, which strengthens the negatives.** Validated
+against the 61 name-days with a trustworthy quote (<1.0 R), Roll reads
+0.091% against a quoted 0.310% — a ratio of **0.32** — and 51% of
+name-days fell back to the tick *floor* rather than a measurement. So
+every cost above is a lower bound and every payX is an **upper** bound.
+Corrected, `desk` lands back near the flat 0.79% it started from.
+**Everything that failed here fails harder in reality.**
+
+**One thing did move, and it is the opposite of what we trade.**
+`desk_px:50-` is the only universe in 39 cells with MFE/MAE climbing
+across horizons — 1.15 → 1.31 → 1.49 — at sigma 2.09/2.41/2.29 and
+**8/10, 8/10, 7/9 sessions green**. It misses the DRIFT verdict on session
+sign by p = **0.0547 against a 0.05 gate**, and misses PLAYABLE on payX
+1.11 against a 2.0 bar. Read it as a candidate and nothing more: n=35
+name-days, searched across nine universes, and 0.0547 is a miss rather
+than a near-pass — this file has been burned five times by exactly this
+shape. What makes it worth writing down at all is that it is the first
+result pointing somewhere new rather than back at the null, and it points
+at names the desk's watchlist (median price $9.79) almost never holds.
+
 ### The design criterion this produces
 
 For a driftless walk, expected favorable excursion is ≈ **0.8σ√t** — which
@@ -561,18 +609,35 @@ honest directions, in the order their evidence supports:
 experiment running and the only new information arriving. Everything below
 waits on it.
 
-**ii. Attack the cost, not the signal.** The round trip is 0.79% of price
-and the desk's own tape offers 0.49% median MFE at 15m. Those two numbers
-are the whole problem, and only one of them is under our control. Nothing
-here has ever tested a cheaper instrument, a limit-order entry, or a
-higher-priced/tighter-spread universe. A universe with the same MFE/MAE
-and half the round trip is worth as much as a gate that never existed.
+**ii. Attack the cost — but the give, not the ticker.** The round trip is
+0.79% of price and the desk's own tape offers 0.49% median MFE at 15m.
+Those two numbers are the whole problem, and only one of them is under our
+control. §5E tested the obvious version of this and it failed: sorting the
+watchlist by price barely moves total cost, because **0.50 of the 0.79 is
+the ratchet's own give**, fixed at 0.10R on every name by construction.
+What is genuinely untested is the give itself, the number of round trips,
+and limit-order entry. §2 prices only the *widening* direction (more give
+removes stomps and does not move the mean); the tightening direction, and
+what it costs in stomps, has never been swept against a per-name spread.
+
+Note the tension before acting on it: a smaller give lowers cost and
+raises stomp rate, and §2 says stomps were never where the money went. So
+this is arithmetic worth checking, not an obvious win.
 
 **iii. Change the holding period, not the gate.** μt beats σ√t only for
 `t > (σ/μ)²`. Every screen in this file lives inside one session because
 the product does. That constraint has never been tested as a *variable* —
 H4 tested a specific bad multi-day design, not the timescale itself, and
 its failure was over-read as closing the whole direction.
+
+**iv. The one candidate on the board.** `desk_px:50-` (§5E) — the desk's
+own seeds filtered to names over $50 — is the only cell in 39 with
+MFE/MAE rising across horizons and 8/10 sessions green. It missed DRIFT
+on p=0.0547 and PLAYABLE on payX 1.11. It is thin (n=35 name-days) and
+searched, so the correct next move is **more tape, not an arm**: it costs
+nothing to re-run `universe_screen` weekly and see whether it survives.
+If it does, it says the desk should be trading the names it currently
+filters out on price.
 
 **What is NOT left:** another indicator permutation, another latency fix,
 another ranker. `gate_screen` covered the first (42 cells), §5C the second,
@@ -689,6 +754,13 @@ whether a found edge survives.
   sizing rule rather than a property of each name. A universe of tighter
   names would have a different R and a different bar; payX is the number
   to compare across universes, not medMFE.
+- **The Roll spread estimate reads ~3× low** against the 61 trustworthy
+  quoted name-days, and 51% of name-days fall back to the tick floor,
+  which is a bound rather than a measurement. Costs are therefore lower
+  bounds and payX values are upper bounds. This makes the negative results
+  safe and would make any future *positive* one suspect — a universe that
+  passes under this model must be re-tested against real quotes before
+  anyone believes it.
 - **`gap_hold` and `liquid` sample from a fixed clock**, so time-of-day is
   confounded with the rule in those two rows. The log-derived universes
   each carry their own eligibility instant and do not have this problem.
@@ -737,3 +809,8 @@ Next:  finish gate 1 (10 sessions), then cost or timescale — not gates
   (`tools/universe_screen.py`, pre-registered pay bar): 6 universes, 18
   cells, zero playable. `rejects` ≈ `desk`, so the gate is not selecting;
   `burst` has 6× the range and no direction. Entry queue items 4–6 retired.
+  Then per-name cost added, which **falsified the cost-lever proposal on
+  the same day**: cheap names have the best payX, because 0.50 of the
+  0.79% round trip is the ratchet's own give and does not vary with price.
+  One candidate survives — `desk_px:50-`, 8/10 sessions, p=0.0547 — thin,
+  searched, and pointing at names the watchlist filters out.
