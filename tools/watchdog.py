@@ -330,6 +330,58 @@ def should_run_eod(
 AUDIT_SETTLE_SEC = 90.0
 AUDIT_INTERVAL_SEC = 1800.0
 
+# Catalyst cache refresh. Lives here rather than in ai_entry_watch because
+# the entry poll has ~2s to decide and must never wait on a news API; the
+# trader only ever reads the cache this writes. 5 minutes is well inside the
+# 60-minute freshness bucket the catalyst work cares about, and the fetch is
+# one request per watchlist symbol against a cache that merges rather than
+# replaces.
+NEWS_INTERVAL_SEC = 300.0
+NEWS_MAX_SYMBOLS = 120
+
+
+def refresh_news_cache() -> int:
+    """Warm the catalyst cache for whatever the desk is currently watching.
+
+    Never raises into the supervisor loop, and never blocks it for long:
+    the whole point of doing this here is that ai_entry_watch's poll reads
+    a file instead of an API. Returns symbols updated, 0 on any failure —
+    which surfaces downstream as a growing `news_cache_age_sec` on the
+    shadow rows rather than as silence.
+    """
+    try:
+        sys.path.insert(0, str(ROOT))
+        import news_feed
+        syms: set[str] = set()
+        for name in ("shadow.jsonl",):
+            p = ROOT / "ai_reports" / name
+            if not p.exists():
+                continue
+            # Only today's names: the cache is for what we are watching now.
+            cutoff = time.time() - 6 * 3600
+            with p.open(encoding="utf-8", errors="replace") as fh:
+                for line in _tail_lines(fh, 20000):
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if float(r.get("ts") or 0) < cutoff:
+                        continue
+                    s = r.get("symbol")
+                    if s:
+                        syms.add(str(s).upper())
+        if not syms:
+            return 0
+        return news_feed.refresh(sorted(syms)[:NEWS_MAX_SYMBOLS])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _tail_lines(fh, n: int) -> list[str]:
+    """Last *n* non-empty lines. shadow.jsonl is 70MB; do not read it all."""
+    from collections import deque
+    return [ln for ln in deque(fh, maxlen=n) if ln.strip()]
+
 
 def run_learn_job(py: str, *argv: str, timeout: float = 900.0) -> int:
     """Run a tools/*.py job; never raise into the supervisor loop.
@@ -416,6 +468,7 @@ def main() -> int:
     # min-hold forward test was armed in config while the running trader
     # had none of its code, and only a freshness check caught it.
     audit_due = time.time() + AUDIT_SETTLE_SEC
+    news_due = time.time()          # warm it immediately on start
     stopping = False
 
     def _stop(_sig, _frm):
@@ -464,6 +517,14 @@ def main() -> int:
             # process, not the one it replaced.
             if started:
                 audit_due = max(audit_due, now + AUDIT_SETTLE_SEC)
+
+            # Catalyst cache. Independent of --no-learn: this is live
+            # telemetry the entry rows read, not a nightly analysis job.
+            if now >= news_due:
+                news_due = now + NEWS_INTERVAL_SEC
+                n_news = refresh_news_cache()
+                if n_news:
+                    log(f"news cache refreshed for {n_news} symbols")
 
             if not args.no_learn and now >= audit_due:
                 audit_due = now + AUDIT_INTERVAL_SEC

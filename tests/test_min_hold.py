@@ -63,16 +63,50 @@ def test_garbage_config_fails_open():
 
 
 def test_it_gates_the_three_discretionary_exits():
-    """Shelf, dead-trade and left-overbought — the desk's opinions."""
+    """Shelf, dead-trade and left-overbought — the desk's opinions.
+
+    Asserted as a property rather than as three literal lines: the first
+    version of this test pinned the exact one-line form of each condition
+    and broke the moment the held-back branch was split out to be counted,
+    which is a test failing on formatting rather than on behaviour.
+    """
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    # the trailing shelf sale
-    assert "and not soft_exit_held_back(pos)):" in src
-    # dead trade
-    assert "and mfe_ok and not soft_exit_held_back(pos, now):" in src
-    # exhaustion / left_overbought
-    assert 'if hit and soft_exit_held_back(pos, now):' in src
-    assert 'hit, why = False, "min_hold"' in src
+    # 5 mentions total: the definition, three gates, and one observational
+    # read in the shadow logger. The logger reads the state and decides
+    # nothing, which is the distinction worth pinning — if that count moves,
+    # something new is either gating on the delay or has stopped recording it.
+    assert src.count("soft_exit_held_back(pos") == 5
+    assert src.count('"min_hold_active": soft_exit_held_back(pos, now)') == 1
+    for which in ("local_trail", "left_overbought", "dead_trade"):
+        assert f'_note_min_hold(pos, "{which}"' in src, (
+            f"{which} suppression must be counted or GATE 1 has no mechanism")
+
+
+def test_every_gated_exit_also_records_the_block():
+    """A suppressed exit that logs nothing is an experiment with no readout."""
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
+    assert src.count("_note_min_hold(") == 4      # 3 call sites + the def
+
+
+def test_noting_a_block_counts_and_labels_without_deciding():
+    pos = {"entry_time": NOW}
+    cp._note_min_hold(pos, "local_trail", NOW)
+    cp._note_min_hold(pos, "dead_trade", NOW + 1)
+    assert pos["min_hold_blocks"] == 2
+    assert pos["min_hold_last"] == "dead_trade"
+    assert pos["min_hold_last_ts"] == NOW + 1
+
+
+def test_noting_a_block_survives_a_corrupt_counter():
+    pos = {"min_hold_blocks": "lots"}
+    cp._note_min_hold(pos, "local_trail", NOW)
+    assert pos["min_hold_blocks"] == 1
+
+
+def test_noting_a_block_on_a_non_position_is_a_no_op():
+    cp._note_min_hold(None, "local_trail", NOW)      # must not raise
 
 
 def test_the_disaster_stop_is_never_gated():
@@ -85,7 +119,7 @@ def test_the_disaster_stop_is_never_gated():
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
     i = src.index("def soft_exit_held_back")
-    j = src.index("def _pos_spread_r")
+    j = src.index("def _note_min_hold")
     body = src[i:j]
     for forbidden in ("entry_stop_price", "liquidate_all", "eod"):
         assert forbidden not in body, (

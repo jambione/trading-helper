@@ -2046,6 +2046,35 @@ def _log_position_shadow(ticker: str, pos: dict[str, Any], price: float | None,
             # Excursions — unreconstructable after the fact.
             "mae_r": _num(pos.get("mae_r")),
             "mfe_r": _num(pos.get("mfe_r")),
+            # THE RATCHET. `stop_price` above is the 5% plan stop; the thing
+            # that actually ends these trades is the working shelf, and until
+            # 2026-08-23 it was never written down — every ratchet study had
+            # to reconstruct it from bars. peak_price is what the shelf
+            # trails off, so peak - shelf is the give ACTUALLY in force,
+            # which stopped being a constant when give_spread_k went live.
+            "local_stop_price": _num(pos.get("local_stop_price")),
+            "peak_price": _num(pos.get("peak_price")),
+            "runner_stop_price": _num(pos.get("runner_stop_price")),
+            "shelf_r": (
+                (px - _num(pos.get("local_stop_price"))) / risk
+                if (px and risk > 0
+                    and _num(pos.get("local_stop_price")) is not None)
+                else None),
+            "give_r": (
+                (_num(pos.get("peak_price")) - _num(pos.get("local_stop_price"))) / risk
+                if (risk > 0 and _num(pos.get("peak_price")) is not None
+                    and _num(pos.get("local_stop_price")) is not None)
+                else None),
+            # The book this position crossed on the way in, and will cross on
+            # the way out. Present on shadow since 8/21 and absent from the
+            # exit side entirely, which is why exit-side spread coverage was 8%.
+            "spread_r": _pos_spread_r(pos),
+            # GATE 1's mechanism. min_hold_active is the state; min_hold_blocks
+            # is how many exits the delay has actually suppressed on this
+            # position. Without the second, the experiment has no mechanism.
+            "min_hold_active": soft_exit_held_back(pos, now),
+            "min_hold_blocks": int(pos.get("min_hold_blocks") or 0),
+            "min_hold_last": pos.get("min_hold_last"),
             # The same indicator wire the entry gate reads, so an exit and an
             # entry can never disagree about what the signals said.
             "cm_ok": sig.get("cm_ok"),
@@ -2350,6 +2379,29 @@ def soft_exit_held_back(pos: dict[str, Any] | None,
     except (TypeError, ValueError):
         return False
     return age < secs
+
+
+def _note_min_hold(pos: dict[str, Any] | None, which: str,
+                   now: float | None = None) -> None:
+    """Record that ``ai_exit_min_hold_sec`` suppressed an exit on this tick.
+
+    Without this, GATE 1 produces a P&L number with no mechanism attached.
+    The delay either changed outcomes or it did not, and "how many exits
+    did it hold back, on which trades, and what did those trades do next"
+    is the only thing that separates a real effect from a week that merely
+    traded differently.
+
+    Write-only by construction: it counts and labels, and never returns a
+    value anything can branch on.
+    """
+    if not isinstance(pos, dict):
+        return
+    try:
+        pos["min_hold_blocks"] = int(pos.get("min_hold_blocks") or 0) + 1
+    except (TypeError, ValueError):
+        pos["min_hold_blocks"] = 1
+    pos["min_hold_last"] = str(which)
+    pos["min_hold_last_ts"] = float(now if now is not None else time.time())
 
 
 def _pos_spread_r(pos: dict[str, Any] | None) -> float | None:
@@ -2809,8 +2861,15 @@ def apply_local_trail(
     # and then testing the low would skip a sale through the old shelf.
     # The shelf keeps RAISING while held back — only the sale waits, so a
     # trade that runs during the delay still banks the higher shelf after.
-    if (trigger is not None and loc is not None and trigger <= loc + 1e-9
-            and not soft_exit_held_back(pos)):
+    # Split so the held-back case can be counted. Logically identical to the
+    # single condition it replaces, short-circuit included: the min-hold check
+    # still runs only when the shelf was actually hit.
+    _trail_hit = (trigger is not None and loc is not None
+                  and trigger <= loc + 1e-9)
+    _trail_held = _trail_hit and soft_exit_held_back(pos)
+    if _trail_held:
+        _note_min_hold(pos, "local_trail")
+    if _trail_hit and not _trail_held:
         last = trigger
         alpaca_trader.cancel_open_orders(ticker)
         out = alpaca_trader.close_out(ticker) or {}
@@ -3644,6 +3703,32 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         # Cost of crossing on the way in, in R. None until a fill is observed
         # against a limit — never estimated from a quote.
         "entry_slippage_r": pos.get("entry_slippage_r"),
+        # ...and on the way out. Only meaningful for a shelf exit, where the
+        # shelf is the price we intended to get: negative means the fill
+        # landed BELOW the shelf, which is the ratchet's real cost and was
+        # invisible before 2026-08-23. None for stops, targets and flattens,
+        # which have no intended price to miss.
+        "exit_shelf_price": _num(pos.get("local_stop_price")),
+        "exit_slippage_r": (
+            (exit_price - _num(pos.get("local_stop_price"))) / per_share_risk
+            if (close_reason == "local_trail" and exit_price
+                and per_share_risk > 0
+                and _num(pos.get("local_stop_price")) is not None)
+            else None),
+        "peak_price": _num(pos.get("peak_price")),
+        "give_r_at_exit": (
+            (_num(pos.get("peak_price")) - _num(pos.get("local_stop_price")))
+            / per_share_risk
+            if (per_share_risk > 0 and _num(pos.get("peak_price")) is not None
+                and _num(pos.get("local_stop_price")) is not None)
+            else None),
+        # Entry-side reading, carried onto the outcome so cost analysis does
+        # not need a join back into shadow. Coverage was 8.2% before this.
+        "spread_r": _pos_spread_r(pos),
+        # How many discretionary exits ai_exit_min_hold_sec suppressed on this
+        # trade. 0 means the delay never bound and the trade is a control.
+        "min_hold_blocks": int(pos.get("min_hold_blocks") or 0),
+        "min_hold_last": pos.get("min_hold_last"),
         # Why this trade was taken, alongside how it ended. Without it an
         # outcome is unsliceable: you know the result but not which gate,
         # indicator state, or time of day to attribute it to.
@@ -4471,6 +4556,7 @@ def manage_open_positions(
                 # shelf delay that left_overbought quietly steps around.
                 if hit and soft_exit_held_back(pos, now):
                     hit, why = False, "min_hold"
+                    _note_min_hold(pos, "left_overbought", now)
                 if pos.get("last_exhaustion") != _num(sig.get("pctr")):
                     pctr_v = _num(sig.get("pctr"))
                     pos["last_exhaustion"] = (
@@ -4530,7 +4616,13 @@ def manage_open_positions(
             age_min = (now - float(pos.get("entry_time") or now)) / 60.0
             mfe = _num(pos.get("mfe_r"))
             mfe_ok = mfe is None or mfe < dead_mfe
-            if age_min >= dead_min and mfe_ok and not soft_exit_held_back(pos, now):
+            # Same split as the shelf sale above: count the held-back case
+            # without changing which ticks close a trade.
+            _dead_ready = age_min >= dead_min and mfe_ok
+            _dead_held = _dead_ready and soft_exit_held_back(pos, now)
+            if _dead_held:
+                _note_min_hold(pos, "dead_trade", now)
+            if _dead_ready and not _dead_held:
                 alpaca_trader.cancel_open_orders(ticker)
                 out = alpaca_trader.close_out(ticker) or {}
                 if isinstance(out, dict) and out.get("order_id"):

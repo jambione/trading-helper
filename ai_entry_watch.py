@@ -1247,10 +1247,19 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
     row = row if isinstance(row, dict) else {}
     rvol = row.get("rvol")
     pct = row.get("pct_change")
+    dvol = row.get("dollar_volume")
     return {
         "admit_rvol": (
             _f_or_none(rvol) if rvol is not None
             else _f_or_none(prev.get("admit_rvol"))),
+        # Raw traded value at admission. RVOL is a ratio whose denominator
+        # nobody logged, so a reading of 3144 was indistinguishable from a
+        # reading of 3 — 3.94% of shadow RVOLs are above 100, which is not a
+        # relative volume. dollar_volume / price recovers the share count, so
+        # this is the column that makes RVOL auditable rather than trusted.
+        "admit_dollar_volume": (
+            _f_or_none(dvol) if dvol is not None
+            else _f_or_none(prev.get("admit_dollar_volume"))),
         "admit_pct_change": (
             _f_or_none(pct) if pct is not None
             else _f_or_none(prev.get("admit_pct_change"))),
@@ -1261,6 +1270,45 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             or list(prev.get("admit_criteria") or [])),
         "admit_ts": float(prev.get("admit_ts") or now),
     }
+
+
+# A relative volume of 100x is already extraordinary; 3,144 and 81,820 both
+# appear in shadow.jsonl. Above this the reading is a producer bug, not a
+# busy tape, and anything averaging it has been eating garbage.
+RVOL_SANE_MAX = 100.0
+
+
+def _news_fields(symbol: str, now: float) -> dict:
+    """Catalyst features for the shadow row. Never raises, never blocks.
+
+    Wrapped rather than called inline because this is the one field group
+    backed by an external service. If ``news_feed`` is missing, the cache is
+    corrupt, or anything else goes wrong, the row must still be written —
+    a telemetry gap is a bad day, a raised exception inside the entry poll
+    is a stopped desk.
+    """
+    try:
+        import news_feed
+        f = news_feed.features_for(symbol, now)
+        f["cache_age_sec"] = news_feed.cache_age_sec()
+        return f
+    except Exception:  # noqa: BLE001
+        f = {"has_news_24h": None, "n_news_24h": None, "mins_since": None,
+             "bearish": None, "bullish": None, "cache_age_sec": None}
+        return f
+
+
+def _rvol_is_sane(v: Any) -> bool | None:
+    """Is this RVOL a plausible ratio? None when there is no reading at all.
+
+    Absence and nonsense are different states and must stay distinguishable:
+    19 fills had no RVOL and ~4% of rows had an impossible one, and a single
+    boolean that conflated them would hide the second inside the first.
+    """
+    f = _f_or_none(v)
+    if f is None:
+        return None
+    return 0.0 < f <= RVOL_SANE_MAX
 
 
 def _f_or_none(v: Any) -> float | None:
@@ -6108,6 +6156,7 @@ def _shadow_row(
     px = _f_or_none(price)
     in_zone = bool(lo is not None and hi is not None and px is not None
                    and lo <= px <= hi)
+    news = _news_fields(str(rec.get("symbol") or "").upper(), now)
     return {
         "ts": round(float(now), 2),
         "symbol": str(rec.get("symbol") or "").upper(),
@@ -6129,6 +6178,25 @@ def _shadow_row(
         "source": str(rec.get("source") or "") or None,
         "score": _f_or_none(rec.get("score")),
         "rvol": _f_or_none(rec.get("admit_rvol")),
+        # Is that RVOL even a number? 3.94% of readings on this log are above
+        # 100 (max 81,820), which is not a relative volume — and because the
+        # floor test is `rv < min_rvol`, a garbage-high reading PASSES the
+        # thin-tape gate. Recorded rather than clamped: clamping would edit
+        # the evidence, and the gate itself is frozen for GATE 1.
+        "rvol_ok": _rvol_is_sane(rec.get("admit_rvol")),
+        "dollar_volume": _f_or_none(rec.get("admit_dollar_volume")),
+        # WHY the name is moving — the first genuinely new input on this row.
+        # Read from a cache the watchdog keeps warm, never fetched here: the
+        # poll has ~2s to decide and a news call belongs nowhere near it.
+        # All-None means the cache had nothing for this symbol, which is "we
+        # did not look", not "there was no catalyst". news_cache_age_sec is
+        # what separates those two, and a dead refresher shows up there
+        # rather than as a quiet week of uneventful names.
+        "news_n_24h": news["n_news_24h"],
+        "news_mins_since": news["mins_since"],
+        "news_bearish": news["bearish"],
+        "news_bullish": news["bullish"],
+        "news_cache_age_sec": news["cache_age_sec"],
         # Day change was recorded on the reject arm but omitted here, so the
         # completeness report read 0% admitted / 91% rejected and the two arms
         # could not be compared on the gate (ai_watch_require_uptrend) that
@@ -6187,6 +6255,11 @@ def _shadow_row(
         # not zero, and must not be read as fresh.
         "tape_age_sec": _tape_age_for_shadow(rec),
         "bid": _f_or_none(bid),
+        # The other side of the book, stated rather than implied. When
+        # price_src is "quote" the price IS the ask, so spread_r was
+        # derivable — but only by someone who knew that, and outcomes.jsonl
+        # already carries `ask` explicitly. Symmetry beats a footnote.
+        "ask": px if price_src == "quote" else None,
         "spread_r": _spread_r(price, bid, stru.get("stop_price")),
         "pctr_slow": _f_or_none(sig.get("pctr_slow")) if sig else None,
         "pctr_gap": _f_or_none(sig.get("pctr_gap")) if sig else None,
