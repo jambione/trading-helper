@@ -352,27 +352,38 @@ def refresh_news_cache() -> int:
     try:
         sys.path.insert(0, str(ROOT))
         import news_feed
-        syms: set[str] = set()
-        for name in ("shadow.jsonl",):
-            p = ROOT / "ai_reports" / name
-            if not p.exists():
-                continue
-            # Only today's names: the cache is for what we are watching now.
-            cutoff = time.time() - 6 * 3600
-            with p.open(encoding="utf-8", errors="replace") as fh:
-                for line in _tail_lines(fh, 20000):
-                    try:
-                        r = json.loads(line)
-                    except ValueError:
-                        continue
-                    if float(r.get("ts") or 0) < cutoff:
-                        continue
-                    s = r.get("symbol")
-                    if s:
-                        syms.add(str(s).upper())
-        if not syms:
+        # symbol -> most recent time the desk looked at it.
+        seen: dict[str, float] = {}
+        p = ROOT / "ai_reports" / "shadow.jsonl"
+        if not p.exists():
             return 0
-        return news_feed.refresh(sorted(syms)[:NEWS_MAX_SYMBOLS])
+        # Only today's names: the cache is for what we are watching now.
+        cutoff = time.time() - 6 * 3600
+        with p.open(encoding="utf-8", errors="replace") as fh:
+            for line in _tail_lines(fh, 20000):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                ts = float(r.get("ts") or 0)
+                if ts < cutoff:
+                    continue
+                s = r.get("symbol")
+                if s:
+                    s = str(s).upper()
+                    if ts > seen.get(s, 0.0):
+                        seen[s] = ts
+        if not seen:
+            return 0
+        # Most-recently-seen first, NOT sorted(...)[:N]. Alphabetical
+        # truncation is the bug that silently cut a 314-name universe at
+        # KTOS on 2026-08-22 and made every screen that week a report on
+        # A-K. Here it would mean names late in the alphabet never get a
+        # catalyst reading at all — and unlike the screens, nothing
+        # downstream would look wrong. Recency is also the right priority:
+        # the names the desk just looked at are the ones it might buy.
+        ordered = sorted(seen, key=lambda s: -seen[s])
+        return news_feed.refresh(ordered[:NEWS_MAX_SYMBOLS])
     except Exception:  # noqa: BLE001
         return 0
 
