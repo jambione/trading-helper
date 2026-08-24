@@ -155,3 +155,65 @@ def test_the_rows_feed_the_live_percent_r_unchanged():
     pctr, rising, falling, src = got
     assert -100.0 <= pctr <= 0.0
     assert src == "live"        # a full window, not clock_range
+
+
+# ---------------------------------------------------------------- shadow RSI
+
+def test_the_extracted_rsi_reproduces_the_live_one_exactly():
+    """The extraction must be behaviour-neutral.
+
+    live_cm_rsi's loop was lifted into cm_rsi_series so the shadow path
+    uses the same arithmetic instead of a second copy that can drift. If
+    these ever disagree, the comparison this whole experiment rests on is
+    measuring the refactor rather than the bar source.
+    """
+    import ai_entry_watch as ew
+    closes = [10.0, 10.4, 10.1, 10.9, 11.3, 11.0, 11.6, 11.2, 11.9]
+    got = ew.cm_rsi_series(closes, 2)
+    # Recompute inline exactly as the original body did.
+    alpha, up, down, want = 1.0 / 2, 0.0, 0.0, []
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        g, l = (d if d > 0 else 0.0), (-d if d < 0 else 0.0)  # noqa: E741
+        if i == 1:
+            up, down = g, l
+        else:
+            up = alpha * g + (1.0 - alpha) * up
+            down = alpha * l + (1.0 - alpha) * down
+        want.append(100.0 if down == 0 else
+                    (0.0 if up == 0 else 100.0 - (100.0 / (1.0 + up / down))))
+    assert got == pytest.approx(want)
+
+
+def test_rsi_needs_a_series_not_a_clock_window():
+    """RMA smoothing carries the whole history, so a short slice is wrong.
+
+    Needs a series that actually oscillates: on a monotonic rise every RSI
+    is pinned at 100 (down == 0) and any slice agrees, which says nothing.
+    """
+    import ai_entry_watch as ew
+    closes = [10.0, 11.0, 10.2, 11.4, 10.6, 11.9, 10.9, 12.3, 11.1, 12.8,
+              11.4, 13.0, 11.8, 13.4, 12.0]
+    long_s = ew.cm_rsi_series(closes, 2)
+    short_s = ew.cm_rsi_series(closes[-5:], 2)
+    assert long_s[-1] != pytest.approx(short_s[-1])
+
+
+def test_a_flat_series_is_pinned_not_divided_by_zero():
+    import ai_entry_watch as ew
+    s = ew.cm_rsi_series([10.0] * 10, 2)
+    assert s and all(v == 100.0 for v in s)
+
+
+def test_too_few_closes_yield_no_series():
+    import ai_entry_watch as ew
+    assert ew.cm_rsi_series([10.0], 2) == []
+
+
+def test_the_shadow_row_carries_both_stream_indicators():
+    src = open(os.path.join(ROOT, "ai_entry_watch.py"), encoding="utf-8").read()
+    i = src.index("def _shadow_row")
+    body = src[i:src.index("\ndef ", i + 10)]
+    for f in ("pctr_stream", "pctr_stream_src", "cm_rsi_stream",
+              "cm_rsi_stream_rising", "stream_empty_min"):
+        assert f'"{f}"' in body, f"{f} missing from the shadow row"

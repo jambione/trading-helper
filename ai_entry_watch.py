@@ -1323,7 +1323,9 @@ def _stream_pctr_fields(symbol: str, price: float | None, cfg: dict,
     """
     out = {"pctr_stream": None, "pctr_stream_src": None,
            "pctr_stream_bars": None, "pctr_stream_span_sec": None,
-           "stream_bar_count": None, "stream_empty_min": None}
+           "stream_bar_count": None, "stream_empty_min": None,
+           "cm_rsi_stream": None, "cm_rsi_stream_rising": None,
+           "cm_rsi_stream_bars": None}
     try:
         px = float(price) if price is not None else 0.0
         if px <= 0:
@@ -1357,16 +1359,33 @@ def _stream_pctr_fields(symbol: str, price: float | None, cfg: dict,
         except (TypeError, ValueError):
             slack = 1.25
         rows, span_sec = stream_bars.window_rows(symbol, now, length, slack)
-        if not rows:
-            return out
-        got = _live_percent_r_line(rows, px, length, span, eps,
-                                   min_range=max(2, min_range))
-        if got is None:
-            return out
-        out["pctr_stream"] = got[0]
-        out["pctr_stream_src"] = got[3]
-        out["pctr_stream_bars"] = len(rows)
-        out["pctr_stream_span_sec"] = span_sec
+        if rows:
+            got = _live_percent_r_line(rows, px, length, span, eps,
+                                       min_range=max(2, min_range))
+            if got is not None:
+                out["pctr_stream"] = got[0]
+                out["pctr_stream_src"] = got[3]
+                out["pctr_stream_bars"] = len(rows)
+                out["pctr_stream_span_sec"] = span_sec
+        # RSI on the same bars, through the same arithmetic live_cm_rsi
+        # uses. RSI wants a long contiguous series rather than a clock
+        # window — RMA smoothing carries the whole history — so it reads
+        # every bar the aggregator holds, not the %R slice.
+        all_rows, _ = stream_bars.window_rows(symbol, now, stream_bars.MAX_BARS,
+                                              slack=1e9)
+        if len(all_rows) >= 3:
+            closes = [float(r[2]) for r in all_rows] + [px]
+            try:
+                period = max(2, int(cfg.get("cm_rsi_length", 2) or 2))
+            except (TypeError, ValueError):
+                period = 2
+            series = cm_rsi_series(closes, period)
+            if series:
+                look = cm_rsi_trend_lookback(cfg)
+                out["cm_rsi_stream"] = float(series[-1])
+                out["cm_rsi_stream_rising"] = bool(
+                    len(series) > look and series[-1] > series[-1 - look])
+                out["cm_rsi_stream_bars"] = len(all_rows)
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -3894,6 +3913,38 @@ def cm_rsi_trend_lookback(cfg: dict) -> int:
     return 2
 
 
+def cm_rsi_series(closes: list[float], period: int) -> list[float]:
+    """Wilder-RMA RSI over *closes*, the whole series.
+
+    Extracted from ``live_cm_rsi`` unchanged so the shadow path that runs
+    on stream-built bars uses the SAME arithmetic rather than a second
+    copy that can drift. The series matters, not just its last value:
+    "rising" needs the reading trend_lookback bars back, and RMA smoothing
+    carries the entire history, so a shorter slice would not reproduce it.
+    """
+    period = max(2, int(period))
+    alpha = 1.0 / period
+    up = 0.0
+    down = 0.0
+    series: list[float] = []
+    for i in range(1, len(closes)):
+        delta = closes[i] - closes[i - 1]
+        gain = delta if delta > 0 else 0.0
+        loss = -delta if delta < 0 else 0.0
+        if i == 1:
+            up, down = gain, loss
+        else:
+            up = alpha * gain + (1.0 - alpha) * up
+            down = alpha * loss + (1.0 - alpha) * down
+        if down == 0:
+            series.append(100.0)
+        elif up == 0:
+            series.append(0.0)
+        else:
+            series.append(100.0 - (100.0 / (1.0 + up / down)))
+    return series
+
+
 def live_cm_rsi(
     symbol: str,
     price: float,
@@ -3927,28 +3978,10 @@ def live_cm_rsi(
         period = max(2, int(cfg.get("cm_rsi_length", 2) or 2))
     except (TypeError, ValueError):
         period = 2
-    alpha = 1.0 / period
-    up = 0.0
-    down = 0.0
     # The whole RSI series, not just its last value: "rising" needs the reading
     # from trend_lookback bars back, and recomputing it from a shorter slice
     # would not reproduce it — RMA smoothing carries the entire history.
-    series: list[float] = []
-    for i in range(1, len(closes)):
-        delta = closes[i] - closes[i - 1]
-        gain = delta if delta > 0 else 0.0
-        loss = -delta if delta < 0 else 0.0
-        if i == 1:
-            up, down = gain, loss
-        else:
-            up = alpha * gain + (1.0 - alpha) * up
-            down = alpha * loss + (1.0 - alpha) * down
-        if down == 0:
-            series.append(100.0)
-        elif up == 0:
-            series.append(0.0)
-        else:
-            series.append(100.0 - (100.0 / (1.0 + up / down)))
+    series = cm_rsi_series(closes, period)
     if not series:
         return None
     rsi = series[-1]
@@ -6385,6 +6418,12 @@ def _shadow_row(
         "pctr_stream_span_sec": stream["pctr_stream_span_sec"],
         "stream_bar_count": stream["stream_bar_count"],
         "stream_empty_min": stream["stream_empty_min"],
+        # Same for RSI: live_cm_rsi's exact arithmetic (cm_rsi_series) over
+        # stream-built bars. cm_rsi_src today is 65% realtime / 35% a REST
+        # fallback, and both update on bar close rather than on tick.
+        "cm_rsi_stream": stream["cm_rsi_stream"],
+        "cm_rsi_stream_rising": stream["cm_rsi_stream_rising"],
+        "cm_rsi_stream_bars": stream["cm_rsi_stream_bars"],
         # Day change was recorded on the reject arm but omitted here, so the
         # completeness report read 0% admitted / 91% rejected and the two arms
         # could not be compared on the gate (ai_watch_require_uptrend) that
