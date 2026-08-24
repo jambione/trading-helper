@@ -413,6 +413,55 @@ shape. What makes it worth writing down at all is that it is the first
 result pointing somewhere new rather than back at the null, and it points
 at names the desk's watchlist (median price $9.79) almost never holds.
 
+### F. The operator's setup — the first conjunction ever tested (8/23)
+
+Everything above tests **marginal** gates: one condition at a time against
+all 493 name-days. The operator's actual thesis is a **conjunction of
+five**, and it fires on **25 of 493 name-days (5.1%)** before the float leg
+and 7–15 after it. A 25-sample effect inside a 493-sample average does not
+move the average. **"No gate selects drift" was only ever a statement about
+single filters.** It was never a test of this.
+
+The rule lives in `setup_rules.py` so live and lab import the same
+thresholds. Stage 1: up ≥10%, RVOL ≥5, catalyst <24h, price $2–20, shares
+outstanding <10M. Stage 2 (timing, untested): both %R lines rising together
+toward overbought is the move, one turning down ends it, RSI entered at the
+bottom of its oscillation.
+
+| universe | horiz | names | n | sess | medMFE | M/A | payX | clear | green |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **setup ≤10M** | 15m | 7 | 42 | 4 | **5.77** | **2.02** | **4.65** | **83%** | 1/4 |
+| **setup ≤30M** | 15m | 15 | 98 | 7 | **3.77** | 1.10 | **3.04** | **80%** | 3/7 |
+| **setup ≤30M** | 30m | 15 | 45 | 6 | **7.25** | 1.17 | **5.85** | **82%** | 3/6 |
+| desk | 15m | 494 | 4909 | 12 | 0.49 | 0.97 | 0.78 | 42% | 4/12 |
+
+**On magnitude this is unlike anything else measured.** payX 3–6 against
+the desk's 0.78; **80% of samples clear their own round trip** against the
+desk's 42%. The unplayability that defeated all six earlier universes is
+simply absent here.
+
+**On direction it is still unproven.** M/A 1.10–1.17 sits under the 1.2
+gate, sigma 1.26–1.65 under 2.0, sessions 3/7 and 3/6 under 70%. So stage 1
+finds names that **move**; it does not yet show they move **up** reliably.
+
+That is the correct division of labour and it is why stage 2 matters:
+**the setup picks the name, the timing rule is supposed to supply the
+direction — and stage 2 has never been tested at all**, because `pctr_slow`
+only reached 31% of historical rows. It is logged live from 2026-08-24.
+
+**Read all of this as exploratory, for four reasons.** n is 7–15 name-days.
+Shares *outstanding* is a proxy for float (always ≥ float; Finnhub
+publishes no float field, and `/stock/metric` has none either), so the cap
+is an approximation and the 30M variant was chosen **after** seeing that
+only ≥30M yields testable n — which is a real methodological compromise,
+not a neutral choice. The screen applies today's share count to past
+sessions, so a name that issued stock mid-window is scored post-issuance.
+And the ≤10M cell looks *better* than ≤30M (M/A 2.02 vs 1.10) on 7
+name-days, which could mean a tighter float genuinely carries more
+direction or could be noise; n cannot separate those.
+
+**The honest next step is more tape, not a tighter threshold.**
+
 ### The design criterion this produces
 
 For a driftless walk, expected favorable excursion is ≈ **0.8σ√t** — which
