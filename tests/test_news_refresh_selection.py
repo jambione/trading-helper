@@ -128,3 +128,45 @@ def test_a_broken_news_feed_never_raises_into_the_supervisor(tmp_path,
 
     monkeypatch.setitem(sys.modules, "news_feed", Boom)
     assert wd.refresh_news_cache() == 0
+
+
+# ------------------------------------------------------- learn job isolation
+
+def test_learn_jobs_do_not_inherit_the_launching_shells_stdin():
+    """The watchdog outlives the Terminal that started it.
+
+    nohup redirects stdout and stderr but leaves fd 0 inherited. When the
+    launching shell exits, fd 0 goes bad and every child dies before
+    running a line of Python -- "init_sys_streams ... [Errno 9] Bad file
+    descriptor" -- which run_learn_job reports as a nonzero rc. On
+    2026-08-24 that produced a CRITICAL alarm from setup_audit that had
+    nothing to do with the desk: instrumentation_check passed at 06:04:21
+    and setup_audit failed at 06:05:52, the shell having closed between
+    them. A safety net that dies with its Terminal is worse than none.
+    """
+    import inspect
+    src = inspect.getsource(wd.run_learn_job)
+    assert "stdin=subprocess.DEVNULL" in src
+
+
+def test_a_learn_job_actually_runs_without_a_usable_stdin(tmp_path,
+                                                          monkeypatch):
+    """Behavioural version: close stdin, then run a real child."""
+    import os
+    import subprocess
+    import sys
+    monkeypatch.setattr(wd, "LOGDIR", tmp_path)
+    (tmp_path / "tools").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(wd, "ROOT", tmp_path)
+    (tmp_path / "tools" / "probe.py").write_text(
+        "import sys; sys.exit(0)\n", encoding="utf-8")
+    devnull = os.open(os.devnull, os.O_RDONLY)
+    saved = os.dup(0)
+    try:
+        os.dup2(devnull, 0)
+        os.close(devnull)
+        rc = wd.run_learn_job(sys.executable, "probe.py", timeout=30.0)
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+    assert rc == 0

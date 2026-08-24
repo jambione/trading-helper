@@ -416,6 +416,18 @@ def run_learn_job(py: str, *argv: str, timeout: float = 900.0) -> int:
     dead services. The screens that pull minute bars for a hundred-plus
     symbols are the ones that can hang on a slow broker, so every job gets
     a wall clock and ``subprocess.run`` kills the child when it expires.
+
+    ``stdin`` is pinned to DEVNULL, and that is not cosmetic. The watchdog
+    is launched with nohup from a Terminal: stdout and stderr are
+    redirected but fd 0 is inherited from the launching shell. When that
+    shell exits, fd 0 becomes invalid and every child dies before running
+    a line of Python — "Fatal Python error: init_sys_streams ... [Errno 9]
+    Bad file descriptor" — which run_learn_job reports as a nonzero rc.
+    On 2026-08-24 that turned into a CRITICAL alarm from setup_audit that
+    had nothing to do with the desk: instrumentation_check succeeded at
+    06:04:21 and setup_audit failed at 06:05:52, the shell having closed
+    in between. A safety net that dies with the Terminal that started it
+    is worse than none, because it reports failure rather than silence.
     """
     script = ROOT / "tools" / argv[0]
     cmd = [py, str(script), *argv[1:]]
@@ -427,8 +439,8 @@ def run_learn_job(py: str, *argv: str, timeout: float = 900.0) -> int:
             fh.flush()
             try:
                 return subprocess.run(
-                    cmd, cwd=str(ROOT), stdout=fh, stderr=fh,
-                    timeout=timeout).returncode
+                    cmd, cwd=str(ROOT), stdin=subprocess.DEVNULL,
+                    stdout=fh, stderr=fh, timeout=timeout).returncode
             except subprocess.TimeoutExpired:
                 fh.write(f"TIMEOUT after {timeout:g}s — killed\n")
                 log(f"learn job {argv[0]} timed out after {timeout:g}s")

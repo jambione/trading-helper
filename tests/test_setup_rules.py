@@ -153,3 +153,43 @@ def test_stage2_reports_unknown_when_a_line_is_missing():
     s = sr.stage2(pctr_rising=True, pctr_slow_rising=None)
     assert s["pctr_both_rising"] is None
     assert s["pctr_diverging"] is None
+
+
+# ------------------------------------------------- volume provenance on the row
+
+def test_volume_fields_come_from_whichever_producer_supplied_the_row():
+    """The first version read only "dollar_volume".
+
+    That key exists on the seed dicts and on NO live row: dashboard rows
+    nest rvol under "funnel", research rows carry vol_session and
+    avg_vol_consolidated. It would have logged None on every poll of every
+    session -- a dead column that looks like a working one.
+    """
+    import ai_entry_watch as ew
+    research = ew._admission_fields(
+        {"vol_session": 4_000_000.0, "avg_vol_consolidated": 250_000.0,
+         "rvol": 16.0, "rvol_raw": 16.2, "price": 5.0, "pct_change": 40.0},
+        {}, 0.0)
+    assert research["admit_vol_session"] == 4_000_000.0
+    assert research["admit_avg_vol"] == 250_000.0
+    assert research["admit_rvol_raw"] == 16.2
+    # dollar volume is derived when the producer does not supply it
+    assert research["admit_dollar_volume"] == 20_000_000.0
+
+
+def test_a_row_without_volume_reports_none_not_zero():
+    import ai_entry_watch as ew
+    f = ew._admission_fields({"price": 5.0, "pct_change": 40.0}, {}, 0.0)
+    assert f["admit_vol_session"] is None
+    assert f["admit_avg_vol"] is None
+    assert f["admit_dollar_volume"] is None
+
+
+def test_volume_falls_back_to_what_admission_saw():
+    """The producer publishes rvol=None until its refresh resolves; a later
+    poll must not erase what was true at admission."""
+    import ai_entry_watch as ew
+    prev = {"admit_vol_session": 9.0, "admit_avg_vol": 3.0}
+    f = ew._admission_fields({"price": 5.0}, prev, 0.0)
+    assert f["admit_vol_session"] == 9.0
+    assert f["admit_avg_vol"] == 3.0

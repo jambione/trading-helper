@@ -1247,8 +1247,38 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
     row = row if isinstance(row, dict) else {}
     rvol = row.get("rvol")
     pct = row.get("pct_change")
+    # Volume, from whichever producer supplied this row. The first version
+    # of this read only "dollar_volume", a key that exists on the seed dicts
+    # and on NO live row — dashboard rows keep rvol nested under "funnel"
+    # and the research rows carry vol_session / avg_vol_consolidated. It
+    # would have logged None every poll of every session: a dead column
+    # that looks like a working one, which is the same defect as a knob
+    # nothing reads.
+    def _pick(*keys):
+        for k in keys:
+            v = row.get(k)
+            if v is not None:
+                return _f_or_none(v)
+        for k in keys:
+            v = prev.get("admit_" + k)
+            if v is not None:
+                return _f_or_none(v)
+        return None
+
+    vol_session = _pick("vol_session", "day_vol")
+    avg_vol = _pick("avg_vol_consolidated", "avg_vol")
     dvol = row.get("dollar_volume")
+    if dvol is None and vol_session is not None:
+        px_now = _f_or_none(row.get("price"))
+        dvol = (vol_session * px_now) if px_now else None
     return {
+        # RVOL's numerator and denominator, so the ratio stops being a
+        # number we either trust or discard. 3.94% of logged RVOLs exceed
+        # 100 and the max is 81,820; with these two the bad ones become
+        # diagnosable instead of merely flagged.
+        "admit_vol_session": vol_session,
+        "admit_avg_vol": avg_vol,
+        "admit_rvol_raw": _f_or_none(row.get("rvol_raw")),
         "admit_rvol": (
             _f_or_none(rvol) if rvol is not None
             else _f_or_none(prev.get("admit_rvol"))),
@@ -6238,6 +6268,12 @@ def _shadow_row(
         # the evidence, and the gate itself is frozen for GATE 1.
         "rvol_ok": _rvol_is_sane(rec.get("admit_rvol")),
         "dollar_volume": _f_or_none(rec.get("admit_dollar_volume")),
+        # The two numbers RVOL is made of. Logged so a reading of 3,144 can
+        # be attributed to a bad numerator or a near-zero denominator
+        # instead of only being flagged and dropped.
+        "vol_session": _f_or_none(rec.get("admit_vol_session")),
+        "avg_vol": _f_or_none(rec.get("admit_avg_vol")),
+        "rvol_raw": _f_or_none(rec.get("admit_rvol_raw")),
         # WHY the name is moving — the first genuinely new input on this row.
         # Read from a cache the watchdog keeps warm, never fetched here: the
         # poll has ~2s to decide and a news call belongs nowhere near it.
