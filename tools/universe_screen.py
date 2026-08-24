@@ -314,7 +314,8 @@ def load_setup(days: int, max_shares_m: float) -> dict[str, dict[str, float]]:
             rvol=r.get("rvol"),
             price=r.get("price"),
             shares_out_m=float_feed.shares_out(sym),
-            news_n_24h=n24)
+            news_n_24h=n24,
+            max_shares_out_m=max_shares_m)
         if legs["ok"]:
             out[day][sym] = _clamp_to_rth(ts, day)
     return dict(out)

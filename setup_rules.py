@@ -60,7 +60,8 @@ def _f(v: Any) -> float | None:
 
 def evaluate(*, pct_change: Any = None, rvol: Any = None, price: Any = None,
              shares_out_m: Any = None, news_mins_since: Any = None,
-             news_n_24h: Any = None) -> dict:
+             news_n_24h: Any = None,
+             max_shares_out_m: float = MAX_SHARES_OUT_M) -> dict:
     """Score one observation against stage 1. Pure; never raises.
 
     Returns each leg separately as well as the conjunction, because a
@@ -82,7 +83,11 @@ def evaluate(*, pct_change: Any = None, rvol: Any = None, price: Any = None,
             (n24 is not None and n24 >= 1)
             or (mins is not None and mins <= NEWS_WINDOW_MIN)),
         # None (never looked up) must not pass. See float_feed.is_low_float.
-        "float": so is not None and so < MAX_SHARES_OUT_M,
+        # The cap is a PARAMETER, not the module constant: the screen has a
+        # --max-shares-m flag, and a flag that silently does nothing is the
+        # exact defect that let ai_watch_min_pct_change read 50 for weeks
+        # while the path that admitted most names ignored it.
+        "float": so is not None and so < float(max_shares_out_m),
     }
     legs["ok"] = all(legs.values())
     legs["n_legs"] = sum(1 for k, v in legs.items()

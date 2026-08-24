@@ -96,6 +96,23 @@ def test_the_share_cap_is_strict():
     assert _ok(shares_out_m=10.0)["float"] is False
 
 
+def test_the_share_cap_is_a_live_parameter_not_a_constant():
+    """A flag that silently does nothing is this project's signature bug.
+
+    universe_screen takes --max-shares-m. The first version of evaluate()
+    read the module constant instead, so the flag was accepted, ignored,
+    and returned the identical seven names at every cap — which is exactly
+    how ai_watch_min_pct_change read 50 for weeks while the path that
+    admitted most names never consulted it.
+    """
+    assert sr.evaluate(pct_change=25.0, rvol=8.0, price=6.0,
+                       shares_out_m=25.0, news_n_24h=2,
+                       max_shares_out_m=30.0)["ok"] is True
+    assert sr.evaluate(pct_change=25.0, rvol=8.0, price=6.0,
+                       shares_out_m=25.0, news_n_24h=2,
+                       max_shares_out_m=10.0)["ok"] is False
+
+
 def test_a_catalyst_counts_by_headline_or_by_recency():
     assert _ok(news_n_24h=0, news_mins_since=30.0)["news"] is True
     assert _ok(news_n_24h=0, news_mins_since=None)["news"] is False
