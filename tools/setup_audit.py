@@ -203,6 +203,42 @@ def _proc_start_epoch(pid: str) -> float | None:
     return None
 
 
+def _pids_matching(pattern: str) -> list[str] | None:
+    """Pids whose command line contains *pattern*. None if unknowable.
+
+    Deliberately NOT ``pgrep -f``. BSD pgrep excludes its own ancestors,
+    so when the watchdog runs this audit as a child, `pgrep -f
+    tools/watchdog.py` cannot see the watchdog — it is the caller's
+    parent. The audit therefore reported "DOWN tools/watchdog.py" on
+    every scheduled run since it was wired in on 2026-08-22, while a
+    human running the same command by hand saw it as healthy.
+
+    The cost of that is precise: the watchdog's own code freshness was
+    never checked by the automated check. A watchdog running stale code
+    is the exact failure this audit exists to catch, and it was the one
+    process structurally invisible to it.
+
+    ``ps -A -o pid=,command=`` has no such exclusion.
+    """
+    try:
+        out = subprocess.run(["ps", "-A", "-o", "pid=,command="],
+                             capture_output=True, text=True)
+    except OSError:
+        return None
+    text = getattr(out, "stdout", None)
+    if not text:
+        return None
+    pids = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid, _, cmd = line.partition(" ")
+        if pattern in cmd and "ps -A" not in cmd:
+            pids.append(pid)
+    return pids
+
+
 def audit_freshness() -> None:
     print("\n=== CODE FRESHNESS ===")
     procs = {
@@ -212,11 +248,14 @@ def audit_freshness() -> None:
         "tools/watchdog.py": ["tools/watchdog.py"],
     }
     for proc, files in procs.items():
-        try:
-            pid = subprocess.run(["pgrep", "-f", proc], capture_output=True,
-                                 text=True).stdout.split()
-        except OSError:
-            pid = []
+        pid = _pids_matching(proc)
+        if pid is None:
+            # Cannot enumerate processes at all. Unmeasurable is CRITICAL
+            # for the same reason a missing start time is: a check that
+            # silently cannot check is worse than no check.
+            CRITICAL.append(f"cannot enumerate processes to find {proc}")
+            print(f"  CRITICAL {proc}: cannot list processes")
+            continue
         if not pid:
             print(f"  DOWN {proc}")
             WARN.append(f"{proc} not running")

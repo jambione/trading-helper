@@ -92,8 +92,14 @@ def test_unmeasurable_freshness_is_critical(monkeypatch):
     monkeypatch.setattr(sa, "CRITICAL", [])
     monkeypatch.setattr(sa, "WARN", [])
     monkeypatch.setattr(sa, "_proc_start_epoch", lambda pid: None)
+    # `ps -A -o pid=,command=` format: the process must be FOUND, so that
+    # the unmeasurable-age branch is the one under test. (Was bare pgrep
+    # output before process lookup moved off pgrep — see
+    # test_process_lookup_does_not_use_pgrep.)
     monkeypatch.setattr(sa.subprocess, "run", lambda *a, **k: type(
-        "R", (), {"stdout": "12345\n"})())
+        "R", (), {"stdout": "12345 /usr/bin/python -u ai_trader.py\n"
+                            "12346 /usr/bin/python dashboard.py\n"
+                            "12347 /usr/bin/python tools/watchdog.py\n"})())
     sa.audit_freshness()
     assert sa.CRITICAL, "unmeasurable process age must be CRITICAL"
 
@@ -144,3 +150,47 @@ def test_watchdog_runs_quick_periodically_and_full_at_eod():
     assert '"setup_audit.py", "--quick"' in src
     assert '"setup_audit.py", "--days", "5"' in src
     assert "AUDIT_SETTLE_SEC" in src and "AUDIT_INTERVAL_SEC" in src
+
+
+# ------------------------------------------------ the watchdog's blind spot
+
+def test_process_lookup_does_not_use_pgrep():
+    """BSD pgrep excludes its own ancestors.
+
+    So when the watchdog spawned this audit, `pgrep -f tools/watchdog.py`
+    could not see the watchdog — it was the caller's parent. Every
+    scheduled run since 2026-08-22 reported "DOWN tools/watchdog.py"
+    while a human running the same command by hand saw it healthy, which
+    means the watchdog's own code freshness was never actually checked.
+    A watchdog running stale code is the exact failure this audit exists
+    to catch, and it was the one process structurally invisible to it.
+    """
+    import inspect
+    body = inspect.getsource(sa._pids_matching)
+    code = body.split('"""')[-1]          # skip the docstring, which names it
+    assert "pgrep" not in code, (
+        "pgrep cannot see the caller's ancestors; use ps -A")
+    assert '"ps"' in code and '"-A"' in code
+
+
+def test_a_process_is_found_by_its_command_line(monkeypatch):
+    fake = "  101 /usr/bin/python -u tools/watchdog.py\n" \
+           "  102 /usr/bin/python ai_trader.py\n"
+
+    class R:
+        returncode = 0
+        stdout = fake
+
+    monkeypatch.setattr(sa.subprocess, "run", lambda *a, **k: R())
+    assert sa._pids_matching("tools/watchdog.py") == ["101"]
+    assert sa._pids_matching("ai_trader.py") == ["102"]
+    assert sa._pids_matching("nothing.py") == []
+
+
+def test_an_unlistable_process_table_is_unknown_not_empty(monkeypatch):
+    """None and [] mean different things: cannot check vs checked and absent."""
+    def boom(*a, **k):
+        raise OSError("no ps")
+
+    monkeypatch.setattr(sa.subprocess, "run", boom)
+    assert sa._pids_matching("anything") is None
