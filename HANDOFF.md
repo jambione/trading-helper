@@ -115,6 +115,24 @@ entries do not have.
 1.00R cuts stomps 13% → 2% and lifts the win rate 25% → 36%, and the mean
 stays at −0.03 R. Do not expect a give change to fix P&L.
 
+> **⚠ The "live" row above is mislabelled, and the whole section needs
+> re-testing (8/24).** `ai_local_trail_give_max_pct` was set to **0.1** in
+> `bot_config.json` — 0.1% of price — against a shipped default of 0.0 and
+> an intended give of ~0.5% of price. It therefore capped the R-based give
+> at roughly a fifth of its intent on **every** name, not just the wide-R
+> outliers it was written for, after which the spread floor set the real
+> cushion. Two live positions on 8/24 measured effective give_r of **0.067
+> (BMNR)** and **0.243 (RUM)** — a 3.6× spread while the config read 0.10.
+>
+> The sweep itself is still sound *as a simulation*: `ratchet_prior.py`
+> applied each give directly, so "0.10R vs 1.00R" is a real comparison of
+> two modelled policies. What is wrong is the claim that the desk was
+> *running* the 0.10R row, and the geometry note below it describes the
+> configured give rather than the effective one. Fixed 8/24 by restoring
+> `give_max_pct = 0.0`; re-run the sweep against clean tape before citing
+> any of this again. Found by the `give_r` column added the same morning,
+> on its first session.
+
 Geometry, for the record: give = 0.497% of price; median 1-minute return sd
 on these names = 0.245%. So the shelf is 2.03× one-minute noise, 1.44× at
 the 2-minute median hold, and 0.77× by 7 minutes. Shelf/spread is 1.73 at
