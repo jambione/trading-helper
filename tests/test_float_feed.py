@@ -113,6 +113,26 @@ def test_refresh_does_fetch_a_stale_reading(cache, monkeypatch):
     assert ff.refresh(["AAPL"]) == 1
 
 
+def test_a_rate_limit_stops_the_pass_and_keeps_what_it_got(cache, monkeypatch):
+    """Finnhub allows 60/minute. The first backfill burned its quota on
+    batch one and then reported 'fetched 0' five times, which reads
+    exactly like a cache that is already warm."""
+    cache({})
+    monkeypatch.setattr(ff, "_api_key", lambda: "k")
+    seen = []
+
+    def fake(sym, key, timeout=8.0):
+        seen.append(sym)
+        if len(seen) > 2:
+            return ff.RATE_LIMITED
+        return {"shares_out": 5.0, "ts": time.time()}
+
+    monkeypatch.setattr(ff, "_fetch_one", fake)
+    assert ff.refresh(["A", "B", "C", "D", "E"], limit=5) == 2
+    assert len(seen) == 3            # stopped on the 429, did not burn D/E
+    assert ff.shares_out("A") == pytest.approx(5.0)
+
+
 def test_a_failed_fetch_leaves_the_previous_reading_alone(cache, monkeypatch):
     cache({"AAPL": {"shares_out": 14687.0, "ts": time.time() - 999999}})
     monkeypatch.setattr(ff, "_api_key", lambda: "k")

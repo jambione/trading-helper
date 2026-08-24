@@ -387,9 +387,11 @@ def refresh_news_cache() -> int:
         # Share counts ride the same pass. They move on offerings and
         # splits rather than on ticks, so float_feed's own TTL means most
         # calls here are a no-op dictionary check, not an HTTP round trip.
+        # 10 per pass, unpaced: at a 5-minute cadence that is 120/hour
+        # against Finnhub's 60/minute, and it cannot stall the supervisor.
         try:
             import float_feed
-            float_feed.refresh(ordered[:NEWS_MAX_SYMBOLS])
+            float_feed.refresh(ordered[:NEWS_MAX_SYMBOLS], limit=10)
         except Exception:  # noqa: BLE001
             pass
         return n

@@ -110,12 +110,22 @@ def is_low_float(symbol: str, max_millions: float = 10.0) -> bool | None:
     return v < max_millions
 
 
-def _fetch_one(sym: str, key: str, timeout: float = 8.0) -> dict | None:
+# Finnhub's free tier allows 60 requests/minute. Over it every call 429s,
+# and a caller that swallows those quietly reports "fetched 0" for five
+# consecutive batches and looks like a cache that is already warm — which
+# is exactly what the first backfill did.
+RATE_LIMITED = object()
+
+
+def _fetch_one(sym: str, key: str, timeout: float = 8.0):
+    """Profile row, None on a normal failure, RATE_LIMITED on a 429."""
     url = ("https://finnhub.io/api/v1/stock/profile2"
            f"?symbol={sym}&token={key}")
     try:
         with urllib.request.urlopen(url, timeout=timeout) as fh:
             d = json.loads(fh.read())
+    except urllib.error.HTTPError as e:
+        return RATE_LIMITED if e.code == 429 else None
     except (urllib.error.URLError, OSError, ValueError, TimeoutError):
         return None
     if not isinstance(d, dict):
@@ -131,13 +141,22 @@ def _fetch_one(sym: str, key: str, timeout: float = 8.0) -> dict | None:
             "ts": time.time()}
 
 
-def refresh(symbols: list[str], limit: int = 60,
-            ttl_sec: float = TTL_SEC) -> int:
+def refresh(symbols: list[str], limit: int = 10,
+            ttl_sec: float = TTL_SEC, pace_sec: float = 0.0) -> int:
     """Fetch share counts for names we lack or whose reading has aged out.
 
     Returns the number fetched; 0 on any failure. Called from the watchdog,
-    never the entry path. `limit` caps a single pass so one refresh cannot
-    stall the supervisor behind sixty HTTP round trips.
+    never the entry path.
+
+    `limit` caps a single pass so one refresh cannot stall the supervisor
+    behind sixty HTTP round trips — the default of 10 per pass is well
+    inside Finnhub's 60/minute at any sane cadence. `pace_sec` is for
+    bulk backfills, which do need to sleep between calls; leaving it at 0
+    in the live path keeps the supervisor loop responsive.
+
+    Stops immediately on a 429 rather than burning the rest of the batch
+    against a closed window, and whatever was fetched before that is still
+    written.
     """
     syms = [str(s).upper().strip() for s in (symbols or []) if s]
     if not syms:
@@ -155,8 +174,12 @@ def refresh(symbols: list[str], limit: int = 60,
     if not stale:
         return 0
     fetched = 0
-    for sym in stale[:limit]:
+    for i, sym in enumerate(stale[:limit]):
+        if pace_sec and i:
+            time.sleep(pace_sec)
         row = _fetch_one(sym, key)
+        if row is RATE_LIMITED:
+            break
         if row is None:
             continue
         cache[sym] = row
