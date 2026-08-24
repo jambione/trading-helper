@@ -1298,6 +1298,57 @@ def _news_fields(symbol: str, now: float) -> dict:
         return f
 
 
+def _setup_fields(rec: dict, symbol: str, price: float | None,
+                  sig: dict, news: dict) -> dict:
+    """Stage 1 + stage 2 state for the shadow row. Never raises.
+
+    Evaluated live rather than reconstructed later, because the
+    conjunction spans four separate logs and a share count that changes
+    after the fact would silently rewrite history. Same reason the news
+    read is wrapped: this is telemetry, and telemetry may not stop a poll.
+    """
+    out = {
+        "shares_out_m": None, "ok": None, "legs": None, "n_legs": None,
+        "pctr_rising": None, "pctr_slow_rising": None,
+        "pctr_slow_falling": None, "pctr_both_rising": None,
+        "pctr_diverging": None,
+    }
+    try:
+        import float_feed
+        import setup_rules
+        sig = sig if isinstance(sig, dict) else {}
+        so = float_feed.shares_out(symbol)
+        legs = setup_rules.evaluate(
+            pct_change=rec.get("admit_pct_change"),
+            rvol=rec.get("admit_rvol"),
+            price=price,
+            shares_out_m=so,
+            news_mins_since=news.get("mins_since"),
+            news_n_24h=news.get("n_news_24h"))
+        s2 = setup_rules.stage2(
+            pctr_rising=sig.get("pctr_rising"),
+            pctr_slow_rising=sig.get("pctr_slow_rising"),
+            pctr_slow_falling=sig.get("pctr_slow_falling"),
+            cm_rsi=sig.get("cm_rsi"))
+        out.update({
+            "shares_out_m": so,
+            "ok": legs["ok"],
+            # Sorted names of the legs that passed — readable in a log tail
+            # and cheap to group on, unlike five separate booleans.
+            "legs": ",".join(sorted(k for k, v in legs.items()
+                                    if k not in ("ok", "n_legs") and v)),
+            "n_legs": legs["n_legs"],
+            "pctr_rising": sig.get("pctr_rising"),
+            "pctr_slow_rising": sig.get("pctr_slow_rising"),
+            "pctr_slow_falling": sig.get("pctr_slow_falling"),
+            "pctr_both_rising": s2["pctr_both_rising"],
+            "pctr_diverging": s2["pctr_diverging"],
+        })
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _rvol_is_sane(v: Any) -> bool | None:
     """Is this RVOL a plausible ratio? None when there is no reading at all.
 
@@ -6156,7 +6207,9 @@ def _shadow_row(
     px = _f_or_none(price)
     in_zone = bool(lo is not None and hi is not None and px is not None
                    and lo <= px <= hi)
-    news = _news_fields(str(rec.get("symbol") or "").upper(), now)
+    sym_u = str(rec.get("symbol") or "").upper()
+    news = _news_fields(sym_u, now)
+    setup = _setup_fields(rec, sym_u, px, sig, news)
     return {
         "ts": round(float(now), 2),
         "symbol": str(rec.get("symbol") or "").upper(),
@@ -6197,6 +6250,28 @@ def _shadow_row(
         "news_bearish": news["bearish"],
         "news_bullish": news["bullish"],
         "news_cache_age_sec": news["cache_age_sec"],
+        # THE SUPPLY SIDE. Shares outstanding in millions — an upper bound
+        # on float, so a low reading is trustworthy and a high one may
+        # still hide a small float. This is the first *cause* on the row:
+        # every other strength column (pct_change, rvol, score, extension)
+        # measured anti-predictive in 2026-08 because 5x volume means
+        # opposite things on a 3M-share company and a 500M-share one.
+        "shares_out_m": setup["shares_out_m"],
+        # The operator's stage-1 conjunction, evaluated live so tomorrow's
+        # tape is sliceable without reconstructing five conditions from
+        # four logs. It fires on ~5% of name-days, which is precisely why
+        # every marginal gate this lab tested read as the null.
+        "setup_ok": setup["ok"],
+        "setup_legs": setup["legs"],
+        "setup_n_legs": setup["n_legs"],
+        # Stage 2 — the timing rule, which has never been recorded. Both
+        # lines travelling to overbought together is the move; one turning
+        # while the other has not is where the gain stops.
+        "pctr_rising": setup["pctr_rising"],
+        "pctr_slow_rising": setup["pctr_slow_rising"],
+        "pctr_slow_falling": setup["pctr_slow_falling"],
+        "pctr_both_rising": setup["pctr_both_rising"],
+        "pctr_diverging": setup["pctr_diverging"],
         # Day change was recorded on the reject arm but omitted here, so the
         # completeness report read 0% admitted / 91% rejected and the two arms
         # could not be compared on the gate (ai_watch_require_uptrend) that

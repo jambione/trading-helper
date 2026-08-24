@@ -383,7 +383,16 @@ def refresh_news_cache() -> int:
         # downstream would look wrong. Recency is also the right priority:
         # the names the desk just looked at are the ones it might buy.
         ordered = sorted(seen, key=lambda s: -seen[s])
-        return news_feed.refresh(ordered[:NEWS_MAX_SYMBOLS])
+        n = news_feed.refresh(ordered[:NEWS_MAX_SYMBOLS])
+        # Share counts ride the same pass. They move on offerings and
+        # splits rather than on ticks, so float_feed's own TTL means most
+        # calls here are a no-op dictionary check, not an HTTP round trip.
+        try:
+            import float_feed
+            float_feed.refresh(ordered[:NEWS_MAX_SYMBOLS])
+        except Exception:  # noqa: BLE001
+            pass
+        return n
     except Exception:  # noqa: BLE001
         return 0
 

@@ -54,6 +54,13 @@ direction, which is precisely what a ratchet cannot harvest.
 Universes (each carries a per-name-day eligibility instant; sampling
 starts there, never before — the same discipline as --eligible-within):
 
+    setup           the operator's stage-1 conjunction (setup_rules.py):
+                    up >=10%, RVOL >=5, catalyst <24h, $2-20, and shares
+                    outstanding <10M. Fires on ~5% of name-days, which is
+                    exactly why every MARGINAL gate this lab tested read
+                    as the null — a 25-sample effect does not move a
+                    493-sample average. Anchored at the first instant all
+                    five legs held.
     desk            shadow.jsonl, from admit_ts. The incumbent.
     desk_px:LO-HI   the same universe sliced by median price, e.g.
                     desk_px:0-10, desk_px:10-50, desk_px:50-. This is the
@@ -261,6 +268,56 @@ def load_catalyst(days: int, syms: list[str], max_age_min: float,
                 continue
             rows.append((day, str(sym).upper(), anchor))
     return _earliest(rows)
+
+
+def load_setup(days: int, max_shares_m: float) -> dict[str, dict[str, float]]:
+    """The operator's stage-1 conjunction, from the first instant it held.
+
+    Anchored at the FIRST shadow row where all five legs were true at once,
+    which is the earliest moment the desk could have acted on it. Rows are
+    scanned forward and the first qualifying instant wins, so nothing here
+    is knowable later than it was live.
+
+    One honest lookahead: the share count is today's reading applied to a
+    past session. Outstanding moves on offerings, so a name that issued
+    stock mid-window is scored on its post-issuance count. That direction
+    is conservative for admission — the count only grows — but it is a
+    lookahead and it is why this universe is evidence for a forward test
+    rather than a result on its own.
+    """
+    import setup_rules
+    try:
+        import float_feed
+    except ImportError:
+        return {}
+    news = {}
+    try:
+        news_path = Path(ROOT) / "ai_reports" / "news_cache.json"
+        news = json.loads(news_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        news = {}
+    out: dict[str, dict[str, float]] = defaultdict(dict)
+    for ts, r in _iter_log("shadow.jsonl", days):
+        sym = r.get("symbol")
+        if not sym:
+            continue
+        sym = str(sym).upper()
+        day = DS._day_of(ts)
+        if sym in out.get(day, {}):
+            continue                      # already qualified earlier today
+        items = news.get(sym) or []
+        n24 = sum(1 for n in items
+                  if n.get("ts") is not None
+                  and ts - 24 * 3600 <= n["ts"] < ts)
+        legs = setup_rules.evaluate(
+            pct_change=r.get("pct_change"),
+            rvol=r.get("rvol"),
+            price=r.get("price"),
+            shares_out_m=float_feed.shares_out(sym),
+            news_n_24h=n24)
+        if legs["ok"]:
+            out[day][sym] = _clamp_to_rth(ts, day)
+    return dict(out)
 
 
 def build_gap_hold(bars: dict[str, list[dict]], gap_pct: float,
@@ -508,6 +565,8 @@ def resolve(name: str, days: int, args, bars: dict | None = None,
         return load_early_rvol(days, args.rvol)
     if name == "catalyst":
         return load_catalyst(days, syms or [], args.news_age, args.refresh_news)
+    if name == "setup":
+        return load_setup(days, args.max_shares_m)
     if name == "gap_hold":
         return build_gap_hold(bars or {}, args.gap)
     if name == "liquid":
@@ -518,8 +577,10 @@ def resolve(name: str, days: int, args, bars: dict | None = None,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--universes",
-                    default="desk,desk_px:0-10,desk_px:10-50,desk_px:50-,"
+                    default="setup,desk,desk_px:0-10,desk_px:10-50,desk_px:50-,"
                             "rejects,burst,early_rvol,gap_hold,liquid")
+    ap.add_argument("--max-shares-m", type=float, default=10.0,
+                    help="setup: shares outstanding cap in millions")
     ap.add_argument("--cost-model", default="measured",
                     choices=("measured", "fixed"),
                     help="measured = give + this name's own estimated spread "
