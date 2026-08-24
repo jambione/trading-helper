@@ -2432,6 +2432,13 @@ body.mobile .icon-btn {
   line-height: 1.15;
 }
 .panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: right; }
+/* A held shelf is the min-hold experiment working, not a failed stop. The
+   bare number reads as broken because the shelf ratchets UP while muzzled,
+   so it drifts further above the print the longer it behaves correctly. */
+.panel-ai-watch .feed-cols--ai-book .cell-trail.is-held {
+  color: var(--warn, #e0a33e);
+  font-variant-numeric: tabular-nums;
+}
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,

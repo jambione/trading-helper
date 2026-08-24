@@ -752,7 +752,7 @@ function _updateBookRow(el, r) {
     statusEl.className = _bookBlockerClass(r);
     statusEl.title = _bookBlockerTitle(r);
   }
-  const trail = _fmtTrail(_bookStopPx(r));
+  const trail = _fmtStopCell(r);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -767,6 +767,8 @@ function _updateBookRow(el, r) {
   if (trailEl) {
     trailEl.classList.remove('cell-src');
     trailEl.classList.add('cell-trail');
+    trailEl.classList.toggle('is-held', _holdLeft(r) != null);
+    trailEl.title = _stopCellTitle(r);
     _setText(trailEl, trail);
   }
   const priceEl = el.querySelector('.cell-price');
@@ -843,7 +845,7 @@ function _bookRowHtml(r) {
   const isOpen = phase === 'open' || r.is_position;
   const statusLabel = _bookBlockerLabel(r);
   const statusCls = _bookBlockerClass(r);
-  const trail = _fmtTrail(_bookStopPx(r));
+  const trail = _fmtStopCell(r);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
     : (r.last_ask != null && Number.isFinite(Number(r.last_ask))
@@ -867,7 +869,7 @@ function _bookRowHtml(r) {
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
-    + `<div class="cell-trail">${_esc(trail)}</div>`
+    + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}" title="${_esc(_stopCellTitle(r))}">${_esc(trail)}</div>`
     + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-rsi${_rsiPairClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_bookRsiText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
@@ -913,6 +915,36 @@ function _fmtEntry(r) {
 function _fmtTrail(v) {
   const n = Number(v);
   return v != null && Number.isFinite(n) && n > 0 ? `$${n.toFixed(2)}` : '—';
+}
+
+/** The shelf is SOFTWARE and, while ai_exit_min_hold_sec is armed, the sale
+ *  is deliberately muzzled. Shown because the bare number reads as a broken
+ *  stop: the shelf keeps ratcheting up while held, so it drifts further above
+ *  the print the longer it works correctly. On 2026-08-24 the desk suppressed
+ *  237 exits on one position exactly as designed and it looked like a
+ *  failure every time the panel was checked. */
+function _holdLeft(r) {
+  const v = r && r.min_hold_left_sec != null ? Number(r.min_hold_left_sec) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+function _fmtStopCell(r) {
+  const px = _fmtTrail(_bookStopPx(r));
+  const left = _holdLeft(r);
+  if (left == null || px === '—') return px;
+  const m = Math.floor(left / 60);
+  const s = String(Math.floor(left % 60)).padStart(2, '0');
+  return `${px} · held ${m}:${s}`;
+}
+
+function _stopCellTitle(r) {
+  const base = 'Software shelf, not a broker stop — the desk polls every '
+    + '5s and sends a market order when the print goes through it.';
+  const left = _holdLeft(r);
+  if (left == null) return base;
+  return base + ` Sale is HELD by ai_exit_min_hold_sec for another `
+    + `${Math.ceil(left)}s (GATE 1). The shelf keeps ratcheting up while `
+    + `held, so a higher shelf is banked when it releases.`;
 }
 
 function _zonePx(x) {

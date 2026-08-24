@@ -577,6 +577,27 @@ def _live_quote_for(sym: str, now: float | None = None) -> tuple[float | None, f
     return round(price, 4), age_sec
 
 
+def _min_hold_left_sec(row: dict) -> float | None:
+    """Seconds before the min-hold releases this position's shelf.
+
+    None when the delay is off or the fill's age is unknown — the panel
+    then shows the stop exactly as it always did. Never raises: this is a
+    display hint and must not be able to take the book view down.
+    """
+    try:
+        from config import load_config
+        secs = float((load_config() or {}).get("ai_exit_min_hold_sec", 0) or 0)
+        if secs <= 0:
+            return None
+        et = row.get("entry_time") or row.get("entry_ts")
+        if not et:
+            return None
+        left = secs - (time.time() - float(et))
+        return round(left, 1) if left > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def overlay_ai_book_live_prices(
     payload: dict | None,
     *,
@@ -634,6 +655,7 @@ def overlay_ai_book_live_prices(
                     or str(row.get("phase") or "") == "open")
                 if not is_open:
                     row["local_stop"] = None
+                    row["min_hold_left_sec"] = None
                 else:
                     try:
                         from ai_positions import never_lower_rstop
@@ -646,6 +668,15 @@ def overlay_ai_book_live_prices(
                             row["local_stop"] = locked
                     except Exception:
                         pass
+                    # Seconds until ai_exit_min_hold_sec releases the shelf.
+                    # Without this the STOP column shows a number sitting
+                    # above the print with no hint that the sale is muzzled,
+                    # and a working experiment reads as a broken stop — the
+                    # operator asked three times on 2026-08-24 while the desk
+                    # was suppressing 237 exits on one position exactly as
+                    # armed. A panel nobody trusts is worse than no panel,
+                    # because the day something IS broken it looks the same.
+                    row["min_hold_left_sec"] = _min_hold_left_sec(row)
                 if lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import apply_tape_blocker
