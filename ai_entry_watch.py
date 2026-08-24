@@ -4215,14 +4215,21 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
     # it is a windowed composite, not a restatement of this reading. A replay
     # has none, so a sim that turns on ai_watch_arm_require_indicators (which
     # names cm_ok) will refuse everything; the sims run with it False.
-    if bool(cfg.get("ai_watch_cm_rsi_local", False)):
+    #
+    # Stream-live RSI uses the SAME OHLC overlay as EXH (IEX seed + sampled
+    # tape), so level and direction stay one series. The old local_iex path
+    # is still available; it is the split-frame bug if left on without
+    # rewriting rising.
+    rsi_local = bool(cfg.get("ai_watch_cm_rsi_local", False))
+    rsi_stream = _stream_bars_live(cfg)
+    if rsi_local or rsi_stream:
         rsi_got = live_cm_rsi(sym, price, cfg, now)
         if rsi_got is not None:
             ind["cm_rsi"] = round(float(rsi_got[0]), 1)
             ind["cm_rsi_green"] = bool(rsi_got[1])
             ind["cm_rsi_rising"] = bool(rsi_got[2])
-            ind["cm_rsi_src"] = "local_iex"
-            ind["cm_rsi_age_sec"] = None
+            ind["cm_rsi_src"] = "realtime" if rsi_stream else "local_iex"
+            ind["cm_rsi_age_sec"] = 0.0 if rsi_stream else None
             try:
                 buy_max = float(cfg.get("cm_rsi_buy_max", 10) or 10)
             except (TypeError, ValueError):
@@ -4344,6 +4351,13 @@ def ensure_live_exhaustion(
     if not sym:
         return False
     ensure_symbol_ohlc(sym, cfg, now)
+    if _stream_bars_live(cfg):
+        try:
+            import stream_bars
+            stream_bars.observe(sym, px, now)
+            _overlay_stream_ohlc(sym, cfg, now)
+        except Exception:
+            pass
     px_src = "decision"
     if bool(cfg.get("ai_watch_exhaustion_trade_price_only", True)):
         got, px_src = indicator_price(rec, cfg, now)
@@ -5534,6 +5548,7 @@ def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
                     # would silently shift the window it is checking.
                     if len(stamps) == len(ohlc):
                         _ohlc_ts_cache[sym] = (now, stamps)
+                        _seed_stream_from_iex(sym, ohlc, stamps)
                     else:
                         _ohlc_ts_cache.pop(sym, None)
     except Exception:
@@ -5547,6 +5562,63 @@ def _fetch_symbol_lows(symbol: str, cfg: dict, now: float) -> list[float]:
     return lows
 
 
+def _stream_bars_live(cfg: dict) -> bool:
+    return bool(cfg.get("ai_watch_stream_bars_live", True))
+
+
+def _overlay_stream_ohlc(symbol: str, cfg: dict, now: float) -> None:
+    """Merge sampled-tape minutes over IEX history in the OHLC cache.
+
+    IEX is a few percent of the tape, so a 21-bar %R window on REST bars
+    often spans an hour. The watch loop already sees the Finnhub print every
+    ~2s; folding that into 1-minute bars and splicing it on top of the IEX
+    seed is what makes EXH/RSI a 1-minute reading on names that actually
+    trade.
+    """
+    if not _stream_bars_live(cfg):
+        return
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return
+    try:
+        import stream_bars
+    except Exception:
+        return
+    srows, sstamps = stream_bars.ohlc_with_stamps(sym)
+    if len(srows) < 2 or len(srows) != len(sstamps):
+        return
+    t0 = float(sstamps[0])
+    with _ohlc_cache_lock:
+        hit = _ohlc_cache.get(sym)
+        ts_hit = _ohlc_ts_cache.get(sym)
+        iex_rows = list(hit[1]) if hit else []
+        iex_ts = list(ts_hit[1]) if ts_hit and len(ts_hit[1]) == len(iex_rows) else []
+        kept_rows: list = []
+        kept_ts: list = []
+        if iex_rows and iex_ts:
+            for row, ts in zip(iex_rows, iex_ts):
+                try:
+                    if float(ts) < t0 - 1.0:
+                        kept_rows.append(row)
+                        kept_ts.append(float(ts))
+                except (TypeError, ValueError):
+                    continue
+        merged_rows = kept_rows + list(srows)
+        merged_ts = kept_ts + [float(t) for t in sstamps]
+        if not merged_rows or len(merged_rows) != len(merged_ts):
+            return
+        _ohlc_cache[sym] = (now, merged_rows)
+        _ohlc_ts_cache[sym] = (now, merged_ts)
+
+
+def _seed_stream_from_iex(symbol: str, ohlc: list, stamps: list) -> None:
+    try:
+        import stream_bars
+        stream_bars.seed(symbol, ohlc, stamps)
+    except Exception:
+        return
+
+
 def symbol_ohlc(symbol: str, cfg: dict, now: float) -> list[tuple[float, float, float]]:
     """Cached (high, low, close) rows, populated by the double-bottom fetch.
 
@@ -5557,6 +5629,9 @@ def symbol_ohlc(symbol: str, cfg: dict, now: float) -> list[tuple[float, float, 
 
     For exhaustion (and any path that needs bars without rebuilding a zone)
     call ``ensure_symbol_ohlc`` instead — that warms the cache once when cold.
+
+    When ``ai_watch_stream_bars_live`` is on, sampled Finnhub tape minutes
+    overwrite the recent IEX window so %R/RSI see a 1-minute clock.
     """
     sym = str(symbol or "").upper().strip()
     if not sym:
@@ -5569,6 +5644,7 @@ def symbol_ohlc(symbol: str, cfg: dict, now: float) -> list[tuple[float, float, 
     # measured four minutes ago is still a fair description of the name, while
     # a support level that old may already be broken.
     max_age = max(60.0, refresh * 3.0)
+    _overlay_stream_ohlc(sym, cfg, now)
     with _ohlc_cache_lock:
         hit = _ohlc_cache.get(sym)
         if hit and (now - hit[0]) < max_age:

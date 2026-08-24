@@ -4435,6 +4435,9 @@ def _exh_cfg() -> dict:
         "ai_watch_require_exhaustion_data": True,
         "rte_fast_length": 21,
         "ai_watch_exhaustion_max_window_mult": 10.0,
+        # Existing EXH tests pin IEX cache rows. Stream overlay is tested
+        # separately so a denser tape cannot rewrite those fixtures.
+        "ai_watch_stream_bars_live": False,
     }
 
 
@@ -4643,7 +4646,7 @@ def test_cm_rsi_level_and_direction_come_from_one_series(monkeypatch):
     rec = {"symbol": "BMNR", "last_trade": rows[-1][2],
            "indicator": dict(engine_view)}
     assert ew.ensure_live_exhaustion(rec, rows[-1][2], cfg, now) is True
-    # Default: the engine's reading stands whole.
+    # Stream overlay off: the engine's reading stands whole.
     assert rec["indicator"]["cm_rsi"] == 5.5
     assert rec["indicator"]["cm_rsi_src"] == "realtime"
     assert rec["indicator"]["cm_rsi_rising"] is True

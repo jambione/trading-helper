@@ -501,6 +501,12 @@ DEFAULT_CONFIG = {
     #
     # False restores the old behaviour (draw %R on whatever price arrives).
     "ai_watch_exhaustion_trade_price_only": True,
+    # EXH and CM RSI-2 on sampled Finnhub tape minutes (stream_bars) spliced
+    # over the Alpaca IEX seed. IEX alone is ~0.6 bars/min on these names and
+    # a 21-minute %R becomes an hour of range. The watch poll already sees
+    # the print every ~2s; this is that print as 1-minute OHLC. Off restores
+    # REST-only windows. Does not change the min-hold exit.
+    "ai_watch_stream_bars_live": True,
     # Fade must persist this long before selling. SECONDS, not polls: the
     # position loop runs every 5s against a 60s engine refresh, so a poll count
     # measured the same stale reading repeatedly and fired ~12x early.
@@ -1258,6 +1264,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_rules",
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_trade_price_only",
+    "ai_watch_stream_bars_live",
     "ai_watch_arm_require_cm_rsi",
     "ai_watch_arm_cm_rsi_max",
     "ai_watch_require_realtime_rsi",

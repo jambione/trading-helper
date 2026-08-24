@@ -217,3 +217,54 @@ def test_the_shadow_row_carries_both_stream_indicators():
     for f in ("pctr_stream", "pctr_stream_src", "cm_rsi_stream",
               "cm_rsi_stream_rising", "stream_empty_min"):
         assert f'"{f}"' in body, f"{f} missing from the shadow row"
+
+
+# ---------------------------------------------------------------- seed / live overlay
+
+def test_seed_backfills_closed_minutes_without_clobbering_live():
+    sb.observe("TEM", 12.0, T0 + 600)
+    hist_rows = [(10.0, 9.0, 9.5), (11.0, 10.0, 10.5)]
+    hist_ts = [T0, T0 + 60]
+    n = sb.seed("TEM", hist_rows, hist_ts)
+    assert n == 2
+    rows, stamps = sb.ohlc_with_stamps("TEM")
+    assert stamps[0] == pytest.approx(T0)
+    assert rows[-1][2] == pytest.approx(12.0)
+    # Second seed of the same minutes must not duplicate or overwrite live.
+    n2 = sb.seed("TEM", hist_rows + [(99.0, 99.0, 99.0)],
+                 hist_ts + [T0 + 600])
+    assert n2 == 0
+    rows2, _ = sb.ohlc_with_stamps("TEM")
+    assert rows2[-1][2] == pytest.approx(12.0)
+
+
+def test_stream_overlay_fills_a_sparse_iex_window():
+    """21 IEX prints an hour apart are not a 1-minute %R; tape minutes are."""
+    import ai_entry_watch as ew
+
+    now = T0 + 21 * 60
+    sparse = [(10.0 + i * 0.01, 9.9, 10.0) for i in range(21)]
+    sparse_ts = [T0 + i * 600.0 for i in range(21)]  # 10 min apart
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache["RUM"] = (now, list(sparse))
+        ew._ohlc_ts_cache["RUM"] = (now, list(sparse_ts))
+    for i in range(22):
+        sb.observe("RUM", 10.0 + i * 0.02, T0 + i * 60)
+    cfg = {
+        "rte_fast_length": 21,
+        "ai_watch_db_bar_seconds": 60.0,
+        "ai_watch_stream_bars_live": True,
+        "ai_watch_db_bar_refresh_sec": 120.0,
+    }
+    rows = ew.symbol_ohlc("RUM", cfg, now)
+    stamps = ew._cached_ohlc_stamps("RUM", cfg, now)
+    assert stamps is not None
+    # Recent minutes are 1m stream, not the 10-minute IEX gaps.
+    assert stamps[-1] - stamps[-2] == pytest.approx(60.0)
+    got = ew.live_exhaustion("RUM", 10.5, cfg, now)
+    assert got is not None
+    rec = {"symbol": "RUM"}
+    assert ew.apply_live_exhaustion(rec, 10.5, cfg, now) is True
+    assert rec["indicator"]["pctr_src"] == "live"
+    assert rec["indicator"]["cm_rsi"] is not None
+    assert rec["indicator"]["cm_rsi_src"] == "realtime"

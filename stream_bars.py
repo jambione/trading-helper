@@ -31,18 +31,17 @@ why it is called `n_samples` and never reported as volume.
 Rows come back in exactly ``clock_window_rows``' shape —
 ``[(high, low, close)]`` plus a span — so the SAME
 ``_live_percent_r_line`` runs against both sources and any difference is
-attributable to the bars and nothing else. That is how "would a denser
-feed fix the window" becomes a measurement instead of a projection.
+attributable to the bars and nothing else.
 
-**Nothing here decides anything.** GATE 1 is mid-flight and the operator's
-stage-2 rule depends entirely on %R quality, so changing indicator inputs
-now would make data from before and after incomparable.
+Live EXH / RSI read these bars when ``ai_watch_stream_bars_live`` is on:
+Alpaca IEX seeds the history (`seed`), then each poll's tape print fills
+the forming minute. That is how a 21-minute %R stays a 21-minute %R on
+names IEX only prints a few times an hour.
 
 Known limits, all real:
 
-  forward only    No history. A symbol admitted at 09:35 has no window
-                  until ~09:49. Live use would need an Alpaca seed;
-                  shadow mode reports the gap rather than filling it.
+  seed required   A symbol admitted at 09:35 has no window until ~09:49
+                  unless `seed` ran with IEX history.
   ~2% empty       p99 print gap is 66s, so the odd minute carries nothing.
   fresh != whole  tape_age_sec says how fresh the last print WE SAW was,
                   not that we saw every print. Denser than IEX, still not
@@ -116,6 +115,68 @@ def on_trade(symbol: str, price: float, volume: Any, ts: Any) -> None:
     aggregator into the engine process is a wiring change, not a rewrite.
     """
     observe(symbol, price, ts)
+
+
+def seed(symbol: str, rows: list, stamps: list) -> int:
+    """Backfill closed minutes from IEX/Alpaca history. Never overwrites live.
+
+    ``rows`` is ``[(high, low, close), ...]`` aligned with epoch ``stamps``.
+    Minutes already held — including the forming bar — stay as sampled tape.
+    Returns how many minutes were inserted.
+    """
+    inserted = 0
+    try:
+        sym = str(symbol or "").upper().strip()
+        if not sym or not rows or not stamps or len(rows) != len(stamps):
+            return 0
+        with _LOCK:
+            have: set[float] = {float(b[0]) for b in (_BARS.get(sym) or ())}
+            cur = _CUR.get(sym)
+            if cur is not None:
+                have.add(float(cur[0]))
+            incoming: list[tuple] = []
+            for row, ts in zip(rows, stamps):
+                try:
+                    t = float(ts)
+                    if t > 1e11:
+                        t /= 1000.0
+                    b = _bucket(t)
+                    hi, lo, cl = float(row[0]), float(row[1]), float(row[2])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if hi <= 0 or lo <= 0 or cl <= 0 or b in have:
+                    continue
+                have.add(b)
+                incoming.append((b, hi, lo, cl, 0))
+            if not incoming:
+                return 0
+            incoming.sort(key=lambda x: x[0])
+            existing = list(_BARS.get(sym) or ())
+            merged = existing + incoming
+            merged.sort(key=lambda x: x[0])
+            # Drop duplicate buckets (keep existing / first).
+            dedup = []
+            seen: set[float] = set()
+            for bar in merged:
+                if bar[0] in seen:
+                    continue
+                seen.add(bar[0])
+                dedup.append(bar)
+            _BARS[sym] = deque(dedup[-MAX_BARS:], maxlen=MAX_BARS)
+            inserted = len(incoming)
+    except Exception:  # noqa: BLE001
+        return 0
+    return inserted
+
+
+def ohlc_with_stamps(symbol: str) -> tuple[list[tuple[float, float, float]],
+                                           list[float]]:
+    """Full held history as ``symbol_ohlc`` rows plus epoch stamps."""
+    sym = str(symbol or "").upper().strip()
+    bars = _closed_and_open(sym)
+    rows = [(float(b[1]), float(b[2]), float(b[3])) for b in bars]
+    stamps = [float(b[0]) for b in bars]
+    return rows, stamps
 
 
 def _closed_and_open(sym: str) -> list[tuple]:
