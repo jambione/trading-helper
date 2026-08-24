@@ -1308,6 +1308,70 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
 RVOL_SANE_MAX = 100.0
 
 
+def _stream_pctr_fields(symbol: str, price: float | None, cfg: dict,
+                        now: float) -> dict:
+    """The SAME %R, computed from Finnhub stream bars instead of IEX bars.
+
+    Shadow only — nothing reads these to decide. The point is to answer
+    "would a denser feed fix the window" with a measurement instead of a
+    projection, by running the identical ``_live_percent_r_line`` over the
+    identical parameters and changing only the bar source.
+
+    A stream has no history, so early in a name's life this is legitimately
+    empty. That is reported as None rather than filled in, because the
+    forward-only gap is one of the things being measured.
+    """
+    out = {"pctr_stream": None, "pctr_stream_src": None,
+           "pctr_stream_bars": None, "pctr_stream_span_sec": None,
+           "stream_bar_count": None, "stream_empty_min": None}
+    try:
+        px = float(price) if price is not None else 0.0
+        if px <= 0:
+            return out
+        import stream_bars
+        # Feed the aggregator first so this minute includes the current
+        # print, then read the window back. The watch loop polls every ~2s
+        # against a median print gap of 11s, so this sees essentially every
+        # price change without a trade stream in this process.
+        stream_bars.observe(symbol, px, now)
+        cov = stream_bars.coverage(symbol)
+        out["stream_bar_count"] = cov["bars"]
+        out["stream_empty_min"] = cov["empty_minutes"]
+        if not cov["bars"]:
+            return out
+        length = _rte_fast_length(cfg)
+        try:
+            eps = float(cfg.get("rte_direction_eps", 0.05) or 0.0)
+        except (TypeError, ValueError):
+            eps = 0.05
+        try:
+            span = float(cfg.get("rte_fast_ewm_span", 7) or 7)
+        except (TypeError, ValueError):
+            span = 7.0
+        try:
+            min_range = int(cfg.get("ai_watch_exhaustion_min_range_bars", 6) or 6)
+        except (TypeError, ValueError):
+            min_range = 6
+        try:
+            slack = float(cfg.get("ai_watch_exhaustion_clock_slack", 1.25) or 1.25)
+        except (TypeError, ValueError):
+            slack = 1.25
+        rows, span_sec = stream_bars.window_rows(symbol, now, length, slack)
+        if not rows:
+            return out
+        got = _live_percent_r_line(rows, px, length, span, eps,
+                                   min_range=max(2, min_range))
+        if got is None:
+            return out
+        out["pctr_stream"] = got[0]
+        out["pctr_stream_src"] = got[3]
+        out["pctr_stream_bars"] = len(rows)
+        out["pctr_stream_span_sec"] = span_sec
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _news_fields(symbol: str, now: float) -> dict:
     """Catalyst features for the shadow row. Never raises, never blocks.
 
@@ -6240,6 +6304,7 @@ def _shadow_row(
     sym_u = str(rec.get("symbol") or "").upper()
     news = _news_fields(sym_u, now)
     setup = _setup_fields(rec, sym_u, px, sig, news)
+    stream = _stream_pctr_fields(sym_u, px, _push_cfg(), now)
     return {
         "ts": round(float(now), 2),
         "symbol": str(rec.get("symbol") or "").upper(),
@@ -6308,6 +6373,18 @@ def _shadow_row(
         "pctr_slow_falling": setup["pctr_slow_falling"],
         "pctr_both_rising": setup["pctr_both_rising"],
         "pctr_diverging": setup["pctr_diverging"],
+        # SHADOW: the same %R over Finnhub stream bars instead of IEX bars.
+        # Decides nothing. Logged beside `pctr` / `pctr_src` /
+        # `window_span_min` so the question "would a denser feed fix the
+        # 23-minute window" gets a measurement rather than my estimate.
+        # stream_bar_count near zero early in a name's life is the
+        # forward-only limitation showing, not a fault.
+        "pctr_stream": stream["pctr_stream"],
+        "pctr_stream_src": stream["pctr_stream_src"],
+        "pctr_stream_bars": stream["pctr_stream_bars"],
+        "pctr_stream_span_sec": stream["pctr_stream_span_sec"],
+        "stream_bar_count": stream["stream_bar_count"],
+        "stream_empty_min": stream["stream_empty_min"],
         # Day change was recorded on the reject arm but omitted here, so the
         # completeness report read 0% admitted / 91% rejected and the two arms
         # could not be compared on the gate (ai_watch_require_uptrend) that
