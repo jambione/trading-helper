@@ -215,6 +215,66 @@ def window_rows(symbol: str, now: float, length: int,
     return rows, float(span)
 
 
+def filled_clock_rows(
+    symbol: str,
+    now: float,
+    length: int,
+    slack: float = 1.25,
+) -> tuple[list[tuple[float, float, float]], float | None]:
+    """1-minute grid of *length* bars ending at *now*, gaps carried forward.
+
+    ``window_rows`` drops minutes with no print, so a thin name's 21-bar %R
+    never forms and EXH prints ``thin`` / ``clock_range``. Carrying the last
+    close into an empty minute does **not** pull an older hour into the
+    range (high/low stay that last print). It keeps a 21-minute clock so
+    the live path can stamp ``pctr_src=live`` once 21 minutes of history
+    exist.
+
+    Minutes before the first observation are not invented. ``coverage()``
+    still reports empty minutes honestly; this is only the EXH window.
+    ``slack`` is accepted so callers match ``window_rows``' signature; the
+    grid is exact-length, not slack-widened.
+    """
+    del slack  # grid is exact; kept so call sites can pass clock slack
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return [], None
+    try:
+        t = float(now)
+        if t > 1e11:
+            t /= 1000.0
+    except (TypeError, ValueError):
+        return [], None
+    length = max(2, int(length))
+    newest = _bucket(t)
+    oldest = newest - (length - 1) * BAR_SEC
+    bars = _closed_and_open(sym)
+    if not bars:
+        return [], None
+    by_b = {float(b[0]): b for b in bars}
+    carry_cl = None
+    for b in bars:
+        if float(b[0]) <= oldest + 1e-9:
+            carry_cl = float(b[3])
+        else:
+            break
+    out: list[tuple[float, float, float]] = []
+    minute = oldest
+    while minute <= newest + 1e-9:
+        got = by_b.get(minute)
+        if got is not None:
+            carry_cl = float(got[3])
+            out.append((float(got[1]), float(got[2]), carry_cl))
+        elif carry_cl is not None:
+            out.append((carry_cl, carry_cl, carry_cl))
+        minute += BAR_SEC
+    if not out:
+        return [], None
+    if len(out) > length:
+        out = out[-length:]
+    return out, float(len(out) * BAR_SEC)
+
+
 def coverage(symbol: str) -> dict:
     """What the aggregator actually holds for a name.
 

@@ -3790,8 +3790,6 @@ def clock_window_rows(
     ``length`` — ``live_exhaustion`` then uses a range %R instead of inventing
     a 21-bar window from older prints.
     """
-    if rows is None:
-        rows = symbol_ohlc(symbol, cfg, now)
     length = int(length) if length is not None else _rte_fast_length(cfg)
     length = max(2, length)
     bar_sec = _bar_seconds(cfg)
@@ -3800,6 +3798,20 @@ def clock_window_rows(
     except (TypeError, ValueError):
         slack = 1.25
     slack = max(1.0, slack)
+    stream_got: tuple[list, float | None] | None = None
+    if rows is None and _stream_bars_live(cfg):
+        try:
+            import stream_bars
+            filled, fspan = stream_bars.filled_clock_rows(
+                symbol, now, length, slack)
+            if filled:
+                stream_got = (filled, fspan)
+                if len(filled) >= length:
+                    return filled, fspan
+        except Exception:
+            stream_got = None
+    if rows is None:
+        rows = symbol_ohlc(symbol, cfg, now)
     stamps = _cached_ohlc_stamps(symbol, cfg, now)
     if stamps and len(stamps) == len(rows) and rows:
         horizon = (length - 1) * bar_sec * slack
@@ -3813,9 +3825,14 @@ def clock_window_rows(
             paired[-1][1] - paired[0][1]
             if len(paired) >= 2 else None
         )
-        return [r for r, _ts in paired], span
+        iex_rows = [r for r, _ts in paired]
+        if stream_got and len(stream_got[0]) >= len(iex_rows):
+            return stream_got
+        return iex_rows, span
 
     # No stamps: last-N-prints plus the existing stretch cap.
+    if stream_got and len(stream_got[0]) >= min(length, max(len(rows), 1)):
+        return stream_got
     if len(rows) < length:
         return list(rows), None
     try:
@@ -3825,6 +3842,8 @@ def clock_window_rows(
     if mult > 0:
         span = window_span_sec(symbol, length, cfg, now)
         if span is not None and span > (length - 1) * bar_sec * mult:
+            if stream_got:
+                return stream_got
             return [], span
     return list(rows), window_span_sec(symbol, length, cfg, now)
 
@@ -4181,10 +4200,10 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
         ind["pctr_gap"] = round(float(pair["gap"]), 2)
     rows, span = clock_window_rows(sym, cfg, now)
     length = _rte_fast_length(cfg)
-    both_live = pair.get("fast_src") == "live" and pair.get("slow_src") == "live"
-    ind["pctr_src"] = (
-        "live" if both_live
-        else (pair.get("fast_src") or ("live" if len(rows) >= length else "clock_range"))
+    # EXH is the fast line. Slow is 112 bars and hover-only — requiring it
+    # to also be live greys a real rolling %R(21) for most of the book.
+    ind["pctr_src"] = pair.get("fast_src") or (
+        "live" if len(rows) >= length else "clock_range"
     )
     ind["pctr_ts"] = float(now)
     # The RSI LEVEL and the RSI DIRECTION have to come off the same series.
@@ -4354,7 +4373,17 @@ def ensure_live_exhaustion(
     if _stream_bars_live(cfg):
         try:
             import stream_bars
-            stream_bars.observe(sym, px, now)
+            # Fold the Finnhub last print when we have one — that is the
+            # denser tape. Decision/ask is only the fallback so a quiet
+            # name still fills the current minute.
+            tape = live_print(sym)
+            obs_px, obs_ts = px, now
+            if tape is not None and tape[0] and float(tape[0]) > 0:
+                obs_px = float(tape[0])
+                age = tape[1]
+                if age is not None and age >= 0:
+                    obs_ts = now - float(age)
+            stream_bars.observe(sym, obs_px, obs_ts)
             _overlay_stream_ohlc(sym, cfg, now)
         except Exception:
             pass
@@ -5585,7 +5614,7 @@ def _overlay_stream_ohlc(symbol: str, cfg: dict, now: float) -> None:
     except Exception:
         return
     srows, sstamps = stream_bars.ohlc_with_stamps(sym)
-    if len(srows) < 2 or len(srows) != len(sstamps):
+    if len(srows) < 1 or len(srows) != len(sstamps):
         return
     t0 = float(sstamps[0])
     with _ohlc_cache_lock:
@@ -5649,6 +5678,14 @@ def symbol_ohlc(symbol: str, cfg: dict, now: float) -> list[tuple[float, float, 
         hit = _ohlc_cache.get(sym)
         if hit and (now - hit[0]) < max_age:
             return list(hit[1])
+    if _stream_bars_live(cfg):
+        try:
+            import stream_bars
+            srows, sstamps = stream_bars.ohlc_with_stamps(sym)
+            if srows and len(srows) == len(sstamps):
+                return list(srows)
+        except Exception:
+            pass
     return []
 
 

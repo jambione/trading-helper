@@ -144,6 +144,31 @@ def test_a_missing_timestamp_falls_back_to_now():
 
 # ---------------------------------------------------------------- fair compare
 
+def test_filled_clock_carries_empty_minutes_so_exh_can_go_live():
+    """A few Finnhub prints across 21 minutes must still form a 21-bar clock.
+
+    window_rows would return 3 bars and EXH would print clock_range / thin.
+    Carry-forward keeps the range on those prints (flats do not invent highs)
+    and gives the live %R path a full window.
+    """
+    sb.observe("BULD", 10.0, T0)
+    sb.observe("BULD", 10.4, T0 + 10 * 60)
+    sb.observe("BULD", 10.2, T0 + 20 * 60)
+    sparse, _ = sb.window_rows("BULD", T0 + 20 * 60, length=21)
+    assert len(sparse) == 3
+    filled, span = sb.filled_clock_rows("BULD", T0 + 20 * 60, length=21)
+    assert len(filled) == 21
+    assert span == pytest.approx(21 * 60.0)
+    highs = {round(r[0], 4) for r in filled}
+    assert highs <= {10.0, 10.4, 10.2}
+
+
+def test_filled_clock_does_not_invent_minutes_before_the_first_print():
+    sb.observe("IND", 5.0, T0 + 18 * 60)
+    filled, _ = sb.filled_clock_rows("IND", T0 + 20 * 60, length=21)
+    assert len(filled) == 3
+
+
 def test_the_rows_feed_the_live_percent_r_unchanged():
     """The comparison is only fair if the same function eats both sources."""
     import ai_entry_watch as ew
@@ -268,3 +293,30 @@ def test_stream_overlay_fills_a_sparse_iex_window():
     assert rec["indicator"]["pctr_src"] == "live"
     assert rec["indicator"]["cm_rsi"] is not None
     assert rec["indicator"]["cm_rsi_src"] == "realtime"
+
+
+def test_sparse_iex_plus_filled_clock_stamps_live_exh():
+    """IEX prints a few times an hour; Finnhub-sampled minutes fill the clock."""
+    import ai_entry_watch as ew
+
+    now = T0 + 21 * 60
+    sparse = [(10.0 + i * 0.01, 9.9, 10.0) for i in range(8)]
+    sparse_ts = [T0 + i * 600.0 for i in range(8)]
+    with ew._ohlc_cache_lock:
+        ew._ohlc_cache["BULD"] = (now, list(sparse))
+        ew._ohlc_ts_cache["BULD"] = (now, list(sparse_ts))
+    sb.observe("BULD", 10.0, T0)
+    sb.observe("BULD", 10.3, T0 + 12 * 60)
+    sb.observe("BULD", 10.1, now)
+    cfg = {
+        "rte_fast_length": 21,
+        "rte_slow_native_length": 112,
+        "ai_watch_db_bar_seconds": 60.0,
+        "ai_watch_stream_bars_live": True,
+        "ai_watch_db_bar_refresh_sec": 120.0,
+        "ai_watch_exhaustion_min_range_bars": 6,
+    }
+    rec = {"symbol": "BULD"}
+    assert ew.apply_live_exhaustion(rec, 10.15, cfg, now) is True
+    assert rec["indicator"]["pctr_src"] == "live"
+    assert rec["indicator"]["pctr"] is not None
