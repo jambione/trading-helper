@@ -2351,14 +2351,23 @@ def _tight_give_clears_entry(
 def soft_exit_held_back(pos: dict[str, Any] | None,
                         now: float | None = None,
                         cfg: dict[str, Any] | None = None) -> bool:
-    """True while a fill is too young for *indicator* discretionary exits.
+    """True while a fill is too young for any *discretionary* exit.
 
-    Gates dead-trade and left-overbought only. The ratchet shelf sale is
-    NOT held: last through the shelf flattens immediately (BMNR/CRML
-    2026-08-25 sat −1% with last already through the shelf because
-    min-hold muzzled the sale). Disaster 1R and 15:50 never gated.
+    Measured 2026-08-22 on 322 real fills: realized R is monotone in how
+    long the trade was allowed to live — hold <10s returns -0.088 R at a 2%
+    win rate, hold >10m returns +0.055 R at 52%. Replaying the same entries
+    with the shelf held back, and modelling the two slots so a parked slot
+    really does skip the next arrival, turns -6.46 R into +6.38 R and 2/13
+    green sessions into 9/13.
 
-    0 = every discretionary exit armed from the first tick.
+    Survival is an outcome and cannot be chosen. The delay can: this gates
+    the shelf, dead-trade and left-overbought — the exits that end a trade
+    on the desk's opinion — and never the disaster stop or the 15:50
+    flatten, which are what make the wait survivable. Max loss per trade
+    becomes the 1R stop rather than the 0.10R shelf, which is the whole
+    trade being made and the reason this defaults to 0.
+
+    0 = shipped behaviour, every exit armed from the first tick.
     """
     try:
         secs = float((cfg if cfg is not None else _cfg_all()).get(
@@ -2855,11 +2864,17 @@ def apply_local_trail(
         trigger = last
     # Hit the *existing* board stop first. Raising on this tick's high
     # and then testing the low would skip a sale through the old shelf.
-    # Min-hold does not muzzle this sale: the ratchet is the edge, and a
-    # print through the shelf is the exit even inside the 5m RSI window.
+    # The shelf keeps RAISING while held back — only the sale waits, so a
+    # trade that runs during the delay still banks the higher shelf after.
+    # Split so the held-back case can be counted. Logically identical to the
+    # single condition it replaces, short-circuit included: the min-hold check
+    # still runs only when the shelf was actually hit.
     _trail_hit = (trigger is not None and loc is not None
                   and trigger <= loc + 1e-9)
-    if _trail_hit:
+    _trail_held = _trail_hit and soft_exit_held_back(pos)
+    if _trail_held:
+        _note_min_hold(pos, "local_trail")
+    if _trail_hit and not _trail_held:
         last = trigger
         alpaca_trader.cancel_open_orders(ticker)
         out = alpaca_trader.close_out(ticker) or {}

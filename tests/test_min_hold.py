@@ -76,20 +76,18 @@ def test_it_gates_the_three_discretionary_exits():
     # read in the shadow logger. The logger reads the state and decides
     # nothing, which is the distinction worth pinning — if that count moves,
     # something new is either gating on the delay or has stopped recording it.
-    assert src.count("soft_exit_held_back(pos") == 4
+    assert src.count("soft_exit_held_back(pos") == 5
     assert src.count('"min_hold_active": soft_exit_held_back(pos, now)') == 1
-    for which in ("left_overbought", "dead_trade"):
+    for which in ("local_trail", "left_overbought", "dead_trade"):
         assert f'_note_min_hold(pos, "{which}"' in src, (
             f"{which} suppression must be counted or GATE 1 has no mechanism")
-    assert '_note_min_hold(pos, "local_trail"' not in src, (
-        "ratchet sale must not be muzzled by min-hold")
 
 
 def test_every_gated_exit_also_records_the_block():
     """A suppressed exit that logs nothing is an experiment with no readout."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    assert src.count("_note_min_hold(") == 3      # 2 call sites + the def
+    assert src.count("_note_min_hold(") == 4      # 3 call sites + the def
 
 
 def test_noting_a_block_counts_and_labels_without_deciding():
@@ -126,3 +124,52 @@ def test_the_disaster_stop_is_never_gated():
     for forbidden in ("entry_stop_price", "liquidate_all", "eod"):
         assert forbidden not in body, (
             f"{forbidden} must stay outside the min-hold gate")
+
+
+def test_ratchet_sale_waits_for_min_hold(monkeypatch):
+    """LAST through the shelf must not flatten until min-hold is over."""
+    import sys
+    import time
+    import types
+
+    closed = []
+    stub = types.SimpleNamespace(
+        cancel_open_orders=lambda *a, **k: None,
+        close_out=lambda t: closed.append(t) or {"ok": True, "order_id": "x"},
+    )
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_exit_min_hold_sec": 300,
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+    })
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": True,
+    }.get(key, default))
+
+    now = time.time()
+    young = {
+        "entry_confirmed": True,
+        "entry_time": now - 60,
+        "entry_price": 10.0,
+        "entry_stop_price": 9.5,
+        "stop_price": 9.5,
+        "local_stop_price": 9.95,
+        "last_seen_price": 9.94,
+        "peak_price": 10.10,
+        "risk_per_share": 0.5,
+    }
+    _ch, done = cp.apply_local_trail("AAA", young, 9.94, [], {})
+    assert done is False
+    assert young.get("closing_reason") is None
+    assert closed == []
+    assert young.get("min_hold_last") == "local_trail"
+    assert int(young.get("min_hold_blocks") or 0) >= 1
+
+    mature = dict(young, entry_time=now - 301, closing_reason=None,
+                  min_hold_blocks=0, min_hold_last=None)
+    _ch, done = cp.apply_local_trail("AAA", mature, 9.94, [], {})
+    assert done is True
+    assert mature.get("closing_reason") == "local_trail"
+    assert closed == ["AAA"]

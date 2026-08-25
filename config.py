@@ -748,11 +748,9 @@ DEFAULT_CONFIG = {
     # taken from it. Percent of tape. 0 disables.
     "ai_decision_ask_max_dev_pct":      5.0,
     "ai_entry_limit_anchor":           "ask",
-    # Dead-trade and left-overbought stay holstered this many seconds after
-    # the fill so RSI-2 still describes the trade. The ratchet shelf sale is
-    # never gated — last through the shelf flattens immediately. 1R disaster
-    # stop and 15:50 flatten are never gated. 0 = all discretionary exits
-    # armed from the first tick. See ai_positions.soft_exit_held_back.
+    # Discretionary exits (shelf, dead-trade, left-overbought) stay holstered
+    # for this many seconds after the fill. The 1R disaster stop and the 15:50
+    # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.
     "ai_exit_min_hold_sec":            0,
     "ai_local_trail_give_spread_k":    0.0,
     # Ceiling on the spread floor, in R. Uncapped, k=1 on a p90
