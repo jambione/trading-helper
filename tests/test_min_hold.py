@@ -76,18 +76,20 @@ def test_it_gates_the_three_discretionary_exits():
     # read in the shadow logger. The logger reads the state and decides
     # nothing, which is the distinction worth pinning — if that count moves,
     # something new is either gating on the delay or has stopped recording it.
-    assert src.count("soft_exit_held_back(pos") == 5
+    assert src.count("soft_exit_held_back(pos") == 4
     assert src.count('"min_hold_active": soft_exit_held_back(pos, now)') == 1
-    for which in ("local_trail", "left_overbought", "dead_trade"):
+    for which in ("left_overbought", "dead_trade"):
         assert f'_note_min_hold(pos, "{which}"' in src, (
             f"{which} suppression must be counted or GATE 1 has no mechanism")
+    assert '_note_min_hold(pos, "local_trail"' not in src, (
+        "ratchet sale must not be muzzled by min-hold")
 
 
 def test_every_gated_exit_also_records_the_block():
     """A suppressed exit that logs nothing is an experiment with no readout."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    assert src.count("_note_min_hold(") == 4      # 3 call sites + the def
+    assert src.count("_note_min_hold(") == 3      # 2 call sites + the def
 
 
 def test_noting_a_block_counts_and_labels_without_deciding():

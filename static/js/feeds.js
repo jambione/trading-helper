@@ -1049,11 +1049,11 @@ function _holdCellTitle(r) {
   if (left == null) {
     const open = !!(r && (r.is_position || r.phase === 'open'));
     return open
-      ? 'Min-hold done. Ratchet sells the next time LAST tags the shelf.'
-      : 'Min-hold countdown on an open long only.';
+      ? 'Hold done. Ratchet sells the next time LAST tags the shelf.'
+      : 'Hold countdown on an open long only.';
   }
-  return `Sale of the ratchet shelf is held for ${_fmtHoldClock(left)}. `
-    + 'The shelf still raises. 1R disaster stop and 15:50 flatten still fire.';
+  return `Dead-trade / left-overbought held ${_fmtHoldClock(left)}. `
+    + 'Ratchet still sells if LAST tags the shelf.';
 }
 
 function _lastPx(r) {
@@ -1090,7 +1090,7 @@ function _stopCellTitle(r) {
   if (Number.isFinite(peak) && peak > 0) bits.push(`peak $${peak.toFixed(2)}`);
   const left = _holdLeft(r);
   if (left != null) {
-    bits.push(`sale HELD ${Math.ceil(left)}s (5m min-hold). Shelf still raises.`);
+    bits.push('ratchet sells on HIT even during Hold. Hold only mutes dead-trade / left-OB.');
   } else if (_shelfHit(r)) {
     bits.push('LAST is through the shelf — selling.');
   } else {
