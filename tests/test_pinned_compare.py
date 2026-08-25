@@ -42,6 +42,24 @@ def test_pinned_surfaced_in_three_indicator_state():
     assert ts.three_indicator_state()["pinned"] is True
 
 
+def test_three_indicator_state_marks_percent_r_live_on_realtime_bars():
+    ts = se.TickerState("IOVA")
+    ts._bars_src = "realtime"
+    ts._bars_age_sec = 1.1
+    ts.three_ind_state = {"pctr": -11.3, "pctr_rising": True}
+    st = ts.three_indicator_state()
+    assert st["pctr_src"] == "live"
+    assert st["pctr"] == -11.3
+    assert st["bars_src"] == "realtime"
+
+
+def test_three_indicator_state_does_not_call_alpaca_percent_r_live():
+    ts = se.TickerState("IOVA")
+    ts._bars_src = "alpaca"
+    st = ts.three_indicator_state()
+    assert st["pctr_src"] == "alpaca"
+
+
 # ── THREE_IND_* env overrides ─────────────────────────────────────────────────
 
 def test_env_overrides_parse_types(monkeypatch):

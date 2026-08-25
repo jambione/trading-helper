@@ -3140,6 +3140,60 @@ def refresh_engine_rsi(rec: dict, sig: dict | None) -> bool:
     return True
 
 
+def _engine_exh_fresh(sig: dict, cfg: dict) -> bool:
+    """True when the engine %R is from Finnhub trades and young enough to use."""
+    if str(sig.get("bars_src") or "").strip().lower() != "realtime":
+        return False
+    if sig.get("pctr") is None:
+        return False
+    try:
+        age = float(sig.get("bars_age_sec"))
+    except (TypeError, ValueError):
+        return False
+    try:
+        cap = float(cfg.get("ai_watch_engine_exh_max_age_sec", 8.0) or 8.0)
+    except (TypeError, ValueError):
+        cap = 8.0
+    return 0.0 <= age <= max(0.5, cap)
+
+
+def refresh_engine_exh(rec: dict, sig: dict | None, cfg: dict | None,
+                       now: float) -> bool:
+    """Stamp the engine's Finnhub %R onto the watch record.
+
+    Same job as refresh_engine_rsi: the 2s sync must not recompute EXH from
+    sampled last prints when a tick-true reading is already on the wire.
+    Returns True when the engine value was written.
+    """
+    if not isinstance(rec, dict) or not isinstance(sig, dict):
+        return False
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not _engine_exh_fresh(sig, cfg):
+        return False
+    ind = rec.get("indicator")
+    if not isinstance(ind, dict):
+        ind = {}
+        rec["indicator"] = ind
+    pctr = _f_or_none(sig.get("pctr"))
+    if pctr is None:
+        return False
+    ind["pctr"] = float(pctr)
+    ind["pctr_rising"] = bool(sig.get("pctr_rising"))
+    ind["pctr_falling"] = bool(sig.get("pctr_falling"))
+    if sig.get("pctr_slow") is not None:
+        ind["pctr_slow"] = _f_or_none(sig.get("pctr_slow"))
+    ind["pctr_slow_rising"] = bool(sig.get("pctr_slow_rising"))
+    ind["pctr_slow_falling"] = bool(sig.get("pctr_slow_falling"))
+    ind["pctr_ob"] = bool(sig.get("pctr_ob"))
+    ind["pctr_tight"] = bool(sig.get("pctr_tight"))
+    if sig.get("pctr_gap") is not None:
+        ind["pctr_gap"] = _f_or_none(sig.get("pctr_gap"))
+    ind["pctr_src"] = "live"
+    ind["pctr_px_src"] = "engine"
+    ind["pctr_ts"] = float(now)
+    return True
+
+
 # Block codes cm_rsi_allows_buy can produce. Carried-forward values for these
 # go stale the moment the RSI behind them moves.
 _RSI_BLOCK_PREFIXES = ("no_rsi_data", "rsi_extended", "rsi_not_rising",
@@ -3648,7 +3702,9 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 ensure_offset_zone_if_needed(rec, ask_for_zone, cfg_z, t0)
             # Refresh %R on the same print we would arm with, every 2s sync.
             if ask_for_zone:
-                ensure_live_exhaustion(rec, ask_for_zone, cfg_z, t0)
+                ensure_live_exhaustion(
+                    rec, ask_for_zone, cfg_z, t0,
+                    sig=_sync_indicators.get(sym))
             # And the RSI half, from the wire the engine refreshes every
             # second. Without this the book's RSI is a poll_once artefact,
             # up to ai_watch_poll_sec (20s) behind the reading the operator
@@ -4348,8 +4404,13 @@ def indicator_price(rec: dict, cfg: dict, now: float) -> tuple[float | None, str
 
 def ensure_live_exhaustion(
     rec: dict, price: float, cfg: dict, now: float,
+    sig: dict | None = None,
 ) -> bool:
     """Warm bar cache if needed and stamp live %R onto the watch record.
+
+    Prefer the engine wire when it is Finnhub realtime and fresh — that is
+    every trade, not a 2s sample of last. Local stream_bars is the fallback
+    when the engine is not covering the name.
 
     Call this on every poll that has a usable price — not only when arming.
     The buy gate and the AI Watch exhaustion column both read
@@ -4367,6 +4428,8 @@ def ensure_live_exhaustion(
         return False
     if not bool(cfg.get("ai_watch_exhaustion_live", True)):
         return False
+    if refresh_engine_exh(rec, sig, cfg, now):
+        return True
     try:
         px = float(price)
     except (TypeError, ValueError):
@@ -7743,6 +7806,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "pctr_slow": sig.get("pctr_slow"),
                 "pctr_rising": sig.get("pctr_rising"),
                 "pctr_falling": sig.get("pctr_falling"),
+                "pctr_slow_rising": sig.get("pctr_slow_rising"),
                 "pctr_slow_falling": sig.get("pctr_slow_falling"),
                 "pctr_ob": sig.get("pctr_ob"),
                 "pctr_tight": sig.get("pctr_tight"),
@@ -7782,7 +7846,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             # Still warm %R so the UI column and shadow log are honest —
             # without this, far names never populate exhaustion either.
             try:
-                ensure_live_exhaustion(rec, float(stream_px), cfg, t0)
+                ensure_live_exhaustion(
+                    rec, float(stream_px), cfg, t0, sig=sig)
             except Exception:
                 pass
             zone = _structure_levels(rec.get("structure"))
@@ -7873,7 +7938,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             try:
                 near = _price_in_or_below_zone(rec, ask_f)
                 if near or bool(cfg.get("ai_watch_exhaustion_all_rows", True)):
-                    ensure_live_exhaustion(rec, ask_f, cfg, t0)
+                    ensure_live_exhaustion(
+                        rec, ask_f, cfg, t0, sig=indicators.get(sym))
             except Exception:
                 pass
 
@@ -8168,7 +8234,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _skip("stale_quote", detail=px_src2)
             continue
         try:
-            ensure_live_exhaustion(rec, ask_f, cfg, t0)
+            ensure_live_exhaustion(
+                rec, ask_f, cfg, t0, sig=indicators.get(sym))
         except Exception:
             pass
         try:

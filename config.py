@@ -507,6 +507,8 @@ DEFAULT_CONFIG = {
     # the print every ~2s; this is that print as 1-minute OHLC. Off restores
     # REST-only windows. Does not change the min-hold exit.
     "ai_watch_stream_bars_live": True,
+    # Prefer engine %R (Finnhub realtime_bars) when the wire is this fresh.
+    "ai_watch_engine_exh_max_age_sec": 8.0,
     # Fade must persist this long before selling. SECONDS, not polls: the
     # position loop runs every 5s against a 60s engine refresh, so a poll count
     # measured the same stale reading repeatedly and fired ~12x early.

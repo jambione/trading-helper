@@ -6,11 +6,13 @@ Supports dynamic ticker subscriptions while the stream is live.
 import asyncio
 import json
 import logging
+import os
 import queue as _queue
 import threading
 import time
 from datetime import datetime
 from collections import deque
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
@@ -287,6 +289,43 @@ def start_finnhub_stream(api_key: str, tickers: list):
     _STREAM_THREAD = thread
     FINNHUB_STATE.add_log("INFO", f"Starting Finnhub stream for {len(tickers)} tickers…")
     return thread
+
+
+def _key_from_engine_env(name: str) -> str:
+    path = Path(__file__).resolve().parent / "signal_engine.env"
+    if not path.exists():
+        return ""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, _, v = s.partition("=")
+            if k.strip() == name:
+                return v.strip().strip('"').strip("'")
+    except OSError:
+        return ""
+    return ""
+
+
+def engine_finnhub_key() -> str:
+    """The key the signal engine will use for its trade socket. Never log it."""
+    for name in ("FINNHUB_API_KEY_ENGINE", "FINNHUB_API_KEY"):
+        got = (os.getenv(name) or "").strip() or _key_from_engine_env(name)
+        if got:
+            return got
+    return ""
+
+
+def dashboard_ws_collides_with_engine(dashboard_key: str) -> bool:
+    """True when opening a dashboard WS would steal the engine's one connection.
+
+    Finnhub free tier allows one socket per key. 2026-08-20 the dashboard won
+    the race and the engine's aggregator saw no trades all session.
+    """
+    dash = (dashboard_key or "").strip()
+    eng = engine_finnhub_key()
+    return bool(dash and eng and dash == eng)
 
 
 # ── REST API helpers ──────────────────────────────────────────

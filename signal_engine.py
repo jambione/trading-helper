@@ -1146,6 +1146,12 @@ class TickerState:
             # inferred later, because the source flips per ticker mid-session.
             "bars_src":       getattr(self, "_bars_src", "alpaca"),
             "bars_age_sec":   getattr(self, "_bars_age_sec", None),
+            # EXH provenance: live = Finnhub trades on realtime_bars.
+            # Anything else is REST fallback and must not look like the tape.
+            "pctr_src": (
+                "live" if getattr(self, "_bars_src", "") == "realtime"
+                else (getattr(self, "_bars_src", None) or "engine")
+            ),
             # 3-indicator breakdown (drives the three condition pills)
             "cm_rsi":         s.get("cm_rsi"),
             "cm_ok":          bool(s.get("cm_ok")),
@@ -1157,6 +1163,7 @@ class TickerState:
             "pctr_slow":         s.get("pctr_slow"),
             "pctr_falling":      bool(s.get("pctr_falling")),
             "pctr_slow_falling": bool(s.get("pctr_slow_falling")),
+            "pctr_slow_rising":  bool(s.get("pctr_slow_rising")),
             "pctr_deep_os":      bool(s.get("pctr_deep_os")),
             "pctr_ob":           bool(s.get("pctr_ob")),
             "pctr_tight":        bool(s.get("pctr_tight")),

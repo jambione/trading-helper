@@ -96,6 +96,7 @@ from finnhub_stream import (
     start_finnhub_stream,
     request_subscribe as _fh_subscribe,
     fetch_realtime_quote as _fh_rest_quote,
+    dashboard_ws_collides_with_engine,
 )
 
 ET                 = ZoneInfo("America/New_York")
@@ -3199,7 +3200,13 @@ async def _startup():
     await loop.run_in_executor(None, _connect_alpaca)
 
     fh_key = STATE.cfg.get("finnhub_key", "")
-    if fh_key:
+    if fh_key and dashboard_ws_collides_with_engine(fh_key):
+        log.warning(
+            "[STARTUP] Finnhub WS skipped — same key as the engine. "
+            "The engine owns trades for EXH/RSI; last price uses REST/Alpaca. "
+            "Set FINNHUB_API_KEY_ENGINE to a second key to stream both."
+        )
+    elif fh_key:
         try:
             start_finnhub_stream(fh_key, load_tickers())
             log.info("[STARTUP] Finnhub stream started")
@@ -4288,11 +4295,16 @@ async def api_config_save(request: Request):
 
         new_fh_key = STATE.cfg.get("finnhub_key", "")
         if new_fh_key and new_fh_key != old_fh_key:
-            try:
-                start_finnhub_stream(new_fh_key, load_tickers())
-                log.info("[CFG] Finnhub stream restarted with new key")
-            except Exception as e:
-                log.warning(f"[CFG] Finnhub restart: {e}")
+            if dashboard_ws_collides_with_engine(new_fh_key):
+                log.warning(
+                    "[CFG] Finnhub WS not started — same key as the engine"
+                )
+            else:
+                try:
+                    start_finnhub_stream(new_fh_key, load_tickers())
+                    log.info("[CFG] Finnhub stream restarted with new key")
+                except Exception as e:
+                    log.warning(f"[CFG] Finnhub restart: {e}")
 
         return JSONResponse({"ok": True})
     except Exception as e:

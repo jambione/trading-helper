@@ -330,6 +330,7 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
         "pctr": None, "pctr_rising": False, "pctr_ok": False,
         # Slow %R line + deep-oversold band (desk FOCUS uses both lines)
         "pctr_slow": None, "pctr_falling": False, "pctr_slow_falling": False,
+        "pctr_slow_rising": False,
         "pctr_deep_os": False,
         "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
         "cm_rsi_low": False, "cm_rsi_green": False,
@@ -364,6 +365,7 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
         out["pctr_slow"] = round(float(pr_s), 1)
     out["pctr_falling"] = _falling(a["s_percentR"], i, tl)
     out["pctr_slow_falling"] = _falling(a["l_percentR"], i, tl)
+    out["pctr_slow_rising"] = _rising(a["l_percentR"], i, tl)
     if (np.isfinite(pr) and np.isfinite(pr_s)
             and -100.0 <= float(pr) <= -75.0
             and -100.0 <= float(pr_s) <= -75.0

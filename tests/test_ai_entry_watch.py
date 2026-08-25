@@ -4747,6 +4747,53 @@ def test_arm_requires_both_exhaustion_and_rsi(monkeypatch):
     assert why != "rsi_extended"
 
 
+def test_refresh_engine_exh_stamps_fresh_realtime_percent_r():
+    import ai_entry_watch as ew
+
+    rec = {"symbol": "IOVA", "indicator": {"pctr": -80.0, "pctr_src": "clock_range"}}
+    sig = {
+        "pctr": -11.3, "pctr_rising": True, "pctr_falling": False,
+        "pctr_slow": -14.0, "pctr_slow_rising": True, "pctr_ob": True,
+        "bars_src": "realtime", "bars_age_sec": 1.2,
+    }
+    cfg = {"ai_watch_engine_exh_max_age_sec": 8.0}
+    assert ew.refresh_engine_exh(rec, sig, cfg, now=1.0) is True
+    ind = rec["indicator"]
+    assert ind["pctr"] == -11.3
+    assert ind["pctr_src"] == "live"
+    assert ind["pctr_px_src"] == "engine"
+    assert ind["pctr_rising"] is True
+
+
+def test_refresh_engine_exh_ignores_alpaca_fallback():
+    import ai_entry_watch as ew
+
+    rec = {"symbol": "IOVA", "indicator": {"pctr": -40.0, "pctr_src": "live"}}
+    sig = {"pctr": -11.3, "bars_src": "alpaca", "bars_age_sec": 0.4}
+    assert ew.refresh_engine_exh(rec, sig, {}, now=1.0) is False
+    assert rec["indicator"]["pctr"] == -40.0
+
+
+def test_ensure_live_exhaustion_does_not_overwrite_fresh_engine_percent_r():
+    import ai_entry_watch as ew
+
+    rec = {"symbol": "IOVA"}
+    sig = {
+        "pctr": -11.3, "pctr_rising": True, "pctr_falling": False,
+        "bars_src": "realtime", "bars_age_sec": 2.0,
+    }
+    cfg = {
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_exhaustion_live": True,
+        "ai_watch_engine_exh_max_age_sec": 8.0,
+        "ai_watch_stream_bars_live": False,
+    }
+    assert ew.ensure_live_exhaustion(rec, 8.40, cfg, now=10.0, sig=sig) is True
+    assert rec["indicator"]["pctr"] == -11.3
+    assert rec["indicator"]["pctr_src"] == "live"
+    assert rec["indicator"]["pctr_px_src"] == "engine"
+
+
 def test_refresh_engine_rsi_stamps_the_wire_value():
     """The 2s sync must pick up the engine's 1s RSI, not carry a stale one."""
     import ai_entry_watch as ew
