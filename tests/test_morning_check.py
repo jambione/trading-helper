@@ -133,7 +133,8 @@ def test_all_columns_emitted_passes():
     row = {"ts": _ts(11), "symbol": "AAA", "setup_ok": False,
            "setup_legs": "", "setup_n_legs": 0, "shares_out_m": None,
            "news_n_24h": 0, "rvol_ok": None, "vol_session": None,
-           "pctr_both_rising": None, "pctr_diverging": None}
+           "pctr_both_rising": None, "pctr_diverging": None,
+           "setup_entry_ok": None, "setup_exit_ok": None}
     mc.check_setup_fields(DAY, [row])
     assert _status("setup fields present") == "PASS"
 

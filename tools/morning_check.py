@@ -203,7 +203,8 @@ def check_setup_fields(day: str, rows: list[dict]) -> None:
         return
     need = ("setup_ok", "setup_legs", "setup_n_legs", "shares_out_m",
             "news_n_24h", "rvol_ok", "vol_session",
-            "pctr_both_rising", "pctr_diverging")
+            "pctr_both_rising", "pctr_diverging",
+            "setup_entry_ok", "setup_exit_ok")
     absent = [k for k in need if not any(k in r for r in rows[-200:])]
     if absent:
         record("FAIL", "setup fields present",

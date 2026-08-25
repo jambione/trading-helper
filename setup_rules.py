@@ -47,6 +47,11 @@ MIN_PRICE = 2.0
 MAX_PRICE = 20.0
 MAX_SHARES_OUT_M = 10.0   # millions; OUTSTANDING, an upper bound on float
 NEWS_WINDOW_MIN = 24 * 60.0
+# Stage 2 RSI: enter at the bottom of the oscillation, exit at the top.
+# 0–50 is the desk's existing "not chasing" band; 70+ is leaving the mid.
+RSI_ENTRY_MIN = 0.0
+RSI_ENTRY_MAX = 50.0
+RSI_EXIT_MIN = 70.0
 
 
 def _f(v: Any) -> float | None:
@@ -96,12 +101,17 @@ def evaluate(*, pct_change: Any = None, rvol: Any = None, price: Any = None,
 
 
 def stage2(*, pctr_rising: Any = None, pctr_slow_rising: Any = None,
-           pctr_slow_falling: Any = None, cm_rsi: Any = None) -> dict:
+           pctr_slow_falling: Any = None, cm_rsi: Any = None,
+           cm_rsi_rising: Any = None) -> dict:
     """Timing state for a name that already cleared stage 1.
 
     `both_rising` is the operator's sweet spot — fast and slow travelling
     toward overbought together. `diverging` is the exit tell: one line has
     turned while the other has not, which is where the gain stops.
+
+    RSI enter at the bottom of its oscillation (0–50, turning up), exit
+    at the top (>=70). Unknown never passes: a missing slow line or RSI
+    is not "not rising".
     """
     fast = bool(pctr_rising) if pctr_rising is not None else None
     slow = bool(pctr_slow_rising) if pctr_slow_rising is not None else None
@@ -110,8 +120,26 @@ def stage2(*, pctr_rising: Any = None, pctr_slow_rising: Any = None,
     diverging = None
     if fast is not None and slow is not None:
         diverging = bool(fast != slow) or bool(slow_dn and fast)
+    rsi = _f(cm_rsi)
+    rsi_bottom = (
+        rsi is not None and RSI_ENTRY_MIN <= rsi <= RSI_ENTRY_MAX)
+    rsi_top = rsi is not None and rsi >= RSI_EXIT_MIN
+    rsi_up = bool(cm_rsi_rising) if cm_rsi_rising is not None else None
+    entry = (
+        both is True
+        and rsi_bottom is True
+        and rsi_up is True
+    )
+    exit_ok = bool(diverging) or bool(rsi_top)
     return {
         "pctr_both_rising": both,
         "pctr_diverging": diverging,
-        "cm_rsi": _f(cm_rsi),
+        "cm_rsi": rsi,
+        "rsi_at_bottom": rsi_bottom if rsi is not None else None,
+        "rsi_at_top": rsi_top if rsi is not None else None,
+        "rsi_rising": rsi_up,
+        "entry_ok": entry if (
+            both is not None and rsi is not None and rsi_up is not None
+        ) else None,
+        "exit_ok": exit_ok if (diverging is not None or rsi is not None) else None,
     }

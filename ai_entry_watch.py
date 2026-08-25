@@ -1425,6 +1425,8 @@ def _setup_fields(rec: dict, symbol: str, price: float | None,
         "pctr_rising": None, "pctr_slow_rising": None,
         "pctr_slow_falling": None, "pctr_both_rising": None,
         "pctr_diverging": None,
+        "rsi_at_bottom": None, "rsi_at_top": None,
+        "setup_entry_ok": None, "setup_exit_ok": None,
     }
     try:
         import float_feed
@@ -1442,7 +1444,8 @@ def _setup_fields(rec: dict, symbol: str, price: float | None,
             pctr_rising=sig.get("pctr_rising"),
             pctr_slow_rising=sig.get("pctr_slow_rising"),
             pctr_slow_falling=sig.get("pctr_slow_falling"),
-            cm_rsi=sig.get("cm_rsi"))
+            cm_rsi=sig.get("cm_rsi"),
+            cm_rsi_rising=sig.get("cm_rsi_rising"))
         out.update({
             "shares_out_m": so,
             "ok": legs["ok"],
@@ -1456,6 +1459,10 @@ def _setup_fields(rec: dict, symbol: str, price: float | None,
             "pctr_slow_falling": sig.get("pctr_slow_falling"),
             "pctr_both_rising": s2["pctr_both_rising"],
             "pctr_diverging": s2["pctr_diverging"],
+            "rsi_at_bottom": s2["rsi_at_bottom"],
+            "rsi_at_top": s2["rsi_at_top"],
+            "setup_entry_ok": s2["entry_ok"],
+            "setup_exit_ok": s2["exit_ok"],
         })
     except Exception:  # noqa: BLE001
         pass
@@ -6519,6 +6526,10 @@ def _shadow_row(
         "pctr_slow_falling": setup["pctr_slow_falling"],
         "pctr_both_rising": setup["pctr_both_rising"],
         "pctr_diverging": setup["pctr_diverging"],
+        "rsi_at_bottom": setup.get("rsi_at_bottom"),
+        "rsi_at_top": setup.get("rsi_at_top"),
+        "setup_entry_ok": setup.get("setup_entry_ok"),
+        "setup_exit_ok": setup.get("setup_exit_ok"),
         # SHADOW: the same %R over Finnhub stream bars instead of IEX bars.
         # Decides nothing. Logged beside `pctr` / `pctr_src` /
         # `window_span_min` so the question "would a denser feed fix the

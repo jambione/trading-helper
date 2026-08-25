@@ -153,6 +153,36 @@ def test_stage2_reports_unknown_when_a_line_is_missing():
     s = sr.stage2(pctr_rising=True, pctr_slow_rising=None)
     assert s["pctr_both_rising"] is None
     assert s["pctr_diverging"] is None
+    assert s["entry_ok"] is None
+
+
+def test_stage2_entry_needs_both_lines_and_rsi_at_the_bottom_turning_up():
+    s = sr.stage2(pctr_rising=True, pctr_slow_rising=True,
+                  cm_rsi=12.0, cm_rsi_rising=True)
+    assert s["entry_ok"] is True
+    assert s["rsi_at_bottom"] is True
+    assert s["exit_ok"] is False
+
+
+def test_stage2_entry_fails_closed_when_rsi_is_already_extended():
+    s = sr.stage2(pctr_rising=True, pctr_slow_rising=True,
+                  cm_rsi=82.0, cm_rsi_rising=True)
+    assert s["entry_ok"] is False
+    assert s["rsi_at_top"] is True
+    assert s["exit_ok"] is True
+
+
+def test_stage2_entry_fails_when_rsi_is_falling_at_the_bottom():
+    s = sr.stage2(pctr_rising=True, pctr_slow_rising=True,
+                  cm_rsi=8.0, cm_rsi_rising=False)
+    assert s["entry_ok"] is False
+
+
+def test_stage2_exit_when_one_percent_r_line_turns():
+    s = sr.stage2(pctr_rising=True, pctr_slow_rising=False,
+                  pctr_slow_falling=True, cm_rsi=40.0, cm_rsi_rising=True)
+    assert s["entry_ok"] is False
+    assert s["exit_ok"] is True
 
 
 # ------------------------------------------------- volume provenance on the row
