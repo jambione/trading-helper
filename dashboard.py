@@ -633,15 +633,22 @@ def overlay_ai_book_live_prices(
                 # same Finnhub/Alpaca stream as Momentum Stocks (arming still
                 # uses the poller's on-disk last_ask via entry_watch_state).
                 row["last_ask"] = px
-                row["price_src"] = "stream"
-                row["last_ask_src"] = "stream"
-                if age is not None:
+                # Only claim stream freshness when the print is young enough
+                # to arm. Stamping age=40–120s as stream made apply_tape_blocker
+                # set sticky stale_quote across the book (2026-08-25) while
+                # PRICE still ticked. Older/unknown ages update the number
+                # only — State stays on the poller's verdict.
+                try:
+                    from ai_entry_watch import decision_max_age_sec as _dec_max
+                    decision_max = float(_dec_max(None))
+                except Exception:
+                    decision_max = 8.0
+                fresh_stream = age is not None and age <= decision_max
+                if fresh_stream:
+                    row["price_src"] = "stream"
+                    row["last_ask_src"] = "stream"
                     row["price_age_sec"] = age
                     row["last_ask_age_sec"] = age
-                # Live above/below from stream vs zone so BLOCKER is not stuck
-                # on a 20s poller verdict while PRICE ticks. Armable overshoots
-                # (within max_r below the floor) count as in-zone — same rule
-                # as ai_entry_watch.ask_triggers_zone / should_arm_buy.
                 try:
                     lo = float(row.get("entry_low") or 0)
                     hi = float(row.get("entry_high") or 0)
@@ -686,7 +693,11 @@ def overlay_ai_book_live_prices(
                             (_lc_hold() or {}).get("ai_exit_min_hold_sec", 0) or 0)
                     except Exception:
                         pass
-                if lo > 0 and hi > 0:
+                # Live above/below from a FRESH stream vs zone so BLOCKER is
+                # not stuck on a 20s poller verdict while PRICE ticks. Skip
+                # when the overlay print is too old: applying the blocker with
+                # a stale stream stamp locked State on stale quote (2026-08-25).
+                if fresh_stream and lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import apply_tape_blocker
                         apply_tape_blocker(row, px)
@@ -2159,19 +2170,30 @@ _PRICE_STALE_SEC = 20.0
 
 def stream_covered(fh_prices: dict, now: float,
                    stale_sec: float = _PRICE_STALE_SEC) -> set:
-    """Symbols whose streamed price is young enough to still be current.
+    """Symbols whose streamed *trade* is young enough to still be current.
 
     Only these are excluded from the Alpaca fallback poll. Previously *any*
     Finnhub price counted, so a symbol that printed once and went quiet kept
     the 5s fallback switched off for the rest of the session — and pre-market,
     where the stream is often idle, that was the normal case.
+
+    Must key off ``trade_ts`` (the print's own time), not ``ts_unix`` (when we
+    learned it). Finnhub REST quotes rewrite ``ts_unix`` every 30s with no
+    trade stamp; treating those as covered starved Alpaca all RTH on
+    2026-08-25 and the book painted stale quote on almost every row.
     """
     covered = set()
     for t, d in (fh_prices or {}).items():
         try:
             if not d.get("price"):
                 continue
-            obs = float(d.get("ts_unix") or 0)
+            # Prefer the trade's own clock. Fall back to ts_unix only when it
+            # is known to be a stream write that also carried trade_ts in the
+            # past — REST quotes leave trade_ts None and must not cover.
+            trade_ts = d.get("trade_ts")
+            if trade_ts is None:
+                continue
+            obs = float(trade_ts or 0)
         except (TypeError, ValueError):
             continue
         # No timestamp means unknown age, which is not the same as current.

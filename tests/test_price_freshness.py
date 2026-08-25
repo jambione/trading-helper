@@ -71,7 +71,7 @@ def test_a_symbol_that_printed_once_and_went_quiet_is_not_covered():
 
 
 def test_a_currently_ticking_symbol_is_covered():
-    fh = {"AAAA": {"price": 10.0, "ts_unix": T0 - 2}}
+    fh = {"AAAA": {"price": 10.0, "ts_unix": T0 - 2, "trade_ts": T0 - 2}}
     assert _covered(fh, T0, 20.0) == {"AAAA"}
 
 
@@ -79,6 +79,12 @@ def test_a_price_with_no_timestamp_is_not_treated_as_current():
     for d in ({"price": 10.0}, {"price": 10.0, "ts_unix": 0},
               {"price": 10.0, "ts_unix": None}):
         assert _covered({"AAAA": d}, T0, 20.0) == set()
+
+
+def test_finnhub_rest_quote_without_trade_ts_is_not_covered():
+    """REST rewrites ts_unix every 30s with no trade stamp — must not starve Alpaca."""
+    fh = {"AAAA": {"price": 10.0, "ts_unix": T0 - 1, "trade_ts": None}}
+    assert _covered(fh, T0, 20.0) == set()
 
 
 # ── monitor display ─────────────────────────────────────────────────────────

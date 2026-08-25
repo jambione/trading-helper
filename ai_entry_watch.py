@@ -333,11 +333,13 @@ def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
 
     LIVE 2026-08-25: STATE painted buy / EXH 100% OB while last_ask_src was
     stale_tape. Realtime EXH/RSI does not make a dead last print a fill.
+
+    Computed from src/age only — never from a leftover ``block_code``.
+    Treating ``stale_quote`` as sticky locked the whole book on 2026-08-25
+    after one bad overlay age: the tape recovered and State still said stale.
     """
     if not isinstance(rec, dict):
         return False
-    if str(rec.get("block_code") or "").strip().lower() == "stale_quote":
-        return True
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
@@ -474,6 +476,8 @@ _GEOMETRY_BLOCK_CODES = frozenset({
 })
 # Poller stamps should_arm_buy does not know about. Keep these.
 # Do NOT keep stale arm vetoes (thin_rvol, heating_too_low) after knobs change.
+# Do NOT keep stale_quote: it is a data condition that must clear when the
+# tape is fresh again. Keeping it sticky locked every row on 2026-08-25.
 _POST_ARM_BLOCK_CODES = frozenset({
     "dead_reentry", "loser_reentry", "reentry_cooldown",
     "buy_cap", "max_positions", "not_trading_hours",
@@ -481,7 +485,7 @@ _POST_ARM_BLOCK_CODES = frozenset({
     "wash_trade", "wash_cooldown",
     "daily_loss_limit", "open_risk_cap",
     "trader_not_ready", "no_equity", "no_buying_power",
-    "placing", "stale_quote",
+    "placing",
 })
 
 
@@ -7928,6 +7932,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 if stream_px and float(stream_px) > 0:
                     rec["last_ask"] = float(stream_px)
                     rec["last_ask_src"] = "stream"
+                    # stream_quote only returns when age is known.
+                    tape = stream_quote(sym)
+                    if tape is not None:
+                        rec["last_ask_age_sec"] = float(tape[1])
             except (TypeError, ValueError):
                 pass
             # Still warm %R so the UI column and shadow log are honest —

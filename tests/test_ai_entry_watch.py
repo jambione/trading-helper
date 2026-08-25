@@ -4188,6 +4188,48 @@ def test_overlay_live_prices_does_not_refetch_api_state(monkeypatch):
     assert out["entry_book"][0]["price"] == 1.5
 
 
+def test_overlay_old_age_does_not_stamp_stream_or_stale_quote(monkeypatch):
+    """LIVE 2026-08-25: overlay age=72s as stream locked State on stale quote."""
+    import dashboard as d
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    monkeypatch.setattr(d, "_live_quote_for", lambda s, now=None: (9.61, 72.0))
+    payload = {
+        "entry_book": [{
+            "symbol": "ASST", "source": "momentum",
+            "entry_low": 9.5, "entry_high": 9.7, "stop_price": 9.0,
+            "block_code": "rsi_not_rising", "blocker": "rsi not rising",
+            "last_ask_src": "rest",
+        }],
+        "entry_watch": [],
+    }
+    out = d.overlay_ai_book_live_prices(payload)
+    row = out["entry_book"][0]
+    assert row["price"] == 9.61
+    assert row["last_ask_src"] == "rest"
+    assert row["block_code"] == "rsi_not_rising"
+    assert row.get("last_ask_age_sec") != 72.0
+
+
+def test_stale_quote_clears_when_tape_is_fresh_again(monkeypatch):
+    """stale_quote must not be sticky once src/age recover."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    row = {
+        "symbol": "LIVE", "source": "momentum",
+        "entry_low": 9.596, "entry_high": 9.624, "stop_price": 9.13,
+        "zone_kind": "at_last",
+        "last_ask_src": "stream", "last_ask_age_sec": 1.0,
+        "block_code": "stale_quote", "blocker": "stale quote",
+    }
+    ew.apply_tape_blocker(row, 9.61)
+    assert row["block_code"] != "stale_quote"
+
+
 def test_ensure_offset_last_mode_tracks_the_tape():
     import ai_entry_watch as ew
 

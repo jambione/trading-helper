@@ -710,11 +710,11 @@ function _createBookRow(r, owner) {
   return el;
 }
 
-/** True when Last is too old to arm — STATE must say so, never "buy". */
+/** True when Last is too old to arm — STATE must say so, never "buy".
+ *  Src/age only — a leftover block_code=stale_quote must not stick after
+ *  the tape recovers (2026-08-25 locked the whole book that way). */
 function _bookTapeStale(r) {
   if (!r) return false;
-  const code = String(r.block_code || '').toLowerCase().trim();
-  if (code === 'stale_quote') return true;
   const src = String(r.last_ask_src || r.price_src || '').toLowerCase().trim();
   if (src === 'stale_tape' || src === 'none') return true;
   const age = r.last_ask_age_sec != null ? Number(r.last_ask_age_sec)
