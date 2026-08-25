@@ -680,6 +680,12 @@ def overlay_ai_book_live_prices(
                     # armed. A panel nobody trusts is worse than no panel,
                     # because the day something IS broken it looks the same.
                     row["min_hold_left_sec"] = _min_hold_left_sec(row)
+                    try:
+                        from config import load_config as _lc_hold
+                        row["min_hold_sec"] = float(
+                            (_lc_hold() or {}).get("ai_exit_min_hold_sec", 0) or 0)
+                    except Exception:
+                        pass
                 if lo > 0 and hi > 0:
                     try:
                         from ai_entry_watch import apply_tape_blocker

@@ -1201,6 +1201,37 @@ def book_table_rows(
                     float(loc) if loc is not None else None)
             except (TypeError, ValueError):
                 by_sym[key]["local_stop"] = None
+            try:
+                peak = float(mpos.get("peak_price") or 0) or None
+            except (TypeError, ValueError):
+                peak = None
+            by_sym[key]["peak_price"] = peak
+            et = mpos.get("entry_time")
+            try:
+                by_sym[key]["entry_time"] = float(et) if et is not None else None
+            except (TypeError, ValueError):
+                by_sym[key]["entry_time"] = None
+            try:
+                import ai_positions as _cp2
+                now_h = time.time()
+                held = _cp2.soft_exit_held_back(mpos, now_h)
+                by_sym[key]["min_hold_active"] = bool(held)
+                if held and et is not None:
+                    left = float(cfg.get("ai_exit_min_hold_sec", 0) or 0) - (
+                        now_h - float(et))
+                    by_sym[key]["min_hold_left_sec"] = (
+                        round(left, 1) if left > 0 else None)
+                else:
+                    by_sym[key]["min_hold_left_sec"] = None
+                try:
+                    by_sym[key]["min_hold_sec"] = float(
+                        cfg.get("ai_exit_min_hold_sec", 0) or 0)
+                except (TypeError, ValueError):
+                    by_sym[key]["min_hold_sec"] = None
+            except Exception:
+                by_sym[key]["min_hold_active"] = False
+                by_sym[key]["min_hold_left_sec"] = None
+                by_sym[key]["min_hold_sec"] = None
 
     # Membership is owned by sync_watch_from_source_panels (watch file). Do NOT
     # re-filter against the pre-gate shortlist here: Stocktwits score/rvol

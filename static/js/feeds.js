@@ -69,6 +69,12 @@ export function init(panelEl, kind) {
   });
   _updateSortHeaders(headerEls, sortCol, sortDir);
 
+  if (bookRowsEl) {
+    setInterval(() => {
+      bookRowsEl.querySelectorAll('.cell-hold[data-entry-time]').forEach(_tickHoldClock);
+    }, 250);
+  }
+
   /** Prefer last good wire when store briefly has a clobber/empty book. */
   function _aiBook() {
     return _stableAiBook(get('ai_positions') || {});
@@ -323,7 +329,15 @@ function _bookRows(book) {
       avg_entry: p.avg_entry,
       pl: p.pl,
       plpc: p.plpc,
-      local_stop: p.local_stop != null ? p.local_stop : prev.local_stop,
+      local_stop: p.local_stop != null ? p.local_stop
+        : (p.local_stop_price != null ? p.local_stop_price : prev.local_stop),
+      peak_price: p.peak_price != null ? p.peak_price : prev.peak_price,
+      min_hold_left_sec: p.min_hold_left_sec != null ? p.min_hold_left_sec
+        : prev.min_hold_left_sec,
+      min_hold_active: p.min_hold_active != null ? p.min_hold_active
+        : prev.min_hold_active,
+      min_hold_sec: p.min_hold_sec != null ? p.min_hold_sec : prev.min_hold_sec,
+      entry_time: p.entry_time != null ? p.entry_time : prev.entry_time,
       stop_price: p.stop_price != null ? p.stop_price : prev.stop_price,
       risk_per_share: p.risk_per_share != null ? p.risk_per_share : prev.risk_per_share,
       entry_stop_price: p.entry_stop_price != null ? p.entry_stop_price : prev.entry_stop_price,
@@ -712,7 +726,10 @@ function _bookTapeStale(r) {
 function _bookBlockerLabel(r) {
   if (!r) return '—';
   const phase = String(r.phase || '').toLowerCase();
-  if (phase === 'open' || r.is_position) return 'open';
+  if (phase === 'open' || r.is_position) {
+    if (_shelfHit(r) && _holdLeft(r) == null) return 'open · SELL';
+    return 'open';
+  }
   if (phase === 'submitted') return 'sent';
   if (_bookTapeStale(r) && phase !== 'open') return 'stale quote';
   const b = String(r.blocker || r.block_reason || '').trim();
@@ -785,8 +802,36 @@ function _updateBookRow(el, r) {
     trailEl.classList.remove('cell-src');
     trailEl.classList.add('cell-trail');
     trailEl.classList.toggle('is-held', _holdLeft(r) != null);
+    trailEl.classList.toggle('is-hit', _shelfHit(r));
     trailEl.title = _stopCellTitle(r);
+    const shelfNow = _bookStopPx(r);
+    const symStop = String(r.symbol || '').toUpperCase();
+    const prevShelf = trailEl._prevShelf;
+    if (shelfNow != null && prevShelf != null && shelfNow > prevShelf + 1e-9) {
+      trailEl.classList.remove('price-flash--down');
+      trailEl.classList.add('price-flash--up');
+      clearTimeout(trailEl._flashTimer);
+      trailEl._flashTimer = setTimeout(() => trailEl.classList.remove(
+        'price-flash--up'), 600);
+    }
+    if (shelfNow != null) trailEl._prevShelf = shelfNow;
     _setText(trailEl, trail);
+  }
+  const holdEl = el.querySelector('.cell-hold');
+  if (holdEl) {
+    holdEl.classList.toggle('is-held', _holdLeft(r) != null);
+    holdEl.classList.toggle('is-hit', _shelfHit(r));
+    holdEl.title = _holdCellTitle(r);
+    const et = r.entry_time != null ? Number(r.entry_time) : NaN;
+    const cap = r.min_hold_sec != null ? Number(r.min_hold_sec) : NaN;
+    if (Number.isFinite(et) && et > 1e9 && Number.isFinite(cap) && cap > 0) {
+      holdEl.dataset.entryTime = String(et);
+      holdEl.dataset.minHoldSec = String(cap);
+    } else {
+      delete holdEl.dataset.entryTime;
+      delete holdEl.dataset.minHoldSec;
+    }
+    _setText(holdEl, _fmtHoldCell(r));
   }
   const priceEl = el.querySelector('.cell-price');
   if (priceEl) {
@@ -886,7 +931,8 @@ function _bookRowHtml(r) {
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
-    + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}" title="${_esc(_stopCellTitle(r))}">${_esc(trail)}</div>`
+    + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}">${_esc(trail)}</div>`
+    + `<div class="cell-hold${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_holdCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(_fmtHoldCell(r))}</div>`
     + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-rsi${_rsiPairClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_bookRsiText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
@@ -941,27 +987,116 @@ function _fmtTrail(v) {
  *  237 exits on one position exactly as designed and it looked like a
  *  failure every time the panel was checked. */
 function _holdLeft(r) {
-  const v = r && r.min_hold_left_sec != null ? Number(r.min_hold_left_sec) : NaN;
+  if (!r) return null;
+  const open = !!(r.is_position || r.phase === 'open' || r.phase === 'submitted'
+    || r.status === 'filled' || r.status === 'submitted');
+  if (!open) return null;
+  const et = r.entry_time != null ? Number(r.entry_time) : NaN;
+  const cap = r.min_hold_sec != null ? Number(r.min_hold_sec) : NaN;
+  if (Number.isFinite(et) && et > 1e9 && Number.isFinite(cap) && cap > 0) {
+    const left = cap - (Date.now() / 1000 - et);
+    return left > 0 ? left : null;
+  }
+  const v = r.min_hold_left_sec != null ? Number(r.min_hold_left_sec) : NaN;
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
-function _fmtStopCell(r) {
-  const px = _fmtTrail(_bookStopPx(r));
+function _fmtHoldClock(sec) {
+  const n = Math.max(0, Math.ceil(sec));
+  const m = Math.floor(n / 60);
+  const s = String(n % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function _fmtHoldCell(r) {
   const left = _holdLeft(r);
-  if (left == null || px === '—') return px;
-  const m = Math.floor(left / 60);
-  const s = String(Math.floor(left % 60)).padStart(2, '0');
-  return `${px} · held ${m}:${s}`;
+  if (left == null) {
+    const open = !!(r && (r.is_position || r.phase === 'open'));
+    return open ? 'armed' : '—';
+  }
+  if (_shelfHit(r)) return `HIT ${_fmtHoldClock(left)}`;
+  return _fmtHoldClock(left);
+}
+
+function _holdDataAttrs(r) {
+  const et = r && r.entry_time != null ? Number(r.entry_time) : NaN;
+  const cap = r && r.min_hold_sec != null ? Number(r.min_hold_sec) : NaN;
+  if (!Number.isFinite(et) || et < 1e9 || !Number.isFinite(cap) || cap <= 0) {
+    return '';
+  }
+  return ` data-entry-time="${et}" data-min-hold-sec="${cap}"`;
+}
+
+function _tickHoldClock(el) {
+  if (!el) return;
+  const et = Number(el.dataset.entryTime);
+  const cap = Number(el.dataset.minHoldSec);
+  if (!Number.isFinite(et) || !Number.isFinite(cap) || cap <= 0) return;
+  const left = cap - (Date.now() / 1000 - et);
+  const hit = el.classList.contains('is-hit');
+  let text = 'armed';
+  if (left > 0) {
+    text = hit ? `HIT ${_fmtHoldClock(left)}` : _fmtHoldClock(left);
+    el.classList.add('is-held');
+  } else {
+    el.classList.remove('is-held');
+  }
+  if (el.textContent !== text) el.textContent = text;
+}
+
+function _holdCellTitle(r) {
+  const left = _holdLeft(r);
+  if (left == null) {
+    const open = !!(r && (r.is_position || r.phase === 'open'));
+    return open
+      ? 'Min-hold done. Ratchet sells the next time LAST tags the shelf.'
+      : 'Min-hold countdown on an open long only.';
+  }
+  return `Sale of the ratchet shelf is held for ${_fmtHoldClock(left)}. `
+    + 'The shelf still raises. 1R disaster stop and 15:50 flatten still fire.';
+}
+
+function _lastPx(r) {
+  const v = r && (r.price != null ? Number(r.price)
+    : (r.last_ask != null ? Number(r.last_ask) : NaN));
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+function _shelfHit(r) {
+  const last = _lastPx(r);
+  const shelf = _bookStopPx(r);
+  return last != null && shelf != null && last <= shelf + 1e-9;
+}
+
+function _fmtStopCell(r) {
+  const shelf = _bookStopPx(r);
+  const px = _fmtTrail(shelf);
+  if (px === '—') return px;
+  if (_shelfHit(r) && _holdLeft(r) != null) return `${px} · HIT`;
+  if (_shelfHit(r)) return `${px} · SELL`;
+  return px;
 }
 
 function _stopCellTitle(r) {
-  const base = 'Software shelf, not a broker stop — the desk polls every '
-    + '5s and sends a market order when the print goes through it.';
+  const last = _lastPx(r);
+  const shelf = _bookStopPx(r);
+  const peak = r && r.peak_price != null ? Number(r.peak_price) : NaN;
+  const bits = [
+    'Ratchet shelf (software). Raises with the print, never lowers.',
+    'Sells a market order when LAST ≤ shelf — after min-hold if that is on.',
+  ];
+  if (last != null) bits.push(`last $${last.toFixed(2)}`);
+  if (shelf != null) bits.push(`shelf $${shelf.toFixed(2)}`);
+  if (Number.isFinite(peak) && peak > 0) bits.push(`peak $${peak.toFixed(2)}`);
   const left = _holdLeft(r);
-  if (left == null) return base;
-  return base + ` Sale is HELD by ai_exit_min_hold_sec for another `
-    + `${Math.ceil(left)}s (GATE 1). The shelf keeps ratcheting up while `
-    + `held, so a higher shelf is banked when it releases.`;
+  if (left != null) {
+    bits.push(`sale HELD ${Math.ceil(left)}s (5m min-hold). Shelf still raises.`);
+  } else if (_shelfHit(r)) {
+    bits.push('LAST is through the shelf — selling.');
+  } else {
+    bits.push('sale armed: next tag of the shelf exits.');
+  }
+  return bits.join(' · ');
 }
 
 function _zonePx(x) {

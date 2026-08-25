@@ -2395,25 +2395,18 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | EXH | RSI | P&L
-     Eight tracks for eight rendered cells. Qty is display:none and a hidden
-     grid item does not occupy a track, so it gets none — declaring one for it
-     pushed every later cell a slot left and stranded the last track.
-     RSI was pulled from the book when CM RSI-2 stopped gating entries and
-     while live_cm_rsi would publish a value off as few as three bars — a
-     number the desk did not act on and could not trust. Both halves changed:
-     it gates again under ai_watch_arm_require_cm_rsi, and the reading now
-     comes from the engine's series with its source attached, so the column
-     can say which feed drew it. */
+  /* Ticker | State | Last | Entry | Stop | Hold | EXH | RSI | P&L
+     Qty is display:none and must not occupy a track. */
   grid-template-columns:
     minmax(52px, 0.9fr)
     minmax(5rem, 1.0fr)
-    minmax(64px, 0.95fr)
-    minmax(64px, 0.95fr)
-    minmax(62px, 0.85fr)
-    minmax(78px, 1.0fr)
+    minmax(58px, 0.9fr)
+    minmax(58px, 0.9fr)
     minmax(58px, 0.8fr)
-    minmax(66px, 0.95fr);
+    minmax(52px, 0.7fr)
+    minmax(72px, 1.0fr)
+    minmax(52px, 0.75fr)
+    minmax(62px, 0.9fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2432,15 +2425,29 @@ body.mobile .icon-btn {
   line-height: 1.15;
 }
 .panel-ai-watch .feed-cols--ai-book .cell-trail { text-align: right; }
-/* A held shelf is the min-hold experiment working, not a failed stop. The
-   bare number reads as broken because the shelf ratchets UP while muzzled,
-   so it drifts further above the print the longer it behaves correctly. */
+.panel-ai-watch .feed-cols--ai-book .cell-hold {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.panel-ai-watch .feed-cols--ai-book .cell-hold.is-held {
+  color: var(--warn, #e0a33e);
+  font-weight: 600;
+}
+.panel-ai-watch .feed-cols--ai-book .cell-hold.is-hit {
+  color: var(--danger, #f87171);
+  font-weight: 700;
+}
 .panel-ai-watch .feed-cols--ai-book .cell-trail.is-held {
   color: var(--warn, #e0a33e);
-  font-variant-numeric: tabular-nums;
+}
+.panel-ai-watch .feed-cols--ai-book .cell-trail.is-hit {
+  color: var(--danger, #f87171);
+  font-weight: 600;
 }
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
+.panel-ai-watch .feed-cols--ai-book .cell-hold,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-rsi,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
@@ -2481,12 +2488,14 @@ body.mobile .panel-ai-watch.ai-book--has-open .ai-book-status {
 }
 body.mobile .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
   grid-template-columns:
-    minmax(56px, 1fr)
-    minmax(58px, 0.9fr)
+    minmax(52px, 1fr)
+    minmax(52px, 0.85fr)
+    minmax(48px, 0.75fr)
     minmax(52px, 0.8fr)
-    minmax(88px, 1.2fr)
     minmax(44px, 0.7fr)
-    minmax(64px, 1.1fr) !important;
+    minmax(56px, 0.9fr)
+    minmax(44px, 0.7fr)
+    minmax(56px, 1fr) !important;
 }
 @media (max-width: 700px) {
   .panel-ai-watch.ai-book--has-open .th-state,
@@ -2495,12 +2504,14 @@ body.mobile .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
   }
   .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
     grid-template-columns:
-      minmax(56px, 1fr)
-      minmax(58px, 0.9fr)
+      minmax(52px, 1fr)
+      minmax(52px, 0.85fr)
+      minmax(48px, 0.75fr)
       minmax(52px, 0.8fr)
-      minmax(88px, 1.2fr)
       minmax(44px, 0.7fr)
-      minmax(64px, 1.1fr) !important;
+      minmax(56px, 0.9fr)
+      minmax(44px, 0.7fr)
+      minmax(56px, 1fr) !important;
   }
 }
 
