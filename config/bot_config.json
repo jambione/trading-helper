@@ -296,6 +296,7 @@
   "ai_watch_arm_require_cm_rsi": true,
   "ai_watch_require_realtime_rsi": false,
   "ai_watch_arm_cm_rsi_max": 50.0,
+  "ai_watch_arm_cm_rsi_allow_falling_below": 20.0,
   "ai_book_tick_sec": 1.0,
   "ai_local_trail_give_spread_k": 1.0,
   "ai_local_trail_give_spread_max_r": 0.5,

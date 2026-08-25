@@ -5088,6 +5088,48 @@ def test_cm_rsi_rising_requirement_can_be_dropped():
     assert ok is False and why == "rsi_not_rising"
 
 
+def test_cm_rsi_allows_falling_when_deep_os_and_exh_heating():
+    """Falling RSI below 20 is OK only when EXH is already rising toward OB."""
+    import ai_entry_watch as ew
+
+    cfg = _rsi_cfg(ai_watch_arm_cm_rsi_allow_falling_below=20.0)
+    deep_os_heating = {
+        "indicator": {
+            "cm_rsi": 12.0,
+            "cm_rsi_rising": False,
+            "pctr_rising": True,
+        }
+    }
+    ok, why = ew.cm_rsi_allows_buy(deep_os_heating, cfg)
+    assert ok is True and why == "rsi_deep_os_exh_heating"
+
+    # Still falling but not deep enough — rising still required.
+    mid_band = {
+        "indicator": {
+            "cm_rsi": 25.0,
+            "cm_rsi_rising": False,
+            "pctr_rising": True,
+        }
+    }
+    ok, why = ew.cm_rsi_allows_buy(mid_band, cfg)
+    assert ok is False and why == "rsi_not_rising"
+
+    # Deep OS but EXH not heating — no exception.
+    deep_os_flat = {
+        "indicator": {
+            "cm_rsi": 8.0,
+            "cm_rsi_rising": False,
+            "pctr_rising": False,
+        }
+    }
+    ok, why = ew.cm_rsi_allows_buy(deep_os_flat, cfg)
+    assert ok is False and why == "rsi_not_rising"
+
+    # Flag at 0 keeps the old strict rule even with EXH heating.
+    ok, why = ew.cm_rsi_allows_buy(deep_os_heating, _rsi_cfg())
+    assert ok is False and why == "rsi_not_rising"
+
+
 # ── crossing cost on the outcome row ──────────────────────────────────────
 # ai_max_spread_r sits at 0 "until it can be set from these rows rather than
 # guessed". The shadow log priced candidates; nothing priced consequences,

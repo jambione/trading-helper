@@ -1239,12 +1239,15 @@ function _bookRsiText(r) {
 }
 
 /** True when this reading satisfies the arm condition on its own: inside the
- *  0-50 band and turning up. Painted green so the column reads as a signal
- *  rather than a number to interpret. */
+ *  0-50 band and turning up. Also paints when RSI is still falling but deeply
+ *  washed out (<20) while EXH is heating toward overbought — matches
+ *  ai_watch_arm_cm_rsi_allow_falling_below. */
 function _rsiArms(r) {
   if (!r || r.cm_rsi == null || !Number.isFinite(Number(r.cm_rsi))) return false;
   const v = Number(r.cm_rsi);
-  return v >= 0 && v <= 50 && !!r.cm_rsi_rising;
+  if (v < 0 || v > 50) return false;
+  if (r.cm_rsi_rising) return true;
+  return v < 20 && String(r.exhaustion_state || '').toLowerCase() === 'heating';
 }
 
 /** The engine draws its bars from the Finnhub trade stream when the tape is
@@ -1282,7 +1285,15 @@ function _fmtRsiTitle(r) {
     return 'CM RSI-2 — no reading';
   }
   bits.push(r.cm_rsi_rising ? 'rising' : 'not rising');
-  bits.push(_rsiArms(r) ? 'in the 0-50 arm band' : 'outside the arm band');
+  if (_rsiArms(r)) {
+    if (!r.cm_rsi_rising && Number(r.cm_rsi) < 20) {
+      bits.push('deep OS + EXH heating (falling RSI allowed)');
+    } else {
+      bits.push('in the 0-50 arm band');
+    }
+  } else {
+    bits.push('outside the arm band');
+  }
   const src = String(r.cm_rsi_src || '').toLowerCase().trim();
   if (src === 'realtime') {
     bits.push('live Finnhub tape');

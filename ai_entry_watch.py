@@ -187,6 +187,11 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_continuation_unknown": "no %R",
     "overbought": "overbought",
     "heating": "heating",
+    "rsi_deep_os_exh_heating": "RSI OS+EXH↑",
+    "rsi_turning_up": "RSI↑",
+    "rsi_in_band": "RSI band",
+    "rsi_not_rising": "RSI↓",
+    "rsi_extended": "RSI high",
     "stale_quote": "stale quote",
 }
 
@@ -4809,6 +4814,11 @@ def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     ``_rising``). Flat is not rising: on a 2-period RSI a flat print is
     usually a name that is not trading, not one that is turning.
 
+    Exception (``ai_watch_arm_cm_rsi_allow_falling_below``): when RSI is still
+    falling but deeply washed out (below that threshold) AND fast %R is already
+    rising toward overbought (``pctr_rising``), allow the arm. EXH is the
+    timing confirm; RSI only says "not chasing". 0 disables the exception.
+
     ``ai_watch_require_realtime_rsi`` additionally refuses a reading the
     engine drew on the REST fallback rather than the Finnhub tape. The source
     flips per ticker mid-session, so without the check the same gate is
@@ -4851,6 +4861,18 @@ def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     # turn on its own is indistinguishable from taking every arm.
     if bool(cfg.get("ai_watch_arm_cm_rsi_require_rising", True)):
         if not bool(ind.get("cm_rsi_rising")):
+            try:
+                fall_max = float(
+                    cfg.get("ai_watch_arm_cm_rsi_allow_falling_below", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                fall_max = 0.0
+            # Deep OS + EXH already heating: waive the RSI turn.
+            if (
+                fall_max > 0
+                and rsi < fall_max
+                and bool(ind.get("pctr_rising"))
+            ):
+                return True, "rsi_deep_os_exh_heating"
             return False, "rsi_not_rising"
         return True, "rsi_turning_up"
     return True, "rsi_in_band"

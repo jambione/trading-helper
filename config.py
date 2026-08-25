@@ -577,6 +577,10 @@ DEFAULT_CONFIG = {
     # — see the numbers in cm_rsi_allows_buy. False trades a little edge per
     # trade for five times the opportunities.
     "ai_watch_arm_cm_rsi_require_rising": True,
+    # When rising is required: still allow a falling RSI if it is below this
+    # level AND fast %R is already rising toward overbought (pctr_rising).
+    # 0 = off (strict "never trending down"). 20 = deep washout exception.
+    "ai_watch_arm_cm_rsi_allow_falling_below": 0.0,
     # Refuse an RSI the engine drew on the REST fallback instead of the
     # Finnhub tape. bars_src flips per ticker mid-session (20 recoveries and
     # 27 fallbacks across 18 symbols on 2026-08-20), so without this the same
@@ -1271,6 +1275,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stream_bars_live",
     "ai_watch_arm_require_cm_rsi",
     "ai_watch_arm_cm_rsi_max",
+    "ai_watch_arm_cm_rsi_allow_falling_below",
     "ai_watch_require_realtime_rsi",
     "ai_watch_cm_rsi_local",
     "ai_watch_exhaustion_exit_sec",
