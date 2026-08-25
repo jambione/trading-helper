@@ -272,7 +272,11 @@ function _bookRows(book) {
       trail_give_r: w.trail_give_r != null ? w.trail_give_r : null,
       trail_give_px: w.trail_give_px != null ? w.trail_give_px : null,
       last_ask: w.last_ask,
+      last_ask_src: w.last_ask_src || w.price_src || null,
+      last_ask_age_sec: w.last_ask_age_sec != null ? w.last_ask_age_sec
+        : (w.price_age_sec != null ? w.price_age_sec : null),
       price: w.price != null ? w.price : w.last_ask,
+      price_age_sec: w.price_age_sec != null ? w.price_age_sec : null,
       qty: w.qty != null ? w.qty : null,
       pl: w.pl != null ? w.pl : null,
       plpc: w.plpc != null ? w.plpc : null,
@@ -692,12 +696,25 @@ function _createBookRow(r, owner) {
   return el;
 }
 
+/** True when Last is too old to arm — STATE must say so, never "buy". */
+function _bookTapeStale(r) {
+  if (!r) return false;
+  const code = String(r.block_code || '').toLowerCase().trim();
+  if (code === 'stale_quote') return true;
+  const src = String(r.last_ask_src || r.price_src || '').toLowerCase().trim();
+  if (src === 'stale_tape' || src === 'none') return true;
+  const age = r.last_ask_age_sec != null ? Number(r.last_ask_age_sec)
+    : (r.price_age_sec != null ? Number(r.price_age_sec) : NaN);
+  return Number.isFinite(age) && age > 8;
+}
+
 /** Status column shows *why we are not long* (blocker), not READY/WATCH. */
 function _bookBlockerLabel(r) {
   if (!r) return '—';
   const phase = String(r.phase || '').toLowerCase();
   if (phase === 'open' || r.is_position) return 'open';
   if (phase === 'submitted') return 'sent';
+  if (_bookTapeStale(r) && phase !== 'open') return 'stale quote';
   const b = String(r.blocker || r.block_reason || '').trim();
   const code = String(r.block_code || '').trim();
   const detail = String(r.block_detail || '').trim();
@@ -1058,6 +1075,7 @@ function _bookExhText(r) {
  *  which readings the desk should be trusted to act on. */
 function _exhStale(r) {
   if (!r) return false;
+  if (_bookTapeStale(r)) return true;
   const src = String(r.pctr_src || '').toLowerCase().trim();
   return src !== '' && src !== 'live';
 }
@@ -1101,6 +1119,7 @@ function _rsiArms(r) {
  *  in with the ones that are. */
 function _rsiStale(r) {
   if (!r) return false;
+  if (_bookTapeStale(r)) return true;
   const src = String(r.cm_rsi_src || '').toLowerCase().trim();
   return src !== '' && src !== 'realtime';
 }

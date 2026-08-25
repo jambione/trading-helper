@@ -328,6 +328,33 @@ def release_orphaned_submits(
     return released
 
 
+def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
+    """True when this row's print is too old (or unknown) to arm.
+
+    LIVE 2026-08-25: STATE painted buy / EXH 100% OB while last_ask_src was
+    stale_tape. Realtime EXH/RSI does not make a dead last print a fill.
+    """
+    if not isinstance(rec, dict):
+        return False
+    if str(rec.get("block_code") or "").strip().lower() == "stale_quote":
+        return True
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if src in ("stale_tape", "none"):
+        return True
+    age = rec.get("last_ask_age_sec")
+    if age is None:
+        age = rec.get("price_age_sec")
+    try:
+        age_f = float(age) if age is not None else None
+    except (TypeError, ValueError):
+        age_f = None
+    if age_f is None:
+        return False
+    return age_f > decision_max_age_sec(cfg)
+
+
 def _poller_blocked(rec: dict) -> bool:
     """True when the last poll recorded a real reason it would not buy.
 
@@ -341,6 +368,8 @@ def _poller_blocked(rec: dict) -> bool:
     ``below_zone`` is *not* a hard poller block when the live print still sits
     in the armable overshoot window — that geometry is a buy, same as in-zone.
     """
+    if _row_tape_stale(rec):
+        return True
     code = str(rec.get("block_code") or "").strip()
     if not code or code in ("in_zone", "placing", "at_last"):
         return False
@@ -388,6 +417,9 @@ def derive_blocker(
         if status == "submitted":
             return "submitted", "sent"
         return "filled", "filled"
+
+    if _row_tape_stale(rec):
+        return "stale_quote", format_blocker("stale_quote")
 
     stored = rec.get("block_code") or rec.get("block_reason")
     if stored:
@@ -555,6 +587,14 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
     except (TypeError, ValueError):
         return
     if lo <= 0 or hi <= 0 or last <= 0:
+        return
+    if _row_tape_stale(row):
+        row["ready"] = False
+        row["block_code"] = "stale_quote"
+        row["blocker"] = format_blocker("stale_quote")
+        row["block_reason"] = row["blocker"]
+        if not row.get("block_detail"):
+            row["block_detail"] = "tape age unknown or old"
         return
     stored = str(row.get("block_code") or "").strip()
     keep = stored in _POST_ARM_BLOCK_CODES
@@ -820,6 +860,8 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "entry_high": entry_high_f,
             "stop_price": stop_f,
             "last_ask": last_ask_f,
+            "last_ask_src": rec.get("last_ask_src"),
+            "last_ask_age_sec": _f_or_none(rec.get("last_ask_age_sec")),
             "score": score_f,
             # RVOL as measured at admission. The score is a blend whose scale
             # differs per source (momentum ~1000, Stocktwits ~10-20), so it is
@@ -931,6 +973,8 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "entry_high": entry_high_f,
         "stop_price": stop_f,
         "last_ask": last_ask_f,
+        "last_ask_src": rec.get("last_ask_src"),
+        "last_ask_age_sec": _f_or_none(rec.get("last_ask_age_sec")),
         "price": last_ask_f,
         # See public_snapshot: double_bottom (real shelf) vs offset (percentage
         # band, 5% stop) is the difference between two strategies, not a detail.

@@ -4085,6 +4085,59 @@ def test_stream_does_not_skip_rest_when_arm_at_last(monkeypatch):
     assert far_z is True
 
 
+def test_stale_tape_never_paints_ready_in_last_mode(monkeypatch):
+    """LIVE 2026-08-25: STATE said buy while last_ask_src was stale_tape."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    row = {
+        "symbol": "LIVE", "source": "momentum",
+        "entry_low": 9.596, "entry_high": 9.624, "stop_price": 9.13,
+        "zone_kind": "at_last",
+        "last_ask_src": "stale_tape",
+        "block_code": "in_zone", "blocker": "in zone",
+    }
+    ew.apply_tape_blocker(row, 9.61)
+    assert row["ready"] is False
+    assert row["block_code"] == "stale_quote"
+
+
+def test_old_stream_age_never_paints_ready(monkeypatch):
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    row = {
+        "symbol": "LIVE", "source": "momentum",
+        "entry_low": 9.596, "entry_high": 9.624, "stop_price": 9.13,
+        "zone_kind": "at_last",
+        "last_ask_src": "stream", "price_age_sec": 40.0,
+        "block_code": "in_zone",
+    }
+    ew.apply_tape_blocker(row, 9.61)
+    assert row["ready"] is False
+    assert row["block_code"] == "stale_quote"
+
+
+def test_derive_blocker_prefers_stale_tape_over_in_zone():
+    import ai_entry_watch as ew
+
+    rec = {
+        "status": "watching",
+        "last_ask_src": "stale_tape",
+        "last_ask": 9.61,
+        "block_code": "in_zone",
+        "structure": {
+            "entry_low": 9.59, "entry_high": 9.63, "stop_price": 9.13,
+            "wait_kind": "wait_for_zone",
+        },
+    }
+    code, label = ew.derive_blocker(rec)
+    assert code == "stale_quote"
+    assert "stale" in (label or "").lower()
+
+
 def test_apply_tape_blocker_last_mode_ready_above_band(monkeypatch):
     import ai_entry_watch as ew
 

@@ -634,8 +634,10 @@ def overlay_ai_book_live_prices(
                 # uses the poller's on-disk last_ask via entry_watch_state).
                 row["last_ask"] = px
                 row["price_src"] = "stream"
+                row["last_ask_src"] = "stream"
                 if age is not None:
                     row["price_age_sec"] = age
+                    row["last_ask_age_sec"] = age
                 # Live above/below from stream vs zone so BLOCKER is not stuck
                 # on a 20s poller verdict while PRICE ticks. Armable overshoots
                 # (within max_r below the floor) count as in-zone — same rule
