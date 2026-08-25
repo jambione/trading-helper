@@ -200,15 +200,14 @@ DEFAULT_CONFIG = {
     # poller does not re-place every 20s (2026-08-11 QMCO thrash).
     "ai_wash_cooldown_sec":      1800.0,
     # ── Entry order shape ───────────────────────────────────────────────────
-    # "limit" (default) or "market". A market entry fills at whatever the ask
-    # is at execution, which breaks the premise of the zone: size_by_risk sizes
-    # off current_ask and the stop is derived from it, so a fill above the
-    # quote makes real risk exceed ai_watch_synth_stop_pct and notional exceed
-    # ai_max_position_pct. These are thin IEX books on high-RVOL names, where
-    # that slippage is largest.
-    "ai_entry_order_style":    "limit",
-    # Marketable pad above the ask, then hard-capped at the zone top — so a
-    # fill can never land outside the entry zone.
+    # "market" (desk default) or "limit". Market fills at the ask at execution;
+    # size_by_risk / stop still size off the quote at arm, so a gap-through
+    # fill can exceed ai_watch_synth_stop_pct and ai_max_position_pct on thin
+    # IEX books. Limit was the old default (ask + pad, capped at zone top) to
+    # bound that; operator chose market for immediacy over that cap.
+    "ai_entry_order_style":    "market",
+    # Used only when ai_entry_order_style is "limit": marketable pad above the
+    # ask, then hard-capped at the zone top.
     "ai_entry_limit_pad_pct":     0.15,
     # An unfilled entry limit is cancelled after this long: if price left the
     # zone the setup is gone, and re-evaluating beats leaving a stale order
