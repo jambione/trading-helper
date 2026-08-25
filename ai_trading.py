@@ -246,6 +246,35 @@ def prime_quotes(symbols: list[str]) -> int:
     return n
 
 
+def invalidate_quotes(symbols: list[str] | None = None) -> int:
+    """Drop cached quotes so the next read hits the wire.
+
+    Pass symbols to clear those only; ``None`` / empty clears the whole cache.
+    Used when a watch becomes buy-ready so arm/place do not reuse the poll's
+    batch ask (up to ``_QUOTE_TTL_SEC`` old).
+    """
+    if not symbols:
+        n = len(_quote_cache)
+        _quote_cache.clear()
+        return n
+    n = 0
+    for s in symbols:
+        sym = _norm_sym(s)
+        if sym and _quote_cache.pop(sym, None) is not None:
+            n += 1
+    return n
+
+
+def refresh_quotes_now(symbols: list[str]) -> int:
+    """Invalidate then prime — forced fresh NBBO for these symbols."""
+    wanted = [_norm_sym(s) for s in (symbols or [])]
+    wanted = [s for s in wanted if s]
+    if not wanted:
+        return 0
+    invalidate_quotes(wanted)
+    return prime_quotes(wanted)
+
+
 def _cached_quote(symbol: str) -> tuple[float | None, float | None] | None:
     """(ask, bid) from the last prime_quotes, or None when absent/stale."""
     sym = _norm_sym(symbol)

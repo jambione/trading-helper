@@ -3137,6 +3137,73 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
     return (float(px) if px else 0.0), src, age
 
 
+def refresh_arm_market_data(
+    rec: dict,
+    cfg: dict | None,
+    now: float,
+    *,
+    gt: Any = None,
+    sig: dict | None = None,
+) -> tuple[float, str, float | None, float | None]:
+    """Force latest quote + EXH/RSI when a watch becomes buy-ready.
+
+    The poll's ``prime_quotes`` batch can be up to ``_QUOTE_TTL_SEC`` old, and
+    the pre-place recheck used to re-read that same cache. Bust it, pull NBBO
+    again, restamp the decision print and live indicators, then return
+    ``(ask, src, age, bid)`` for a fresh ``should_arm_buy``.
+    """
+    if not isinstance(rec, dict):
+        return 0.0, "none", None, None
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if not sym:
+        return 0.0, "none", None, None
+    if gt is None:
+        import ai_trading as gt  # noqa: PLW0621
+    try:
+        refresh = getattr(gt, "refresh_quotes_now", None)
+        if callable(refresh):
+            refresh([sym])
+        else:
+            inv = getattr(gt, "invalidate_quotes", None)
+            if callable(inv):
+                inv([sym])
+            prime = getattr(gt, "prime_quotes", None)
+            if callable(prime):
+                prime([sym])
+    except Exception:
+        pass
+    ask_f, src, age = apply_decision_price(rec, cfg, now)
+    if ask_f > 0:
+        try:
+            ensure_live_exhaustion(rec, ask_f, cfg, now, sig=sig)
+        except Exception:
+            pass
+        try:
+            refresh_engine_rsi(rec, sig)
+        except Exception:
+            pass
+    bid_f: float | None = None
+    try:
+        hit = gt._cached_quote(sym)
+    except Exception:
+        hit = None
+    if hit is not None and hit[1] is not None:
+        try:
+            cached_bid = float(hit[1])
+            bid_f = cached_bid if cached_bid > 0 else None
+        except (TypeError, ValueError):
+            bid_f = None
+    if bid_f is None:
+        try:
+            bid = gt._latest_bid(sym)
+            bid_f = float(bid) if bid is not None else None
+        except Exception:
+            bid_f = None
+    if bid_f is not None and bid_f <= 0:
+        bid_f = None
+    return ask_f, src, age, bid_f
+
+
 def stream_says_far_from_zone(
     rec: dict,
     cfg: dict,
@@ -8249,6 +8316,25 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 touched[sym] = rec
             continue
 
+        # Buy-ready on this poll's batch quote can be up to a few seconds
+        # stale. Re-pull NBBO + EXH/RSI before we treat the name as a buy
+        # (State, gates, and place all read what we stamp here).
+        ask_f, px_src, _age_fresh, bid_f = refresh_arm_market_data(
+            rec, cfg, t0, gt=gt, sig=indicators.get(sym))
+        if ask_f <= 0 or px_src in ("none", "stale_tape"):
+            _skip("stale_quote", detail=px_src or "arm_refresh")
+            continue
+        ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
+        if not ok_arm:
+            if why in ("wait_setup", "hard_no", "spread", "above_zone",
+                       "below_zone", "reward_risk", "no_structure",
+                       "late_hold_closed", "late_hold_not_late_admit"):
+                _skip(why)
+            else:
+                set_block_reason(rec, why or "blocked", now=t0)
+                touched[sym] = rec
+            continue
+
         # Position / buy-cap gates (fail closed on errors — never place blind)
         try:
             if gt.has_open_position(sym):
@@ -8345,20 +8431,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         except Exception:
             pass
 
-        # Re-check the same realtime source immediately before place.
-        ask_f, px_src2, _age2 = apply_decision_price(rec, cfg, t0)
+        # Re-pull again immediately before place — gates above can take long
+        # enough that the buy-ready refresh is no longer the live print.
+        ask_f, px_src2, _age2, bid2_f = refresh_arm_market_data(
+            rec, cfg, t0, gt=gt, sig=indicators.get(sym))
         if ask_f <= 0 or px_src2 in ("none", "stale_tape"):
             _skip("stale_quote", detail=px_src2)
             continue
-        try:
-            ensure_live_exhaustion(
-                rec, ask_f, cfg, t0, sig=indicators.get(sym))
-        except Exception:
-            pass
-        try:
-            bid2 = gt._latest_bid(sym)
-            bid2_f = float(bid2) if bid2 is not None else None
-        except Exception:
+        if bid2_f is None:
             bid2_f = bid_f
         ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
         if not ok_arm2:

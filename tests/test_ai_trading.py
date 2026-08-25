@@ -79,6 +79,34 @@ def test_record_external_buy_counts_against_the_same_cap_as_buy_stock():
     assert logged[-1]["stop_price"] == 38.0
 
 
+def test_invalidate_quotes_drops_cached_nbbo():
+    gt._quote_cache.clear()
+    gt._quote_cache["AAA"] = (0.0, 10.0, 9.9)
+    gt._quote_cache["BBB"] = (0.0, 20.0, 19.9)
+    assert gt.invalidate_quotes(["aaa"]) == 1
+    assert "AAA" not in gt._quote_cache
+    assert "BBB" in gt._quote_cache
+    assert gt.invalidate_quotes() == 1
+    assert gt._quote_cache == {}
+
+
+def test_refresh_quotes_now_busts_cache_then_primes(monkeypatch):
+    gt._quote_cache["SMCI"] = (0.0, 1.0, 0.9)
+    primed = []
+
+    def fake_prime(symbols):
+        primed.append(list(symbols))
+        for s in symbols:
+            gt._quote_cache[s] = (1.0, 28.0, 27.9)
+        return len(symbols)
+
+    monkeypatch.setattr(gt, "prime_quotes", fake_prime)
+    n = gt.refresh_quotes_now(["smci"])
+    assert n == 1
+    assert primed == [["SMCI"]]
+    assert gt._quote_cache["SMCI"][1] == 28.0
+
+
 def test_can_open_new_position_allows_under_cap_without_a_live_client():
     gt._max_positions = 5
     assert gt.can_open_new_position("NVDA") is True

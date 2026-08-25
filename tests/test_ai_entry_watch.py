@@ -1228,6 +1228,16 @@ def _patch_trading_ready(monkeypatch, gt, *, ask=28.0, bid=27.95):
         monkeypatch.setattr(gt, "prime_quotes", lambda symbols: None)
     except Exception:
         pass
+    try:
+        monkeypatch.setattr(gt, "invalidate_quotes", lambda symbols=None: 0)
+    except Exception:
+        pass
+    try:
+        monkeypatch.setattr(
+            gt, "refresh_quotes_now",
+            lambda symbols: gt.prime_quotes(symbols) or 0)
+    except Exception:
+        pass
 
 
 def test_poll_once_buys_when_in_zone(tmp_path, monkeypatch):
@@ -3890,6 +3900,71 @@ def test_live_exhaustion_accepts_exact_21_one_minute_bars():
     px = rows[-1][2]
     got = ew.live_exhaustion("CRMD", px, cfg, now)
     assert got is not None
+
+
+def test_refresh_arm_market_data_busts_quote_cache_and_restamps(monkeypatch):
+    """Buy-ready must not reuse the poll's batch ask."""
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    refreshed = []
+    monkeypatch.setattr(
+        gt, "refresh_quotes_now",
+        lambda symbols: refreshed.append(list(symbols)) or 1)
+    monkeypatch.setattr(ew, "live_print", lambda s: (28.05, 0.4))
+    monkeypatch.setattr(gt, "_latest_ask", lambda s: 99.0)  # must not win over fresh stream
+    monkeypatch.setattr(gt, "_cached_quote", lambda s: (28.05, 28.00))
+    monkeypatch.setattr(gt, "_latest_bid", lambda s: 27.90)
+    warmed = []
+    monkeypatch.setattr(
+        ew, "ensure_live_exhaustion",
+        lambda rec, px, cfg, now, sig=None: warmed.append(px) or True)
+    monkeypatch.setattr(ew, "refresh_engine_rsi", lambda rec, sig: True)
+
+    rec = {"symbol": "SMCI", "last_ask": 27.0, "last_ask_src": "rest"}
+    ask, src, age, bid = ew.refresh_arm_market_data(
+        rec, {"ai_watch_decision_max_age_sec": 8.0}, 1e12,
+        gt=gt, sig={"cm_rsi": 12.0})
+    assert refreshed == [["SMCI"]]
+    assert ask == 28.05 and src == "stream" and age == 0.4
+    assert bid == 28.00
+    assert rec["last_ask"] == 28.05
+    assert rec["last_ask_src"] == "stream"
+    assert warmed == [28.05]
+
+
+def test_poll_once_refreshes_market_data_when_buy_ready(tmp_path, monkeypatch):
+    """First should_arm_buy True → forced refresh before place."""
+    import ai_entry_watch as ew
+    import ai_positions as cp
+    import ai_trading as gt
+
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._structure_call_ts.clear()
+    ew.save_watch({
+        "SMCI": {
+            "symbol": "SMCI", "status": "watching", "agreement": True,
+            "reason": "test", "score": 8.0, "structure_ts": 1e12,
+            "structure": {
+                "decision": "WAIT", "wait_kind": "wait_for_zone",
+                "entry_low": 27.0, "entry_high": 29.0,
+                "stop_price": 25.0, "target_1": 36.0, "reward_risk": 3.5,
+                "scale_out_pct": 40,
+            },
+        }
+    })
+    _patch_trading_ready(monkeypatch, gt)
+    refreshed = []
+    monkeypatch.setattr(
+        gt, "refresh_quotes_now",
+        lambda symbols: refreshed.append(tuple(symbols)) or 1)
+    monkeypatch.setattr(
+        cp, "place_scaled_entry",
+        lambda *a, **k: {"ok": True, "stop_price": 25.0, "target_1": 36.0},
+    )
+    ew.poll_once(cfg=_poll_cfg(), now=1e12 + 10)
+    # Once at buy-ready, once again immediately before place.
+    assert refreshed.count(("SMCI",)) >= 2
 
 
 def test_decision_price_prefers_fresh_stream(monkeypatch):

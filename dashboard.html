@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=146" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=147" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -337,16 +337,16 @@
                 </div>
                 <div class="feed-table-header ai-book-table-header">
                     <div class="feed-cols feed-cols--ai-book">
-                        <div class="th">Ticker</div>
+                        <div class="th th-ticker">Ticker</div>
                         <div class="th th-state">State</div>
-                        <div class="th">Last</div>
-                        <div class="th" title="Average fill price. Open positions only.">Entry</div>
-                        <div class="th" title="Open longs only. Raise-only shelf; flatten if last prints through.">Stop</div>
-                        <div class="th" title="Min-hold countdown on an OPEN long. Sale of the ratchet shelf is muzzled until this hits 0:00. Watches show —.">Hold</div>
-                        <div class="th" title="Exhaustion = 100 + fast %R (0-100). Arms when it is at/above ai_watch_exhaustion_heat_min_pct and rising. Greyed + dotted = NOT a live rolling %R (clock_range / sparse_window) — a different measurement. Hover a row for detail.">EXH</div>
-                        <div class="th" title="CM RSI-2 from the engine's series. ↑ = rising (RSI-2 above where it was 2 bars back). Green = inside the arm band (0–50) AND rising, or RSI &lt;20 still falling while EXH is heating toward overbought. Greyed + dotted = drawn on the REST fallback, not the live Finnhub tape.">RSI</div>
-                        <div class="th desk-col-extra">Qty</div>
-                        <div class="th">P&amp;L</div>
+                        <div class="th th-last">Last</div>
+                        <div class="th th-entry" title="Average fill price. Open positions only.">Entry</div>
+                        <div class="th th-stop" title="Open longs only. Raise-only shelf; flatten if last prints through.">Stop</div>
+                        <div class="th th-hold" title="Min-hold countdown on an OPEN long. Sale of the ratchet shelf is muzzled until this hits 0:00. Watches show —.">Hold</div>
+                        <div class="th th-exh" title="Exhaustion = 100 + fast %R (0-100). Arms when it is at/above ai_watch_exhaustion_heat_min_pct and rising. Greyed + dotted = NOT a live rolling %R (clock_range / sparse_window) — a different measurement. Hover a row for detail.">EXH</div>
+                        <div class="th th-rsi" title="CM RSI-2 from the engine's series. ↑ = rising (RSI-2 above where it was 2 bars back). Green = inside the arm band (0–50) AND rising, or RSI &lt;20 still falling while EXH is heating toward overbought. Greyed + dotted = drawn on the REST fallback, not the live Finnhub tape.">RSI</div>
+                        <div class="th th-qty desk-col-extra">Qty</div>
+                        <div class="th th-pl">P&amp;L</div>
                     </div>
                 </div>
                 <div data-ai-book-rows class="feed-rows ai-book-rows">

@@ -2344,14 +2344,15 @@ body.mobile .icon-btn {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.panel-ai-watch .ai-book-table-header .th:nth-child(1) { text-align: left; }
-.panel-ai-watch .ai-book-table-header .th:nth-child(2) { text-align: center; }
-.panel-ai-watch .ai-book-table-header .th:nth-child(3),
-.panel-ai-watch .ai-book-table-header .th:nth-child(4),
-.panel-ai-watch .ai-book-table-header .th:nth-child(5),
-.panel-ai-watch .ai-book-table-header .th:nth-child(6),
-/* 7 is Qty (display:none); P&L is the 8th child. */
-.panel-ai-watch .ai-book-table-header .th:nth-child(8) { text-align: right; }
+.panel-ai-watch .ai-book-table-header .th-ticker { text-align: left; }
+.panel-ai-watch .ai-book-table-header .th-state { text-align: center; }
+.panel-ai-watch .ai-book-table-header .th-last,
+.panel-ai-watch .ai-book-table-header .th-entry,
+.panel-ai-watch .ai-book-table-header .th-stop,
+.panel-ai-watch .ai-book-table-header .th-hold,
+.panel-ai-watch .ai-book-table-header .th-exh,
+.panel-ai-watch .ai-book-table-header .th-rsi,
+.panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
@@ -2481,37 +2482,126 @@ body.mobile .icon-btn {
   text-decoration: underline dotted rgba(148, 163, 184, 0.55);
 }
 
-/* Mobile + an open long: drop State so Last, Stop, EXH, RSI, P&L can breathe. */
-body.mobile .panel-ai-watch.ai-book--has-open .th-state,
-body.mobile .panel-ai-watch.ai-book--has-open .ai-book-status {
-  display: none !important;
-}
-body.mobile .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
+/* Mobile Book: two lines per row so every field fits without horizontal scroll.
+   Line 1 — identity + money: Ticker | State | Last | Entry | P&L
+   Line 2 — exit / signals:   Stop   | Hold  | EXH  | RSI
+   Qty stays desk-col-extra (hidden). State stays visible (no squeeze hide). */
+body.mobile .panel-ai-watch .feed-cols--ai-book {
   grid-template-columns:
-    minmax(52px, 1fr)
-    minmax(52px, 0.85fr)
-    minmax(48px, 0.75fr)
-    minmax(52px, 0.8fr)
-    minmax(44px, 0.7fr)
-    minmax(56px, 0.9fr)
-    minmax(44px, 0.7fr)
-    minmax(56px, 1fr) !important;
+    minmax(0, 1.1fr)
+    minmax(0, 1fr)
+    minmax(0, 0.95fr)
+    minmax(0, 0.85fr)
+    minmax(0, 1fr);
+  grid-template-areas:
+    "ticker state last entry pl"
+    "stop   hold  exh  exh   rsi";
+  row-gap: 5px;
+  column-gap: 8px;
+  align-items: center;
+}
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-ticker,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-last,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-price { grid-area: last; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-entry,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-stop,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-hold,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-hold { grid-area: hold; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-rsi,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-pl,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-pl { grid-area: pl; }
+body.mobile .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
+  padding: 8px 0 6px;
+}
+body.mobile .panel-ai-watch .feed-row--ai-book .feed-cols--ai-book {
+  padding: 9px 0;
+}
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-ticker {
+  font-size: 14px;
+  font-weight: 700;
+}
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-pl {
+  font-size: 13px;
+  font-weight: 700;
+}
+body.mobile .panel-ai-watch .feed-cols--ai-book .ai-book-status {
+  font-size: 10px;
+  line-height: 1.1;
+}
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-price,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-rsi {
+  font-size: 12px;
 }
 @media (max-width: 700px) {
-  .panel-ai-watch.ai-book--has-open .th-state,
-  .panel-ai-watch.ai-book--has-open .ai-book-status {
-    display: none !important;
-  }
-  .panel-ai-watch.ai-book--has-open .feed-cols--ai-book {
+  .panel-ai-watch .feed-cols--ai-book {
     grid-template-columns:
-      minmax(52px, 1fr)
-      minmax(52px, 0.85fr)
-      minmax(48px, 0.75fr)
-      minmax(52px, 0.8fr)
-      minmax(44px, 0.7fr)
-      minmax(56px, 0.9fr)
-      minmax(44px, 0.7fr)
-      minmax(56px, 1fr) !important;
+      minmax(0, 1.1fr)
+      minmax(0, 1fr)
+      minmax(0, 0.95fr)
+      minmax(0, 0.85fr)
+      minmax(0, 1fr);
+    grid-template-areas:
+      "ticker state last entry pl"
+      "stop   hold  exh  exh   rsi";
+    row-gap: 5px;
+    column-gap: 8px;
+    align-items: center;
+  }
+  .panel-ai-watch .feed-cols--ai-book > .th-ticker,
+  .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
+  .panel-ai-watch .feed-cols--ai-book > .th-state,
+  .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
+  .panel-ai-watch .feed-cols--ai-book > .th-last,
+  .panel-ai-watch .feed-cols--ai-book > .cell-price { grid-area: last; }
+  .panel-ai-watch .feed-cols--ai-book > .th-entry,
+  .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
+  .panel-ai-watch .feed-cols--ai-book > .th-stop,
+  .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
+  .panel-ai-watch .feed-cols--ai-book > .th-hold,
+  .panel-ai-watch .feed-cols--ai-book > .cell-hold { grid-area: hold; }
+  .panel-ai-watch .feed-cols--ai-book > .th-exh,
+  .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
+  .panel-ai-watch .feed-cols--ai-book > .th-rsi,
+  .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
+  .panel-ai-watch .feed-cols--ai-book > .th-pl,
+  .panel-ai-watch .feed-cols--ai-book > .cell-pl { grid-area: pl; }
+  .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
+    padding: 8px 0 6px;
+  }
+  .panel-ai-watch .feed-row--ai-book .feed-cols--ai-book {
+    padding: 9px 0;
+  }
+  .panel-ai-watch .feed-cols--ai-book .cell-ticker {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .panel-ai-watch .feed-cols--ai-book .cell-pl {
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .panel-ai-watch .feed-cols--ai-book .ai-book-status {
+    font-size: 10px;
+    line-height: 1.1;
+  }
+  .panel-ai-watch .feed-cols--ai-book .cell-price,
+  .panel-ai-watch .feed-cols--ai-book .cell-entry,
+  .panel-ai-watch .feed-cols--ai-book .cell-trail,
+  .panel-ai-watch .feed-cols--ai-book .cell-hold,
+  .panel-ai-watch .feed-cols--ai-book .cell-exh,
+  .panel-ai-watch .feed-cols--ai-book .cell-rsi {
+    font-size: 12px;
   }
 }
 
