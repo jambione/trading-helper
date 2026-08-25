@@ -1268,6 +1268,25 @@ def test_outcome_carries_the_decision_time_feature_vector(tmp_path, monkeypatch)
     assert f["cm_rsi_rising"] is True and f["entry_hour_et"] == 10.25
 
 
+def test_outcome_stamps_tape_provenance_at_the_top_level(tmp_path, monkeypatch):
+    """Gate 1 is only about realtime EXH/RSI if the fill row says so."""
+    features = {
+        "source": "anthropic", "pctr": -11.3, "pctr_src": "live",
+        "cm_rsi": 22.0, "cm_rsi_src": "realtime", "bars_age_sec": 1.4,
+        "cm_rsi_rising": True,
+    }
+    _seed_state(tmp_path, monkeypatch, tranche_a_filled=False,
+                last_seen_price=39.0, features=features)
+    stub = _StubBrokerManage(position_open=False, fills={"stop_b": 37.90})
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    cp.manage_open_positions(now=1_000_010.0)
+    outcome = json.loads(_outcomes_path(tmp_path).read_text().strip())
+    assert outcome["pctr_src"] == "live"
+    assert outcome["cm_rsi_src"] == "realtime"
+    assert outcome["bars_age_sec"] == 1.4
+
+
 def test_outcome_without_features_still_records(tmp_path, monkeypatch):
     """Positions opened before the feature vector existed, or by a path that
     does not set one, must still produce a priced outcome — instrumentation

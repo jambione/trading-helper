@@ -1939,6 +1939,8 @@ def test_entry_features_snapshot_selection_and_timing_separately():
     # distinguishable from "not recorded".
     assert f["cm_ok"] is True and f["cm_rsi_rising"] is False
     assert f["cm_rsi"] == 18.3
+    assert f["pctr_src"] is None and f["cm_rsi_src"] is None
+    assert f["bars_age_sec"] is None
     # Time-of-day and dwell: a 09:35 entry and a 15:45 entry facing the
     # flatten are different trades with the same signal.
     assert f["entry_hour_et"] is not None
@@ -1956,6 +1958,26 @@ def test_entry_features_keep_missing_values_missing():
     assert f["look_reason"] is None and f["criteria"] == []
     # Booleans are a real observation (the gate was checked and was false).
     assert f["cm_ok"] is False
+    assert f["pctr_src"] is None and f["cm_rsi_src"] is None
+    assert f["bars_age_sec"] is None
+
+
+def test_entry_features_stamp_tape_provenance():
+    """Min-hold is only evidence about realtime EXH/RSI if the fill says so."""
+    import ai_entry_watch as ew
+
+    rec = {
+        "symbol": "IOVA", "source": "anthropic",
+        "indicator": {
+            "pctr": -11.3, "pctr_src": "live",
+            "cm_rsi": 22.0, "cm_rsi_src": "realtime",
+            "cm_rsi_age_sec": 1.4, "cm_rsi_rising": True,
+        },
+    }
+    f = ew._entry_features(rec, ask=8.40)
+    assert f["pctr_src"] == "live"
+    assert f["cm_rsi_src"] == "realtime"
+    assert f["bars_age_sec"] == 1.4
 
 
 def test_admission_provenance_survives_a_refresh_without_numbers():

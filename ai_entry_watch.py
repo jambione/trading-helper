@@ -6361,6 +6361,18 @@ def _entry_features(rec: dict, *, ask: float | None = None,
         "macd_ok": bool(sig.get("macd_ok")),
         "cm_rsi": _f_or_none(sig.get("cm_rsi")),
         "pctr": _f_or_none(sig.get("pctr")),
+        # Which tape the levers were on at arm. Gate 1 (min-hold) is only
+        # evidence about the realtime product when these are live/realtime.
+        "pctr_src": str(sig.get("pctr_src") or "").strip() or None,
+        "cm_rsi_src": (
+            str(sig.get("cm_rsi_src") or sig.get("bars_src") or "").strip()
+            or None
+        ),
+        "bars_age_sec": _f_or_none(
+            sig.get("cm_rsi_age_sec")
+            if sig.get("cm_rsi_age_sec") is not None
+            else sig.get("bars_age_sec")
+        ),
         "proximity_pct": _f_or_none(sig.get("proximity_pct")),
         # Time-of-day and dwell: an open-drive entry and a 15:00 entry facing
         # the 15:50 flatten are different trades with the same signal.

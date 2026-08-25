@@ -1669,6 +1669,11 @@ def place_scaled_entry(
         # one row. A join against events.jsonl would work until a symbol is
         # entered twice in a session, which happens.
         "features": decision.get("features"),
+        # Frozen at open so the outcome can slice realtime vs fallback
+        # without a join. Missing on a fill means we cannot score gate 1.
+        "pctr_src": (decision.get("features") or {}).get("pctr_src"),
+        "cm_rsi_src": (decision.get("features") or {}).get("cm_rsi_src"),
+        "bars_age_sec": (decision.get("features") or {}).get("bars_age_sec"),
         # Set once we've observed the position actually open — guards the
         # closure check below from mistaking "order hasn't filled yet" for
         # "position closed" on the very first tick after entry.
@@ -3733,6 +3738,16 @@ def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
         # outcome is unsliceable: you know the result but not which gate,
         # indicator state, or time of day to attribute it to.
         "features": pos.get("features"),
+        "pctr_src": pos.get("pctr_src") or (pos.get("features") or {}).get("pctr_src"),
+        "cm_rsi_src": (
+            pos.get("cm_rsi_src")
+            or (pos.get("features") or {}).get("cm_rsi_src")
+        ),
+        "bars_age_sec": (
+            pos.get("bars_age_sec")
+            if pos.get("bars_age_sec") is not None
+            else (pos.get("features") or {}).get("bars_age_sec")
+        ),
         # Book source (trending / momentum / research). 2026-08-11 outcomes
         # lacked this so "did we trade trending?" needed a join against trades.
         "source": (
