@@ -42,10 +42,22 @@ def _cfg(**over):
     which is under the RSI-2 warmup, so every bar answered no_rsi_data and no
     trade ever opened to trail. Arm-gate behaviour is covered in
     test_ai_entry_watch.py against a series long enough to have one.
+
+    MACD is the third gate to need naming here, for the identical reason and
+    on a larger margin: it needs 26 + 9 bars before it produces anything at
+    all, plus confirm_window + trend_lookback before it has a direction, so a
+    three-bar fixture answers no_macd_data on every bar. Left on, these four
+    tests fail with `assert []` — no trade ever opens, so there is no trail
+    to measure and the verdict is vacuous rather than red. That is the exact
+    failure mode HANDOFF §6 warns about for replay output.
+
+    The MACD gate's own behaviour is covered in test_macd_gap_direction.py,
+    which builds records directly instead of walking synthetic bars.
     """
     return path_cfg(
         ai_watch_exhaustion_rules=False,
         ai_watch_arm_require_cm_rsi=False,
+        ai_watch_arm_require_macd=False,
         ai_watch_synth_stop_pct=5.0,
         ai_local_trail_give_r=0.10,
         ai_local_trail_give_open_r=0.10,
