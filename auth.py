@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 auth.py — JWT authentication for the Signal Scanner dashboard.
 

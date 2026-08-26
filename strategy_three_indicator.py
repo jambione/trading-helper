@@ -69,9 +69,14 @@ DEFAULT_PARAMS: dict = {
     "rte_slow_window": 60,
     "rte_require_slow": True,    # False restores the single fast-line test
     "rte_sell_from":  -10.0,    # %R must have been above this (near 0) to call a top
+    # Entry filters: whether CM RSI-2 and %R Exhaustion are required for BUY
+    "require_macd":    True,
+    "require_cm_rsi":  True,    # False = MACD alone triggers entry (ignoring RSI)
+    "require_pctr":    True,    # False = MACD alone triggers entry (ignoring EXH)
+    "macd_min_gap":    0.005,   # min absolute line separation (hist)
     # MACD
     "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
-    "macd_sep_mult":   1.0,     # "large separation" = |hist| ≥ mult × rolling std(hist)
+    "macd_sep_mult":   0.8,     # "large separation" = |histogram| ≥ mult × rolling std(histogram)
     "macd_sep_window": 50,
     # Alignment / trend
     "confirm_window":  8,       # bars within which the cross + filters must align
@@ -253,22 +258,23 @@ def buy_signal(a: dict, i: int, p: dict) -> bool:
     if not (a["macd_line"][i] > a["macd_signal"][i]):
         return False
     sep = a["macd_hist_std"][i]
-    if not (sep > 0 and a["macd_hist"][i] >= p["macd_sep_mult"] * sep):
+    min_gap = float(p.get("macd_min_gap", 0.005) or 0.005)
+    if not (a["macd_hist"][i] >= min_gap):
+        return False
+    if sep > 0 and not (a["macd_hist"][i] >= p["macd_sep_mult"] * sep):
         return False
 
-    # CM RSI-2: reached oversold inside the window, and is turning up.
-    #
-    # The dip and the turn are SEQUENTIAL, not simultaneous. Requiring both on
-    # the same bar is a near-impossible ask of a 2-period RSI: while it is under
-    # the level it is typically still falling, and once it turns it clears the
-    # level within a bar or two. On a sine fixture that same-bar form produced
-    # 0 buys at buy_max=30 despite 288 bars printing under 30.
-    # Mirrors the sell side's "reached above sell_min, then rolled over".
-    cm_ok = _cm_ok(a, i, p, lo, tl)
-    if not cm_ok:
-        return False
+    # Optional CM RSI-2 filter (bypassed when require_cm_rsi is False)
+    if bool(p.get("require_cm_rsi", False)):
+        cm_ok = _cm_ok(a, i, p, lo, tl)
+        if not cm_ok:
+            return False
 
-    return _pctr_ok(a, i, p, lo, tl)
+    # Optional %R Exhaustion filter (bypassed when require_pctr is False)
+    if bool(p.get("require_pctr", False)):
+        return _pctr_ok(a, i, p, lo, tl)
+
+    return True
 
 
 def sell_signal(a: dict, i: int, p: dict) -> bool:
@@ -399,6 +405,11 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
     # MACD: recent bullish cross, still bullish, wide separation
     line, sig = a["macd_line"][i], a["macd_signal"][i]
     cross = bool(a["macd_bull"][lo:i + 1].any()) and (np.isfinite(line) and np.isfinite(sig) and line > sig)
+    out["macd_fast"] = round(float(line), 4) if np.isfinite(line) else None
+    out["macd_slow"] = round(float(sig), 4) if np.isfinite(sig) else None
+    out["macd_gap"] = round(float(a["macd_hist"][i]), 4) if np.isfinite(a["macd_hist"][i]) else None
+    out["macd_hist"] = out["macd_gap"]
+    out["macd_bull"] = bool(np.isfinite(line) and np.isfinite(sig) and line > sig)
     out["macd_cross"] = cross
     sep = a["macd_hist_std"][i]
     if np.isfinite(sep) and sep > 0 and np.isfinite(a["macd_hist"][i]):

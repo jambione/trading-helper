@@ -2350,8 +2350,7 @@ body.mobile .icon-btn {
 .panel-ai-watch .ai-book-table-header .th-entry,
 .panel-ai-watch .ai-book-table-header .th-stop,
 .panel-ai-watch .ai-book-table-header .th-hold,
-.panel-ai-watch .ai-book-table-header .th-exh,
-.panel-ai-watch .ai-book-table-header .th-rsi,
+.panel-ai-watch .ai-book-table-header .th-macd,
 .panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
 .panel-ai-watch .ai-book-rows.feed-rows {
@@ -2396,7 +2395,7 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | Hold | EXH | RSI | P&L
+  /* Ticker | State | Last | Entry | Stop | Hold | MACD Gap | P&L
      Qty is display:none and must not occupy a track. */
   grid-template-columns:
     minmax(52px, 0.9fr)
@@ -2405,8 +2404,7 @@ body.mobile .icon-btn {
     minmax(58px, 0.9fr)
     minmax(58px, 0.8fr)
     minmax(52px, 0.7fr)
-    minmax(72px, 1.0fr)
-    minmax(52px, 0.75fr)
+    minmax(84px, 1.3fr)
     minmax(62px, 0.9fr);
   width: 100%;
   box-sizing: border-box;
@@ -2466,28 +2464,23 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
-.panel-ai-watch .feed-cols--ai-book .cell-exh,
-.panel-ai-watch .feed-cols--ai-book .cell-rsi,
+.panel-ai-watch .feed-cols--ai-book .cell-macd,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
-.panel-ai-watch .feed-cols--ai-book .cell-exh.exh--ob { color: #f87171; }
-/* Not a live rolling %R — clock_range / sparse_window is position-in-range
-   over whatever bars existed. Dimmed and dashed so a reading the desk should
-   not act on cannot be mistaken for one it should. */
-.panel-ai-watch .feed-cols--ai-book .cell-exh.exh--stale {
+
+.panel-ai-watch .feed-cols--ai-book .cell-macd {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--bull { color: #4ade80; font-weight: 600; }
+.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--wide { color: #34d399; font-weight: 700; }
+.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--narrow { color: #fbbf24; }
+.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--bear { color: #f87171; }
+.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--stale {
   color: #6b7280;
   font-style: italic;
   text-decoration: underline dotted rgba(148, 163, 184, 0.55);
-  text-underline-offset: 3px;
 }
-.panel-ai-watch .feed-cols--ai-book .cell-exh.exh--tight { font-weight: 600; }
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--low { color: #6ee7b7; }
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--green { color: #4ade80; font-weight: 600; }
-/* The entry condition itself: inside the 0-50 band AND turning up. Brightest
-   state in the column, because this is the one the operator is waiting for. */
-.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--arm {
-  color: #4ade80;
-  font-weight: 700;
 }
 /* Drawn on REST fallback bars rather than the live Finnhub tape. Same
    treatment as a non-live %R: dimmed and dashed, so a reading the desk should
@@ -2512,7 +2505,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 1fr);
   grid-template-areas:
     "ticker state last entry pl"
-    "stop   hold  exh  exh   rsi";
+    "stop   hold  macd  macd  macd";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
@@ -2529,10 +2522,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book > .th-stop,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-hold,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-hold { grid-area: hold; }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-rsi,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-macd,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-macd { grid-area: macd; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-pl,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-pl { grid-area: pl; }
 body.mobile .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
@@ -2557,8 +2548,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-price,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold,
-body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh,
-body.mobile .panel-ai-watch .feed-cols--ai-book .cell-rsi {
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
   font-size: 12px;
 }
 @media (max-width: 700px) {
@@ -2571,13 +2561,15 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-rsi {
       minmax(0, 1fr);
     grid-template-areas:
       "ticker state last entry pl"
-      "stop   hold  exh  exh   rsi";
+      "stop   hold  macd  macd  macd";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
   }
   .panel-ai-watch .feed-cols--ai-book > .th-ticker,
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
+  .panel-ai-watch .feed-cols--ai-book > .th-macd,
+  .panel-ai-watch .feed-cols--ai-book > .cell-macd { grid-area: macd; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
   .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
   .panel-ai-watch .feed-cols--ai-book > .th-last,

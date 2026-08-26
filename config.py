@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 import os
 from pathlib import Path
@@ -37,8 +38,8 @@ DEFAULT_CONFIG = {
     "cm_rsi_oversold": 25,   # approaching-oversold threshold for signal
     "cm_rsi_buy_max":   10.0,  # line at the bottom of the CM RSI pane
     "cm_rsi_prefer_green": True,  # Connors color is a strength flag, not a gate
-    # Desk buy = both %R lines in the top band, then RSI-2 <= buy_max.
-    "ai_watch_tv_exh_rsi": True,
+    # Desk buy = MACD bullish cross with wide line separation (gap).
+    "ai_watch_tv_exh_rsi": False,
 
     # Live bar tape. iex is the free Alpaca feed. sip needs Algo Trader Plus
     # and is what matches TradingView highs/lows on thin names.
@@ -51,6 +52,9 @@ DEFAULT_CONFIG = {
     "macd_fast":   12,
     "macd_slow":   26,
     "macd_signal":  9,
+    "macd_sep_mult": 0.8,
+    "macd_min_gap": 0.005,
+    "ai_watch_arm_require_macd": True,
 
     # ── Signal: volume surge ─────────────────────────────────
     "volume_surge_mult": 1.5,
@@ -751,7 +755,7 @@ DEFAULT_CONFIG = {
     # Discretionary exits (shelf, dead-trade, left-overbought) stay holstered
     # for this many seconds after the fill. The 1R disaster stop and the 15:50
     # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.
-    "ai_exit_min_hold_sec":            0,
+    "ai_exit_min_hold_sec":            30,
     "ai_local_trail_give_spread_k":    0.0,
     # Ceiling on the spread floor, in R. Uncapped, k=1 on a p90
     # book (5.56R) parks the shelf 5.5R down, which is no stop.

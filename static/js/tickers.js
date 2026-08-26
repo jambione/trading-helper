@@ -509,13 +509,16 @@ function _signalPills(sp) {
     return `${velPill}${stopPill}${srcBadge}`;
   }
 
-  if (sp.strategy === 'three_indicator') {
-    const cm = sp.cm_rsi, pr = sp.pctr, slow = sp.pctr_slow;
-    const rsiOk = !!(sp.cm_rsi_low || (cm != null && cm <= 10));
-    const prOk = !!(sp.pctr_ob || sp.pctr_ok);
-    const cmPill = `<span class="sig-cond ${rsiOk ? 'cond-ok' : 'cond-no'}" title="CM RSI-2 ${cm != null ? cm.toFixed(1) : '?'}${sp.cm_rsi_green ? ' green' : ''} — buy when ≤10">RSI ${cm != null ? cm.toFixed(0) : '?'}</span>`;
-    const prPill = `<span class="sig-cond ${prOk ? 'cond-ok' : 'cond-no'}" title="%R fast/slow ${pr != null ? pr.toFixed(1) : '?'}/${slow != null ? Number(slow).toFixed(1) : '?'}">${pr != null ? pr.toFixed(0) : '?'}/${slow != null ? Number(slow).toFixed(0) : '?'}</span>`;
-    return `${cmPill}${prPill}${hotPill}${srcBadge}`;
+  if (sp.strategy === 'three_indicator' || sp.strategy === 'macd') {
+    const gap = sp.macd_gap ?? sp.macd_hist;
+    const ratio = sp.macd_sep_ratio;
+    const isBull = !!(sp.macd_bull || sp.macd_ok || (gap != null && gap > 0));
+    const isWide = !!(sp.macd_ok || (ratio != null && ratio >= 0.8) || (gap != null && gap >= 0.015));
+    const macdCls = isWide ? 'cond-ok' : (isBull ? 'cond-warn' : 'cond-no');
+    const gapTxt = gap != null ? `${gap >= 0 ? '+' : ''}${gap.toFixed(3)}` : '—';
+    const ratioTxt = ratio != null ? ` (${ratio.toFixed(1)}×)` : '';
+    const macdPill = `<span class="sig-cond ${macdCls}" title="MACD Fast/Slow Line Gap: ${gapTxt}${ratioTxt} — wider gap indicates stronger bullish momentum">MACD ${gapTxt}</span>`;
+    return `${macdPill}${hotPill}${srcBadge}`;
   }
 
   // momentum (default)

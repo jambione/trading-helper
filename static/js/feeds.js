@@ -722,6 +722,23 @@ function _bookTapeStale(r) {
   return Number.isFinite(age) && age > 8;
 }
 
+const _MACD_BLOCKER_LABELS = {
+  'macd_bearish': 'MACD bear',
+  'macd_gap_too_close': 'MACD narrow',
+  'macd_gap_insufficient': 'MACD gap low',
+  'no_macd_data': 'no MACD',
+  'macd_no_recent_cross': 'wait cross',
+  'macd_bullish_gap': 'buy',
+};
+
+const _MACD_BLOCKER_DESCRIPTIONS = {
+  'macd_bearish': 'MACD Bearish: Fast line is below slow signal line (bullish crossover required)',
+  'macd_gap_too_close': 'MACD Narrow: Fast/slow separation gap is too close (< 0.005 minimum)',
+  'macd_gap_insufficient': 'MACD Gap Low: Line separation is under 0.8× rolling standard deviation',
+  'no_macd_data': 'No MACD: Real-time 1-minute bar MACD calculation not available yet',
+  'macd_no_recent_cross': 'Wait Cross: Bullish crossover has not occurred within the confirm window',
+};
+
 /** Status column shows *why we are not long* (blocker), not READY/WATCH. */
 function _bookBlockerLabel(r) {
   if (!r) return '—';
@@ -733,25 +750,33 @@ function _bookBlockerLabel(r) {
   if (phase === 'submitted') return 'sent';
   if (_bookTapeStale(r) && phase !== 'open') return 'stale quote';
   const b = String(r.blocker || r.block_reason || '').trim();
-  const code = String(r.block_code || '').trim();
+  const code = String(r.block_code || '').trim().toLowerCase();
   const detail = String(r.block_detail || '').trim();
+
+  if (_MACD_BLOCKER_LABELS[code]) {
+    return _MACD_BLOCKER_LABELS[code];
+  }
+
   // A real refuse (heat low, dead today) wins over leftover "in zone" / buy.
   if (b && !(r.ready) && !['in zone', 'in_zone', 'buy'].includes(b.toLowerCase()) && code !== 'in_zone') {
-    return b;
+    return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
   }
   if (code && !r.ready && !['in_zone', 'placing'].includes(code)) {
-    return b || code.replace(/_/g, ' ');
+    return _MACD_BLOCKER_LABELS[code] || b || code.replace(/_/g, ' ');
   }
   if (r.ready || phase === 'ready') return 'buy';
-  if (b) return b;
+  if (b) return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
   if (detail) return detail;
   return 'watching';
 }
 
 function _bookBlockerTitle(r) {
+  const code = String((r && r.block_code) || '').trim().toLowerCase();
+  if (_MACD_BLOCKER_DESCRIPTIONS[code]) {
+    return _MACD_BLOCKER_DESCRIPTIONS[code];
+  }
   const label = _bookBlockerLabel(r);
   const detail = String((r && r.block_detail) || '').trim();
-  const code = String((r && r.block_code) || '').trim();
   const parts = [];
   if (label && label !== '—') parts.push(label);
   if (detail && detail.toLowerCase() !== label.toLowerCase()) parts.push(detail);
@@ -874,37 +899,12 @@ function _updateBookRow(el, r) {
     priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
-  const exhEl = el.querySelector('.cell-exh');
-  if (exhEl) {
-    const symKey = String(r.symbol || '').toUpperCase();
-    const exhN = r.exhaustion != null && Number.isFinite(Number(r.exhaustion))
-      ? Number(r.exhaustion) : null;
-    const prevExh = _bookPrevExh[symKey];
-    if (exhN != null && prevExh !== undefined && prevExh !== exhN) {
-      const dir = exhN > prevExh ? 'up' : 'down';
-      exhEl.classList.remove('price-flash--up', 'price-flash--down');
-      exhEl.classList.add(`price-flash--${dir}`);
-      clearTimeout(exhEl._flashTimer);
-      exhEl._flashTimer = setTimeout(() => exhEl.classList.remove(
-        'price-flash--up', 'price-flash--down'), 600);
-    }
-    if (exhN != null) _bookPrevExh[symKey] = exhN;
-    _setText(exhEl, _bookExhText(r));
-    exhEl.classList.add('cell-exh');
-    exhEl.classList.toggle('exh--ob', !!r.pctr_ob || r.exhaustion_state === 'overbought');
-    exhEl.classList.toggle('exh--tight', !!r.pctr_tight);
-    exhEl.classList.toggle('exh--up', r.exhaustion_state === 'heating');
-    exhEl.classList.toggle('exh--down', r.exhaustion_state === 'cooling');
-    exhEl.classList.toggle('exh--stale', _exhStale(r));
-    const tip = _fmtExhTitle(r);
-    if (tip) exhEl.title = tip;
-  }
-
-  const rsiEl = el.querySelector('.cell-rsi');
-  if (rsiEl) {
-    _setText(rsiEl, _bookRsiText(r));
-    rsiEl.className = `cell-rsi${_rsiPairClass(r)}`;
-    rsiEl.title = _fmtRsiTitle(r);
+  const macdEl = el.querySelector('.cell-macd');
+  if (macdEl) {
+    _setText(macdEl, _bookMacdText(r));
+    macdEl.className = `cell-macd${_bookMacdClass(r)}`;
+    const tip = _fmtMacdTitle(r);
+    if (tip) macdEl.title = tip;
   }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
@@ -952,8 +952,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}">${_esc(trail)}</div>`
     + `<div class="cell-hold${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_holdCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(_fmtHoldCell(r))}</div>`
-    + `<div class="cell-exh${_exhPairClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-rsi${_rsiPairClass(r)}" title="${_esc(_fmtRsiTitle(r))}">${_esc(_bookRsiText(r))}</div>`
+    + `<div class="cell-macd${_bookMacdClass(r)}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
@@ -1240,6 +1239,49 @@ function _exhPairClass(r) {
   if (r && r.pctr_tight) cls += ' exh--tight';
   if (_exhStale(r)) cls += ' exh--stale';
   return cls;
+}
+
+function _bookMacdText(r) {
+  if (!r) return '—';
+  const gap = r.macd_gap ?? r.macd_hist;
+  if (gap == null || !Number.isFinite(Number(gap))) return '—';
+  const n = Number(gap);
+  const sign = n >= 0 ? '+' : '';
+  const arrow = n > 0 ? '▲ ' : (n < 0 ? '▼ ' : '');
+  const ratio = r.macd_sep_ratio != null && Number.isFinite(Number(r.macd_sep_ratio))
+    ? ` (${Number(r.macd_sep_ratio).toFixed(1)}×)`
+    : '';
+  return `${arrow}${sign}${n.toFixed(3)}${ratio}`;
+}
+
+function _bookMacdClass(r) {
+  if (!r) return '';
+  const gap = r.macd_gap ?? r.macd_hist;
+  if (gap == null || !Number.isFinite(Number(gap))) return '';
+  const n = Number(gap);
+  const ratio = Number(r.macd_sep_ratio || 0);
+  if (n > 0) {
+    if (ratio >= 0.8 || n >= 0.015) return ' macd--wide';
+    return ' macd--bull';
+  }
+  if (Math.abs(n) <= 0.002) return ' macd--narrow';
+  return ' macd--bear';
+}
+
+function _fmtMacdTitle(r) {
+  if (!r) return 'MACD — no reading';
+  const fast = r.macd_fast ?? r.macd_line;
+  const slow = r.macd_slow ?? r.macd_signal;
+  const gap = r.macd_gap ?? r.macd_hist;
+  const bits = ['MACD Momentum'];
+  if (fast != null && Number.isFinite(Number(fast))) bits.push(`Fast: ${Number(fast).toFixed(4)}`);
+  if (slow != null && Number.isFinite(Number(slow))) bits.push(`Slow: ${Number(slow).toFixed(4)}`);
+  if (gap != null && Number.isFinite(Number(gap))) bits.push(`Gap: ${Number(gap) >= 0 ? '+' : ''}${Number(gap).toFixed(4)}`);
+  if (r.macd_sep_ratio != null && Number.isFinite(Number(r.macd_sep_ratio))) bits.push(`Sep: ${Number(r.macd_sep_ratio).toFixed(2)}x std`);
+  if (r.macd_bull) bits.push('Bullish');
+  if (r.macd_cross) bits.push('Recent Bull Cross');
+  if (r.macd_ok) bits.push('Wide Separation Confirmed');
+  return bits.join(' · ');
 }
 
 function _fmtRsi(r) {

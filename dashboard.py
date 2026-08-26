@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 dashboard.py — Signal Scanner
 Ties together the Discord OCR alert source, real-time prices, and signals.
@@ -714,6 +715,11 @@ def overlay_ai_book_live_prices(
                             row["block_code"] = "below_zone"
                             row["in_zone"] = False
                             row["ready"] = False
+                ind = row.get("indicator")
+                if isinstance(ind, dict):
+                    for mk in ("macd_fast", "macd_slow", "macd_gap", "macd_hist", "macd_hist_std", "macd_sep_ratio", "macd_bull", "macd_cross", "macd_ok"):
+                        if mk in ind and row.get(mk) is None:
+                            row[mk] = ind[mk]
             new_rows.append(row)
         out[key] = new_rows
     return out

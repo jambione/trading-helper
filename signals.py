@@ -1,6 +1,7 @@
 """
 signals.py — Multi-Indicator Strategy with CM RSI-2, OBV Oscillator, and %R Trend Exhaustion
 """
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd

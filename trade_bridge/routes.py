@@ -6,6 +6,7 @@ token). The WebSocket authenticates itself via ?token=, same as /ws.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -140,7 +141,7 @@ class OrderBody(BaseModel):
     side: str                    # BUY | SELL
     qty: float
     order_type: str = "MARKET"   # MARKET | LIMIT
-    limit_price: float | None = None
+    limit_price: Optional[float] = None
 
     @field_validator("symbol")
     @classmethod

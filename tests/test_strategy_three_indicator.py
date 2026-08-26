@@ -385,3 +385,23 @@ def test_the_slow_line_does_not_peek_into_its_own_bar():
     a = out.to_numpy(dtype=float)[:cut - 15]
     b = part.to_numpy(dtype=float)[:cut - 15]
     assert np.allclose(a, b, equal_nan=True), "past values changed with future bars"
+
+
+def test_macd_only_entry():
+    p_macd = strat.params(
+        require_macd=True,
+        require_cm_rsi=False,
+        require_pctr=False,
+        macd_sep_mult=0.4,
+        confirm_window=12,
+    )
+    df = strat.compute_indicators(_frame(_sine()), p_macd)
+    a = strat.to_arrays(df)
+    n = len(a["close"])
+    buys = [i for i in range(n - 1) if strat.buy_signal(a, i, p_macd)]
+    assert buys, "expected MACD-only entries on sine upswings"
+    st = strat.evaluate_state(a, buys[0], p_macd)
+    assert st["buy"] is True
+    assert "macd_gap" in st and st["macd_gap"] is not None
+    assert "macd_bull" in st and st["macd_bull"] is True
+

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """Server-side AI research desk (Anthropic + Grok).
 
 Runs scheduled research prompts for one or both sources, turns qualifying
@@ -23,6 +24,7 @@ positions are managed in ai_positions.manage_open_positions().
 
     python3 ai_trader.py
 """
+
 import json
 import sys
 import threading

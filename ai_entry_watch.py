@@ -8,6 +8,7 @@ and poll_once paper entry placement.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -189,10 +190,16 @@ _BLOCKER_LABELS: dict[str, str] = {
     "heating": "heating",
     "rsi_deep_os_exh_heating": "RSI OS+EXH↑",
     "rsi_turning_up": "RSI↑",
-    "rsi_in_band": "RSI band",
     "rsi_not_rising": "RSI↓",
     "rsi_extended": "RSI high",
     "stale_quote": "stale quote",
+    # MACD momentum validation refusals
+    "no_macd_data": "no MACD",
+    "macd_bearish": "MACD bear",
+    "macd_gap_too_close": "MACD narrow",
+    "macd_gap_insufficient": "MACD gap low",
+    "macd_no_recent_cross": "wait cross",
+    "macd_bullish_gap": "buy",
 }
 
 
@@ -560,9 +567,13 @@ def _row_arm_refuse(row: dict, px: float) -> str | None:
     # any gate added later, which a literal list cannot.
     rsi_fields = {
         k: row.get(k) for k in row
-        if k.startswith(("cm_rsi", "pctr_")) and k not in (
+        if k.startswith(("cm_rsi", "pctr_", "macd_", "macd")) and k not in (
             "pctr_rising", "pctr_falling")
     }
+    if isinstance(row.get("indicator"), dict):
+        for ik, iv in row["indicator"].items():
+            if ik not in rsi_fields or rsi_fields[ik] is None:
+                rsi_fields[ik] = iv
     if src == "thin" or (pctr is None and state in ("", "unknown")):
         rec["indicator"] = dict(rsi_fields)
     else:
@@ -3086,7 +3097,7 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         hold = float(_push_cfg().get("scan_interval_sec", 60) or 60) * 2.0
     except (TypeError, ValueError):
         hold = 120.0
-    missing = [m for m in missing if (now - _pushed_at.get(m, 0.0)) > hold]
+    missing = [m for m in missing if m not in _pushed_at or (now - _pushed_at[m]) > hold]
     if not missing:
         return {"pushed": 0, "known": len(known), "debounced": True}
     for m in missing:
@@ -4346,6 +4357,104 @@ def live_cm_rsi(
     return float(rsi), green, bool(rising)
 
 
+def _ema_series(values: list[float], span: int) -> list[float]:
+    if not values or span <= 0:
+        return []
+    alpha = 2.0 / (float(span) + 1.0)
+    out = [float(values[0])]
+    for v in values[1:]:
+        out.append(alpha * float(v) + (1.0 - alpha) * out[-1])
+    return out
+
+
+def live_macd(
+    symbol: str,
+    price: float,
+    cfg: dict,
+    now: float,
+) -> dict | None:
+    """Compute real-time MACD (fast line, slow signal line, histogram gap, std, sep_ratio, bull status)
+    with the live trade print folded as the forming minute close.
+    """
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0:
+        return None
+    rows = symbol_ohlc(symbol, cfg, now)
+    if len(rows) < 15:
+        return None
+    closes = [float(r[2]) for r in rows] + [px]
+    try:
+        fast_p = int(cfg.get("macd_fast", 12) or 12)
+        slow_p = int(cfg.get("macd_slow", 26) or 26)
+        sig_p = int(cfg.get("macd_signal", 9) or 9)
+    except (TypeError, ValueError):
+        fast_p, slow_p, sig_p = 12, 26, 9
+    if len(closes) < max(slow_p + sig_p, 20):
+        return None
+
+    ema_fast = _ema_series(closes, fast_p)
+    ema_slow = _ema_series(closes, slow_p)
+    macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
+    signal_line = _ema_series(macd_line, sig_p)
+    hist = [m - s for m, s in zip(macd_line, signal_line)]
+
+    cur_line = macd_line[-1]
+    cur_sig = signal_line[-1]
+    cur_gap = hist[-1]
+
+    # Rolling standard deviation of histogram for scale-free gap measurement
+    try:
+        w = int(cfg.get("macd_sep_window", 50) or 50)
+    except (TypeError, ValueError):
+        w = 50
+    hist_win = hist[-w:] if len(hist) >= w else hist
+    if len(hist_win) >= 5:
+        mean_h = sum(hist_win) / len(hist_win)
+        var_h = sum((x - mean_h) ** 2 for x in hist_win) / (len(hist_win) - 1)
+        std_h = math.sqrt(var_h) if var_h > 0 else 0.0
+    else:
+        std_h = 0.0
+
+    sep_ratio = round(cur_gap / std_h, 2) if std_h > 0 else None
+
+    try:
+        cw = int(cfg.get("confirm_window", 8) or 8)
+    except (TypeError, ValueError):
+        cw = 8
+    lo = max(0, len(macd_line) - cw - 1)
+    bull_cross = False
+    for k in range(lo, len(macd_line) - 1):
+        if macd_line[k] <= signal_line[k] and macd_line[k + 1] > signal_line[k + 1]:
+            bull_cross = True
+            break
+
+    is_bull = cur_line > cur_sig
+
+    try:
+        sep_mult = float(cfg.get("macd_sep_mult", 0.8) or 0.8)
+        min_gap = float(cfg.get("macd_min_gap", 0.005) or 0.005)
+    except (TypeError, ValueError):
+        sep_mult, min_gap = 0.8, 0.005
+
+    macd_ok = is_bull and cur_gap >= min_gap and (std_h <= 0 or cur_gap >= sep_mult * std_h)
+
+    return {
+        "macd_fast": round(cur_line, 4),
+        "macd_slow": round(cur_sig, 4),
+        "macd_gap": round(cur_gap, 4),
+        "macd_hist": round(cur_gap, 4),
+        "macd_hist_std": round(std_h, 4) if std_h > 0 else None,
+        "macd_sep_ratio": sep_ratio,
+        "macd_bull": is_bull,
+        "macd_cross": bull_cross,
+        "macd_ok": macd_ok,
+        "macd_src": "realtime",
+    }
+
+
 def live_exhaustion_pair(
     symbol: str,
     price: float,
@@ -4583,6 +4692,10 @@ def apply_live_exhaustion(rec: dict, price: float, cfg: dict, now: float) -> boo
             except (TypeError, ValueError):
                 buy_max = 10.0
             ind["cm_rsi_low"] = float(rsi_got[0]) <= buy_max
+    macd_got = live_macd(sym, price, cfg, now)
+    if macd_got is not None:
+        for mk, mv in macd_got.items():
+            ind[mk] = mv
     try:
         px = float(price)
     except (TypeError, ValueError):
@@ -4804,6 +4917,15 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
         "exh_window_min": None if span is None else round(span / 60.0, 1),
         "exh_hh": _f_or_none(ind.get("pctr_hh")),
         "exh_ll": _f_or_none(ind.get("pctr_ll")),
+        "macd_fast": _f_or_none(ind.get("macd_fast") if ind.get("macd_fast") is not None else ind.get("macd_line")),
+        "macd_slow": _f_or_none(ind.get("macd_slow") if ind.get("macd_slow") is not None else ind.get("macd_signal")),
+        "macd_gap": _f_or_none(ind.get("macd_gap") if ind.get("macd_gap") is not None else ind.get("macd_hist")),
+        "macd_hist": _f_or_none(ind.get("macd_hist") if ind.get("macd_hist") is not None else ind.get("macd_gap")),
+        "macd_hist_std": _f_or_none(ind.get("macd_hist_std")),
+        "macd_sep_ratio": _f_or_none(ind.get("macd_sep_ratio")),
+        "macd_bull": bool(ind.get("macd_bull") if ind.get("macd_bull") is not None else (_f_or_none(ind.get("macd_fast")) is not None and _f_or_none(ind.get("macd_slow")) is not None and float(ind.get("macd_fast")) > float(ind.get("macd_slow")))),
+        "macd_cross": bool(ind.get("macd_cross")),
+        "macd_ok": bool(ind.get("macd_ok")),
     }
 
 
@@ -4981,6 +5103,61 @@ def _tv_exh_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     if rsi > buy_max:
         return False, "wait_rsi"
     return True, "exh_rsi"
+
+
+def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
+    """Buy side of the MACD momentum gate.
+
+    Opens positions on MACD bullish crossover where slow and fast lines have
+    sufficient separation/gap (the farther apart, the more bullish the signal).
+    """
+    if not bool(cfg.get("ai_watch_arm_require_macd", False)):
+        return True, "macd_off"
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+
+    fast = _f_or_none(ind.get("macd_fast") if ind.get("macd_fast") is not None else ind.get("macd_line"))
+    slow = _f_or_none(ind.get("macd_slow") if ind.get("macd_slow") is not None else ind.get("macd_signal"))
+    gap = _f_or_none(ind.get("macd_gap") if ind.get("macd_gap") is not None else ind.get("macd_hist"))
+    if fast is None or slow is None or gap is None:
+        if isinstance(record, dict):
+            record["block_detail"] = "no realtime MACD (needs 1-min bars)"
+        return False, "no_macd_data"
+
+    if fast <= slow or gap <= 0:
+        if isinstance(record, dict):
+            record["block_detail"] = f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})"
+        return False, "macd_bearish"
+
+    try:
+        min_gap = float(cfg.get("macd_min_gap", 0.005) or 0.005)
+    except (TypeError, ValueError):
+        min_gap = 0.005
+
+    if gap < min_gap:
+        if isinstance(record, dict):
+            record["block_detail"] = f"gap {gap:+.4f} < min {min_gap:.4f}"
+        return False, "macd_gap_too_close"
+
+    try:
+        sep_mult = float(cfg.get("macd_sep_mult", 0.8) or 0.8)
+    except (TypeError, ValueError):
+        sep_mult = 0.8
+
+    std = _f_or_none(ind.get("macd_hist_std") if ind.get("macd_hist_std") is not None else ind.get("macd_std"))
+    if sep_mult > 0 and std is not None and std > 0:
+        if gap < sep_mult * std:
+            if isinstance(record, dict):
+                record["block_detail"] = f"gap {gap:+.4f} < {sep_mult:.1f}x std ({sep_mult * std:.4f})"
+            return False, "macd_gap_insufficient"
+
+    if bool(cfg.get("macd_require_cross", False)):
+        if not bool(ind.get("macd_cross")):
+            if isinstance(record, dict):
+                record["block_detail"] = "no bullish cross in confirm window"
+            return False, "macd_no_recent_cross"
+
+    return True, "macd_bullish_gap"
 
 
 def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -7199,16 +7376,17 @@ def should_arm_buy(
     if min_rr > 0 and rr + 1e-12 < min_rr:
         return False, "reward_risk"
 
+    # MACD bullish crossover + wide separation gap (primary momentum entry gate)
+    if bool(cfg.get("ai_watch_arm_require_macd", False)):
+        macd_ok, macd_why = macd_allows_buy(record, cfg)
+        if not macd_ok:
+            return False, macd_why
+
     # Exhaustion first so (a) missing %R is named correctly, and (b) the soft
     # sell_signal veto below can reference exh_why without UnboundLocalError.
-    # Rising EXH ≥ heat_min (default 50). Overbought-only was the old scalp
-    # rule; local trail now locks the pop so we can arm earlier.
     exh_ok, exh_why = exhaustion_allows_buy(record, cfg)
 
-    # CM RSI-2 band + turn. Its own gate, deliberately not folded into the
-    # ai_watch_arm_require triple above: that list is all-or-nothing and also
-    # demands pctr_ok, a different %R test than the EXH gate this desk arms
-    # on. Off by default; ai_watch_arm_require_cm_rsi turns it on.
+    # CM RSI-2 band + turn (checked when ai_watch_arm_require_cm_rsi is active)
     rsi_ok, rsi_why = cm_rsi_allows_buy(record, cfg)
     if not rsi_ok:
         return False, rsi_why
