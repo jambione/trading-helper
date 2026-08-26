@@ -301,8 +301,11 @@ def cached_quote_age_sec(symbol: str, now: float | None = None) -> float | None:
     sym = _norm_sym(symbol)
     if not sym:
         return None
-    if _cached_quote(sym) is None:      # honours _QUOTE_TTL_SEC eviction
-        return None
+    # Deliberately NOT gated on _cached_quote: that evicts at
+    # _QUOTE_TTL_SEC (3s), and _latest_ask keeps returning a good ask from
+    # its fallback paths afterwards. Tying the age to the price cache made
+    # the age vanish three seconds after every prime while the ask lived on,
+    # which is precisely when the guards need it.
     qts = _quote_ts.get(sym)
     if qts is None:
         return None
@@ -317,6 +320,27 @@ def refresh_quotes_now(symbols: list[str]) -> int:
         return 0
     invalidate_quotes(wanted)
     return prime_quotes(wanted)
+
+
+def _remember_quote_ts(symbol: str, ts) -> None:
+    """Store a quote's own timestamp for symbol, refusing a useless one.
+
+    Split out because three paths produce an ask and only prime_quotes was
+    recording when the quote was stamped. A stamp in the future is a skewed
+    clock and would read as eternally fresh; unknown is safer than wrong.
+    """
+    sym = _norm_sym(symbol)
+    if not sym:
+        return
+    try:
+        val = float(ts.timestamp()) if ts is not None else None
+    except (TypeError, ValueError, AttributeError):
+        val = None
+    now = time.time()
+    if val is None or not (0 < val <= now + 5):
+        _quote_ts.pop(sym, None)
+        return
+    _quote_ts[sym] = val
 
 
 def _cached_quote(symbol: str) -> tuple[float | None, float | None] | None:
@@ -360,6 +384,14 @@ def _latest_ask(symbol: str) -> float | None:
             quote = q.get(symbol) if isinstance(q, dict) else q
             ask = float(getattr(quote, "ask_price", 0) or 0)
             if ask > 0:
+                # Record this quote's own time. _quote_ts is only written by
+                # prime_quotes, and _cached_quote evicts at _QUOTE_TTL_SEC
+                # (3s) — so outside the arm path, which primes first, the
+                # poll reached here, got a perfectly good ask, and had no
+                # provable age for it. With the staleness guards failing
+                # closed that reads as stale_quote on every REST-priced name.
+                # An ask without a timestamp is an ask the desk cannot use.
+                _remember_quote_ts(symbol, getattr(quote, "timestamp", None))
                 return ask
         except Exception:
             pass

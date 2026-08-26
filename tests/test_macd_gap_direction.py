@@ -26,7 +26,12 @@ OFF = {"ai_watch_arm_require_macd": True, "ai_watch_macd_block_narrowing": False
 
 
 def _rec(**ind):
-    base = {"macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05}
+    # macd_sep_ratio is part of the baseline: the separation test is the
+    # strategy, and a record without one is now refused as macd_sep_unknown
+    # rather than passed silently. 1.5 clears the 0.8 default multiple, so
+    # these fixtures exercise the direction rule and not the size rule.
+    base = {"macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05,
+            "macd_sep_ratio": 1.5}
     base.update(ind)
     return {"symbol": "AAA", "indicator": base}
 
@@ -205,3 +210,74 @@ def test_the_poll_whitelist_carries_the_levels_not_just_the_verdict():
     for k in ("macd_gap", "macd_fast", "macd_slow", "macd_sep_ratio",
               "macd_gap_rising", "macd_gap_falling"):
         assert f'"{k}": sig.get("{k}")' in body, f"{k} missing from the whitelist"
+
+
+# ── the separation rule the strategy is named for ────────────────────────
+
+def test_a_narrow_separation_is_refused():
+    """gap >= sep_mult * std  <=>  ratio >= sep_mult. The gate used to read
+    macd_hist_std, which the engine does not publish — it puts the finished
+    quotient on the wire as macd_sep_ratio — so `std` was None on every
+    symbol and this check silently never ran."""
+    rec = _rec(macd_sep_ratio=0.4, macd_gap_rising=True, macd_gap_falling=False)
+    ok, why = ew.macd_allows_buy(rec, ON)
+    assert ok is False
+    assert why == "macd_gap_insufficient"
+    assert "0.40" in str(rec.get("block_detail"))
+
+
+def test_a_wide_separation_passes():
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_sep_ratio=4.25, macd_gap_rising=True, macd_gap_falling=False),
+        ON)
+    assert ok is True and why == "macd_bullish_gap"
+
+
+def test_the_ratio_is_read_at_the_configured_multiple():
+    cfg = dict(ON, macd_sep_mult=2.0)
+    base = dict(macd_gap_rising=True, macd_gap_falling=False)
+    assert ew.macd_allows_buy(_rec(macd_sep_ratio=1.5, **base), cfg)[1] == (
+        "macd_gap_insufficient")
+    assert ew.macd_allows_buy(_rec(macd_sep_ratio=2.5, **base), cfg)[0] is True
+
+
+def test_a_raw_std_is_still_honoured_if_a_producer_publishes_one():
+    rec = {"symbol": "AAA", "indicator": {
+        "macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05,
+        "macd_hist_std": 0.20,          # 0.8 * 0.20 = 0.16 > 0.05
+        "macd_gap_rising": True, "macd_gap_falling": False}}
+    ok, why = ew.macd_allows_buy(rec, ON)
+    assert ok is False and why == "macd_gap_insufficient"
+
+
+def test_no_separation_reading_at_all_is_refused_not_passed():
+    """This is the bug: with neither field the whole check short-circuited
+    and the live rule collapsed to a bare gap >= macd_min_gap."""
+    rec = {"symbol": "AAA", "indicator": {
+        "macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05,
+        "macd_gap_rising": True, "macd_gap_falling": False}}
+    ok, why = ew.macd_allows_buy(rec, ON)
+    assert ok is False
+    assert why == "macd_sep_unknown"
+
+
+def test_zeroing_the_multiple_does_NOT_disable_the_separation_test():
+    """Footgun, pinned rather than "fixed" without being asked for.
+
+    The knob is read as `float(cfg.get("macd_sep_mult", 0.8) or 0.8)`, and
+    0 is falsy — so setting macd_sep_mult to 0 in bot_config.json silently
+    restores 0.8 instead of turning the check off. Several knobs on this
+    desk document "0 disables"; this one does the opposite, quietly. Set it
+    to a tiny positive number if you actually want it out of the way.
+    """
+    cfg = dict(ON, macd_sep_mult=0)
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_sep_ratio=0.01, macd_gap_rising=True,
+             macd_gap_falling=False), cfg)
+    assert ok is False, "0 does not disable — it re-reads as the 0.8 default"
+    assert why == "macd_gap_insufficient"
+
+    ok2, _ = ew.macd_allows_buy(
+        _rec(macd_sep_ratio=0.01, macd_gap_rising=True,
+             macd_gap_falling=False), dict(ON, macd_sep_mult=1e-9))
+    assert ok2 is True, "a tiny positive multiple is how you stand it down"

@@ -203,6 +203,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     # together, so the momentum this entry is meant to ride is already over.
     "macd_gap_narrowing": "MACD closing",
     "macd_gap_dir_unknown": "no MACD dir",
+    "macd_sep_unknown": "no MACD sep",
     "macd_bullish_gap": "buy",
 }
 
@@ -5236,12 +5237,37 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     except (TypeError, ValueError):
         sep_mult = 0.8
 
+    # "Wide separation" — the rule the strategy is named for. It read
+    # macd_hist_std / macd_std, and the engine publishes NEITHER: it computes
+    # the rolling std internally and puts the finished quotient on the wire as
+    # macd_sep_ratio. So `std` was None on every symbol, the whole check
+    # short-circuited, and the live rule was bare `gap >= macd_min_gap` while
+    # the doc and the commit title both said "wide gap". Same field-name class
+    # of bug as price_age_sec and dollar_volume before it.
+    #
+    # gap >= sep_mult * std  <=>  (gap / std) >= sep_mult  <=>  ratio >= mult.
+    # The raw std path is kept for any producer that does publish it.
+    ratio = _f_or_none(ind.get("macd_sep_ratio"))
     std = _f_or_none(ind.get("macd_hist_std") if ind.get("macd_hist_std") is not None else ind.get("macd_std"))
-    if sep_mult > 0 and std is not None and std > 0:
-        if gap < sep_mult * std:
+    if sep_mult > 0:
+        if ratio is not None:
+            if ratio < sep_mult:
+                if isinstance(record, dict):
+                    record["block_detail"] = (
+                        f"sep {ratio:.2f}x < {sep_mult:.1f}x std")
+                return False, "macd_gap_insufficient"
+        elif std is not None and std > 0:
+            if gap < sep_mult * std:
+                if isinstance(record, dict):
+                    record["block_detail"] = f"gap {gap:+.4f} < {sep_mult:.1f}x std ({sep_mult * std:.4f})"
+                return False, "macd_gap_insufficient"
+        else:
+            # Neither form on the record. The separation test is the strategy,
+            # not a garnish, so an unmeasurable one is a refusal rather than a
+            # silent pass — which is what it had been doing.
             if isinstance(record, dict):
-                record["block_detail"] = f"gap {gap:+.4f} < {sep_mult:.1f}x std ({sep_mult * std:.4f})"
-            return False, "macd_gap_insufficient"
+                record["block_detail"] = "no separation reading (needs 50 bars)"
+            return False, "macd_sep_unknown"
 
     if bool(cfg.get("macd_require_cross", False)):
         if not bool(ind.get("macd_cross")):
