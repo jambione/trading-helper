@@ -2398,6 +2398,49 @@ def _price_loop():
                 # unconditionally meant a stream tick from 90s ago beat an
                 # Alpaca print from 5s ago — and pre-market, where the stream
                 # idles, that was the normal case.
+                # THE DESK IS THE SOURCE. signal_engine holds its own
+                # Finnhub trade socket and aggregates it into realtime bars,
+                # and it already publishes both the price and the age of the
+                # trade behind it. Measured 2026-08-26 over a full RTH
+                # session: the engine's tape ran p50 0.3s / p90 0.9s while
+                # this loop's merged price ran p50 28.0s / p90 85.4s — and
+                # the merged one is what the arm gate reads, which is why
+                # "stale quote" was the most common state on the book.
+                #
+                # Two independent price feeds is one too many. The engine
+                # originates; the dashboard renders. Included as a normal
+                # merge source rather than an override so it still has to
+                # win on trade recency — if the desk's print is older than
+                # an Alpaca one, Alpaca should win, and freshest_prices
+                # already decides that correctly.
+                desk_prices: dict = {}
+                try:
+                    _sig = _load_signal_state() or {}
+                    for _t, _sp in (_sig.get("tickers") or {}).items():
+                        if not isinstance(_sp, dict):
+                            continue
+                        if _t not in quote_universe:
+                            continue
+                        # Only the realtime pipe. bars_src flips per ticker
+                        # mid-session, and the REST fallback has no trade
+                        # clock worth trusting here.
+                        if str(_sp.get("bars_src") or "") != "realtime":
+                            continue
+                        _px = _sp.get("price")
+                        _age = _sp.get("bars_age_sec")
+                        if _px is None or _age is None:
+                            continue
+                        _px = float(_px)
+                        _age = float(_age)
+                        if _px <= 0 or _age < 0:
+                            continue
+                        _tts = now - _age
+                        if _tts <= 0:
+                            continue
+                        desk_prices[_t] = (_px, _tts, _tts)
+                except Exception:
+                    desk_prices = {}
+
                 with _alpaca_cache_lock:
                     cached_alpaca = dict(_alpaca_price_cache)
                 with FINNHUB_STATE.lock:
@@ -2407,7 +2450,7 @@ def _price_loop():
                               for t, d in FINNHUB_STATE.prices.items()
                               if d.get("price")}
 
-                merged = freshest_prices(cached_alpaca, fh_all)
+                merged = freshest_prices(cached_alpaca, fh_all, desk_prices)
 
                 with STATE.lock:
                     for t, (p, obs, trade_ts) in merged.items():
