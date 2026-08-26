@@ -556,6 +556,69 @@ protection at all.
    before building anything on top of them.** Do not swap one unvalidated
    feed for another.
 
+#### G2. Finnhub is not the answer, and the premarket price is frozen (8/26)
+
+Checked live at 06:00 ET (`scratchpad/finnhub_quote_probe.py`):
+
+| endpoint | result |
+|---|---|
+| `/stock/bidask` (NBBO) | **HTTP 403** — not entitled on this plan |
+| `/quote` | fields `c,d,dp,h,l,o,pc,t` — last trade only, **no book** |
+| `/quote` timestamp, premarket | `t = 2026-08-25 16:00 ET` — **yesterday's close** |
+
+So Finnhub cannot price a spread at any hour, and cannot price *anything*
+premarket. Only its **websocket** carries live premarket trades, and that
+socket lives in `signal_engine.py`, not in the `ai_trader` process where
+`ai_entry_watch` runs.
+
+**Which makes the 8/25 stream experiment unable to answer its question.**
+`_stream_pctr_fields` (`ai_entry_watch.py:1422`) feeds the aggregator with
+`stream_bars.observe(symbol, px, now)` — `px` is the shadow row's own
+price, from the same IEX path. Its docstring says so plainly: "without a
+trade stream in this process". `pctr_stream` is therefore **not** a denser
+feed to compare against; it is the same feed resampled, and it answers
+"would a denser feed fix the window" with a restatement of the old one.
+
+What that produces premarket is degenerate. Of 770 paired rows on 8/26,
+`pctr_stream` is pinned to an extreme (0 or −100) on **95%** — 590 at 0 and
+144 at −100 — against 25% for the IEX-bar `pctr`. On most rows the two read
+*exact opposites*: `pctr_stream` = 0 (maximally overbought) while `pctr` =
+−100. `cm_rsi_stream` hits both rails (0.00 and 100.00) where `cm_rsi` runs
+11.1–99.9. A windowed indicator over a window with no variation collapses
+to its extremes; that is arithmetic, not signal.
+
+**The cause is upstream of all of it. The premarket price never moves.**
+RARE, 365 distinct samples, 04:00–06:05 ET, median gap 20.5s
+(`scratchpad/premarket_frozen_check.py`):
+
+```
+  FROZE : price, ask, spread_r, pctr_stream, stop_price, pct_change, ...
+  MOVED : bid, pctr, pctr_slow, cm_rsi, ...
+
+  live IEX quote   bid 22.72   ask 0.00      age 50710s
+  live IEX trade   26.45                     age 50712s
+  shadow log last  26.45                     age     6s
+```
+
+**The IEX ask is literally `0.00`, the last IEX trade is 14 hours old — it
+*is* yesterday's 16:00 close — and the desk logged that number six seconds
+ago as the current price.** Zero price changes in ~363 samples, on all
+eight names watched. The same symbol on the same field changes on 61% of
+RTH samples with a real 26.12–27.08 range, so the machinery is fine; it is
+specifically premarket that is dead.
+
+Everything the desk records between 04:00 and 09:30 — `pctr`, `cm_rsi`,
+`exhaustion`, `spread_r`, `pct_change`, the setup legs in §5F — is computed
+on yesterday's closing print. By the standing rule, none of it is evidence
+of anything.
+
+**This is the real blocker on starting the day at 04:00, and it outranks
+both the order mechanics and the spread.** The desk is not slow premarket
+or noisy premarket; it is blind. Order plumbing already exists on both
+sides (`alpaca_trader.py:405` buy, `:955` sell), and `_require_protective_exit`
+refuses the entry anyway — which, given the above, is currently the correct
+behaviour and should not be relaxed until a live premarket price exists.
+
 ### The design criterion this produces
 
 For a driftless walk, expected favorable excursion is ≈ **0.8σ√t** — which
@@ -974,3 +1037,15 @@ the case that settles it: logged 5.278R, actual 0.026R. The premarket
 hazard is the quote going *dark* (37% of rows matched a quote over a minute
 old, vs 2% in RTH) against a session where Alpaca holds no stop and
 `_rth_now()` gates the blind-book flatten off. §5G.
+
+**8/26 (later) — the premarket price is yesterday's close.** Finnhub is out
+as a quote source (`/stock/bidask` 403, `/quote` returns the prior close
+premarket), so only its websocket carries premarket tape — and that socket
+is in `signal_engine`, not in the process that computes indicators. The
+8/25 `pctr_stream` experiment feeds the aggregator the *same* IEX price it
+was meant to be compared against, so it pins to an extreme on 95% of
+premarket rows and reads the exact opposite of `pctr` on most of them.
+Underneath: the live IEX ask is `0.00`, the last IEX trade is 14 hours old,
+and the desk logs it as current every 20 seconds — zero price changes in
+363 samples across all 8 names. Every premarket number the desk has ever
+recorded is computed on yesterday's close. §5G2.
