@@ -883,6 +883,17 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             # differs per source (momentum ~1000, Stocktwits ~10-20), so it is
             # not comparable down the column; rvol is one unit everywhere.
             "rvol": _f_or_none(rec.get("admit_rvol")),
+            # Did a human call this one out? The seeder tags `bro_call` onto
+            # rows another source owns (a call is the weakest evidence and
+            # must not seize the row), so `source` alone cannot answer it —
+            # DAIC on 8/26 was called by Trader Bro and reached the book as
+            # `momentum` with nothing recording the call. Shipped as its own
+            # boolean rather than the whole criteria list: the panel wants a
+            # badge, and criteria is a producer-side vocabulary.
+            "bro_call": bool(
+                "bro_call" in (rec.get("admit_criteria") or [])
+                or str(rec.get("source") or "").strip().lower()
+                in _BB_LIVE_SOURCES),
             # % of the way to overbought (100 + fast %R) and which way it is
             # moving. Both, because the level alone cannot tell "pinned at the
             # highs and rolling over" from "climbing into them".

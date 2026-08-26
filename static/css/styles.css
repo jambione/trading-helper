@@ -2442,6 +2442,23 @@ body.mobile .icon-btn {
 .panel-ai-watch .feed-cols--ai-book .cell-trail.is-held {
   color: var(--warn, #e0a33e);
 }
+/* Trader Bro called this symbol out. Sits beside the ticker rather than in
+   the source cell because the call does NOT own the row — momentum or a
+   research thesis usually does, and overwriting the source would hide
+   which pipeline actually admitted it. */
+.panel-ai-watch .feed-cols--ai-book .cell-ticker .bro-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.5;
+  vertical-align: middle;
+  color: var(--bg, #0f1115);
+  background: var(--accent, #6ea8fe);
+}
 .panel-ai-watch .feed-cols--ai-book .cell-trail.is-hit {
   color: var(--danger, #f87171);
   font-weight: 600;

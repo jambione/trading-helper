@@ -871,6 +871,10 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
             "agreement": True,
             "score": 7.5,
             "last_ask": 12.3,
+            # A price with no provable age is stale_quote and can never be
+            # READY (8/26). This row is testing snapshot shape and zone
+            # geometry, so it gets an age it can prove.
+            "last_ask_src": "rest", "last_ask_age_sec": 1.0,
             "structure": {
                 "wait_kind": "wait_for_zone",
                 "entry_low": 11.0,
@@ -907,6 +911,14 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # Which geometry drew the band — double_bottom vs the offset fallback.
         "zone_kind",
         "block_code", "blocker", "block_reason", "block_detail",
+        # How old the print behind last_ask is, and where it came from. The
+        # staleness guards key off these, and until 8/26 they were absent
+        # here while _row_tape_stale silently treated unknown age as fresh.
+        "last_ask_src", "last_ask_age_sec",
+        # Whether a human called this symbol out. Separate from `source`
+        # because a Trader Bro call does not take ownership of a row that
+        # momentum or a research thesis already owns — it only tags it.
+        "bro_call",
     }
     for row in snap:
         assert set(row.keys()) == keys

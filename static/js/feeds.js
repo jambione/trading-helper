@@ -777,6 +777,23 @@ function _bookBlockerClass(r) {
 
 function _updateBookRow(el, r) {
   if (!el || !r) return;
+  // A call-out can land after the row is already on the book — Bro names a
+  // symbol momentum seeded minutes ago — and this path patches cells rather
+  // than re-rendering, so the badge has to be added (and removed, once the
+  // call ages out of the freshness window) here too.
+  const tickerCell = el.querySelector('.cell-ticker');
+  if (tickerCell) {
+    const badge = tickerCell.querySelector('.bro-badge');
+    if (r.bro_call && !badge) {
+      const span = document.createElement('span');
+      span.className = 'bro-badge';
+      span.title = 'Trader Bro called this one out';
+      span.textContent = 'BRO';
+      tickerCell.appendChild(span);
+    } else if (!r.bro_call && badge) {
+      badge.remove();
+    }
+  }
   const phase = String((r && r.phase) || 'watching').toLowerCase();
   const isOpen = phase === 'open' || r.is_position;
   const statusLabel = _bookBlockerLabel(r);
@@ -927,7 +944,9 @@ function _bookRowHtml(r) {
       : 'ticker-row feed-row feed-row--ai-book');
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
-    + `<div class="cell-ticker">${_esc(sym)}</div>`
+    + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
+      ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
+      : ''}</div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
