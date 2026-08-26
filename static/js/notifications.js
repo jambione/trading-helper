@@ -464,8 +464,7 @@ function _check(rows) {
         title: `Momentum BUY  ${row.ticker}`,
         sub: [
           row.price != null ? `$${row.price.toFixed(2)}`    : '',
-          sp.cm_rsi != null ? `RSI ${sp.cm_rsi.toFixed(0)}` : '',
-          sp.pctr   != null ? `%R ${sp.pctr.toFixed(0)}`    : '',
+          (sp.macd_gap != null || sp.macd_hist != null) ? `MACD ${(sp.macd_gap ?? sp.macd_hist) >= 0 ? '+' : ''}${Number(sp.macd_gap ?? sp.macd_hist).toFixed(3)}` : '',
           'tap to focus',
         ].filter(Boolean).join('  ·  '),
         toastType: 'buy',
@@ -473,8 +472,7 @@ function _check(rows) {
         meta: {
           price: row.price,
           proximity_pct: sp.proximity_pct,
-          cm_rsi: sp.cm_rsi,
-          pctr: sp.pctr,
+          macd_gap: sp.macd_gap ?? sp.macd_hist,
         },
         select: !currentSelected,
         beepType: 'buy',
@@ -509,8 +507,7 @@ function _notify(row, type = 'buy') {
     const n = new Notification(`Momentum BUY  ${row.ticker}`, {
       body: [
         row.price  != null ? `$${row.price.toFixed(2)}`      : '',
-        sp.pctr    != null ? `%R ${sp.pctr.toFixed(0)}`      : '',
-        sp.cm_rsi  != null ? `RSI ${sp.cm_rsi.toFixed(0)}`   : '',
+        (sp.macd_gap != null || sp.macd_hist != null) ? `MACD ${(sp.macd_gap ?? sp.macd_hist) >= 0 ? '+' : ''}${Number(sp.macd_gap ?? sp.macd_hist).toFixed(3)}` : '',
       ].filter(Boolean).join('  ·  '),
       tag:               `buy-${row.ticker}`,
       requireInteraction: false,

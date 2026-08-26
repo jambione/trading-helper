@@ -509,25 +509,23 @@ function _signalPills(sp) {
     return `${velPill}${stopPill}${srcBadge}`;
   }
 
-  if (sp.strategy === 'three_indicator' || sp.strategy === 'macd') {
-    const gap = sp.macd_gap ?? sp.macd_hist;
-    const ratio = sp.macd_sep_ratio;
-    const isBull = !!(sp.macd_bull || sp.macd_ok || (gap != null && gap > 0));
-    const isWide = !!(sp.macd_ok || (ratio != null && ratio >= 0.8) || (gap != null && gap >= 0.015));
-    const macdCls = isWide ? 'cond-ok' : (isBull ? 'cond-warn' : 'cond-no');
-    const gapTxt = gap != null ? `${gap >= 0 ? '+' : ''}${gap.toFixed(3)}` : '—';
-    const ratioTxt = ratio != null ? ` (${ratio.toFixed(1)}×)` : '';
-    const macdPill = `<span class="sig-cond ${macdCls}" title="MACD Fast/Slow Line Gap: ${gapTxt}${ratioTxt} — wider gap indicates stronger bullish momentum">MACD ${gapTxt}</span>`;
-    return `${macdPill}${hotPill}${srcBadge}`;
-  }
-
-  // momentum (default)
-  const rsi = sp.rsi, macdHist = sp.macd_hist;
-  const rsiOk = isHot || (rsi != null && rsi < 70);
-  const rsiPill  = `<span class="sig-cond ${rsiOk ? 'cond-ok' : 'cond-no'}" title="RSI ${rsi != null ? rsi.toFixed(1) : '?'}${isHot ? ' (bypassed)' : ''}">RSI</span>`;
-  const posPill  = `<span class="sig-cond ${sp.hist_positive ? 'cond-ok' : 'cond-no'}" title="MACD histogram ${macdHist != null ? macdHist.toFixed(4) : '?'}">+</span>`;
-  const growPill = `<span class="sig-cond ${sp.hist_growing ? 'cond-ok' : 'cond-no'}" title="MACD growing">↑</span>`;
-  return `${rsiPill}${posPill}${growPill}${hotPill}${srcBadge}`;
+  // Render MACD Bullish Gap for all momentum watchlist items
+  const gap = sp.macd_gap ?? sp.macd_hist;
+  const ratio = sp.macd_sep_ratio;
+  const isBull = !!(sp.macd_bull || sp.macd_ok || sp.hist_positive || (gap != null && gap > 0));
+  const isWide = !!(sp.macd_ok || (ratio != null && ratio >= 0.8) || (gap != null && gap >= 0.015));
+  const macdCls = isWide ? 'cond-ok' : (isBull ? 'cond-warn' : 'cond-no');
+  const gapTxt = (gap != null && Number.isFinite(Number(gap)))
+    ? `${Number(gap) >= 0 ? '+' : ''}${Number(gap).toFixed(3)}`
+    : (sp.hist_growing ? '↑' : (sp.hist_positive ? '+' : '—'));
+  const ratioTxt = (ratio != null && Number.isFinite(Number(ratio)))
+    ? ` (${Number(ratio).toFixed(1)}×)`
+    : '';
+  const titleTxt = (gap != null && Number.isFinite(Number(gap)))
+    ? `MACD Fast/Slow Line Gap: ${gapTxt}${ratioTxt} — wider gap indicates stronger bullish momentum`
+    : `MACD ${sp.hist_growing ? 'growing' : (sp.hist_positive ? 'positive' : 'negative')}`;
+  const macdPill = `<span class="sig-cond ${macdCls}" title="${titleTxt}">MACD ${gapTxt}${ratioTxt}</span>`;
+  return `${macdPill}${hotPill}${srcBadge}`;
 }
 
 function _signalBarHTML(row) {
