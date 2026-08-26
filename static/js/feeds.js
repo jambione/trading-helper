@@ -1247,11 +1247,17 @@ function _bookMacdText(r) {
   if (gap == null || !Number.isFinite(Number(gap))) return '—';
   const n = Number(gap);
   const sign = n >= 0 ? '+' : '';
+  // ▲/▼ is the SIGN of the gap — bullish or bearish. It says nothing about
+  // whether the lines are still separating, so opening/closing gets its own
+  // glyph: ↗ widening, ↘ closing. A wide gap that is closing is momentum
+  // already over, and reading the sign arrow as direction is the exact
+  // confusion this pair removes.
   const arrow = n > 0 ? '▲ ' : (n < 0 ? '▼ ' : '');
+  const dir = r.macd_gap_rising ? ' ↗' : (r.macd_gap_falling ? ' ↘' : '');
   const ratio = r.macd_sep_ratio != null && Number.isFinite(Number(r.macd_sep_ratio))
     ? ` (${Number(r.macd_sep_ratio).toFixed(1)}×)`
     : '';
-  return `${arrow}${sign}${n.toFixed(3)}${ratio}`;
+  return `${arrow}${sign}${n.toFixed(3)}${ratio}${dir}`;
 }
 
 function _bookMacdClass(r) {
@@ -1278,6 +1284,17 @@ function _fmtMacdTitle(r) {
   if (slow != null && Number.isFinite(Number(slow))) bits.push(`Slow: ${Number(slow).toFixed(4)}`);
   if (gap != null && Number.isFinite(Number(gap))) bits.push(`Gap: ${Number(gap) >= 0 ? '+' : ''}${Number(gap).toFixed(4)}`);
   if (r.macd_sep_ratio != null && Number.isFinite(Number(r.macd_sep_ratio))) bits.push(`Sep: ${Number(r.macd_sep_ratio).toFixed(2)}x std`);
+  // Say the direction in words, with the previous value behind it — the
+  // glyph in the cell is small and "closing" is the reading that stops an
+  // entry, so it should not depend on spotting an arrow.
+  if (r.macd_gap_rising || r.macd_gap_falling) {
+    const prev = (r.macd_gap_prev != null && Number.isFinite(Number(r.macd_gap_prev)))
+      ? ` (was ${Number(r.macd_gap_prev) >= 0 ? '+' : ''}${Number(r.macd_gap_prev).toFixed(4)})`
+      : '';
+    bits.push(`Gap ${r.macd_gap_rising ? 'OPENING' : 'CLOSING'}${prev}`);
+  } else if (r.macd_gap_rising === null && r.macd_gap_falling === null) {
+    bits.push('Gap direction unknown');
+  }
   if (r.macd_bull) bits.push('Bullish');
   if (r.macd_cross) bits.push('Recent Bull Cross');
   if (r.macd_ok) bits.push('Wide Separation Confirmed');

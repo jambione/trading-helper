@@ -1177,6 +1177,12 @@ class TickerState:
             "macd_bull":      bool(s.get("macd_bull")),
             "macd_cross":     bool(s.get("macd_cross")),
             "macd_sep_ratio": s.get("macd_sep_ratio"),
+            # Direction of the separation, not just its size: a wide
+            # gap that is closing is momentum dying, and the arm gate
+            # refuses it (ai_watch_macd_require_widening).
+            "macd_gap_rising":  s.get("macd_gap_rising"),
+            "macd_gap_falling": s.get("macd_gap_falling"),
+            "macd_gap_prev":    s.get("macd_gap_prev"),
             "macd_ok":        bool(s.get("macd_ok")),
             "buy_signal":     bool(s.get("buy")),
             "sell_signal":    bool(s.get("sell")),

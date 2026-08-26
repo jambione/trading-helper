@@ -199,6 +199,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "macd_gap_too_close": "MACD narrow",
     "macd_gap_insufficient": "MACD gap low",
     "macd_no_recent_cross": "wait cross",
+    # Direction, not size: the lines are far enough apart but coming back
+    # together, so the momentum this entry is meant to ride is already over.
+    "macd_gap_narrowing": "MACD closing",
+    "macd_gap_dir_unknown": "no MACD dir",
     "macd_bullish_gap": "buy",
 }
 
@@ -911,6 +915,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "exhaustion": _f_or_none(exhaustion_pct(rec)),
             "exhaustion_state": exhaustion_state(rec, _push_cfg()),
             **_exhaustion_wire_fields(rec),
+            **_macd_wire_fields(rec),
             "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
             "reason": str(rec.get("reason") or "")[:80] or None,
             "source": str(rec.get("source") or "research")[:24] or "research",
@@ -1005,6 +1010,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "exhaustion": _f_or_none(exhaustion_pct(rec)),
         "exhaustion_state": exhaustion_state(rec, _push_cfg()),
         **_exhaustion_wire_fields(rec),
+        **_macd_wire_fields(rec),
         "reason": str(rec.get("reason") or "")[:80] or None,
         "wait_kind": wait_kind,
         "entry_low": entry_low_f,
@@ -4879,6 +4885,56 @@ def _price_in_or_below_zone(rec: dict, price: float, *, pad_pct: float = 0.0) ->
     return px <= high_bound
 
 
+def _macd_wire_fields(rec: dict) -> dict:
+    """MACD momentum for the book's MACD Gap column.
+
+    The 8/26 redesign made MACD the entry lever and added the column, the
+    renderer, the CSS and the arm gate — but nothing ever put the numbers on
+    the wire, so every row rendered "—" while the engine had real values.
+    Sibling of _exhaustion_wire_fields for exactly the same reason.
+
+    Direction travels with size. Every other field here says how far apart
+    the lines are; `macd_gap_rising` / `macd_gap_falling` say which way they
+    are going, and a wide gap that is closing is momentum already over.
+    `macd_gap_prev` rides along so the column can show the actual change
+    rather than a bare boolean.
+    """
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    keys = ("macd_fast", "macd_slow", "macd_gap", "macd_sep_ratio",
+            "macd_gap_prev")
+    if not isinstance(ind, dict):
+        out = {k: None for k in keys}
+        out.update({"macd_bull": False, "macd_cross": False, "macd_ok": False,
+                    "macd_gap_rising": None, "macd_gap_falling": None})
+        return out
+    gap = _f_or_none(
+        ind.get("macd_gap") if ind.get("macd_gap") is not None
+        else ind.get("macd_hist"))
+    return {
+        "macd_fast": _f_or_none(
+            ind.get("macd_fast") if ind.get("macd_fast") is not None
+            else ind.get("macd_line")),
+        "macd_slow": _f_or_none(
+            ind.get("macd_slow") if ind.get("macd_slow") is not None
+            else ind.get("macd_signal")),
+        "macd_gap": gap,
+        "macd_sep_ratio": _f_or_none(ind.get("macd_sep_ratio")),
+        "macd_bull": bool(ind.get("macd_bull")),
+        "macd_cross": bool(ind.get("macd_cross")),
+        "macd_ok": bool(ind.get("macd_ok")),
+        # None, not False: "too few bars to say" and "not widening" are
+        # different answers, and the arm gate refuses the first rather than
+        # treating it as a held gap.
+        "macd_gap_rising": (
+            None if ind.get("macd_gap_rising") is None
+            else bool(ind.get("macd_gap_rising"))),
+        "macd_gap_falling": (
+            None if ind.get("macd_gap_falling") is None
+            else bool(ind.get("macd_gap_falling"))),
+        "macd_gap_prev": _f_or_none(ind.get("macd_gap_prev")),
+    }
+
+
 def _exhaustion_wire_fields(rec: dict) -> dict:
     """Williams %R diagnostics for the EXH column tooltip."""
     ind = rec.get("indicator") if isinstance(rec, dict) else None
@@ -5156,6 +5212,33 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
             if isinstance(record, dict):
                 record["block_detail"] = "no bullish cross in confirm window"
             return False, "macd_no_recent_cross"
+
+    # Is the gap OPENING or CLOSING? Every test above measures the SIZE of the
+    # separation; none of them says which way it is going, and a wide gap that
+    # is closing is momentum dying. Entering it buys the fade — a +0.03 gap
+    # that was +0.08 two bars ago passes every size test on this list.
+    #
+    # A FLAT gap is allowed through: the rule is "do not open into a closing
+    # gap", and flat is not closing. Tightening that to "must be actively
+    # widening" is a second, stricter knob, not a reinterpretation of this one.
+    #
+    # Unknown direction is refused rather than waved through — same rule as
+    # everywhere else on this desk, and here it means the name has too few
+    # bars for the trend_lookback comparison to mean anything.
+    if bool(cfg.get("ai_watch_macd_block_narrowing", False)):
+        rising = ind.get("macd_gap_rising")
+        falling = ind.get("macd_gap_falling")
+        if rising is None and falling is None:
+            if isinstance(record, dict):
+                record["block_detail"] = "gap direction unknown (needs bars)"
+            return False, "macd_gap_dir_unknown"
+        if bool(falling):
+            prev = _f_or_none(ind.get("macd_gap_prev"))
+            if isinstance(record, dict):
+                record["block_detail"] = (
+                    f"gap closing {prev:+.4f} -> {gap:+.4f}"
+                    if prev is not None else f"gap closing (now {gap:+.4f})")
+            return False, "macd_gap_narrowing"
 
     return True, "macd_bullish_gap"
 

@@ -919,6 +919,14 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # because a Trader Bro call does not take ownership of a row that
         # momentum or a research thesis already owns — it only tags it.
         "bro_call",
+        # MACD momentum — the entry lever since 8/26. The redesign shipped
+        # the column, the renderer and the arm gate but never put the
+        # numbers on the wire, so the book rendered "—" on every row.
+        # Direction rides with size: a wide gap that is CLOSING is momentum
+        # already over, and no size field can say so.
+        "macd_fast", "macd_slow", "macd_gap", "macd_sep_ratio",
+        "macd_bull", "macd_cross", "macd_ok",
+        "macd_gap_rising", "macd_gap_falling", "macd_gap_prev",
     }
     for row in snap:
         assert set(row.keys()) == keys

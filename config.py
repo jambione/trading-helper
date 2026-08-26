@@ -55,6 +55,15 @@ DEFAULT_CONFIG = {
     "macd_sep_mult": 0.8,
     "macd_min_gap": 0.005,
     "ai_watch_arm_require_macd": True,
+    # Refuse to arm when the fast/slow gap is CLOSING. Every other MACD test
+    # measures how far apart the lines are; none says which way they are
+    # moving, so a +0.03 gap that was +0.08 two bars ago passes all of them
+    # while the momentum it is meant to ride is already over. Judged on
+    # trend_lookback (2 bars), the same basis as cm_rsi_rising.
+    #
+    # A FLAT gap still passes — the rule is "do not open into a closing gap",
+    # and flat is not closing. False = shipped behaviour (size only).
+    "ai_watch_macd_block_narrowing": False,
 
     # ── Signal: volume surge ─────────────────────────────────
     "volume_surge_mult": 1.5,

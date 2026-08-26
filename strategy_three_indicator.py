@@ -341,6 +341,9 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
         "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
         "cm_rsi_low": False, "cm_rsi_green": False,
         "macd_cross": False, "macd_sep_ratio": None, "macd_ok": False,
+        # Unknown, not "flat": too few bars cannot say a gap is holding.
+        "macd_gap_rising": None, "macd_gap_falling": None,
+        "macd_gap_prev": None,
         "buy": False, "sell": False, "buy_pct": 0,
     }
     if i < cw + tl:
@@ -415,6 +418,17 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
     if np.isfinite(sep) and sep > 0 and np.isfinite(a["macd_hist"][i]):
         out["macd_sep_ratio"] = round(float(a["macd_hist"][i] / sep), 2)
         out["macd_ok"] = bool(cross and a["macd_hist"][i] >= p["macd_sep_mult"] * sep)
+    # Is the gap OPENING or CLOSING? The level says the lines are apart; it
+    # cannot say whether they are still separating. A +0.03 gap that was
+    # +0.08 two bars ago is momentum dying, and entering it buys the fade —
+    # the same distinction cm_rsi_rising draws for RSI, on the same
+    # trend_lookback. The previous value rides along so a slice can sweep
+    # the rule instead of trusting the boolean.
+    out["macd_gap_rising"] = _rising(a["macd_hist"], i, tl)
+    out["macd_gap_falling"] = _falling(a["macd_hist"], i, tl)
+    prev_gap = a["macd_hist"][i - tl] if i - tl >= 0 else np.nan
+    out["macd_gap_prev"] = (
+        round(float(prev_gap), 4) if np.isfinite(prev_gap) else None)
 
     out["buy"] = buy_signal(a, i, p)
     out["sell"] = sell_signal(a, i, p)
