@@ -1194,6 +1194,42 @@ enforced.** That is not a bug — nothing ever wired them to the arm gate —
 but it means §5F has never been the operative rule, and any claim that the
 book trades the operator's setup is currently false.
 
+### Remedy status — all six shipped 8/26 (`d669bca`)
+
+Verify with `.venv/bin/python tools/perf_verify.py`, which asserts each
+against the live system rather than against the config file. At 07:00 ET:
+**15 checks, 0 FAIL, 1 PENDING** (the RTH freshness assertion, correctly
+deferred — premarket every age is legitimately enormous).
+
+| # | what shipped | evidence |
+|---|---|---|
+| 1 | Finnhub `/quote`'s `t` carried through; REST ask given a provable age via `_quote_ts`; both guards fail closed | `price_age_sec` 0/9 → **12/12**; guard returns unknown→stale, fresh→ok, old→stale |
+| 2 | measured, not guessed | transport **0.49s**, engine tape **0.50s** — both now logged per row |
+| 3 | `ai_shelf_tick_sec: 0.25` declared | shelf 0.25 < book 1.0, no longer implicit |
+| 4 | `require_live_pctr` + `require_realtime_rsi` → true | both armed; expect ~¼–⅓ fewer arms, which is the point |
+| 5 | `ai_watch_poll_sec` 20 → 10 | blind window halved |
+| 6 | `NEWS_INTERVAL_SEC` 300 → 120, **and the decision not to gate** | see below |
+
+**Remedy 2 came out differently than the audit predicted.** The premise was
+that the ratchet reads a 1.5s cache while the engine holds sub-second tape.
+The cache half was real and improved as a side effect of remedy 5 — more
+frequent reads keep the snapshot younger, median transport age now 0.49s
+against the 1.5s TTL. The feed half is **unproven**: it was measured
+premarket, where IEX is dead and everything looks like a feed problem. Both
+ages are now logged on every row, so decide it from RTH data rather than
+from a premarket artifact. Do not re-point the shelf at another feed until
+that measurement exists.
+
+**Remedy 6 is a decision, not a fix.** The 55–66% leg coverage is a
+*timing* gap: for a settled book it is ~100% (float known on 8 of 8, news
+cache 125s old), but `refresh_news_cache` builds its list FROM
+`shadow.jsonl`, so a name enters it only after its first shadow row — while
+the median dwell from admit to arm is **5–11 seconds**. Nothing on a
+refresh cadence can close that; it needs a warm at admission. **Until then
+the §5F legs must not gate.** Wiring them today would refuse nearly every
+arm — not because the setup is absent, but because the desk has not looked
+yet, and an absence of your own making is not a refusal.
+
 ### Ordered remedy
 
 1. **Populate `price_age_sec`, and make the three guards fail closed.**
