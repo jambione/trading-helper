@@ -281,3 +281,94 @@ def test_zeroing_the_multiple_does_NOT_disable_the_separation_test():
         _rec(macd_sep_ratio=0.01, macd_gap_rising=True,
              macd_gap_falling=False), dict(ON, macd_sep_mult=1e-9))
     assert ok2 is True, "a tiny positive multiple is how you stand it down"
+
+
+# ── the EXH confluence override ──────────────────────────────────────────
+
+OVR = dict(ON, ai_watch_macd_exh_override=True,
+           ai_watch_macd_exh_override_min_pct=70.0)
+
+
+def _ovr_rec(pctr, *, rising=True, exh_rising=True, gap=0.0004, sep=0.05):
+    """A gap far too small for either size test, so only the override can
+    pass it. pctr is the raw %R; exhaustion_pct is 100 + pctr."""
+    return {"symbol": "AAA", "indicator": {
+        "macd_fast": 0.10, "macd_slow": 0.10 - gap, "macd_gap": gap,
+        "macd_sep_ratio": sep,
+        "macd_gap_rising": rising, "macd_gap_falling": not rising,
+        "pctr": pctr, "pctr_rising": exh_rising,
+        "pctr_falling": not exh_rising,
+    }}
+
+
+def test_confluence_opens_at_any_gap():
+    """The operator's rule: MACD open and trending at ANY gap, with EXH
+    rising past 70, is an automatic yes. This gap is 0.0004 — an order of
+    magnitude under macd_min_gap, and 0.05x separation."""
+    rec = _ovr_rec(-25.0)                       # EXH 75%
+    ok, why = ew.macd_allows_buy(rec, OVR)
+    assert ok is True
+    assert why == "macd_exh_confluence"
+    assert "75.0%" in str(rec.get("block_detail"))
+
+
+def test_the_same_row_is_refused_without_the_override():
+    ok, why = ew.macd_allows_buy(_ovr_rec(-25.0), ON)
+    assert ok is False
+    assert why == "macd_gap_too_close"
+
+
+def test_exh_below_the_threshold_does_not_override():
+    ok, why = ew.macd_allows_buy(_ovr_rec(-35.0), OVR)   # EXH 65%
+    assert ok is False and why == "macd_gap_too_close"
+
+
+def test_both_lines_must_be_turning_up_macd_side():
+    """A closing MACD gap cannot be overridden into a buy."""
+    ok, why = ew.macd_allows_buy(_ovr_rec(-25.0, rising=False), OVR)
+    assert ok is False
+    assert why in ("macd_gap_too_close", "macd_gap_narrowing")
+
+
+def test_both_lines_must_be_turning_up_exh_side():
+    """A %R at 85 that is ROLLING OVER is a top, not a confirmation — the
+    operator's own setup calls that where the profit gain stops."""
+    ok, why = ew.macd_allows_buy(_ovr_rec(-15.0, exh_rising=False), OVR)
+    assert ok is False and why == "macd_gap_too_close"
+
+
+def test_the_override_cannot_rescue_a_bearish_macd():
+    """"Open" means the lines are apart. A negative gap is not a narrow one,
+    and no amount of EXH makes it bullish."""
+    rec = _ovr_rec(-10.0)
+    rec["indicator"].update({"macd_fast": 0.01, "macd_slow": 0.05,
+                             "macd_gap": -0.04})
+    ok, why = ew.macd_allows_buy(rec, OVR)
+    assert ok is False and why == "macd_bearish"
+
+
+def test_missing_exh_does_not_override():
+    rec = _ovr_rec(-25.0)
+    rec["indicator"]["pctr"] = None
+    ok, why = ew.macd_allows_buy(rec, OVR)
+    assert ok is False and why == "macd_gap_too_close"
+
+
+def test_the_threshold_is_configurable():
+    cfg = dict(OVR, ai_watch_macd_exh_override_min_pct=90.0)
+    assert ew.macd_allows_buy(_ovr_rec(-25.0), cfg)[0] is False   # 75 < 90
+    assert ew.macd_allows_buy(_ovr_rec(-5.0), cfg)[0] is True     # 95 >= 90
+
+
+def test_override_is_off_by_default():
+    from config import DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["ai_watch_macd_exh_override"] is False
+    assert DEFAULT_CONFIG["ai_watch_macd_exh_override_min_pct"] == 70.0
+
+
+def test_a_wide_healthy_gap_still_passes_on_its_own_merits():
+    """The override adds a path; it must not become the only one."""
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_sep_ratio=2.0, macd_gap_rising=True, macd_gap_falling=False),
+        OVR)
+    assert ok is True and why == "macd_bullish_gap"

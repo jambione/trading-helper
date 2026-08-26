@@ -90,6 +90,11 @@ _FINGERPRINT_KEYS = (
     # different rules; a session that refuses the fade is not the same regime
     # as one that buys it.
     "ai_watch_macd_block_narrowing",
+    # Whether EXH confluence can override the gap-size tests. A session
+    # that arms on confluence is not the same regime as one that
+    # requires 0.8x separation.
+    "ai_watch_macd_exh_override",
+    "ai_watch_macd_exh_override_min_pct",
     # And whether a curl back to bearish pulls the shelf under the print.
     # This changes what the exit IS, not merely how wide it sits.
     "ai_exit_macd_curl_tighten",

@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=150" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=151" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -342,6 +342,7 @@
                         <div class="th th-last">Last</div>
                         <div class="th th-entry" title="Average fill price. Open positions only.">Entry</div>
                         <div class="th th-stop" title="Open longs only. Raise-only shelf; flatten if last prints through. While min-hold runs this cell shows the countdown instead — the shelf still raises, only the SALE is muzzled — and the stop price returns at 0:00.">Stop</div>
+                        <div class="th th-exh" title="%R Trend Exhaustion: how far the move is toward overbought (100 + fast %R), with its direction. OB marks the overbought band. Shown beside MACD so the two levers can be read together.">EXH</div>
                         <div class="th th-macd" title="MACD Fast/Slow Line Gap (realtime). Green = Bullish cross with wide separation. The wider the gap, the more bullish the signal.">MACD Gap</div>
                         <div class="th th-qty desk-col-extra">Qty</div>
                         <div class="th th-pl">P&amp;L</div>
@@ -770,7 +771,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=152"></script>
+        <script type="module" src="/static/js/app.js?v=153"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

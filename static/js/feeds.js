@@ -917,6 +917,13 @@ function _updateBookRow(el, r) {
     priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
+  const exhEl = el.querySelector('.cell-exh');
+  if (exhEl) {
+    _setText(exhEl, _bookExhText(r));
+    exhEl.className = `cell-exh${_bookExhClass(r)}`;
+    const exhTip = _fmtExhTitle(r);
+    if (exhTip) exhEl.title = exhTip;
+  }
   const macdEl = el.querySelector('.cell-macd');
   if (macdEl) {
     _setText(macdEl, _bookMacdText(r));
@@ -969,6 +976,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
+    + `<div class="cell-exh${_bookExhClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-macd${_bookMacdClass(r)}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
@@ -1235,6 +1243,23 @@ function _bookExhText(r) {
     ex = Math.max(0, Math.min(100, 100 + Number(r.pctr)));
   }
   return _fmtExh(ex, r.exhaustion_state, r.pctr_src);
+}
+
+/** Colour for the EXH cell, off the same state the arrow comes from.
+ *
+ *  The styles (exh--ob / exh--up / exh--down) survived the column's removal
+ *  in styles.css; only the function that selects them did not, so this
+ *  restores the pairing rather than inventing a new one. `thin` gets no
+ *  class: a reading the desk could not take should not be coloured as
+ *  though it had an opinion. */
+function _bookExhClass(r) {
+  if (!r) return '';
+  if (r.pctr_src === 'sparse_window' && r.exhaustion == null) return '';
+  const state = String(r.exhaustion_state || '').toLowerCase();
+  if (state === 'overbought') return ' exh--ob';
+  if (state === 'heating') return ' exh--up';
+  if (state === 'cooling') return ' exh--down';
+  return '';
 }
 
 /** "live" means a rolling %R over a clock window, recomputed against the live

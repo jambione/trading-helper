@@ -2395,18 +2395,19 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | MACD Gap | P&L
-     Hold is gone: the Stop cell shows the min-hold countdown while it runs
-     and the stop price after, so one column carries both halves of the same
-     fact. Qty is display:none and must not occupy a track. */
+  /* Ticker | State | Last | Entry | Stop | EXH | MACD Gap | P&L
+     EXH is back beside MACD so the two levers read together. Hold stays
+     gone: the Stop cell shows the min-hold countdown while it runs and the
+     stop price after. Qty is display:none and must not occupy a track. */
   grid-template-columns:
     minmax(52px, 0.9fr)
     minmax(5rem, 1.0fr)
     minmax(58px, 0.9fr)
     minmax(58px, 0.9fr)
     minmax(62px, 0.9fr)
-    minmax(84px, 1.3fr)
-    minmax(62px, 0.9fr);
+    minmax(62px, 0.9fr)
+    minmax(84px, 1.2fr)
+    minmax(58px, 0.85fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2506,11 +2507,13 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 1fr);
   grid-template-areas:
     "ticker state last entry pl"
-    "stop   macd  macd  macd  macd";
+    "stop   exh   macd  macd  macd";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
 }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-exh,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-ticker,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2560,7 +2563,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
       minmax(0, 1fr);
     grid-template-areas:
       "ticker state last entry pl"
-      "stop   macd  macd  macd  macd";
+      "stop   exh   macd  macd  macd";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
@@ -2569,6 +2572,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
   .panel-ai-watch .feed-cols--ai-book > .th-macd,
   .panel-ai-watch .feed-cols--ai-book > .cell-macd { grid-area: macd; }
+  .panel-ai-watch .feed-cols--ai-book > .th-exh,
+  .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
   .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
   .panel-ai-watch .feed-cols--ai-book > .th-last,

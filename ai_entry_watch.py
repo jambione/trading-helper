@@ -204,6 +204,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "macd_gap_narrowing": "MACD closing",
     "macd_gap_dir_unknown": "no MACD dir",
     "macd_sep_unknown": "no MACD sep",
+    # Passed on confluence rather than on gap size: MACD opening while
+    # EXH is at or past the threshold.
+    "macd_exh_confluence": "buy (EXH)",
     "macd_bullish_gap": "buy",
 }
 
@@ -5221,6 +5224,36 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         if isinstance(record, dict):
             record["block_detail"] = f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})"
         return False, "macd_bearish"
+
+    # CONFLUENCE OVERRIDE — the operator's rule, 8/26: "if the MACD is open
+    # and trending at ANY gap when EXH is at or past 70, that is an automatic
+    # yes." Two independent readings agreeing is the evidence; the size of
+    # the gap is not, so this deliberately runs BEFORE macd_min_gap and the
+    # separation test and bypasses both.
+    #
+    # It cannot bypass the bearish check above — "open" means the lines are
+    # apart, and a negative gap is not a narrow one. Nor can it collide with
+    # the narrowing rule below, because it requires the gap to be RISING:
+    # opening and closing are not both true.
+    if bool(cfg.get("ai_watch_macd_exh_override", False)):
+        try:
+            need = float(cfg.get("ai_watch_macd_exh_override_min_pct", 70.0)
+                         or 70.0)
+        except (TypeError, ValueError):
+            need = 70.0
+        ex = exhaustion_pct(record)
+        # BOTH lines trending up, not just both present. A %R at 85 that is
+        # rolling over is a top, not a confirmation — it is the exact reading
+        # the operator's original setup called "where the profit gain stops".
+        # So the override needs the level AND the turn, on both indicators.
+        macd_up = bool(ind.get("macd_gap_rising"))
+        exh_up = bool(ind.get("pctr_rising"))
+        if macd_up and exh_up and ex is not None and ex >= need:
+            if isinstance(record, dict):
+                record["block_detail"] = (
+                    f"MACD opening {gap:+.4f} + EXH {ex:.1f}% rising "
+                    f"(>= {need:.0f}%)")
+            return True, "macd_exh_confluence"
 
     try:
         min_gap = float(cfg.get("macd_min_gap", 0.005) or 0.005)

@@ -64,6 +64,19 @@ DEFAULT_CONFIG = {
     # A FLAT gap still passes — the rule is "do not open into a closing gap",
     # and flat is not closing. False = shipped behaviour (size only).
     "ai_watch_macd_block_narrowing": False,
+    # Confluence override (operator, 8/26): MACD open and RISING at any gap
+    # while %R exhaustion is RISING and at or past
+    # ai_watch_macd_exh_override_min_pct arms the entry regardless of
+    # macd_min_gap and the separation test. Two independent readings agreeing
+    # is the evidence; gap size is not.
+    #
+    # BOTH must be turning up, not merely present: a %R at 85 that is rolling
+    # over is a top, and the operator's own setup calls that "where the
+    # profit gain stops". Runs before both size tests; cannot bypass the
+    # bearish check, and cannot collide with the narrowing rule since it
+    # requires the gap to be rising.
+    "ai_watch_macd_exh_override":         False,
+    "ai_watch_macd_exh_override_min_pct": 70.0,
 
     # ── Signal: volume surge ─────────────────────────────────
     "volume_surge_mult": 1.5,
