@@ -150,3 +150,58 @@ def test_snapshot_actually_ships_the_macd_column(tmp_path, monkeypatch):
     row = ew.public_snapshot()[0]
     assert row["macd_gap"] == 0.05
     assert row["macd_gap_rising"] is True
+
+
+# ── the record has to actually receive the numbers ───────────────────────
+
+def test_refresh_stamps_the_full_macd_set_onto_the_record():
+    """The 8/26 redesign made MACD the entry lever and the poll's indicator
+    whitelist copied only macd_ok — and that dict REPLACES the previous map,
+    so macd_allows_buy looked for macd_gap on a record that had just had it
+    wiped. Every name read "no_macd_data" while the engine held +0.0425.
+    """
+    rec = {"symbol": "AAA", "indicator": {"cm_rsi": 40.0}}
+    wrote = ew.refresh_engine_macd(rec, {
+        "macd_gap": 0.0425, "macd_fast": 0.11, "macd_slow": 0.0675,
+        "macd_sep_ratio": 2.15, "macd_bull": True, "macd_cross": False,
+        "macd_gap_rising": True, "macd_gap_falling": False,
+        "macd_gap_prev": 0.03,
+    })
+    assert wrote is True
+    ind = rec["indicator"]
+    assert ind["macd_gap"] == 0.0425
+    assert ind["macd_fast"] == 0.11 and ind["macd_slow"] == 0.0675
+    assert ind["macd_sep_ratio"] == 2.15
+    assert ind["macd_gap_rising"] is True
+    assert ind["cm_rsi"] == 40.0, "must not clobber the rest of the map"
+
+
+def test_refresh_leaves_the_record_alone_when_the_engine_has_no_gap():
+    """"Not computed yet" is not "the gap is gone" — blanking a good reading
+    on a cold engine would flip a live name to no_macd_data."""
+    rec = {"symbol": "AAA", "indicator": {"macd_gap": 0.05}}
+    assert ew.refresh_engine_macd(rec, {"macd_bull": True}) is False
+    assert rec["indicator"]["macd_gap"] == 0.05
+
+
+def test_refresh_accepts_macd_hist_as_the_gap():
+    rec = {"symbol": "AAA"}
+    assert ew.refresh_engine_macd(rec, {"macd_hist": -0.02}) is True
+    assert rec["indicator"]["macd_gap"] == -0.02
+
+
+def test_refresh_is_a_no_op_on_junk():
+    assert ew.refresh_engine_macd(None, {"macd_gap": 1.0}) is False
+    assert ew.refresh_engine_macd({"symbol": "AAA"}, None) is False
+
+
+def test_the_poll_whitelist_carries_the_levels_not_just_the_verdict():
+    """Pinned as source text: that dict replaces the indicator map wholesale,
+    so a field missing from it is a field the gate will never see."""
+    import pathlib
+    src = pathlib.Path(ew.__file__).read_text(encoding="utf-8")
+    i = src.index('"macd_ok": sig.get("macd_ok"),')
+    body = src[i:i + 1400]
+    for k in ("macd_gap", "macd_fast", "macd_slow", "macd_sep_ratio",
+              "macd_gap_rising", "macd_gap_falling"):
+        assert f'"{k}": sig.get("{k}")' in body, f"{k} missing from the whitelist"

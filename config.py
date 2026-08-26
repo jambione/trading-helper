@@ -765,6 +765,19 @@ DEFAULT_CONFIG = {
     # for this many seconds after the fill. The 1R disaster stop and the 15:50
     # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.
     "ai_exit_min_hold_sec":            30,
+    # MACD curled bearish on an OPEN position: pull the ratchet shelf to a
+    # penny under the print so the next tick down exits. The entry thesis is
+    # "the lines are separating"; a curl back together is that thesis
+    # expiring, and the give was sized for noise rather than for a signal
+    # that has already turned. Expressed as a floor on the wanted stop, so
+    # the raise-only rule still holds: this tightens, never loosens.
+    "ai_exit_macd_curl_tighten":       False,
+    # How far under the print. One tick.
+    "ai_exit_macd_curl_px":            0.01,
+    # Also fire while the gap is still POSITIVE but closing. Earlier and
+    # noisier: one narrowing bar inside a live move would flatten a winner
+    # that was still working. Off unless the tape says otherwise.
+    "ai_exit_macd_curl_on_falling":    False,
     "ai_local_trail_give_spread_k":    0.0,
     # Ceiling on the spread floor, in R. Uncapped, k=1 on a p90
     # book (5.56R) parks the shelf 5.5R down, which is no stop.
@@ -1343,6 +1356,9 @@ SAFE_CONFIG_KEYS = [
     "ai_decision_ask_max_dev_pct",
     "ai_entry_limit_anchor",
     "ai_exit_min_hold_sec",
+    "ai_exit_macd_curl_tighten",
+    "ai_exit_macd_curl_px",
+    "ai_exit_macd_curl_on_falling",
     "ai_local_trail_give_spread_k",
     "ai_local_trail_give_spread_max_r",
     "ai_local_trail_be_at_spread_k",

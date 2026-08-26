@@ -2903,6 +2903,20 @@ def apply_local_trail(
         return True, True
 
     want = local_profit_stop(pos, _cfg_all())
+    # MACD rolled over: pull the shelf to a penny under the print so the next
+    # tick down takes us out. The entry thesis is "the lines are separating";
+    # once they curl back together that thesis is spent, and waiting for the
+    # give to be crossed hands back the part of the move the signal already
+    # told us was over.
+    #
+    # Deliberately expressed as a floor on `want` rather than a direct write,
+    # so it passes through the raise-only rule below. On a winner that puts
+    # the stop just under price; on a loser last-0.01 sits below the existing
+    # shelf and is correctly ignored — this tightens, it never loosens.
+    curl_px = _macd_curl_stop(ticker, last)
+    if curl_px is not None:
+        want = curl_px if want is None else max(want, curl_px)
+        pos["macd_curl_stop"] = round(curl_px, 4)
     prev_local = _num(pos.get("local_stop_price"))
     if want is not None and (
         prev_local is None or want > prev_local + 1e-9
@@ -2924,6 +2938,69 @@ def apply_local_trail(
                 give_r=local_trail_give_r(pos.get("mfe_r"), _cfg_all()),
             )
     return changed, False
+
+
+def _macd_curl_stop(ticker: str, last: float | None) -> float | None:
+    """Shelf price to demand when MACD has curled bearish, else None.
+
+    The entry says "the fast and slow lines are separating". A curl back
+    together is that thesis expiring, and the ratchet's give was sized for
+    noise, not for a signal that has already turned — so on a curl the shelf
+    goes to ``last - ai_exit_macd_curl_px`` and the next tick down exits.
+
+    Two triggers, because they are different claims:
+
+      • CROSSED (default): fast is at or below slow, gap <= 0. Unambiguous,
+        and late by construction — MACD is the laggard of the three
+        indicators (see strategy_three_indicator.buy_signal).
+      • FALLING (``ai_exit_macd_curl_on_falling``): the gap is still
+        positive but closing. Earlier and noisier; off by default because
+        one narrowing bar inside a live move would flatten a winner that
+        was still working.
+
+    Returns None when the feature is off, the tape is unusable, or the
+    reading cannot be had — a missing indicator must not tighten a stop on a
+    guess, and the ordinary give still protects the position either way.
+    """
+    if not _cfg_flag("ai_exit_macd_curl_tighten", False):
+        return None
+    px = _num(last)
+    if px is None or px <= 0:
+        return None
+    try:
+        import ai_entry_watch as ew
+        sig = (ew._engine_indicator_map() or {}).get(
+            str(ticker or "").upper().strip()) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(sig, dict) or not sig:
+        return None
+    gap = sig.get("macd_gap")
+    if gap is None:
+        gap = sig.get("macd_hist")
+    try:
+        gap_f = float(gap) if gap is not None else None
+    except (TypeError, ValueError):
+        gap_f = None
+    if gap_f is None:
+        return None
+
+    bearish = gap_f <= 0 or sig.get("macd_bull") is False
+    if not bearish and _cfg_flag("ai_exit_macd_curl_on_falling", False):
+        bearish = bool(sig.get("macd_gap_falling"))
+    if not bearish:
+        return None
+
+    cfg = _cfg_all()
+    try:
+        back = float(cfg.get("ai_exit_macd_curl_px", 0.01) or 0.01)
+    except (TypeError, ValueError):
+        back = 0.01
+    back = abs(back)
+    stop = px - back
+    # A shelf at or above the print flattens on the very next trigger before
+    # the market has moved at all, which is a fill, not a stop.
+    return stop if stop > 0 else None
 
 
 def local_trail_ring(tick_sec: float, cfg: dict | None = None) -> int:

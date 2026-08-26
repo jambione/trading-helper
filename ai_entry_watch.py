@@ -3312,6 +3312,7 @@ def refresh_arm_market_data(
             pass
         try:
             refresh_engine_rsi(rec, sig)
+            refresh_engine_macd(rec, sig)
         except Exception:
             pass
     bid_f: float | None = None
@@ -3387,6 +3388,40 @@ def stream_says_far_from_zone(
     # In or below the band: stay on the arm path. The planned stop is not
     # a "far" floor — it only exists after the position is open.
     return False, px
+
+
+def refresh_engine_macd(rec: dict, sig: dict | None) -> bool:
+    """Stamp the engine's current MACD onto a watch record.
+
+    MACD is the entry lever since 8/26, and it was the only lever with no
+    refresh of its own: the full record is rebuilt in poll_once on
+    ai_watch_poll_sec, so between polls the gate decided on a reading that
+    old while a current one sat on the wire — exactly the problem
+    refresh_engine_rsi was written to fix for RSI, on the same 2s sync.
+
+    Cheap for the same reason: the wire is already cached, so this is a dict
+    lookup per symbol.
+
+    Returns True when a value was written. A sig with no gap writes nothing
+    rather than blanking what the record has — "the engine has not computed
+    it yet" is not "the gap is gone".
+    """
+    if not isinstance(rec, dict) or not isinstance(sig, dict):
+        return False
+    gap = sig.get("macd_gap") if sig.get("macd_gap") is not None else sig.get("macd_hist")
+    if gap is None:
+        return False
+    ind = rec.get("indicator")
+    if not isinstance(ind, dict):
+        ind = {}
+        rec["indicator"] = ind
+    ind["macd_gap"] = gap
+    ind["macd_hist"] = gap
+    for k in ("macd_fast", "macd_slow", "macd_sep_ratio", "macd_bull",
+              "macd_cross", "macd_ok", "macd_gap_rising",
+              "macd_gap_falling", "macd_gap_prev"):
+        ind[k] = sig.get(k)
+    return True
 
 
 def refresh_engine_rsi(rec: dict, sig: dict | None) -> bool:
@@ -3992,6 +4027,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             # second. Without this the book's RSI is a poll_once artefact,
             # up to ai_watch_poll_sec (20s) behind the reading the operator
             # is watching move on the chart.
+            refresh_engine_macd(rec, _sync_indicators.get(sym))
             if refresh_engine_rsi(rec, _sync_indicators.get(sym)):
                 _restamp_rsi_block(rec, cfg_z, t0)
         except Exception:
@@ -8372,6 +8408,24 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 "pctr_ok": sig.get("pctr_ok"),
                 "cm_rsi_rising": sig.get("cm_rsi_rising"),
                 "macd_ok": sig.get("macd_ok"),
+                # The MACD LEVELS, not just the verdict. This dict REPLACES
+                # the previous indicator map, and the 8/26 redesign made MACD
+                # the entry lever while copying only macd_ok — so
+                # macd_allows_buy looked for macd_gap on a record that had
+                # just had it wiped, and refused every name with
+                # "no_macd_data" while the engine held +0.0425 on BHVN.
+                # Same shape as pctr below: the gate trades off the LEVEL and
+                # the DIRECTION, and a single bit answers neither.
+                "macd_fast": sig.get("macd_fast"),
+                "macd_slow": sig.get("macd_slow"),
+                "macd_gap": sig.get("macd_gap"),
+                "macd_hist": sig.get("macd_hist"),
+                "macd_sep_ratio": sig.get("macd_sep_ratio"),
+                "macd_bull": sig.get("macd_bull"),
+                "macd_cross": sig.get("macd_cross"),
+                "macd_gap_rising": sig.get("macd_gap_rising"),
+                "macd_gap_falling": sig.get("macd_gap_falling"),
+                "macd_gap_prev": sig.get("macd_gap_prev"),
                 "cm_rsi": sig.get("cm_rsi"),
                 # Raw %R and its direction, not just the derived booleans. The
                 # exhaustion rules below trade off the LEVEL and the TURN, and

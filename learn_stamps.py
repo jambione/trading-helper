@@ -77,6 +77,24 @@ _FINGERPRINT_KEYS = (
     # from a min-hold session must not claim the same regime as rows from a
     # session where the shelf fired on the first tick.
     "ai_exit_min_hold_sec",
+    # Which lever opens a position. The 8/26 redesign moved entries from %R
+    # exhaustion + Connors RSI-2 to a MACD bullish gap, which is a different
+    # strategy — none of these were fingerprinted, so the ledger would pool
+    # MACD sessions and EXH/RSI sessions into one meaningless mean, exactly
+    # the failure ai_watch_tv_exh_rsi is on this list to prevent.
+    "ai_watch_arm_require_macd",
+    "macd_min_gap",
+    "macd_sep_mult",
+    "macd_require_cross",
+    # Whether a CLOSING gap can still open a position. Size and direction are
+    # different rules; a session that refuses the fade is not the same regime
+    # as one that buys it.
+    "ai_watch_macd_block_narrowing",
+    # And whether a curl back to bearish pulls the shelf under the print.
+    # This changes what the exit IS, not merely how wide it sits.
+    "ai_exit_macd_curl_tighten",
+    "ai_exit_macd_curl_px",
+    "ai_exit_macd_curl_on_falling",
     # Which names are admitted at all. min_pct_change gates only the
     # big-mover seed; this one gates the soft open seed, where most
     # admissions actually come from.
