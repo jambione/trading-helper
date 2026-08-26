@@ -1068,6 +1068,150 @@ whether a found edge survives.
 
 ---
 
+## 9B. Performance audit — where the latency and the coverage actually are (8/26)
+
+Asked: is the desk optimised and performing — realtime coverage, decision
+speed, ratchet responsiveness, admission efficiency, and whether selection
+is weighted on the stated principles. Measured rather than reasoned;
+scripts in `scratchpad/{cadence_cost,admission_audit,rth_freshness_audit}.py`.
+
+### The cadences
+
+| loop | cadence | what it decides |
+|---|---:|---|
+| shelf / ratchet | **0.25s** | raise the stop, flatten through it |
+| book tick | 1.0s | fills, T1, dead-trade, EOD |
+| positions poll | 3.0s | broker reconciliation |
+| **arm gate** | **20.0s** | open a position |
+
+`ai_shelf_tick_sec` is **not in `bot_config.json`** and runs on the 0.25
+default; `ai_trader.py:1246` reads it with a fallback of `0.0`, which folds
+the shelf back into the 1s book tick. It resolves correctly today only
+because `load_config()` merges `DEFAULT_CONFIG` — an undeclared knob one
+refactor away from silently quartering the ratchet's rate.
+
+### 1. The single root cause: `price_age_sec` is None
+
+Live on the wire, all nine names: **`price_age_sec = None`**. On RTH shadow
+rows it is absent on **53%** (9,253/17,585). It is computed from the
+trade's own timestamp and is None whenever the winning price source cannot
+supply one — which is the normal case, because the dashboard's merge is
+falling back to REST.
+
+**Every freshness guard in the desk keys off that field, and every one
+fails open:**
+
+| guard | anchor | behaviour when age is None |
+|---|---|---|
+| ratchet staleness | `ai_positions.py:3035` | `return px` — accepts unconditionally |
+| arm freshness, 8s | `ai_entry_watch.py:359` | `return False` — not stale |
+| blind-book flatten, 15s | `ai_positions.py:4026` | cannot evaluate |
+
+That is why `stale_quote` blocked **0 of 17,585** RTH rows while
+`tape_age_sec` exceeded its own 8s threshold on 69% of the rows that
+recorded it. `ai_watch_decision_max_age_sec` is effectively dead config.
+**Fix this one thing and three guards come back to life.**
+
+### 2. The ratchet's 0.25s tick is ~1.5s in practice
+
+`tick_local_trail` → `_fresh_tape_px` → `ew.live_print` → `dashboard_state`,
+which is **cached for `_DASH_CACHE_TTL` = 1.5s**. The new
+`ind_snapshot_age_sec` column measures that cache directly and reads
+**0.99–1.37s**. So the shelf ticks four times per second against a price
+that cannot refresh faster than ~1.5s — a 6× gap between intended and
+actual, and it is invisible without the column.
+
+Worse, that price is the *weaker* of the two feeds in the building. The
+engine holds Finnhub trades at **0.1–0.9s** for the same names; the price
+path runs on Alpaca IEX because the dashboard's merge is not winning with a
+timestamped trade. **The desk owns sub-second tape and does not stop on it.**
+
+### 3. Decision speed: fresh data, slow gate
+
+The 2s desk sync refreshes %R (`ensure_live_exhaustion`) and RSI
+(`refresh_engine_rsi`) onto every record — but its own docstring says it is
+"not a place to re-run the whole arm decision". So data refreshes every 2s
+and the gate decides every 20s; roughly 18 of every 20 seconds of freshness
+is discarded.
+
+What that costs is real but **second-order**, and the honest numbers are
+mixed: median blind-window drift is 0.000R (shadow samples repeat a stale
+price ~44% of the time, so the median is uninformative), **p90 is 0.079R —
+nearly 2× the median trade's entire MFE of 0.046R** — and 17% of gaps drift
+further than that MFE. Flicker is only **0.3%** of gaps, so the armable
+state is stable and little is opening and closing unseen. Fix §1 and §2
+before touching this.
+
+### 4. The levers are not reliably realtime *at the arm*
+
+Of 422 armed rows over 8/20–26:
+
+| | realtime | degraded | unrecorded |
+|---|---:|---:|---:|
+| `pctr_src` | live 314 (74%) | **clock_range 108 (26%)** | — |
+| `cm_rsi_src` | realtime 279 (66%) | alpaca 22 (5%) | **None 121 (29%)** |
+
+**About one arm in four fires on a non-live %R.** Guards for this exist
+(`rsi_not_realtime_alpaca`, `pctr_not_live_clock_range`) but blocked **0**
+of the 5,412 fallback-RSI rows evaluated — they are not on the path that
+matters. Indicator coverage itself is good: 7 of 9 names on realtime bars.
+
+### 5. Admission is fast; research arms far more often
+
+| source | names | armed | rate | first seen ET |
+|---|---:|---:|---:|---:|
+| momentum | 69 | 14 | 20% | 09:26 |
+| trending | 42 | 17 | 40% | 09:34 |
+| anthropic | 14 | 9 | **64%** | 06:17 |
+| xai | 8 | 5 | **63%** | 09:30 |
+| bb_live | 1 | 0 | 0% | 08:11 |
+
+Admission latency is **p50 9.6s / p90 17.0s / max 20.5s** — bounded by the
+20s poll, i.e. admission is as fast as the gate allows and is not itself a
+bottleneck. Research names arm at ~3× the rate of momentum names on ~1/5
+the volume, and `anthropic` names are first seen at **06:17**, inside the
+window where §5G2 says price and setup are unevaluable.
+
+### 6. Selection is NOT weighted on the stated principles
+
+The setup (§5F) needs five legs. What the book could actually see:
+
+| leg | known | coverage | passing |
+|---|---:|---:|---:|
+| pct_change ≥ 10 | 48,502 | 100% | 24% |
+| price $2–20 | 48,734 | 100% | 69% |
+| **rvol ≥ 5** | 32,029 | **66%** | 13% |
+| **catalyst** | 26,974 | **55%** | 48% |
+| **float < 10M** | 27,396 | **56%** | 9% |
+
+`setup_n_legs` is **None on 42%** of rows and all five legs are satisfied on
+**1.3%**. And the block reasons say what really decided the book:
+`rsi_extended` 51% + `rsi_not_rising` 37% = **88% RSI**. No setup leg
+appears anywhere in the top ten.
+
+**The desk selects on RSI. The stated principles are recorded, not
+enforced.** That is not a bug — nothing ever wired them to the arm gate —
+but it means §5F has never been the operative rule, and any claim that the
+book trades the operator's setup is currently false.
+
+### Ordered remedy
+
+1. **Populate `price_age_sec`, and make the three guards fail closed.**
+   One root cause, three dead safety checks, no new feed required.
+2. **Point `_fresh_tape_px` at the engine's Finnhub tape** (0.1–0.9s)
+   instead of the 1.5s-cached IEX wire, or shorten `_DASH_CACHE_TTL` for
+   the shelf path. The ratchet is the one thing §2 proved works — it
+   deserves the better feed.
+3. **Declare `ai_shelf_tick_sec` in `bot_config.json`.** It is load-bearing
+   and currently implicit.
+4. Put the realtime guards on the arm path so a `clock_range` %R cannot
+   fire an entry, or accept it deliberately and record the choice.
+5. Only then consider the 20s arm cadence — it is a tail cost (p90 0.079R)
+   and the cheapest of these to get wrong.
+6. Decide whether §5F legs should gate. Today they do not, and with rvol,
+   float and catalyst each known on ~half of rows, they *cannot* without
+   the coverage first.
+
 ## 10. Operator constraints
 
 - The operator owns the account and has more faith in the ratchet than in
