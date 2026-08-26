@@ -764,7 +764,7 @@ DEFAULT_CONFIG = {
     # Discretionary exits (shelf, dead-trade, left-overbought) stay holstered
     # for this many seconds after the fill. The 1R disaster stop and the 15:50
     # flatten are never gated. 0 = shipped. See ai_positions.soft_exit_held_back.
-    "ai_exit_min_hold_sec":            30,
+    "ai_exit_min_hold_sec":            0,
     # MACD curled bearish on an OPEN position: pull the ratchet shelf to a
     # penny under the print so the next tick down exits. The entry thesis is
     # "the lines are separating"; a curl back together is that thesis

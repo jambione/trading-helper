@@ -2703,15 +2703,6 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
             if float(mfe) + 1e-9 < be_k * sp:
                 be_hit = False
     be_floor = (breakeven_floor(entry, cfg) or float(entry)) if be_hit else None
-    # After min hold expires on an active position with entry_time, stop must be at least entry + $0.01
-    try:
-        min_hold_sec = float((cfg if cfg is not None else _cfg_all()).get("ai_exit_min_hold_sec", 0) or 0)
-    except (TypeError, ValueError):
-        min_hold_sec = 0.0
-    et = _num(pos.get("entry_time"))
-    if min_hold_sec > 0 and et is not None and et > 0 and (time.time() - et >= min_hold_sec) and entry:
-        min_hold_be = breakeven_floor(entry, cfg) or (float(entry) + 0.01)
-        be_floor = min_hold_be if be_floor is None else max(be_floor, min_hold_be)
     try:
         arm_need = float(cfg.get("ai_local_trail_arm_r", 0) or 0)
     except (TypeError, ValueError):
