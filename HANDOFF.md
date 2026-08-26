@@ -884,6 +884,21 @@ it was on 8/22, and nobody should be told otherwise.
   removes stomps and does not move the mean. `give_spread_k` and
   `be_at_spread_k` are worth turning on for the wide-spread quarter of
   trades, but as risk hygiene, not as a profit change.
+- **Do not build premarket trading until the desk has real-time SIP.**
+  **Shelved 8/26 by the operator, on evidence, not preference.** The
+  economics are fine (premarket crossing costs 0.120R against 0.117R in
+  RTH) and the order plumbing already exists on both sides
+  (`alpaca_trader.py:405` buy, `:955` sell) — so this *looks* buildable and
+  is not. The desk cannot see the premarket market at all: price age equals
+  time-since-subscription on every name, the IEX ask reads `0.00`, and the
+  last IEX trade is yesterday's close (§5G2). A synthetic stop cannot fire
+  on a frozen price, which is why `_require_protective_exit` refusing these
+  entries is **correct** and must not be relaxed to unblock the feature.
+  The single unshelving condition is a live premarket quote — SIP; Finnhub
+  is out on entitlement (403) and IEX is structurally absent before 09:30.
+  Until then, do not touch the entry gate, the spread gate, or the stream
+  indicators *for premarket reasons*, and treat any premarket `pctr`,
+  `cm_rsi`, `exhaustion`, `spread_r` or `pct_change` as unevidenced.
 - **Do not price anything off an IEX spread.** §5G: IEX overstates the book
   1.5x in RTH, 3.3x premarket, and up to 200x on a single name (SDOT). That
   includes setting `ai_max_spread_r`, ranking names by cost, and any
