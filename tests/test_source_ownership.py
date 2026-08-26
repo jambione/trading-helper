@@ -44,19 +44,17 @@ def test_research_takes_a_name_from_anyone_else():
     assert ew._merge_source(BRO, "xai") == "xai"
 
 
-# ── a call-out outranks automatic heat ───────────────────────────────────
+# ── a call-out does NOT outrank desk heat ────────────────────────────────
 
-def test_a_bro_call_is_not_erased_by_the_next_momentum_sweep():
-    """The bug the operator actually saw: DAIC admitted on a Trader Bro
-    call and relabelled `momentum` before it could be read as a bro name."""
-    assert ew._merge_source(BRO, DESK) == BRO
-    assert ew._merge_source("bro", "trending") == "bro"
-    assert ew._merge_source("bb", "stocktwits") == "bb"
-
-
-def test_a_bro_call_takes_a_name_from_desk_heat():
-    assert ew._merge_source(DESK, BRO) == BRO
-    assert ew._merge_source("trending", "bro") == "bro"
+def test_a_bro_call_does_not_take_ownership_from_desk_heat():
+    """Deliberately weaker. The seed loop calls a bro call "the weakest
+    evidence on this list" and only lets it contribute symbols nothing else
+    named, so letting it win a merge would contradict the seeder. Ownership
+    and visibility are separate: the seeder tags `bro_call` onto a row it
+    does not own — see test_bro_call_tags_a_row_it_does_not_own.
+    """
+    assert ew._merge_source(DESK, BRO) == BRO      # newest wins, unchanged
+    assert ew._merge_source(BRO, DESK) == DESK     # and desk can take it back
 
 
 # ── unchanged behaviour ──────────────────────────────────────────────────
@@ -87,10 +85,94 @@ def test_bb_live_is_its_own_bucket_not_a_desk_source():
     assert ew._BB_LIVE_SOURCES <= ew._PANEL_SOURCES
 
 
-def test_ownership_is_transitive_across_a_reseed_sequence():
-    """A name seeded bro -> momentum -> bro -> momentum must stay bro, not
-    flap with whichever panel refreshed last."""
-    src = BRO
-    for nxt in (DESK, "trending", DESK, BRO, DESK):
+def test_research_ownership_survives_a_whole_reseed_sequence():
+    """The case that actually mattered: once a thesis owns a row, no
+    sequence of desk sweeps or bro calls may quietly relabel it."""
+    src = RESEARCH
+    for nxt in (DESK, BRO, "trending", BRO, DESK):
         src = ew._merge_source(src, nxt)
-    assert src == BRO
+    assert src == RESEARCH
+
+
+# ── visibility without ownership ─────────────────────────────────────────
+
+def test_bro_call_tags_a_row_it_does_not_own(monkeypatch):
+    """The operator's actual complaint: Trader Bro never appears.
+
+    DAIC was called by Bro on 8/26, momentum named it in the same pass, and
+    the row reached the book as `momentum` with criteria
+    ['big_move', 'uptrend'] — nothing on it recorded that a human had
+    called it out. The call must not seize the row (it is the weakest
+    evidence here), but it must leave a mark.
+    """
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_momentum_flagged_from_dashboard",
+                        lambda max_price: [(9.0, {
+                            "symbol": "DAIC", "source": "momentum",
+                            "price": 3.88, "criteria": ["big_move"],
+                        })])
+    monkeypatch.setattr(ew, "_trending_rows_from_dashboard",
+                        lambda *a, **k: [], raising=False)
+    monkeypatch.setattr(ew, "_research_rows", lambda *a, **k: [],
+                        raising=False)
+    monkeypatch.setattr(ew, "_bb_live_from_dashboard",
+                        lambda max_price, fresh, now=None: [
+                            (800.0, {"symbol": "DAIC", "source": "bb_live",
+                                     "price": 3.88,
+                                     "criteria": ["bro_call"]}),
+                            (700.0, {"symbol": "SOLO", "source": "bb_live",
+                                     "price": 4.10,
+                                     "criteria": ["bro_call"]}),
+                        ])
+
+    rows = ew.desk_candidate_rows({
+        "ai_watch_seed_momentum": True,
+        "ai_watch_seed_trending": False,
+        "ai_watch_seed_research": False,
+        "ai_watch_seed_bb_live": True,
+        "ai_watch_seed_bb_live_n": 6,
+        "ai_watch_bb_live_fresh_sec": 900.0,
+        "ai_max_price": 100.0,
+    })
+    by = {str(r.get("symbol")): r for r in rows}
+
+    assert "DAIC" in by, "momentum's row must survive"
+    assert by["DAIC"]["source"] == "momentum", "the call must not seize it"
+    assert "bro_call" in (by["DAIC"].get("criteria") or []), (
+        "but the call has to be visible on the row")
+    assert "big_move" in by["DAIC"]["criteria"], "and not clobber what was there"
+
+    # A name nothing else claimed still comes in owned by the call.
+    assert "SOLO" in by
+    assert by["SOLO"]["source"] == "bb_live"
+
+
+def test_tagging_is_idempotent_across_repeated_seeds(monkeypatch):
+    """The seeder runs every poll; criteria must not grow without bound."""
+    import ai_entry_watch as ew
+
+    row = {"symbol": "DAIC", "source": "momentum", "price": 3.88,
+           "criteria": ["big_move"]}
+    monkeypatch.setattr(ew, "_momentum_flagged_from_dashboard",
+                        lambda max_price: [(9.0, dict(row))])
+    monkeypatch.setattr(ew, "_trending_rows_from_dashboard",
+                        lambda *a, **k: [], raising=False)
+    monkeypatch.setattr(ew, "_research_rows", lambda *a, **k: [],
+                        raising=False)
+    monkeypatch.setattr(ew, "_bb_live_from_dashboard",
+                        lambda max_price, fresh, now=None: [
+                            (800.0, {"symbol": "DAIC", "source": "bb_live",
+                                     "price": 3.88,
+                                     "criteria": ["bro_call"]}),
+                        ])
+    cfg = {
+        "ai_watch_seed_momentum": True, "ai_watch_seed_trending": False,
+        "ai_watch_seed_research": False, "ai_watch_seed_bb_live": True,
+        "ai_watch_seed_bb_live_n": 6, "ai_watch_bb_live_fresh_sec": 900.0,
+        "ai_max_price": 100.0,
+    }
+    for _ in range(3):
+        rows = ew.desk_candidate_rows(cfg)
+        got = [r for r in rows if r.get("symbol") == "DAIC"][0]
+        assert got["criteria"].count("bro_call") == 1

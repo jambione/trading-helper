@@ -2108,21 +2108,19 @@ _PANEL_SOURCES = _DESK_SOURCES | _RESEARCH_SOURCES | _BB_LIVE_SOURCES
 
 
 def _merge_source(prev_src: str, new_src: str) -> str:
-    """Ownership by deliberateness: research > bro call > desk heat.
+    """Research beats everything less deliberate; otherwise newest wins.
 
-    A research thesis and a named call-out are both somebody deciding on a
-    symbol; momentum and trending are automatic heat that sweeps up whatever
-    is moving. The more deliberate label owns the row, so re-seeding cannot
-    quietly relabel it.
+    The bb_live half was documented above _BB_LIVE_SOURCES ("a bro call
+    should not be able to take a name away from a research thesis either")
+    and never implemented — this function did not reference the set at all,
+    so `prev=research, new=bb_live` fell through to "newest wins" and the
+    call took the row from the thesis.
 
-    The bb_live half of that was documented above _BB_LIVE_SOURCES ("a bro
-    call should not be able to take a name away from a research thesis
-    either") and never implemented — this function did not reference
-    _BB_LIVE_SOURCES at all, so it fell through to "newest wins" in both
-    directions. Both were wrong: a bro call DID take names from research,
-    and the next momentum sweep erased the bro attribution. Over 8/20-26
-    exactly one bb_live name survived to be counted, which is why the source
-    looked dead when it was in fact being overwritten.
+    A bro call deliberately does NOT outrank desk heat: the seed loop calls
+    it "the weakest evidence on this list" and only lets it contribute
+    symbols nothing else already named. Ownership and visibility are
+    separate problems — see the bb_live seed block, which tags `bro_call`
+    onto a row another source owns instead of relabelling it.
     """
     p = str(prev_src or "").strip().lower()
     n = str(new_src or "").strip().lower()
@@ -2135,9 +2133,6 @@ def _merge_source(prev_src: str, new_src: str) -> str:
         return prev_src
     if n in _RESEARCH_SOURCES:
         return new_src
-    # A call-out outranks automatic heat, so momentum cannot relabel it.
-    if p in _BB_LIVE_SOURCES and n in _DESK_SOURCES:
-        return prev_src
     return new_src or prev_src
 
 
@@ -2938,10 +2933,32 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
             fresh = float(cfg.get("ai_watch_bb_live_fresh_sec", 900.0) or 0.0)
             added = 0
             for _, r in _bb_live_from_dashboard(max_price, fresh):
-                if added >= n:
-                    break
                 s = str(r.get("symbol") or "").upper().strip()
-                if not s or s in seen:
+                if not s:
+                    continue
+                if s in seen:
+                    # Another source already named it, and a call must not
+                    # take ownership of a row it is the weakest evidence
+                    # for. But dropping the call silently is why the source
+                    # looked dead: DAIC was called by Trader Bro on 8/26,
+                    # momentum happened to name it in the same pass, and the
+                    # row reached the book as `momentum` with criteria
+                    # ['big_move', 'uptrend'] — nothing on it said a human
+                    # had called it out. Ownership and visibility are
+                    # different questions, so tag the criteria and leave the
+                    # source alone.
+                    for prev in rows:
+                        if str(prev.get("symbol") or "").upper().strip() != s:
+                            continue
+                        crit = list(prev.get("criteria") or [])
+                        if "bro_call" not in crit:
+                            crit.append("bro_call")
+                            prev["criteria"] = crit
+                        break
+                    continue
+                # Cap NEW symbols only. `continue` rather than `break` so a
+                # call further down the list can still tag a row above it.
+                if added >= n:
                     continue
                 seen.add(s)
                 added += 1
