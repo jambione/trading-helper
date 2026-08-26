@@ -2237,6 +2237,28 @@ def dashboard_error() -> str:
     return _dash_error
 
 
+def dashboard_state_age_sec() -> float | None:
+    """Seconds since the /api/state snapshot this process is reading was fetched.
+
+    A reading's real age at decision time has two independent parts, and they
+    fail independently: the age of the tape the engine computed on
+    (``bars_age_sec``) and the age of THIS process's copy of that reading. A
+    sub-second realtime bar read through a stalled transport is not a
+    realtime decision, and only the first was ever recorded.
+
+    Normally bounded by ``_DASH_CACHE_TTL``, which is exactly why it is worth
+    logging: the value is uninteresting until the day it isn't.
+
+    None when nothing has been fetched yet, or when the last fetch failed and
+    cached an empty dict. Unknown age is not fresh — callers and slices must
+    be able to tell the two apart, so this never reports 0.0 for "no idea".
+    """
+    ts, cached = _DASH_CACHE
+    if not cached or ts <= 0:
+        return None
+    return round(max(0.0, time.monotonic() - ts), 2)
+
+
 def _dashboard_tickers() -> list[dict]:
     rows = dashboard_state().get("tickers")
     return rows if isinstance(rows, list) else []
@@ -6869,6 +6891,32 @@ def _shadow_row(
         # split — the thing that decides whether this reading may gate an
         # entry — is unmeasurable after the fact. See tools/rsi_trust.py.
         "cm_rsi_src": (sig.get("cm_rsi_src") or None) if sig else None,
+        # HOW OLD the levers were when this row was scored. Provenance without
+        # age answers "which pipe" and never "how stale", and the desk gates
+        # arming on the age of the PRINT (_row_tape_stale, 8s) while %R and
+        # RSI come from bars it never times. Across 8/24-26 cm_rsi_age_sec was
+        # absent from all 17,585 RTH rows and pctr_age_sec did not exist, so
+        # "were EXH and RSI fresh at the arm?" could not be answered from the
+        # record at all — it had to be read off a live process, which cannot
+        # be done retroactively for a session already gone.
+        #
+        # Two numbers, not one, because they fail independently and add:
+        # bars_age_sec is engine-side (the tape the reading was computed on),
+        # ind_snapshot_age_sec is transport-side (the age of this process's
+        # copy). Deliberately NOT summed here — a slice can add them, and a
+        # single blended figure would hide which half broke.
+        #
+        # No pctr_age_sec: when pctr_src is "live" the %R came off these same
+        # bars, so it is this number, and when it is sparse_window/clock_range
+        # /engine the age is genuinely unknown. Duplicating the value under a
+        # second name would invite the two to drift apart and imply a
+        # measurement that was never taken.
+        "bars_age_sec": (_f_or_none(
+            sig.get("cm_rsi_age_sec")
+            if sig.get("cm_rsi_age_sec") is not None
+            else sig.get("bars_age_sec")
+        ) if sig else None),
+        "ind_snapshot_age_sec": dashboard_state_age_sec(),
         "sell_signal": bool(sig.get("sell_signal")) if sig else None,
         "proximity_pct": _f_or_none(sig.get("proximity_pct")) if sig else None,
         "entry_hour_et": _et_hour_decimal(now),
