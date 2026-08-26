@@ -2329,7 +2329,14 @@ body.mobile .icon-btn {
   border-bottom-color: rgba(167, 139, 250, 0.22);
 }
 .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
-  padding: 10px 0;
+  /* 11px sides, not 0: a data row sits inside .feed-row--ai-book, which adds
+     its own 10px padding AND a 1px border on top of the 10px the rows
+     container already has — so the row grid is inset 21px per side while the
+     header grid was inset 10px. Same tracks, different content width, so
+     every right-aligned value drifted left of its header and the drift grew
+     toward the P&L end. Match the inset and the two grids resolve
+     identically. Keep in step with .feed-row--ai-book's border + padding. */
+  padding: 10px 11px;
   width: 100%;
   box-sizing: border-box;
 }
@@ -2349,7 +2356,6 @@ body.mobile .icon-btn {
 .panel-ai-watch .ai-book-table-header .th-last,
 .panel-ai-watch .ai-book-table-header .th-entry,
 .panel-ai-watch .ai-book-table-header .th-stop,
-.panel-ai-watch .ai-book-table-header .th-hold,
 .panel-ai-watch .ai-book-table-header .th-macd,
 .panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
@@ -2400,14 +2406,14 @@ body.mobile .icon-btn {
      gone: the Stop cell shows the min-hold countdown while it runs and the
      stop price after. Qty is display:none and must not occupy a track. */
   grid-template-columns:
-    minmax(52px, 0.9fr)
-    minmax(5rem, 1.0fr)
-    minmax(58px, 0.9fr)
-    minmax(58px, 0.9fr)
-    minmax(62px, 0.9fr)
-    minmax(62px, 0.9fr)
-    minmax(84px, 1.2fr)
-    minmax(58px, 0.85fr);
+    minmax(48px, 0.8fr)
+    minmax(4.6rem, 0.95fr)
+    minmax(54px, 0.8fr)
+    minmax(50px, 0.7fr)
+    minmax(58px, 0.8fr)
+    minmax(58px, 0.8fr)
+    minmax(116px, 1.7fr)
+    minmax(52px, 0.75fr);
   width: 100%;
   box-sizing: border-box;
 }
