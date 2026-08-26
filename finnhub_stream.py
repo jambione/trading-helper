@@ -52,9 +52,13 @@ class FinnhubState:
             self.log_lines.append({"ts": ts, "level": level, "msg": msg})
 
     def update_price(self, ticker: str, price: float, volume: int = 0, timestamp: int = 0):
-        """Record a price. `timestamp` is the trade's OWN time in ms (stream
-        trades have one; REST quotes do not) and is kept separately from
-        ts_unix.
+        """Record a price. `timestamp` is the trade's OWN time in ms and is
+        kept separately from ts_unix.
+
+        Stream trades carry one. So does the REST /quote (`t`, in seconds) —
+        this docstring used to say it did not, and the caller believed it and
+        passed nothing, which is how price_age_sec came to be None on most
+        rows and left every staleness guard failing open (fixed 8/26).
 
         ts_unix is when WE learned the price, which is the right basis for
         "is this source still covering the symbol". trade_ts is when the print
@@ -331,7 +335,19 @@ def dashboard_ws_collides_with_engine(dashboard_key: str) -> bool:
 # ── REST API helpers ──────────────────────────────────────────
 
 def fetch_realtime_quote(api_key: str, ticker: str) -> dict:
-    """Fetch current quote from Finnhub REST API (fallback for non-streamed tickers)."""
+    """Fetch current quote from Finnhub REST API (fallback for non-streamed tickers).
+
+    ``t`` is the quote's OWN unix time in seconds, and dropping it was the
+    root cause of every staleness guard on the desk failing open: with no
+    trade time the price merge published ``price_age_sec = None``, and
+    ai_positions._fresh_tape_px, ai_entry_watch._row_tape_stale and the
+    blind-book flatten all treat unknown age as fresh. On 2026-08-26 that
+    field was None on all nine live names and absent on 53% of RTH rows,
+    and `stale_quote` had blocked 0 of 17,585 of them.
+
+    Returned in seconds exactly as Finnhub sends it; callers convert. 0 when
+    absent, which update_price already reads as "unknown" rather than epoch.
+    """
     try:
         import urllib.request
         url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={api_key}"
@@ -341,7 +357,7 @@ def fetch_realtime_quote(api_key: str, ticker: str) -> dict:
                 "ok": True, "ticker": ticker,
                 "c": data.get("c", 0), "h": data.get("h", 0),
                 "l": data.get("l", 0), "o": data.get("o", 0),
-                "pc": data.get("pc", 0),
+                "pc": data.get("pc", 0), "t": data.get("t", 0),
             }
     except Exception as e:
         return {"ok": False, "error": str(e)}

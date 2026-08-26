@@ -2288,7 +2288,17 @@ def _finnhub_rest_poll_worker(api_key: str, tickers: list):
                 fail_streak = 0
                 price = float(q.get("c", 0))
                 if price > 0:
-                    FINNHUB_STATE.update_price(ticker, price)
+                    # Carry the quote's own time through. Without it this
+                    # path published a price with no provable age, the merge
+                    # emitted price_age_sec=None, and every staleness guard
+                    # on the desk read unknown as fresh. Finnhub sends `t` in
+                    # SECONDS; update_price takes milliseconds and rejects a
+                    # stamp that is zero, malformed or in the future.
+                    try:
+                        q_ms = int(float(q.get("t") or 0) * 1000.0)
+                    except (TypeError, ValueError):
+                        q_ms = 0
+                    FINNHUB_STATE.update_price(ticker, price, timestamp=q_ms)
                     day_open = float(q.get("o", 0))
                     if day_open > 0:
                         with STATE.lock:
