@@ -71,7 +71,7 @@ export function init(panelEl, kind) {
 
   if (bookRowsEl) {
     setInterval(() => {
-      bookRowsEl.querySelectorAll('.cell-hold[data-entry-time]').forEach(_tickHoldClock);
+      bookRowsEl.querySelectorAll('.cell-trail[data-entry-time]').forEach(_tickHoldClock);
     }, 250);
   }
 
@@ -857,23 +857,22 @@ function _updateBookRow(el, r) {
         'price-flash--up'), 600);
     }
     if (shelfNow != null) trailEl._prevShelf = shelfNow;
-    _setText(trailEl, trail);
-  }
-  const holdEl = el.querySelector('.cell-hold');
-  if (holdEl) {
-    holdEl.classList.toggle('is-held', _holdLeft(r) != null);
-    holdEl.classList.toggle('is-hit', _shelfHit(r));
-    holdEl.title = _holdCellTitle(r);
+    // The countdown runs in THIS cell now, so it carries the clock attrs —
+    // and the stop price it should reveal when the clock hits zero, since
+    // the 250ms ticker fires between book ticks and would otherwise blank
+    // the cell until the next update.
     const et = r.entry_time != null ? Number(r.entry_time) : NaN;
     const cap = r.min_hold_sec != null ? Number(r.min_hold_sec) : NaN;
     if (Number.isFinite(et) && et > 1e9 && Number.isFinite(cap) && cap > 0) {
-      holdEl.dataset.entryTime = String(et);
-      holdEl.dataset.minHoldSec = String(cap);
+      trailEl.dataset.entryTime = String(et);
+      trailEl.dataset.minHoldSec = String(cap);
+      trailEl.dataset.stopText = _fmtTrail(_bookStopPx(r));
     } else {
-      delete holdEl.dataset.entryTime;
-      delete holdEl.dataset.minHoldSec;
+      delete trailEl.dataset.entryTime;
+      delete trailEl.dataset.minHoldSec;
+      delete trailEl.dataset.stopText;
     }
-    _setText(holdEl, _fmtHoldCell(r));
+    _setText(trailEl, trail);
   }
   const priceEl = el.querySelector('.cell-price');
   if (priceEl) {
@@ -950,8 +949,7 @@ function _bookRowHtml(r) {
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
-    + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}">${_esc(trail)}</div>`
-    + `<div class="cell-hold${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_holdCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(_fmtHoldCell(r))}</div>`
+    + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-macd${_bookMacdClass(r)}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
@@ -1026,23 +1024,18 @@ function _fmtHoldClock(sec) {
   return `${m}:${s}`;
 }
 
-function _fmtHoldCell(r) {
-  const left = _holdLeft(r);
-  if (left == null) {
-    const open = !!(r && (r.is_position || r.phase === 'open'));
-    return open ? 'armed' : '—';
-  }
-  if (_shelfHit(r)) return `HIT ${_fmtHoldClock(left)}`;
-  return _fmtHoldClock(left);
-}
 
 function _holdDataAttrs(r) {
+  // Includes the stop price the cell falls back to at zero — see
+  // _tickHoldClock. Kept in one place so the create and update paths cannot
+  // disagree about what the cell shows when the clock runs out.
   const et = r && r.entry_time != null ? Number(r.entry_time) : NaN;
   const cap = r && r.min_hold_sec != null ? Number(r.min_hold_sec) : NaN;
   if (!Number.isFinite(et) || et < 1e9 || !Number.isFinite(cap) || cap <= 0) {
     return '';
   }
-  return ` data-entry-time="${et}" data-min-hold-sec="${cap}"`;
+  return ` data-entry-time="${et}" data-min-hold-sec="${cap}"`
+    + ` data-stop-text="${_esc(_fmtTrail(_bookStopPx(r)))}"`;
 }
 
 function _tickHoldClock(el) {
@@ -1052,27 +1045,20 @@ function _tickHoldClock(el) {
   if (!Number.isFinite(et) || !Number.isFinite(cap) || cap <= 0) return;
   const left = cap - (Date.now() / 1000 - et);
   const hit = el.classList.contains('is-hit');
-  let text = 'armed';
+  // Zero hands the cell back to the stop price. `armed` was right when this
+  // drove a separate Hold column; in the Stop cell it would blank the one
+  // number the operator needs the instant the sale becomes possible.
+  let text = el.dataset.stopText || '—';
   if (left > 0) {
     text = hit ? `HIT ${_fmtHoldClock(left)}` : _fmtHoldClock(left);
     el.classList.add('is-held');
   } else {
     el.classList.remove('is-held');
+    if (hit && text !== '—') text = `${text} · SELL`;
   }
   if (el.textContent !== text) el.textContent = text;
 }
 
-function _holdCellTitle(r) {
-  const left = _holdLeft(r);
-  if (left == null) {
-    const open = !!(r && (r.is_position || r.phase === 'open'));
-    return open
-      ? 'Min-hold done. Ratchet sells the next time LAST tags the shelf.'
-      : 'Min-hold countdown on an open long only.';
-  }
-  return `Sale of the ratchet shelf is held for ${_fmtHoldClock(left)}. `
-    + 'The shelf still raises. 1R disaster stop and 15:50 flatten still fire.';
-}
 
 function _lastPx(r) {
   const v = r && (r.price != null ? Number(r.price)
@@ -1086,11 +1072,22 @@ function _shelfHit(r) {
   return last != null && shelf != null && last <= shelf + 1e-9;
 }
 
+/** The Stop cell does double duty.
+ *
+ *  While min-hold is running the ratchet cannot SELL — the shelf still
+ *  raises, but a sale is muzzled — so the number that matters is how long
+ *  is left, not where the shelf currently sits. Once the clock reaches zero
+ *  the stop price takes the cell back. That is one column instead of two
+ *  saying different halves of the same fact, and it puts the countdown
+ *  where the operator is already looking when a position is open. */
 function _fmtStopCell(r) {
+  const left = _holdLeft(r);
+  if (left != null) {
+    return _shelfHit(r) ? `HIT ${_fmtHoldClock(left)}` : _fmtHoldClock(left);
+  }
   const shelf = _bookStopPx(r);
   const px = _fmtTrail(shelf);
   if (px === '—') return px;
-  if (_shelfHit(r) && _holdLeft(r) != null) return `${px} · HIT`;
   if (_shelfHit(r)) return `${px} · SELL`;
   return px;
 }

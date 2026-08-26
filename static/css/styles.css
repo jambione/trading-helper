@@ -2395,15 +2395,16 @@ body.mobile .icon-btn {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | Hold | MACD Gap | P&L
-     Qty is display:none and must not occupy a track. */
+  /* Ticker | State | Last | Entry | Stop | MACD Gap | P&L
+     Hold is gone: the Stop cell shows the min-hold countdown while it runs
+     and the stop price after, so one column carries both halves of the same
+     fact. Qty is display:none and must not occupy a track. */
   grid-template-columns:
     minmax(52px, 0.9fr)
     minmax(5rem, 1.0fr)
     minmax(58px, 0.9fr)
     minmax(58px, 0.9fr)
-    minmax(58px, 0.8fr)
-    minmax(52px, 0.7fr)
+    minmax(62px, 0.9fr)
     minmax(84px, 1.3fr)
     minmax(62px, 0.9fr);
   width: 100%;
@@ -2505,7 +2506,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 1fr);
   grid-template-areas:
     "ticker state last entry pl"
-    "stop   hold  macd  macd  macd";
+    "stop   macd  macd  macd  macd";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
@@ -2520,8 +2521,6 @@ body.mobile .panel-ai-watch .feed-cols--ai-book > .th-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-stop,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-hold,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-hold { grid-area: hold; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-macd,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-macd { grid-area: macd; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-pl,
@@ -2561,7 +2560,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
       minmax(0, 1fr);
     grid-template-areas:
       "ticker state last entry pl"
-      "stop   hold  macd  macd  macd";
+      "stop   macd  macd  macd  macd";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
@@ -2578,8 +2577,6 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
   .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
   .panel-ai-watch .feed-cols--ai-book > .th-stop,
   .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
-  .panel-ai-watch .feed-cols--ai-book > .th-hold,
-  .panel-ai-watch .feed-cols--ai-book > .cell-hold { grid-area: hold; }
   .panel-ai-watch .feed-cols--ai-book > .th-exh,
   .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
   .panel-ai-watch .feed-cols--ai-book > .th-rsi,
