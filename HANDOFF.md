@@ -607,6 +607,22 @@ eight names watched. The same symbol on the same field changes on 61% of
 RTH samples with a real 26.12–27.08 range, so the machinery is fine; it is
 specifically premarket that is dead.
 
+`logs/engine.log` states it outright — it prints the price age, and **that
+age equals time-since-subscription for every name**:
+
+```
+[RARE ] $26.45  age=7595s  #7528      [VVOS ] $0.26  age=51s   #52
+[TEM  ] $68.74  age=7595s  #7528      [LGHL ] $0.54  age=369s  #367
+```
+
+Polls run ~1/s, so age ≈ poll count on all 13 subscribed names: each symbol
+receives **one** price when it is subscribed and never another. The engine
+subscribes "(Alpaca IEX, Finnhub)" and neither pushes a premarket update.
+
+The market itself is not quiet — the SIP quotes in the table above have a
+median age of **20.4s** across the same window. Premarket trading is
+happening on these names; IEX and Finnhub simply cannot see it.
+
 Everything the desk records between 04:00 and 09:30 — `pctr`, `cm_rsi`,
 `exhaustion`, `spread_r`, `pct_change`, the setup legs in §5F — is computed
 on yesterday's closing print. By the standing rule, none of it is evidence
