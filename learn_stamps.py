@@ -95,6 +95,10 @@ _FINGERPRINT_KEYS = (
     # requires 0.8x separation.
     "ai_watch_macd_exh_override",
     "ai_watch_macd_exh_override_min_pct",
+    # Whether the lever must come off the live tape. A session that armed
+    # on REST-fallback MACD is not the same regime as one that did not.
+    "ai_watch_require_realtime_macd",
+    "ai_watch_macd_max_age_sec",
     # And whether a curl back to bearish pulls the shelf under the print.
     # This changes what the exit IS, not merely how wide it sits.
     "ai_exit_macd_curl_tighten",

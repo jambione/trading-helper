@@ -195,6 +195,11 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_quote": "stale quote",
     # MACD momentum validation refusals
     "no_macd_data": "no MACD",
+    # Provenance refusals — the reading exists but was not drawn on
+    # the live tape, or cannot say what it was drawn on.
+    "macd_not_realtime_alpaca": "MACD not live",
+    "macd_src_unknown": "MACD src?",
+    "macd_stale_bars": "MACD stale",
     "macd_bearish": "MACD bear",
     "macd_gap_too_close": "MACD narrow",
     "macd_gap_insufficient": "MACD gap low",
@@ -3425,6 +3430,15 @@ def refresh_engine_macd(rec: dict, sig: dict | None) -> bool:
               "macd_cross", "macd_ok", "macd_gap_rising",
               "macd_gap_falling", "macd_gap_prev"):
         ind[k] = sig.get(k)
+    # Provenance and age of the bars this reading was drawn on. MACD became
+    # the entry lever on 8/26 and was the only lever with neither — %R has
+    # ai_watch_require_live_pctr and RSI has ai_watch_require_realtime_rsi,
+    # both gating on exactly these two facts. bars_src flips per ticker
+    # mid-session (20 recoveries and 27 fallbacks across 18 symbols on
+    # 2026-08-20), so without it one gate silently alternates between the
+    # Finnhub tape and a REST fallback up to 60s old.
+    ind["macd_src"] = sig.get("bars_src")
+    ind["macd_age_sec"] = sig.get("bars_age_sec")
     return True
 
 
@@ -5219,6 +5233,35 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         if isinstance(record, dict):
             record["block_detail"] = "no realtime MACD (needs 1-min bars)"
         return False, "no_macd_data"
+
+    # Was this reading drawn on the live tape, and how old is it? MACD became
+    # the entry lever on 8/26 with no provenance check of its own, while the
+    # levers it replaced both had one. bars_src flips per ticker mid-session,
+    # so an ungated gate alternates between the Finnhub tape (0.3s at the
+    # median, measured 8/26) and the Alpaca REST fallback (up to 60s) without
+    # saying which it used. Refused rather than merely noted: an entry on a
+    # 60s-old MACD is an entry on a different indicator.
+    if bool(cfg.get("ai_watch_require_realtime_macd", False)):
+        src = str(ind.get("macd_src") or "").strip().lower()
+        if src and src != "realtime":
+            if isinstance(record, dict):
+                record["block_detail"] = f"MACD drawn on {src}, not the tape"
+            return False, f"macd_not_realtime_{src}"[:40]
+        age = _f_or_none(ind.get("macd_age_sec"))
+        try:
+            max_age = float(cfg.get("ai_watch_macd_max_age_sec", 0) or 0)
+        except (TypeError, ValueError):
+            max_age = 0.0
+        if not src and age is None:
+            # No provenance at all. Absence is not a pass.
+            if isinstance(record, dict):
+                record["block_detail"] = "MACD source unknown"
+            return False, "macd_src_unknown"
+        if max_age > 0 and age is not None and age > max_age:
+            if isinstance(record, dict):
+                record["block_detail"] = (
+                    f"MACD bars {age:.1f}s old > {max_age:.0f}s")
+            return False, "macd_stale_bars"
 
     if fast <= slow or gap <= 0:
         if isinstance(record, dict):

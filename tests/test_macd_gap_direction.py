@@ -372,3 +372,80 @@ def test_a_wide_healthy_gap_still_passes_on_its_own_merits():
         _rec(macd_sep_ratio=2.0, macd_gap_rising=True, macd_gap_falling=False),
         OVR)
     assert ok is True and why == "macd_bullish_gap"
+
+
+# ── provenance: which tape drew this reading ─────────────────────────────
+
+RT = dict(ON, ai_watch_require_realtime_macd=True)
+
+
+def test_a_rest_fallback_reading_is_refused():
+    """MACD became the entry lever with no provenance check while the levers
+    it replaced both had one. bars_src flips per ticker mid-session, so an
+    ungated gate alternates between the Finnhub tape (0.3s median, measured
+    8/26) and the Alpaca REST fallback (up to 60s) without saying which."""
+    rec = _rec(macd_gap_rising=True, macd_gap_falling=False,
+               macd_src="alpaca")
+    ok, why = ew.macd_allows_buy(rec, RT)
+    assert ok is False
+    assert why == "macd_not_realtime_alpaca"
+    assert "alpaca" in str(rec.get("block_detail"))
+
+
+def test_a_realtime_reading_passes():
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False,
+             macd_src="realtime", macd_age_sec=0.3), RT)
+    assert ok is True and why == "macd_bullish_gap"
+
+
+def test_unknown_provenance_is_refused():
+    """Absence is not a pass — the rule everywhere else on this desk."""
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False), RT)
+    assert ok is False and why == "macd_src_unknown"
+
+
+def test_an_age_ceiling_is_optional_and_off_by_default():
+    from config import DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["ai_watch_macd_max_age_sec"] == 0.0
+    # 0 = source check only: a realtime reading of any age still passes.
+    ok, _ = ew.macd_allows_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False,
+             macd_src="realtime", macd_age_sec=999.0), RT)
+    assert ok is True
+
+
+def test_the_age_ceiling_bites_when_set():
+    cfg = dict(RT, ai_watch_macd_max_age_sec=10.0)
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False,
+             macd_src="realtime", macd_age_sec=42.0), cfg)
+    assert ok is False and why == "macd_stale_bars"
+
+
+def test_provenance_is_checked_before_the_size_tests():
+    """A fallback reading must not be reported as a narrow gap — the State
+    column has to name the real problem, which is the feed."""
+    rec = _rec(macd_gap=0.0001, macd_sep_ratio=0.01,
+               macd_gap_rising=True, macd_gap_falling=False,
+               macd_src="alpaca")
+    ok, why = ew.macd_allows_buy(rec, RT)
+    assert ok is False and why == "macd_not_realtime_alpaca"
+
+
+def test_the_guard_is_off_by_default():
+    from config import DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["ai_watch_require_realtime_macd"] is False
+    ok, _ = ew.macd_allows_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False,
+             macd_src="alpaca"), ON)
+    assert ok is True, "a fallback reading still passes when the guard is off"
+
+
+def test_refresh_stamps_provenance_onto_the_record():
+    rec = {"symbol": "AAA"}
+    ew.refresh_engine_macd(rec, {"macd_gap": 0.02, "bars_src": "realtime",
+                                 "bars_age_sec": 0.4})
+    assert rec["indicator"]["macd_src"] == "realtime"
+    assert rec["indicator"]["macd_age_sec"] == 0.4

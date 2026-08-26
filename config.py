@@ -77,6 +77,16 @@ DEFAULT_CONFIG = {
     # requires the gap to be rising.
     "ai_watch_macd_exh_override":         False,
     "ai_watch_macd_exh_override_min_pct": 70.0,
+    # Refuse a MACD the engine drew on the REST fallback instead of the
+    # Finnhub tape, and optionally one whose bars are too old. MACD became
+    # the entry lever on 8/26 with no provenance check while the levers it
+    # replaced both had one (ai_watch_require_live_pctr,
+    # ai_watch_require_realtime_rsi). Measured 8/26: realtime bars run 0.3s
+    # at the median, the REST fallback up to 60s — an entry on the latter is
+    # an entry on a different indicator.
+    "ai_watch_require_realtime_macd":  False,
+    # 0 = source check only, no age ceiling.
+    "ai_watch_macd_max_age_sec":       0.0,
 
     # ── Signal: volume surge ─────────────────────────────────
     "volume_surge_mult": 1.5,
