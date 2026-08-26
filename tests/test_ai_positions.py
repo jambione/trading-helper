@@ -35,6 +35,11 @@ def _use_tmp_state(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "POSITION_SHADOW_PATH", _pos_shadow_path(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def _stub_open_position_quote_refresh(monkeypatch):
+    """manage_open_positions now force-refreshes held NBBO; keep unit tests offline."""
+    monkeypatch.setattr(cp, "refresh_open_position_quotes", lambda *_a, **_k: 0)
+
 
 # ── evaluate_entry CLI routing ────────────────────────────────────────────────
 
@@ -2874,6 +2879,7 @@ def test_stale_data_flattens_after_max_age(tmp_path, monkeypatch):
     })
     monkeypatch.setattr(cp, "_rth_now", lambda now: True)
     monkeypatch.setattr(cp, "quote_is_live", lambda *a, **k: (False, "none"))
+    monkeypatch.setattr(cp, "refresh_open_position_quotes", lambda *_a, **_k: 0)
     stub = _StubBrokerManage(current_price=40.5)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     events = cp.manage_open_positions(now=1_000_020.0)
@@ -2893,6 +2899,7 @@ def test_stale_data_does_not_flatten_on_first_miss(tmp_path, monkeypatch):
     })
     monkeypatch.setattr(cp, "_rth_now", lambda now: True)
     monkeypatch.setattr(cp, "quote_is_live", lambda *a, **k: (False, "none"))
+    monkeypatch.setattr(cp, "refresh_open_position_quotes", lambda *_a, **_k: 0)
     stub = _StubBrokerManage(current_price=40.5)
     monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
     events = cp.manage_open_positions(now=1_000_100.0)
@@ -2900,6 +2907,76 @@ def test_stale_data_does_not_flatten_on_first_miss(tmp_path, monkeypatch):
     assert stub.closed == []
     state = json.loads(_state_path(tmp_path).read_text())
     assert state["NVDA"].get("stale_since") == 1_000_100.0
+
+
+def test_quote_is_live_rescues_rest_ask_when_decision_price_says_stale_tape(
+        monkeypatch):
+    """CRE 2026-08-26: wide NBBO made decision_price return stale_tape while
+    IEX still had an ask — open-position liveness must not flatten on that."""
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    monkeypatch.setattr(
+        ew, "decision_price",
+        lambda *_a, **_k: (6.9, "stale_tape", 40.0),
+    )
+    monkeypatch.setattr(gt, "_latest_ask", lambda *_a, **_k: 6.92)
+    ok, src = cp.quote_is_live("CRE", {"ai_stale_data_max_age_sec": 15.0})
+    assert ok is True
+    assert src == "rest"
+
+
+def test_quote_is_live_stays_dark_when_no_stream_and_no_ask(monkeypatch):
+    import ai_entry_watch as ew
+    import ai_trading as gt
+
+    monkeypatch.setattr(
+        ew, "decision_price",
+        lambda *_a, **_k: (None, "none", None),
+    )
+    monkeypatch.setattr(gt, "_latest_ask", lambda *_a, **_k: None)
+    ok, src = cp.quote_is_live("CRE")
+    assert ok is False
+    assert src == "none"
+
+
+def test_stale_miss_clears_after_refresh_rescues_quote(tmp_path, monkeypatch):
+    """First check dark, refresh brings REST back → do not start stale_since."""
+    _seed_state(tmp_path, monkeypatch, entry_confirmed=True)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda k, d=True: True)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_stale_data_flatten": True, "ai_stale_data_max_age_sec": 15.0,
+        "ai_local_trail_enabled": False, "ai_dead_trade_min": 0,
+        "ai_watch_exhaustion_rules": False,
+    })
+    monkeypatch.setattr(cp, "_rth_now", lambda now: True)
+    calls = {"n": 0}
+
+    def _live(*_a, **_k):
+        calls["n"] += 1
+        # Batch refresh + per-symbol rescue both re-check; stay dark until
+        # after at least one refresh has run.
+        if calls["n"] <= 1:
+            return False, "stale_tape"
+        return True, "rest"
+
+    refreshed = []
+
+    def _refresh(syms):
+        refreshed.append(list(syms or []))
+        return len(syms or [])
+
+    monkeypatch.setattr(cp, "quote_is_live", _live)
+    monkeypatch.setattr(cp, "refresh_open_position_quotes", _refresh)
+    stub = _StubBrokerManage(current_price=40.5)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert not any(e.get("event") == "stale_data" for e in events)
+    assert stub.closed == []
+    assert refreshed, "held names must be refreshed each manage tick"
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"].get("stale_since") is None
+    assert state["NVDA"].get("last_live_data_ts") == 1_000_100.0
 
 
 def test_desk_click_flattens_when_already_long(monkeypatch):

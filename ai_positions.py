@@ -3114,7 +3114,14 @@ def _rth_now(now: float) -> bool:
 
 
 def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
-    """True when we have a stream print or a REST ask we can trade on."""
+    """True when we have a stream print or a REST ask we can manage on.
+
+    ``decision_price`` may return ``stale_tape`` when an old print disagrees
+    with a live REST ask (``ai_decision_ask_max_dev_pct``). That is an
+    *arming* refusal, not "no market data". Open-position protection only
+    needs a usable quote — a fetchable ask still counts as live so a wide
+    NBBO on a thin name (CRE 2026-08-26) does not look blind and flatten.
+    """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
         import ai_entry_watch as ew
@@ -3133,7 +3140,42 @@ def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
         return True, "stream"
     if src == "rest":
         return True, "rest"
+    # Rescue: arming rejected the ask vs tape, but the ask itself is live.
+    try:
+        import ai_trading as gt
+        ask = gt._latest_ask(symbol)
+        if ask is not None and float(ask) > 0:
+            return True, "rest"
+    except Exception:
+        pass
     return False, src or "none"
+
+
+def refresh_open_position_quotes(symbols: list[str] | None = None) -> int:
+    """Force-fresh dashboard tape + NBBO for held names. Returns symbols primed.
+
+    Quiet tape alone is not blindness — CRE flatlined on ``stale_tape`` while
+    IEX still had an ask, because the book never busted the quote cache and
+    ``decision_price`` then refused the ask on ask/tape divergence. Call this
+    before the stale-data gate so open positions keep a live REST fallback.
+    """
+    wanted = [
+        str(s or "").upper().strip()
+        for s in (symbols or [])
+        if str(s or "").strip()
+    ]
+    if not wanted:
+        return 0
+    try:
+        import ai_entry_watch as ew
+        ew.dashboard_state(force=True)
+    except Exception:
+        pass
+    try:
+        import ai_trading as gt
+        return int(gt.refresh_quotes_now(wanted) or 0)
+    except Exception:
+        return 0
 
 
 def _infer_t1_fill(pos: dict[str, Any], live_qty: float | None) -> bool:
@@ -3935,6 +3977,18 @@ def manage_open_positions(
         state = _load_state()
         snapshot_keys = set(state.keys())
 
+    # Held names first: bust dashboard + NBBO caches so the stale-data gate
+    # sees a fresh REST ask instead of a quiet stream print.
+    held_live = [
+        t for t, p in state.items()
+        if isinstance(p, dict)
+        and p.get("entry_confirmed")
+        and not p.get("closing_reason")
+        and detail.get(str(t).upper()) is not None
+    ]
+    if held_live:
+        refresh_open_position_quotes(held_live)
+
     # Pass 1: has anything gone fully flat since the last tick? Catches every
     # closing mechanism at once — hard stop, first target then a later
     # trailing/breakeven stop, or an explicit close_out from time-stop or
@@ -4025,6 +4079,8 @@ def manage_open_positions(
             _update_excursions(pos, pos.get("last_seen_price") or live.get("current"))
             # Blind book: no stream and no REST for ai_stale_data_max_age_sec
             # during RTH → market flatten. Local trail cannot protect a ghost.
+            # One more per-symbol refresh on the first miss so a single quiet
+            # poll does not start the stale clock while IEX still answers.
             if (
                 pos.get("entry_confirmed")
                 and not pos.get("closing_reason")
@@ -4032,6 +4088,9 @@ def manage_open_positions(
                 and _rth_now(now)
             ):
                 live_ok, live_src = quote_is_live(ticker, _cfg_all())
+                if not live_ok:
+                    refresh_open_position_quotes([ticker])
+                    live_ok, live_src = quote_is_live(ticker, _cfg_all())
                 if live_ok:
                     pos.pop("stale_since", None)
                     pos["last_live_data_ts"] = now
