@@ -119,15 +119,11 @@ def test_a_dead_wire_does_not_tighten(monkeypatch):
 
 # ── raise-only still holds ───────────────────────────────────────────────
 
-def test_the_curl_stop_is_a_floor_not_an_override(monkeypatch):
-    """Pinned as source text: writing pos["local_stop_price"] directly would
-    let a losing trade's `last - 0.01` move the shelf DOWN, which is the one
-    thing a ratchet may never do."""
+def test_bear_curl_stop_not_applied_in_local_trail():
+    """Bear curl stop update is removed from apply_local_trail so only
+    realtime ratcheting updates move the stop."""
     src = (_ROOT / "ai_positions.py").read_text(encoding="utf-8")
-    i = src.index("curl_px = _macd_curl_stop(ticker, last)")
-    body = src[i:i + 400]
-    assert "max(want, curl_px)" in body, "must raise, never replace"
-    assert 'pos["local_stop_price"] = curl_px' not in body
+    assert "curl_px = _macd_curl_stop" not in src
 
 
 def test_a_curl_below_the_existing_shelf_is_ignored(monkeypatch):

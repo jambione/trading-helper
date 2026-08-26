@@ -2903,20 +2903,6 @@ def apply_local_trail(
         return True, True
 
     want = local_profit_stop(pos, _cfg_all())
-    # MACD rolled over: pull the shelf to a penny under the print so the next
-    # tick down takes us out. The entry thesis is "the lines are separating";
-    # once they curl back together that thesis is spent, and waiting for the
-    # give to be crossed hands back the part of the move the signal already
-    # told us was over.
-    #
-    # Deliberately expressed as a floor on `want` rather than a direct write,
-    # so it passes through the raise-only rule below. On a winner that puts
-    # the stop just under price; on a loser last-0.01 sits below the existing
-    # shelf and is correctly ignored — this tightens, it never loosens.
-    curl_px = _macd_curl_stop(ticker, last)
-    if curl_px is not None:
-        want = curl_px if want is None else max(want, curl_px)
-        pos["macd_curl_stop"] = round(curl_px, 4)
     prev_local = _num(pos.get("local_stop_price"))
     if want is not None and (
         prev_local is None or want > prev_local + 1e-9
