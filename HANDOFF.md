@@ -1,4 +1,4 @@
-# Desk state — 2026-08-23
+# Desk state — 2026-08-26
 
 Replaces `GROK_HANDOFF.md`. Written for someone with none of the chat that
 produced it. **Challenge anything.** Every claim carries its anchor.
@@ -75,7 +75,7 @@ a product change needs no restart.
 | `ai_local_trail_give_spread_k` | **1.0** | floors the give at 1×spread — the shelf can no longer sit inside the book |
 | `ai_local_trail_give_spread_max_r` | **0.50** | caps that floor. RTH spread_r runs p90 **5.56R**, and uncapped k=1 would park the shelf 5.5R down, which is no stop at all |
 | `ai_local_trail_be_at_spread_k` | **1.0** | won't protect a gain until it clears one round trip |
-| `ai_max_spread_r` | 0.0 (off) | **open.** A book wider than the move is unwinnable, but n=28 fills cannot pick a threshold — kept and refused means are indistinguishable at every cap tried. Revisit when coverage gives real n |
+| `ai_max_spread_r` | 0.0 (off) | **open, and now blocked on the feed, not on n.** A book wider than the move is unwinnable, but every `spread_r` on the record is an IEX quote, which overstates the book 1.5x in RTH, 3.3x premarket and 200x on SDOT (§5G). Setting this from the current record would refuse the *tightest* names. More tape will not fix it |
 | `ai_watch_open_seed_min_pct` | 0.0 | new, and 0.0 = shipped behaviour. See §5 |
 | heat 40 / 1R 5% / 2 slots / IEX / flatten 15:50 | unchanged | |
 | `ai_watch_min_pct_change` | 50.0 | **not the operative gate** — see §5 |
@@ -480,6 +480,82 @@ direction or could be noise; n cannot separate those.
 
 **The honest next step is more tape, not a tighter threshold.**
 
+### G. Is the premarket book too wide to trade? — **No. The book is fine; the feed is not.** (8/26)
+
+Asked because the operator wants the day to start at 04:00 — the setup in F
+is a gap-up-on-news setup, and on those names the move is often over by
+09:30. `tools/spread_coverage.py` appeared to answer it decisively:
+
+```
+RTH spread_r        median 0.065R
+PRE-MARKET spread_r median 1.717R      <- 26x, and a round trip pays it twice
+```
+
+That reads as ~3.4R to scratch on a distribution that lives inside ±1R —
+premarket entry as arithmetic you cannot win. **It is an artifact.** Every
+`spread_r` on the record is built from `DataFeed.IEX` (`ai_trading.py:226`).
+IEX is one venue with a couple of percent of consolidated volume and very
+little of it before 09:30, so a wide premarket "spread" is substantially
+measuring IEX's *absence*. Orders route against the NBBO, and the NBBO is
+what prices an entry.
+
+`scratchpad/sip_premarket_spread.py` re-prices the **same shadow rows**
+against SIP historical quotes — same stops, matched strictly point-in-time
+(last quote *before* the instant, never the one that closed it), and
+self-validating: it reproduces each logged IEX value from the row's own
+bid/ask/stop first, and aborts rather than compare an unpaired sample.
+6452 paired premarket rows, 2026-08-20..26:
+
+| | p10 | median | p90 | RTH-like (≤0.13R) |
+|---|---:|---:|---:|---:|
+| IEX — what the desk logs | 0.026 | **0.749** | 7.325 | 14% |
+| SIP — what you actually cross | 0.029 | **0.229** | 3.050 | 37% |
+| SIP, quote <60s old | 0.024 | **0.120** | 0.465 | 52% |
+
+RTH, same method (10:00–11:00, 8 busiest symbol-days, n=1162): IEX 0.173R
+vs SIP **0.117R**.
+
+**The premarket book, measured properly, costs what the regular-session
+book costs — 0.120R against 0.117R.** The 26x penalty was never in the
+market.
+
+Three prior claims die with it:
+
+- *"09:00–09:30 is the worst book of the day."* Pure IEX artifact: IEX says
+  2.280R there, SIP says 0.201R — among the *better* premarket half-hours.
+  The SIP median is flat at 0.17–0.27R across all of 04:00–09:30. The book
+  does not degrade toward the open.
+- *"Only 2 of 21 names are crossable premarket."* On SIP it is 6 of 18.
+- Per-name error is not a scale factor and cannot be calibrated away. SDOT:
+  IEX 5.278R, SIP **0.026R** — a 200x error, on a name the desk would have
+  refused as untradeable while its book was tighter than the RTH median.
+
+**What the premarket book actually does wrong is go dark, not go wide.**
+Matched-quote age is median 20.4s / p90 856s premarket, against 2.3s / 24s
+in RTH; 37% of premarket rows matched a quote over a minute old, versus 2%
+in RTH. Every name with a bad SIP median is a name with a stale quote (OI
+378s, CADL 410s, AUPH 582s, IND 860s). That is a real untradeability
+signal, but a *different* one, and it lands on the exact weakness in §8:
+`ai_positions.py:4026` gates the blind-book flatten on `_rth_now()`, and
+Alpaca will not hold a stop outside RTH. Premarket, a dark book means no
+protection at all.
+
+**Consequences.**
+
+1. **`ai_max_spread_r` must not be enforced on IEX quotes.** It is 1.5x
+   wrong in RTH and 3.3x wrong premarket, per-name up to 200x. Set from
+   IEX it would refuse SDOT at 5.278R while its real book was 0.026R. The
+   gate has been parked at `0.0` waiting for a record — this is why it must
+   keep waiting for a *better feed*, not a longer sample.
+2. **The blocker on trading at 04:00 is the live quote, not the economics.**
+   SIP is delayed-only on this account (§10), so it can measure and cannot
+   trade. Finnhub already holds the websocket in `signal_engine.py` and
+   `stream_bars.py` landed 8/25 — the premarket feed problem and the
+   EXH/RSI realtime problem are the same problem with the same fix.
+3. **Validate Finnhub premarket quotes against SIP with this same script
+   before building anything on top of them.** Do not swap one unvalidated
+   feed for another.
+
 ### The design criterion this produces
 
 For a driftless walk, expected favorable excursion is ≈ **0.8σ√t** — which
@@ -729,6 +805,11 @@ it was on 8/22, and nobody should be told otherwise.
   removes stomps and does not move the mean. `give_spread_k` and
   `be_at_spread_k` are worth turning on for the wide-spread quarter of
   trades, but as risk hygiene, not as a profit change.
+- **Do not price anything off an IEX spread.** §5G: IEX overstates the book
+  1.5x in RTH, 3.3x premarket, and up to 200x on a single name (SDOT). That
+  includes setting `ai_max_spread_r`, ranking names by cost, and any
+  premarket entry or exit rule. Measure with SIP historical; trade on a
+  feed validated against it.
 - **Do not change live knobs mid-session** without the operator.
 - **Do not read a replay verdict without checking `desk_product` first.**
   `tools/sim_rstop_path.path_cfg()` calls `load_config()`, so the simulator
@@ -881,3 +962,15 @@ Next:  finish gate 1 (10 sessions), then cost or timescale — not gates
   0.79% round trip is the ratchet's own give and does not vary with price.
   One candidate survives — `desk_px:50-`, 8/10 sessions, p=0.0547 — thin,
   searched, and pointing at names the watchlist filters out.
+
+**8/26 — the premarket book is not wide, the premarket feed is blind.**
+`spread_coverage` said premarket costs 1.717R against 0.065R in RTH, which
+would end the "start at 04:00" idea on arithmetic. Re-priced against SIP on
+the same rows it is **0.229R**, and 0.120R when the quote is under a minute
+old — indistinguishable from the RTH SIP median of 0.117R. Every spread on
+the record comes from IEX, which barely quotes before 09:30, so the desk
+has been measuring its own blindness and calling it the market. `SDOT` is
+the case that settles it: logged 5.278R, actual 0.026R. The premarket
+hazard is the quote going *dark* (37% of rows matched a quote over a minute
+old, vs 2% in RTH) against a session where Alpaca holds no stop and
+`_rth_now()` gates the blind-book flatten off. §5G.
