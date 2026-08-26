@@ -306,6 +306,25 @@ function _bookRows(book) {
       cm_rsi_rising: !!w.cm_rsi_rising,
       cm_rsi_src: w.cm_rsi_src || null,
       cm_rsi_age_sec: w.cm_rsi_age_sec != null ? w.cm_rsi_age_sec : null,
+      // MACD — the entry lever. This builder rebuilds every row field by
+      // field, so anything not listed is dropped before the renderer ever
+      // sees it: the wire carried macd_gap for all seven rows and the MACD
+      // Gap column still showed "—" on every one. Third whitelist in the
+      // same chain (engine -> record -> snapshot -> here); this is the last.
+      // Direction rides with size, because a wide gap that is CLOSING is
+      // momentum already over and no size field can say so.
+      macd_gap: w.macd_gap != null ? w.macd_gap : null,
+      macd_hist: w.macd_hist != null ? w.macd_hist : null,
+      macd_fast: w.macd_fast != null ? w.macd_fast : null,
+      macd_slow: w.macd_slow != null ? w.macd_slow : null,
+      macd_sep_ratio: w.macd_sep_ratio != null ? w.macd_sep_ratio : null,
+      macd_bull: !!w.macd_bull,
+      macd_cross: !!w.macd_cross,
+      macd_ok: !!w.macd_ok,
+      // null-preserving: false is "not widening", null is "cannot say".
+      macd_gap_rising: w.macd_gap_rising != null ? !!w.macd_gap_rising : null,
+      macd_gap_falling: w.macd_gap_falling != null ? !!w.macd_gap_falling : null,
+      macd_gap_prev: w.macd_gap_prev != null ? w.macd_gap_prev : null,
       pctr_raw: w.pctr_raw != null ? w.pctr_raw : null,
       pctr_src: w.pctr_src || null,
       exh_bars: w.exh_bars != null ? w.exh_bars : null,
