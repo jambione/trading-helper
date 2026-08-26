@@ -1303,3 +1303,24 @@ Underneath: the live IEX ask is `0.00`, the last IEX trade is 14 hours old,
 and the desk logs it as current every 20 seconds — zero price changes in
 363 samples across all 8 names. Every premarket number the desk has ever
 recorded is computed on yesterday's close. §5G2.
+
+**8/26 — Trader Bro reaches the book.** The source looked dead (1 admitted
+name across 8/20-26, 0 armed) and was not: Discord OCR captures the
+call-outs fine. Three separate things buried them. `ai_watch_min_price` was
+**5.00** against a shipped default of 1.00, so DAIC at $3.88 was refused
+despite sitting inside §5F's own $2-20 band — now 2.00, which the tick
+arithmetic agrees with (a one-cent tick is 0.10R at $3.88 and 0.20R at
+$2.00 against an RTH median spread of 0.117R, but 0.57R at DDC's $0.70 and
+**3.08R** at VEEA's $0.13, where the minimum possible spread is three times
+the risk unit). `_merge_source` never referenced `_BB_LIVE_SOURCES` at all,
+so a call could take a name from a research thesis — which the comment
+above that set explicitly forbids. And the seeder dropped a call outright
+when another source had already named the symbol, so DAIC reached the book
+as `momentum` with nothing recording that a human had called it.
+
+Ownership and visibility are separate questions. A call is still the
+weakest evidence and does **not** own a row momentum or research already
+owns; it now tags `bro_call` onto the criteria instead, that tag is sticky
+across re-seeds (a call is an event, not a live state, and expires from the
+wire after 900s), and `public_snapshot` ships it as a boolean the book
+renders as a **BRO** badge beside the ticker. Verified end to end.
