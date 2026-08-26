@@ -301,3 +301,14 @@ def cap_long_qty(
     if cap_qty < q:
         return max(0, cap_qty)
     return q
+
+def dynamic_max_price(equity: float, cfg: dict[str, Any] | None = None) -> float:
+    """Float the max_price upper limit based on account equity and risk limits.
+    
+    If equity is $250, the limit is smaller. If equity is $10k, it 
+    scales up, allowing the system to see higher value stocks and open multiple
+    positions.
+    """
+    eq = max(250.0, float(equity if equity else 250.0))
+    limits = limits_from_cfg(eq, cfg)
+    return max(10.0, limits.dollar_cap)

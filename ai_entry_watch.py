@@ -2610,7 +2610,12 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     cfg = cfg if isinstance(cfg, dict) else {}
     rows: list[dict] = []
     seen: set[str] = set()
-    max_price = cfg.get("ai_max_price", cfg.get("claude_max_price"))
+    try:
+        from desk_risk import dynamic_max_price
+        eq = float(dashboard_state().get("ai_positions", {}).get("account", {}).get("equity") or 0.0)
+        max_price = dynamic_max_price(eq, cfg)
+    except Exception:
+        max_price = cfg.get("ai_max_price", cfg.get("claude_max_price"))
     try:
         min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
     except (TypeError, ValueError):
@@ -8012,10 +8017,12 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         indicators = {}
 
     try:
+        from desk_risk import dynamic_max_price
+        eq = float(dashboard_state().get("ai_positions", {}).get("account", {}).get("equity") or 0.0)
+        max_price_f = dynamic_max_price(eq, cfg)
+    except Exception:
         max_price = cfg.get("ai_max_price")
         max_price_f = float(max_price) if max_price is not None else None
-    except (TypeError, ValueError):
-        max_price_f = None
 
     try:
         risk_pct = float(cfg.get("ai_risk_pct", 1.0) or 1.0)

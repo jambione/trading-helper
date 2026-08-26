@@ -759,17 +759,16 @@ def filter_trending_by_max_price(
 
 
 def _trending_max_price_from_cfg(cfg: dict | None = None) -> float | None:
-    """Prefer stocktwits_max_price; fall back to trending_max_price; default $35."""
+    """Float the upper limit based on account equity rather than a hard cap."""
     cfg = cfg if cfg is not None else (STATE.cfg if hasattr(STATE, "cfg") else {})
-    raw = cfg.get("stocktwits_max_price")
-    if raw is None:
-        raw = cfg.get("trending_max_price", 35.0)
-    if raw is None or raw == "" or raw is False:
-        return None
     try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return 35.0
+        from desk_risk import dynamic_max_price
+        book = load_ai_positions()
+        eq = float((book.get("account") or {}).get("equity") or 0.0)
+        return dynamic_max_price(eq, cfg)
+    except Exception:
+        raw = cfg.get("trending_max_price", 35.0)
+        return float(raw) if raw else 35.0
 
 
 # ── Suggestions ──────────────────────────────────────────────────────────────

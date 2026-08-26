@@ -680,6 +680,18 @@ def _tick_source(
 ) -> None:
     if gs is None:
         return
+    # Float the upper limit based on equity so it can scale up with account size.
+    try:
+        from desk_risk import dynamic_max_price
+        import json
+        from config import load_config
+        with open(POSITIONS_FILE) as f:
+            pos_data = json.load(f)
+        eq = float(pos_data.get("account", {}).get("equity") or 0.0)
+        gs.max_price = dynamic_max_price(eq, load_config())
+    except Exception:
+        pass
+
     # After duel score, only the winner spends the chance-3 research slot.
     try:
         import ai_duel as duel
