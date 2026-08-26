@@ -623,17 +623,58 @@ The market itself is not quiet — the SIP quotes in the table above have a
 median age of **20.4s** across the same window. Premarket trading is
 happening on these names; IEX and Finnhub simply cannot see it.
 
-Everything the desk records between 04:00 and 09:30 — `pctr`, `cm_rsi`,
-`exhaustion`, `spread_r`, `pct_change`, the setup legs in §5F — is computed
-on yesterday's closing print. By the standing rule, none of it is evidence
-of anything.
+> **⚠ Corrected same day — this section overstated the blindness.** The
+> sentence that stood here said *every* premarket number is computed on
+> yesterday's close. That is true of the **price path** and false of the
+> **indicators**, and the difference decides the whole feature. See G3.
 
-**This is the real blocker on starting the day at 04:00, and it outranks
-both the order mechanics and the spread.** The desk is not slow premarket
-or noisy premarket; it is blind. Order plumbing already exists on both
-sides (`alpaca_trader.py:405` buy, `:955` sell), and `_require_protective_exit`
-refuses the entry anyway — which, given the above, is currently the correct
-behaviour and should not be relaxed until a live premarket price exists.
+#### G3. The desk is half-blind premarket: live tape, dead book (8/26)
+
+`_engine_indicator_map()` read live at 07:10 ET, against `load_watch()`:
+
+```
+sym     bars_src    bars_age    pctr  cm_rsi   last_ask_src
+AUPH    realtime         0.1   -18.7    56.0   stale_tape
+CADL    realtime         0.6   -33.5    66.6   rest
+IMMX    realtime         0.3    -0.1    99.9   stale_tape
+IOVA    realtime         0.9   -10.3    95.8   stale_tape
+PURR    realtime         0.7   -48.5    42.3   rest
+RARE    realtime         0.7   -15.2    66.9   rest
+VVOS    realtime         0.2   -96.7     0.6   None
+BRNX    alpaca          None   -14.1    92.9   stale_tape
+TEM     alpaca          None   -23.9    64.1   rest
+```
+
+**Seven of nine names are on realtime bars premarket with sub-second trade
+age.** `rt_bars.on_trade` is wired to the Finnhub trade callback
+(`signal_engine.py:1370`), and `age_seconds()` measures *the trade's own
+timestamp*, written precisely to catch "connected but serving stale prints"
+— so 0.1–0.9s is live premarket tape, not a poll artifact.
+
+So the two halves diverge, and the frozen-field list in G2 says which is
+which:
+
+| | premarket | source |
+|---|---|---|
+| `pctr`, `cm_rsi` — **the arm levers** | **live, <1s** | Finnhub trades → `rt_bars` |
+| `price`, `ask`, `spread_r`, `pct_change` | **frozen at yesterday's close** | IEX REST |
+| bid/ask book | **absent** (`ask` reads `0.00`) | needs SIP |
+
+The irony worth keeping: `pctr_stream`, built 8/25 to test "would a denser
+feed fix the window", is degenerate *because it feeds on the frozen price*
+— while production `pctr` was already running on the denser feed the
+experiment was proposing. The experiment is both redundant and broken.
+
+**What this does and does not change.** It does not revive premarket
+trading: entry pricing needs an ask, a synthetic stop needs a live price to
+trigger on, and neither exists without SIP — Finnhub carries trades, never
+a book. What it changes is the *reason*, and therefore the cost of the fix:
+the missing piece is a **quote**, not a feed. A live premarket last-trade
+price is already in the process (`finnhub_stream.get_latest_price`) and
+simply is not wired into the price path.
+
+`_require_protective_exit` refusing premarket entries remains correct, and
+should not be relaxed until a premarket **book** exists.
 
 ### The design criterion this produces
 
@@ -897,8 +938,10 @@ it was on 8/22, and nobody should be told otherwise.
   The single unshelving condition is a live premarket quote — SIP; Finnhub
   is out on entitlement (403) and IEX is structurally absent before 09:30.
   Until then, do not touch the entry gate, the spread gate, or the stream
-  indicators *for premarket reasons*, and treat any premarket `pctr`,
-  `cm_rsi`, `exhaustion`, `spread_r` or `pct_change` as unevidenced.
+  indicators *for premarket reasons*. Treat premarket `price`, `ask`,
+  `spread_r` and `pct_change` as unevidenced — they are yesterday's close.
+  Premarket `pctr` and `cm_rsi` are **not**: they run on live Finnhub tape
+  at sub-second age (§5G3). The missing piece is a quote, not a feed.
 - **Do not price anything off an IEX spread.** §5G: IEX overstates the book
   1.5x in RTH, 3.3x premarket, and up to 200x on a single name (SDOT). That
   includes setting `ai_max_spread_r`, ranking names by cost, and any
