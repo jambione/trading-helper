@@ -3033,7 +3033,13 @@ def _fresh_tape_px(ticker: str) -> float | None:
         return None
     age = tape[1]
     if age is None:
-        return px
+        # Unprovable age is STALE, not fresh. This returned the price
+        # unconditionally, which meant the shelf's staleness check could
+        # never fire — and price_age_sec was None on 53% of RTH rows, so it
+        # mostly did not. Returning None here costs nothing: the caller
+        # simply skips this pass, and the 1s book tick still owns the REST
+        # fallback and the blind-book flatten.
+        return None
     try:
         stale = float(
             _cfg_all().get(

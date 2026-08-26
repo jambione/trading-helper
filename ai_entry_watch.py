@@ -358,7 +358,14 @@ def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
     except (TypeError, ValueError):
         age_f = None
     if age_f is None:
-        return False
+        # Unprovable age is stale. This returned False — "fresh" — and since
+        # last_ask_age_sec was None on every REST-priced row, the 8s
+        # threshold could not fire once in 17,585 RTH rows while tape_age
+        # exceeded it on 69% of them. decision_price now supplies a real age
+        # on the REST path, so None here means the quote genuinely cannot be
+        # timed, and "absence is not a pass" is the rule everywhere else on
+        # this desk (see passes_inclusion).
+        return True
     return age_f > decision_max_age_sec(cfg)
 
 
@@ -3142,7 +3149,17 @@ def decision_price(
         if (dev > 0 and tape is not None and tape[0] and tape[0] > 0
                 and abs(ask_f - tape[0]) / tape[0] * 100.0 > dev):
             return tape[0], "stale_tape", tape[1]
-        return ask_f, "rest", None
+        # The REST ask now carries the quote's own age when Alpaca supplied
+        # one. It used to return None unconditionally, which read downstream
+        # as "cannot prove it is live" and — because every guard failed open
+        # — was then treated as fresh. A freshly FETCHED quote is not a
+        # freshly QUOTED one: premarket 8/26 this path served an IEX ask of
+        # 0.00 behind a quote 14 hours old. None still means unprovable.
+        try:
+            rest_age = gt.cached_quote_age_sec(symbol)
+        except Exception:  # noqa: BLE001
+            rest_age = None
+        return ask_f, "rest", rest_age
     if tape is not None and tape[0] > 0:
         return tape[0], "stale_tape", tape[1]
     return None, "none", None

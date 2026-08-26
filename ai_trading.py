@@ -194,6 +194,10 @@ def _open_position_count() -> int:
 # zone, and a stale ask arms on a price the order cannot get.
 _QUOTE_TTL_SEC = 3.0
 _quote_cache: dict[str, tuple[float, float | None, float | None]] = {}
+# symbol -> the quote's own unix time, parallel to _quote_cache. Separate so
+# the cache tuple keeps its shape; see prime_quotes for why it is not the
+# fetch time.
+_quote_ts: dict[str, float] = {}
 
 
 def prime_quotes(symbols: list[str]) -> int:
@@ -242,6 +246,25 @@ def prime_quotes(symbols: list[str]) -> int:
         if ask is None and bid is None:
             continue
         _quote_cache[sym] = (now, ask, bid)
+        # The quote's OWN time, kept beside the cache rather than in it so
+        # the 3-tuple shape (and the tests that build it) stay valid. The
+        # cache's `now` is when WE asked, which is always fresh and therefore
+        # says nothing about staleness — recording only that is how
+        # last_ask_age_sec came to be None on the REST path, leaving
+        # _row_tape_stale unable to fire even once in 17,585 RTH rows.
+        qts = getattr(quote, "timestamp", None)
+        try:
+            qts = float(qts.timestamp()) if qts is not None else None
+        except (TypeError, ValueError, AttributeError):
+            qts = None
+        # A stamp from the future is a skewed clock, and would read as
+        # eternally fresh. Unknown is safer than wrong.
+        if qts is not None and not (0 < qts <= now + 5):
+            qts = None
+        if qts is None:
+            _quote_ts.pop(sym, None)
+        else:
+            _quote_ts[sym] = qts
         n += 1
     return n
 
@@ -256,13 +279,34 @@ def invalidate_quotes(symbols: list[str] | None = None) -> int:
     if not symbols:
         n = len(_quote_cache)
         _quote_cache.clear()
+        _quote_ts.clear()
         return n
     n = 0
     for s in symbols:
         sym = _norm_sym(s)
+        if sym:
+            _quote_ts.pop(sym, None)
         if sym and _quote_cache.pop(sym, None) is not None:
             n += 1
     return n
+
+
+def cached_quote_age_sec(symbol: str, now: float | None = None) -> float | None:
+    """Seconds since the cached quote's OWN timestamp, or None if unprovable.
+
+    None means "cannot prove this is live" and callers must treat it as
+    stale, never as fresh. That distinction is the whole point: every
+    staleness guard on the desk failed open for want of this number.
+    """
+    sym = _norm_sym(symbol)
+    if not sym:
+        return None
+    if _cached_quote(sym) is None:      # honours _QUOTE_TTL_SEC eviction
+        return None
+    qts = _quote_ts.get(sym)
+    if qts is None:
+        return None
+    return max(0.0, (time.time() if now is None else float(now)) - qts)
 
 
 def refresh_quotes_now(symbols: list[str]) -> int:

@@ -681,6 +681,7 @@ def test_book_does_not_paint_below_band_or_heat_as_in_zone(tmp_path, monkeypatch
         "CELC": {
             "symbol": "CELC", "status": "watching", "source": "momentum",
             "last_ask": 91.82, "block_code": "already_extended",
+            "last_ask_src": "rest", "last_ask_age_sec": 1.0,
             "block_reason": "extended",
             "structure": {
                 "entry_low": 103.4, "entry_high": 104.6, "stop_price": 99.0,
@@ -689,6 +690,7 @@ def test_book_does_not_paint_below_band_or_heat_as_in_zone(tmp_path, monkeypatch
         "RUM": {
             "symbol": "RUM", "status": "watching", "source": "xai",
             "last_ask": 7.59, "block_code": "heating_too_low",
+            "last_ask_src": "rest", "last_ask_age_sec": 1.0,
             "block_reason": "heat low",
             "structure": {
                 "entry_low": 7.53, "entry_high": 7.64, "stop_price": 7.20,
@@ -1403,9 +1405,14 @@ def test_format_blocker_and_derive():
     assert ew.format_blocker("above_zone") == "above zone"
     assert ew.format_blocker("recheck_below_zone") == "left zone"
     assert "wash" in (ew.format_blocker("x", detail="potential wash trade detected") or "").lower()
+    # last_ask_age_sec is required to reach the geometry at all: a record
+    # whose price cannot be timed is stale_quote before any zone test runs
+    # (8/26 — the guard used to treat unknown age as fresh and never fired).
+    # These tests are about zone geometry, so they get a provably fresh age.
     rec = {
         "status": "watching",
         "last_ask": 30.0,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "structure": {
             "wait_kind": "wait_for_zone",
             "entry_low": 20.0, "entry_high": 21.0,
@@ -1421,6 +1428,7 @@ def test_format_blocker_and_derive():
     rec_in = {
         "status": "watching",
         "last_ask": 20.5,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "structure": {
             "wait_kind": "wait_for_zone",
             "entry_low": 20.0, "entry_high": 21.0,
@@ -2769,6 +2777,7 @@ def test_ready_is_false_when_the_poller_recorded_a_blocker():
 
     base = {
         "symbol": "AAA", "status": "watching", "score": 8.0, "last_ask": 28.0,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "structure": {
             "decision": "WAIT", "wait_kind": "wait_for_zone",
             "entry_low": 27.0, "entry_high": 29.0,
@@ -3393,6 +3402,7 @@ def test_derive_blocker_armable_below_is_in_zone():
     rec = {
         "status": "watching",
         "last_ask": 9.6,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "block_code": "below_zone",
         "block_reason": "below zone",
         "structure": {
@@ -3776,6 +3786,7 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
         "symbol": "UMAC", "source": "momentum", "rvol": 3.8,
         "entry_low": 32.74, "entry_high": 33.23, "stop_price": 32.0,
         "zone_kind": "double_bottom", "exhaustion": 37.6,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "exhaustion_state": "heating", "pctr": -62.4,
         "block_code": "in_zone", "blocker": "in zone",
     }
@@ -3788,6 +3799,7 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
 
     onds = {
         "symbol": "ONDS", "source": "momentum", "rvol": 1.8,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "entry_low": 9.03, "entry_high": 9.17, "stop_price": 8.80,
         "zone_kind": "double_bottom", "exhaustion": 73.6,
         "exhaustion_state": "heating", "pctr": -26.4,
@@ -3806,6 +3818,7 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
 
     sora = {
         "symbol": "SORA", "source": "momentum", "rvol": None,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "entry_low": 3.18, "entry_high": 3.31, "stop_price": 3.00,
         "zone_kind": "pullback_band", "exhaustion": None,
         "exhaustion_state": "unknown", "pctr_src": "thin",
@@ -3818,6 +3831,7 @@ def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
 
     rum = {
         "symbol": "RUM", "source": "xai", "rvol": 0.6,
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "entry_low": 7.54, "entry_high": 7.65, "stop_price": 7.20,
         "zone_kind": "double_bottom",
         "block_code": "dead_reentry", "blocker": "dead today",
@@ -4224,6 +4238,9 @@ def test_apply_tape_blocker_last_mode_ready_above_band(monkeypatch):
         "target_1": 34.0, "reward_risk": 0.6,
         "zone_kind": "double_bottom",
         "block_code": "above_zone", "blocker": "above zone",
+        # public_snapshot ships these on every book row; without them the
+        # row cannot be timed and is stale_quote before geometry is reached.
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
     }
     ew.apply_tape_blocker(row, 34.50)
     assert row["ready"] is True
