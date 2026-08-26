@@ -2108,17 +2108,36 @@ _PANEL_SOURCES = _DESK_SOURCES | _RESEARCH_SOURCES | _BB_LIVE_SOURCES
 
 
 def _merge_source(prev_src: str, new_src: str) -> str:
-    """Research beats desk heat; otherwise prefer the non-empty new source."""
+    """Ownership by deliberateness: research > bro call > desk heat.
+
+    A research thesis and a named call-out are both somebody deciding on a
+    symbol; momentum and trending are automatic heat that sweeps up whatever
+    is moving. The more deliberate label owns the row, so re-seeding cannot
+    quietly relabel it.
+
+    The bb_live half of that was documented above _BB_LIVE_SOURCES ("a bro
+    call should not be able to take a name away from a research thesis
+    either") and never implemented — this function did not reference
+    _BB_LIVE_SOURCES at all, so it fell through to "newest wins" in both
+    directions. Both were wrong: a bro call DID take names from research,
+    and the next momentum sweep erased the bro attribution. Over 8/20-26
+    exactly one bb_live name survived to be counted, which is why the source
+    looked dead when it was in fact being overwritten.
+    """
     p = str(prev_src or "").strip().lower()
     n = str(new_src or "").strip().lower()
     if not n:
         return prev_src or "research"
     if not p:
         return new_src or "research"
-    if p in _RESEARCH_SOURCES and n in _DESK_SOURCES:
-        return prev_src  # keep AI thesis ownership
+    # Research owns the row against anything less deliberate, bro included.
+    if p in _RESEARCH_SOURCES and n not in _RESEARCH_SOURCES:
+        return prev_src
     if n in _RESEARCH_SOURCES:
         return new_src
+    # A call-out outranks automatic heat, so momentum cannot relabel it.
+    if p in _BB_LIVE_SOURCES and n in _DESK_SOURCES:
+        return prev_src
     return new_src or prev_src
 
 
