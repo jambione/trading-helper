@@ -176,3 +176,60 @@ def test_tagging_is_idempotent_across_repeated_seeds(monkeypatch):
         rows = ew.desk_candidate_rows(cfg)
         got = [r for r in rows if r.get("symbol") == "DAIC"][0]
         assert got["criteria"].count("bro_call") == 1
+
+
+# ── a call is history, not live state ────────────────────────────────────
+
+def test_bro_call_survives_a_reseed_after_the_call_ages_out():
+    """A Trader Bro call is live for 900s; the fact of it is permanent.
+
+    DAIC on 8/26: tagged bro_call at 07:04, then momentum re-seeded it with
+    ['mom_open', 'uptrend'] and the record stopped saying a human had ever
+    named it. `admit_criteria` records what was true AT ADMISSION, so
+    letting a later sweep erase it is the same disappearing act the source
+    relabel was doing.
+    """
+    import ai_entry_watch as ew
+
+    prev = {"admit_criteria": ["mom_open", "bro_call", "uptrend"]}
+    row = {"criteria": ["mom_open", "uptrend"]}          # call has expired
+    got = ew._merge_admit_criteria(row, prev)
+    assert "bro_call" in got
+    assert "mom_open" in got and "uptrend" in got
+
+
+def test_non_sticky_criteria_still_reflect_the_current_pass():
+    """Only history is sticky. 'big_move' means it is moving NOW, so a name
+    that stops moving must stop claiming it."""
+    import ai_entry_watch as ew
+
+    prev = {"admit_criteria": ["big_move", "uptrend"]}
+    got = ew._merge_admit_criteria({"criteria": ["uptrend"]}, prev)
+    assert got == ["uptrend"]
+    assert "big_move" not in got
+
+
+def test_merge_admit_criteria_does_not_duplicate():
+    import ai_entry_watch as ew
+
+    prev = {"admit_criteria": ["bro_call"]}
+    got = ew._merge_admit_criteria({"criteria": ["bro_call", "uptrend"]}, prev)
+    assert got.count("bro_call") == 1
+
+
+def test_empty_fresh_criteria_falls_back_to_the_previous_list():
+    """Unchanged behaviour: a pass that computed nothing must not wipe the
+    record it already had."""
+    import ai_entry_watch as ew
+
+    prev = {"admit_criteria": ["mom_open", "uptrend"]}
+    assert ew._merge_admit_criteria({}, prev) == ["mom_open", "uptrend"]
+    assert ew._merge_admit_criteria({"criteria": []}, prev) == [
+        "mom_open", "uptrend"]
+
+
+def test_merge_admit_criteria_handles_missing_inputs():
+    import ai_entry_watch as ew
+
+    assert ew._merge_admit_criteria({}, {}) == []
+    assert ew._merge_admit_criteria(None, None) == []

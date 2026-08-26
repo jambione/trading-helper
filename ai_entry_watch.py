@@ -1333,6 +1333,32 @@ def _score_from_row(row: dict) -> float:
     return 0.0
 
 
+# Criteria that record something that HAPPENED rather than something that is
+# currently true, and so must survive a re-seed. `bro_call` is the case: a
+# Trader Bro call-out is only live for ai_watch_bb_live_fresh_sec (900s), and
+# the seeder tags it onto rows another source owns. Without this, DAIC on
+# 8/26 was tagged at 07:04, then momentum re-seeded it with
+# ['mom_open', 'uptrend'] and the fact that a human had named it vanished
+# from the record — the same disappearing act the source relabel was doing.
+_STICKY_CRITERIA = frozenset({"bro_call"})
+
+
+def _merge_admit_criteria(row: dict, prev: dict) -> list:
+    """Admission criteria for this pass, keeping the sticky ones.
+
+    Non-sticky criteria are a snapshot of why the name qualifies NOW, so the
+    fresh list wins as before. Sticky ones are history and are unioned back
+    in, deduplicated, in a stable order.
+    """
+    fresh = list((row or {}).get("criteria") or [])
+    before = list((prev or {}).get("admit_criteria") or [])
+    out = fresh or list(before)
+    for c in before:
+        if c in _STICKY_CRITERIA and c not in out:
+            out.append(c)
+    return out
+
+
 def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
     """Admission provenance for a watch record — why this name was let on.
 
@@ -1397,9 +1423,7 @@ def _admission_fields(row: dict, prev: dict, now: float) -> dict[str, Any]:
             else _f_or_none(prev.get("admit_pct_change"))),
         "admit_look_reason": _look_reason_value(
             row, prev.get("admit_look_reason")),
-        "admit_criteria": (
-            list(row.get("criteria") or [])
-            or list(prev.get("admit_criteria") or [])),
+        "admit_criteria": _merge_admit_criteria(row, prev),
         "admit_ts": float(prev.get("admit_ts") or now),
     }
 
