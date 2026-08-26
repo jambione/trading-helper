@@ -3549,9 +3549,13 @@ def test_sync_preserves_poller_indicator_and_block(tmp_path, monkeypatch):
 def test_ensure_symbol_ohlc_fetches_when_cache_cold(monkeypatch):
     """Cold cache after restart must fetch — not wait for a zone rebuild."""
     import ai_entry_watch as ew
+    monkeypatch.setattr(ew, "_stream_bars_live", lambda c: False)
+    monkeypatch.setattr(ew, "_stream_bars_live", lambda c: False)
 
     now = 1_700_000_000.0
     filled = _synthetic_ohlc()
+    ew._DASH_CACHE = (0.0, {})
+
     calls = {"n": 0}
 
     def fake_fetch(symbol, cfg, t):

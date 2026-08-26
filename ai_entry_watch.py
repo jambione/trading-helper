@@ -2259,7 +2259,7 @@ def _dash_urlopen(url: str, *, data: bytes | None = None, method: str | None = N
 # ~4s per sync while holding nothing useful. One fetch, briefly cached, serves
 # both — and carries the signal_proximity rows the inclusion gate needs.
 _DASH_CACHE: tuple[float, dict] = (0.0, {})
-_DASH_CACHE_TTL = 1.5
+_DASH_CACHE_TTL = 0.25
 
 # Why the last fetch failed, surfaced as watch_meta.source_error. A bare
 # `except: return []` made "dashboard is down" indistinguishable from "nothing

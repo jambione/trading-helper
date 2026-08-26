@@ -701,8 +701,8 @@ DEFAULT_CONFIG = {
     # as be_at_pct: 1R is ~5% of price here, so an R-only arm freezes the
     # shelf through moves that are plainly real.
     "ai_local_trail_arm_pct":       0.0,
-    "ai_local_trail_give_r":           0.10,
-    "ai_local_trail_give_open_r":      0.20,
+    "ai_local_trail_give_r":           0.05,
+    "ai_local_trail_give_open_r":      0.05,
     "ai_local_trail_tighten_mfe_r":    0.25,
     "ai_local_trail_give_px":          0.0,
     # Ceiling on the local trail cushion, percent of price. 0 = off.
