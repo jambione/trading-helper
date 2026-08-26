@@ -336,7 +336,16 @@ AUDIT_INTERVAL_SEC = 1800.0
 # 60-minute freshness bucket the catalyst work cares about, and the fetch is
 # one request per watchlist symbol against a cache that merges rather than
 # replaces.
-NEWS_INTERVAL_SEC = 300.0
+# 120s, was 300s. Over 8/20-26 the setup legs that depend on these caches
+# were knowable on only about half the rows — rvol 66%, float 56%, catalyst
+# 55% — and setup_n_legs was None on 42%. That is a timing gap, not a
+# capability one: for a settled book the coverage is ~100%, but this list is
+# built FROM shadow.jsonl, so a name enters it only after its first shadow
+# row, while the admission audit puts the median dwell from admit to arm at
+# 5-11 SECONDS. Halving the cadence narrows the session-wide gap; it cannot
+# close the arm-time one, which needs a warm at admission. Until that
+# exists the §5F legs cannot gate — see HANDOFF §9B remedy 6.
+NEWS_INTERVAL_SEC = 120.0
 NEWS_MAX_SYMBOLS = 120
 
 

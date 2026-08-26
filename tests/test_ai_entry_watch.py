@@ -26,7 +26,13 @@ def test_watch_config_defaults_present():
     assert "ai_watch_require_agreement" in DEFAULT_CONFIG
     assert DEFAULT_CONFIG["ai_watch_seed_momentum"] is True
     assert DEFAULT_CONFIG["ai_watch_seed_trending"] is True
-    assert cfg["ai_watch_poll_sec"] == 20.0
+    # The DEFAULT, not the live value. This asserted cfg[...] == 20.0 and so
+    # failed the moment the operator tuned the knob (8/26: 20 -> 10 to halve
+    # the arm gate's blind window), which is the one thing a tunable is for.
+    # Same rule the comment four lines up states for agreement: live
+    # bot_config may flip it, defaults document it.
+    assert DEFAULT_CONFIG["ai_watch_poll_sec"] == 20.0
+    assert float(cfg["ai_watch_poll_sec"]) > 0
     assert float(DEFAULT_CONFIG["ai_entry_zone_pad_pct"]) == 0.0
     assert DEFAULT_CONFIG["ai_watch_arm_mode"] == "last"
     assert DEFAULT_CONFIG["ai_watch_zone_mode"] == "pullback"
