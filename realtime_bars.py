@@ -87,6 +87,13 @@ class RealtimeBarAggregator:
         # and the forming bar both survive a disconnect, so get_bars() keeps
         # returning a full-looking frame whose newest bar is silently ageing.
         self._last_ts: dict[str, int] = {}
+        # The price of that same newest trade. Kept beside the timestamp, and
+        # written only when the timestamp actually advances, so the two are
+        # always the same event. `last_trade()` hands them out as one object
+        # for exactly that reason: the desk publishes a price for the merge to
+        # date, and dating a price with a clock taken from somewhere else is
+        # how a frozen quote comes to look 0.3s old.
+        self._last_px: dict[str, float] = {}
 
     # ── Seeding ───────────────────────────────────────────────────────────────
 
@@ -124,7 +131,9 @@ class RealtimeBarAggregator:
             # Newest wins: an out-of-order print from an already-sealed minute
             # is dropped below, but it still proves the stream is alive, and it
             # must never drag the freshness clock backwards.
-            self._last_ts[ticker] = max(self._last_ts.get(ticker, 0), int(ts_ms))
+            if int(ts_ms) >= self._last_ts.get(ticker, -1):
+                self._last_ts[ticker] = int(ts_ms)
+                self._last_px[ticker] = float(price)
             cur = self._forming.get(ticker)
             if cur is None:
                 self._forming[ticker] = _Bar(minute, price, volume)
@@ -169,6 +178,21 @@ class RealtimeBarAggregator:
         """ts_ms of the newest trade folded in, or None if never fed."""
         with self._lock:
             return self._last_ts.get(ticker)
+
+    def last_trade(self, ticker: str) -> tuple[float, int] | None:
+        """(price, ts_ms) of the newest trade, or None if never fed.
+
+        One lock, one event. This exists so a consumer cannot pair a price
+        from here with an age from anywhere else: the desk publishes both to
+        the dashboard's price merge, and that merge decides which feed wins on
+        recency. A price carrying a borrowed clock wins races it should lose.
+        """
+        with self._lock:
+            ts = self._last_ts.get(ticker)
+            px = self._last_px.get(ticker)
+        if ts is None or px is None:
+            return None
+        return px, ts
 
     def age_seconds(self, ticker: str, now_ms: float | None = None) -> float | None:
         """Seconds since this ticker's newest trade, or None if never fed.

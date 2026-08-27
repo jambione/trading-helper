@@ -1888,17 +1888,49 @@ class SignalEngine:
         there are no engine positions to report, no exposure to cap, and no
         kill switch to trip. Manual trades go through the desk and the
         dashboard, which own their own state.
+
+        `rt_price` / `rt_price_age_sec` are stamped HERE rather than taken
+        from proximity_state(), and neither may be replaced by the `price`
+        field beside them. Two reasons, both load-bearing:
+
+        1. `price` is TickerState.last_price, and _ingest_state adopts the
+           DASHBOARD's price into it whenever the Finnhub stream is quiet or
+           frozen — which is most of premarket. Since the dashboard now reads
+           this file back as a price source, using `price` here closes a loop:
+           dashboard → last_price → this file → dashboard. The number would
+           come home wearing the tape's clock.
+        2. `bars_age_sec` is cached on the TickerState at bar-evaluation time
+           and republished verbatim on every write, so it reports the age as
+           of the last eval, not as of now. Recomputed per write below.
+
+        Measured 2026-08-27 premarket, before this: eight symbols held a price
+        frozen for over two minutes while the published age ticked 0.2s-1.2s.
         """
         try:
+            _now_ms = time.time() * 1000.0
+            tickers = {}
+            for sym, ts in self.active.items():
+                row = ts.proximity_state()
+                # The realtime tape's own last print, with its own timestamp,
+                # taken as one object. None when the ticker has never traded
+                # on this socket — absent, not stale, and the consumer must
+                # treat a missing pair as "no desk price", never as fresh.
+                lt = self.rt_bars.last_trade(sym) if REALTIME_BARS else None
+                if lt is not None:
+                    _px, _ts_ms = lt
+                    row["rt_price"] = round(float(_px), 4)
+                    row["rt_price_age_sec"] = round(
+                        max(0.0, (_now_ms - float(_ts_ms)) / 1000.0), 2)
+                else:
+                    row["rt_price"] = None
+                    row["rt_price_age_sec"] = None
+                tickers[sym] = row
             payload = {
                 "updated": _now_iso(),
                 "version": version.get_version(),   # which engine build is running
                 "started": self._started,           # when this engine booted
                 "strategy": STRATEGY_MODE,
-                "tickers": {
-                    sym: ts.proximity_state()
-                    for sym, ts in self.active.items()
-                },
+                "tickers": tickers,
             }
             SIGNAL_STATE_FILE.write_text(
                 json.dumps(payload, indent=2), encoding="utf-8"

@@ -309,3 +309,83 @@ def test_aggregator_stays_fresh_when_fed_seconds_style_input():
     age = agg.age_seconds("TEM")
     assert age is not None
     assert age < 5, f"seconds input reported as {age}s old"
+
+
+# ── last_trade(): the price and its clock as one event ──────────────────────
+#
+# Added 2026-08-27. The desk publishes a price into the dashboard's price
+# merge, and that merge picks a winner by recency. It had been pairing the
+# engine's `price` (which the engine adopts from the dashboard when the stream
+# is quiet) with `bars_age_sec` (the tape's trade clock). A frozen quote came
+# back reading 0.3s old and won races it should have lost. last_trade() exists
+# so the two cannot be sourced separately.
+
+def test_last_trade_returns_the_price_and_its_own_timestamp():
+    agg = RealtimeBarAggregator()
+    agg.on_trade("AAA", 10.25, 100, 1_787_000_000_000)
+    assert agg.last_trade("AAA") == (10.25, 1_787_000_000_000)
+
+
+def test_last_trade_is_none_for_a_ticker_that_never_traded():
+    """Absent, not fresh — the caller must be able to tell the difference."""
+    agg = RealtimeBarAggregator()
+    assert agg.last_trade("NOPE") is None
+
+
+def test_last_trade_is_none_for_a_seeded_but_unfed_ticker():
+    """seed() fills sealed history, so get_bars() looks healthy for a ticker
+    no trade has touched. The price pair must not inherit that illusion."""
+    agg = RealtimeBarAggregator()
+    agg.seed("AAA", pd.DataFrame([
+        {"time": "2026-08-27T13:30:00Z", "open": 10.0, "high": 10.1,
+         "low": 9.9, "close": 10.05, "volume": 1000},
+    ]))
+    assert agg.get_bars("AAA") is not None
+    assert agg.last_trade("AAA") is None
+
+
+def test_last_trade_advances_with_the_newest_print():
+    agg = RealtimeBarAggregator()
+    agg.on_trade("AAA", 10.00, 100, 1_787_000_000_000)
+    agg.on_trade("AAA", 10.40, 100, 1_787_000_030_000)
+    assert agg.last_trade("AAA") == (10.40, 1_787_000_030_000)
+
+
+def test_an_out_of_order_print_moves_neither_half():
+    """on_trade keeps the freshness clock monotonic. The price has to follow
+    the same rule or the pair splits: a late print from an earlier minute
+    would overwrite the price while the timestamp stayed put, which is the
+    borrowed-clock bug in miniature."""
+    agg = RealtimeBarAggregator()
+    agg.on_trade("AAA", 10.00, 100, 1_787_000_030_000)
+    agg.on_trade("AAA", 9.50, 100, 1_787_000_000_000)   # 30s late
+    assert agg.last_trade("AAA") == (10.00, 1_787_000_030_000)
+
+
+def test_the_pair_survives_a_minute_rollover():
+    agg = RealtimeBarAggregator()
+    agg.on_trade("AAA", 10.00, 100, 1_787_000_000_000)
+    agg.on_trade("AAA", 10.75, 100, 1_787_000_000_000 + MIN)
+    px, ts = agg.last_trade("AAA")
+    assert px == 10.75
+    assert ts == 1_787_000_000_000 + MIN
+
+
+def test_the_pair_agrees_with_age_seconds():
+    """Same underlying timestamp, so they can never disagree about which
+    print is the newest one."""
+    agg = RealtimeBarAggregator()
+    now_ms = 1_787_000_000_000
+    agg.on_trade("AAA", 10.00, 100, now_ms)
+    _px, ts = agg.last_trade("AAA")
+    age = agg.age_seconds("AAA", now_ms=now_ms + 4_000)
+    assert age == (now_ms + 4_000 - ts) / 1000.0 == 4.0
+
+
+def test_a_zero_price_print_updates_neither_half():
+    """on_trade drops price <= 0 before the clock, so a junk print must not
+    advance freshness either."""
+    agg = RealtimeBarAggregator()
+    agg.on_trade("AAA", 10.00, 100, 1_787_000_000_000)
+    agg.on_trade("AAA", 0.0, 100, 1_787_000_060_000)
+    assert agg.last_trade("AAA") == (10.00, 1_787_000_000_000)

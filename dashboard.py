@@ -2426,8 +2426,17 @@ def _price_loop():
                         # clock worth trusting here.
                         if str(_sp.get("bars_src") or "") != "realtime":
                             continue
-                        _px = _sp.get("price")
-                        _age = _sp.get("bars_age_sec")
+                        # rt_price / rt_price_age_sec ONLY — never `price`
+                        # with `bars_age_sec`. Those two are different
+                        # events: `price` is the engine's last_price, which
+                        # it adopts from THIS dashboard whenever the Finnhub
+                        # stream is quiet (signal_engine._ingest_state), and
+                        # `bars_age_sec` is the tape's trade clock stamped at
+                        # bar-eval time. Pairing them fed our own price back
+                        # to us wearing a sub-second age it had not earned,
+                        # and it would have won every race in the merge.
+                        _px = _sp.get("rt_price")
+                        _age = _sp.get("rt_price_age_sec")
                         if _px is None or _age is None:
                             continue
                         _px = float(_px)

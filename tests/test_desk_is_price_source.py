@@ -61,7 +61,11 @@ def test_the_published_age_is_the_trades_own_age():
 # ── what the loop is allowed to take from the desk ───────────────────────
 
 def _desk_rows(**over):
-    base = {"price": 10.0, "bars_age_sec": 0.3, "bars_src": "realtime"}
+    # `price` and `bars_age_sec` are present and deliberately WRONG-looking:
+    # a stale price wearing a sub-second age, which is what the loop used to
+    # read. Every test below must ignore them in favour of the rt_ pair.
+    base = {"price": 999.0, "bars_age_sec": 0.3,
+            "rt_price": 10.0, "rt_price_age_sec": 0.3, "bars_src": "realtime"}
     base.update(over)
     return {"tickers": {"AAA": base}}
 
@@ -75,7 +79,7 @@ def _harvest(sig, universe={"AAA"}, now=1_787_000_000.0):
             continue
         if str(sp.get("bars_src") or "") != "realtime":
             continue
-        px, age = sp.get("price"), sp.get("bars_age_sec")
+        px, age = sp.get("rt_price"), sp.get("rt_price_age_sec")
         if px is None or age is None:
             continue
         px, age = float(px), float(age)
@@ -92,6 +96,20 @@ def test_a_realtime_row_contributes():
     assert "AAA" in _harvest(_desk_rows())
 
 
+def test_the_price_taken_is_the_tapes_own_print():
+    """The whole defect in one assertion.
+
+    `price` is TickerState.last_price, which signal_engine._ingest_state
+    adopts FROM THIS DASHBOARD whenever the Finnhub stream is quiet — most of
+    premarket. Reading it back here closed a loop, and `bars_age_sec` (the
+    tape's trade clock, cached at bar-eval time) then dated our own returned
+    number as 0.3s old. Observed 2026-08-27 premarket: eight symbols frozen
+    for over two minutes, every one publishing a sub-second age.
+    """
+    got = _harvest(_desk_rows())
+    assert got["AAA"][0] == 10.0, "rt_price, not the fed-back `price`"
+
+
 def test_the_rest_fallback_does_not_contribute():
     """bars_src flips per ticker mid-session and the fallback has no trade
     clock worth trusting here."""
@@ -101,12 +119,19 @@ def test_the_rest_fallback_does_not_contribute():
 def test_a_row_with_no_age_does_not_contribute():
     """A price the desk cannot date is exactly what this change exists to
     stop propagating."""
-    assert _harvest(_desk_rows(bars_age_sec=None)) == {}
+    assert _harvest(_desk_rows(rt_price_age_sec=None)) == {}
 
 
 def test_a_row_with_no_price_does_not_contribute():
-    assert _harvest(_desk_rows(price=None)) == {}
-    assert _harvest(_desk_rows(price=0)) == {}
+    assert _harvest(_desk_rows(rt_price=None)) == {}
+    assert _harvest(_desk_rows(rt_price=0)) == {}
+
+
+def test_a_row_carrying_only_the_old_pair_does_not_contribute():
+    """A ticker that has never traded on the socket publishes rt_price=None
+    while `price` and `bars_age_sec` are both still populated. That row must
+    read as ABSENT, not as fresh."""
+    assert _harvest(_desk_rows(rt_price=None, rt_price_age_sec=None)) == {}
 
 
 def test_symbols_outside_the_quote_universe_are_ignored():
@@ -121,10 +146,31 @@ def test_the_loop_actually_passes_the_desk_into_the_merge():
     src = (_ROOT / "dashboard.py").read_text(encoding="utf-8")
     assert "freshest_prices(cached_alpaca, fh_all, desk_prices)" in src
     i = src.index("desk_prices: dict = {}")
-    body = src[i:i + 1600]
+    # Bounded to the desk harvest itself. The Finnhub block below it has its
+    # own legitimate .get("price"), and a slice that swallowed it would make
+    # the loop guard below unfalsifiable.
+    body = src[i:src.index("desk_prices = {}", i + 1)]
     assert '_load_signal_state()' in body, "the desk state is the source"
     assert '"realtime"' in body, "only the realtime pipe may contribute"
-    assert "bars_age_sec" in body, "the trade's own age, not read time"
+    assert 'get("rt_price")' in body, "the tape's own print"
+    assert 'get("rt_price_age_sec")' in body, "and that print's own clock"
+    # The loop guard. Re-reaching for either of these is the regression.
+    assert 'get("price")' not in body, "`price` is fed back from this loop"
+    assert 'get("bars_age_sec")' not in body, "bar-eval clock, not this price"
+
+
+def test_the_engine_stamps_the_pair_at_write_time():
+    """Source-pinned on the other end. bars_age_sec is cached on the
+    TickerState at bar-eval time and republished verbatim, so it under-reports
+    age by up to a full eval period; rt_price_age_sec must be computed in the
+    writer. And it must come from last_trade(), which hands out the price and
+    its timestamp under one lock as one event."""
+    src = (_ROOT / "signal_engine.py").read_text(encoding="utf-8")
+    i = src.index("def _write_signal_state")
+    body = src[i:i + 3000]
+    assert "rt_bars.last_trade(" in body, "one lock, one event"
+    assert "rt_price_age_sec" in body
+    assert "proximity_state()" in body, "still the base row"
 
 
 def test_freshest_prices_still_accepts_three_sources():
