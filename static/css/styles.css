@@ -2351,6 +2351,39 @@ body.mobile .icon-btn {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+/* Sortable book headers. The caret is a ::after on the header itself so it
+   cannot change the cell's width and knock the tracks out of line with the
+   rows — the alignment bug this column set has had twice already. It sits in
+   the padding by absolute positioning for the same reason. */
+.panel-ai-watch .ai-book-table-header .th[data-book-sort-col] {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+.panel-ai-watch .ai-book-table-header .th[data-book-sort-col]:hover,
+.panel-ai-watch .ai-book-table-header .th[data-book-sort-col]:focus-visible {
+  color: #ede9fe;
+  outline: none;
+}
+.panel-ai-watch .ai-book-table-header .th[data-book-sort-col].is-sorted {
+  color: #ede9fe;
+}
+.panel-ai-watch .ai-book-table-header .th.is-sorted::after {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--accent, #6ea8fe);
+  pointer-events: none;
+}
+.panel-ai-watch .ai-book-table-header .th.is-sorted.sort-desc::after { content: "▾"; }
+.panel-ai-watch .ai-book-table-header .th.is-sorted.sort-asc::after  { content: "▴"; }
+.panel-ai-watch .ai-book-table-header .th-ticker.is-sorted::after { text-align: left; }
+.panel-ai-watch .ai-book-table-header .th-state.is-sorted::after { text-align: center; }
+
 .panel-ai-watch .ai-book-table-header .th-ticker { text-align: left; }
 .panel-ai-watch .ai-book-table-header .th-state { text-align: center; }
 .panel-ai-watch .ai-book-table-header .th-last,
@@ -2469,9 +2502,14 @@ body.mobile .icon-btn {
   color: var(--danger, #f87171);
   font-weight: 600;
 }
+/* Every numeric cell right-aligns, and each one must match its own header
+   (.th is right by default). cell-exh was the odd one out: restored with the
+   EXH column, never added here, so it rendered left inside a right-aligned
+   track and the values sat a column-width away from the word EXH. */
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
+.panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-macd,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }

@@ -73,6 +73,11 @@ export function init(panelEl, kind) {
     setInterval(() => {
       bookRowsEl.querySelectorAll('.cell-trail[data-entry-time]').forEach(_tickHoldClock);
     }, 250);
+    _bindBookSort(() => {
+      _paintBookTable(
+        bookSection, bookRowsEl, bookCountEl, bookStampEl, _aiBook(), bookDayPlEl,
+      );
+    });
   }
 
   /** Prefer last good wire when store briefly has a clobber/empty book. */
@@ -465,14 +470,154 @@ const _bookPrevPrices = Object.create(null);
 const _bookPrevExh = Object.create(null);
 
 /** Stable display order — phase groups, then symbol (no score shuffle). */
-function _sortBookRows(rows) {
-  const rank = { open: 0, ready: 1, submitted: 2, filled: 2, watching: 3 };
-  return [...rows].sort((a, b) => {
-    const pa = rank[String(a.phase || 'watching')] ?? 9;
-    const pb = rank[String(b.phase || 'watching')] ?? 9;
-    if (pa !== pb) return pa - pb;
-    return String(a.symbol || '').localeCompare(String(b.symbol || ''));
+const _PHASE_RANK = { open: 0, ready: 1, submitted: 2, filled: 2, watching: 3 };
+
+/** Numeric value behind each sortable book column, or null when unknown.
+ *
+ *  Deliberately reads the same raw fields the CELLS read, not the formatted
+ *  text: "$16.95", "99.2% OB" and "+0.007 (1.1×)" do not sort as numbers, and
+ *  a column that sorted by its own label would put $9 after $10. */
+function _bookSortVal(r, col) {
+  const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
+  switch (col) {
+    case 'last':
+      return num(r.price) ?? num(r.last_trade) ?? num(r.last_ask);
+    case 'entry': {
+      const open = !!(r.is_position || r.phase === 'open' || r.phase === 'submitted'
+        || r.status === 'filled' || r.status === 'submitted');
+      return open ? (num(r.avg_entry) ?? num(r.entry_price)) : null;
+    }
+    case 'stop':
+      return num(_bookStopPx(r));
+    case 'exh': {
+      const ex = num(r.exhaustion);
+      if (ex != null) return ex;
+      const p = num(r.pctr);
+      return p == null ? null : Math.max(0, Math.min(100, 100 + p));
+    }
+    case 'macd':
+      return num(r.macd_gap) ?? num(r.macd_hist);
+    case 'pl':
+      return num(r.pl);
+    default:
+      return null;
+  }
+}
+
+/** Book ordering. `col` null = the default: phase first (open, then ready,
+ *  then the rest), ticker within phase — the ordering that answers "what am I
+ *  in and what is about to fire" without being asked.
+ *
+ *  When the operator picks a column, that column wins outright and phase is
+ *  NOT used as a pre-sort: the point of clicking MACD GAP is to see the whole
+ *  book in gap order, and grouping by phase first would silently defeat it.
+ *  Unknowns always sink to the bottom in either direction — a name with no
+ *  reading is not the best or the worst, and floating "—" to the top of a
+ *  descending sort is how a blank column looks like a leader. */
+function _sortBookRows(rows, sort) {
+  const s = sort || _bookSort;
+  const list = [...rows];
+  const byTicker = (a, b) =>
+    String(a.symbol || '').localeCompare(String(b.symbol || ''));
+
+  if (!s || !s.col) {
+    return list.sort((a, b) => {
+      const pa = _PHASE_RANK[String(a.phase || 'watching')] ?? 9;
+      const pb = _PHASE_RANK[String(b.phase || 'watching')] ?? 9;
+      return pa !== pb ? pa - pb : byTicker(a, b);
+    });
+  }
+
+  const dir = s.dir < 0 ? -1 : 1;
+  if (s.col === 'ticker') {
+    return list.sort((a, b) => dir * byTicker(a, b));
+  }
+  if (s.col === 'state') {
+    return list.sort((a, b) => {
+      const pa = _PHASE_RANK[String(a.phase || 'watching')] ?? 9;
+      const pb = _PHASE_RANK[String(b.phase || 'watching')] ?? 9;
+      return pa !== pb ? dir * (pa - pb) : byTicker(a, b);
+    });
+  }
+  return list.sort((a, b) => {
+    const av = _bookSortVal(a, s.col);
+    const bv = _bookSortVal(b, s.col);
+    if (av == null && bv == null) return byTicker(a, b);
+    if (av == null) return 1;      // unknowns sink, both directions
+    if (bv == null) return -1;
+    return av === bv ? byTicker(a, b) : dir * (av - bv);
   });
+}
+
+/** Active book sort. col null = default phase ordering. */
+const _bookSort = { col: null, dir: -1 };
+
+const _BOOK_SORT_LS = 'aiBookSort';
+
+(function _restoreBookSort() {
+  try {
+    const raw = localStorage.getItem(_BOOK_SORT_LS);
+    if (!raw) return;
+    const v = JSON.parse(raw);
+    if (v && typeof v.col === 'string') {
+      _bookSort.col = v.col;
+      _bookSort.dir = v.dir < 0 ? -1 : 1;
+    }
+  } catch (e) { /* private mode / blocked storage: keep the default */ }
+})();
+
+function _bookSortHeaders() {
+  return document.querySelectorAll('.ai-book-table-header [data-book-sort-col]');
+}
+
+function _paintBookSortHeaders() {
+  _bookSortHeaders().forEach(h => {
+    const on = _bookSort.col === h.dataset.bookSortCol;
+    h.classList.toggle('is-sorted', on);
+    h.classList.toggle('sort-asc', on && _bookSort.dir > 0);
+    h.classList.toggle('sort-desc', on && _bookSort.dir < 0);
+    h.setAttribute('aria-sort', on
+      ? (_bookSort.dir > 0 ? 'ascending' : 'descending')
+      : 'none');
+  });
+}
+
+/** Click cycles desc → asc → default. The third state matters: the default
+ *  (open positions first) is the one an operator actually watches, and a sort
+ *  you cannot leave is a sort that hides your open risk behind a reload. */
+function _bindBookSort(repaint) {
+  _bookSortHeaders().forEach(h => {
+    const col = h.dataset.bookSortCol;
+    h.setAttribute('role', 'columnheader');
+    h.setAttribute('tabindex', '0');
+    const hit = () => {
+      if (_bookSort.col !== col) {
+        _bookSort.col = col;
+        // Text asc (A→Z reads naturally); numbers high-first.
+        _bookSort.dir = (col === 'ticker' || col === 'state') ? 1 : -1;
+      } else if ((_bookSort.dir < 0 && col !== 'ticker' && col !== 'state')
+        || (_bookSort.dir > 0 && (col === 'ticker' || col === 'state'))) {
+        _bookSort.dir *= -1;
+      } else {
+        _bookSort.col = null;
+        _bookSort.dir = -1;
+      }
+      try {
+        if (_bookSort.col) {
+          localStorage.setItem(_BOOK_SORT_LS, JSON.stringify(_bookSort));
+        } else {
+          localStorage.removeItem(_BOOK_SORT_LS);
+        }
+      } catch (e) { /* storage blocked: the sort still works this session */ }
+      _paintBookSortHeaders();
+      repaint();
+    };
+    h.addEventListener('click', hit);
+    h.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); hit(); }
+    });
+  });
+  _paintBookSortHeaders();
 }
 
 /** Optional duel line in day-P&L strip title / equity area. */
