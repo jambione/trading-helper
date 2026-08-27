@@ -566,6 +566,15 @@ DEFAULT_CONFIG = {
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          False,
+    # Let a %R pinned at the top of its range stand in for a rising one,
+    # but only while MACD is bullish AND opening. Williams %R is
+    # position-in-range: at 100% it cannot rise, so pctr_rising and
+    # pctr_falling are both False and the gate refuses it forever. Measured
+    # 2026-08-27: CRMG 100.0%, CSIQ 100.0%, FIG 98.9% all flat and all
+    # refused, on a day the desk was hunting momentum — the strongest names
+    # were the only structurally unreachable ones. A FALLING %R is still
+    # refused, so a top that has rolled over cannot get in this way.
+    "ai_watch_ob_allow_flat_when_macd_armed": False,
     # False: cooling EXH refuses even at last / in-zone. Last-mode still
     # buys rising or pinned-OB names above the old pullback band.
     "ai_watch_in_zone_ignore_fade":  False,
@@ -1143,6 +1152,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_ob_allow_hot",
+    "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_zone_exh_window_sec",
     "ai_trading_source",
     "ai_trade_style",

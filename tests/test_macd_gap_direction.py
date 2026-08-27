@@ -488,3 +488,92 @@ def test_the_same_record_without_provenance_is_still_refused():
     ok, why = ew.macd_allows_buy(rec, RT)
     assert ok is False
     assert why == "macd_src_unknown"
+
+
+# ── a %R pinned at the ceiling cannot be "rising" ───────────────────────────
+#
+# Williams %R is position-in-range. At 100% the name is at the top of its
+# lookback window, so pctr_rising and pctr_falling are BOTH False and the
+# exhaustion gate refuses it as not_rising_overbought forever. Measured
+# 2026-08-27 on a momentum-hunting session: CRMG 100.0%, CSIQ 100.0%,
+# FIG 98.9% — all flat, all refused. The strongest names on the book were the
+# only ones structurally unreachable.
+#
+# The operator's rule: allow the LEVEL to stand in for the turn, but only
+# while MACD is armed. A falling %R is still refused, so a top that has
+# already rolled over cannot get in this way.
+
+_OBFLAT = dict(RT, ai_watch_ob_allow_flat_when_macd_armed=True)
+
+
+def _armed_ind(**over):
+    ind = {"macd_src": "realtime", "macd_gap": 0.05, "macd_bull": True,
+           "macd_gap_rising": True, "macd_gap_falling": False}
+    ind.update(over)
+    return ind
+
+
+def test_macd_is_armed_needs_bullish_and_opening():
+    assert ew._macd_is_armed({"indicator": _armed_ind()}) is True
+    assert ew._macd_is_armed({"indicator": _armed_ind(macd_gap=-0.01)}) is False
+    assert ew._macd_is_armed({"indicator": _armed_ind(macd_bull=False)}) is False
+
+
+def test_macd_is_armed_refuses_a_closing_gap():
+    """A wide gap that is closing is a move already over — exactly what a
+    pinned %R must not be paired with."""
+    assert ew._macd_is_armed({"indicator": _armed_ind(
+        macd_gap_rising=False, macd_gap_falling=True)}) is False
+
+
+def test_macd_is_armed_refuses_an_unproven_reading():
+    """An opening gap drawn on the REST fallback is an opening gap in older
+    bars. Absence is not a pass."""
+    assert ew._macd_is_armed({"indicator": _armed_ind(macd_src="alpaca")}) is False
+    assert ew._macd_is_armed({"indicator": _armed_ind(macd_src=None)}) is False
+
+
+def test_macd_is_armed_is_narrower_than_the_entry_gate():
+    """It stands in for a %R turn; it does not re-decide the entry. A gap far
+    under macd_min_gap still counts as armed, and macd_allows_buy runs on its
+    own afterwards to refuse it."""
+    assert ew._macd_is_armed({"indicator": _armed_ind(macd_gap=0.0001)}) is True
+
+
+def test_a_pinned_overbought_reading_passes_when_macd_is_armed():
+    rec = {"symbol": "AAA", "indicator": dict(
+        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=False)}
+    ok, why = ew.exhaustion_allows_buy(rec, _OBFLAT)
+    assert ok, why
+    assert why == "overbought_macd_armed"
+
+
+def test_a_pinned_overbought_reading_is_still_refused_without_the_flag():
+    rec = {"symbol": "AAA", "indicator": dict(
+        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=False)}
+    ok, why = ew.exhaustion_allows_buy(rec, RT)
+    assert ok is False
+    assert why == "not_rising_overbought"
+
+
+def test_a_rolling_over_top_is_still_refused_with_the_flag():
+    """The half that must not regress: falling is checked before this."""
+    rec = {"symbol": "AAA", "indicator": dict(
+        _armed_ind(), pctr=0.0, pctr_rising=False, pctr_falling=True)}
+    ok, why = ew.exhaustion_allows_buy(rec, _OBFLAT)
+    assert ok is False
+    assert why == "not_rising_overbought"
+
+
+def test_a_pinned_reading_is_refused_when_macd_is_not_armed():
+    """The level alone is never enough — MACD supplies the direction."""
+    rec = {"symbol": "AAA", "indicator": dict(
+        _armed_ind(macd_gap_rising=False, macd_gap_falling=True),
+        pctr=0.0, pctr_rising=False, pctr_falling=False)}
+    assert ew.exhaustion_allows_buy(rec, _OBFLAT)[0] is False
+
+
+def test_the_knob_is_off_by_default_and_reaches_the_live_config():
+    from config import DEFAULT_CONFIG, load_config
+    assert DEFAULT_CONFIG["ai_watch_ob_allow_flat_when_macd_armed"] is False
+    assert "ai_watch_ob_allow_flat_when_macd_armed" in load_config()

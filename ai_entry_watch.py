@@ -5306,6 +5306,17 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         # So the override needs the level AND the turn, on both indicators.
         macd_up = bool(ind.get("macd_gap_rising"))
         exh_up = bool(ind.get("pctr_rising"))
+        # Same ceiling problem as exhaustion_allows_buy: %R pinned at the top
+        # of its range is flat by construction, never rising, so the override
+        # could never fire on the most extended names — the ones it exists
+        # for. A pinned reading counts as "up" while it is not FALLING; a top
+        # that has rolled over is still excluded, which was the point of
+        # requiring the turn in the first place.
+        if (not exh_up
+                and bool(cfg.get("ai_watch_ob_allow_flat_when_macd_armed", False))
+                and exhaustion_state(record, cfg) == "overbought"
+                and not ind.get("pctr_falling")):
+            exh_up = True
         if macd_up and exh_up and ex is not None and ex >= need:
             if isinstance(record, dict):
                 record["block_detail"] = (
@@ -5522,6 +5533,23 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
             return False, "not_rising_overbought"
         if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
             return True, "overbought_hot"
+        # A name pinned at the top of its range cannot be "rising".
+        #
+        # Williams %R is position-in-range, so at 100% it is at the ceiling by
+        # construction: pctr_rising and pctr_falling are BOTH False and the
+        # test below refuses it as not_rising_overbought forever. Measured
+        # 2026-08-27: CRMG 100.0%, CSIQ 100.0%, FIG 98.9% — all flat, all
+        # refused, on a day the desk was hunting momentum. The strongest names
+        # were the only ones structurally unreachable.
+        #
+        # So the level is allowed to stand in for the turn, but ONLY while
+        # MACD is armed — bullish with an opening gap. That is the operator's
+        # rule ("allow this when the MACD is armed"): the second indicator
+        # supplies the direction %R has run out of room to express. A falling
+        # %R is still refused above, so a rolling-over top cannot get in here.
+        if bool(cfg.get("ai_watch_ob_allow_flat_when_macd_armed", False)):
+            if _macd_is_armed(record):
+                return True, "overbought_macd_armed"
     ex = exhaustion_pct(record)
     raw_min = cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0)
     try:
@@ -5543,6 +5571,36 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     if state == "overbought":
         return True, "overbought"
     return True, "heating"
+
+
+def _macd_is_armed(record: dict) -> bool:
+    """Bullish AND opening — the direction %R cannot express at 100%.
+
+    Deliberately narrower than macd_allows_buy: no min-gap, no separation
+    test, no confluence override. This answers one question — are the lines
+    apart and still separating — because it is standing in for a %R turn, not
+    re-deciding the entry. macd_allows_buy still runs on its own afterwards.
+
+    Provenance is required for the same reason it is everywhere else: an
+    opening gap drawn on the REST fallback is an opening gap in older bars,
+    and absence is not a pass.
+    """
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    if str(ind.get("macd_src") or "").strip().lower() != "realtime":
+        return False
+    gap = _f_or_none(
+        ind.get("macd_gap") if ind.get("macd_gap") is not None
+        else ind.get("macd_hist"))
+    if gap is None or gap <= 0:
+        return False
+    if ind.get("macd_bull") is False:
+        return False
+    # Opening, not merely positive. A wide gap that is closing is a move
+    # already over, which is exactly what a pinned %R must not be paired with.
+    if ind.get("macd_gap_falling"):
+        return False
+    return bool(ind.get("macd_gap_rising"))
 
 
 def exhaustion_exit_now(record: dict, cfg: dict) -> tuple[bool, str]:
