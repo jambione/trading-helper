@@ -8560,6 +8560,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # instead of the live tape. See cm_rsi_allows_buy.
                 "cm_rsi_src": sig.get("bars_src"),
                 "cm_rsi_age_sec": sig.get("bars_age_sec"),
+                # And the same two for MACD, which is now THE entry lever.
+                # Added 2026-08-27. ai_watch_require_realtime_macd went on
+                # yesterday and refuses a reading with no provenance —
+                # correctly, "absence is not a pass" — but this dict replaces
+                # the indicator map wholesale, so the fields the guard reads
+                # never survived to reach it. Every realtime name showed
+                # "MACD src?" and no position could open, while the same rows
+                # published a perfectly good bars_src="realtime" upstream.
+                # Third field to be lost to this exact whitelist: see macd_gap
+                # and pctr_src above. Same bars, so the same two keys.
+                "macd_src": sig.get("bars_src"),
+                "macd_age_sec": sig.get("bars_age_sec"),
                 "ts": t0,
             }
         elif "indicator" in rec:

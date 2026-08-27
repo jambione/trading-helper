@@ -449,3 +449,42 @@ def test_refresh_stamps_provenance_onto_the_record():
                                  "bars_age_sec": 0.4})
     assert rec["indicator"]["macd_src"] == "realtime"
     assert rec["indicator"]["macd_age_sec"] == 0.4
+
+
+# ── provenance survives the whitelist that REPLACES the indicator map ───────
+#
+# 2026-08-27. ai_watch_require_realtime_macd refuses a reading with no
+# provenance. The poll's indicator dict is a wholesale replacement, and it
+# carried cm_rsi_src/cm_rsi_age_sec but not the MACD pair — so the guard read
+# an empty map on every row, answered macd_src_unknown, and no name could
+# open. The book showed "MACD src?" against rows whose engine state said
+# bars_src="realtime". Third field lost to this whitelist (macd_gap, pctr_src).
+
+def test_the_poll_whitelist_carries_macd_provenance():
+    """Source-pinned: the failure is invisible in unit tests that build
+    records by hand, because the dropped keys are dropped in transport."""
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parent.parent / "ai_entry_watch.py"
+    body = src.read_text(encoding="utf-8")
+    i = body.index('"cm_rsi_src": sig.get("bars_src")')
+    block = body[i:body.index('"ts": t0,', i)]
+    assert '"macd_src": sig.get("bars_src")' in block
+    assert '"macd_age_sec": sig.get("bars_age_sec")' in block
+
+
+def test_a_record_with_provenance_is_not_refused_for_lacking_it():
+    """The end the operator sees: same record, guard on, no macd_src_unknown."""
+    rec = _rec(macd_gap_rising=True, macd_gap_falling=False,
+               macd_gap_prev=0.02, macd_src="realtime", macd_age_sec=0.4)
+    ok, why = ew.macd_allows_buy(rec, RT)
+    assert why != "macd_src_unknown"
+    assert ok, why
+
+
+def test_the_same_record_without_provenance_is_still_refused():
+    """The guard must stay real — this is the half that must NOT regress."""
+    rec = _rec(macd_gap_rising=True, macd_gap_falling=False,
+               macd_gap_prev=0.02)
+    ok, why = ew.macd_allows_buy(rec, RT)
+    assert ok is False
+    assert why == "macd_src_unknown"
