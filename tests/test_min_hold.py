@@ -72,11 +72,16 @@ def test_it_gates_the_three_discretionary_exits():
     """
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    # 5 mentions total: the definition, three gates, and one observational
+    # 6 mentions total: the definition, FOUR gates, and one observational
     # read in the shadow logger. The logger reads the state and decides
     # nothing, which is the distinction worth pinning — if that count moves,
     # something new is either gating on the delay or has stopped recording it.
-    assert src.count("soft_exit_held_back(pos") == 5
+    #
+    # The fourth is the MACD thesis break (2026-08-27). A withdrawn entry
+    # thesis is a better reason to sell than a 6c wiggle, but it is still not
+    # a reason to sell forty seconds after buying, so it is gated like the
+    # rest — ai_exit_macd_liquidate_ignore_hold exempts it deliberately.
+    assert src.count("soft_exit_held_back(pos") == 6
     assert src.count('"min_hold_active": soft_exit_held_back(pos, now)') == 1
     for which in ("local_trail", "left_overbought", "dead_trade"):
         assert f'_note_min_hold(pos, "{which}"' in src, (
@@ -87,7 +92,10 @@ def test_every_gated_exit_also_records_the_block():
     """A suppressed exit that logs nothing is an experiment with no readout."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
-    assert src.count("_note_min_hold(") == 4      # 3 call sites + the def
+    assert src.count("_note_min_hold(") == 5      # 4 call sites + the def
+    # The MACD gate passes the reason through a variable rather than a
+    # literal, so the label is macd_negative / macd_curl at runtime.
+    assert "_note_min_hold(pos, _macd_why, now)" in src
 
 
 def test_noting_a_block_counts_and_labels_without_deciding():

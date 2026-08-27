@@ -313,6 +313,7 @@
   "ai_local_trail_be_at_spread_k": 1.0,
   "ai_watch_open_seed_min_pct": 0.0,
   "ai_exit_min_hold_sec": 300,
+  "ai_exit_macd_liquidate": true,
   "ai_entry_order_style": "limit",
   "ai_entry_limit_anchor": "mid",
   "ai_entry_limit_ttl_sec": 30.0

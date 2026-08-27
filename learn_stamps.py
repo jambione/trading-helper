@@ -26,6 +26,8 @@ _FINGERPRINT_KEYS = (
     "ai_h4_paper",
     "ai_h3_paper",
     "ai_exit_left_overbought",
+    "ai_exit_macd_liquidate",
+    "ai_exit_macd_liquidate_ignore_hold",
     "ai_entry_broker_target",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_min_rvol",

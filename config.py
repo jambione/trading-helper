@@ -795,6 +795,18 @@ DEFAULT_CONFIG = {
     # that has already turned. Expressed as a floor on the wanted stop, so
     # the raise-only rule still holds: this tightens, never loosens.
     "ai_exit_macd_curl_tighten":       False,
+    # LIQUIDATE on a MACD thesis break — flatten outright rather than pull
+    # the shelf under the print (curl_tighten above). Two triggers, both
+    # asked for: the gap turning NEGATIVE (the lines crossed, the entry
+    # claim is simply false now), and the gap CURLING from rising to falling
+    # while still positive. The curl is an edge, so it only counts once the
+    # position has been seen opening. Requires macd_src == "realtime": a curl
+    # drawn on the REST fallback is a curl in older bars, and absence is not
+    # a pass. Off by default; this closes positions.
+    "ai_exit_macd_liquidate":          False,
+    # Let the signal outrank min-hold. Off: a thesis break is a better reason
+    # than a 6c wiggle, but still not a reason to sell 40s after buying.
+    "ai_exit_macd_liquidate_ignore_hold": False,
     # How far under the print. One tick.
     "ai_exit_macd_curl_px":            0.01,
     # Also fire while the gap is still POSITIVE but closing. Earlier and
@@ -1380,6 +1392,8 @@ SAFE_CONFIG_KEYS = [
     "ai_entry_limit_anchor",
     "ai_exit_min_hold_sec",
     "ai_exit_macd_curl_tighten",
+    "ai_exit_macd_liquidate",
+    "ai_exit_macd_liquidate_ignore_hold",
     "ai_exit_macd_curl_px",
     "ai_exit_macd_curl_on_falling",
     "ai_local_trail_give_spread_k",

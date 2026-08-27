@@ -2980,6 +2980,72 @@ def _macd_curl_stop(ticker: str, last: float | None) -> float | None:
     return stop if stop > 0 else None
 
 
+def macd_thesis_broken(ticker: str, pos: dict) -> tuple[bool, str]:
+    """Has MACD withdrawn the reason this position was opened?
+
+    The entry thesis is "the fast line is above the slow one and the gap is
+    OPENING". Two ways that expires, and the operator asked for both:
+
+      • NEGATIVE — the gap is at or below zero. The lines have crossed; the
+        claim is simply false now.
+      • CURLED — the gap is still positive but has turned from rising to
+        falling. This is an EDGE, not a level: `macd_gap_falling` alone would
+        fire on a position that was never opening in the first place, so the
+        turn only counts once this position has actually been seen rising.
+        The last direction is remembered on the position for that reason.
+
+    Provenance is required, not preferred. `macd_src` says which pipe drew the
+    reading and it flips per ticker mid-session; a curl computed on the Alpaca
+    REST fallback is a curl in yesterday's bars. Absence is not a pass — with
+    no proof the reading is live this returns False and the ordinary trail
+    still protects the position. Refusing to act on an unprovable indicator is
+    the same rule the entry gate uses (macd_src_unknown).
+
+    Returns (fire, why). Mutates pos["macd_dir_seen"] to track the edge.
+    """
+    if not _cfg_flag("ai_exit_macd_liquidate", False):
+        return False, ""
+    try:
+        import ai_entry_watch as ew
+        sig = (ew._engine_indicator_map() or {}).get(
+            str(ticker or "").upper().strip()) or {}
+    except Exception:  # noqa: BLE001
+        return False, ""
+    if not isinstance(sig, dict) or not sig:
+        return False, ""
+
+    src = str(sig.get("macd_src") or sig.get("bars_src") or "").strip().lower()
+    if src != "realtime":
+        return False, ""
+
+    gap = sig.get("macd_gap")
+    if gap is None:
+        gap = sig.get("macd_hist")
+    gap_f = _num(gap)
+    if gap_f is None:
+        return False, ""
+
+    # NEGATIVE — the lines have crossed. Checked before the edge, because a
+    # crossed gap is not a "turn" to be remembered, it is the thesis gone.
+    if gap_f <= 0 or sig.get("macd_bull") is False:
+        return True, "macd_negative"
+
+    rising = bool(sig.get("macd_gap_rising"))
+    falling = bool(sig.get("macd_gap_falling"))
+    prev = str(pos.get("macd_dir_seen") or "")
+    if rising:
+        pos["macd_dir_seen"] = "up"
+    elif falling:
+        pos["macd_dir_seen"] = "down"
+
+    # CURLED — only after this position has been seen opening. Without the
+    # edge, a name admitted mid-narrowing would be liquidated on the first
+    # tick it was ever looked at.
+    if falling and prev == "up":
+        return True, "macd_curl"
+    return False, ""
+
+
 def local_trail_ring(tick_sec: float, cfg: dict | None = None) -> int:
     """Ring size that holds the shelf's damping window constant in seconds.
 
@@ -4739,6 +4805,40 @@ def manage_open_positions(
                     })
                     log_event("left_overbought", symbol=ticker,
                               pctr=sig.get("pctr"))
+                    changed = True
+                    continue
+
+        # MACD thesis break — liquidate. Lives HERE, in the 3s positions loop,
+        # and deliberately not in the 0.25s shelf tick: that loop's contract is
+        # no broker round trip unless the stop fires, and an indicator lookup
+        # on every tick breaks it. An earlier attempt put it there and was
+        # rightly removed.
+        if pos.get("entry_confirmed"):
+            _macd_fire, _macd_why = macd_thesis_broken(ticker, pos)
+            if _macd_fire:
+                # Held back by min-hold like any other soft exit. The hold
+                # exists because this desk's stop sits inside normal noise;
+                # a thesis-break is a better reason than a 6c wiggle, but it
+                # is still not a reason to sell forty seconds after buying.
+                # ai_exit_macd_liquidate_ignore_hold overrides for an operator
+                # who wants the signal to outrank the clock.
+                _macd_held = (
+                    soft_exit_held_back(pos, now)
+                    and not _cfg_flag("ai_exit_macd_liquidate_ignore_hold", False)
+                )
+                if _macd_held:
+                    _note_min_hold(pos, _macd_why, now)
+                else:
+                    alpaca_trader.cancel_open_orders(ticker)
+                    out = alpaca_trader.close_out(ticker) or {}
+                    if isinstance(out, dict) and out.get("order_id"):
+                        pos["close_order_id"] = str(out["order_id"])
+                    pos["closing_reason"] = _macd_why
+                    exit_why[ticker] = _macd_why
+                    events.append({"ticker": ticker, "event": _macd_why})
+                    log_event(_macd_why, symbol=ticker,
+                              age_min=round((now - float(
+                                  pos.get("entry_time") or now)) / 60.0, 1))
                     changed = True
                     continue
 
