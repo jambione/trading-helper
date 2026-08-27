@@ -316,6 +316,7 @@
   "ai_exit_macd_liquidate": true,
   "ai_shelf_trace_sec": 10.0,
   "ai_watch_ob_allow_flat_when_macd_armed": true,
+  "ai_watch_rank_rvol_band": 0.5,
   "ai_entry_order_style": "limit",
   "ai_entry_limit_anchor": "ask",
   "ai_entry_limit_ttl_sec": 30.0
