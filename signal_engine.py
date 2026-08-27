@@ -1940,11 +1940,44 @@ class SignalEngine:
                     row["rt_price"] = None
                     row["rt_price_age_sec"] = None
                 tickers[sym] = row
+            # Realtime tape coverage. Distinguishes the two failures that look
+            # identical downstream — every name refused macd_not_realtime_alpaca:
+            #
+            #   a quiet name   subscribed, has traded before, just not lately
+            #   a starved name subscribed and has NEVER received a trade
+            #
+            # The second is the Finnhub free-tier limit, which starved this
+            # engine for a full session on 2026-08-20 with an ellipsis in a
+            # subscribe tag as the only tell. INTC and HPQ sitting on the REST
+            # fallback is what raised it again on 08-27: a mega-cap prints
+            # thousands of times a minute, so "quiet" cannot explain it.
+            rt = {}
+            try:
+                subs = set(FINNHUB_STATE.subscribed)
+                fed = {s for s in subs
+                       if self.rt_bars.last_trade_ms(s) is not None}
+                fresh = set()
+                for s in fed:
+                    age = self.rt_bars.age_seconds(s)
+                    if age is not None and age <= RT_BARS_MAX_STALE:
+                        fresh.add(s)
+                rt = {
+                    "connected": bool(FINNHUB_STATE.connected),
+                    "subscribed": len(subs),
+                    "ever_fed": len(fed),
+                    "fresh": len(fresh),
+                    "max_stale_sec": RT_BARS_MAX_STALE,
+                    # Subscribed but never once fed — the starvation signature.
+                    "silent": sorted(subs - fed)[:25],
+                }
+            except Exception:  # noqa: BLE001
+                rt = {}
             payload = {
                 "updated": _now_iso(),
                 "version": version.get_version(),   # which engine build is running
                 "started": self._started,           # when this engine booted
                 "strategy": STRATEGY_MODE,
+                "realtime_tape": rt,
                 "tickers": tickers,
             }
             SIGNAL_STATE_FILE.write_text(

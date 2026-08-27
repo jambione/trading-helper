@@ -214,6 +214,46 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("R2 instrumentation present", "FAIL", f"{type(e).__name__}: {e}")
 
+    # ── R7: is the realtime tape actually feeding the entry lever? ───────
+    #
+    # MACD is the lever and ai_watch_require_realtime_macd refuses anything
+    # not drawn on the Finnhub tape. So a starved socket does not look like a
+    # data outage — it looks like a desk that has stopped trading, with every
+    # name refused macd_not_realtime_alpaca. Reported as coverage rather than
+    # a boolean, because "quiet name" and "starved subscription" are different
+    # problems with different fixes and they are indistinguishable downstream.
+    try:
+        import json as _json
+        raw = _json.load(open(os.path.join(ROOT, "signal_state.json")))
+        rt = raw.get("realtime_tape") or {}
+        if not rt:
+            check("R7 realtime tape coverage", "PENDING",
+                  "engine has not published realtime_tape yet")
+        else:
+            subs = int(rt.get("subscribed") or 0)
+            fed = int(rt.get("ever_fed") or 0)
+            fresh = int(rt.get("fresh") or 0)
+            silent = rt.get("silent") or []
+            if not rt.get("connected"):
+                check("R7 realtime tape coverage", "FAIL",
+                      "Finnhub socket is DOWN — every name will fall back")
+            elif subs and fed == 0:
+                check("R7 realtime tape coverage", "FAIL",
+                      f"0/{subs} subscribed symbols have EVER received a "
+                      f"trade — socket up but starved (free-tier limit)")
+            elif subs and fed < subs:
+                check("R7 realtime tape coverage", "WARN",
+                      f"{fed}/{subs} ever fed, {fresh} fresh "
+                      f"(<= {rt.get('max_stale_sec')}s). Never fed: "
+                      f"{', '.join(silent[:8]) or '-'}")
+            else:
+                check("R7 realtime tape coverage", "PASS",
+                      f"{fresh}/{subs} fresh, all subscribed symbols fed")
+    except FileNotFoundError:
+        check("R7 realtime tape coverage", "PENDING", "no signal_state.json")
+    except Exception as e:  # noqa: BLE001
+        check("R7 realtime tape coverage", "FAIL", f"{type(e).__name__}: {e}")
+
     # ── report ───────────────────────────────────────────────────────────
     order = {"FAIL": 0, "WARN": 1, "PENDING": 2, "PASS": 3}
     for verdict, name, detail in sorted(_rows, key=lambda r: order.get(r[0], 4)):
