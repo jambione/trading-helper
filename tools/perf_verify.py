@@ -88,11 +88,34 @@ def main() -> int:
           "PASS" if ok3 else "FAIL",
           f"shelf={shelf} book={book} declared_in_bot_config={raw_declared}")
 
-    live_pctr = bool(cfg.get("ai_watch_require_live_pctr"))
-    rt_rsi = bool(cfg.get("ai_watch_require_realtime_rsi"))
-    check("R4 realtime lever guards armed",
-          "PASS" if (live_pctr and rt_rsi) else "FAIL",
-          f"require_live_pctr={live_pctr} require_realtime_rsi={rt_rsi}")
+    # R4 guards THE LEVER — whichever indicator currently opens positions.
+    #
+    # It used to check require_live_pctr and require_realtime_rsi, and by 8/27
+    # it was failing on a system that was not broken: MACD replaced both on
+    # 8/26 (ai_watch_arm_require_macd), CM RSI-2 is no longer an arm gate at
+    # all (ai_watch_arm_require_cm_rsi=False), so its freshness knob guards
+    # nothing, and %R now decides only inside the MACD/EXH confluence
+    # override. A check that fails for a stale reason trains you to ignore it.
+    rt_macd = bool(cfg.get("ai_watch_require_realtime_macd"))
+    arm_macd = bool(cfg.get("ai_watch_arm_require_macd"))
+    if not arm_macd:
+        check("R4 lever freshness guard armed", "FAIL",
+              "ai_watch_arm_require_macd=False — no lever to guard")
+    else:
+        check("R4 lever freshness guard armed", "PASS" if rt_macd else "FAIL",
+              f"lever=MACD require_realtime_macd={rt_macd}"
+              f" (cm_rsi arm gate off, so its knob is inert)")
+
+    # The override is the most permissive path in the entry gate: it returns
+    # an automatic yes and skips both macd_min_gap and the separation test.
+    # Its %R leg is read straight off the record, so it does NOT pass through
+    # exhaustion_allows_buy's require_live_pctr provenance check. Reported,
+    # not enforced — the override is the operator's rule and tightening it
+    # changes what trades.
+    if bool(cfg.get("ai_watch_macd_exh_override")):
+        check("R4b override EXH provenance", "WARN",
+              "confluence override reads pctr_rising directly; "
+              "require_live_pctr does not cover it")
 
     poll = float(cfg.get("ai_watch_poll_sec") or 0)
     check("R5 arm cadence tightened", "PASS" if 0 < poll <= 10.0 else "FAIL",
@@ -192,15 +215,17 @@ def main() -> int:
         check("R2 instrumentation present", "FAIL", f"{type(e).__name__}: {e}")
 
     # ── report ───────────────────────────────────────────────────────────
-    order = {"FAIL": 0, "PENDING": 1, "PASS": 2}
-    for verdict, name, detail in sorted(_rows, key=lambda r: order.get(r[0], 3)):
-        mark = {"PASS": "OK  ", "FAIL": "FAIL", "PENDING": "...."}.get(verdict)
+    order = {"FAIL": 0, "WARN": 1, "PENDING": 2, "PASS": 3}
+    for verdict, name, detail in sorted(_rows, key=lambda r: order.get(r[0], 4)):
+        mark = {"PASS": "OK  ", "FAIL": "FAIL",
+                "WARN": "WARN", "PENDING": "...."}.get(verdict, "????")
         print(f"  {mark} {name}")
         if detail:
             print(f"         {detail}")
     fails = sum(1 for v, _, _ in _rows if v == "FAIL")
+    warns = sum(1 for v, _, _ in _rows if v == "WARN")
     pend = sum(1 for v, _, _ in _rows if v == "PENDING")
-    print(f"\n  {len(_rows)} checks — {fails} FAIL, {pend} PENDING")
+    print(f"\n  {len(_rows)} checks — {fails} FAIL, {warns} WARN, {pend} PENDING")
     if pend and not rth_now():
         print("  Re-run after 09:30: the PENDING checks need a live session.")
     return 1 if fails else 0
