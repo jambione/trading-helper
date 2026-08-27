@@ -813,6 +813,12 @@ DEFAULT_CONFIG = {
     # drawn on the REST fallback is a curl in older bars, and absence is not
     # a pass. Off by default; this closes positions.
     "ai_exit_macd_liquidate":          False,
+    # HARD sell: macd_sep_ratio under this while the gap is CLOSING. The
+    # ratio is the gap measured in standard deviations of its own histogram,
+    # so under 1.0 the separation is inside the noise the entry was meant to
+    # clear; falling on top of that is small and shrinking. Bypasses min-hold
+    # on its own, without exempting the ordinary curl.
+    "ai_exit_macd_hard_sell_sep":      1.0,
     # Let the signal outrank min-hold. Off: a thesis break is a better reason
     # than a 6c wiggle, but still not a reason to sell 40s after buying.
     "ai_exit_macd_liquidate_ignore_hold": False,
@@ -1403,6 +1409,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_min_hold_sec",
     "ai_exit_macd_curl_tighten",
     "ai_exit_macd_liquidate",
+    "ai_exit_macd_hard_sell_sep",
     "ai_exit_macd_liquidate_ignore_hold",
     "ai_exit_macd_curl_px",
     "ai_exit_macd_curl_on_falling",

@@ -181,3 +181,53 @@ def test_ratchet_sale_waits_for_min_hold(monkeypatch):
     assert done is True
     assert mature.get("closing_reason") == "local_trail"
     assert closed == ["AAA"]
+
+
+# ── the shelf may raise on a stale print; it may not sell on one ────────────
+#
+# The 0.25s tick did `px = _fresh_tape_px(ticker); if px is None: continue`,
+# which skipped the RAISE along with the sale. Raising is monotonic and
+# conservative — a stop moved up on a slightly old print is still a stop that
+# only helps — while selling on a stale print is exactly what the freshness
+# guard exists to prevent. Coupled, any name whose stream went quiet had its
+# shelf frozen: IOVA held 8.1537 for a full minute on 2026-08-27 against a
+# computed 8.21365, six cents of earned protection never banked, while SBET
+# and IBRX ticked normally beside it.
+
+def test_raise_only_banks_the_shelf_without_selling():
+    pos = {
+        "entry_confirmed": True, "entry_price": 8.19,
+        "risk_per_share": 0.409, "last_seen_price": 8.275,
+        "local_stop_price": 8.1537, "mfe_r": 0.306,
+        "entry_time": NOW - 10_000,
+    }
+    events, exit_why = [], {}
+    # A trigger far UNDER the shelf: without raise_only this is a sale.
+    _ch, closed = cp.apply_local_trail(
+        "AAA", pos, 1.00, events, exit_why, raise_only=True)
+    assert closed is False, "raise_only must never sell"
+    assert not exit_why
+    assert cp._num(pos["local_stop_price"]) > 8.1537, "shelf must still raise"
+
+
+def test_the_same_trigger_does_sell_without_raise_only():
+    """The half that must not regress — raise_only is a mode, not a defusing."""
+    pos = {
+        "entry_confirmed": True, "entry_price": 8.19,
+        "risk_per_share": 0.409, "last_seen_price": 8.275,
+        "local_stop_price": 8.1537, "mfe_r": 0.306,
+        "entry_time": NOW - 10_000,
+    }
+    _ch, closed = cp.apply_local_trail("AAA", pos, 1.00, [], {})
+    assert closed is True
+
+
+def test_the_stale_branch_raises_instead_of_skipping():
+    """Source-pinned: the bug was a bare `continue`, and it is invisible in
+    unit tests because the skip happens in the caller, not the shelf."""
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "ai_positions.py"), encoding="utf-8").read()
+    i = src.index("px = _fresh_tape_px(ticker)")
+    body = src[i:i + 1200]
+    assert "raise_only=True" in body, "a stale tick must still bank the shelf"
+    assert "apply_local_trail(" in body

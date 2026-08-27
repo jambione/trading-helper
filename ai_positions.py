@@ -2812,8 +2812,20 @@ def apply_local_trail(
     trigger: float | None,
     events: list[dict[str, Any]],
     exit_why: dict[str, Any],
+    *,
+    raise_only: bool = False,
 ) -> tuple[bool, bool]:
     """Raise the software shelf, or flatten if *trigger* prints at/under it.
+
+    ``raise_only`` computes and stores the shelf but can never sell. The two
+    halves were coupled and should not be: raising is monotonic and
+    conservative — a stop moved up on a slightly old print is still a stop
+    that only helps — while SELLING on a stale print is the thing the
+    freshness guard exists to prevent. Coupled, a name whose stream print
+    went quiet had its shelf frozen entirely. Measured 2026-08-27: IOVA sat
+    at 8.1537 for a full minute against a computed 8.21365 — six cents of
+    earned protection never banked — while its last_seen_price stayed pinned
+    at 8.275 and SBET and IBRX ticked normally beside it.
 
     Returns ``(changed, closed)``. ``closed`` means the caller must stop
     working this position on this pass — it has been handed to close_out.
@@ -2869,7 +2881,7 @@ def apply_local_trail(
     # Split so the held-back case can be counted. Logically identical to the
     # single condition it replaces, short-circuit included: the min-hold check
     # still runs only when the shelf was actually hit.
-    _trail_hit = (trigger is not None and loc is not None
+    _trail_hit = (not raise_only and trigger is not None and loc is not None
                   and trigger <= loc + 1e-9)
     _trail_held = _trail_hit and soft_exit_held_back(pos)
     if _trail_held:
@@ -3032,6 +3044,27 @@ def macd_thesis_broken(ticker: str, pos: dict) -> tuple[bool, str]:
 
     rising = bool(sig.get("macd_gap_rising"))
     falling = bool(sig.get("macd_gap_falling"))
+
+    # HARD SELL — a gap narrower than one standard deviation of its own
+    # histogram, and closing. The operator's rule, read off the book: the
+    # number in parentheses is macd_sep_ratio, and under 1.0 the separation
+    # is inside the noise the entry was supposed to clear. Falling on top of
+    # that is a move that is both small and shrinking.
+    #
+    # Distinguished from macd_curl below because it is a LEVEL and a
+    # direction rather than an edge, so it does not wait to have been seen
+    # rising — IBRX showed +0.003 (0.8x) closing while still nominally
+    # bullish. It reports its own reason so it can bypass min-hold on its own
+    # without exempting the ordinary curl.
+    if falling:
+        sep = _num(sig.get("macd_sep_ratio"))
+        try:
+            need = float(_cfg_all().get("ai_exit_macd_hard_sell_sep", 1.0)
+                         or 1.0)
+        except (TypeError, ValueError):
+            need = 1.0
+        if sep is not None and sep < need:
+            return True, "macd_thin_and_closing"
     prev = str(pos.get("macd_dir_seen") or "")
     if rising:
         pos["macd_dir_seen"] = "up"
@@ -3111,9 +3144,21 @@ def tick_local_trail(tick_sec: float = 0.0) -> list[dict[str, Any]]:
                 continue
             px = _fresh_tape_px(ticker)
             if px is None:
-                # No fresh stream print. The book tick owns the REST fallback
-                # and the stale-data flatten; this pass simply has nothing to
-                # say, and must not ratchet off a stale number.
+                # No fresh stream print, so this pass may not SELL — the book
+                # tick owns the REST fallback and the stale-data flatten.
+                #
+                # It may still RAISE. Skipping the whole position here froze
+                # the shelf of any name whose stream went quiet, which on a
+                # thin tape is most of them: IOVA held 8.1537 for a full
+                # minute on 2026-08-27 while the shelf it had earned was
+                # 8.21365. The raise reads the damped print ring, not this
+                # tick's price, so it banks protection already established
+                # rather than ratcheting off a stale number — and it is
+                # monotonic, so a late raise can only ever help.
+                ch, _closed = apply_local_trail(
+                    ticker, pos, None, events, exit_why, raise_only=True)
+                if ch:
+                    changed = True
                 continue
             pos["last_seen_price"] = px
             note_trail_print(pos, px, n=ring)
@@ -4822,8 +4867,12 @@ def manage_open_positions(
                 # is still not a reason to sell forty seconds after buying.
                 # ai_exit_macd_liquidate_ignore_hold overrides for an operator
                 # who wants the signal to outrank the clock.
+                # macd_thin_and_closing is the operator's HARD sell — a gap
+                # inside its own noise and still shrinking — so it outranks
+                # the clock on its own, without exempting the ordinary curl.
                 _macd_held = (
                     soft_exit_held_back(pos, now)
+                    and _macd_why != "macd_thin_and_closing"
                     and not _cfg_flag("ai_exit_macd_liquidate_ignore_hold", False)
                 )
                 if _macd_held:

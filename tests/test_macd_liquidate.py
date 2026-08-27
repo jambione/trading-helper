@@ -181,3 +181,74 @@ def test_it_is_wired_into_the_positions_loop_not_the_shelf_tick():
     assert "soft_exit_held_back(pos, now)" in body, "min-hold applies"
     # And it only runs on a position that actually exists.
     assert 'pos.get("entry_confirmed")' in src[i - 400:i]
+
+
+# ── HARD SELL: thin separation AND closing ─────────────────────────────────
+#
+# The operator's rule, read off the book: the number in parentheses is
+# macd_sep_ratio — the gap measured in standard deviations of its own
+# histogram. Under 1.0 the separation is inside the noise the entry was meant
+# to clear, and falling on top of that is a move both small and shrinking.
+# IBRX showed +0.003 (0.8x) closing while still nominally bullish.
+#
+# A LEVEL plus a direction, not an edge: unlike macd_curl it does not wait to
+# have been seen rising, and it outranks min-hold on its own.
+
+def test_thin_and_closing_is_a_hard_sell(monkeypatch):
+    _on(monkeypatch)
+    _wire(monkeypatch, macd_gap=0.003, macd_sep_ratio=0.8,
+          macd_gap_falling=True, **_RT)
+    fire, why = cp.macd_thesis_broken("AAA", {})
+    assert fire and why == "macd_thin_and_closing"
+
+
+def test_thin_but_still_opening_is_left_alone(monkeypatch):
+    """IOVA: +0.001 (0.3x) RISING. Thin, but going the right way."""
+    _on(monkeypatch)
+    _wire(monkeypatch, macd_gap=0.001, macd_sep_ratio=0.3,
+          macd_gap_rising=True, **_RT)
+    assert cp.macd_thesis_broken("AAA", {})[0] is False
+
+
+def test_wide_and_closing_is_not_the_hard_sell(monkeypatch):
+    """SBET: +0.006 (1.7x) falling. Closing, but still well clear of noise —
+    that is the ordinary curl, which is min-hold gated."""
+    _on(monkeypatch)
+    pos = {"macd_dir_seen": "up"}
+    _wire(monkeypatch, macd_gap=0.006, macd_sep_ratio=1.7,
+          macd_gap_falling=True, **_RT)
+    fire, why = cp.macd_thesis_broken("AAA", pos)
+    assert fire and why == "macd_curl", why
+
+
+def test_the_threshold_is_configurable(monkeypatch):
+    cfg = {"ai_exit_macd_liquidate": True}
+    monkeypatch.setattr(cp, "_cfg_flag", lambda k, d=False: bool(cfg.get(k, d)))
+    monkeypatch.setattr(cp, "_cfg_all",
+                        lambda: {"ai_exit_macd_hard_sell_sep": 0.5})
+    _wire(monkeypatch, macd_gap=0.003, macd_sep_ratio=0.8,
+          macd_gap_falling=True, **_RT)
+    # 0.8 is no longer under the bar, so it is not the hard sell.
+    assert cp.macd_thesis_broken("AAA", {})[1] != "macd_thin_and_closing"
+
+
+def test_a_missing_ratio_cannot_hard_sell(monkeypatch):
+    """Absence is not a pass — an unmeasurable separation is not a thin one."""
+    _on(monkeypatch)
+    _wire(monkeypatch, macd_gap=0.003, macd_gap_falling=True, **_RT)
+    assert cp.macd_thesis_broken("AAA", {})[1] != "macd_thin_and_closing"
+
+
+def test_the_hard_sell_outranks_min_hold_but_the_curl_does_not():
+    """Source-pinned: the exemption must name this reason specifically, or it
+    silently exempts every MACD exit including the ordinary curl."""
+    src = (_ROOT / "ai_positions.py").read_text(encoding="utf-8")
+    i = src.index("_macd_held = (")
+    body = src[i:i + 420]
+    assert '_macd_why != "macd_thin_and_closing"' in body
+    assert "soft_exit_held_back(pos, now)" in body
+
+
+def test_the_threshold_reaches_the_live_config():
+    import config
+    assert "ai_exit_macd_hard_sell_sep" in config.load_config()
