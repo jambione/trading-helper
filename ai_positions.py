@@ -2806,6 +2806,64 @@ def _shelf_under_print(loc: float | None, last: float | None,
     return under if 0 < under < last else loc
 
 
+DEFAULT_STRANDED_CLOSE_SEC = 30.0
+
+
+def unstrand_failed_close(ticker: str, pos: dict, now: float | None = None) -> bool:
+    """Clear a ``closing_reason`` whose close never actually happened.
+
+    Every exit path sets ``closing_reason`` and THEN calls close_out. When the
+    broker call returns no order id the position is still open, still held,
+    and permanently flagged as closing — and because apply_local_trail skips
+    any position carrying that flag, its ratchet is switched off for the life
+    of the trade.
+
+    Observed 2026-08-27: IOVA carried ``closing_reason='stale_data'`` with
+    ``close_order_id=None`` for the better part of an hour, holding a shelf of
+    8.1537 against its own 8.19 fill while price traded at 8.27. Not lagging —
+    disabled. The operator read it as "the ratchet never moves", which is
+    exactly what it looks like from outside.
+
+    Clearing the flag returns the position to management and lets the exit
+    fire again on the next evaluation, which is the right outcome: whatever
+    made it want to close is still true, and if it is not, it should not be
+    closing anyway. Delayed by ``ai_stranded_close_sec`` so a close that is
+    merely in flight is not interrupted.
+
+    Returns True when a flag was cleared.
+    """
+    if not isinstance(pos, dict):
+        return False
+    reason = str(pos.get("closing_reason") or "").strip()
+    if not reason or pos.get("close_order_id"):
+        return False
+    now = time.time() if now is None else float(now)
+    try:
+        wait = float(_cfg_all().get(
+            "ai_stranded_close_sec", DEFAULT_STRANDED_CLOSE_SEC) or 0.0)
+    except (TypeError, ValueError):
+        wait = DEFAULT_STRANDED_CLOSE_SEC
+    if wait <= 0:
+        return False
+    since = _num(pos.get("closing_since"))
+    if since is None:
+        # First sighting. Stamped here rather than at the ten sites that set
+        # closing_reason, so a new exit path cannot forget to do it.
+        pos["closing_since"] = now
+        return False
+    if now - float(since) < wait:
+        return False
+    pos.pop("closing_reason", None)
+    pos.pop("closing_since", None)
+    log_event(
+        "stranded_close_cleared", symbol=ticker, was=reason,
+        stranded_sec=round(now - float(since), 1),
+        local_stop=_num(pos.get("local_stop_price")),
+        entry=_num(pos.get("entry_price")),
+    )
+    return True
+
+
 _SHELF_TRACE_TS: dict[str, float] = {}
 
 
@@ -2871,14 +2929,21 @@ def apply_local_trail(
     except Exception:
         pass
 
-    if not (
-        pos.get("entry_confirmed")
-        and not pos.get("closing_reason")
-        and _cfg_flag("ai_local_trail_enabled", True)
-    ):
+    if not (pos.get("entry_confirmed")
+            and _cfg_flag("ai_local_trail_enabled", True)):
         return False, False
 
     changed = False
+    if pos.get("closing_reason"):
+        # A position on its way out must not SELL again from here — that is
+        # the close's job and a second close_out would be a duplicate order.
+        # But it must keep RAISING. Protection that switches itself off the
+        # moment an exit is attempted is protection that vanishes exactly when
+        # the close fails, which is the one case it was needed for.
+        if unstrand_failed_close(ticker, pos):
+            changed = True
+        else:
+            raise_only = True
     last = _num(pos.get("last_seen_price"))
     floor = _orig_stop(pos)
     loc = _num(pos.get("local_stop_price"))

@@ -822,6 +822,11 @@ DEFAULT_CONFIG = {
     # Shelf trace: one log line per symbol per N seconds showing want vs the
     # stored shelf and whether the raise fired. Diagnostic only; 0 = off.
     "ai_shelf_trace_sec":              0.0,
+    # A position flagged closing whose close returned no order id is stranded:
+    # still open, still held, and skipped by the ratchet. Clear the flag after
+    # this many seconds so it returns to management and the exit retries.
+    # 0 = never clear (the old behaviour, which strands it forever).
+    "ai_stranded_close_sec":           30.0,
     # Let the signal outrank min-hold. Off: a thesis break is a better reason
     # than a 6c wiggle, but still not a reason to sell 40s after buying.
     "ai_exit_macd_liquidate_ignore_hold": False,
@@ -1414,6 +1419,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
     "ai_shelf_trace_sec",
+    "ai_stranded_close_sec",
     "ai_exit_macd_liquidate_ignore_hold",
     "ai_exit_macd_curl_px",
     "ai_exit_macd_curl_on_falling",
