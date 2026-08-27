@@ -570,13 +570,16 @@ function _bookSortHeaders() {
   return document.querySelectorAll('.ai-book-table-header [data-book-sort-col]');
 }
 
+/** Same indicator the Scan tables use — _updateSortHeaders appends " ↑"/" ↓"
+ *  to the label and flags .th--sorted for the accent colour. Reused rather
+ *  than reimplemented so the two tables cannot drift apart: one arrow glyph,
+ *  one highlight rule, one place to change either. */
 function _paintBookSortHeaders() {
+  const map = {};
+  _bookSortHeaders().forEach(h => { map[h.dataset.bookSortCol] = h; });
+  _updateSortHeaders(map, _bookSort.col, _bookSort.dir);
   _bookSortHeaders().forEach(h => {
-    const on = _bookSort.col === h.dataset.bookSortCol;
-    h.classList.toggle('is-sorted', on);
-    h.classList.toggle('sort-asc', on && _bookSort.dir > 0);
-    h.classList.toggle('sort-desc', on && _bookSort.dir < 0);
-    h.setAttribute('aria-sort', on
+    h.setAttribute('aria-sort', _bookSort.col === h.dataset.bookSortCol
       ? (_bookSort.dir > 0 ? 'ascending' : 'descending')
       : 'none');
   });

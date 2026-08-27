@@ -2351,38 +2351,25 @@ body.mobile .icon-btn {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-/* Sortable book headers. The caret is a ::after on the header itself so it
-   cannot change the cell's width and knock the tracks out of line with the
-   rows — the alignment bug this column set has had twice already. It sits in
-   the padding by absolute positioning for the same reason. */
+/* Sortable book headers — deliberately identical to the Scan tables above
+   (.th[data-sort-col]): pointer, accent on hover, and .th--sorted carries the
+   accent colour for the active column. The arrow itself is appended to the
+   label text by _updateSortHeaders, the same function Scan uses, so the two
+   tables share one glyph and one highlight rule.
+
+   Safe inline here because every book track is minmax(<px>, <fr>) — an
+   explicit pixel minimum, so header text cannot widen a column and pull it
+   off its values, which is the alignment bug this table has had twice. */
 .panel-ai-watch .ai-book-table-header .th[data-book-sort-col] {
-  position: relative;
   cursor: pointer;
   user-select: none;
+  transition: color 0.18s;
 }
 .panel-ai-watch .ai-book-table-header .th[data-book-sort-col]:hover,
 .panel-ai-watch .ai-book-table-header .th[data-book-sort-col]:focus-visible {
-  color: #ede9fe;
+  color: var(--accent);
   outline: none;
 }
-.panel-ai-watch .ai-book-table-header .th[data-book-sort-col].is-sorted {
-  color: #ede9fe;
-}
-.panel-ai-watch .ai-book-table-header .th.is-sorted::after {
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  font-size: 8px;
-  line-height: 1;
-  letter-spacing: 0;
-  color: var(--accent, #6ea8fe);
-  pointer-events: none;
-}
-.panel-ai-watch .ai-book-table-header .th.is-sorted.sort-desc::after { content: "▾"; }
-.panel-ai-watch .ai-book-table-header .th.is-sorted.sort-asc::after  { content: "▴"; }
-.panel-ai-watch .ai-book-table-header .th-ticker.is-sorted::after { text-align: left; }
-.panel-ai-watch .ai-book-table-header .th-state.is-sorted::after { text-align: center; }
 
 .panel-ai-watch .ai-book-table-header .th-ticker { text-align: left; }
 .panel-ai-watch .ai-book-table-header .th-state { text-align: center; }

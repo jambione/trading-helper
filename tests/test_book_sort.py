@@ -80,13 +80,35 @@ def test_every_column_header_aligns_with_its_values():
     assert not bad, "header/value alignment mismatch — " + "; ".join(bad)
 
 
-def test_the_sort_caret_cannot_change_a_header_width():
-    """An inline caret would widen the header and knock the tracks out of
-    line with the rows, which is the alignment bug arriving by a new road."""
-    i = _CSS.index(".ai-book-table-header .th.is-sorted::after")
-    body = _CSS[i:_CSS.index("}", i)]
-    assert "position: absolute" in body, "caret must leave the flow"
-    assert "pointer-events: none" in body, "caret must not eat the click"
+def test_the_sort_indicator_matches_the_scan_tables():
+    """The operator asked for the book's sort to look like Scan's. It does so
+    by REUSING _updateSortHeaders rather than by copying its output, so the
+    two tables cannot drift into two different arrows."""
+    i = _JS.index("function _paintBookSortHeaders")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "_updateSortHeaders(map, _bookSort.col, _bookSort.dir)" in body
+    # And that shared function is the one Scan uses: inline arrow + .th--sorted.
+    j = _JS.index("function _updateSortHeaders")
+    shared = _JS[j:_JS.index("\n}", j)]
+    assert "' ↑'" in shared and "' ↓'" in shared
+    assert "th--sorted" in shared
+
+
+def test_the_book_tracks_have_pixel_minimums():
+    """Why an inline arrow is safe here. If any book track were sized by its
+    content, a longer header ("MACD GAP ↑") would widen the column and pull it
+    off its values — the alignment bug arriving by a new road."""
+    # Anchored at line start: the bare selector defines the tracks. Several
+    # descendant rules (.ai-book-table-header .feed-cols--ai-book, the mobile
+    # override) match as substrings and carry no track list.
+    i = _CSS.index("\n.feed-cols--ai-book {")
+    block = _CSS[i:_CSS.index("}", i)]
+    tracks = re.findall(r"minmax\(([^,]+),", block)
+    assert len(tracks) == 8, f"expected 8 tracks, found {len(tracks)}"
+    for t in tracks:
+        t = t.strip()
+        assert re.fullmatch(r"\d+(\.\d+)?(px|rem)", t), (
+            f"track min '{t}' is not a fixed length; header text could resize it")
 
 
 # ── the headers are wired ────────────────────────────────────────────────
