@@ -314,6 +314,7 @@
   "ai_watch_open_seed_min_pct": 0.0,
   "ai_exit_min_hold_sec": 300,
   "ai_exit_macd_liquidate": true,
+  "ai_shelf_trace_sec": 10.0,
   "ai_watch_ob_allow_flat_when_macd_armed": true,
   "ai_entry_order_style": "limit",
   "ai_entry_limit_anchor": "ask",

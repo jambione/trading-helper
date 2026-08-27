@@ -819,6 +819,9 @@ DEFAULT_CONFIG = {
     # clear; falling on top of that is small and shrinking. Bypasses min-hold
     # on its own, without exempting the ordinary curl.
     "ai_exit_macd_hard_sell_sep":      1.0,
+    # Shelf trace: one log line per symbol per N seconds showing want vs the
+    # stored shelf and whether the raise fired. Diagnostic only; 0 = off.
+    "ai_shelf_trace_sec":              0.0,
     # Let the signal outrank min-hold. Off: a thesis break is a better reason
     # than a 6c wiggle, but still not a reason to sell 40s after buying.
     "ai_exit_macd_liquidate_ignore_hold": False,
@@ -1410,6 +1413,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_macd_curl_tighten",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
+    "ai_shelf_trace_sec",
     "ai_exit_macd_liquidate_ignore_hold",
     "ai_exit_macd_curl_px",
     "ai_exit_macd_curl_on_falling",

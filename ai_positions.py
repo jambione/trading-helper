@@ -2806,6 +2806,29 @@ def _shelf_under_print(loc: float | None, last: float | None,
     return under if 0 < under < last else loc
 
 
+_SHELF_TRACE_TS: dict[str, float] = {}
+
+
+def _shelf_trace_due(ticker: str) -> bool:
+    """Rate-limit the shelf trace to one line per symbol per interval.
+
+    ai_shelf_trace_sec <= 0 turns it off. Diagnostic only — nothing reads
+    this, and it must never be able to change what the shelf decides.
+    """
+    try:
+        every = float(_cfg_all().get("ai_shelf_trace_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if every <= 0:
+        return False
+    key = str(ticker or "").upper()
+    now = time.time()
+    if now - _SHELF_TRACE_TS.get(key, 0.0) < every:
+        return False
+    _SHELF_TRACE_TS[key] = now
+    return True
+
+
 def apply_local_trail(
     ticker: str,
     pos: dict[str, Any],
@@ -2907,6 +2930,32 @@ def apply_local_trail(
 
     want = local_profit_stop(pos, _cfg_all())
     prev_local = _num(pos.get("local_stop_price"))
+
+    # Why did the shelf not move? 2026-08-27: IOVA held 8.1537 for a quarter
+    # of an hour while local_profit_stop returned 8.20865 for the same
+    # position dict, the same config, called standalone — and the raise below
+    # still did not fire. Every static explanation was ruled out (config
+    # drift, the h4/late-hold bypass, a second writer, the sell branch), so
+    # the next move is to stop reasoning and read the two numbers this
+    # comparison actually sees, in the running process, on the tick itself.
+    #
+    # Throttled per symbol: this sits in the 0.25s tick and an unthrottled
+    # line here would bury the log it is meant to produce.
+    if _shelf_trace_due(ticker):
+        log_event(
+            "shelf_trace", symbol=ticker,
+            want=want, prev=prev_local,
+            would_raise=bool(want is not None and (
+                prev_local is None or want > prev_local + 1e-9)),
+            raise_only=bool(raise_only),
+            last_seen=_num(pos.get("last_seen_price")),
+            ring_last=_trail_last_for_stop(pos),
+            mfe_r=_num(pos.get("mfe_r")),
+            entry=_num(pos.get("entry_price")),
+            risk=_risk_basis(pos),
+            floor=floor, loc=loc, seed=seed,
+        )
+
     if want is not None and (
         prev_local is None or want > prev_local + 1e-9
     ):
