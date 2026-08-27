@@ -1919,8 +1919,23 @@ class SignalEngine:
                 if lt is not None:
                     _px, _ts_ms = lt
                     row["rt_price"] = round(float(_px), 4)
-                    row["rt_price_age_sec"] = round(
-                        max(0.0, (_now_ms - float(_ts_ms)) / 1000.0), 2)
+                    _age = max(0.0, (_now_ms - float(_ts_ms)) / 1000.0)
+                    row["rt_price_age_sec"] = round(_age, 2)
+                    # bars_age_sec is the SAME clock, but proximity_state()
+                    # hands out the value cached on the TickerState at bar
+                    # evaluation, republished unchanged on every write — so it
+                    # reports the age as of the last eval, not as of now, and
+                    # it only ever understates. It becomes macd_age_sec, which
+                    # is what the MACD staleness guard reads.
+                    #
+                    # Measured 2026-08-27 mid-session, same file, same write:
+                    # VNCE published bars_age_sec 0.5s against a trade 639s
+                    # old; GRRR 1.1s against 41.8s. Harmless only because
+                    # ai_watch_macd_max_age_sec is 0 today — the moment that
+                    # ceiling is set it would be read off a number that
+                    # understates by three orders of magnitude.
+                    if str(row.get("bars_src") or "") == "realtime":
+                        row["bars_age_sec"] = round(_age, 1)
                 else:
                     row["rt_price"] = None
                     row["rt_price_age_sec"] = None

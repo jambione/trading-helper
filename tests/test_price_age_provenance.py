@@ -25,6 +25,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
+import ai_entry_watch as ew  # noqa: E402
 import finnhub_stream as fs  # noqa: E402
 
 
@@ -154,3 +155,53 @@ def test_the_dashboard_poll_passes_the_stamp_through():
     assert 'q.get("t")' in body, "the quote's own time must be read"
     assert "timestamp=q_ms" in body, "and handed to update_price"
     assert "1000" in body, "seconds -> milliseconds"
+
+
+# ── the ceiling the operator set must be the ceiling that is enforced ───────
+#
+# 2026-08-27. ai_watch_decision_max_age_sec was raised to 30.0 on 8/26 and
+# never took effect: every production caller of _row_tape_stale passes no cfg
+# (_poller_blocked, derive_blocker and apply_tape_blocker have none in scope),
+# and decision_max_age_sec resolved `(cfg or {})` straight to its 8.0 literal.
+# Mid-session that day the gate age ran p50 14.0s — 8s admitted 41.7% of rows
+# where 30s admits 58.3%, so a sixth of the book was refused as "stale quote"
+# against a ceiling nobody had chosen.
+
+def test_an_explicit_cfg_still_wins():
+    assert ew.decision_max_age_sec({"ai_watch_decision_max_age_sec": 12.0}) == 12.0
+
+
+def test_none_means_look_it_up_not_use_the_default(monkeypatch):
+    """The whole bug in one assertion: cfg=None must consult the live config,
+    because that is what every real caller passes."""
+    monkeypatch.setattr(
+        ew, "_push_cfg", lambda: {"ai_watch_decision_max_age_sec": 30.0})
+    assert ew.decision_max_age_sec(None) == 30.0
+
+
+def test_the_guard_honours_the_looked_up_ceiling(monkeypatch):
+    """End to end through the function the callers actually use. A 17.9s tape
+    (PPCB, observed) is stale at 8s and fresh at 30s."""
+    monkeypatch.setattr(
+        ew, "_push_cfg", lambda: {"ai_watch_decision_max_age_sec": 30.0})
+    rec = {"last_ask_src": "stream", "last_ask_age_sec": 17.9}
+    assert ew._row_tape_stale(rec) is False
+
+    monkeypatch.setattr(
+        ew, "_push_cfg", lambda: {"ai_watch_decision_max_age_sec": 8.0})
+    assert ew._row_tape_stale(rec) is True
+
+
+def test_an_unreadable_config_still_falls_back(monkeypatch):
+    """A config that cannot be loaded must not crash the gate — and must not
+    silently admit everything either."""
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {})
+    assert ew.decision_max_age_sec(None) == 8.0
+
+
+def test_absence_is_still_not_a_pass(monkeypatch):
+    """Unchanged behaviour, re-pinned beside the ceiling change: a tape whose
+    age cannot be proven is stale at any ceiling."""
+    monkeypatch.setattr(
+        ew, "_push_cfg", lambda: {"ai_watch_decision_max_age_sec": 30.0})
+    assert ew._row_tape_stale({"last_ask_src": "rest"}) is True

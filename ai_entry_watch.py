@@ -3182,6 +3182,21 @@ def stream_quote(symbol: str) -> tuple[float, float] | None:
 
 
 def decision_max_age_sec(cfg: dict | None) -> float:
+    """The tape-age ceiling, in seconds.
+
+    cfg=None means "look it up", NOT "use the default". Every production
+    caller of _row_tape_stale passes no cfg — _poller_blocked, derive_blocker
+    and apply_tape_blocker have none in scope — so `(cfg or {})` silently
+    resolved the operator's setting to the 8.0 literal. The knob was raised to
+    30.0 in bot_config.json on 8/26 and never took effect anywhere.
+
+    Cost, measured 2026-08-27 mid-session: gate age ran p50 14.0s, so 8s
+    admitted 41.7% of rows where 30s admits 58.3%. A sixth of the book was
+    being refused as "stale quote" against a ceiling nobody had chosen.
+    load_config() is stamp-cached, so this is a stat() on the hot path.
+    """
+    if cfg is None:
+        cfg = _push_cfg()
     try:
         v = float((cfg or {}).get("ai_watch_decision_max_age_sec", 8.0) or 8.0)
     except (TypeError, ValueError):

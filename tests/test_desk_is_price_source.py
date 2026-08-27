@@ -181,3 +181,31 @@ def test_freshest_prices_still_accepts_three_sources():
                             {"B": (2.0, now - 8, now - 8)},
                             {"C": (3.0, now - 7, now - 7)})
     assert set(got) == {"A", "B", "C"}
+
+
+# ── bars_age_sec must be the age NOW, not the age at bar evaluation ─────────
+
+def test_the_engine_recomputes_bars_age_at_write_time():
+    """proximity_state() hands out the value cached on the TickerState when
+    the bar was last evaluated, and the writer republishes it unchanged — so
+    it reports the age as of that eval and only ever understates. It becomes
+    macd_age_sec, which is what the MACD staleness guard reads.
+
+    Observed 2026-08-27 mid-session, one file, one write: VNCE published
+    bars_age_sec 0.5s against a trade 639s old; GRRR 1.1s against 41.8s.
+    """
+    src = (_ROOT / "signal_engine.py").read_text(encoding="utf-8")
+    i = src.index("def _write_signal_state")
+    body = src[i:src.index("SIGNAL_STATE_FILE.write_text", i)]
+    assert 'row["bars_age_sec"] = round(_age, 1)' in body
+    # Same clock as the price, or the two disagree about the newest print.
+    assert "_age = max(0.0, (_now_ms - float(_ts_ms)) / 1000.0)" in body
+
+
+def test_only_the_realtime_pipe_gets_its_age_rewritten():
+    """A REST-fallback row has no trade clock here; overwriting its age with
+    the aggregator's would date an Alpaca bar by a Finnhub print."""
+    src = (_ROOT / "signal_engine.py").read_text(encoding="utf-8")
+    i = src.index('row["bars_age_sec"] = round(_age, 1)')
+    guard = src[i - 200:i]
+    assert 'bars_src' in guard and '"realtime"' in guard
