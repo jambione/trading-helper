@@ -315,6 +315,6 @@
   "ai_exit_min_hold_sec": 300,
   "ai_exit_macd_liquidate": true,
   "ai_entry_order_style": "limit",
-  "ai_entry_limit_anchor": "mid",
+  "ai_entry_limit_anchor": "ask",
   "ai_entry_limit_ttl_sec": 30.0
 }
