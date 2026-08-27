@@ -575,6 +575,10 @@ DEFAULT_CONFIG = {
     # were the only structurally unreachable ones. A FALLING %R is still
     # refused, so a top that has rolled over cannot get in this way.
     "ai_watch_ob_allow_flat_when_macd_armed": False,
+    # Round RVOL into buckets before ranking entry candidates, so EXH and
+    # MACD trend decide between names the tape is treating alike. 0 = exact
+    # RVOL ordering, which leaves the signal legs almost never consulted.
+    "ai_watch_rank_rvol_band":         0.0,
     # False: cooling EXH refuses even at last / in-zone. Last-mode still
     # buys rising or pinned-OB names above the old pullback band.
     "ai_watch_in_zone_ignore_fade":  False,
@@ -1167,6 +1171,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_ob_allow_hot",
     "ai_watch_ob_allow_flat_when_macd_armed",
+    "ai_watch_rank_rvol_band",
     "ai_watch_zone_exh_window_sec",
     "ai_trading_source",
     "ai_trade_style",

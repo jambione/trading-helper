@@ -8365,7 +8365,19 @@ def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
 
 
 def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
-    """Watch records, strongest relative volume first.
+    """Watch records, strongest relative volume first, then the best setup.
+
+    RVOL leads, as the operator asked. ``_signal_rank`` (EXH and MACD gap,
+    both trending) breaks ties beneath it — so among names the tape is
+    treating alike, the seat goes to the one whose own signal has turned
+    rather than to whichever the loop reached first.
+
+    RVOL is a float and two names essentially never tie on it exactly, so
+    ``ai_watch_rank_rvol_band`` rounds it into buckets first: at 0.5 a 3.4x
+    and a 3.2x are one group and the signal decides between them. At 0 (the
+    default) the volume ordering is exact and the signal legs will almost
+    never get a say — which is the honest cost of ranking a continuous
+    measure first.
 
     Seats are scarce — ``ai_max_buys_per_poll`` is 1 and the book holds two on
     a small account — but the poll walked ``state.items()``, which is the order
@@ -8387,12 +8399,90 @@ def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
     blocker rows are unchanged — this decides who gets the seat, not who is
     looked at.
     """
-    def rank(item: tuple[str, Any]) -> tuple[int, float]:
+    band = _rank_rvol_band()
+
+    def rank(item: tuple[str, Any]) -> tuple[int, float, int, float]:
         rec = item[1] if isinstance(item[1], dict) else {}
         v = _rank_rvol(rec, live_lookup)
-        return (1, 0.0) if v is None else (0, -v)
+        tier, strength = _signal_rank(rec)
+        if v is None:
+            return (1, 0.0, tier, -strength)
+        # Banding is what lets the signal legs matter at all. RVOL is a float,
+        # so two names essentially never tie on it exactly — ranked raw, the
+        # volume term decides every contest and EXH/MACD never get a say.
+        # Rounding to a band makes 3.4x and 3.2x one group, ordered by which
+        # setup is actually turning. band = 0 keeps the raw ordering.
+        keyed = -v if band <= 0 else -(int(v / band) * band)
+        return (0, keyed, tier, -strength)
 
     return sorted(list(state.items()), key=rank)
+
+
+def _rank_rvol_band() -> float:
+    """Width of the RVOL bucket used for ranking, in multiples. 0 = exact."""
+    try:
+        return max(0.0, float(
+            (_push_cfg() or {}).get("ai_watch_rank_rvol_band", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# How wide a separation still counts as "more". Beyond a few standard
+# deviations the gap is not meaningfully better, and letting it run unbounded
+# would let one enormous ratio outrank a name that is better on both legs.
+_SEP_CAP = 4.0
+
+
+def _signal_rank(rec: dict) -> tuple[int, float]:
+    """(tier, strength) for one candidate — lower tier wins, higher strength.
+
+    Seats are scarce: ai_max_buys_per_poll is 1, so when several names qualify
+    in the same poll exactly one gets the trade. Ranking by RVOL alone gave
+    the seat to the busiest name rather than the best setup — volume says a
+    name is being traded, not that its own signal has turned.
+
+    The operator's rule: the seat goes to the strongest EXH and MACD gap that
+    are TRENDING. So direction is the tier and size is the tiebreak, in that
+    order — a small gap that is opening beats a wide one that is closing,
+    because the wide one is a move already over.
+
+        0  both MACD gap and %R rising   the confluence, the best evidence
+        1  MACD gap rising               the entry lever turning on its own
+        2  %R rising                     supporting only
+        3  neither, or unreadable        no direction to trade
+
+    Strength inside a tier is the MACD separation in standard deviations of
+    its own histogram (capped) plus %R as a fraction of its range, so a name
+    that is better on both legs outranks one that is better on either. A
+    reading that cannot be had scores 0 rather than being guessed at, which
+    sorts it behind anything measurable in the same tier — unknown is not
+    strong, the same rule _rank_rvol already applies.
+
+    Ordering only. Every record is still evaluated and every gate still runs;
+    this decides who is offered the seat first, never whether it is allowed.
+    """
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+
+    macd_up = bool(ind.get("macd_gap_rising"))
+    exh_up = bool(ind.get("pctr_rising"))
+    if macd_up and exh_up:
+        tier = 0
+    elif macd_up:
+        tier = 1
+    elif exh_up:
+        tier = 2
+    else:
+        tier = 3
+
+    strength = 0.0
+    sep = _f_or_none(ind.get("macd_sep_ratio"))
+    if sep is not None and sep > 0:
+        strength += min(float(sep), _SEP_CAP)
+    ex = exhaustion_pct(rec)
+    if ex is not None:
+        strength += max(0.0, min(100.0, float(ex))) / 100.0
+    return tier, strength
 
 
 def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
