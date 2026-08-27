@@ -579,6 +579,12 @@ DEFAULT_CONFIG = {
     # MACD trend decide between names the tape is treating alike. 0 = exact
     # RVOL ordering, which leaves the signal legs almost never consulted.
     "ai_watch_rank_rvol_band":         0.0,
+    # Rank entry candidates by how far they are actually MOVING first, in
+    # percent, bucketed to this width. The one seat per poll should go to a
+    # name that travels: the shelf trails 0.25% behind price, so a trade whose
+    # whole move is 0.2% cannot finish above its own fill. RVOL does not
+    # measure that. 0 = off, leaving RVOL to lead.
+    "ai_watch_rank_move_band":         0.0,
     # False: cooling EXH refuses even at last / in-zone. Last-mode still
     # buys rising or pinned-OB names above the old pullback band.
     "ai_watch_in_zone_ignore_fade":  False,
@@ -1172,6 +1178,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_ob_allow_hot",
     "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_rank_rvol_band",
+    "ai_watch_rank_move_band",
     "ai_watch_zone_exh_window_sec",
     "ai_trading_source",
     "ai_trade_style",

@@ -138,3 +138,82 @@ def test_every_record_survives_the_sort():
     evaluated. A dropped record would silently stop being gated at all."""
     state = {f"S{i}": _rec(f"S{i}", sep=i * 0.1) for i in range(12)}
     assert len(ew.rvol_ranked(state)) == 12
+
+
+# ── the move leads: spend the seat on a name that is travelling ────────────
+#
+# The purpose of ranking at all. The shelf trails 0.25% behind price, so a
+# trade whose whole move is 0.2% cannot finish above its own fill however well
+# it is managed. RVOL does not measure that — a heavily traded name that goes
+# nowhere has high RVOL too. The one profitable session on record (08-24)
+# differed from every other day in exactly one respect: median peak +0.95%
+# against +0.12% to +0.31% everywhere else.
+
+def _mv(sym, move, rvol, **ind):
+    return {"symbol": sym, "pct_change": move, "rvol": rvol, "indicator": ind}
+
+
+def _order_mv(*recs, move_band=2.0, rvol_band=0.5):
+    om, orv = ew._rank_move_band, ew._rank_rvol_band
+    odp, odr = ew._desk_pct_change, ew._desk_rvol
+    ew._rank_move_band = lambda: move_band
+    ew._rank_rvol_band = lambda: rvol_band
+    ew._desk_pct_change = lambda s: None      # offline: use the stamp
+    ew._desk_rvol = lambda s: None
+    try:
+        return [s for s, _ in ew.rvol_ranked({r["symbol"]: r for r in recs})]
+    finally:
+        ew._rank_move_band, ew._rank_rvol_band = om, orv
+        ew._desk_pct_change, ew._desk_rvol = odp, odr
+
+
+def test_the_bigger_mover_takes_the_seat_over_the_busier_name():
+    runner = _mv("RUNNER", 12.4, 1.2, macd_gap_rising=True, macd_sep_ratio=1.4)
+    busy = _mv("BUSY", 1.1, 8.9)
+    assert _order_mv(busy, runner)[0] == "RUNNER"
+
+
+def test_a_huge_rvol_on_a_name_going_nowhere_sorts_behind():
+    """The failure mode this exists to stop."""
+    stuck = _mv("STUCK", 0.9, 9.9, macd_gap_rising=True, pctr_rising=True,
+                macd_sep_ratio=3.0)
+    moving = _mv("MOVING", 8.0, 1.0)
+    assert _order_mv(stuck, moving)[0] == "MOVING"
+
+
+def test_direction_of_the_move_does_not_matter_for_ranking():
+    """A big move is a big move; whether it is tradeable is what the GATES
+    decide, and they run regardless of this ordering."""
+    assert ew._rank_move({"symbol": "A", "pct_change": -9.0}) == 9.0
+
+
+def test_live_pct_change_beats_the_admit_stamp():
+    """Same live-before-stale rule as RVOL: a name can stop moving between
+    admission and the poll that would buy it."""
+    odp = ew._desk_pct_change
+    ew._desk_pct_change = lambda s: 3.0
+    try:
+        assert ew._rank_move({"symbol": "A", "admit_pct_change": 30.0}) == 3.0
+    finally:
+        ew._desk_pct_change = odp
+
+
+def test_rvol_still_breaks_ties_inside_a_move_bucket():
+    a = _mv("A", 10.2, 1.0)
+    b = _mv("B", 10.4, 7.0)
+    assert _order_mv(a, b, move_band=5.0)[0] == "B"
+
+
+def test_a_name_with_no_move_reading_sorts_last():
+    known = _mv("KNOWN", 4.0, 1.0)
+    blank = {"symbol": "BLANK", "rvol": 9.9,
+             "indicator": {"macd_gap_rising": True, "pctr_rising": True}}
+    assert _order_mv(known, blank)[-1] == "BLANK"
+
+
+def test_zero_band_restores_rvol_first_ordering():
+    """The knob is a switch, not a tuning: 0 gives back exactly the previous
+    behaviour, so this can be turned off without a deploy."""
+    runner = _mv("RUNNER", 12.4, 1.2)
+    busy = _mv("BUSY", 1.1, 8.9)
+    assert _order_mv(busy, runner, move_band=0.0)[0] == "BUSY"

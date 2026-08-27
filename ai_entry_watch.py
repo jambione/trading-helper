@@ -7517,6 +7517,28 @@ def _arm_rvol(record: dict) -> float | None:
     return None
 
 
+def _desk_pct_change(symbol: str) -> float | None:
+    """Live percent change off the dashboard row, if the desk has one.
+
+    Mirrors _desk_rvol and reads the same cached row, so ranking on the move
+    costs no extra quote call.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    try:
+        for r in _dashboard_tickers():
+            if not isinstance(r, dict):
+                continue
+            key = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+            if key != sym:
+                continue
+            return _f_or_none(r.get("pct_change"))
+    except Exception:
+        return None
+    return None
+
+
 def _desk_rvol(symbol: str) -> float | None:
     """Live RVOL off the dashboard row, if the desk has one."""
     sym = str(symbol or "").upper().strip()
@@ -8400,22 +8422,71 @@ def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
     looked at.
     """
     band = _rank_rvol_band()
+    move_band = _rank_move_band()
 
-    def rank(item: tuple[str, Any]) -> tuple[int, float, int, float]:
+    def _bucket(v: float, width: float) -> float:
+        return -v if width <= 0 else -(int(v / width) * width)
+
+    def rank(item: tuple[str, Any]) -> tuple:
         rec = item[1] if isinstance(item[1], dict) else {}
-        v = _rank_rvol(rec, live_lookup)
         tier, strength = _signal_rank(rec)
-        if v is None:
-            return (1, 0.0, tier, -strength)
-        # Banding is what lets the signal legs matter at all. RVOL is a float,
-        # so two names essentially never tie on it exactly — ranked raw, the
-        # volume term decides every contest and EXH/MACD never get a say.
-        # Rounding to a band makes 3.4x and 3.2x one group, ordered by which
-        # setup is actually turning. band = 0 keeps the raw ordering.
-        keyed = -v if band <= 0 else -(int(v / band) * band)
-        return (0, keyed, tier, -strength)
+        v = _rank_rvol(rec, live_lookup)
+        rv = (1, 0.0) if v is None else (0, _bucket(v, band))
+
+        if move_band <= 0:
+            # Move ranking off: RVOL leads, signal breaks ties beneath it.
+            return (rv[0], rv[1], tier, -strength)
+
+        # THE MOVE LEADS. The purpose of ranking at all is to spend the one
+        # seat per poll on a name that is actually travelling: the shelf
+        # trails 0.25% behind price, so a trade whose whole move is 0.2%
+        # cannot finish above its own fill no matter how well it is managed.
+        # RVOL does not measure that — it says a name is being traded hard,
+        # which a heavily traded name that goes nowhere also satisfies. The
+        # profitable session on 08-24 differed from every other day in exactly
+        # one respect: its median peak was +0.95% against +0.12%-+0.31%.
+        #
+        # Banded for the same reason RVOL is: a raw float decides every
+        # contest by itself and nothing beneath it is ever consulted.
+        m = _rank_move(rec)
+        mv = (1, 0.0) if m is None else (0, _bucket(m, move_band))
+        return (mv[0], mv[1], rv[0], rv[1], tier, -strength)
 
     return sorted(list(state.items()), key=rank)
+
+
+def _rank_move(rec: dict) -> float | None:
+    """How far this name has actually travelled today, in percent.
+
+    Live off the dashboard row first, admit-time stamp as the fallback — the
+    same live-before-stale rule _rank_rvol applies, and for the same reason: a
+    name can stop moving between admission and the poll that would buy it.
+
+    Absolute value, because a big move is a big move; direction is what the
+    entry gates are for, and they run regardless of this ordering.
+    """
+    sym = str(rec.get("symbol") or "").upper().strip()
+    vals = []
+    if sym:
+        try:
+            vals.append(_f_or_none(_desk_pct_change(sym)))
+        except Exception:  # noqa: BLE001
+            vals.append(None)
+    vals.append(_f_or_none(rec.get("pct_change")))
+    vals.append(_f_or_none(rec.get("admit_pct_change")))
+    for v in vals:
+        if v is not None:
+            return abs(float(v))
+    return None
+
+
+def _rank_move_band() -> float:
+    """Width of the percent-move bucket used for ranking. 0 = move ranking off."""
+    try:
+        return max(0.0, float(
+            (_push_cfg() or {}).get("ai_watch_rank_move_band", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _rank_rvol_band() -> float:
