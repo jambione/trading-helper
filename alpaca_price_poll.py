@@ -131,10 +131,27 @@ def _poll_once():
                 continue
             if px <= 0:
                 continue
+            # The TRADE's own timestamp, not this poll's read time.
+            #
+            # `now` is identical for every symbol in the batch, so stamping
+            # trades with it told the bar aggregator that a print from twenty
+            # minutes ago had just happened — and that clock is what
+            # rt_price_age_sec, and therefore the dashboard's price merge,
+            # reads. The tell on 2026-08-27: eight symbols publishing the
+            # exact same 0.4s age. Real trade clocks do not line up.
+            #
+            # StockLatestTradeRequest has always returned this; it was simply
+            # dropped on the floor. `now` survives only as a last resort for a
+            # trade with no timestamp at all.
+            t_raw = getattr(tr, "timestamp", None)
+            try:
+                t_unix = t_raw.timestamp() if t_raw is not None else now
+            except (AttributeError, TypeError, ValueError, OSError):
+                t_unix = now
             STATE.update(str(sym).upper(), px, sz)
             for cb in list(_callbacks):
                 try:
-                    cb(str(sym).upper(), px, sz, now)
+                    cb(str(sym).upper(), px, sz, t_unix)
                 except Exception:
                     pass
         STATE.connected = True
