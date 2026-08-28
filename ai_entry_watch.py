@@ -129,6 +129,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "reentry_cooldown": "cooldown",
     "arm_confirming": "confirming",
     "attempt_cap": "3 strikes",
+    "float_too_big": "float",
     # Two different failures wearing one label until now. "stale quote" means
     # the print is provably old; "no quote age" means it cannot be timed at
     # all, which is a plumbing fault rather than a quiet tape and has to be
@@ -931,6 +932,15 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "last_ask": last_ask_f,
             "last_ask_src": rec.get("last_ask_src"),
             "last_ask_age_sec": _f_or_none(rec.get("last_ask_age_sec")),
+            # The age the tape-staleness guard actually reads, published under
+            # the name the rest of the desk uses for it. Without this the book
+            # legend's FRESH row could never be evaluated at all — it went
+            # permanently blank, which reads as "unknown" and was in fact
+            # "never asked". Sixth field to travel this chain.
+            "price_age_sec": _f_or_none(
+                rec.get("price_age_sec")
+                if rec.get("price_age_sec") is not None
+                else rec.get("last_ask_age_sec")),
             "score": score_f,
             # RVOL as measured at admission. The score is a blend whose scale
             # differs per source (momentum ~1000, Stocktwits ~10-20), so it is
@@ -3724,6 +3734,36 @@ def passes_inclusion(
 
     # Long-only: must be up on the day. Research with no print yet abstains
     # (same idea as unknown rvol) so the thesis can sit and get a quote.
+    # FLOAT. Measured over 507 closed trades on 2026-08-28, joining each to
+    # its arm-time features and its own max favourable excursion:
+    #
+    #                    n     medMFE   reached +0.25R
+    #   every trade     507    +0.041        10%
+    #   float < 20M      33    +0.186        45%
+    #   float >= 50M    438    +0.039         8%
+    #
+    # 438 of 507 trades this desk has ever taken were in names over 50M float,
+    # and those names barely move: their median best moment was +0.039R, about
+    # a fifth of a percent of price, against a trail that needs more than that
+    # to clear the fill. Float is the strongest single admission filter found.
+    #
+    # A float we cannot read does NOT refuse — the lookup is a cached Finnhub
+    # profile call and an outage must not empty the book. 0 disables.
+    try:
+        max_float_m = float(cfg.get("ai_watch_max_float_m", 0) or 0)
+    except (TypeError, ValueError):
+        max_float_m = 0.0
+    if max_float_m > 0:
+        try:
+            import float_feed
+            fl = float_feed.float_shares(str(row.get("symbol") or ""))
+        except Exception:  # noqa: BLE001
+            fl = None
+        if fl is not None and fl > max_float_m:
+            return False, met, "float_too_big"
+        if fl is not None:
+            met.append("low_float")
+
     if bool(cfg.get("ai_watch_require_uptrend", True)):
         pct = _pct_change_value(row.get("pct_change"))
         if is_research:

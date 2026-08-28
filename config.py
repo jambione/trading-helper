@@ -456,6 +456,11 @@ DEFAULT_CONFIG = {
     # there?" had no data behind it at all. Writes position_shadow.jsonl.
     "ai_position_shadow_enabled":      True,
     "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
+    # Maximum float in MILLIONS of shares. Finnhub profile2.floatingShare,
+    # cached by float_feed. 0 = no float filter. Measured 2026-08-28: names
+    # over 50M float were 438 of 507 historical trades and reached +0.25R on
+    # 8% of them, against 45% for names under 20M.
+    "ai_watch_max_float_m":         0.0,
     "ai_watch_min_price":               1.0,  # no sub-$1 names
     "ai_watch_admit_ticks":               1,  # consecutive qualifying polls to admit
     # ── Real-time tape pre-filter ───────────────────────────────────────────
@@ -1535,6 +1540,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_arm_min_proximity",
     "ai_watch_min_adx",
     "ai_watch_min_price",
+    "ai_watch_max_float_m",
     "ai_watch_admit_ticks",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",

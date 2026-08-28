@@ -98,6 +98,26 @@ def shares_out(symbol: str) -> float | None:
         return None
 
 
+def float_shares(symbol: str) -> float | None:
+    """Shares outstanding in MILLIONS, or None when unknown. Never raises.
+
+    None is not zero and must not be filtered as though it were: an unknown
+    share count means the name was never looked up, and treating that as
+    "small float" would admit exactly the names we know least about.
+    """
+    try:
+        sym = str(symbol or "").upper().strip()
+        if not sym:
+            return None
+        row = load_cache().get(sym)
+        if not isinstance(row, dict):
+            return None
+        v = row.get("float_m")
+        return float(v) if v is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def is_low_float(symbol: str, max_millions: float = 10.0) -> bool | None:
     """True / False / None-when-unknown. Three states, deliberately.
 
@@ -135,9 +155,22 @@ def _fetch_one(sym: str, key: str, timeout: float = 8.0):
         so = float(so) if so is not None else None
     except (TypeError, ValueError):
         so = None
+    # FLOAT, not shares outstanding. This module has been caching
+    # shareOutstanding and calling the file float_cache.json, which are
+    # different numbers and not by a little: AREN carries 47.6M outstanding
+    # against a 13.12M float, KXIN 1.56M against 1.42M. A low-float screen
+    # run on outstanding shares is not the screen the operator asked for.
+    # Kept alongside rather than replacing it — universe_screen consumes
+    # shares_out today and that is a separate, valid number.
+    fl = d.get("floatingShare")
+    try:
+        fl = float(fl) if fl is not None else None
+    except (TypeError, ValueError):
+        fl = None
     # An empty profile is a real answer for a delisted or unknown ticker.
     # Cache it so we stop asking, but keep shares_out as None rather than 0.
-    return {"shares_out": so, "name": str(d.get("name") or "")[:40],
+    return {"shares_out": so, "float_m": fl,
+            "name": str(d.get("name") or "")[:40],
             "ts": time.time()}
 
 
