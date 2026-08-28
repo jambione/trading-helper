@@ -157,7 +157,15 @@ def fetch_rows(cfg: dict) -> list[dict]:
 
     try:
         import float_feed
-        float_feed.refresh(syms, limit=len(syms), pace_sec=1.1)
+        # Bounded per pass, and paced. Unbounded this blocks the 60s loop for
+        # 1.1s per uncached name — on a morning with 25 fresh movers that is
+        # half a minute of a screener not screening. Whatever is missed reads
+        # None this pass and is picked up on the next one; the cache TTL is a
+        # week, so this converges within a few minutes of the open and then
+        # fetches nothing.
+        float_feed.refresh(syms, limit=int(
+            cfg.get("ai_movers_float_refresh_per_pass", 10) or 10),
+            pace_sec=1.1)
     except Exception:  # noqa: BLE001
         pass
 

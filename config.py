@@ -1048,6 +1048,7 @@ DEFAULT_CONFIG = {
     # $190M of dollar volume on 2026-08-28), not what makes a name unsafe.
     "ai_movers_min_dollar_vol": 1000000.0,
     "ai_movers_max_rows":           25,   # enrich at most this many per pass
+    "ai_movers_float_refresh_per_pass": 10,  # bounded so the loop stays responsive
     "trending_screener_enabled": False,   # launch trending_screener.py
     "stocktwits_poll":           60.0,    # seconds between Stocktwits polls
     "stocktwits_quote_poll":     15.0,
@@ -1650,6 +1651,7 @@ SAFE_CONFIG_KEYS = [
     "ai_movers_max_price",
     "ai_movers_min_dollar_vol",
     "ai_movers_max_rows",
+    "ai_movers_float_refresh_per_pass",
     "stocktwits_max_price",
     "trending_max_price",
     "stocktwits_poll",

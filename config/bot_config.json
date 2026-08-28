@@ -117,6 +117,7 @@
   "grok_request_timeout": 600.0,
   "grok_save_reports": true,
   "trending_screener_enabled": true,
+  "movers_screener_enabled": true,
   "stocktwits_poll": 60.0,
   "stocktwits_quote_poll": 15.0,
   "stocktwits_volume_poll": 60.0,
