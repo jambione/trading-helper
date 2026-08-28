@@ -291,6 +291,12 @@ DEFAULT_CONFIG = {
     # tape and always look wide, so this would block good fills. Turn it on
     # once outcomes.jsonl has real entry_slippage_r to calibrate against.
     "ai_max_spread_r":              0.0,
+    # Above this, a logged spread_r is the IEX quote being wrong rather than a
+    # wide book, and it stops sizing the trail. Measured against SIP on the
+    # 2026-08-28 fills: the artifacts run 30-170x, every real reading 1.3-6x.
+    # See ai_positions.DEFAULT_SPREAD_R_SANE_MAX. 0 = act on whatever the feed
+    # said, which is the behaviour this replaces.
+    "ai_spread_r_sane_max":         0.50,
     "ai_min_dollar_volume":         0.0,    # 0 = off; else require row dollar_volume
     # Entry watch poller (agreement queue + structure TTL / arming)
     "ai_watch_enabled":                 True,   # enable entry-watch queue
@@ -1446,6 +1452,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_arm_below_zone_max_r",
     "ai_watch_min_stop_pct",
     "ai_max_spread_r",
+    "ai_spread_r_sane_max",
     "ai_watch_db_above_pct",
     "ai_watch_db_below_pct",
     "ai_watch_db_stop_below_pct",

@@ -148,6 +148,27 @@ DEFAULT_LOCAL_TRAIL_SPREAD_K = 0.0
 # Cap it: past this, the book is too wide to trade around and the answer is
 # to refuse the entry (ai_max_spread_r), not to widen the shelf.
 DEFAULT_LOCAL_TRAIL_SPREAD_MAX_R = 0.50
+# Above this, the reading is not a wide book — it is the IEX quote being
+# wrong, and it must not size anything. Measured 2026-08-28 against SIP (the
+# NBBO orders actually route to) on the same fills, within 20s of each:
+#
+#   PURR 5.547R logged -> $0.02 = 0.032R actual   172x
+#   ASST 1.368R        -> $0.04 = 0.035R           39x
+#   ASST 1.315R        -> $0.03 = 0.026R           50x
+#   ...every legitimate reading that day        1.3-6x
+#
+# The error is not a scale factor that could be calibrated away — it is 30x
+# to 170x on precisely the names that trip the k floor and 1.3-6x on the
+# rest, so the break is clean and a threshold is the honest instrument. 0.5
+# sits above every real reading observed (worst 0.262R, actual 0.115R) and
+# below every artifact. Same lesson as the volume feeds: the feed IS the
+# calculation, and a number this wrong should be absent rather than acted on.
+#
+# NOT a clamp to the bound: capping the VALUE would change nothing, because
+# DEFAULT_LOCAL_TRAIL_SPREAD_MAX_R already caps the give at 0.5R, so 1.07 and
+# 5.55 already produce an identical shelf. Only absence changes behaviour.
+# 0 disables the check and restores acting on whatever the feed said.
+DEFAULT_SPREAD_R_SANE_MAX = 0.50
 # Breakeven floor may not arm until the trade has cleared this many round
 # trips. 0 = off (shipped). Sibling of the give knob above and the same
 # lesson: be_at_pct is 0.15% of price against a 0.49% book, so the floor
@@ -2449,6 +2470,39 @@ def _pos_spread_r(pos: dict[str, Any] | None) -> float | None:
     return None
 
 
+def _sane_spread_r(
+    spread_r: float | None,
+    cfg: dict | None = None,
+) -> float | None:
+    """The reading, or None when it is too wide to be a real book.
+
+    Applied where the spread SIZES something, not where it is read: the
+    outcome record keeps the raw number so these artifacts stay visible and
+    countable, and every consumer — including ``sim_fill_replay``, which
+    passes a logged ``spread_r`` straight into ``initial_local_stop`` and
+    never touches ``_pos_spread_r`` — goes through here instead.
+
+    See DEFAULT_SPREAD_R_SANE_MAX for the measurement.
+    """
+    try:
+        v = float(spread_r) if spread_r is not None else None
+    except (TypeError, ValueError):
+        return None
+    if v is None or v <= 0:
+        return None
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        bound = float(
+            cfg.get("ai_spread_r_sane_max", DEFAULT_SPREAD_R_SANE_MAX)
+            if cfg.get("ai_spread_r_sane_max") is not None
+            else DEFAULT_SPREAD_R_SANE_MAX)
+    except (TypeError, ValueError):
+        bound = DEFAULT_SPREAD_R_SANE_MAX
+    if bound > 0 and v > bound:
+        return None
+    return v
+
+
 def local_trail_give(
     last: float | None,
     risk: float | None,
@@ -2535,9 +2589,10 @@ def local_trail_give(
                           DEFAULT_LOCAL_TRAIL_SPREAD_K) or 0.0)
     except (TypeError, ValueError):
         k = DEFAULT_LOCAL_TRAIL_SPREAD_K
-    if k > 0 and r > 0 and spread_r is not None:
+    sane = _sane_spread_r(spread_r, cfg)
+    if k > 0 and r > 0 and sane is not None:
         try:
-            sp = float(spread_r)
+            sp = float(sane)
         except (TypeError, ValueError):
             sp = 0.0
         if sp > 0:
@@ -2711,7 +2766,7 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
                                  DEFAULT_BE_AT_SPREAD_K) or 0.0)
         except (TypeError, ValueError):
             be_k = DEFAULT_BE_AT_SPREAD_K
-        sp = _pos_spread_r(pos)
+        sp = _sane_spread_r(_pos_spread_r(pos), cfg)
         if be_k > 0 and sp is not None and sp > 0:
             if float(mfe) + 1e-9 < be_k * sp:
                 be_hit = False

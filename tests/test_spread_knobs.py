@@ -6,6 +6,13 @@ and dangerous on the tail: RTH spread_r runs p90 5.56R
 (tools/spread_coverage.py, 2026-08-17..21). Uncapped, k=1 there parks the
 shelf 5.5R under the peak, which is not a wide stop — it is no stop.
 
+That p90 is no longer believed to be a book. Checked against SIP on
+2026-08-28 (see tests/test_spread_sanity.py), readings of that size are the
+IEX quote being wrong by 30-170x — PURR logged 5.547R against a two-cent
+NBBO. Such a reading is now ABSENT rather than capped, so the cases below
+exercise the cap with spreads small enough to be real; the cap still matters
+whenever k > 1 lifts a genuine book past it.
+
 ``ai_watch_open_seed_min_pct`` exists because ``ai_watch_min_pct_change``
 gates only the big-mover seed while the soft open seed — where most
 admissions come from — had no percent gate at all. Default 0.0 must keep
@@ -51,19 +58,36 @@ def test_spread_floor_does_not_shrink_a_wide_cushion():
 
 
 def test_spread_floor_is_capped_so_it_stays_a_stop():
-    """p90 book (5.56R) must not become a 5.56R cushion."""
-    g = _give(ai_local_trail_give_spread_k=1.0, _spread_r=5.56)
-    assert g == pytest.approx(0.50 * 0.50)   # capped at 0.50R, not 5.56R
-    assert g < 5.56 * 0.50
+    """A real 0.40R book at k=2 asks for 0.80R and must be held to 0.50R.
+
+    Used to be written with the p90 5.56R reading. That input now never
+    reaches the cap — it is refused as an artifact one rule earlier — so the
+    cap needs a spread that is genuinely wide but genuinely possible.
+    """
+    g = _give(ai_local_trail_give_spread_k=2.0, _spread_r=0.40)
+    assert g == pytest.approx(0.50 * 0.50)   # capped at 0.50R, not 0.80R
+    assert g < 0.80 * 0.50
 
 
 def test_cap_is_configurable_and_can_be_disabled():
-    wide = {"ai_local_trail_give_spread_k": 1.0, "_spread_r": 5.56}
+    wide = {"ai_local_trail_give_spread_k": 2.0, "_spread_r": 0.40}
     assert _give(ai_local_trail_give_spread_max_r=0.25, **wide) == \
         pytest.approx(0.25 * 0.50)
     # 0 disables the cap — the old, unbounded behaviour, opt-in only.
     assert _give(ai_local_trail_give_spread_max_r=0.0, **wide) == \
-        pytest.approx(5.56 * 0.50)
+        pytest.approx(0.80 * 0.50)
+
+
+def test_an_impossible_reading_never_reaches_the_cap():
+    """The behaviour change, stated where the cap is specified.
+
+    Capping 5.56R to 0.50R still parks the shelf a quarter of the way to the
+    stop on a name whose book is two cents. The cap bounded the damage; it
+    could not tell that there was no book to trail around.
+    """
+    g = _give(ai_local_trail_give_spread_k=1.0, _spread_r=5.56)
+    assert g == pytest.approx(0.05)          # give_r x R, as if no reading
+    assert g < 0.50 * 0.50
 
 
 def test_missing_spread_reading_applies_no_floor():
