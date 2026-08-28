@@ -938,6 +938,9 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "blocker": b_label,
             "block_reason": b_label,
             "block_detail": rec.get("block_detail"),
+            # Same ceiling the arm gate uses, so the UI cannot say stale at 8s
+            # while the poller still buys at 30s.
+            "decision_max_age_sec": decision_max_age_sec(_push_cfg()),
         })
     # Ready first, then higher score, then symbol for stable UI.
     rows.sort(key=lambda r: (
@@ -4974,7 +4977,8 @@ def _macd_wire_fields(rec: dict) -> dict:
     if not isinstance(ind, dict):
         out = {k: None for k in keys}
         out.update({"macd_bull": False, "macd_cross": False, "macd_ok": False,
-                    "macd_gap_rising": None, "macd_gap_falling": None})
+                    "macd_gap_rising": None, "macd_gap_falling": None,
+                    "macd_src": None, "macd_age_sec": None})
         return out
     gap = _f_or_none(
         ind.get("macd_gap") if ind.get("macd_gap") is not None
@@ -5001,6 +5005,11 @@ def _macd_wire_fields(rec: dict) -> dict:
             None if ind.get("macd_gap_falling") is None
             else bool(ind.get("macd_gap_falling"))),
         "macd_gap_prev": _f_or_none(ind.get("macd_gap_prev")),
+        # Provenance on the same wire as the number. Without these the book
+        # showed a live-looking gap while State said "MACD src?" — or worse,
+        # armed on a reading the operator could not audit.
+        "macd_src": (str(ind.get("macd_src") or "").strip().lower() or None),
+        "macd_age_sec": _f_or_none(ind.get("macd_age_sec")),
     }
 
 
@@ -5230,6 +5239,39 @@ def _tv_exh_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     return True, "exh_rsi"
 
 
+def macd_reading_is_live(ind: dict | None, cfg: dict | None = None) -> tuple[bool, str]:
+    """Is this MACD reading from the live tape, and young enough to trade?
+
+    ``macd_src`` / ``bars_src`` must be ``realtime``. An age without a source
+    is not provenance — that hole let a timestamped Alpaca fallback through
+    as if it were the Finnhub tape.
+
+    ``ai_watch_macd_max_age_sec`` 0 means source-only (any age). A positive
+    ceiling also refuses a missing age (cannot prove freshness) and bars
+    older than the ceiling.
+    """
+    ind = ind if isinstance(ind, dict) else {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    src = str(ind.get("macd_src") or ind.get("bars_src") or "").strip().lower()
+    if src != "realtime":
+        if not src:
+            return False, "macd_src_unknown"
+        return False, f"macd_not_realtime_{src}"[:40]
+    age = _f_or_none(
+        ind.get("macd_age_sec") if ind.get("macd_age_sec") is not None
+        else ind.get("bars_age_sec"))
+    try:
+        max_age = float(cfg.get("ai_watch_macd_max_age_sec", 0) or 0)
+    except (TypeError, ValueError):
+        max_age = 0.0
+    if max_age > 0:
+        if age is None:
+            return False, "macd_src_unknown"
+        if age > max_age:
+            return False, "macd_stale_bars"
+    return True, ""
+
+
 def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the MACD momentum gate.
 
@@ -5257,26 +5299,21 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     # saying which it used. Refused rather than merely noted: an entry on a
     # 60s-old MACD is an entry on a different indicator.
     if bool(cfg.get("ai_watch_require_realtime_macd", False)):
-        src = str(ind.get("macd_src") or "").strip().lower()
-        if src and src != "realtime":
+        live, why = macd_reading_is_live(ind, cfg)
+        if not live:
             if isinstance(record, dict):
-                record["block_detail"] = f"MACD drawn on {src}, not the tape"
-            return False, f"macd_not_realtime_{src}"[:40]
-        age = _f_or_none(ind.get("macd_age_sec"))
-        try:
-            max_age = float(cfg.get("ai_watch_macd_max_age_sec", 0) or 0)
-        except (TypeError, ValueError):
-            max_age = 0.0
-        if not src and age is None:
-            # No provenance at all. Absence is not a pass.
-            if isinstance(record, dict):
-                record["block_detail"] = "MACD source unknown"
-            return False, "macd_src_unknown"
-        if max_age > 0 and age is not None and age > max_age:
-            if isinstance(record, dict):
-                record["block_detail"] = (
-                    f"MACD bars {age:.1f}s old > {max_age:.0f}s")
-            return False, "macd_stale_bars"
+                if why == "macd_src_unknown":
+                    record["block_detail"] = "MACD source unknown"
+                elif why == "macd_stale_bars":
+                    age = _f_or_none(ind.get("macd_age_sec"))
+                    record["block_detail"] = (
+                        f"MACD bars {age:.1f}s old" if age is not None
+                        else "MACD bars too old")
+                else:
+                    src = str(ind.get("macd_src") or ind.get("bars_src") or "")
+                    record["block_detail"] = (
+                        f"MACD drawn on {src}, not the tape")
+            return False, why
 
     if fast <= slow or gap <= 0:
         if isinstance(record, dict):
@@ -5587,7 +5624,8 @@ def _macd_is_armed(record: dict) -> bool:
     """
     ind = record.get("indicator") if isinstance(record, dict) else None
     ind = ind if isinstance(ind, dict) else {}
-    if str(ind.get("macd_src") or "").strip().lower() != "realtime":
+    live, _why = macd_reading_is_live(ind, _push_cfg())
+    if not live:
         return False
     gap = _f_or_none(
         ind.get("macd_gap") if ind.get("macd_gap") is not None
@@ -7395,6 +7433,10 @@ def _shadow_row(
         # "live" = recomputed against the live price; "engine" = the 60-120s
         # copy. A row scored without knowing which is scoring two rules at once.
         "pctr_src": (sig.get("pctr_src") or "engine") if sig else None,
+        "macd_src": (str(sig.get("macd_src") or "").strip().lower() or None) if sig else None,
+        "macd_age_sec": _f_or_none(sig.get("macd_age_sec")) if sig else None,
+        "last_ask_src": rec.get("last_ask_src"),
+        "last_ask_age_sec": _f_or_none(rec.get("last_ask_age_sec")),
         # Minutes the %R window actually spans. Logged even when the reading
         # was refused for being too wide, because the threshold that refused it
         # is a guess (3x) and this column is the only way to sweep it: bucket

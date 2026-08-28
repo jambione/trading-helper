@@ -886,7 +886,9 @@ function _bookTapeStale(r) {
   if (src === 'stale_tape' || src === 'none') return true;
   const age = r.last_ask_age_sec != null ? Number(r.last_ask_age_sec)
     : (r.price_age_sec != null ? Number(r.price_age_sec) : NaN);
-  return Number.isFinite(age) && age > 8;
+  const raw = Number(r.decision_max_age_sec);
+  const maxAge = Number.isFinite(raw) && raw > 0 ? raw : 8;
+  return Number.isFinite(age) && age > maxAge;
 }
 
 const _MACD_BLOCKER_LABELS = {
@@ -1469,6 +1471,10 @@ function _fmtMacdTitle(r) {
   const slow = r.macd_slow ?? r.macd_signal;
   const gap = r.macd_gap ?? r.macd_hist;
   const bits = ['MACD Momentum'];
+  if (r.macd_src) bits.push(`src: ${r.macd_src}`);
+  if (r.macd_age_sec != null && Number.isFinite(Number(r.macd_age_sec))) {
+    bits.push(`age: ${Number(r.macd_age_sec).toFixed(1)}s`);
+  }
   if (fast != null && Number.isFinite(Number(fast))) bits.push(`Fast: ${Number(fast).toFixed(4)}`);
   if (slow != null && Number.isFinite(Number(slow))) bits.push(`Slow: ${Number(slow).toFixed(4)}`);
   if (gap != null && Number.isFinite(Number(gap))) bits.push(`Gap: ${Number(gap) >= 0 ? '+' : ''}${Number(gap).toFixed(4)}`);

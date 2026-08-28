@@ -85,7 +85,8 @@ DEFAULT_CONFIG = {
     # at the median, the REST fallback up to 60s — an entry on the latter is
     # an entry on a different indicator.
     "ai_watch_require_realtime_macd":  False,
-    # 0 = source check only, no age ceiling.
+    # 0 = source check only, no age ceiling. Live desk sets 30s so a
+    # "realtime" bar that has not printed in half a minute cannot arm.
     "ai_watch_macd_max_age_sec":       0.0,
 
     # ── Signal: volume surge ─────────────────────────────────

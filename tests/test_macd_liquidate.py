@@ -40,7 +40,7 @@ def _on(monkeypatch, **over):
                         lambda k, d=False: bool(cfg.get(k, d)))
 
 
-_RT = {"macd_src": "realtime"}
+_RT = {"macd_src": "realtime", "macd_age_sec": 0.3}
 
 
 # ── the two triggers ─────────────────────────────────────────────────────
@@ -115,6 +115,15 @@ def test_the_rest_fallback_cannot_liquidate(monkeypatch):
     """A curl drawn on Alpaca bars is a curl in older bars."""
     _on(monkeypatch)
     _wire(monkeypatch, macd_gap=-0.05, macd_src="alpaca")
+    assert cp.macd_thesis_broken("AAA", {})[0] is False
+
+
+def test_stale_realtime_macd_cannot_liquidate(monkeypatch):
+    """A 70s-old 'realtime' bar is not a live flatten."""
+    _on(monkeypatch)
+    monkeypatch.setattr(cp, "_cfg_all",
+                        lambda: {"ai_watch_macd_max_age_sec": 30.0})
+    _wire(monkeypatch, macd_gap=-0.05, macd_src="realtime", macd_age_sec=71.0)
     assert cp.macd_thesis_broken("AAA", {})[0] is False
 
 

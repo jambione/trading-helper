@@ -927,6 +927,8 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "macd_fast", "macd_slow", "macd_gap", "macd_sep_ratio",
         "macd_bull", "macd_cross", "macd_ok",
         "macd_gap_rising", "macd_gap_falling", "macd_gap_prev",
+        "macd_src", "macd_age_sec",
+        "decision_max_age_sec",
     }
     for row in snap:
         assert set(row.keys()) == keys

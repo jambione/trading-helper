@@ -122,6 +122,8 @@ def test_wire_fields_carry_direction_and_the_previous_gap():
     assert got["macd_gap_falling"] is False
     assert got["macd_gap_prev"] == 0.02
     assert got["macd_sep_ratio"] == 1.4
+    assert "macd_src" in got
+    assert "macd_age_sec" in got
 
 
 def test_wire_fields_keep_unknown_direction_as_none_not_false():
@@ -148,13 +150,17 @@ def test_snapshot_actually_ships_the_macd_column(tmp_path, monkeypatch):
         "symbol": "AAA", "status": "watching", "last_ask": 10.0,
         "last_ask_src": "rest", "last_ask_age_sec": 1.0,
         "indicator": {"macd_fast": 0.10, "macd_slow": 0.05, "macd_gap": 0.05,
-                      "macd_gap_rising": True, "macd_gap_falling": False},
+                      "macd_gap_rising": True, "macd_gap_falling": False,
+                      "macd_src": "realtime", "macd_age_sec": 0.4},
         "structure": {"entry_low": 9.0, "entry_high": 11.0,
                       "stop_price": 8.5},
     }})
     row = ew.public_snapshot()[0]
     assert row["macd_gap"] == 0.05
     assert row["macd_gap_rising"] is True
+    assert row["macd_src"] == "realtime"
+    assert row["macd_age_sec"] == 0.4
+    assert row.get("decision_max_age_sec") is not None
 
 
 # ── the record has to actually receive the numbers ───────────────────────
@@ -406,6 +412,14 @@ def test_unknown_provenance_is_refused():
     assert ok is False and why == "macd_src_unknown"
 
 
+def test_an_age_without_a_source_is_not_provenance():
+    """The hole: src empty + age set used to skip macd_src_unknown."""
+    ok, why = ew.macd_allows_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False,
+             macd_age_sec=0.3), RT)
+    assert ok is False and why == "macd_src_unknown"
+
+
 def test_an_age_ceiling_is_optional_and_off_by_default():
     from config import DEFAULT_CONFIG
     assert DEFAULT_CONFIG["ai_watch_macd_max_age_sec"] == 0.0
@@ -507,7 +521,8 @@ _OBFLAT = dict(RT, ai_watch_ob_allow_flat_when_macd_armed=True)
 
 
 def _armed_ind(**over):
-    ind = {"macd_src": "realtime", "macd_gap": 0.05, "macd_bull": True,
+    ind = {"macd_src": "realtime", "macd_age_sec": 0.3,
+           "macd_gap": 0.05, "macd_bull": True,
            "macd_gap_rising": True, "macd_gap_falling": False}
     ind.update(over)
     return ind

@@ -288,10 +288,10 @@ STRATEGY_MODE  = os.getenv("STRATEGY_MODE", "momentum").lower()
 # the gap with TradingView. Only consumed by the three_indicator path.
 REALTIME_BARS  = os.getenv("REALTIME_BARS", "0") in ("1", "true", "yes")
 # Seconds without a trade before the realtime bars are considered stale and the
-# engine falls back to freshly-fetched Alpaca bars. Two 1-minute bars: long
-# enough that a thin symbol pausing between prints does not flap the source,
-# short enough that a dropped stream cannot quietly freeze the indicators.
-RT_BARS_MAX_STALE = float(os.getenv("REALTIME_BARS_MAX_STALE", "120"))
+# engine falls back to freshly-fetched Alpaca bars. 30s: a thin name can pause
+# between prints without flapping; two silent minutes used to keep publishing
+# a frozen Finnhub candle as "realtime" and the desk armed on it.
+RT_BARS_MAX_STALE = float(os.getenv("REALTIME_BARS_MAX_STALE", "30"))
 
 # Minimum seconds to hold a three_indicator position before a strategy reversal
 # may close it — guards against per-second buy/sell flip-flop on the forming bar.

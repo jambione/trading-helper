@@ -3204,6 +3204,14 @@ def macd_thesis_broken(ticker: str, pos: dict | None = None) -> tuple[bool, str]
     src = str(sig.get("macd_src") or sig.get("bars_src") or "").strip().lower()
     if src != "realtime":
         return False, ""
+    age = _num(sig.get("macd_age_sec") if sig.get("macd_age_sec") is not None
+               else sig.get("bars_age_sec"))
+    try:
+        max_age = float(_cfg_all().get("ai_watch_macd_max_age_sec", 0) or 0)
+    except (TypeError, ValueError):
+        max_age = 0.0
+    if max_age > 0 and (age is None or age > max_age):
+        return False, ""
 
     gap = sig.get("macd_gap")
     if gap is None:

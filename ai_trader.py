@@ -386,6 +386,7 @@ def _positions_payload(
 
     entry_watch: list = []
     entry_book: list = []
+    decision_max_age = 8.0
     try:
         import ai_entry_watch as ew
 
@@ -394,6 +395,7 @@ def _positions_payload(
             positions=positions if isinstance(positions, dict) else {},
             watch_rows=entry_watch,
         )
+        decision_max_age = float(ew.decision_max_age_sec(None))
     except Exception:
         entry_watch = []
         entry_book = []
@@ -475,6 +477,7 @@ def _positions_payload(
             # zero candidates for a whole session.
             "source_error": _watch_source_error(),
             "rejected": _watch_rejected(),
+            "decision_max_age_sec": decision_max_age,
         },
         "duel": _duel_public(),
     }
