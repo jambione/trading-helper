@@ -13,6 +13,21 @@
 #   ./scripts/deploy_mini.sh              # push (if needed) + pull + restart stack
 #   ./scripts/deploy_mini.sh --no-push    # mini pull + restart only (already on GitHub)
 #   ./scripts/deploy_mini.sh --pull-only  # pull on mini, do not restart
+#
+# USE --pull-only FOR CONFIG-ONLY CHANGES. ai_trader calls load_config()
+# inside its own loop, so edits to config/bot_config.json take effect on the
+# next tick with no restart at all. A restart is only needed for Python
+# changes or for signal_engine.env, which is read into module constants at
+# import.
+#
+# The cost of restarting unnecessarily is not downtime — it is the realtime
+# bar WARMUP. The aggregator needs MACD_SLOW + MACD_SIG + 5 = 40 one-minute
+# bars per symbol before it will serve realtime bars, and a restart discards
+# them. Measured 2026-08-28: three names with live tapes (GAP 2.5s, PATH 6.7s,
+# SRPT 18.7s) were all refused macd_not_realtime_alpaca purely because the
+# stack had been restarted eighteen minutes earlier. Fifteen restarts that
+# session, most for config-only edits, each one blinding the entry gate for
+# the next forty minutes.
 #   ./scripts/deploy_mini.sh --full       # pull + scripts/shutdown.command + startup.command
 #   ./scripts/deploy_mini.sh --status     # remote status + curl only
 #
