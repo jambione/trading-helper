@@ -2995,10 +2995,24 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 except (TypeError, ValueError):
                     px = None
                 pct_f = _pct_change_value(pct_src)
-                # Red research stays off a long-only book. Still emit a row
-                # when change is unknown so the book can subscribe a quote.
-                if pct_f is not None and pct_f <= 0:
-                    continue
+                # Direction is decided ONCE, by ai_watch_require_uptrend in
+                # the inclusion gate — not here as well.
+                #
+                # This used to drop any research name that was red on the day,
+                # and it was hardcoded rather than a knob, so it survived the
+                # operator turning every day-change floor off on 2026-08-28.
+                # Six of the seven names on the research panel that afternoon
+                # were negative — PURR -5.66%, ASST -4.63%, FIG -3.41%, SRPT
+                # -2.18%, BULL -1.46% — and all six were dropped before the
+                # gate ever saw them, leaving one research candidate.
+                #
+                # Momentum and trending are momentum sources, where the sign
+                # is part of the signal. Research is a THESIS list: "Q2 EPS
+                # $1.38 vs est, guidance raised" does not stop being a thesis
+                # because the stock is red today. Refusing the whole list on
+                # the day's sign throws away the reason the source exists, and
+                # a filter that lives in code rather than config cannot be
+                # seen or switched off.
                 try:
                     dvol = float(live.get("day_vol")) if live.get("day_vol") is not None else None
                 except (TypeError, ValueError):
