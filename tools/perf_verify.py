@@ -254,6 +254,53 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("R7 realtime tape coverage", "FAIL", f"{type(e).__name__}: {e}")
 
+    # ── R8: is the movers seed actually producing? ───────────────────────
+    #
+    # This one fails silently in both directions and neither shows on the
+    # book. If the producer dies, the seed refuses the stale file and simply
+    # stops contributing names — correct, and invisible. If the producer runs
+    # but every candidate is filtered, the file is fresh and empty, which
+    # looks identical from the book's side. Age and row count separate them,
+    # and the seed's own ceiling is the threshold, so this cannot drift away
+    # from what the book will actually accept.
+    try:
+        import json as _json
+        cfg_all = cfg
+        if not cfg_all.get("movers_screener_enabled"):
+            check("R8 movers seed producing", "PENDING",
+                  "movers_screener_enabled is off")
+        elif not cfg_all.get("ai_watch_seed_movers", True):
+            check("R8 movers seed producing", "WARN",
+                  "producer is on but ai_watch_seed_movers is off — "
+                  "it is writing a file nothing reads")
+        else:
+            p = os.path.join(ROOT, "movers_stocks.json")
+            raw = _json.load(open(p))
+            age = time.time() - float(raw.get("ts") or 0)
+            n = len(raw.get("rows") or [])
+            ceil = float(cfg_all.get("ai_movers_max_age_sec", 900.0) or 900.0)
+            running = any("movers_screener.py" in ln and "grep" not in ln
+                          for ln in ps.splitlines())
+            if not running:
+                check("R8 movers seed producing", "FAIL",
+                      "movers_screener.py is not running")
+            elif ceil > 0 and age > ceil:
+                check("R8 movers seed producing", "FAIL",
+                      f"file is {age/60:.0f}m old against a {ceil/60:.0f}m "
+                      f"ceiling — the seed is refusing it")
+            elif n == 0:
+                check("R8 movers seed producing", "WARN",
+                      f"fresh ({age:.0f}s) but 0 rows — every candidate "
+                      f"filtered, or no mover cleared the band today")
+            else:
+                check("R8 movers seed producing", "PASS",
+                      f"{n} row(s), {age:.0f}s old (ceiling {ceil:.0f}s)")
+    except FileNotFoundError:
+        check("R8 movers seed producing", "PENDING",
+              "no movers_stocks.json yet — expected outside 04:00-20:00 ET")
+    except Exception as e:  # noqa: BLE001
+        check("R8 movers seed producing", "FAIL", f"{type(e).__name__}: {e}")
+
     # ── report ───────────────────────────────────────────────────────────
     order = {"FAIL": 0, "WARN": 1, "PENDING": 2, "PASS": 3}
     for verdict, name, detail in sorted(_rows, key=lambda r: order.get(r[0], 4)):

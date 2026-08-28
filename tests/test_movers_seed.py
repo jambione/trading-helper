@@ -180,3 +180,41 @@ def test_the_producer_is_supervised():
     assert "movers_screener_enabled" in src, "must honour its enable flag"
     assert src.count('pkill -TERM -f "movers_screener.py"') == 1
     assert src.count('pkill -KILL -f "movers_screener.py"') == 1
+
+
+# ── the source tag, which is the whole point ─────────────────────────────
+
+def test_movers_counts_as_desk_heat_not_a_thesis():
+    """A seed missing from _DESK_SOURCES does not announce itself.
+
+    _merge_source keeps the SOURCE tag as research (research outranks desk
+    heat), but `keep_research` is `prev in _RESEARCH_SOURCES and new in
+    _DESK_SOURCES` — so an unregistered seed makes that False and overwrites
+    the thesis text and score, leaving a row labelled research wearing
+    "mover +41.2%". The tag and the text would disagree.
+    """
+    assert "movers" in ew._DESK_SOURCES
+    assert "movers" not in ew._RESEARCH_SOURCES
+
+
+def test_a_research_thesis_keeps_the_row_against_a_mover():
+    assert ew._merge_source("anthropic", "movers") == "anthropic"
+    assert ew._merge_source("xai", "movers") == "xai"
+
+
+def test_a_mover_still_takes_a_row_from_plain_desk_heat():
+    """It is not privileged either — newest desk heat wins, as for trending."""
+    assert ew._merge_source("momentum", "movers") == "movers"
+    assert ew._merge_source("movers", "trending") == "trending"
+
+
+def test_every_seed_source_the_loop_can_emit_is_registered():
+    """Generalised, so the next new seed cannot repeat this.
+
+    Any source string desk_candidate_rows assigns must be classified as
+    research, desk heat, or bb_live — an unclassified one silently loses the
+    thesis-ownership argument.
+    """
+    known = ew._DESK_SOURCES | ew._RESEARCH_SOURCES | ew._BB_LIVE_SOURCES
+    for emitted in ("momentum", "trending", "movers", "research"):
+        assert emitted in known, f"{emitted} is not classified"

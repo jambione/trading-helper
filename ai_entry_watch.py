@@ -2200,7 +2200,14 @@ def _price_under_cap(px: Any, max_price: Any) -> bool:
 _RESEARCH_SOURCES = frozenset({
     "research", "xai", "anthropic", "grok", "claude", "a", "x", "ax", "ai",
 })
-_DESK_SOURCES = frozenset({"momentum", "trending", "mom", "st", "stocktwits"})
+# Desk heat: seeds that name a symbol without carrying a thesis about it.
+# A new seed source MUST be registered here. Omitted, it is not recognised as
+# desk heat, `keep_research` goes False when it lands on a research row, and
+# the seed overwrites that row's thesis text and score while _merge_source
+# correctly keeps the source tag as "research" — a row labelled research
+# wearing another seed's reason.
+_DESK_SOURCES = frozenset({"momentum", "trending", "mom", "st", "stocktwits",
+                           "movers"})
 # "Bullish Bob LIVE" call-outs. Its own bucket, not a desk source: _merge_source
 # lets research keep thesis ownership over desk heat, and a bro call should not
 # be able to take a name away from a research thesis either.
