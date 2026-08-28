@@ -83,3 +83,48 @@ def test_it_can_never_break_the_book():
     i = _JS.index("_paintBookLegend(get('config'),")
     assert "try {" in _JS[i - 80:i]
     assert "catch" in _JS[i:i + 300]
+
+
+# ── provenance gates the whole panel ───────────────────────────────────────
+#
+# PATH, 2026-08-28: the State column read "MACD not live" while the legend
+# showed EITHER as satisfied. Both were describing the same row. The gate
+# refuses a MACD not drawn on the live tape BEFORE it looks at gap size,
+# separation or the override, so scoring those rules on an unusable reading
+# ticks a branch the gate never reached.
+#
+# A reading that cannot be used is not a rule that passes. It is a rule that
+# could not be judged — the same distinction the desk draws everywhere else.
+
+def test_provenance_is_read_before_the_rules():
+    body = _legend()
+    i = body.index("const src = String(r.macd_src")
+    # The assignments, not the `let` line that declares them all as null.
+    for later in ("const gap = num(r.macd_gap)", "_macdLeg",
+                  "fresh = live === false"):
+        assert body.index(later) > i, f"{later} is evaluated before provenance"
+
+
+def test_a_non_live_macd_makes_its_rules_unjudgeable():
+    """null, not false: the rule is not failed, it is unreachable."""
+    body = _legend()
+    assert "macd = live !== true ? null" in body
+    assert "both = live !== true ? null" in body
+
+
+def test_a_non_live_macd_fails_fresh_outright():
+    """FRESH is the row that is ABOUT usability, so there it is a real fail
+    rather than an unknown — otherwise nothing on the panel would say why."""
+    body = _legend()
+    assert "fresh = live === false ? false" in body
+
+
+def test_fresh_says_it_covers_the_tape():
+    """The row has to name what it now checks, or the panel is accurate and
+    still unreadable."""
+    assert "MACD on the live tape" in _JS
+
+
+def test_unknown_provenance_is_not_treated_as_live():
+    body = _legend()
+    assert "live = src ? src === 'realtime' : null" in body

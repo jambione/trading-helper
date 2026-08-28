@@ -808,11 +808,21 @@ function _paintBookLegend(cfg, row) {
   const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 
   // null = cannot say. Never collapse that into false.
-  let macd = null, exh = null, both = null, fresh = null;
+  let macd = null, exh = null, both = null, fresh = null, live = null;
   if (r) {
+    // PROVENANCE FIRST. The gate refuses a MACD not drawn on the live tape
+    // before it looks at any of the rules below, so a legend that scored the
+    // rules without it would tick a row the gate never reached — PATH showed
+    // EITHER as satisfied while its State said "MACD not live". A reading
+    // that cannot be used is not a rule that passes; it is a rule that could
+    // not be judged.
+    const src = String(r.macd_src || '').toLowerCase();
+    live = src ? src === 'realtime' : null;
+
     const gap = num(r.macd_gap), sep = num(r.macd_sep_ratio);
     const falling = r.macd_gap_falling;
-    macd = (gap == null || sep == null) ? null
+    macd = live !== true ? null
+      : (gap == null || sep == null) ? null
       : (gap > n('macd_min_gap', 0.005) && sep >= n('macd_sep_mult', 1.5)
          && falling !== true);
 
@@ -821,15 +831,19 @@ function _paintBookLegend(cfg, row) {
       : ((ex >= n('ai_watch_exhaustion_heat_min_pct', 40) && rising === true)
          || ex >= n('ai_watch_ob_flat_min_pct', 99));
 
-    // OR, matching the gate: either leg alone earns the bypass.
+    // OR, matching the gate: either leg alone earns the bypass — but the
+    // override sits BEHIND the provenance check, so an unusable MACD makes
+    // the whole branch unreachable regardless of which leg is strong.
     const _exhLeg = ex == null ? null
       : (ex >= n('ai_watch_macd_exh_override_min_pct', 70) && rising === true);
     const _macdLeg = r.macd_gap_rising == null ? null : r.macd_gap_rising === true;
-    both = (_exhLeg === true || _macdLeg === true) ? true
+    both = live !== true ? null
+      : (_exhLeg === true || _macdLeg === true) ? true
       : (_exhLeg == null || _macdLeg == null) ? null : false;
 
     const pAge = num(r.price_age_sec), mAge = num(r.macd_age_sec);
-    fresh = (pAge == null || mAge == null) ? null
+    fresh = live === false ? false
+      : (pAge == null || mAge == null) ? null
       : (pAge <= n('ai_watch_decision_max_age_sec', 8)
          && mAge <= n('ai_watch_macd_max_age_sec', 30));
   }
@@ -838,7 +852,7 @@ function _paintBookLegend(cfg, row) {
     ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`, macd],
     ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`, exh],
     ['EITHER', `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`, both],
-    ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
+    ['FRESH', `MACD on the live tape &nbsp;·&nbsp; price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
     ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`, null],
     ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`, null],
   ];
