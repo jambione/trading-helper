@@ -321,6 +321,13 @@ DEFAULT_CONFIG = {
     # Turning it off re-enables the path that opened CELH unhedged at 83% of
     # equity on 2026-08-06.
     "require_protective_exit":          True,
+    # Premarket session adapter. Default OFF — no live bid/ask yet (HANDOFF
+    # §5G). When on, the current ratchet still decides; only the sell
+    # transport changes (one DAY ext-hours limit) until 09:30 handoff.
+    "ai_premarket_working_sell":       False,
+    "ai_premarket_quote_max_age_sec":    15.0,
+    "ai_premarket_max_exit_slip_r":      0.25,
+    "ai_premarket_chase_step_sec":        2.5,
     # Only this host may place/cancel/replace/liquidate. Empty = unrestricted
     # (single-box default). Both machines shared one Alpaca paper key: risk
     # caps are per-instance so real exposure could double, liquidate_all
@@ -1168,6 +1175,7 @@ _EFFECTIVE_KEYS = (
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
     "ai_local_trail_enabled",
+    "ai_premarket_working_sell",
     "desk_product",
     "ai_h4_paper",
     "ai_h3_paper",
@@ -1334,6 +1342,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_decision_max_age_sec",
     "ai_stale_data_flatten",
     "ai_stale_data_max_age_sec",
+    "ai_premarket_working_sell",
+    "ai_premarket_quote_max_age_sec",
+    "ai_premarket_max_exit_slip_r",
+    "ai_premarket_chase_step_sec",
     "ai_structure_ttl_sec",
     "ai_watch_expire_at_close",
     "ai_watch_seed_momentum",

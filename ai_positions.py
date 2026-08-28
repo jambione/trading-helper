@@ -2919,6 +2919,11 @@ def apply_local_trail(
     """
     import alpaca_trader
 
+    if handoff_working_sell_to_rth(ticker, pos):
+        changed_handoff = True
+    else:
+        changed_handoff = False
+
     if pos.get("late_hold") or str(pos.get("strategy") or "") == "late_hold":
         return _flatten_late_hold_stop(ticker, pos, trigger, events, exit_why)
     try:
@@ -2976,6 +2981,26 @@ def apply_local_trail(
         _note_min_hold(pos, "local_trail")
     if _trail_hit and not _trail_held:
         last = trigger
+        if _premarket_working_sell_on():
+            bid = _premarket_bid(ticker)
+            px = round(float(bid), 2) if bid and bid > 0 else None
+            if px is None:
+                pos["working_sell_state"] = "held_dark"
+                log_event("working_sell_dark", symbol=ticker, last=last, stop=loc)
+                return True, False
+            if _rest_working_sell(ticker, pos, px, "flatten"):
+                pos["working_sell_flatten_since"] = time.time()
+            exit_why[ticker] = "local_trail"
+            events.append({
+                "ticker": ticker, "event": "local_trail_working",
+                "last": last, "stop": loc, "limit": px,
+                "peak": pos.get("peak_price"),
+            })
+            log_event(
+                "local_trail_working", symbol=ticker,
+                last=last, stop=loc, limit=px, peak=pos.get("peak_price"),
+            )
+            return True, False
         alpaca_trader.cancel_open_orders(ticker)
         out = alpaca_trader.close_out(ticker) or {}
         if isinstance(out, dict) and out.get("order_id"):
@@ -3040,6 +3065,29 @@ def apply_local_trail(
                 peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                 give_r=local_trail_give_r(pos.get("mfe_r"), _cfg_all()),
             )
+        if (
+            _premarket_working_sell_on()
+            and str(pos.get("working_sell_state") or "") != "flatten"
+        ):
+            bid = _premarket_bid(ticker)
+            loc_now = _num(pos.get("local_stop_price"))
+            if loc_now and loc_now > 0:
+                px = round(min(float(loc_now), float(bid)), 2) if bid and bid > 0 else round(float(loc_now), 2)
+                if _rest_working_sell(ticker, pos, px, "protect"):
+                    changed = True
+    if (
+        _premarket_working_sell_on()
+        and str(pos.get("working_sell_state") or "") != "flatten"
+        and not pos.get("working_sell_id")
+    ):
+        loc_now = _num(pos.get("local_stop_price"))
+        bid = _premarket_bid(ticker)
+        if loc_now and loc_now > 0:
+            px = round(min(float(loc_now), float(bid)), 2) if bid and bid > 0 else round(float(loc_now), 2)
+            if _rest_working_sell(ticker, pos, px, "protect"):
+                changed = True
+    if changed_handoff:
+        changed = True
     return changed, False
 
 
@@ -3254,6 +3302,8 @@ def tick_local_trail(tick_sec: float = 0.0) -> list[dict[str, Any]]:
         for ticker, pos in list(state.items()):
             if not isinstance(pos, dict):
                 continue
+            if handoff_working_sell_to_rth(ticker, pos):
+                changed = True
             if not pos.get("entry_confirmed") or pos.get("closing_reason"):
                 continue
             px = _fresh_tape_px(ticker)
@@ -3379,6 +3429,82 @@ def _tick_prints(ticker: str, live: dict | None) -> tuple[float | None, float | 
     return max(vals), min(vals)
 
 
+def _premarket_working_sell_on(now: float | None = None) -> bool:
+    """Session adapter: current shelf, DAY ext-hours sell. Default off."""
+    if not _cfg_flag("ai_premarket_working_sell", False):
+        return False
+    ts = time.time() if now is None else float(now)
+    return not _rth_now(ts)
+
+
+def _premarket_bid(symbol: str) -> float | None:
+    try:
+        import ai_trading as gt
+        bid = gt._latest_bid(symbol)
+        if bid is not None and float(bid) > 0:
+            return float(bid)
+    except Exception:
+        return None
+    return None
+
+
+def _premarket_book(symbol: str) -> tuple[float | None, float | None]:
+    bid = _premarket_bid(symbol)
+    ask = None
+    try:
+        import ai_trading as gt
+        raw = gt._latest_ask(symbol)
+        if raw is not None and float(raw) > 0:
+            ask = float(raw)
+    except Exception:
+        ask = None
+    return bid, ask
+
+
+def handoff_working_sell_to_rth(ticker: str, pos: dict) -> bool:
+    """09:30: cancel the ext-hours sell; the RTH ratchet owns the name."""
+    if not isinstance(pos, dict):
+        return False
+    if not (pos.get("working_sell_id") or pos.get("working_sell_state")):
+        return False
+    if not _rth_now(time.time()):
+        return False
+    import alpaca_trader
+    alpaca_trader.cancel_open_orders(ticker)
+    pos.pop("working_sell_id", None)
+    pos.pop("working_sell_px", None)
+    pos.pop("working_sell_state", None)
+    pos.pop("working_sell_flatten_since", None)
+    log_event("rth_handoff", symbol=ticker)
+    return True
+
+
+def _rest_working_sell(
+    ticker: str,
+    pos: dict,
+    px: float | None,
+    state: str,
+) -> bool:
+    """Replace the one working DAY sell. Submit is not a fill."""
+    if px is None or px <= 0:
+        return False
+    prev = _num(pos.get("working_sell_px"))
+    if (
+        prev is not None
+        and abs(prev - float(px)) < 0.005
+        and str(pos.get("working_sell_state") or "") == state
+    ):
+        return False
+    import alpaca_trader
+    out = alpaca_trader.working_sell_replace(ticker, float(px)) or {}
+    if isinstance(out, dict) and out.get("order_id"):
+        pos["working_sell_id"] = str(out["order_id"])
+        pos["working_sell_px"] = round(float(px), 2)
+        pos["working_sell_state"] = state
+        return True
+    return False
+
+
 def _rth_now(now: float) -> bool:
     """Regular session (weekdays 09:30–16:00 ET). Broker clock if available."""
     try:
@@ -3416,6 +3542,8 @@ def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
         _px, src, age = ew.decision_price(symbol, cfg)
     except Exception:
         return False, "error"
+    live = False
+    why = src or "none"
     if src == "stream":
         try:
             max_age = float(cfg.get(
@@ -3425,18 +3553,25 @@ def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
             max_age = DEFAULT_STALE_DATA_MAX_AGE_SEC
         if age is not None and age > max_age:
             return False, "stream_old"
-        return True, "stream"
-    if src == "rest":
-        return True, "rest"
-    # Rescue: arming rejected the ask vs tape, but the ask itself is live.
-    try:
-        import ai_trading as gt
-        ask = gt._latest_ask(symbol)
-        if ask is not None and float(ask) > 0:
-            return True, "rest"
-    except Exception:
-        pass
-    return False, src or "none"
+        live, why = True, "stream"
+    elif src == "rest":
+        live, why = True, "rest"
+    else:
+        # Rescue: arming rejected the ask vs tape, but the ask itself is live.
+        try:
+            import ai_trading as gt
+            ask = gt._latest_ask(symbol)
+            if ask is not None and float(ask) > 0:
+                live, why = True, "rest"
+        except Exception:
+            pass
+    if live and _premarket_working_sell_on():
+        bid, ask = _premarket_book(symbol)
+        if bid is None or ask is None or ask < bid:
+            return False, "no_book"
+    if live:
+        return True, why
+    return False, why
 
 
 def refresh_open_position_quotes(symbols: list[str] | None = None) -> int:
@@ -4319,6 +4454,23 @@ def manage_open_positions(
                             fill, intended, planned, risk, cfg=_cfg_all())
                     ):
                         alpaca_trader.cancel_open_orders(ticker)
+                        if _premarket_working_sell_on():
+                            bid = _premarket_bid(ticker)
+                            px = round(float(bid), 2) if bid and bid > 0 else None
+                            if px is not None:
+                                _rest_working_sell(ticker, pos, px, "flatten")
+                            pos["entry_confirmed"] = True
+                            pos["working_sell_state"] = pos.get("working_sell_state") or "held_dark"
+                            events.append({
+                                "ticker": ticker, "event": "fill_through_stop",
+                                "fill": fill, "last": tape, "stop": planned,
+                            })
+                            log_event(
+                                "fill_through_stop", symbol=ticker,
+                                fill=fill, last=tape, stop=planned,
+                            )
+                            changed = True
+                            continue
                         out = alpaca_trader.close_out(ticker) or {}
                         if isinstance(out, dict) and out.get("order_id"):
                             pos["close_order_id"] = str(out["order_id"])

@@ -168,6 +168,7 @@
   "ai_trade_style": "Day scalp",
   "ai_edge_mode": "continuation",
   "desk_product": "scalp_legacy",
+  "ai_premarket_working_sell": false,
   "ai_h4_paper": false,
   "ai_h3_paper": false,
   "h4_min_price": 10.0,

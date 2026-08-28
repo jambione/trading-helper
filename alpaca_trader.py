@@ -1653,11 +1653,15 @@ def place_limit_sell(
     limit_price: float,
     *,
     time_in_force: str = "gtc",
+    extended_hours: bool | None = None,
 ) -> dict:
     """Resting limit SELL for a partial (or full) long — e.g. dual-tranche T1.
 
     Call only after the parent BUY has filled (or there is no resting buy).
     Submitting this while a buy limit is open is an Alpaca wash-trade reject.
+
+    ``extended_hours`` None → ``ext_hours_now()``. Premarket T1 must pass
+    True; Alpaca rejects a limit sell outside RTH without the flag.
     """
     if not _can_mutate():
         return {"ok": False, "order_id": None, "status": None, "error": "trader off"}
@@ -1687,6 +1691,7 @@ def place_limit_sell(
         if sell_qty < 1:
             return {"ok": False, "order_id": None, "status": "no_qty",
                     "error": "qty<1 after clamp"}
+        ext = ext_hours_now() if extended_hours is None else bool(extended_hours)
         order = _client.submit_order(
             LimitOrderRequest(
                 symbol=ticker,
@@ -1694,6 +1699,7 @@ def place_limit_sell(
                 side=OrderSide.SELL,
                 time_in_force=tif,
                 limit_price=lim,
+                extended_hours=ext,
             )
         )
         print(f"  [TRADER] 🎯 limit SELL  {ticker}  qty={sell_qty}  "
@@ -1707,11 +1713,79 @@ def place_limit_sell(
         return {
             "ok": True, "order_id": str(order.id),
             "status": str(order.status), "qty": sell_qty, "limit": lim,
+            "extended_hours": ext,
         }
     except Exception as e:
         print(f"  [TRADER] ❌  limit SELL {ticker} failed: {e}")
         _log_action("SELL_LIMIT_ERROR", ticker, float(limit_price or 0), 0.0, 0.0,
                     error=str(e))
+        return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
+
+
+def working_sell_replace(
+    ticker: str,
+    limit_price: float,
+    *,
+    settle_sec: float = 0.35,
+) -> dict:
+    """Premarket protect/flatten: one DAY ext-hours limit sell for held qty.
+
+    Cancels open orders on the symbol first (wash + replace). The returned
+    ``order_id`` is an accept, not a fill — caller must keep the position
+    until broker qty is 0.
+    """
+    if not _can_mutate():
+        return {"ok": False, "order_id": None, "status": "trader_off",
+                "error": "trader off"}
+    ticker = str(ticker or "").upper()
+    try:
+        lim = round(float(limit_price), 2)
+    except (TypeError, ValueError):
+        return {"ok": False, "order_id": None, "status": "bad_params",
+                "error": "limit"}
+    if not ticker or lim <= 0:
+        return {"ok": False, "order_id": None, "status": "bad_params",
+                "error": "limit"}
+    try:
+        pos = _client.get_open_position(ticker)
+        held = float(pos.qty)
+    except Exception:
+        return {"ok": False, "order_id": None, "status": "no_qty",
+                "error": "no open position"}
+    sell_qty = int(held)
+    if sell_qty < 1:
+        return {"ok": False, "order_id": None, "status": "no_qty",
+                "error": "qty<1"}
+    free_sell_capacity(ticker, settle_sec=settle_sec)
+    try:
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        order = _client.submit_order(
+            LimitOrderRequest(
+                symbol=ticker,
+                qty=sell_qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+                limit_price=lim,
+                extended_hours=True,
+            )
+        )
+        print(f"  [TRADER] 🎯 working SELL  {ticker}  qty={sell_qty}  "
+              f"LMT=${lim:.2f}  id={order.id}")
+        _log_action(
+            "WORKING_SELL", ticker, lim, 0.0, 0.0,
+            qty=sell_qty, order_id=str(order.id),
+            order_status=str(order.status),
+            note=f"working_sell lmt={lim}",
+        )
+        return {
+            "ok": True, "order_id": str(order.id),
+            "status": str(order.status), "qty": sell_qty, "limit": lim,
+            "extended_hours": True,
+        }
+    except Exception as e:
+        print(f"  [TRADER] ❌  working SELL {ticker} failed: {e}")
+        _log_action("WORKING_SELL_ERROR", ticker, lim, 0.0, 0.0, error=str(e))
         return {"ok": False, "order_id": None, "status": "error", "error": str(e)}
 
 
