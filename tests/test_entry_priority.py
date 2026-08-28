@@ -181,10 +181,14 @@ def test_a_huge_rvol_on_a_name_going_nowhere_sorts_behind():
     assert _order_mv(stuck, moving)[0] == "MOVING"
 
 
-def test_direction_of_the_move_does_not_matter_for_ranking():
-    """A big move is a big move; whether it is tradeable is what the GATES
-    decide, and they run regardless of this ordering."""
-    assert ew._rank_move({"symbol": "A", "pct_change": -9.0}) == 9.0
+def test_a_decliner_sorts_behind_a_riser():
+    """Signed since the day-change floors came off. abs() was defensible only
+    while a floor kept decliners out of the pool; without one it would sort
+    IREN at -12.2% to the front of a one-seat queue."""
+    assert ew._rank_move({"symbol": "A", "pct_change": -9.0}) == -9.0
+    up = _mv("UP", 4.0, 1.0)
+    down = _mv("DOWN", -12.0, 1.0)
+    assert _order_mv(down, up)[0] == "UP"
 
 
 def test_live_pct_change_beats_the_admit_stamp():

@@ -4936,6 +4936,21 @@ def ensure_live_exhaustion(
         return False
     if refresh_engine_exh(rec, sig, cfg, now):
         return True
+    # ENGINE AUTHORITATIVE. The local fallback below is not the engine's %R
+    # with older data — it is a DIFFERENT indicator: a rolling window of
+    # ai_watch_exh_bars against the engine's wr_length, recomputed off the
+    # live print. Measured on AREN 2026-08-28 at the same instant, the two
+    # disagreed by 48 points: engine %R -64.6 (EXH 35.4%) against local
+    # -16.67 (EXH 83.3%), and opposite directions — engine rising, local
+    # flat. The desk displayed and GATED on the local one, and the MACD
+    # beside it came from the engine, so the confluence rule was combining
+    # two indicators computed on different bars over different windows.
+    #
+    # With this on, a name the engine cannot cover simply has no %R, and
+    # ai_watch_require_exhaustion_data decides what that means. Better a
+    # missing reading than a confident wrong one.
+    if bool(cfg.get("ai_watch_exhaustion_engine_only", False)):
+        return False
     try:
         px = float(price)
     except (TypeError, ValueError):
@@ -8553,8 +8568,15 @@ def _rank_move(rec: dict) -> float | None:
     same live-before-stale rule _rank_rvol applies, and for the same reason: a
     name can stop moving between admission and the poll that would buy it.
 
-    Absolute value, because a big move is a big move; direction is what the
-    entry gates are for, and they run regardless of this ordering.
+    SIGNED, not absolute. It was abs() on the argument that a big move is a
+    big move and direction is the gates' job. That held while a day-change
+    FLOOR kept decliners out of the pool. With those floors removed
+    (2026-08-28, the operator's call: percent gained today is backward-looking
+    and says nothing about whether a name is about to move), abs() would sort
+    the day's worst decliners straight to the front of a one-seat queue —
+    today's trending list is IREN -12.2%, PYPL -11.4%, MRVL -9.2%. Ordering
+    is not admission, so they would still be refused, but they would occupy
+    the top of the queue while doing it.
     """
     sym = str(rec.get("symbol") or "").upper().strip()
     vals = []
@@ -8567,7 +8589,7 @@ def _rank_move(rec: dict) -> float | None:
     vals.append(_f_or_none(rec.get("admit_pct_change")))
     for v in vals:
         if v is not None:
-            return abs(float(v))
+            return float(v)
     return None
 
 

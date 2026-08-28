@@ -667,6 +667,12 @@ DEFAULT_CONFIG = {
     # clock_range / sparse_window print in the same column and are a
     # different measurement. 0/False keeps the old behaviour.
     "ai_watch_require_live_pctr":   False,
+    # The engine's %R is the only %R. Without this the desk falls back to a
+    # LOCAL recompute over a different window whenever the engine's bars are
+    # not realtime-fresh — a different indicator, not fresher data. They
+    # disagreed by 48 points on AREN 2026-08-28 while MACD beside them came
+    # from the engine.
+    "ai_watch_exhaustion_engine_only": False,
     # Widest the %R window may stretch, as a multiple of its nominal duration
     # (21 bars x 60s = 21 min, so 3.0 allows ~63 min). 0 disables the check.
     #

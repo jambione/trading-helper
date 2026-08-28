@@ -318,3 +318,53 @@ def test_a_zero_cap_admits_everything():
     i = src.index("candidates, rejected = apply_inclusion_gate(candidates, cfg)")
     body = src[i:i + 1400]
     assert "if cap > 0:" in body
+
+
+# ── the engine's %R is the only %R ─────────────────────────────────────────
+#
+# ensure_live_exhaustion tried the engine wire first and fell back to a LOCAL
+# recompute whenever the engine's bars were not realtime-fresh. That fallback
+# is not the engine's %R with older data — it is a different indicator: a
+# rolling window of ai_watch_exh_bars against the engine's wr_length,
+# recomputed off the live print.
+#
+# Measured on AREN 2026-08-28 at one instant:
+#     engine  pctr -64.60  ->  EXH 35.4%   rising
+#     local   pctr -16.67  ->  EXH 83.3%   flat        <- displayed AND gated
+#
+# 48 points apart and pointing opposite ways, while the MACD beside them came
+# from the engine — so the confluence rule was combining two indicators
+# computed on different bars over different windows.
+
+def test_engine_only_refuses_the_local_substitute():
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("if refresh_engine_exh(rec, sig, cfg, now):")
+    body = src[i:i + 1400]
+    assert "ai_watch_exhaustion_engine_only" in body
+    assert "return False" in body, "no %R at all beats a confident wrong one"
+
+
+def test_the_engine_is_still_tried_first():
+    """The knob removes the FALLBACK, not the engine read — reversing those
+    would leave the record with no %R at all."""
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("def ensure_live_exhaustion")
+    body = src[i:i + 2200]
+    assert body.index("refresh_engine_exh(") < body.index(
+        "ai_watch_exhaustion_engine_only")
+
+
+def test_off_by_default_keeps_the_fallback():
+    from config import DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["ai_watch_exhaustion_engine_only"] is False
+
+
+def test_the_local_only_guard_came_off_with_it():
+    """require_live_pctr demands pctr_src == "live", which is the LOCAL
+    computation's own label. Leaving it on while making the engine
+    authoritative would refuse every engine-sourced reading."""
+    import config
+    c = config.load_config()
+    if c.get("ai_watch_exhaustion_engine_only"):
+        assert not c.get("ai_watch_require_live_pctr"), (
+            "require_live_pctr gates on the local source that is now gone")
