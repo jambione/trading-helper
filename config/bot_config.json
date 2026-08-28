@@ -77,7 +77,7 @@
   "rs_use_adr_filter": false,
   "rs_min_adr_pct": 3.0,
   "claude_research_enabled": true,
-  "claude_backend": "claude_cli",
+  "claude_backend": "agy",
   "claude_cli_bin": "claude",
   "claude_model": "sonnet",
   "claude_effort": "xhigh",
