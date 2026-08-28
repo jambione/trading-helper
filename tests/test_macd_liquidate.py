@@ -269,3 +269,45 @@ def test_both_hard_sells_skip_min_hold_and_curl_is_gone():
 def test_the_threshold_reaches_the_live_config():
     import config
     assert "ai_exit_macd_hard_sell_sep" in config.load_config()
+
+
+# ── entry and exit must not overlap ─────────────────────────────────────────
+#
+# 2026-08-28, live session. Entry admitted at macd_sep_mult >= 0.8 while the
+# hard sell fired at macd_sep_ratio < 1.0, so anything bought in the 0.8-1.0
+# band was born inside the liquidation zone and flattened the first time its
+# gap ticked down. Fourteen hard sells that morning, six of them held under
+# thirty seconds:
+#
+#   09:39:52  PATH  macd_thin_and_closing  age_min=0.3   18 seconds
+#   10:20:45  GAP   macd_negative          age_min=-0.0  instant
+#   10:25:09  PURR  macd_thin_and_closing  age_min=0.1   6 seconds
+#
+# Neither rule was wrong on its own — the seam between them was. min-hold at
+# 300s had been deferring the sells five minutes and disguising them as
+# ordinary trail exits; 30s plus a min-hold-exempt hard sell made it visible
+# in a single session.
+
+def test_entry_separation_clears_the_hard_sell_line():
+    """A fresh position must not already satisfy its own liquidation rule."""
+    import config
+    c = config.load_config()
+    entry = float(c["macd_sep_mult"])
+    hard = float(c["ai_exit_macd_hard_sell_sep"])
+    assert entry > hard, (
+        f"entry admits at sep >= {entry} but the hard sell fires below "
+        f"{hard}: anything bought in between is liquidated on the next "
+        f"downtick")
+
+
+def test_a_position_bought_at_the_entry_bar_is_not_instantly_sellable(monkeypatch):
+    """End to end through the real rule, at the exact admission threshold."""
+    import config
+    c = config.load_config()
+    _on(monkeypatch)
+    _wire(monkeypatch, macd_gap=0.02,
+          macd_sep_ratio=float(c["macd_sep_mult"]),
+          macd_gap_falling=True, **_RT)
+    fire, why = cp.macd_thesis_broken("AAA", {})
+    assert why != "macd_thin_and_closing", (
+        "a name admitted at the entry bar is already inside the hard sell")

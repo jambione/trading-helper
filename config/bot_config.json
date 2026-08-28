@@ -302,7 +302,7 @@
   "ai_watch_macd_max_age_sec": 8.0,
   "ai_watch_macd_exh_override": true,
   "ai_watch_macd_exh_override_min_pct": 70.0,
-  "macd_sep_mult": 0.8,
+  "macd_sep_mult": 1.5,
   "macd_min_gap": 0.005,
   "ai_watch_require_realtime_rsi": false,
   "ai_watch_arm_cm_rsi_max": 50.0,
