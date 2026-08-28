@@ -8,10 +8,13 @@ were observed on 2026-08-28 before any of this was written:
   top fifty were warrants at under a dollar. A price band alone does not
   remove them, because some print inside the band.
 
-  RVOL divides by a dormant average. QNRX showed 1281x against a 20-day mean
-  of nearly nothing. Arithmetically true, meaningless as a ratio, and it
-  would sort straight to the top of any RVOL ranking — selecting exactly the
-  thin, gap-through names this desk converts worst.
+  Liquidity has to be measured on today, not on the average. QNRX showed
+  1281x, which looked like a divide-by-nothing and is not: SIP says
+  31,009,292 shares traded against a 24,203 mean — a dormant shell genuinely
+  waking up, and the strongest signal on the list. Flooring the DENOMINATOR
+  would have thrown it away; worse, computed on IEX (313-12,565 share
+  averages) the floor rejected all eight names. The floor belongs on today's
+  dollar volume, which is what "can this be traded" actually asks.
 
 The filtering that needs a network call lives in the producer; the seed just
 reads the file. So these are two suites: symbol/RVOL shape here, and the
@@ -165,7 +168,7 @@ def test_the_knobs_ship_declared():
     for k in ("ai_watch_seed_movers", "ai_watch_seed_movers_n",
               "ai_watch_movers_min_pct_change", "ai_movers_max_age_sec",
               "movers_screener_enabled", "ai_movers_poll",
-              "ai_movers_min_avg_vol", "ai_movers_top"):
+              "ai_movers_min_dollar_vol", "ai_movers_top"):
         assert k in DEFAULT_CONFIG, f"{k} missing from DEFAULT_CONFIG"
 
 

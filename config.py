@@ -1042,9 +1042,11 @@ DEFAULT_CONFIG = {
     "ai_movers_min_pct_change":   10.0,
     "ai_movers_min_price":         2.0,
     "ai_movers_max_price":        20.0,
-    # Floors the RVOL DENOMINATOR. A dormant 20-day average makes the ratio
-    # meaningless, not large: QNRX printed 1281x on 2026-08-28.
-    "ai_movers_min_avg_vol":    100000.0,
+    # Liquidity floor on TODAY's dollar volume — the question a screener
+    # actually needs answered. Not on the 20-day average: a small average is
+    # what makes RVOL interesting (QNRX did 31M shares against a 24k mean and
+    # $190M of dollar volume on 2026-08-28), not what makes a name unsafe.
+    "ai_movers_min_dollar_vol": 1000000.0,
     "ai_movers_max_rows":           25,   # enrich at most this many per pass
     "trending_screener_enabled": False,   # launch trending_screener.py
     "stocktwits_poll":           60.0,    # seconds between Stocktwits polls
@@ -1646,7 +1648,7 @@ SAFE_CONFIG_KEYS = [
     "ai_movers_min_pct_change",
     "ai_movers_min_price",
     "ai_movers_max_price",
-    "ai_movers_min_avg_vol",
+    "ai_movers_min_dollar_vol",
     "ai_movers_max_rows",
     "stocktwits_max_price",
     "trending_max_price",

@@ -23,17 +23,28 @@ a watchlist if they are not handled here:
   trade. Eight of the top fifty. A price band alone does not remove them
   (some print above $2), so symbols are filtered by shape as well.
 
-  RVOL divides by a dormant average. QNRX showed 1281x against a 20-day mean
-  of almost nothing — arithmetically true, meaningless as a ratio, and it
-  would top any RVOL sort. ai_movers_min_avg_vol floors the DENOMINATOR;
-  under it, rvol is None rather than enormous, because an unknown ratio is
-  not a big one.
+  Liquidity is a question about TODAY, not about the average. The first
+  version of this floored the 20-day mean, on the theory that QNRX's 1281x
+  was a divide-by-nothing. Checked against SIP it is nothing of the kind:
+  31,009,292 shares traded against a 24,203 average, which is a dormant
+  shell genuinely waking up — the ratio is real and it is the strongest
+  signal on the list. What a small average cannot tell you is whether the
+  name is tradeable, and today's dollar volume can: QNRX did $190M.
+  ai_movers_min_dollar_vol floors that instead.
 
 FEEDS
-RVOL numerator and denominator are both IEX daily bars — the same rule
-stocktwits_trending._feed_arg states, for the same reason. A ratio built
-from two feeds is not a ratio, and the desk's other RVOL readings are IEX,
-so a movers row must be comparable to them and to ai_watch_min_rvol.
+Both sides of RVOL are SIP daily bars. One feed, one granularity, per
+[[volume-ratios-need-one-feed]] — but SIP rather than the IEX that
+stocktwits_trending uses, because IEX is a few percent of the tape and its
+20-day averages here are 313-12,565 shares. A ratio off a 502-share base is
+noise wearing a decimal point (QNRX reads 269x on IEX against 1281x on SIP).
+SIP daily bars are historical and available on this plan; only SIP snapshots
+are 403.
+
+One consequence to know: a movers rvol is not numerically the same statistic
+as the trending panel's IEX rvol for the same name. Both are internally
+consistent, this one is the true market ratio, and ai_watch_min_rvol is
+applied to both — so that floor is slightly stricter here than on trending.
 
     python3 movers_screener.py
 """
@@ -111,7 +122,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
     min_pct = float(cfg.get("ai_movers_min_pct_change", 10.0) or 10.0)
     lo = float(cfg.get("ai_movers_min_price", 2.0) or 2.0)
     hi = float(cfg.get("ai_movers_max_price", 20.0) or 20.0)
-    min_avg_vol = float(cfg.get("ai_movers_min_avg_vol", 100_000) or 0)
+    min_dollar_vol = float(cfg.get("ai_movers_min_dollar_vol", 1_000_000) or 0)
     want = int(cfg.get("ai_movers_max_rows", 25) or 25)
 
     scr = ScreenerClient(api, sec)
@@ -139,7 +150,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
     try:
         df = data.get_stock_bars(StockBarsRequest(
             symbol_or_symbols=syms, timeframe=TimeFrame(1, TimeFrameUnit.Day),
-            start=start, limit=10000, feed=DataFeed.IEX))
+            start=start, limit=10000, feed=DataFeed.SIP))
         bars = getattr(df, "data", {}) or {}
     except Exception as e:  # noqa: BLE001
         print(f"[movers] daily bars failed: {e}", flush=True)
@@ -156,9 +167,12 @@ def fetch_rows(cfg: dict) -> list[dict]:
         vol = float(getattr(seq[-1], "volume", 0) or 0) if seq else 0.0
         prior = [float(getattr(b, "volume", 0) or 0) for b in seq[:-1]][-20:]
         avg = (sum(prior) / len(prior)) if prior else 0.0
-        # An unknown ratio is not a big one. Below the floor the average is
-        # too small to divide by and rvol stays None.
-        rvol = (vol / avg) if (avg >= min_avg_vol and avg > 0 and vol > 0) else None
+        rvol = (vol / avg) if (avg > 0 and vol > 0) else None
+        dollar_vol = (vol * px) if vol else 0.0
+        # Tradeable TODAY is the liquidity question. A tiny 20-day average is
+        # what makes the ratio interesting, not what makes the name unsafe.
+        if min_dollar_vol > 0 and dollar_vol < min_dollar_vol:
+            continue
         try:
             import float_feed
             fl = float_feed.float_shares(sym)
@@ -181,7 +195,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
             "rvol": rvol,
             "float_m": fl,
             "avg_vol_20d": round(avg) if avg else None,
-            "dollar_volume": round(vol * px) if (vol and px) else None,
+            "dollar_volume": round(dollar_vol) if dollar_vol else None,
             "criteria": crit,
         })
     return rows
