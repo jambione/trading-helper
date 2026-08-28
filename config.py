@@ -593,6 +593,10 @@ DEFAULT_CONFIG = {
     # whole move is 0.2% cannot finish above its own fill. RVOL does not
     # measure that. 0 = off, leaving RVOL to lead.
     "ai_watch_rank_move_band":         0.0,
+    # Three strikes: a symbol round-tripped this many times today is done,
+    # whatever the tape says. The re-entry cooldown only spaces attempts out;
+    # it never stops them. 0 = no cap.
+    "ai_watch_max_entries_per_symbol_day": 0,
     # False: cooling EXH refuses even at last / in-zone. Last-mode still
     # buys rising or pinned-OB names above the old pullback band.
     "ai_watch_in_zone_ignore_fade":  False,
@@ -837,6 +841,12 @@ DEFAULT_CONFIG = {
     # clear; falling on top of that is small and shrinking. Rising, even
     # when thin, is left alone.
     "ai_exit_macd_hard_sell_sep":      1.0,
+    # How many consecutive evaluations a hard sell must survive before it
+    # fires. MACD is computed on the FORMING minute bar, so its gap moves with
+    # every trade and the falling flag flips inside a single bar; one reading
+    # is noise sampled at the positions tick. At a 3s tick, 3 is ~9s of
+    # agreement. 1 = the old single-reading behaviour.
+    "ai_exit_macd_confirm_ticks":      1,
     # Shelf trace: one log line per symbol per N seconds showing want vs the
     # stored shelf and whether the raise fired. Diagnostic only; 0 = off.
     "ai_shelf_trace_sec":              0.0,
@@ -1191,6 +1201,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_rank_rvol_band",
     "ai_watch_rank_move_band",
+    "ai_watch_max_entries_per_symbol_day",
     "ai_watch_zone_exh_window_sec",
     "ai_trading_source",
     "ai_trade_style",
@@ -1446,6 +1457,7 @@ SAFE_CONFIG_KEYS = [
     "ai_exit_macd_curl_tighten",
     "ai_exit_macd_liquidate",
     "ai_exit_macd_hard_sell_sep",
+    "ai_exit_macd_confirm_ticks",
     "ai_shelf_trace_sec",
     "ai_stranded_close_sec",
     "ai_exit_macd_liquidate_ignore_hold",

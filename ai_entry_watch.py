@@ -127,6 +127,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "dollar_volume": "too thin",
     "already_managed": "managed",
     "reentry_cooldown": "cooldown",
+    "attempt_cap": "3 strikes",
     "wash_trade": "wash trade",
     "wash_cooldown": "wash cool",
     "already_holding": "held",
@@ -8522,6 +8523,59 @@ def _rank_move(rec: dict) -> float | None:
     return None
 
 
+_ENTRIES_TODAY: dict[str, object] = {"day": "", "counts": {}, "ts": 0.0}
+
+
+def _entries_today(symbol: str) -> int:
+    """How many times this symbol has been BOUGHT today.
+
+    Read from the fill log, not a counter in memory: this desk restarts many
+    times in a session and an in-process tally would silently reset the cap
+    every time, which is the same shape as a knob nothing reads.
+
+    Cached for a few seconds because the poll asks per symbol per pass.
+    """
+    import datetime as _dt
+    from zoneinfo import ZoneInfo as _Z
+    et = _Z("America/New_York")
+    today = _dt.datetime.now(et).date().isoformat()
+    now = time.time()
+    if (_ENTRIES_TODAY.get("day") != today
+            or now - float(_ENTRIES_TODAY.get("ts") or 0.0) > 5.0):
+        counts: dict[str, int] = {}
+        try:
+            import json as _json
+            rows = _json.load(open("alpaca_trade_log.json", encoding="utf-8"))
+            for r in rows:
+                if not isinstance(r, dict) or r.get("action") != "BUY":
+                    continue
+                stamp = str(r.get("time") or "")
+                if not stamp:
+                    continue
+                try:
+                    t = _dt.datetime.fromisoformat(
+                        stamp.replace("Z", "+00:00")).astimezone(et)
+                except ValueError:
+                    continue
+                if t.date().isoformat() != today:
+                    continue
+                k = str(r.get("ticker") or "").upper().strip()
+                if k:
+                    counts[k] = counts.get(k, 0) + 1
+        except Exception:  # noqa: BLE001
+            # Unreadable log must not silently disable the cap OR block the
+            # desk: keep whatever was last counted for this day.
+            if _ENTRIES_TODAY.get("day") == today:
+                return int((_ENTRIES_TODAY.get("counts") or {}).get(
+                    str(symbol or "").upper().strip(), 0))
+            return 0
+        _ENTRIES_TODAY["day"] = today
+        _ENTRIES_TODAY["counts"] = counts
+        _ENTRIES_TODAY["ts"] = now
+    return int((_ENTRIES_TODAY.get("counts") or {}).get(
+        str(symbol or "").upper().strip(), 0))
+
+
 def _rank_move_band() -> float:
     """Width of the percent-move bucket used for ranking. 0 = move ranking off."""
     try:
@@ -9124,6 +9178,22 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             if last_exit and (t0 - last_exit) < cool:
                 _skip("reentry_cooldown",
                       detail=f"{int(cool - (t0 - last_exit))}s left")
+                continue
+        # THREE STRIKES. A name that has already been round-tripped N times
+        # today is done, whatever the tape says. Seven names produced thirty
+        # of thirty-three trades on 2026-08-28 — ASST eight times, BULL,
+        # PATH and SRPT five each — and the cooldown only spaces those out,
+        # it never stops them. Counted off the fill log rather than a
+        # counter in memory, so it survives the restarts this desk does
+        # several times a day.
+        try:
+            cap = int(cfg.get("ai_watch_max_entries_per_symbol_day", 0) or 0)
+        except (TypeError, ValueError):
+            cap = 0
+        if cap > 0:
+            tries = _entries_today(sym)
+            if tries >= cap:
+                _skip("attempt_cap", detail=f"{tries} today")
                 continue
         if _dead_reentry_blocked(sym, t0, cfg):
             try:

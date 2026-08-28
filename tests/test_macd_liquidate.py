@@ -38,6 +38,15 @@ def _on(monkeypatch, **over):
     cfg.update(over)
     monkeypatch.setattr(cp, "_cfg_flag",
                         lambda k, d=False: bool(cfg.get(k, d)))
+    # These tests are about the RULE, so they run at one reading per verdict.
+    # The confirmation streak that the live config uses (3 ticks, ~9s of
+    # agreement, so a forming-bar flicker cannot liquidate) has its own file:
+    # tests/test_churn_guards.py.
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_exit_macd_confirm_ticks": 1,
+        "ai_exit_macd_hard_sell_sep": 1.0,
+        "ai_watch_macd_max_age_sec": 30.0,
+    })
 
 
 _RT = {"macd_src": "realtime", "macd_age_sec": 0.3}

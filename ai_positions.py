@@ -3167,6 +3167,46 @@ def _macd_curl_stop(ticker: str, last: float | None) -> float | None:
     return stop if stop > 0 else None
 
 
+def _confirmed(pos: dict | None, why: str | None) -> tuple[bool, str]:
+    """Hold a hard sell until the same verdict repeats N evaluations running.
+
+    MACD is computed on the FORMING one-minute bar, so its gap moves with
+    every trade and macd_gap_falling can flip several times inside a single
+    bar. Firing on one reading is therefore sampling noise at the positions
+    tick and calling it a thesis break. Observed 2026-08-28: GAP liquidated 6
+    seconds after entry, ASST at 9s and again at 11s, PURR at 11s — thirteen
+    of thirty-three exits that morning were hard sells, most of them faster
+    than a bar.
+
+    Requiring the verdict to survive ai_exit_macd_confirm_ticks consecutive
+    evaluations is the cheap approximation of "confirm on a sealed bar": at a
+    3s positions tick, 3 ticks is ~9s of agreement. The streak lives on the
+    position and resets the moment the reading disagrees, so a genuine break
+    still exits within seconds and a flickering one never does.
+
+    1 restores the old single-reading behaviour exactly.
+    """
+    if not isinstance(pos, dict):
+        return (bool(why), why or "")
+    if not why:
+        pos.pop("macd_break_streak", None)
+        pos.pop("macd_break_why", None)
+        return False, ""
+    try:
+        need = int(_cfg_all().get("ai_exit_macd_confirm_ticks", 1) or 1)
+    except (TypeError, ValueError):
+        need = 1
+    need = max(1, need)
+    if str(pos.get("macd_break_why") or "") != why:
+        pos["macd_break_why"] = why
+        pos["macd_break_streak"] = 0
+    streak = int(pos.get("macd_break_streak") or 0) + 1
+    pos["macd_break_streak"] = streak
+    if streak < need:
+        return False, ""
+    return True, why
+
+
 def macd_thesis_broken(ticker: str, pos: dict | None = None) -> tuple[bool, str]:
     """Has MACD withdrawn the reason this position was opened?
 
@@ -3223,7 +3263,7 @@ def macd_thesis_broken(ticker: str, pos: dict | None = None) -> tuple[bool, str]
     # NEGATIVE — the lines have crossed. A level, not a direction: an up
     # arrow does not save a gap that is already at or below zero.
     if gap_f <= 0 or sig.get("macd_bull") is False:
-        return True, "macd_negative"
+        return _confirmed(pos, "macd_negative")
 
     falling = bool(sig.get("macd_gap_falling"))
 
@@ -3240,8 +3280,8 @@ def macd_thesis_broken(ticker: str, pos: dict | None = None) -> tuple[bool, str]
         except (TypeError, ValueError):
             need = 1.0
         if sep is not None and sep < need:
-            return True, "macd_thin_and_closing"
-    return False, ""
+            return _confirmed(pos, "macd_thin_and_closing")
+    return _confirmed(pos, None)
 
 
 def local_trail_ring(tick_sec: float, cfg: dict | None = None) -> int:
