@@ -291,7 +291,7 @@
   "ai_local_trail_be_at_r": 0.1,
   "ai_local_trail_arm_pct": 0.1,
   "ai_local_trail_be_at_pct": 0.15,
-  "ai_watch_min_price": 2.0,
+  "ai_watch_min_price": 1.0,
   "ai_local_trail_print_ring": 2,
   "ai_watch_require_live_pctr": true,
   "ai_watch_arm_require_cm_rsi": false,
