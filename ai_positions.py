@@ -4221,6 +4221,38 @@ def _heal_unprotected(
     return events
 
 
+def mark_closing_reason(reason: str, *, except_symbols: set | None = None) -> int:
+    """Stamp *reason* on every managed open position before an outside close.
+
+    resolve_exit prefers pos["closing_reason"] and falls back to inferring
+    from the order type, where a market fill becomes "flattened". Paths that
+    close positions at the BROKER without going through the desk's own exits
+    — the 15:50 EOD sweep and the start-of-day flatten — never set it, so
+    their outcomes were all labelled "flattened".
+
+    That bucket is not a rule and not homogeneous. On 2026-08-28 it held both
+    BIVI at +1.912R, the best trade in the dataset, and QS at -0.455R after
+    being up +0.597R. Analysis grouped by close_reason cannot say anything
+    about either while they wear the same word.
+
+    Label only — no order is placed here and no behaviour changes.
+    """
+    skip = {str(x).upper() for x in (except_symbols or set())}
+    n = 0
+    with _state_lock:
+        state = _load_state()
+        for sym, pos in state.items():
+            if not isinstance(pos, dict) or str(sym).upper() in skip:
+                continue
+            if pos.get("closing_reason") or not pos.get("entry_confirmed"):
+                continue
+            pos["closing_reason"] = reason
+            n += 1
+        if n:
+            _save_state(state)
+    return n
+
+
 def _record_outcome(ticker: str, pos: dict[str, Any], exit_price: float | None,
                     close_reason: str, now: float) -> dict[str, Any]:
     entry_price = pos.get("entry_price") or 0

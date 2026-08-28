@@ -853,6 +853,16 @@ def _run_eod_liquidate(cfg: dict, now: float) -> dict:
     print("[ai] EOD liquidate — cancel open orders + close all positions"
           + (f" (keeping H4 {sorted(keep)})" if keep else ""),
           flush=True)
+    # Say WHY before the broker closes them. liquidate_all goes straight to
+    # Alpaca, so without this every 15:50 exit records close_reason
+    # "flattened" — the label resolve_exit falls back to for a market fill it
+    # cannot attribute. That bucket held BIVI at +1.912R and QS at -0.455R
+    # side by side, which makes analysis grouped by exit reason useless for
+    # both. Label only; no order is placed here.
+    try:
+        ai_positions.mark_closing_reason("eod_liquidate", except_symbols=keep)
+    except Exception as e:  # noqa: BLE001
+        print(f"[ai] eod label failed (harmless): {e}", flush=True)
     try:
         result = alpaca_trader.liquidate_all(except_symbols=keep)
     except Exception as e:  # noqa: BLE001
