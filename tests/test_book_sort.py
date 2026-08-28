@@ -129,8 +129,11 @@ def test_the_hidden_qty_column_is_not_sortable():
 
 def test_the_book_binds_its_own_sort_and_repaints():
     assert "_bindBookSort(" in _JS
-    i = _JS.index("_bindBookSort(() =>")
-    assert "_paintBookTable(" in _JS[i:i + 400], "a click must repaint"
+    # The repaint is a named closure now — it is shared with the legend's
+    # row-click handler — so assert the wiring, not the arrow function.
+    i = _JS.index("const _repaintBook =")
+    assert "_paintBookTable(" in _JS[i:i + 300], "the repaint must paint the book"
+    assert "_bindBookSort(_repaintBook)" in _JS, "a sort click must repaint"
 
 
 def test_headers_are_reachable_by_keyboard():

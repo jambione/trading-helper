@@ -73,10 +73,26 @@ export function init(panelEl, kind) {
     setInterval(() => {
       bookRowsEl.querySelectorAll('.cell-trail[data-entry-time]').forEach(_tickHoldClock);
     }, 250);
-    _bindBookSort(() => {
-      _paintBookTable(
-        bookSection, bookRowsEl, bookCountEl, bookStampEl, _aiBook(), bookDayPlEl,
-      );
+    const _repaintBook = () => _paintBookTable(
+      bookSection, bookRowsEl, bookCountEl, bookStampEl, _aiBook(), bookDayPlEl,
+    );
+    _bindBookSort(_repaintBook);
+
+    // Click a row to have the legend explain THAT name: each rule is
+    // evaluated against it and marked pass / fail / unknown. Click the same
+    // row again to go back to the plain rules. Delegated, because rows are
+    // re-rendered on every paint.
+    bookRowsEl.addEventListener('click', (ev) => {
+      const row = ev.target && ev.target.closest
+        ? ev.target.closest('[data-book-symbol]') : null;
+      if (!row) return;
+      const sym = String(row.dataset.bookSymbol || '');
+      _legendFor = (_legendFor === sym) ? '' : sym;
+      bookRowsEl.querySelectorAll('[data-book-symbol]').forEach((el) => {
+        el.classList.toggle('is-explained',
+          !!_legendFor && el.dataset.bookSymbol === _legendFor);
+      });
+      _repaintBook();
     });
   }
 
@@ -323,6 +339,12 @@ function _bookRows(book) {
       macd_fast: w.macd_fast != null ? w.macd_fast : null,
       macd_slow: w.macd_slow != null ? w.macd_slow : null,
       macd_sep_ratio: w.macd_sep_ratio != null ? w.macd_sep_ratio : null,
+      // Provenance, age and %R direction: the legend cannot say whether a
+      // row satisfies FRESH or 'and rising' without them. Fourth field to
+      // be added to this chain for exactly that reason.
+      macd_src: w.macd_src != null ? w.macd_src : null,
+      macd_age_sec: w.macd_age_sec != null ? w.macd_age_sec : null,
+      pctr_rising: w.pctr_rising != null ? !!w.pctr_rising : null,
       macd_bull: !!w.macd_bull,
       macd_cross: !!w.macd_cross,
       macd_ok: !!w.macd_ok,
@@ -758,14 +780,22 @@ function _announcePositions(rows) {
   _prevOpenSyms = now;
 }
 
+/** Which book row the legend is explaining, or '' for the plain rules. */
+let _legendFor = '';
+
 /** Entry rules, rendered from the LIVE config rather than written down.
  *
  *  Hardcoding the numbers here would produce a legend that drifts from the
  *  thresholds it claims to describe — the same failure as a config knob
  *  nothing reads, and this desk has hit that three times in one session.
  *  Every value below comes off the config the server actually loaded.
+ *
+ *  With a row selected each rule is also EVALUATED against it, so the panel
+ *  answers "what is this name missing" rather than only "what is required".
+ *  A rule whose inputs are absent reads UNKNOWN, never PASS — the desk's own
+ *  rule that absence is not a pass.
  */
-function _paintBookLegend(cfg) {
+function _paintBookLegend(cfg, row) {
   const el = document.querySelector('[data-ai-book-legend]');
   if (!el) return;
   const c = cfg && typeof cfg === 'object' ? cfg : {};
@@ -774,24 +804,62 @@ function _paintBookLegend(cfg) {
     const v = Number(c[k]);
     return Number.isFinite(v) ? v : d;
   };
+  const r = row && typeof row === 'object' ? row : null;
+  const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+
+  // null = cannot say. Never collapse that into false.
+  let macd = null, exh = null, both = null, fresh = null;
+  if (r) {
+    const gap = num(r.macd_gap), sep = num(r.macd_sep_ratio);
+    const falling = r.macd_gap_falling;
+    macd = (gap == null || sep == null) ? null
+      : (gap > n('macd_min_gap', 0.005) && sep >= n('macd_sep_mult', 1.5)
+         && falling !== true);
+
+    const ex = num(r.exhaustion), rising = r.pctr_rising;
+    exh = ex == null ? null
+      : ((ex >= n('ai_watch_exhaustion_heat_min_pct', 40) && rising === true)
+         || ex >= n('ai_watch_ob_flat_min_pct', 99));
+
+    both = (ex == null || gap == null) ? null
+      : (ex >= n('ai_watch_macd_exh_override_min_pct', 70) && rising === true
+         && r.macd_gap_rising === true);
+
+    const pAge = num(r.price_age_sec), mAge = num(r.macd_age_sec);
+    fresh = (pAge == null || mAge == null) ? null
+      : (pAge <= n('ai_watch_decision_max_age_sec', 8)
+         && mAge <= n('ai_watch_macd_max_age_sec', 30));
+  }
+
   const rules = [
-    ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`],
-    ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`],
-    ['BOTH',  `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising + MACD rising = override`],
-    ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`],
-    ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`],
-    ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`],
+    ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`, macd],
+    ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`, exh],
+    ['BOTH',  `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising + MACD rising = override`, both],
+    ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
+    ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`, null],
+    ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`, null],
   ];
-  const html = rules.map(([k, v]) =>
-    `<div class="lg-row"><span class="lg-k">${k}</span><span class="lg-v">${v}</span></div>`
-  ).join('');
+
+  const head = r
+    ? `<div class="lg-head">${_esc(String(r.symbol || ''))} — tap the row again to clear</div>`
+    : '';
+  const html = head + rules.map(([k, v, ok]) => {
+    const cls = ok === true ? ' lg-pass' : ok === false ? ' lg-fail' : '';
+    const mark = !r || ok == null ? '' :
+      `<span class="lg-mark">${ok ? '✓' : '✗'}</span>`;
+    return `<div class="lg-row${cls}"><span class="lg-k">${k}</span>`
+      + `<span class="lg-v">${v}</span>${mark}</div>`;
+  }).join('');
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
-  try { _paintBookLegend(get('config')); } catch (e) { /* legend is never load-bearing */ }
+  try {
+    _paintBookLegend(get('config'),
+      _legendFor ? rows.find(x => String(x.symbol || '') === _legendFor) : null);
+  } catch (e) { /* legend is never load-bearing */ }
   _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;

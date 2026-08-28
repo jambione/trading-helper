@@ -2394,6 +2394,31 @@ body.mobile .icon-btn {
   line-height: 1.45;
 }
 .ai-book-legend:empty { display: none; }
+.ai-book-legend .lg-head {
+  color: #c4b5fd;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding-bottom: 3px;
+}
+.ai-book-legend .lg-row { position: relative; }
+.ai-book-legend .lg-mark {
+  position: absolute;
+  right: 0;
+  top: 0;
+  font-weight: 700;
+}
+/* Pass and fail are the semantic pair, deliberately not the violet accent —
+   the accent means "this is the desk's own chrome", these mean "this name
+   does or does not clear the rule". */
+.ai-book-legend .lg-pass .lg-v,
+.ai-book-legend .lg-pass .lg-mark { color: #5fcf96; }
+.ai-book-legend .lg-fail .lg-v,
+.ai-book-legend .lg-fail .lg-mark { color: #f4818f; }
+.panel-ai-watch .feed-row--ai-book.is-explained {
+  outline: 1px solid rgba(167, 139, 250, 0.55);
+  outline-offset: -1px;
+}
+.panel-ai-watch .feed-row--ai-book[data-book-symbol] { cursor: pointer; }
 .ai-book-legend .lg-row {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);

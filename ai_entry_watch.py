@@ -5070,6 +5070,8 @@ def _macd_wire_fields(rec: dict) -> dict:
             ind.get("macd_slow") if ind.get("macd_slow") is not None
             else ind.get("macd_signal")),
         "macd_gap": gap,
+        "macd_src": str(ind.get("macd_src") or "") or None,
+        "macd_age_sec": _f_or_none(ind.get("macd_age_sec")),
         "macd_sep_ratio": _f_or_none(ind.get("macd_sep_ratio")),
         "macd_bull": bool(ind.get("macd_bull")),
         "macd_cross": bool(ind.get("macd_cross")),
@@ -5098,6 +5100,7 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
     if not isinstance(ind, dict):
         return {
             "pctr": None, "pctr_slow": None, "pctr_raw": None, "pctr_src": None,
+            "pctr_rising": False, "pctr_falling": False,
             "pctr_ob": False, "pctr_tight": False, "pctr_gap": None,
             "cm_rsi": None, "cm_rsi_green": False, "cm_rsi_low": False,
             "cm_rsi_rising": False, "cm_rsi_src": None, "cm_rsi_age_sec": None,
@@ -5110,6 +5113,8 @@ def _exhaustion_wire_fields(rec: dict) -> dict:
         "pctr_slow": _f_or_none(ind.get("pctr_slow")),
         "pctr_raw": _f_or_none(ind.get("pctr_raw")),
         "pctr_src": str(ind.get("pctr_src") or "") or None,
+        "pctr_rising": bool(ind.get("pctr_rising")),
+        "pctr_falling": bool(ind.get("pctr_falling")),
         "pctr_ob": bool(ind.get("pctr_ob")),
         "pctr_tight": bool(ind.get("pctr_tight")),
         "pctr_gap": _f_or_none(ind.get("pctr_gap")),

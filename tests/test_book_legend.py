@@ -80,6 +80,6 @@ def test_it_hides_itself_when_empty():
 def test_it_can_never_break_the_book():
     """A legend is a reference, not a mechanism. If it throws, the rows still
     have to paint."""
-    i = _JS.index("_paintBookLegend(get('config'))")
-    assert "try {" in _JS[i - 40:i]
-    assert "catch" in _JS[i:i + 120]
+    i = _JS.index("_paintBookLegend(get('config'),")
+    assert "try {" in _JS[i - 80:i]
+    assert "catch" in _JS[i:i + 300]
