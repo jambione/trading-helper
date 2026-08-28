@@ -98,12 +98,19 @@ DEFAULT_MAX_OUTPUT_TOKENS = 10000  # includes reasoning on some models — leave
 DEFAULT_SEARCH_TOOLS = "web_x"   # "web" | "web_x" | "none"
 # Backend:
 #   claude_cli — Claude Code CLI (claude -p), Anthropic/subscription auth
+#   agy / gemini_cli — Antigravity CLI (agy -p), Gemini subscription auth
 #   cli / grok_cli — Grok Build CLI (grok.com login)
 #   api — paid xAI console HTTP (XAI_API_KEY)
 DEFAULT_BACKEND = "claude_cli"
 DEFAULT_CLI_BIN = "grok"
 DEFAULT_CLAUDE_CLI_BIN = "claude"
 DEFAULT_CLAUDE_MODEL = "sonnet"
+DEFAULT_AGY_CLI_BIN = "agy"
+DEFAULT_AGY_MODEL = "gemini-3.7-flash-high"
+# JSON-trailer repair is extraction — cheapest Gemini, no extra tools.
+DEFAULT_AGY_REPAIR_MODEL = "gemini-3.7-flash-low"
+DEFAULT_AGY_EFFORT = "high"
+AGY_BACKENDS = frozenset({"agy", "gemini", "gemini_cli", "antigravity"})
 # JSON-trailer repair is trivial extraction — cheapest model, no web tools.
 DEFAULT_CLAUDE_REPAIR_MODEL = "haiku"
 # Research effort (low|medium|high|xhigh|max). xhigh measurably grounds the
@@ -327,6 +334,154 @@ def claude_cli_ready(cli_bin: str | None = None) -> bool:
     return claude_cli_logged_in(cli_bin)
 
 
+def is_agy_backend(backend: str | None, cli_bin: str | None = None) -> bool:
+    """True when this research slot is Antigravity CLI, not Claude Code.
+
+    Matches an explicit backend name, or a ``claude_cli_bin`` that is ``agy``
+    so a partial config flip cannot send Claude flags to the Gemini binary.
+    """
+    b = (backend or "").strip().lower()
+    if b in AGY_BACKENDS:
+        return True
+    return Path(str(cli_bin or "")).name.lower() == "agy"
+
+
+def resolve_agy_cli(cli_bin: str | None = None) -> str | None:
+    """Path to the Antigravity CLI binary, or None if missing."""
+    name = (cli_bin or os.getenv("AGY_CLI_BIN") or DEFAULT_AGY_CLI_BIN).strip()
+    if not name:
+        return None
+    p = Path(name)
+    if p.is_file() and os.access(p, os.X_OK):
+        return str(p)
+    home_bin = Path.home() / ".local" / "bin" / "agy"
+    if home_bin.is_file() and os.access(home_bin, os.X_OK):
+        return str(home_bin)
+    found = shutil.which(name)
+    if found:
+        return found
+    if name != DEFAULT_AGY_CLI_BIN:
+        return shutil.which(DEFAULT_AGY_CLI_BIN)
+    return None
+
+
+def agy_cli_available(cli_bin: str | None = None) -> bool:
+    return resolve_agy_cli(cli_bin) is not None
+
+
+_AGY_NOT_LOGGED_IN_MARKERS = (
+    "authentication required",
+    "authentication failed",
+    "not logged into antigravity",
+    "please sign in",
+    "run 'agy' to log in",
+    "run agy to log in",
+    "launch the cli without arguments to sign in",
+)
+
+
+def agy_output_looks_logged_out(text: str | None) -> bool:
+    s = (text or "").strip().lower()
+    if not s:
+        return False
+    return any(m in s for m in _AGY_NOT_LOGGED_IN_MARKERS)
+
+
+def _agy_model(model: str | None) -> str:
+    m = (model or "").strip()
+    low = m.lower()
+    if not m or low in ("sonnet", "haiku", "opus") or low.startswith("grok"):
+        return DEFAULT_AGY_MODEL
+    return m
+
+
+def _agy_effort(effort: str | None) -> str | None:
+    e = (effort or "").strip().lower()
+    if not e:
+        return DEFAULT_AGY_EFFORT
+    if e in ("xhigh", "max", "highest"):
+        return "high"
+    if e in ("low", "medium", "high"):
+        return e
+    return DEFAULT_AGY_EFFORT
+
+
+def _agy_print_timeout(timeout: float) -> str:
+    try:
+        sec = int(max(30.0, float(timeout)))
+    except (TypeError, ValueError):
+        sec = 600
+    return f"{sec}s"
+
+
+def agy_auth_status(cli_bin: str | None = None,
+                    *, timeout: float = 20.0) -> dict[str, Any]:
+    """``agy models`` is the login probe — there is no ``agy auth status``.
+
+    Keys match ``claude_auth_status`` so the trader print path can share shape.
+    """
+    binary = resolve_agy_cli(cli_bin)
+    if not binary:
+        return {
+            "ok": False,
+            "logged_in": False,
+            "raw": "",
+            "error": "Antigravity CLI not found",
+            "binary": None,
+        }
+    try:
+        proc = subprocess.run(
+            [binary, "models"],
+            capture_output=True,
+            text=True,
+            timeout=max(5.0, float(timeout)),
+            env={**os.environ},
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "logged_in": False,
+            "raw": "",
+            "error": "agy models timed out",
+            "binary": binary,
+        }
+    except OSError as e:
+        return {
+            "ok": False,
+            "logged_in": False,
+            "raw": "",
+            "error": f"agy models failed: {e}",
+            "binary": binary,
+        }
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    raw = out or err
+    logged_out = agy_output_looks_logged_out(out) or agy_output_looks_logged_out(err)
+    logged_in = proc.returncode == 0 and bool(out) and not logged_out
+    return {
+        "ok": logged_in,
+        "logged_in": logged_in,
+        "raw": raw[:500],
+        "error": "" if logged_in else (
+            "Antigravity CLI not logged in — run: agy   "
+            "(from a Terminal on this machine, then restart the stack there)"
+        ),
+        "binary": binary,
+        "auth_method": "session" if logged_in else "",
+    }
+
+
+def agy_cli_logged_in(cli_bin: str | None = None,
+                      *, timeout: float = 20.0) -> bool:
+    return bool(agy_auth_status(cli_bin, timeout=timeout).get("logged_in"))
+
+
+def agy_cli_ready(cli_bin: str | None = None) -> bool:
+    if not agy_cli_available(cli_bin):
+        return False
+    return agy_cli_logged_in(cli_bin)
+
+
 def prompt_path(cfg_name: str | None = None) -> Path:
     name = (cfg_name or DEFAULT_PROMPT_FILE).strip() or DEFAULT_PROMPT_FILE
     p = Path(name)
@@ -451,7 +606,8 @@ def normalize_ai_source(value: str | None) -> str:
     s = (value or "").strip().lower()
     if not s:
         return "unknown"
-    if s in ("a", "anthropic", "claude", "claude_cli"):
+    if s in ("a", "anthropic", "claude", "claude_cli",
+             "agy", "gemini", "gemini_cli", "antigravity"):
         return SOURCE_ANTHROPIC
     if s in ("x", "xai", "grok", "grok_cli", "cli", "api"):
         # ``cli`` / ``api`` are the historical Grok backends in this module.
@@ -473,7 +629,7 @@ def ai_source_mark(value: str | None) -> str:
 def source_from_backend(backend: str | None) -> str:
     """Canonical source id for a claude_suggest backend string."""
     b = (backend or DEFAULT_BACKEND).strip().lower()
-    if b in ("claude_cli", "claude"):
+    if b in ("claude_cli", "claude") or b in AGY_BACKENDS:
         return SOURCE_ANTHROPIC
     if b in ("cli", "grok_cli", "api"):
         return SOURCE_XAI
@@ -1612,6 +1768,138 @@ def call_claude_cli(
     return text
 
 
+def call_agy_cli(
+    prompt: str,
+    *,
+    model: str = DEFAULT_AGY_MODEL,
+    timeout: float = DEFAULT_TIMEOUT,
+    live_search: bool = True,
+    cli_bin: str | None = None,
+    effort: str | None = None,
+    phase: str = "research",
+) -> str:
+    """Run research via Antigravity CLI headless (``agy -p``).
+
+    Uses the Google / Gemini subscription login (Keychain on macOS). Same
+    session rule as Claude Code: a stack started over SSH cannot read it.
+
+    Does **not** pass ``--dangerously-skip-permissions``. Research runs from
+    an empty temp workspace so a tool that would write the trading repo is
+    outside the trusted tree and soft-denied in headless mode. Web fetch is
+    also Ask-by-default; allow ``read_url(*)`` in
+    ``~/.gemini/antigravity-cli/settings.json`` if the run must search live.
+    ``live_search`` is accepted for call-shape parity; agy has no Claude-style
+    ``--disallowedTools`` switch.
+    """
+    binary = resolve_agy_cli(cli_bin)
+    if not binary:
+        raise RuntimeError(
+            "Antigravity CLI not found — install agy "
+            "(https://antigravity.google/docs/cli/install) "
+            "or set AGY_CLI_BIN"
+        )
+
+    model_id = _agy_model(model)
+    effort_id = _agy_effort(effort)
+    cmd = [
+        binary,
+        "-p", prompt,
+        "--output-format", "json",
+        "--print-timeout", _agy_print_timeout(timeout),
+        "--disable-slash-commands",
+        "--model", model_id,
+    ]
+    if effort_id:
+        cmd.extend(["--effort", effort_id])
+    _ = live_search  # no CLI flag; permissions.allow read_url is the gate
+
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=max(30.0, float(timeout)),
+            env={**os.environ},
+            cwd=_cli_workspace(),
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"Antigravity CLI timed out after {timeout:.0f}s") from e
+
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    if agy_output_looks_logged_out(out) or agy_output_looks_logged_out(err):
+        raise RuntimeError(
+            "Antigravity CLI not logged in — run: agy   "
+            "(on the machine running ai_trader, from a local Terminal)"
+        )
+    if proc.returncode != 0 and not out:
+        raise RuntimeError(
+            f"Antigravity CLI exit {proc.returncode}: {(err or 'no output')[:240]}"
+        )
+    if not out:
+        raise RuntimeError(
+            f"Antigravity CLI returned empty output: {(err or 'no stderr')[:240]}"
+        )
+
+    envelope: dict[str, Any] | None = None
+    try:
+        maybe = json.loads(out)
+        if isinstance(maybe, dict) and (
+            "response" in maybe or "status" in maybe or "usage" in maybe
+        ):
+            envelope = maybe
+    except json.JSONDecodeError:
+        envelope = None
+
+    if envelope is None:
+        return out
+
+    status = str(envelope.get("status") or "").strip().upper()
+    text = str(envelope.get("response") or envelope.get("result") or "")
+    if status and status != "SUCCESS":
+        err_msg = str(envelope.get("error") or status)
+        if agy_output_looks_logged_out(err_msg):
+            raise RuntimeError(
+                "Antigravity CLI not logged in — run: agy   "
+                "(on the machine running ai_trader, from a local Terminal)"
+            )
+        raise RuntimeError(f"Antigravity CLI {status}: {err_msg[:240]}")
+
+    usage = envelope.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    duration_ms = None
+    try:
+        if envelope.get("duration_seconds") is not None:
+            duration_ms = int(round(float(envelope["duration_seconds"]) * 1000))
+        else:
+            duration_ms = int(round((time.time() - started) * 1000))
+    except (TypeError, ValueError):
+        duration_ms = None
+    _record_usage({
+        "ts": round(started, 3),
+        "backend": "agy",
+        "phase": phase,
+        "model": model_id,
+        "effort": effort_id or "",
+        "num_turns": envelope.get("num_turns"),
+        "duration_ms": duration_ms,
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "thinking_tokens": usage.get("thinking_tokens"),
+        "cache_read_input_tokens": usage.get("cache_read_tokens")
+        or usage.get("cache_read_input_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "prompt_chars": len(prompt),
+        "result_chars": len(text),
+        "session_id": envelope.get("conversation_id"),
+    })
+    if not text.strip():
+        raise RuntimeError("Antigravity CLI returned empty response")
+    return text
+
+
 def call_grok_cli(
     prompt: str,
     *,
@@ -2432,6 +2720,8 @@ def _place_qualifying_entries(
         be = (backend or "claude_cli").strip().lower()
         if be in ("cli", "grok_cli", "grok"):
             entry_model = model or DEFAULT_XAI_MODEL
+        elif is_agy_backend(be, cli_bin):
+            entry_model = model or DEFAULT_AGY_MODEL
         else:
             entry_model = model or DEFAULT_CLAUDE_MODEL
         work_rows = tag_agreement_on_rows(list(rows))
@@ -2633,12 +2923,15 @@ def call_claude(
 
     ``backend``:
     - ``claude_cli`` — ``claude -p …`` (Claude Code / Anthropic)
+    - ``agy`` / ``gemini_cli`` — ``agy -p …`` (Gemini / Antigravity login)
     - ``cli`` / ``grok_cli`` — ``grok --prompt-file …`` (grok.com login)
     - ``api`` — ``POST /v1/responses`` with ``XAI_API_KEY`` (paid credits)
     """
     backend = (backend or DEFAULT_BACKEND).strip().lower()
     if backend == "grok_cli":
         backend = "cli"
+    if is_agy_backend(backend, cli_bin):
+        backend = "agy"
     user_content = prompt
     if use_prior_context:
         user_content = prompt.rstrip() + _prior_context_snippet()
@@ -2647,7 +2940,7 @@ def call_claude(
             max_price=max_price,
             backend=backend,
         )
-    if trading and backend in ("cli", "claude_cli"):
+    if trading and backend in ("cli", "claude_cli", "agy"):
         # Rides this call's existing web-search budget rather than a
         # separate per-position invocation — see ai_positions.py.
         import ai_positions as cp
@@ -2659,7 +2952,7 @@ def call_claude(
           "not personalized financial advice. Compete for the best session "
           "LONG (~3–4h until the next run); put your champion first in JSON.\n\n"
         + user_content
-        if backend in ("cli", "claude_cli")
+        if backend in ("cli", "claude_cli", "agy")
         else user_content
     )
 
@@ -2672,7 +2965,17 @@ def call_claude(
                 "Research text:\n" + text[-6000:]
             )
             try:
-                if backend == "claude_cli":
+                if backend == "agy":
+                    trailer = call_agy_cli(
+                        repair_prompt,
+                        model=DEFAULT_AGY_REPAIR_MODEL,
+                        timeout=min(180.0, timeout),
+                        live_search=False,
+                        cli_bin=cli_bin,
+                        effort="low",
+                        phase="repair",
+                    )
+                elif backend == "claude_cli":
                     trailer = call_claude_cli(
                         repair_prompt,
                         model=DEFAULT_CLAUDE_REPAIR_MODEL,
@@ -2789,6 +3092,18 @@ def call_claude(
             full_prompt,
             model=model if not str(model).lower().startswith("grok")
             else DEFAULT_CLAUDE_MODEL,
+            timeout=timeout,
+            live_search=live_search,
+            cli_bin=cli_bin,
+            effort=effort,
+            phase="research",
+        )
+        return _cli_research_then_maybe_trade(text)
+
+    if backend == "agy":
+        text = call_agy_cli(
+            full_prompt,
+            model=model,
             timeout=timeout,
             live_search=live_search,
             cli_bin=cli_bin,
@@ -3192,7 +3507,19 @@ class AiSuggestions:
             # No schedule configured — fall back to interval polling.
             return False
 
-        if self.backend in ("claude_cli", "claude"):
+        if is_agy_backend(self.backend, self.cli_bin):
+            if not agy_cli_available(self.cli_bin):
+                self.error = "Antigravity CLI missing — install agy"
+                self.last_attempt = now
+                return False
+            if not agy_cli_logged_in(self.cli_bin):
+                self.error = (
+                    "Antigravity CLI not logged in — run: agy   "
+                    "(from a Terminal on this machine, then restart there)"
+                )
+                self.last_attempt = now
+                return False
+        elif self.backend in ("claude_cli", "claude"):
             if not claude_cli_available(self.cli_bin):
                 self.error = "Claude CLI missing — install Claude Code"
                 self.last_attempt = now

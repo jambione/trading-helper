@@ -170,7 +170,7 @@ echo ""
 # valid — Anthropic research then silently skips every scheduled run. Grok is
 # unaffected (its credential is a file). This is a property of macOS session
 # gating, not something the script can fix, so it reports rather than pretends.
-if ssh_mini "cd '$MINI_REPO' && grep -q 'claude_auth=fail' logs/ai_trader.log 2>/dev/null"; then
+if ssh_mini "cd '$MINI_REPO' && grep -qE 'claude_auth=fail|agy_auth=fail' logs/ai_trader.log 2>/dev/null"; then
   echo "⚠  claude_auth=fail — this SSH restart logged the Claude CLI out."
   echo "   The credential is still in the mini's Keychain; \`claude /login\`"
   echo "   is NOT the fix. To restore Anthropic research, restart the stack"

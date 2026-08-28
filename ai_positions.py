@@ -41,12 +41,15 @@ if str(ROOT) not in sys.path:
 
 from ai_paths import resolve_report_dir  # noqa: E402
 from ai_suggest import (  # noqa: E402
+    DEFAULT_AGY_MODEL,
     DEFAULT_CLAUDE_CLI_BIN,
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_XAI_MODEL,
     _iter_json_blobs,
+    call_agy_cli,
     call_claude_cli,
     call_grok_cli,
+    is_agy_backend,
 )
 from learn_stamps import merge_regime, regime_stamp  # noqa: E402
 
@@ -367,6 +370,7 @@ def evaluate_entry(
 
     ``backend`` selects which CLI runs the entry call:
     - ``claude_cli`` / ``claude`` → Claude Code CLI
+    - ``agy`` / ``gemini_cli`` → Antigravity CLI
     - ``cli`` / ``grok_cli`` / ``grok`` → Grok Build CLI
     """
     prompt = build_entry_prompt(
@@ -383,6 +387,15 @@ def evaluate_entry(
                 max_turns=2,
                 live_search=True,
                 cli_bin=cli_bin or "grok",
+                phase="entry",
+            )
+        elif is_agy_backend(be, cli_bin):
+            text = call_agy_cli(
+                prompt,
+                model=model or DEFAULT_AGY_MODEL,
+                timeout=timeout,
+                live_search=True,
+                cli_bin=cli_bin or "agy",
                 phase="entry",
             )
         else:

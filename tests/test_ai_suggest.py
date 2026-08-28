@@ -49,11 +49,14 @@ def test_source_marks_anthropic_and_xai():
         source_from_backend,
     )
     assert normalize_ai_source("claude_cli") == "anthropic"
+    assert normalize_ai_source("agy") == "anthropic"
     assert normalize_ai_source("grok") == "xai"
     assert ai_source_mark("claude") == "A"
+    assert ai_source_mark("gemini") == "A"
     assert ai_source_mark("xai") == "X"
     assert source_from_backend("cli") == "xai"
     assert source_from_backend("claude_cli") == "anthropic"
+    assert source_from_backend("agy") == "anthropic"
     x_rows = parse_suggestions(
         {"suggestions": [{"symbol": "SOFI", "score": 8}]}, source="xai")
     assert x_rows[0]["source"] == "xai"

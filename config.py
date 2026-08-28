@@ -933,12 +933,15 @@ DEFAULT_CONFIG = {
     # 0.0 = track the real-time price every poll (no deadband).
     "ai_watch_synth_reanchor_pct":     0.0,
 
-    # Anthropic (Claude) research source — provider-specific
+    # Anthropic (Claude) research source — provider-specific.
+    # claude_backend=agy (and claude_cli_bin=agy, claude_model=gemini-…)
+    # runs this same slot through Antigravity CLI instead of Claude Code.
+    # Duel still treats it as source A vs Grok's X.
     "claude_research_enabled":   False,
     "claude_backend":       "claude_cli",
     "claude_cli_bin":          "claude",
     "claude_model":            "sonnet",
-    "claude_effort":            "xhigh",  # low|medium|high|xhigh|max
+    "claude_effort":            "xhigh",  # low|medium|high|xhigh|max; agy: high
     "claude_research_times": ["08:30", "11:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,

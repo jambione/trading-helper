@@ -526,6 +526,32 @@ def _claude_auth_remedy() -> str:
     )
 
 
+def _agy_auth_remedy() -> str:
+    """Same Keychain-vs-SSH split as Claude, for the Antigravity login."""
+    try:
+        import subprocess
+        found = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", "gemini", "-a", "antigravity"],
+            capture_output=True, timeout=10,
+        ).returncode == 0
+    except Exception:  # noqa: BLE001
+        found = False
+    if found:
+        return (
+            "The Gemini/Antigravity credential IS in this machine's login "
+            "Keychain — you are logged in, but this process cannot read it "
+            "because it was not started from an interactive session. Do NOT "
+            "run `agy` login again. Restart the stack from a Terminal window "
+            "on this machine."
+        )
+    return (
+        "No Antigravity credential found in this machine's login Keychain. "
+        "Run `agy` from a Terminal on this machine, complete Google sign-in, "
+        "then restart the stack from that same Terminal."
+    )
+
+
 def _cfg(cfg: dict, key: str, default=None):
     """Config read where an explicit null counts as unset, not as a value."""
     v = cfg.get(key)
@@ -1101,7 +1127,25 @@ def main() -> None:
         if n:
             print(f"[ai] hydrated {n} Anthropic idea(s) from "
                   f"{CLAUDE_SUGGESTIONS_FILE.name}", flush=True)
-        if gs_a.backend in ("claude_cli", "claude"):
+        from ai_suggest import is_agy_backend
+        if is_agy_backend(gs_a.backend, gs_a.cli_bin):
+            try:
+                from ai_suggest import agy_auth_status
+                auth = agy_auth_status(gs_a.cli_bin)
+                if auth.get("logged_in"):
+                    how = auth.get("auth_method") or "session"
+                    print(f"[ai] agy_auth=ok method={how}", flush=True)
+                else:
+                    print(
+                        "[ai] WARNING: agy_auth=fail — "
+                        f"{auth.get('error') or 'not logged in'}. "
+                        f"{_agy_auth_remedy()}",
+                        flush=True,
+                    )
+            except Exception as e:  # noqa: BLE001
+                print(f"[ai] WARNING: agy_auth probe failed: {e}",
+                      flush=True)
+        elif gs_a.backend in ("claude_cli", "claude"):
             try:
                 from ai_suggest import claude_auth_status
                 auth = claude_auth_status(gs_a.cli_bin)
