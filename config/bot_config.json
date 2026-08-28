@@ -299,7 +299,7 @@
   "ai_watch_macd_block_narrowing": true,
   "ai_watch_decision_max_age_sec": 8.0,
   "ai_watch_require_realtime_macd": true,
-  "ai_watch_macd_max_age_sec": 8.0,
+  "ai_watch_macd_max_age_sec": 30.0,
   "ai_watch_macd_exh_override": true,
   "ai_watch_macd_exh_override_min_pct": 70.0,
   "macd_sep_mult": 1.5,
