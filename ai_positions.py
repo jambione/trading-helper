@@ -3488,7 +3488,19 @@ def _rest_working_sell(
     px: float | None,
     state: str,
 ) -> bool:
-    """Replace the one working DAY sell. Submit is not a fill."""
+    """Replace the one working DAY sell. Submit is not a fill.
+
+    Two of the adapter's three knobs live here, because this is the only place
+    the order is actually placed:
+
+      ai_premarket_chase_step_sec   how often the resting price may be moved
+      ai_premarket_max_exit_slip_r  how far under the shelf it may be placed
+
+    Both shipped in config and in SAFE_CONFIG_KEYS without a reader, which is
+    worse than not shipping them: the dashboard accepts an edit and nothing
+    changes. The desk lost a session today to that exact shape on a different
+    knob.
+    """
     if px is None or px <= 0:
         return False
     prev = _num(pos.get("working_sell_px"))
@@ -3498,12 +3510,45 @@ def _rest_working_sell(
         and str(pos.get("working_sell_state") or "") == state
     ):
         return False
+
+    cfg = _cfg_all()
+    now = time.time()
+
+    # CHASE STEP. Premarket books are thin and jumpy; re-pricing on every
+    # tick spends the rate limit chasing noise and can walk the resting sell
+    # down a spread that never traded. A move that is genuinely gone will
+    # still be there one step later.
+    try:
+        step = float(cfg.get("ai_premarket_chase_step_sec", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        step = 0.0
+    if step > 0 and prev is not None:
+        last = _num(pos.get("working_sell_ts"))
+        if last is not None and now - float(last) < step:
+            return False
+
+    # SLIP CAP. The working sell rests under the shelf so it fills on the way
+    # down, but "under" has to be bounded or a wide premarket NBBO puts the
+    # order far below anything the position was risking. Measured in R, the
+    # unit the rest of the desk sizes in.
+    try:
+        slip = float(cfg.get("ai_premarket_max_exit_slip_r", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        slip = 0.0
+    shelf = _num(pos.get("local_stop_price"))
+    risk = _risk_basis(pos)
+    if slip > 0 and shelf is not None and risk and float(risk) > 0:
+        floor_px = float(shelf) - slip * float(risk)
+        if float(px) < floor_px:
+            px = floor_px
+
     import alpaca_trader
     out = alpaca_trader.working_sell_replace(ticker, float(px)) or {}
     if isinstance(out, dict) and out.get("order_id"):
         pos["working_sell_id"] = str(out["order_id"])
         pos["working_sell_px"] = round(float(px), 2)
         pos["working_sell_state"] = state
+        pos["working_sell_ts"] = now
         return True
     return False
 
@@ -3548,12 +3593,24 @@ def quote_is_live(symbol: str, cfg: dict | None = None) -> tuple[bool, str]:
     live = False
     why = src or "none"
     if src == "stream":
+        # Outside RTH the adapter gets its own ceiling: premarket prints are
+        # sparse, so the RTH staleness bar would read a normally quiet book as
+        # blind and flatten it. ai_premarket_quote_max_age_sec was shipped for
+        # this and never read — 0 or unset falls back to the RTH ceiling.
+        max_age = None
         try:
-            max_age = float(cfg.get(
-                "ai_stale_data_max_age_sec", DEFAULT_STALE_DATA_MAX_AGE_SEC)
-                or DEFAULT_STALE_DATA_MAX_AGE_SEC)
-        except (TypeError, ValueError):
-            max_age = DEFAULT_STALE_DATA_MAX_AGE_SEC
+            if _premarket_working_sell_on():
+                v = float(cfg.get("ai_premarket_quote_max_age_sec", 0.0) or 0.0)
+                max_age = v if v > 0 else None
+        except Exception:  # noqa: BLE001
+            max_age = None
+        if max_age is None:
+            try:
+                max_age = float(cfg.get(
+                    "ai_stale_data_max_age_sec", DEFAULT_STALE_DATA_MAX_AGE_SEC)
+                    or DEFAULT_STALE_DATA_MAX_AGE_SEC)
+            except (TypeError, ValueError):
+                max_age = DEFAULT_STALE_DATA_MAX_AGE_SEC
         if age is not None and age > max_age:
             return False, "stream_old"
         live, why = True, "stream"
