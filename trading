@@ -121,15 +121,17 @@ cmd_start() {
     local want_tunnel=1
     case "${1:-}" in local|--no-tunnel|notunnel|-n) want_tunnel=0 ;; esac
 
-    local dash_up=0 eng_up=0 disc_up=0 trend_up=0 claude_up=0
+    local dash_up=0 eng_up=0 disc_up=0 trend_up=0 movers_up=0 claude_up=0
     _running "dashboard.py"     && dash_up=1
     _running "signal_engine.py" && eng_up=1
     _running "discord_source.py" && disc_up=1
     _running "trending_screener.py" && trend_up=1
+    _running "movers_screener.py" && movers_up=1
     _running "ai_trader.py"     && claude_up=1
 
     # A disabled producer counts as "up" so it never blocks the early return.
     _cfg_flag trending_screener_enabled || trend_up=1
+    _cfg_flag movers_screener_enabled || movers_up=1
     # Prefer ai_trader_enabled; accept legacy claude_trader_enabled.
     if ! _cfg_flag ai_trader_enabled && ! _cfg_flag claude_trader_enabled; then
         claude_up=1
@@ -216,6 +218,12 @@ cmd_start() {
         echo "$!" >> "$PIDFILE"
     fi
 
+    if [ "$movers_up" = 0 ]; then
+        echo "Starting movers screener"
+        nohup "$PY" -u movers_screener.py >"$LOGDIR/movers.log" 2>&1 &
+        echo "$!" >> "$PIDFILE"
+    fi
+
     if [ "$claude_up" = 0 ]; then
         echo "Starting AI trader (Claude + Grok research desk)"
         nohup "$PY" -u ai_trader.py >"$LOGDIR/ai_trader.log" 2>&1 &
@@ -260,6 +268,7 @@ cmd_stop() {
     pkill -TERM -f "signal_engine.py"     2>/dev/null || true
     pkill -TERM -f "dashboard.py"         2>/dev/null || true
     pkill -TERM -f "trending_screener.py" 2>/dev/null || true
+    pkill -TERM -f "movers_screener.py"   2>/dev/null || true
     pkill -TERM -f "ai_trader.py"     2>/dev/null || true
     _stop_tunnel
     sleep 2
@@ -268,6 +277,7 @@ cmd_stop() {
     pkill -KILL -f "signal_engine.py"     2>/dev/null || true
     pkill -KILL -f "dashboard.py"         2>/dev/null || true
     pkill -KILL -f "trending_screener.py" 2>/dev/null || true
+    pkill -KILL -f "movers_screener.py"   2>/dev/null || true
     pkill -KILL -f "ai_trader.py"     2>/dev/null || true
     rm -f "$PIDFILE"
     echo "✅ Stopped (incl. tunnel)."
@@ -279,12 +289,14 @@ cmd_status() {
     e=$(pgrep -f "signal_engine.py"    | tr '\n' ' ' || true)
     g=$(pgrep -f "discord_source.py"   | tr '\n' ' ' || true)
     t=$(pgrep -f "trending_screener.py" | tr '\n' ' ' || true)
+    mv=$(pgrep -f "movers_screener.py" | tr '\n' ' ' || true)
     c=$(pgrep -f "ai_trader.py"    | tr '\n' ' ' || true)
     w=$(pgrep -f "tools/watchdog.py"   | tr '\n' ' ' || true)
     echo "dashboard : ${d:-not running}"
     echo "engine    : ${e:-not running}"
     echo "discord   : ${g:-not running}"
     echo "trending  : ${t:-not running}"
+    echo "movers    : ${mv:-not running}"
     echo "ai_trader : ${c:-not running}"
     echo "watchdog  : ${w:-not running}"
     if _tunnel_running; then

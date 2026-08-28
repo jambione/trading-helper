@@ -375,6 +375,14 @@ DEFAULT_CONFIG = {
     "ai_watch_seed_momentum_open_n":      10,
     "ai_watch_seed_trending":           True,
     "ai_watch_seed_trending_n":           20,
+    # Alpaca movers seed — the one source that is not sentiment. See
+    # movers_screener.py for why the producer, not this poll, drops warrants
+    # and floors the RVOL denominator.
+    "ai_watch_seed_movers":             True,
+    "ai_watch_seed_movers_n":             12,
+    "ai_watch_movers_min_pct_change":   10.0,
+    # Refuse a movers file older than this rather than seed a stale ranking.
+    "ai_movers_max_age_sec":           900.0,
     # Trending shortlist floors (looser than momentum's 50% day-move bar).
     # Seed needs score > min OR day chg ≥ this OR rvol ≥ trending min rvol.
     "ai_watch_trending_min_pct_change": 15.0,
@@ -1027,6 +1035,17 @@ DEFAULT_CONFIG = {
     # LOOK badges are NOT computed here — those thresholds are desk display
     # settings and stay in the monitor's momentum_config.json. max_price is
     # applied by the dashboard (web panel) and the monitor (display_rows).
+    "movers_screener_enabled":   False,   # launch movers_screener.py
+    "ai_movers_poll":             60.0,   # seconds between movers passes
+    "ai_movers_poll_idle":       900.0,   # ...outside 04:00-20:00 ET
+    "ai_movers_top":                50,   # gainers requested per pass
+    "ai_movers_min_pct_change":   10.0,
+    "ai_movers_min_price":         2.0,
+    "ai_movers_max_price":        20.0,
+    # Floors the RVOL DENOMINATOR. A dormant 20-day average makes the ratio
+    # meaningless, not large: QNRX printed 1281x on 2026-08-28.
+    "ai_movers_min_avg_vol":    100000.0,
+    "ai_movers_max_rows":           25,   # enrich at most this many per pass
     "trending_screener_enabled": False,   # launch trending_screener.py
     "stocktwits_poll":           60.0,    # seconds between Stocktwits polls
     "stocktwits_quote_poll":     15.0,
@@ -1405,6 +1424,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_seed_momentum_open_n",
     "ai_watch_seed_trending",
     "ai_watch_seed_trending_n",
+    "ai_watch_seed_movers",
+    "ai_watch_seed_movers_n",
+    "ai_watch_movers_min_pct_change",
+    "ai_movers_max_age_sec",
     "ai_watch_trending_min_pct_change",
     "ai_watch_trending_min_rvol",
     "ai_watch_seed_research",
@@ -1616,6 +1639,15 @@ SAFE_CONFIG_KEYS = [
     "grok_save_reports",
     "grok_max_price",
     "trending_screener_enabled",
+    "movers_screener_enabled",
+    "ai_movers_poll",
+    "ai_movers_poll_idle",
+    "ai_movers_top",
+    "ai_movers_min_pct_change",
+    "ai_movers_min_price",
+    "ai_movers_max_price",
+    "ai_movers_min_avg_vol",
+    "ai_movers_max_rows",
     "stocktwits_max_price",
     "trending_max_price",
     "stocktwits_poll",

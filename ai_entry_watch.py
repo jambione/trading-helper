@@ -2956,6 +2956,66 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
         except Exception:
             pass
 
+    # Alpaca movers. The only seed that is not sentiment: it ranks what moved
+    # and what traded, so it fails differently from Stocktwits heat, a Discord
+    # mention or a research thesis. movers_screener.py has already dropped
+    # warrants and applied the price band — the filtering that needs a network
+    # call belongs in the producer, not in a poll that runs every few seconds.
+    #
+    # rvol may legitimately be None here: the producer refuses to divide by a
+    # dormant 20-day average (QNRX printed 1281x against one), and an unknown
+    # ratio must not read as a big one. A None simply makes no rvol claim.
+    if cfg.get("ai_watch_seed_movers", True):
+        try:
+            path = ROOT / "movers_stocks.json"
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            mv_rows = raw.get("rows") or []
+            try:
+                max_age = float(cfg.get("ai_movers_max_age_sec", 900.0) or 0.0)
+            except (TypeError, ValueError):
+                max_age = 900.0
+            age = time.time() - float(raw.get("ts") or 0)
+            # A frozen file is worse than no file: it seeds this morning's
+            # movers into this afternoon's book. Absence over a stale claim.
+            if max_age > 0 and raw.get("ts") and age > max_age:
+                mv_rows = []
+            if isinstance(mv_rows, list):
+                n = int(cfg.get("ai_watch_seed_movers_n", 12) or 12)
+                try:
+                    mv_min_pct = float(
+                        cfg.get("ai_watch_movers_min_pct_change", 10.0) or 10.0)
+                except (TypeError, ValueError):
+                    mv_min_pct = 10.0
+                for r in mv_rows:
+                    if not isinstance(r, dict):
+                        continue
+                    s = str(r.get("symbol") or "").upper().strip()
+                    if not s or not s[0].isalpha() or s in seen:
+                        continue
+                    if not _price_under_cap(r.get("price"), max_price):
+                        continue
+                    pct = _pct_change_value(r.get("pct_change"))
+                    if pct is None or pct < mv_min_pct:
+                        continue
+                    rvol = None
+                    if r.get("rvol") is not None:
+                        try:
+                            rvol = float(r["rvol"])
+                        except (TypeError, ValueError):
+                            rvol = None
+                    seen.add(s)
+                    row = dict(r)
+                    row["symbol"] = s
+                    row["source"] = "movers"
+                    row["rvol"] = rvol
+                    row["pct_change"] = pct
+                    rows.append(row)
+                    if len([x for x in rows
+                            if x.get("source") == "movers"]) >= max(1, n):
+                        break
+        except Exception:
+            pass
+
     # AI Research boards. No numeric gate here on purpose: a research row is a
     # thesis, and the board has already been through the research pass's own
     # filters. Price / day-change come from Momentum desk first, then Trending
