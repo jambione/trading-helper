@@ -157,8 +157,11 @@ def test_an_unreadable_log_does_not_block_the_desk(tmp_path, monkeypatch):
 def test_the_cap_is_wired_into_the_poll():
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
     assert "ai_watch_max_entries_per_symbol_day" in src
-    i = src.index("ai_watch_max_entries_per_symbol_day")
-    body = src[i:i + 1100]
+    # Anchored on the poll's own line: the knob name now appears at
+    # admission too (test_seeding_refuses_a_capped_name), and index() would
+    # find that one first.
+    i = src.index("tries = _entries_today(sym)")
+    body = src[i - 400:i + 1100]
     assert "_entries_today(sym)" in body
     # The cap DROPS the name rather than skipping it — see
     # test_the_attempt_cap_drops_rather_than_parks below.
@@ -289,3 +292,29 @@ def test_the_new_label_is_display_only():
 def test_the_label_is_registered():
     from ai_entry_watch import _BLOCKER_LABELS as L
     assert L.get("no_quote_age") == "no quote age"
+
+
+# ── the cap has to hold at ADMISSION, not just in the poll ──────────────────
+#
+# The poll drops a capped name, but seeding runs on its own cadence and put it
+# straight back. BULL was dropped for attempt_cap at 12:14:02, :16, :28, :40
+# and :53 on 2026-08-28 — five times in under a minute, 137 admit/drop/entry
+# events across the session. Two mechanisms fighting each other, spending
+# quotes, poll slots and log lines to stay exactly where they started.
+
+def test_seeding_refuses_a_capped_name():
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("candidates, rejected = apply_inclusion_gate(candidates, cfg)")
+    body = src[i:i + 1400]
+    assert "ai_watch_max_entries_per_symbol_day" in body, (
+        "the cap must be applied where candidates are admitted")
+    assert "_entries_today(sym)" in body
+    assert '"reason": "attempt_cap"' in body, "a refusal must be logged, not silent"
+
+
+def test_a_zero_cap_admits_everything():
+    """The knob is a switch: 0 must leave seeding exactly as it was."""
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("candidates, rejected = apply_inclusion_gate(candidates, cfg)")
+    body = src[i:i + 1400]
+    assert "if cap > 0:" in body

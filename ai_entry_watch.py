@@ -3965,6 +3965,27 @@ def sync_watch_from_source_panels(
             for r in candidates if isinstance(r, dict)
         }
         candidates, rejected = apply_inclusion_gate(candidates, cfg)
+        # A name over its daily attempt cap must not be re-admitted. The poll
+        # drops it, but seeding runs on its own cadence and put it straight
+        # back: BULL was dropped for attempt_cap at 12:14:02, :16, :28, :40
+        # and :53 on 2026-08-28 — five times in under a minute, 137 admit /
+        # drop / entry events in a session. The cap has to hold HERE, at
+        # admission, or the two mechanisms just fight each other and spend
+        # quotes, poll slots and log lines doing it.
+        try:
+            cap = int(cfg.get("ai_watch_max_entries_per_symbol_day", 0) or 0)
+        except (TypeError, ValueError):
+            cap = 0
+        if cap > 0:
+            kept = []
+            for r in candidates:
+                sym = str((r or {}).get("symbol") or "").upper().strip()
+                if sym and _entries_today(sym) >= cap:
+                    rejected.append({"symbol": sym, "reason": "attempt_cap",
+                                     "criteria": {}})
+                    continue
+                kept.append(r)
+            candidates = kept
         _last_rejected.clear()
         _last_rejected.extend(rejected)
         _log_rejects(rejected, by_symbol, cfg, t0)
