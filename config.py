@@ -462,6 +462,13 @@ DEFAULT_CONFIG = {
     # 8% of them, against 45% for names under 20M.
     "ai_watch_max_float_m":         0.0,
     "ai_watch_min_price":               1.0,  # no sub-$1 names
+    # Seconds a name stays on the book after the panels stop offering it.
+    # The book is rebuilt from each cycle's candidate list, so a marginal name
+    # (rvol crossing 2.0, pct_change crossing zero) is dropped and re-added
+    # repeatedly, losing its zone, its admit stamp and its arm streak each
+    # time. ai_watch_arm_confirm_ticks needs consecutive polls, which such a
+    # name can never accumulate. 0 = rebuild strictly from candidates.
+    "ai_watch_admit_grace_sec":     0.0,
     "ai_watch_admit_ticks":               1,  # consecutive qualifying polls to admit
     # ── Real-time tape pre-filter ───────────────────────────────────────────
     # The Finnhub WebSocket price (via the dashboard's ticker rows) is used to
@@ -1542,6 +1549,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_min_price",
     "ai_watch_max_float_m",
     "ai_watch_admit_ticks",
+    "ai_watch_admit_grace_sec",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",
     "ai_watch_stream_max_age_sec",

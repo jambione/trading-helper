@@ -4172,6 +4172,10 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 _restamp_rsi_block(rec, cfg_z, t0)
         except Exception:
             pass
+        # When the panels last offered this name. The grace below measures
+        # from here rather than from admission, so a name the panels keep
+        # offering never ages out of it.
+        rec["last_candidate_ts"] = t0
         new_state[sym] = rec
 
     # Keep in-flight paper entries even if they left the panels (still managing).
@@ -4184,6 +4188,31 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             continue
         status = str(rec.get("status") or "").lower().strip()
         is_duel = bool(rec.get("duel") or rec.get("duel_source"))
+
+        # ADMISSION GRACE. The book is rebuilt from THIS cycle's candidates,
+        # so a name that momentarily fails one inclusion filter loses its row
+        # — and with it the zone structure, the admit stamp and the arm
+        # streak. Marginal names flicker: rvol crossing 2.0 or pct_change
+        # crossing zero drops and re-adds the same symbol every cycle.
+        #
+        # Survivable while arming took one good poll. Not now:
+        # ai_watch_arm_confirm_ticks wants CONSECUTIVE agreeing polls, and a
+        # name that leaves the book between two can never accumulate any — the
+        # confirmation would quietly exclude the borderline names it was never
+        # aimed at. This keeps the ROW alive, not the verdict; every gate
+        # still runs on every poll. 0 disables.
+        if status not in ("submitted", "filled") and not is_duel:
+            try:
+                _grace = float((cfg or {}).get("ai_watch_admit_grace_sec", 0) or 0)
+            except (TypeError, ValueError):
+                _grace = 0.0
+            if _grace > 0 and not _dead_reentry_blocked(
+                    key, t0, cfg if isinstance(cfg, dict) else {}):
+                _seen = _f_or_none(rec.get("last_candidate_ts"))
+                if _seen is not None and (t0 - _seen) <= _grace:
+                    new_state[key] = dict(rec)
+                    continue
+
         if status in ("submitted", "filled") or is_duel:
             if status in ("invalidated", "expired") and not is_duel:
                 continue

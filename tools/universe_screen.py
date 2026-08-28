@@ -313,7 +313,13 @@ def load_setup(days: int, max_shares_m: float) -> dict[str, dict[str, float]]:
             pct_change=r.get("pct_change"),
             rvol=r.get("rvol"),
             price=r.get("price"),
-            shares_out_m=float_feed.shares_out(sym),
+            # FLOAT, not shares outstanding. float_feed cached
+            # shareOutstanding under the name float_cache.json until
+            # 2026-08-28; this screen's low-float dimension was therefore
+            # measuring the wrong quantity. AREN: 47.6M outstanding against a
+            # 13.12M float. The distinction is the whole point of the cut —
+            # outstanding includes stock that cannot trade.
+            shares_out_m=float_feed.float_shares(sym),
             news_n_24h=n24,
             max_shares_out_m=max_shares_m)
         if legs["ok"]:
