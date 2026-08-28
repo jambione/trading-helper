@@ -821,9 +821,12 @@ function _paintBookLegend(cfg, row) {
       : ((ex >= n('ai_watch_exhaustion_heat_min_pct', 40) && rising === true)
          || ex >= n('ai_watch_ob_flat_min_pct', 99));
 
-    both = (ex == null || gap == null) ? null
-      : (ex >= n('ai_watch_macd_exh_override_min_pct', 70) && rising === true
-         && r.macd_gap_rising === true);
+    // OR, matching the gate: either leg alone earns the bypass.
+    const _exhLeg = ex == null ? null
+      : (ex >= n('ai_watch_macd_exh_override_min_pct', 70) && rising === true);
+    const _macdLeg = r.macd_gap_rising == null ? null : r.macd_gap_rising === true;
+    both = (_exhLeg === true || _macdLeg === true) ? true
+      : (_exhLeg == null || _macdLeg == null) ? null : false;
 
     const pAge = num(r.price_age_sec), mAge = num(r.macd_age_sec);
     fresh = (pAge == null || mAge == null) ? null
@@ -834,7 +837,7 @@ function _paintBookLegend(cfg, row) {
   const rules = [
     ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`, macd],
     ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`, exh],
-    ['BOTH',  `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising + MACD rising = override`, both],
+    ['EITHER', `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`, both],
     ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
     ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`, null],
     ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`, null],

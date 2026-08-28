@@ -5438,11 +5438,30 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
                 and exhaustion_state(record, cfg) == "overbought"
                 and not ind.get("pctr_falling")):
             exh_up = True
-        if macd_up and exh_up and ex is not None and ex >= need:
+        # OR, not AND — the operator's call on 2026-08-28.
+        #
+        # Either leg alone now earns the bypass: a MACD gap that is opening,
+        # or a %R at or past the threshold and rising. It was written as
+        # confluence on the argument that two independent readings agreeing is
+        # what justifies skipping macd_min_gap and the separation test.
+        #
+        # Recording the cost rather than arguing it again: this is the path
+        # that took GAP at 13:31:46 today. Its separation was inside the noise
+        # band and the position closed 79 seconds later on macd_negative. With
+        # OR, a rising gap of any size reaches this branch, so the 1.5x entry
+        # bar no longer stands between the desk and that trade — the arm
+        # confirmation (ai_watch_arm_confirm_ticks) is what remains, and it
+        # only requires the reading to survive, not to be large.
+        macd_leg = macd_up
+        exh_leg = exh_up and ex is not None and ex >= need
+        if macd_leg or exh_leg:
             if isinstance(record, dict):
-                record["block_detail"] = (
-                    f"MACD opening {gap:+.4f} + EXH {ex:.1f}% rising "
-                    f"(>= {need:.0f}%)")
+                _legs = []
+                if macd_leg:
+                    _legs.append(f"MACD opening {gap:+.4f}")
+                if exh_leg:
+                    _legs.append(f"EXH {ex:.1f}% rising (>= {need:.0f}%)")
+                record["block_detail"] = " or ".join(_legs)
             return True, "macd_exh_confluence"
 
     try:

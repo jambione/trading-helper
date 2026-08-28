@@ -307,10 +307,17 @@ def _ovr_rec(pctr, *, rising=True, exh_rising=True, gap=0.0004, sep=0.05):
     }}
 
 
+# The override became OR on 2026-08-28 at the operator's direction: EITHER a
+# MACD gap that is opening, OR a %R at/past the threshold and rising, earns
+# the bypass past macd_min_gap and the separation test. It was written as
+# confluence — two independent readings agreeing — and the cost of the change
+# is recorded in ai_entry_watch beside the branch.
+
+
 def test_confluence_opens_at_any_gap():
-    """The operator's rule: MACD open and trending at ANY gap, with EXH
-    rising past 70, is an automatic yes. This gap is 0.0004 — an order of
-    magnitude under macd_min_gap, and 0.05x separation."""
+    """MACD open and trending at ANY gap is now an automatic yes on its own.
+    This gap is 0.0004 — an order of magnitude under macd_min_gap, and 0.05x
+    separation."""
     rec = _ovr_rec(-25.0)                       # EXH 75%
     ok, why = ew.macd_allows_buy(rec, OVR)
     assert ok is True
@@ -324,23 +331,34 @@ def test_the_same_row_is_refused_without_the_override():
     assert why == "macd_gap_too_close"
 
 
-def test_exh_below_the_threshold_does_not_override():
+def test_a_weak_exh_no_longer_blocks_the_macd_leg():
+    """Under OR the EXH threshold only governs the EXH leg. EXH 65% is under
+    the bar, but the gap is opening, so that leg carries it alone."""
     ok, why = ew.macd_allows_buy(_ovr_rec(-35.0), OVR)   # EXH 65%
-    assert ok is False and why == "macd_gap_too_close"
+    assert ok is True and why == "macd_exh_confluence"
 
 
-def test_both_lines_must_be_turning_up_macd_side():
-    """A closing MACD gap cannot be overridden into a buy."""
-    ok, why = ew.macd_allows_buy(_ovr_rec(-25.0, rising=False), OVR)
+def test_neither_leg_means_no_override():
+    """The refusal that must survive: gap not opening AND EXH under the bar."""
+    ok, why = ew.macd_allows_buy(_ovr_rec(-35.0, rising=False), OVR)
     assert ok is False
     assert why in ("macd_gap_too_close", "macd_gap_narrowing")
 
 
-def test_both_lines_must_be_turning_up_exh_side():
-    """A %R at 85 that is ROLLING OVER is a top, not a confirmation — the
-    operator's own setup calls that where the profit gain stops."""
-    ok, why = ew.macd_allows_buy(_ovr_rec(-15.0, exh_rising=False), OVR)
-    assert ok is False and why == "macd_gap_too_close"
+def test_a_closing_gap_can_still_be_carried_by_the_exh_leg():
+    """Under OR a closing MACD gap is not fatal if %R is past the bar and
+    rising — that is the leg doing its job."""
+    ok, why = ew.macd_allows_buy(_ovr_rec(-25.0, rising=False), OVR)
+    assert ok is True and why == "macd_exh_confluence"
+
+
+def test_a_rolling_over_exh_cannot_carry_its_own_leg():
+    """A %R at 85 that is ROLLING OVER is a top, not a confirmation. It fails
+    the EXH leg; only an opening MACD gap can still carry the row."""
+    ok, why = ew.macd_allows_buy(
+        _ovr_rec(-15.0, exh_rising=False, rising=False), OVR)
+    assert ok is False
+    assert why in ("macd_gap_too_close", "macd_gap_narrowing")
 
 
 def test_the_override_cannot_rescue_a_bearish_macd():
@@ -353,17 +371,21 @@ def test_the_override_cannot_rescue_a_bearish_macd():
     assert ok is False and why == "macd_bearish"
 
 
-def test_missing_exh_does_not_override():
-    rec = _ovr_rec(-25.0)
+def test_missing_exh_leaves_only_the_macd_leg():
+    """Absence is not a pass on the EXH side — but it does not veto the MACD
+    leg either. With the gap closing too, nothing carries it."""
+    rec = _ovr_rec(-25.0, rising=False)
     rec["indicator"]["pctr"] = None
     ok, why = ew.macd_allows_buy(rec, OVR)
-    assert ok is False and why == "macd_gap_too_close"
+    assert ok is False
+    assert why in ("macd_gap_too_close", "macd_gap_narrowing")
 
 
-def test_the_threshold_is_configurable():
+def test_the_threshold_still_governs_the_exh_leg():
+    """Gap held closing so only the EXH leg can decide."""
     cfg = dict(OVR, ai_watch_macd_exh_override_min_pct=90.0)
-    assert ew.macd_allows_buy(_ovr_rec(-25.0), cfg)[0] is False   # 75 < 90
-    assert ew.macd_allows_buy(_ovr_rec(-5.0), cfg)[0] is True     # 95 >= 90
+    assert ew.macd_allows_buy(_ovr_rec(-25.0, rising=False), cfg)[0] is False
+    assert ew.macd_allows_buy(_ovr_rec(-5.0, rising=False), cfg)[0] is True
 
 
 def test_override_is_off_by_default():
@@ -377,7 +399,9 @@ def test_a_wide_healthy_gap_still_passes_on_its_own_merits():
     ok, why = ew.macd_allows_buy(
         _rec(macd_sep_ratio=2.0, macd_gap_rising=True, macd_gap_falling=False),
         OVR)
-    assert ok is True and why == "macd_bullish_gap"
+    # Under OR the rising gap reaches the override first, so the reason is the
+    # override's. The point of the test is that it PASSES on its own merits.
+    assert ok is True and why in ("macd_bullish_gap", "macd_exh_confluence")
 
 
 # ── provenance: which tape drew this reading ─────────────────────────────
