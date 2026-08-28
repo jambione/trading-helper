@@ -8546,8 +8546,9 @@ def _entries_today(symbol: str) -> int:
         try:
             import json as _json
             rows = _json.load(open("alpaca_trade_log.json", encoding="utf-8"))
+            todays = []
             for r in rows:
-                if not isinstance(r, dict) or r.get("action") != "BUY":
+                if not isinstance(r, dict):
                     continue
                 stamp = str(r.get("time") or "")
                 if not stamp:
@@ -8557,11 +8558,32 @@ def _entries_today(symbol: str) -> int:
                         stamp.replace("Z", "+00:00")).astimezone(et)
                 except ValueError:
                     continue
-                if t.date().isoformat() != today:
-                    continue
+                if t.date().isoformat() == today:
+                    todays.append((stamp, r))
+            todays.sort(key=lambda x: x[0])
+            # A strike is a POSITION, not an attempt. An entry limit that
+            # never filled is cancelled at the TTL and logged as
+            # "no position" — the name did not churn, it just did not get a
+            # fill, and burning the daily allowance on that punishes bad luck
+            # with the book. GAP wore four strikes for two actual trades on
+            # 2026-08-28 while passing every signal gate.
+            pend: dict[str, int] = {}
+            for _stamp, r in todays:
                 k = str(r.get("ticker") or "").upper().strip()
-                if k:
+                if not k:
+                    continue
+                act = str(r.get("action") or "")
+                if act == "BUY":
+                    pend[k] = pend.get(k, 0) + 1
                     counts[k] = counts.get(k, 0) + 1
+                elif (act == "CANCELED"
+                        and "no position" in str(r.get("note") or "")
+                        and pend.get(k)):
+                    # That BUY never became a position — take the strike back.
+                    pend[k] -= 1
+                    counts[k] = max(0, counts.get(k, 0) - 1)
+                elif act.startswith("SELL"):
+                    pend[k] = 0
         except Exception:  # noqa: BLE001
             # Unreadable log must not silently disable the cap OR block the
             # desk: keep whatever was last counted for this day.

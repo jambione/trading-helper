@@ -167,3 +167,70 @@ def test_the_blocker_has_a_label():
     """An unlabelled block code renders as a raw string on the desk."""
     from ai_entry_watch import _BLOCKER_LABELS as L
     assert "attempt_cap" in L
+
+
+# ── a strike is a POSITION, not an attempt ─────────────────────────────────
+#
+# 2026-08-28: GAP wore four strikes for two actual trades. Two of its BUY rows
+# were entry limits that never filled and were cancelled at the 30s TTL,
+# logged as "no position". The name had not churned — it had failed to get a
+# fill — and the cap was punishing bad luck with the book while GAP passed
+# every signal gate (macd_exh_confluence, overbought_macd_armed, cm_rsi_off).
+
+def _log(tmp_path, rows):
+    import datetime as dt
+    import json
+    from zoneinfo import ZoneInfo
+    now = dt.datetime.now(ZoneInfo("America/New_York"))
+    out = []
+    for i, (action, note) in enumerate(rows):
+        out.append({"action": action, "ticker": "GAP", "note": note,
+                    "time": (now + dt.timedelta(seconds=i)).astimezone(
+                        dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+    (tmp_path / "alpaca_trade_log.json").write_text(json.dumps(out))
+    ew._ENTRIES_TODAY.update({"day": "", "counts": {}, "ts": 0.0})
+
+
+def test_an_unfilled_limit_does_not_burn_a_strike(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _log(tmp_path, [
+        ("BUY", "local_stop_only"),
+        ("CANCELED", "no position (canceled 1 open order)"),
+        ("BUY", "local_stop_only"),
+        ("CANCELED", "no position (canceled 0 open orders)"),
+        ("BUY", "local_stop_only"), ("SELL", "close_out"),
+        ("BUY", "local_stop_only"), ("SELL", "close_out"),
+    ])
+    assert ew._entries_today("GAP") == 2, "two fills, two non-fills"
+
+
+def test_a_filled_entry_still_counts(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _log(tmp_path, [("BUY", ""), ("SELL", "close_out")] * 3)
+    assert ew._entries_today("GAP") == 3
+
+
+def test_an_open_position_counts_before_it_closes(tmp_path, monkeypatch):
+    """A fill that has not exited yet is still a strike — otherwise the cap
+    only applies to names that have already finished trading."""
+    monkeypatch.chdir(tmp_path)
+    _log(tmp_path, [("BUY", ""), ("SELL", "close_out"), ("BUY", "")])
+    assert ew._entries_today("GAP") == 2
+
+
+def test_a_cancel_cannot_drive_the_count_negative(tmp_path, monkeypatch):
+    """A stray cancel with no matching BUY must not hand out free strikes."""
+    monkeypatch.chdir(tmp_path)
+    _log(tmp_path, [
+        ("CANCELED", "no position (canceled 0 open orders)"),
+        ("CANCELED", "no position (canceled 0 open orders)"),
+        ("BUY", ""), ("SELL", "close_out"),
+    ])
+    assert ew._entries_today("GAP") == 1
+
+
+def test_a_cancel_that_is_not_a_non_fill_is_ignored(tmp_path, monkeypatch):
+    """Only the 'no position' cancel proves the entry never filled."""
+    monkeypatch.chdir(tmp_path)
+    _log(tmp_path, [("BUY", ""), ("CANCELED", "replaced working sell")])
+    assert ew._entries_today("GAP") == 1
