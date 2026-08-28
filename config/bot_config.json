@@ -321,6 +321,8 @@
   "ai_watch_max_entries_per_symbol_day": 0,
   "ai_shelf_trace_sec": 10.0,
   "ai_watch_ob_allow_flat_when_macd_armed": true,
+  "ai_watch_ob_flat_min_pct": 99.0,
+  "ai_watch_arm_confirm_ticks": 2,
   "ai_watch_rank_rvol_band": 0.5,
   "ai_watch_rank_move_band": 2.0,
   "ai_entry_order_style": "limit",

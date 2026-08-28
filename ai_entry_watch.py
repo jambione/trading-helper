@@ -127,6 +127,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "dollar_volume": "too thin",
     "already_managed": "managed",
     "reentry_cooldown": "cooldown",
+    "arm_confirming": "confirming",
     "attempt_cap": "3 strikes",
     # Two different failures wearing one label until now. "stale quote" means
     # the print is provably old; "no quote age" means it cannot be timed at
@@ -5663,7 +5664,23 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         # supplies the direction %R has run out of room to express. A falling
         # %R is still refused above, so a rolling-over top cannot get in here.
         if bool(cfg.get("ai_watch_ob_allow_flat_when_macd_armed", False)):
-            if _macd_is_armed(record):
+            # ONLY where %R is genuinely out of room. The exemption exists
+            # because a reading pinned at the ceiling cannot rise — 100% is
+            # the top of the range by construction, so demanding a turn there
+            # refuses the strongest names forever. That argument does not
+            # extend to merely-overbought: GAP armed on this branch at 80.7%
+            # on 2026-08-28 with nineteen points of headroom, where "not
+            # rising" is a real refusal and not an artifact. It was flat by
+            # choice of the tape, and the trade closed 79 seconds later on
+            # macd_negative.
+            try:
+                pinned_at = float(cfg.get(
+                    "ai_watch_ob_flat_min_pct", 99.0) or 99.0)
+            except (TypeError, ValueError):
+                pinned_at = 99.0
+            ex_now = exhaustion_pct(record)
+            if (ex_now is not None and ex_now + 1e-9 >= pinned_at
+                    and _macd_is_armed(record)):
                 return True, "overbought_macd_armed"
     ex = exhaustion_pct(record)
     raw_min = cfg.get("ai_watch_exhaustion_heat_min_pct", 50.0)
@@ -8506,6 +8523,32 @@ def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
     return None
 
 
+def _arm_confirm_ticks(cfg: dict | None) -> int:
+    """How many consecutive polls must agree before a buy is placed."""
+    try:
+        return max(1, int((cfg or {}).get("ai_watch_arm_confirm_ticks", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _arm_streak(rec: dict, ok: bool) -> int:
+    """Count consecutive arm-YES verdicts on *rec*; any NO resets it.
+
+    Mirrors the exit's confirmation streak. Kept on the record so it survives
+    the poll but not a restart, which is the right lifetime: after a restart
+    the desk should re-earn its evidence rather than act on a count it cannot
+    see the readings behind.
+    """
+    if not isinstance(rec, dict):
+        return 1 if ok else 0
+    if not ok:
+        rec.pop("arm_streak", None)
+        return 0
+    n = int(rec.get("arm_streak") or 0) + 1
+    rec["arm_streak"] = n
+    return n
+
+
 def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
     """Watch records, strongest relative volume first, then the best setup.
 
@@ -9362,6 +9405,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
+            _arm_streak(rec, False)
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit"):
@@ -9369,6 +9413,28 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             else:
                 set_block_reason(rec, why or "blocked", now=t0)
                 touched[sym] = rec
+            continue
+
+        # The buy must survive as long as the sell does. MACD is computed on
+        # the FORMING minute bar, so a single poll can catch it momentarily
+        # bullish inside a bar that is otherwise bearish. GAP on 2026-08-28:
+        #
+        #   13:31:33  arm=False  macd_bearish
+        #   13:31:46  arm=True   last_overbought_macd_armed   <- bought
+        #   13:33:14  arm=False  macd_bearish
+        #
+        # Bearish either side, bullish for one thirteen-second poll, and the
+        # position closed 79 seconds later on macd_negative. The hard sell has
+        # required ai_exit_macd_confirm_ticks agreeing reads since this
+        # morning, for exactly this reason; the entry required one. An exit
+        # held to a higher standard of evidence than the entry will always
+        # buy noise and sell signal.
+        need_arm = _arm_confirm_ticks(cfg)
+        streak = _arm_streak(rec, True)
+        if streak < need_arm:
+            set_block_reason(rec, "arm_confirming", now=t0,
+                             detail=f"{streak}/{need_arm}")
+            touched[sym] = rec
             continue
 
         # Position / buy-cap gates (fail closed on errors — never place blind)

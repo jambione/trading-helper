@@ -583,6 +583,16 @@ DEFAULT_CONFIG = {
     # were the only structurally unreachable ones. A FALLING %R is still
     # refused, so a top that has rolled over cannot get in this way.
     "ai_watch_ob_allow_flat_when_macd_armed": False,
+    # How close to the ceiling %R must be for the flat-OB exemption to apply.
+    # The exemption is for readings that CANNOT rise (100% is the top of the
+    # range); anything lower is flat by choice of the tape and refusing it is
+    # correct. GAP armed at 80.7% before this existed.
+    "ai_watch_ob_flat_min_pct":        99.0,
+    # Consecutive polls that must agree before a buy is placed. MACD lives on
+    # the FORMING minute bar and flickers inside it; the hard sell has
+    # required ai_exit_macd_confirm_ticks agreeing reads since 2026-08-28 and
+    # the entry required one, so the desk bought noise and sold signal.
+    "ai_watch_arm_confirm_ticks":      1,
     # Round RVOL into buckets before ranking entry candidates, so EXH and
     # MACD trend decide between names the tape is treating alike. 0 = exact
     # RVOL ordering, which leaves the signal legs almost never consulted.
@@ -1205,6 +1215,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_ob_allow_hot",
     "ai_watch_ob_allow_flat_when_macd_armed",
+    "ai_watch_ob_flat_min_pct",
+    "ai_watch_arm_confirm_ticks",
     "ai_watch_rank_rvol_band",
     "ai_watch_rank_move_band",
     "ai_watch_max_entries_per_symbol_day",
