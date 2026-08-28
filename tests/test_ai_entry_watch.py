@@ -899,7 +899,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         "symbol", "status", "wait_kind", "entry_low", "entry_high",
         "stop_price",
         "last_ask", "score", "rvol", "exhaustion", "exhaustion_state",
-                                                     "pctr_rising", "pctr_falling",
+        "price_age_sec", "pctr_rising", "pctr_falling",
         "pctr", "pctr_slow", "pctr_raw", "pctr_src", "pctr_ob", "pctr_tight",
         "pctr_gap", "cm_rsi", "cm_rsi_green", "cm_rsi_low",
         # Direction and provenance ride with the RSI level: the entry rule is
