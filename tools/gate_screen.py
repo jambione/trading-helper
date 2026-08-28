@@ -55,6 +55,29 @@ def _f(v):
         return None
 
 
+_FLOAT_MEMO: dict[str, float | None] = {}
+
+
+def _float_m(r: dict) -> float | None:
+    """Float in millions for a shadow row's symbol, or None when unreadable.
+
+    Memoised: a gate runs over every watch poll — hundreds of thousands of
+    rows — against a few hundred distinct symbols, and load_cache() re-reads
+    from disk. None means the cache never had it, which is a different fact
+    from a large float and must stay distinguishable here.
+    """
+    sym = str(r.get("symbol") or "").upper()
+    if not sym:
+        return None
+    if sym not in _FLOAT_MEMO:
+        try:
+            import float_feed
+            _FLOAT_MEMO[sym] = float_feed.float_shares(sym)
+        except Exception:  # noqa: BLE001
+            _FLOAT_MEMO[sym] = None
+    return _FLOAT_MEMO[sym]
+
+
 def _mins_since_admit(r: dict) -> float | None:
     ts, admit = _f(r.get("ts")), _f(r.get("admit_ts"))
     if ts is None or admit is None or admit <= 0:
@@ -84,6 +107,24 @@ GATES: dict[str, callable] = {
     # The desk's own arm decision, restricted to fresh names.
     "arm_ok_fresh":   lambda r: (bool(r.get("arm_ok"))
                                  and (_mins_since_admit(r) or 1e9) <= 15.0),
+    # Float ceilings. ai_watch_max_float_m cannot be graded by the fill
+    # replay — that tool pins fills, so an admission filter is invisible to
+    # it — and grading it on the realised record instead confounds the names
+    # a ceiling SELECTS with how well the desk happens to exit them. Anchored
+    # here at every watch poll, this is the drift the ceiling admits, before
+    # execution touches it.
+    #
+    # The _live variants carry the shipped fail-open: an unreadable float is
+    # admitted, because the lookup is a cached profile call and an outage
+    # must not empty the book. Kept beside the strict ones on purpose — the
+    # gap between a pair is the cost of cache coverage, which on 2026-08-28
+    # was 92% of all admissions before a backfill.
+    "float_10":       lambda r: (_float_m(r) or 1e9) <= 10.0,
+    "float_25":       lambda r: (_float_m(r) or 1e9) <= 25.0,
+    "float_50":       lambda r: (_float_m(r) or 1e9) <= 50.0,
+    "float_50_live":  lambda r: (_float_m(r) is None
+                                 or _float_m(r) <= 50.0),
+    "float_over_50":  lambda r: (_float_m(r) or -1) > 50.0,
 }
 
 
