@@ -158,9 +158,11 @@ def test_the_cap_is_wired_into_the_poll():
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
     assert "ai_watch_max_entries_per_symbol_day" in src
     i = src.index("ai_watch_max_entries_per_symbol_day")
-    body = src[i:i + 400]
+    body = src[i:i + 1100]
     assert "_entries_today(sym)" in body
-    assert '_skip("attempt_cap"' in body
+    # The cap DROPS the name rather than skipping it — see
+    # test_the_attempt_cap_drops_rather_than_parks below.
+    assert "drop_watch_symbols([sym])" in body
 
 
 def test_the_blocker_has_a_label():
@@ -234,3 +236,56 @@ def test_a_cancel_that_is_not_a_non_fill_is_ignored(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _log(tmp_path, [("BUY", ""), ("CANCELED", "replaced working sell")])
     assert ew._entries_today("GAP") == 1
+
+
+# ── a capped name leaves the book ───────────────────────────────────────────
+
+def test_the_attempt_cap_drops_rather_than_parks():
+    """A name that cannot be opened again today is not a watch candidate.
+    Parking it spends a row, a quote and a poll slot on something with no
+    reachable outcome, and reads to the operator as a setup that might still
+    fire. Same treatment dead_reentry already gets."""
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("tries = _entries_today(sym)")
+    body = src[i:i + 900]
+    assert "drop_watch_symbols([sym])" in body
+    assert 'reason="attempt_cap"' in body
+
+
+# ── the two staleness faults are named apart ────────────────────────────────
+#
+# "stale quote" is a print we can SEE is old — a quiet tape, normal on a thin
+# name. "no quote age" is a print we cannot TIME at all, which is plumbing:
+# decision_price returns an age on demand while the record carries None, and
+# an untimed price does not trip the staleness guard, it disables it. GAP
+# carried that on 2026-08-28 while the operator was reading "stale quote".
+
+def test_a_provably_old_print_says_stale_quote():
+    got = ew.derive_blocker({"last_ask_src": "rest", "last_ask_age_sec": 9999.0})
+    assert got[0] == "stale_quote"
+
+
+def test_an_untimed_print_says_no_quote_age():
+    got = ew.derive_blocker({"last_ask_src": "rest", "last_ask_age_sec": None})
+    assert got == ("no_quote_age", "no quote age")
+
+
+def test_a_dead_tape_is_still_a_stale_quote():
+    """stale_tape/none already mean 'no usable print' — that is not the
+    plumbing fault this label exists to surface."""
+    for src in ("stale_tape", "none", ""):
+        got = ew.derive_blocker({"last_ask_src": src, "last_ask_age_sec": None})
+        assert got[0] == "stale_quote", src
+
+
+def test_the_new_label_is_display_only():
+    """Both refuse identically. This names which is which; it must not add a
+    gate — should_arm_buy does not consult tape staleness, so an early skip
+    here would block rows that currently arm."""
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    assert '_skip("no_quote_age"' not in src
+
+
+def test_the_label_is_registered():
+    from ai_entry_watch import _BLOCKER_LABELS as L
+    assert L.get("no_quote_age") == "no quote age"

@@ -128,6 +128,12 @@ _BLOCKER_LABELS: dict[str, str] = {
     "already_managed": "managed",
     "reentry_cooldown": "cooldown",
     "attempt_cap": "3 strikes",
+    # Two different failures wearing one label until now. "stale quote" means
+    # the print is provably old; "no quote age" means it cannot be timed at
+    # all, which is a plumbing fault rather than a quiet tape and has to be
+    # legible as one — decision_price returns an age on demand while the
+    # record carries None.
+    "no_quote_age": "no quote age",
     "wash_trade": "wash trade",
     "wash_cooldown": "wash cool",
     "already_holding": "held",
@@ -354,6 +360,14 @@ def release_orphaned_submits(
     return released
 
 
+def _num_or_none(v):
+    """float(v) or None — never raises, never invents a zero."""
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
     """True when this row's print is too old (or unknown) to arm.
 
@@ -454,6 +468,19 @@ def derive_blocker(
         return "filled", "filled"
 
     if _row_tape_stale(rec):
+        # Two different faults have been sharing one word. "stale quote" is a
+        # print we can see is old — a quiet tape, which is normal on a thin
+        # name. "no quote age" is a print we cannot TIME at all, which is
+        # plumbing: decision_price returns an age on demand while the record
+        # carries None, and an untimed price does not trip the staleness
+        # guard, it disables it. The operator cannot act on the second while
+        # it is wearing the first one's label.
+        #
+        # Display only. Both refuse identically; this names which is which.
+        if _num_or_none(rec.get("last_ask_age_sec")) is None and str(
+                rec.get("last_ask_src") or "").strip().lower() not in (
+                "", "none", "stale_tape"):
+            return "no_quote_age", format_blocker("no_quote_age")
         return "stale_quote", format_blocker("stale_quote")
 
     stored = rec.get("block_code") or rec.get("block_reason")
@@ -9215,7 +9242,19 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if cap > 0:
             tries = _entries_today(sym)
             if tries >= cap:
-                _skip("attempt_cap", detail=f"{tries} today")
+                # Dropped, not parked. A name that cannot be opened again
+                # today is not a watch candidate — leaving it on the book
+                # spends a row, a quote and a poll slot on something with no
+                # reachable outcome, and reads to the operator as a setup
+                # that might still fire. Same treatment dead_reentry gets.
+                try:
+                    events.append(cp.log_event(
+                        "watch_drop", symbol=sym, reason="attempt_cap",
+                        entries_today=tries))
+                except Exception:
+                    events.append({"kind": "watch_drop", "symbol": sym,
+                                   "reason": "attempt_cap"})
+                drop_watch_symbols([sym])
                 continue
         if _dead_reentry_blocked(sym, t0, cfg):
             try:
