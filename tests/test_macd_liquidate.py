@@ -1,24 +1,18 @@
 """MACD withdraws the entry thesis → liquidate the position.
 
-The entry claim is "fast is above slow AND the gap is opening". The operator
-asked for both ways that expires to flatten the trade:
+The entry claim is "fast is above slow AND the gap is opening". Two hard
+sells, neither waits on min-hold:
 
-  NEGATIVE  the gap is at or below zero — the lines crossed, the claim is
-            simply false now.
-  CURLED    the gap is still positive but has turned from rising to falling.
+  NEGATIVE          the gap is at or below zero — the lines crossed, the
+                    claim is simply false now. Direction does not matter.
+  THIN AND CLOSING  still positive, falling, and macd_sep_ratio under 1.0.
 
-CURLED is an EDGE, not a level. `macd_gap_falling` on its own would fire on a
-position that was never opening to begin with — a name admitted mid-narrowing
-would be liquidated on the first tick it was ever looked at. So the turn only
-counts once THIS position has been seen rising, which is what macd_dir_seen
-records.
-
-Provenance is required rather than preferred, and that is most of what these
-tests are about. macd_src flips per ticker mid-session; a curl computed on the
-Alpaca REST fallback is a curl in older bars. With no proof the reading is
-live, this must not fire — the ordinary trail still protects the position, and
-refusing to act on an unprovable indicator is the same rule the entry gate
-applies as macd_src_unknown.
+A wide positive gap that is merely falling is not a flatten. The trail owns
+that. Provenance is required rather than preferred. macd_src flips per ticker
+mid-session; a reading on the Alpaca REST fallback is older bars. With no
+proof the reading is live, this must not fire — the ordinary trail still
+protects the position, and refusing to act on an unprovable indicator is the
+same rule the entry gate applies as macd_src_unknown.
 """
 import sys
 import types
@@ -72,21 +66,22 @@ def test_macd_bull_false_liquidates_even_with_a_positive_gap(monkeypatch):
     assert cp.macd_thesis_broken("AAA", {})[1] == "macd_negative"
 
 
-def test_a_curl_after_rising_liquidates(monkeypatch):
+def test_a_wide_gap_that_curls_does_not_liquidate(monkeypatch):
+    """Curl is gone. A still-positive gap well clear of 1.0x is the trail's."""
     _on(monkeypatch)
     pos = {}
-    _wire(monkeypatch, macd_gap=0.05, macd_gap_rising=True, **_RT)
+    _wire(monkeypatch, macd_gap=0.05, macd_sep_ratio=1.7,
+          macd_gap_rising=True, **_RT)
     assert cp.macd_thesis_broken("AAA", pos)[0] is False, "still opening"
-    assert pos["macd_dir_seen"] == "up"
-
-    _wire(monkeypatch, macd_gap=0.04, macd_gap_falling=True, **_RT)
+    _wire(monkeypatch, macd_gap=0.04, macd_sep_ratio=1.7,
+          macd_gap_falling=True, **_RT)
     fire, why = cp.macd_thesis_broken("AAA", pos)
-    assert fire and why == "macd_curl"
+    assert fire is False
+    assert why != "macd_curl"
 
 
-def test_falling_without_ever_rising_does_not_liquidate(monkeypatch):
-    """The edge is the point. A name admitted mid-narrowing would otherwise be
-    flattened on the first tick it was ever looked at."""
+def test_falling_without_being_thin_does_not_liquidate(monkeypatch):
+    """A name admitted mid-narrowing, still above the 1.0x bar, is left."""
     _on(monkeypatch)
     _wire(monkeypatch, macd_gap=0.04, macd_gap_falling=True, **_RT)
     assert cp.macd_thesis_broken("AAA", {})[0] is False
@@ -103,6 +98,15 @@ def test_a_negative_gap_fires_even_with_no_direction_history(monkeypatch):
     _on(monkeypatch)
     _wire(monkeypatch, macd_gap=-0.02, **_RT)
     assert cp.macd_thesis_broken("AAA", {})[0] is True
+
+
+def test_a_negative_gap_liquidates_even_while_rising(monkeypatch):
+    """No exceptions: an up arrow does not save a crossed gap."""
+    _on(monkeypatch)
+    _wire(monkeypatch, macd_gap=-0.007, macd_sep_ratio=-0.4,
+          macd_gap_rising=True, macd_bull=False, **_RT)
+    fire, why = cp.macd_thesis_broken("AAA", {})
+    assert fire and why == "macd_negative"
 
 
 # ── provenance: absence is not a pass ────────────────────────────────────
@@ -175,10 +179,11 @@ def test_it_is_wired_into_the_positions_loop_not_the_shelf_tick():
     src = (_ROOT / "ai_positions.py").read_text(encoding="utf-8")
     assert "macd_thesis_broken(ticker, pos)" in src
     i = src.index("_macd_fire, _macd_why = macd_thesis_broken")
-    body = src[i:i + 1400]
+    body = src[i:src.index("# Day-scalp dead trade", i)]
     assert "close_out(ticker)" in body, "liquidate means flatten"
     assert "cancel_open_orders(ticker)" in body, "pull resting legs first"
-    assert "soft_exit_held_back(pos, now)" in body, "min-hold applies"
+    assert "soft_exit_held_back" not in body, "hard sells skip min-hold"
+    assert "_note_min_hold" not in body
     # And it only runs on a position that actually exists.
     assert 'pos.get("entry_confirmed")' in src[i - 400:i]
 
@@ -191,8 +196,8 @@ def test_it_is_wired_into_the_positions_loop_not_the_shelf_tick():
 # to clear, and falling on top of that is a move both small and shrinking.
 # IBRX showed +0.003 (0.8x) closing while still nominally bullish.
 #
-# A LEVEL plus a direction, not an edge: unlike macd_curl it does not wait to
-# have been seen rising, and it outranks min-hold on its own.
+# A LEVEL plus a direction: it does not wait to have been seen rising, and
+# it outranks min-hold. Rising, even when thin, is left alone.
 
 def test_thin_and_closing_is_a_hard_sell(monkeypatch):
     _on(monkeypatch)
@@ -210,15 +215,15 @@ def test_thin_but_still_opening_is_left_alone(monkeypatch):
     assert cp.macd_thesis_broken("AAA", {})[0] is False
 
 
-def test_wide_and_closing_is_not_the_hard_sell(monkeypatch):
-    """SBET: +0.006 (1.7x) falling. Closing, but still well clear of noise —
-    that is the ordinary curl, which is min-hold gated."""
+def test_wide_and_closing_is_not_a_flatten(monkeypatch):
+    """SBET: +0.006 (1.7x) falling. Closing, but still well clear of noise.
+    Curl is gone; the trail owns this."""
     _on(monkeypatch)
-    pos = {"macd_dir_seen": "up"}
     _wire(monkeypatch, macd_gap=0.006, macd_sep_ratio=1.7,
           macd_gap_falling=True, **_RT)
-    fire, why = cp.macd_thesis_broken("AAA", pos)
-    assert fire and why == "macd_curl", why
+    fire, why = cp.macd_thesis_broken("AAA", {})
+    assert fire is False
+    assert why != "macd_curl"
 
 
 def test_the_threshold_is_configurable(monkeypatch):
@@ -239,14 +244,17 @@ def test_a_missing_ratio_cannot_hard_sell(monkeypatch):
     assert cp.macd_thesis_broken("AAA", {})[1] != "macd_thin_and_closing"
 
 
-def test_the_hard_sell_outranks_min_hold_but_the_curl_does_not():
-    """Source-pinned: the exemption must name this reason specifically, or it
-    silently exempts every MACD exit including the ordinary curl."""
+def test_both_hard_sells_skip_min_hold_and_curl_is_gone():
+    """Source-pinned: nothing in the flatten block consults the clock, and
+    macd_curl is no longer a reason the thesis function can return."""
     src = (_ROOT / "ai_positions.py").read_text(encoding="utf-8")
-    i = src.index("_macd_held = (")
-    body = src[i:i + 420]
-    assert '_macd_why != "macd_thin_and_closing"' in body
-    assert "soft_exit_held_back(pos, now)" in body
+    i = src.index("_macd_fire, _macd_why = macd_thesis_broken")
+    body = src[i:src.index("# Day-scalp dead trade", i)]
+    assert "soft_exit_held_back" not in body
+    assert "_note_min_hold" not in body
+    assert 'return True, "macd_curl"' not in src
+    assert "macd_negative" in src
+    assert "macd_thin_and_closing" in src
 
 
 def test_the_threshold_reaches_the_live_config():

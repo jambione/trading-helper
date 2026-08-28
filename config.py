@@ -822,19 +822,19 @@ DEFAULT_CONFIG = {
     # the raise-only rule still holds: this tightens, never loosens.
     "ai_exit_macd_curl_tighten":       False,
     # LIQUIDATE on a MACD thesis break — flatten outright rather than pull
-    # the shelf under the print (curl_tighten above). Two triggers, both
-    # asked for: the gap turning NEGATIVE (the lines crossed, the entry
-    # claim is simply false now), and the gap CURLING from rising to falling
-    # while still positive. The curl is an edge, so it only counts once the
-    # position has been seen opening. Requires macd_src == "realtime": a curl
-    # drawn on the REST fallback is a curl in older bars, and absence is not
-    # a pass. Off by default; this closes positions.
+    # the shelf under the print (curl_tighten above). Two hard sells, both
+    # skip min-hold: the gap turning NEGATIVE (the lines crossed; direction
+    # does not matter), and a still-positive gap CLOSING under
+    # ai_exit_macd_hard_sell_sep. A wide positive gap that is merely
+    # falling is not a flatten — the trail owns that. Requires
+    # macd_src == "realtime": a reading on the REST fallback is older bars,
+    # and absence is not a pass. Off by default; this closes positions.
     "ai_exit_macd_liquidate":          False,
     # HARD sell: macd_sep_ratio under this while the gap is CLOSING. The
     # ratio is the gap measured in standard deviations of its own histogram,
     # so under 1.0 the separation is inside the noise the entry was meant to
-    # clear; falling on top of that is small and shrinking. Bypasses min-hold
-    # on its own, without exempting the ordinary curl.
+    # clear; falling on top of that is small and shrinking. Rising, even
+    # when thin, is left alone.
     "ai_exit_macd_hard_sell_sep":      1.0,
     # Shelf trace: one log line per symbol per N seconds showing want vs the
     # stored shelf and whether the raise fired. Diagnostic only; 0 = off.
@@ -844,8 +844,8 @@ DEFAULT_CONFIG = {
     # this many seconds so it returns to management and the exit retries.
     # 0 = never clear (the old behaviour, which strands it forever).
     "ai_stranded_close_sec":           30.0,
-    # Let the signal outrank min-hold. Off: a thesis break is a better reason
-    # than a 6c wiggle, but still not a reason to sell 40s after buying.
+    # Unused: both MACD liquidate reasons skip min-hold on their own.
+    # Kept so existing bot_config keys still load.
     "ai_exit_macd_liquidate_ignore_hold": False,
     # How far under the print. One tick.
     "ai_exit_macd_curl_px":            0.01,

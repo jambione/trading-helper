@@ -3154,28 +3154,28 @@ def _macd_curl_stop(ticker: str, last: float | None) -> float | None:
     return stop if stop > 0 else None
 
 
-def macd_thesis_broken(ticker: str, pos: dict) -> tuple[bool, str]:
+def macd_thesis_broken(ticker: str, pos: dict | None = None) -> tuple[bool, str]:
     """Has MACD withdrawn the reason this position was opened?
 
     The entry thesis is "the fast line is above the slow one and the gap is
-    OPENING". Two ways that expires, and the operator asked for both:
+    OPENING". Two hard sells, neither waits on min-hold:
 
-      • NEGATIVE — the gap is at or below zero. The lines have crossed; the
-        claim is simply false now.
-      • CURLED — the gap is still positive but has turned from rising to
-        falling. This is an EDGE, not a level: `macd_gap_falling` alone would
-        fire on a position that was never opening in the first place, so the
-        turn only counts once this position has actually been seen rising.
-        The last direction is remembered on the position for that reason.
+      • NEGATIVE — the gap is at or below zero, or ``macd_bull`` is false.
+        The lines have crossed; the claim is simply false now. Direction
+        does not matter.
+      • THIN AND CLOSING — gap still positive, falling, and
+        ``macd_sep_ratio`` under ``ai_exit_macd_hard_sell_sep`` (default
+        1.0). Inside its own noise and shrinking. Rising, even when thin,
+        is left alone.
 
-    Provenance is required, not preferred. `macd_src` says which pipe drew the
-    reading and it flips per ticker mid-session; a curl computed on the Alpaca
-    REST fallback is a curl in yesterday's bars. Absence is not a pass — with
-    no proof the reading is live this returns False and the ordinary trail
-    still protects the position. Refusing to act on an unprovable indicator is
-    the same rule the entry gate uses (macd_src_unknown).
+    Provenance is required, not preferred. ``macd_src`` says which pipe drew
+    the reading and it flips per ticker mid-session; a reading on the Alpaca
+    REST fallback is older bars. Absence is not a pass — with no proof the
+    reading is live this returns False and the ordinary trail still protects
+    the position. Refusing to act on an unprovable indicator is the same
+    rule the entry gate uses (macd_src_unknown).
 
-    Returns (fire, why). Mutates pos["macd_dir_seen"] to track the edge.
+    Returns (fire, why).
     """
     if not _cfg_flag("ai_exit_macd_liquidate", False):
         return False, ""
@@ -3199,25 +3199,18 @@ def macd_thesis_broken(ticker: str, pos: dict) -> tuple[bool, str]:
     if gap_f is None:
         return False, ""
 
-    # NEGATIVE — the lines have crossed. Checked before the edge, because a
-    # crossed gap is not a "turn" to be remembered, it is the thesis gone.
+    # NEGATIVE — the lines have crossed. A level, not a direction: an up
+    # arrow does not save a gap that is already at or below zero.
     if gap_f <= 0 or sig.get("macd_bull") is False:
         return True, "macd_negative"
 
-    rising = bool(sig.get("macd_gap_rising"))
     falling = bool(sig.get("macd_gap_falling"))
 
     # HARD SELL — a gap narrower than one standard deviation of its own
-    # histogram, and closing. The operator's rule, read off the book: the
-    # number in parentheses is macd_sep_ratio, and under 1.0 the separation
-    # is inside the noise the entry was supposed to clear. Falling on top of
-    # that is a move that is both small and shrinking.
-    #
-    # Distinguished from macd_curl below because it is a LEVEL and a
-    # direction rather than an edge, so it does not wait to have been seen
-    # rising — IBRX showed +0.003 (0.8x) closing while still nominally
-    # bullish. It reports its own reason so it can bypass min-hold on its own
-    # without exempting the ordinary curl.
+    # histogram, and closing. The number in parentheses on the book is
+    # macd_sep_ratio; under 1.0 the separation is inside the noise the
+    # entry was supposed to clear. Falling on top of that is small and
+    # shrinking. Rising, even when thin, is left alone.
     if falling:
         sep = _num(sig.get("macd_sep_ratio"))
         try:
@@ -3227,17 +3220,6 @@ def macd_thesis_broken(ticker: str, pos: dict) -> tuple[bool, str]:
             need = 1.0
         if sep is not None and sep < need:
             return True, "macd_thin_and_closing"
-    prev = str(pos.get("macd_dir_seen") or "")
-    if rising:
-        pos["macd_dir_seen"] = "up"
-    elif falling:
-        pos["macd_dir_seen"] = "down"
-
-    # CURLED — only after this position has been seen opening. Without the
-    # edge, a name admitted mid-narrowing would be liquidated on the first
-    # tick it was ever looked at.
-    if falling and prev == "up":
-        return True, "macd_curl"
     return False, ""
 
 
@@ -5127,35 +5109,20 @@ def manage_open_positions(
         if pos.get("entry_confirmed"):
             _macd_fire, _macd_why = macd_thesis_broken(ticker, pos)
             if _macd_fire:
-                # Held back by min-hold like any other soft exit. The hold
-                # exists because this desk's stop sits inside normal noise;
-                # a thesis-break is a better reason than a 6c wiggle, but it
-                # is still not a reason to sell forty seconds after buying.
-                # ai_exit_macd_liquidate_ignore_hold overrides for an operator
-                # who wants the signal to outrank the clock.
-                # macd_thin_and_closing is the operator's HARD sell — a gap
-                # inside its own noise and still shrinking — so it outranks
-                # the clock on its own, without exempting the ordinary curl.
-                _macd_held = (
-                    soft_exit_held_back(pos, now)
-                    and _macd_why != "macd_thin_and_closing"
-                    and not _cfg_flag("ai_exit_macd_liquidate_ignore_hold", False)
-                )
-                if _macd_held:
-                    _note_min_hold(pos, _macd_why, now)
-                else:
-                    alpaca_trader.cancel_open_orders(ticker)
-                    out = alpaca_trader.close_out(ticker) or {}
-                    if isinstance(out, dict) and out.get("order_id"):
-                        pos["close_order_id"] = str(out["order_id"])
-                    pos["closing_reason"] = _macd_why
-                    exit_why[ticker] = _macd_why
-                    events.append({"ticker": ticker, "event": _macd_why})
-                    log_event(_macd_why, symbol=ticker,
-                              age_min=round((now - float(
-                                  pos.get("entry_time") or now)) / 60.0, 1))
-                    changed = True
-                    continue
+                # Both remaining reasons are hard sells (macd_negative,
+                # macd_thin_and_closing). Neither waits on min-hold.
+                alpaca_trader.cancel_open_orders(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = _macd_why
+                exit_why[ticker] = _macd_why
+                events.append({"ticker": ticker, "event": _macd_why})
+                log_event(_macd_why, symbol=ticker,
+                          age_min=round((now - float(
+                              pos.get("entry_time") or now)) / 60.0, 1))
+                changed = True
+                continue
 
         # Day-scalp dead trade: no scale-out, never ran (MFE < 0.10R).
         # A shelf already above entry means the trail locked profit — leave it.
