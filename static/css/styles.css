@@ -2379,6 +2379,42 @@ body.mobile .icon-btn {
 .panel-ai-watch .ai-book-table-header .th-macd,
 .panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
+/* Entry rules, under the book. Values come from the live config at render
+   time — see _paintBookLegend. Deliberately quiet: it is a reference the
+   operator reads on purpose, not a thing competing with the rows above it. */
+.ai-book-legend {
+  flex: 0 0 auto;
+  padding: 9px 11px 10px;
+  border-top: 1px solid var(--line, #322d42);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.ai-book-legend:empty { display: none; }
+.ai-book-legend .lg-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.ai-book-legend .lg-k {
+  color: #c4b5fd;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.ai-book-legend .lg-v {
+  color: #8b7ab8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 620px) {
+  .ai-book-legend .lg-v { white-space: normal; }
+}
+
 .panel-ai-watch .ai-book-rows.feed-rows {
   background: transparent;
   flex: 1;

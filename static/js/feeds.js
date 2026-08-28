@@ -758,9 +758,40 @@ function _announcePositions(rows) {
   _prevOpenSyms = now;
 }
 
+/** Entry rules, rendered from the LIVE config rather than written down.
+ *
+ *  Hardcoding the numbers here would produce a legend that drifts from the
+ *  thresholds it claims to describe — the same failure as a config knob
+ *  nothing reads, and this desk has hit that three times in one session.
+ *  Every value below comes off the config the server actually loaded.
+ */
+function _paintBookLegend(cfg) {
+  const el = document.querySelector('[data-ai-book-legend]');
+  if (!el) return;
+  const c = cfg && typeof cfg === 'object' ? cfg : {};
+  if (!Object.keys(c).length) return;
+  const n = (k, d) => {
+    const v = Number(c[k]);
+    return Number.isFinite(v) ? v : d;
+  };
+  const rules = [
+    ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`],
+    ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`],
+    ['BOTH',  `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising + MACD rising = override`],
+    ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`],
+    ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`],
+    ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`],
+  ];
+  const html = rules.map(([k, v]) =>
+    `<div class="lg-row"><span class="lg-k">${k}</span><span class="lg-v">${v}</span></div>`
+  ).join('');
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
 function _paintBookTable(sectionEl, rowsEl, countEl, stampEl, book, dayPlEl) {
   if (!rowsEl) return;
   const rows = _sortBookRows(_bookRows(book));
+  try { _paintBookLegend(get('config')); } catch (e) { /* legend is never load-bearing */ }
   _announcePositions(rows);
   const nOpen = rows.filter(r => r && r.phase === 'open').length;
   const nReady = rows.filter(r => r && r.phase === 'ready').length;
