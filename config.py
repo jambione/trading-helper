@@ -381,6 +381,10 @@ DEFAULT_CONFIG = {
     "ai_watch_seed_movers":             True,
     "ai_watch_seed_movers_n":             12,
     "ai_watch_movers_min_pct_change":   10.0,
+    # Judge a movers row on a live quote rather than on whatever the producer
+    # recorded. 0/false keeps the file's own price and pct_change, which go
+    # stale the moment the producer does. rvol is never enriched either way.
+    "ai_watch_movers_enrich":           True,
     # Refuse a movers file older than this rather than seed a stale ranking.
     "ai_movers_max_age_sec":           900.0,
     # Trending shortlist floors (looser than momentum's 50% day-move bar).
@@ -1430,6 +1434,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_seed_movers",
     "ai_watch_seed_movers_n",
     "ai_watch_movers_min_pct_change",
+    "ai_watch_movers_enrich",
     "ai_movers_max_age_sec",
     "ai_watch_trending_min_pct_change",
     "ai_watch_trending_min_rvol",

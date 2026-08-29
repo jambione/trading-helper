@@ -252,3 +252,110 @@ def test_score_and_trending_score_agree():
     block = src[i:i + 200]
     assert '"trending_score":' in block, (
         "trending_score must be set next to score, from the same expression")
+
+
+# ── live enrichment ──────────────────────────────────────────────────────
+
+def _enriched(tmp_path, monkeypatch, file_rows, desk=None, trending=None, cfg=None):
+    """Seed movers with a controlled live-quote map."""
+    _write(tmp_path, monkeypatch, file_rows)
+    monkeypatch.setattr(ew, "_live_quote_map",
+                        lambda: (desk or {}, trending or {}))
+    return _seeded(cfg)
+
+
+def test_a_live_desk_quote_beats_the_file(tmp_path, monkeypatch):
+    """The whole point. The file says +22% because that is what the producer
+    saw; the desk says +11% because that is what the name is worth now."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        desk={"AAA": {"price": 5.10, "pct_change": 11.0}})
+    assert len(got) == 1
+    assert got[0]["pct_change"] == 11.0
+    assert got[0]["price"] == 5.10
+    assert got[0]["quote_src"] == "desk"
+
+
+def test_a_faded_name_is_refused_on_its_LIVE_percent(tmp_path, monkeypatch):
+    """A timer cannot know this and does not need to. The name qualified when
+    the producer wrote it and does not now, so the floor refuses it — which is
+    what makes the file's age stop deciding correctness."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        desk={"AAA": {"price": 4.90, "pct_change": 1.2}},
+        cfg={"ai_watch_movers_min_pct_change": 10.0})
+    assert got == []
+
+
+def test_a_name_that_still_qualifies_survives_a_reranking(tmp_path, monkeypatch):
+    """Alpaca caps top at 50 and ranks by percent change, so a name can be
+    evicted by hotter movers while still meeting every criterion. Enrichment
+    must not punish it for that — it is judged on its number, not its rank."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        desk={"AAA": {"price": 6.40, "pct_change": 18.0}})
+    assert [r["symbol"] for r in got] == ["AAA"]
+    assert got[0]["pct_change"] == 18.0
+
+
+def test_trending_is_the_fallback_when_the_desk_has_not_seen_it(tmp_path, monkeypatch):
+    """Movers names are often new to the book, so the desk map will miss
+    them. Trending is the second source before giving up on the file."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        trending={"AAA": {"price": 5.50, "pct_change": 14.0}})
+    assert got[0]["pct_change"] == 14.0
+    assert got[0]["quote_src"] == "trending"
+
+
+def test_the_file_is_used_when_no_live_quote_exists(tmp_path, monkeypatch):
+    """Degrade to the old behaviour rather than dropping the name. An
+    unenrichable row is still a real mover the producer measured."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}])
+    assert got[0]["pct_change"] == 22.0
+    assert got[0]["quote_src"] == "file"
+
+
+def test_a_half_populated_live_row_does_not_win(tmp_path, monkeypatch):
+    """Price without a percent (or the reverse) would mix one source's price
+    with another's change — a row that never existed at any instant."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        desk={"AAA": {"price": 5.10}})          # no pct_change
+    assert got[0]["quote_src"] == "file"
+    assert got[0]["price"] == 6.00
+
+
+def test_rvol_is_never_enriched(tmp_path, monkeypatch):
+    """The guard that matters most. The producer's rvol is SIP on both sides;
+    the desk's is IEX. Both render as "x" and they are not the same statistic
+    — taking one for the other builds a ratio from two feeds."""
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        desk={"AAA": {"price": 6.10, "pct_change": 20.0, "rvol": 99.0}})
+    assert got[0]["rvol"] == 5.0, "rvol must stay the producer's SIP reading"
+
+
+def test_enrichment_can_be_switched_off(tmp_path, monkeypatch):
+    got = _enriched(
+        tmp_path, monkeypatch,
+        [{"symbol": "AAA", "pct_change": 22.0, "price": 6.00, "rvol": 5.0}],
+        desk={"AAA": {"price": 5.10, "pct_change": 11.0}},
+        cfg={"ai_watch_movers_enrich": False})
+    assert got[0]["pct_change"] == 22.0
+    assert got[0]["quote_src"] == "file"
+
+
+def test_both_seeds_share_one_quote_map():
+    """Two copies would drift into two ideas of "the live price"."""
+    src = open("ai_entry_watch.py", encoding="utf-8").read()
+    assert src.count("def _live_quote_map(") == 1
+    assert src.count("_live_quote_map()") >= 2

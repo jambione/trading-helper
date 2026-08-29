@@ -2661,6 +2661,42 @@ def _bb_live_from_dashboard(
     return scored
 
 
+def _live_quote_map() -> tuple[dict[str, dict], dict[str, dict]]:
+    """(desk rows, trending rows) keyed by symbol, for enriching a seed.
+
+    The research seed has always done this: a seeded row carries whatever its
+    SOURCE happened to record, and for a thesis that is nothing at all, so
+    without a live quote every research name failed no_price / not_uptrend.
+    The movers seed needs it for a different reason — its rows carry the
+    producer's price and pct_change, which stop moving the instant the
+    producer does. Enriched, a stale file changes which NAMES are considered
+    and never what they are worth.
+
+    Two maps rather than one merged dict so a caller can state its own
+    precedence. Both are cheap: _dashboard_tickers is already cached and the
+    trending file is a small local read.
+    """
+    desk_rows: dict[str, dict] = {}
+    for r in _dashboard_tickers():
+        if isinstance(r, dict):
+            k = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+            if k:
+                desk_rows[k] = r
+    tr_by: dict[str, dict] = {}
+    try:
+        path = ROOT / "trending_stocks.json"
+        raw_tr = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        for tr in (raw_tr.get("rows") or []):
+            if not isinstance(tr, dict):
+                continue
+            k = str(tr.get("symbol") or tr.get("ticker") or "").upper().strip()
+            if k:
+                tr_by[k] = tr
+    except Exception:  # noqa: BLE001
+        tr_by = {}
+    return desk_rows, tr_by
+
+
 def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     """Momentum + trending + research + Trader Bro candidates for AI Watch.
 
@@ -2993,17 +3029,46 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         cfg.get("ai_watch_movers_min_pct_change", 10.0) or 10.0)
                 except (TypeError, ValueError):
                     mv_min_pct = 10.0
+                mv_desk, mv_tr = ((None, None)
+                                  if not cfg.get("ai_watch_movers_enrich", True)
+                                  else _live_quote_map())
                 for r in mv_rows:
                     if not isinstance(r, dict):
                         continue
                     s = str(r.get("symbol") or "").upper().strip()
                     if not s or not s[0].isalpha() or s in seen:
                         continue
-                    if not _price_under_cap(r.get("price"), max_price):
+                    # Live quote first, the file second. The file's numbers are
+                    # as old as the last producer write, and the gates below
+                    # decide on them — so a name that popped at 09:35 and has
+                    # since faded must be judged on what it is worth NOW, not
+                    # on the moment it earned its place in the ranking.
+                    live = (mv_desk or {}).get(s) or {}
+                    tr = (mv_tr or {}).get(s) or {}
+                    px_src = r.get("price")
+                    pct_src = r.get("pct_change")
+                    src_used = "file"
+                    for cand in (live, tr):
+                        if not cand:
+                            continue
+                        c_px = cand.get("price")
+                        c_pct = _pct_change_value(cand.get("pct_change"))
+                        if c_px is not None and c_pct is not None:
+                            px_src, pct_src = c_px, c_pct
+                            src_used = "desk" if cand is live else "trending"
+                            break
+                    if not _price_under_cap(px_src, max_price):
                         continue
-                    pct = _pct_change_value(r.get("pct_change"))
+                    pct = _pct_change_value(pct_src)
                     if pct is None or pct < mv_min_pct:
                         continue
+                    # rvol is NOT enriched, deliberately. The producer computes
+                    # it from SIP daily bars on both sides; the desk's reading
+                    # is IEX. They are different statistics that both render as
+                    # "x", and swapping one for the other would build a ratio
+                    # out of two feeds — the mismatch that makes a volume ratio
+                    # meaningless, and one this screener already walked into
+                    # once.
                     rvol = None
                     if r.get("rvol") is not None:
                         try:
@@ -3016,6 +3081,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     row["source"] = "movers"
                     row["rvol"] = rvol
                     row["pct_change"] = pct
+                    row["price"] = px_src
+                    row["quote_src"] = src_used
                     rows.append(row)
                     if len([x for x in rows
                             if x.get("source") == "movers"]) >= max(1, n):
@@ -3031,24 +3098,9 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     if cfg.get("ai_watch_seed_research", True):
         try:
             n = max(1, int(cfg.get("ai_watch_seed_research_n", 12) or 12))
-            desk_rows: dict[str, dict] = {}
-            for r in _dashboard_tickers():
-                if isinstance(r, dict):
-                    k = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
-                    if k:
-                        desk_rows[k] = r
-            tr_by: dict[str, dict] = {}
-            try:
-                path = ROOT / "trending_stocks.json"
-                raw_tr = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-                for tr in (raw_tr.get("rows") or []):
-                    if not isinstance(tr, dict):
-                        continue
-                    k = str(tr.get("symbol") or tr.get("ticker") or "").upper().strip()
-                    if k:
-                        tr_by[k] = tr
-            except Exception:
-                tr_by = {}
+            # Shared with the movers seed — one implementation, so the two
+            # cannot drift into two different ideas of "the live price".
+            desk_rows, tr_by = _live_quote_map()
             added = 0
             for r in research_candidate_rows():
                 if added >= n:
