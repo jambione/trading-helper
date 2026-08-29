@@ -111,6 +111,7 @@ GROK_SUGGESTIONS_FILE   = Path("grok_suggestions.json")
 AI_POSITIONS_FILE       = Path("ai_positions_state.json")
 CLAUDE_POSITIONS_FILE   = Path("claude_positions_state.json")  # legacy alias
 TRENDING_FILE      = Path("trending_stocks.json")
+MOVERS_FILE        = Path("movers_stocks.json")
 SUGGESTIONS_FILE   = Path("suggestions.json")
 TICKER_FEED_FILE   = Path("static/ticker_feed.json")
 PUSH_SUBS_FILE     = Path("config/push_subscriptions.json")
@@ -729,6 +730,19 @@ _trending_cache: dict = {"mtime": -1.0, "payload": {}}
 
 def load_trending() -> dict:
     return _load_json_payload(TRENDING_FILE, _trending_cache, "TRENDING")
+
+
+_movers_cache: dict = {"mtime": -1.0, "payload": {}}
+
+def load_movers() -> dict:
+    """Alpaca movers from movers_stocks.json (movers_screener.py).
+
+    Same mtime-cached read as trending. The file is absent outside the
+    producer's 04:00-20:00 ET window, which _load_json_payload renders as an
+    empty payload — the panel then says it is waiting rather than showing a
+    frozen morning ranking all evening.
+    """
+    return _load_json_payload(MOVERS_FILE, _movers_cache, "MOVERS")
 
 
 def filter_trending_by_max_price(
@@ -2866,6 +2880,7 @@ def _snapshot() -> dict:
             "ai_positions":       claude_positions,
             "claude_positions":   claude_positions,  # legacy alias
             "trending":           trending,
+            "movers":             load_movers(),
             "news":    news,
             "config":  {k: STATE.cfg.get(k) for k in SAFE_CONFIG_KEYS},
             # Trading-engine status — trader mode + risk guard written by

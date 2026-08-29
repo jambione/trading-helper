@@ -1114,6 +1114,7 @@ body.mobile .icon-btn {
 .scan-source-tab:hover { color: var(--text); }
 #scan-src-claude:checked ~ .panel-header--scan label[for="scan-src-claude"],
 #scan-src-tickers:checked ~ .panel-header--scan label[for="scan-src-tickers"],
+#scan-src-movers:checked ~ .panel-header--scan label[for="scan-src-movers"],
 #scan-src-trending:checked ~ .panel-header--scan label[for="scan-src-trending"] {
   color: var(--accent-2);
   border-bottom-color: var(--accent);
@@ -1165,6 +1166,7 @@ body.mobile .icon-btn {
 }
 #scan-src-tickers:checked ~ .scan-body > [data-panel="tickers"],
 #scan-src-trending:checked ~ .scan-body > [data-panel="trending"],
+#scan-src-movers:checked ~ .scan-body > [data-panel="movers"],
 #scan-src-claude:checked ~ .scan-body > [data-panel="claude"] {
   display: flex;
 }

@@ -7,7 +7,7 @@
  * Column headers sort the list the same way Momentum Stocks does.
  */
 
-import { subscribe, get } from './store.js?v=133';
+import { subscribe, get } from './store.js?v=134';
 import { api }       from './api.js?v=133';
 import { copyTicker } from './tickers.js?v=137';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
@@ -38,13 +38,16 @@ export function init(panelEl, kind) {
     : null;
   const empty   = kind === 'claude'
     ? 'Waiting for AI research…'
+    : kind === 'movers' ? 'Waiting for movers data…'
     : 'Waiting for trending data…';
   const noteSymbols = createSymbolMembershipWatcher();
 
   // Default sort matches server ranking: trending by score desc, AI by
   // server order (rank) until the user picks a column.
-  let sortCol   = kind === 'trending' ? 'score' : 'rank';
-  let sortDir   = kind === 'trending' ? -1 : 1;  // -1 = desc, 1 = asc
+  // Anything that is not the research panel ranks like Trend: score desc.
+  // Movers scores off day change, so that puts the biggest movers on top.
+  let sortCol   = kind === 'claude' ? 'rank' : 'score';
+  let sortDir   = kind === 'claude' ? 1 : -1;   // -1 = desc, 1 = asc
   let lastRows  = [];
   let lastKey   = '';
   let lastPayload = {};
@@ -171,7 +174,10 @@ export function init(panelEl, kind) {
 
   // AI panel prefers merged ai_suggestions (A/X/AX); store mirrors it onto
   // claude_suggestions for older snapshots.
-  subscribe(kind === 'claude' ? 'claude_suggestions' : 'trending', payload => {
+  const _channel = kind === 'claude' ? 'claude_suggestions'
+    : kind === 'movers' ? 'movers'
+    : 'trending';
+  subscribe(_channel, payload => {
     _refresh(payload ?? {});
   });
   if (kind === 'claude') {

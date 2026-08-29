@@ -6,8 +6,8 @@
  */
 
 import { connect, on, api }                      from './api.js?v=134';
-import { subscribe, set, selectTicker }          from './store.js?v=133';
-import { init as initFeeds }                     from './feeds.js?v=164';
+import { subscribe, set, selectTicker }          from './store.js?v=134';
+import { init as initFeeds }                     from './feeds.js?v=165';
 import { init as initTickers }                   from './tickers.js?v=140';
 import { init as initTradingView }               from './tradingview.js?v=133';
 import { init as initConfig, open as openConfig, updateFeedbackBadge } from './config.js?v=133';
@@ -213,6 +213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Wrapped individually so one failure doesn't block the rest.
   // Trending and AI research panels are server-fed (WebSocket), so they work hosted too.
   try { initFeeds(document.querySelector('[data-panel="trending"]'), 'trending'); } catch (e) { console.error('[app] initFeeds trending', e); }
+  try { initFeeds(document.querySelector('[data-panel="movers"]'), 'movers'); }   catch (e) { console.error('[app] initFeeds movers', e); }
   try { initFeeds(document.querySelector('[data-panel="claude"]'), 'claude'); }      catch (e) { console.error('[app] initFeeds claude', e); }
   try { initTickers(document.querySelector('[data-panel="tickers"]')); }          catch (e) { console.error('[app] initTickers', e); }
   try { initNews(document.querySelector('[data-news]')); }                        catch (e) { console.error('[app] initNews', e); }

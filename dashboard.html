@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=157" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=158" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -198,12 +198,14 @@
                 <input class="scan-radio" type="radio" name="scan-src" id="scan-src-claude" value="claude" />
                 <input class="scan-radio" type="radio" name="scan-src" id="scan-src-tickers" value="tickers" checked />
                 <input class="scan-radio" type="radio" name="scan-src" id="scan-src-trending" value="trending" />
+                <input class="scan-radio" type="radio" name="scan-src" id="scan-src-movers" value="movers" />
 
                 <div class="panel-header panel-header--scan">
                     <span class="panel-title">Scan</span>
                     <div class="scan-sources" role="tablist" aria-label="Scan source">
                         <label class="scan-source-tab" for="scan-src-tickers">Momentum</label>
                         <label class="scan-source-tab" for="scan-src-trending">Trend</label>
+                        <label class="scan-source-tab" for="scan-src-movers" title="Alpaca day movers — the one seed that is not sentiment">Movers</label>
                         <label class="scan-source-tab" for="scan-src-claude">Research</label>
                     </div>
                 </div>
@@ -281,6 +283,36 @@
                         <div data-trending-error class="feed-error" hidden></div>
                         <div data-trending-rows class="feed-rows">
                             <span class="tx-placeholder">Waiting for trending data…</span>
+                        </div>
+                    </section>
+
+                    <!-- Movers: Alpaca day-gainers, warrants and thin names already dropped
+                         by movers_screener.py. Same columns as Trend on purpose — the rows
+                         carry the same fields, so they share feed-cols--trending. -->
+                    <section data-panel="movers" class="scan-pane panel-trending" aria-label="Day movers">
+                        <div class="panel-header">
+                            <div class="panel-header-left">
+                                <span class="panel-title">Day Movers</span>
+                                <span data-movers-count class="ticker-count"></span>
+                            </div>
+                            <div class="panel-header-right">
+                                <span data-movers-stamp class="feed-stamp"></span>
+                            </div>
+                        </div>
+                        <div class="feed-table-header">
+                            <div class="feed-cols feed-cols--trending">
+                                <div class="th" data-sort-col="ticker">Ticker</div>
+                                <div class="th" data-sort-col="price">Last</div>
+                                <div class="th" data-sort-col="chg">Chg</div>
+                                <div class="th desk-col-extra" data-sort-col="vol">Vol</div>
+                                <div class="th desk-col-extra" data-sort-col="rvol">RVOL</div>
+                                <div class="th desk-col-extra" data-sort-col="score">Score</div>
+                                <div class="th desk-col-extra">Look</div>
+                            </div>
+                        </div>
+                        <div data-movers-error class="feed-error" hidden></div>
+                        <div data-movers-rows class="feed-rows">
+                            <span class="tx-placeholder">Waiting for movers data…</span>
                         </div>
                     </section>
 
@@ -775,7 +807,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=161"></script>
+        <script type="module" src="/static/js/app.js?v=162"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

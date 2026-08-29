@@ -15,6 +15,7 @@ const _state = {
   tickers:        /** @type {Object[]} */ ([]),
   funnel:         /** @type {Object} */ ({}),
   trending:           /** @type {Object} */ ({}),
+  movers:             /** @type {Object} */ ({}),
   claude_suggestions: /** @type {Object} */ ({}),
   ai_suggestions: /** @type {Object} */ ({}),
   /** Shared AI paper book (Grok/Claude owner): positions, mode, book_owner. */
