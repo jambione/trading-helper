@@ -1060,6 +1060,10 @@ DEFAULT_CONFIG = {
     "ai_movers_min_live_pct":         0.80,
     "ai_movers_live_window_min":        60,
     "ai_movers_min_minute_dollars": 2000.0,
+    # Below this many OPEN minutes in the window there is not enough tape
+    # to judge continuity, so the filter forms no opinion rather than
+    # refusing everything — which is what it did in premarket.
+    "ai_movers_live_min_open_minutes": 20,
     "ai_movers_max_rows":           25,   # enrich at most this many per pass
     "ai_movers_float_refresh_per_pass": 10,  # bounded so the loop stays responsive
     "trending_screener_enabled": False,   # launch trending_screener.py
@@ -1667,6 +1671,7 @@ SAFE_CONFIG_KEYS = [
     "ai_movers_min_live_pct",
     "ai_movers_live_window_min",
     "ai_movers_min_minute_dollars",
+    "ai_movers_live_min_open_minutes",
     "ai_movers_max_rows",
     "ai_movers_float_refresh_per_pass",
     "stocktwits_max_price",

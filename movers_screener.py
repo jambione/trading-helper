@@ -107,6 +107,25 @@ def _active_hours(now: datetime | None = None) -> bool:
     return 4 <= now.hour < 20
 
 
+def _rth_minutes_in_window(window_min: int, now: datetime | None = None) -> int:
+    """How many of the trailing *window_min* minutes were inside RTH.
+
+    The continuity filter divides by this rather than by the window, because
+    a minute the market was shut is not a minute a name failed to trade in.
+    """
+    now = (now or _et_now())
+    if now.weekday() >= 5:
+        return 0
+    open_t = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    close_t = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    start = now - timedelta(minutes=max(0, window_min))
+    lo = max(start, open_t)
+    hi = min(now, close_t)
+    if hi <= lo:
+        return 0
+    return int((hi - lo).total_seconds() // 60)
+
+
 def fetch_rows(cfg: dict) -> list[dict]:
     """One pass: rank movers, drop what cannot be traded, enrich survivors."""
     api, sec = _keys()
@@ -174,8 +193,18 @@ def fetch_rows(cfg: dict) -> list[dict]:
     # NOW, and lets a name that has just woken up qualify intraday. Median
     # per-minute dollars is deliberately not the test — RDIB's was a healthy
     # $36k. Coverage is the discriminator.
+    # Only judge on minutes the market was actually open. A trailing window
+    # is otherwise indistinguishable from a thin tape: run at 04:00 the window
+    # covers 03:00-04:00, nothing trades in it, every name reads 0% and the
+    # book empties — which is what this did the first time it ran, on a
+    # Saturday. Premarket would have done the same thing every morning.
+    #
+    # Fewer open minutes than the floor means there is not enough tape to have
+    # an opinion, so it does not form one.
+    open_min = _rth_minutes_in_window(live_win)
+    need_min = int(cfg.get("ai_movers_live_min_open_minutes", 20) or 20)
     live_pct: dict[str, float] = {}
-    if min_live_pct > 0 and syms:
+    if min_live_pct > 0 and syms and open_min >= need_min:
         try:
             mdf = data.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=syms,
@@ -190,7 +219,8 @@ def fetch_rows(cfg: dict) -> list[dict]:
                     if float(getattr(b, "volume", 0) or 0)
                     * float(getattr(b, "vwap", None)
                             or getattr(b, "close", 0) or 0) >= min_min_dollars)
-                live_pct[sym] = live / float(max(1, live_win))
+                # Denominator is OPEN minutes, not wall-clock minutes.
+                live_pct[sym] = live / float(max(1, open_min))
         except Exception as e:  # noqa: BLE001
             # No reading is no opinion. Refusing every name because one bar
             # request failed would empty the book on an API hiccup, and this

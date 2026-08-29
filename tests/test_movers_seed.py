@@ -388,7 +388,7 @@ def test_the_continuity_filter_measures_coverage_not_a_sum():
     src = open("movers_screener.py", encoding="utf-8").read()
     assert "ai_movers_min_live_pct" in src
     assert "TimeFrameUnit.Minute" in src, "coverage needs minute bars"
-    assert "live_pct[sym] = live / float(max(1, live_win))" in src
+    assert "live_pct[sym] = live / float(max(1, open_min))" in src
 
 
 def test_an_unmeasured_name_is_not_refused():
@@ -423,3 +423,34 @@ def test_the_continuity_knobs_ship_declared():
         assert k in DEFAULT_CONFIG, f"{k} missing from DEFAULT_CONFIG"
     assert DEFAULT_CONFIG["ai_movers_min_live_pct"] > 0, (
         "shipped on — the 2026-08-28 list was half untradeable without it")
+
+
+def test_the_window_counts_only_open_minutes():
+    """A minute the market was shut is not a minute a name failed to trade in.
+
+    Dividing by wall-clock minutes made every name read 0% outside RTH. It
+    emptied the book the first time it ran, on a Saturday, and it would have
+    done the same every premarket — the producer starts at 04:00, when a
+    trailing hour covers 03:00-04:00 and nothing trades in it for ANY symbol.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import movers_screener as ms
+    et = ZoneInfo("America/New_York")
+    # Mid-session: the whole window is open.
+    assert ms._rth_minutes_in_window(60, datetime(2026, 8, 31, 14, 0, tzinfo=et)) == 60
+    # Half an hour after the open: only 30 of the 60 were.
+    assert ms._rth_minutes_in_window(60, datetime(2026, 8, 31, 10, 0, tzinfo=et)) == 30
+    # Premarket and weekends have none.
+    assert ms._rth_minutes_in_window(60, datetime(2026, 8, 31, 4, 30, tzinfo=et)) == 0
+    assert ms._rth_minutes_in_window(60, datetime(2026, 8, 29, 14, 0, tzinfo=et)) == 0
+
+
+def test_too_little_tape_forms_no_opinion():
+    """At the open there is not yet an hour of session to judge against, and
+    'not enough evidence' must not read as 'failed'."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert "open_min >= need_min" in src
+    assert "ai_movers_live_min_open_minutes" in src
+    assert "live / float(max(1, open_min))" in src, (
+        "the denominator must be open minutes, not the wall-clock window")
