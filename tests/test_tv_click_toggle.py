@@ -43,12 +43,10 @@ def test_tickers_js_guards_against_mobile():
     assert "document.body.classList.contains('mobile')" in _TICKERS
 
 
-def test_tickers_js_triggers_tv_automation():
-    """openTradingViewChart triggers local desk agent and server-side automation."""
-    assert "http://127.0.0.1:8889/v1/action" in _TICKERS
-    assert "action: 'load_tv'" in _TICKERS
-    assert "api.addToTV(sym)" in _TICKERS
-    assert "api.addToWBAndTV(sym)" in _TICKERS
+def test_tickers_js_opens_tradingview_url():
+    """openTradingViewChart opens TradingView chart via window.open."""
+    assert "https://www.tradingview.com/chart/?symbol=" in _TICKERS
+    assert "window.open(url, '_blank'" in _TICKERS
 
 
 def test_copy_ticker_invokes_open_when_enabled():

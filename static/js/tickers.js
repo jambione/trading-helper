@@ -70,32 +70,25 @@ export function isTvClickOpenEnabled() {
 }
 
 export function openTradingViewChart(ticker) {
-  const sym = String(ticker || '').trim().toUpperCase();
+  const sym = encodeURIComponent(String(ticker || '').trim().toUpperCase());
   if (!sym) return;
 
-  // 1. Direct local desk agent on port 8889 (mac_agent / windows_agent command bus)
-  try {
-    fetch('http://127.0.0.1:8889/v1/action', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ action: 'load_tv', symbol: sym, source: 'dashboard' }),
-      signal:  AbortSignal.timeout(1500),
-    }).catch(() => {
-      fetch('http://127.0.0.1:8889/add-tv', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ticker: sym }),
-        signal:  AbortSignal.timeout(1500),
-      }).catch(() => {});
-    });
-  } catch {}
+  const cfg = get('config') || {};
+  let base = (cfg.tv_chart_url || '').trim();
+  let url;
+  if (!base) {
+    url = `https://www.tradingview.com/chart/?symbol=${sym}`;
+  } else if (base.includes('{sym}')) {
+    url = base.replace('{sym}', sym);
+  } else {
+    const sep = base.includes('?') ? '&' : (base.endsWith('/') ? '?' : '/?');
+    url = `${base}${sep}symbol=${sym}`;
+  }
+  window.open(url, '_blank', 'noopener');
 
-  // 2. Server-side automation (/api/tickers/add-tv and /api/tickers/add-wb-tv)
+  // Optional: notify server-side automation if available
   try {
     api.addToTV(sym).catch(() => {});
-  } catch {}
-  try {
-    api.addToWBAndTV(sym).catch(() => {});
   } catch {}
 }
 
