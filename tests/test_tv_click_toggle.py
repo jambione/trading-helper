@@ -44,9 +44,37 @@ def test_tickers_js_guards_against_mobile():
 
 
 def test_tickers_js_opens_tradingview_url():
-    """openTradingViewChart opens TradingView chart via window.open."""
-    assert "https://www.tradingview.com/chart/?symbol=" in _TICKERS
-    assert "window.open(url, '_blank'" in _TICKERS
+    """One tab, reused — not a new one per click.
+
+    A NAMED target is the whole feature. With '_blank' every click spawns
+    another TradingView tab, so clicking five tickers leaves five of them and
+    the operator is back to hunting for the right window, which is the problem
+    this was built to remove. A name reuses the same tab and reloads it with
+    the new symbol.
+
+    noopener has to go for that to work: it forces a fresh browsing context
+    and defeats the name. The opener reference is nulled instead.
+    """
+    assert "window.open(url, String(cfg.tv_chart_window || 'tvchart'))" in _TICKERS
+    assert "window.open(url, '_blank'" not in _TICKERS, (
+        "_blank opens a new tab per click — the named target is the feature")
+    assert "win.opener = null" in _TICKERS
+
+
+def test_a_blocked_popup_is_reported_not_swallowed():
+    """The bug that made this feature look dead for two commits was an empty
+    catch. A blocked tab must say so somewhere the operator can find it."""
+    assert "console.warn" in _TICKERS
+    assert "pop-ups" in _TICKERS
+
+
+def test_the_browser_path_does_not_depend_on_the_desk_agent():
+    """It must work on a machine with no agent running. The agent notify is
+    best-effort and comes AFTER the window is opened, never before."""
+    i = _TICKERS.index("export function openTradingViewChart")
+    body = _TICKERS[i:_TICKERS.index("\nexport function updateTickerTitles", i)]
+    assert body.index("window.open(") < body.index("api.addToTV("), (
+        "the agent call must not gate the browser path")
 
 
 def test_copy_ticker_invokes_open_when_enabled():

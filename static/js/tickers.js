@@ -84,12 +84,37 @@ export function openTradingViewChart(ticker) {
     const sep = base.includes('?') ? '&' : (base.endsWith('/') ? '?' : '/?');
     url = `${base}${sep}symbol=${sym}`;
   }
-  window.open(url, '_blank', 'noopener');
+  // A NAMED target, not _blank: the point of the feature is not to open a
+  // chart, it is to stop switching tabs and retyping symbols. _blank gives a
+  // fresh tab per click, so five tickers leave five TradingView tabs and the
+  // operator is back to hunting for the right one. A name reuses the same tab
+  // and reloads it with the new symbol, which is what "load it into my chart"
+  // actually means.
+  //
+  // Dropping `noopener` is required for that reuse — it forces a fresh
+  // context and defeats the name. The trade is that the opened page can see
+  // window.opener. The destination is tradingview.com, or a URL the operator
+  // configured themselves in tv_chart_url, so this is a known site rather
+  // than untrusted content; the reference is cleared below anyway.
+  const win = window.open(url, String(cfg.tv_chart_window || 'tvchart'));
+  if (win) {
+    try { win.opener = null; } catch { /* cross-origin: already isolated */ }
+    try { win.focus(); } catch { /* focus is best-effort */ }
+  } else {
+    // Say so. The version this replaced swallowed every failure into an empty
+    // catch, which is why a dead button was indistinguishable from a working
+    // one for two commits.
+    console.warn('[tickers] TradingView tab was blocked — allow pop-ups for '
+                 + 'this site to load charts on click.');
+  }
 
-  // Optional: notify server-side automation if available
+  // Best effort, and deliberately last: if the desk agent happens to be
+  // running it also loads the symbol in the native TradingView app. The
+  // browser path above must never depend on it — that dependency is what
+  // made this feature do nothing at all.
   try {
     api.addToTV(sym).catch(() => {});
-  } catch {}
+  } catch { /* no agent, no problem */ }
 }
 
 export function updateTickerTitles() {
