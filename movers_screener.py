@@ -123,6 +123,9 @@ def fetch_rows(cfg: dict) -> list[dict]:
     lo = float(cfg.get("ai_movers_min_price", 2.0) or 2.0)
     hi = float(cfg.get("ai_movers_max_price", 20.0) or 20.0)
     min_dollar_vol = float(cfg.get("ai_movers_min_dollar_vol", 1_000_000) or 0)
+    live_win = int(cfg.get("ai_movers_live_window_min", 60) or 60)
+    min_live_pct = float(cfg.get("ai_movers_min_live_pct", 0.0) or 0.0)
+    min_min_dollars = float(cfg.get("ai_movers_min_minute_dollars", 2000.0) or 0.0)
     want = int(cfg.get("ai_movers_max_rows", 25) or 25)
 
     scr = ScreenerClient(api, sec)
@@ -155,6 +158,47 @@ def fetch_rows(cfg: dict) -> list[dict]:
     except Exception as e:  # noqa: BLE001
         print(f"[movers] daily bars failed: {e}", flush=True)
 
+    # Tape continuity. A DAILY dollar-volume floor is a sum, and a sum cannot
+    # tell a name that trades every minute from one that does its whole day in
+    # three bursts. Measured 2026-08-28: RDIB cleared $12.4M total and still
+    # had a 54-minute stretch with no prints at all; YDES printed in 29% of
+    # RTH minutes at a $1,920 median. Both passed the dollar floor. Half that
+    # session's list was untradeable and nothing here could see it.
+    #
+    # It matters because the working shelf sits 0.25% under the fill. On a
+    # tape with holes, the next print after entry can be several tenths of a
+    # percent away with nothing in between, so the stop is set by whoever
+    # crosses next rather than by the move.
+    #
+    # A trailing window, not the session: it costs less, reflects liquidity
+    # NOW, and lets a name that has just woken up qualify intraday. Median
+    # per-minute dollars is deliberately not the test — RDIB's was a healthy
+    # $36k. Coverage is the discriminator.
+    live_pct: dict[str, float] = {}
+    if min_live_pct > 0 and syms:
+        try:
+            mdf = data.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols=syms,
+                timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                start=datetime.now(timezone.utc) - timedelta(minutes=live_win),
+                limit=100000, feed=DataFeed.SIP))
+            mbars = getattr(mdf, "data", {}) or {}
+            for sym in syms:
+                seq = mbars.get(sym) or []
+                live = sum(
+                    1 for b in seq
+                    if float(getattr(b, "volume", 0) or 0)
+                    * float(getattr(b, "vwap", None)
+                            or getattr(b, "close", 0) or 0) >= min_min_dollars)
+                live_pct[sym] = live / float(max(1, live_win))
+        except Exception as e:  # noqa: BLE001
+            # No reading is no opinion. Refusing every name because one bar
+            # request failed would empty the book on an API hiccup, and this
+            # filter is about tape quality, not about availability.
+            print(f"[movers] minute bars failed, continuity filter off "
+                  f"this pass: {e}", flush=True)
+            live_pct = {}
+
     try:
         import float_feed
         # Bounded per pass, and paced. Unbounded this blocks the 60s loop for
@@ -180,6 +224,9 @@ def fetch_rows(cfg: dict) -> list[dict]:
         # Tradeable TODAY is the liquidity question. A tiny 20-day average is
         # what makes the ratio interesting, not what makes the name unsafe.
         if min_dollar_vol > 0 and dollar_vol < min_dollar_vol:
+            continue
+        lp = live_pct.get(sym)
+        if min_live_pct > 0 and lp is not None and lp < min_live_pct:
             continue
         try:
             import float_feed
@@ -211,6 +258,9 @@ def fetch_rows(cfg: dict) -> list[dict]:
             "rvol": rvol,
             "float_m": fl,
             "avg_vol_20d": round(avg) if avg else None,
+            # Share of the trailing window's minutes that actually traded.
+            # None means it was not measured this pass, which is not zero.
+            "live_pct": (round(live_pct[sym], 3) if sym in live_pct else None),
             "dollar_volume": round(dollar_vol) if dollar_vol else None,
             "criteria": crit,
         })

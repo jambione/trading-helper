@@ -359,3 +359,67 @@ def test_both_seeds_share_one_quote_map():
     src = open("ai_entry_watch.py", encoding="utf-8").read()
     assert src.count("def _live_quote_map(") == 1
     assert src.count("_live_quote_map()") >= 2
+
+
+# ── tape continuity ──────────────────────────────────────────────────────
+
+def test_the_continuity_filter_measures_coverage_not_a_sum():
+    """A daily dollar-volume floor cannot see a hole in the tape.
+
+    Measured on 2026-08-28's own picks, all of which cleared the $1M sum:
+
+        QNRX  100% of minutes traded   0m longest gap
+        SWVL   99%                     1m
+        IREZ   93%                     2m
+        JELD   88%                     4m
+        TJGC   53%                     9m
+        RDIB   42%                    54m      $12.4M total
+        YDES   29%                    31m      $706K total, $1,920/min median
+        AKTX   28%                    35m
+
+    Half of them were untradeable and the producer could not tell. It matters
+    because the working shelf sits 0.25% under the fill: across a 30-minute
+    hole the next print can be several tenths of a percent away, so the stop
+    is set by whoever crosses next rather than by the move.
+
+    RDIB is why the test is coverage and not median-per-minute — its median
+    traded minute was a healthy $36k. It simply did not trade in most of them.
+    """
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert "ai_movers_min_live_pct" in src
+    assert "TimeFrameUnit.Minute" in src, "coverage needs minute bars"
+    assert "live_pct[sym] = live / float(max(1, live_win))" in src
+
+
+def test_an_unmeasured_name_is_not_refused():
+    """No reading is no opinion. Refusing every name because one bar request
+    failed would empty the book on an API hiccup — this filter is about tape
+    quality, not availability."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert "lp = live_pct.get(sym)" in src
+    assert "if min_live_pct > 0 and lp is not None and lp < min_live_pct:" in src, (
+        "a missing reading must not count as a failing one")
+    assert "live_pct = {}" in src, "a failed fetch disables the filter, not the pass"
+
+
+def test_the_window_is_trailing_not_the_whole_session():
+    """Cheaper, reflects liquidity NOW, and lets a name that just woke up
+    qualify intraday rather than waiting for tomorrow."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert "timedelta(minutes=live_win)" in src
+
+
+def test_live_pct_travels_on_the_row():
+    """So a thin admission can be explained after the fact instead of
+    argued about."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert '"live_pct":' in src
+
+
+def test_the_continuity_knobs_ship_declared():
+    from config import DEFAULT_CONFIG
+    for k in ("ai_movers_min_live_pct", "ai_movers_live_window_min",
+              "ai_movers_min_minute_dollars"):
+        assert k in DEFAULT_CONFIG, f"{k} missing from DEFAULT_CONFIG"
+    assert DEFAULT_CONFIG["ai_movers_min_live_pct"] > 0, (
+        "shipped on — the 2026-08-28 list was half untradeable without it")

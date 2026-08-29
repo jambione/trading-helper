@@ -1051,6 +1051,15 @@ DEFAULT_CONFIG = {
     # what makes RVOL interesting (QNRX did 31M shares against a 24k mean and
     # $190M of dollar volume on 2026-08-28), not what makes a name unsafe.
     "ai_movers_min_dollar_vol": 1000000.0,
+    # Tape CONTINUITY, which the dollar floor above cannot see because a daily
+    # sum cannot tell a name that trades every minute from one that does its
+    # whole day in three bursts. Measured 2026-08-28: RDIB cleared $12.4M and
+    # still had a 54-minute hole; YDES traded in 29% of RTH minutes. Both
+    # passed the sum. Require this share of a trailing window's minutes to
+    # have printed at least ai_movers_min_minute_dollars. 0 = off.
+    "ai_movers_min_live_pct":         0.80,
+    "ai_movers_live_window_min":        60,
+    "ai_movers_min_minute_dollars": 2000.0,
     "ai_movers_max_rows":           25,   # enrich at most this many per pass
     "ai_movers_float_refresh_per_pass": 10,  # bounded so the loop stays responsive
     "trending_screener_enabled": False,   # launch trending_screener.py
@@ -1655,6 +1664,9 @@ SAFE_CONFIG_KEYS = [
     "ai_movers_min_price",
     "ai_movers_max_price",
     "ai_movers_min_dollar_vol",
+    "ai_movers_min_live_pct",
+    "ai_movers_live_window_min",
+    "ai_movers_min_minute_dollars",
     "ai_movers_max_rows",
     "ai_movers_float_refresh_per_pass",
     "stocktwits_max_price",
