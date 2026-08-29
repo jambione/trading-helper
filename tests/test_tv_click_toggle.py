@@ -52,13 +52,22 @@ def test_tickers_js_opens_tradingview_url():
     this was built to remove. A name reuses the same tab and reloads it with
     the new symbol.
 
+    It is also what gets past the pop-up blocker. With '_blank' every click
+    asks for a NEW window, so the browser allows the first and refuses the
+    rest — observed as "it opened once and then nothing". Named, only the
+    first click creates a window; the rest navigate a tab that already exists,
+    which is not a pop-up.
+
     noopener has to go for that to work: it forces a fresh browsing context
-    and defeats the name. The opener reference is nulled instead.
+    and defeats the name. The opener must NOT be nulled afterwards either —
+    that can detach the tab from this browsing-context group, and the name
+    lookup is the entire mechanism. Nulling it reintroduces a tab per click.
     """
     assert "window.open(url, String(cfg.tv_chart_window || 'tvchart'))" in _TICKERS
     assert "window.open(url, '_blank'" not in _TICKERS, (
         "_blank opens a new tab per click — the named target is the feature")
-    assert "win.opener = null" in _TICKERS
+    assert "win.opener = null" not in _TICKERS, (
+        "nulling opener detaches the tab and defeats the name lookup")
 
 
 def test_a_blocked_popup_is_reported_not_swallowed():

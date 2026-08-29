@@ -96,10 +96,20 @@ export function openTradingViewChart(ticker) {
   // window.opener. The destination is tradingview.com, or a URL the operator
   // configured themselves in tv_chart_url, so this is a known site rather
   // than untrusted content; the reference is cleared below anyway.
+  // Why the name matters more than it looks: with '_blank' EVERY click asks
+  // for a new window, and a pop-up blocker allows the first and refuses the
+  // rest — "it opened once and then nothing", which is what this replaces.
+  // Named, only the first click creates a window; later clicks navigate a tab
+  // that already exists, which is not a pop-up and is not blocked.
+  //
+  // The opener reference is deliberately NOT nulled. Doing so can detach the
+  // tab from this browsing-context group, and the name lookup is what the
+  // whole mechanism runs on — clearing it would put us straight back to a new
+  // tab per click. The destination is tradingview.com or a URL the operator
+  // configured, so the residual window.opener exposure is a known site.
   const win = window.open(url, String(cfg.tv_chart_window || 'tvchart'));
   if (win) {
-    try { win.opener = null; } catch { /* cross-origin: already isolated */ }
-    try { win.focus(); } catch { /* focus is best-effort */ }
+    try { win.focus(); } catch { /* focus is best-effort, and often refused */ }
   } else {
     // Say so. The version this replaced swallowed every failure into an empty
     // catch, which is why a dead button was indistinguishable from a working
