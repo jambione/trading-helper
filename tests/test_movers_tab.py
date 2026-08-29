@@ -108,16 +108,23 @@ def test_movers_reuses_the_trending_column_grid():
     assert "colsClass = kind === 'claude'" in _FEEDS
 
 
-def test_the_asset_pins_moved_so_browsers_reload_the_new_code():
-    """Every one of these files changed for this tab. A stale pin means the
-    browser keeps the old module and the tab is missing for the operator
-    while being present in the repo — which is indistinguishable from a bug."""
-    for name, pin in (("feeds.js", 165), ("store.js", 134),
-                      ("app.js", 162), ("styles.css", 158)):
-        found = set(re.findall(re.escape(name) + r"\?v=(\d+)",
-                               _HTML + _APP + _FEEDS + _STORE))
+def test_each_asset_resolves_to_exactly_one_pin():
+    """Consistency, not a hardcoded number.
+
+    Freshness is already enforced by tests/test_asset_cache_busting.py, which
+    compares each pin against git commit recency — a far better check than a
+    literal, which would have to be edited on every future bump and would fail
+    for the next person for a reason that has nothing to do with them.
+
+    What THAT test cannot see is disagreement: two pins for one module are two
+    modules, because ES modules are keyed by URL. See
+    test_one_store_pin_across_every_module_that_imports_it for the day that
+    shipped."""
+    blob = _HTML + _APP + _FEEDS + _STORE
+    for name in ("feeds.js", "store.js", "app.js", "styles.css"):
+        found = set(re.findall(re.escape(name) + r"\?v=(\d+)", blob))
         assert found, f"{name} is not pinned anywhere"
-        assert found == {str(pin)}, f"{name} pins disagree: {found}"
+        assert len(found) == 1, f"{name} pins disagree: {found}"
 
 
 def test_one_store_pin_across_every_module_that_imports_it():
