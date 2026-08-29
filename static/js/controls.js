@@ -7,7 +7,7 @@
 
 import { api } from './api.js?v=133';
 import { get, selectTicker } from './store.js?v=134';
-import { clearCopiedTickers } from './tickers.js?v=142';
+import { clearCopiedTickers } from './tickers.js?v=143';
 
 export async function clearWatchlist() {
   if (!confirm('Clear the watchlist?\n\nThis removes all tickers from wb_watchlist.json.')) return;
