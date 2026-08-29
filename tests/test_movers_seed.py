@@ -218,3 +218,37 @@ def test_every_seed_source_the_loop_can_emit_is_registered():
     known = ew._DESK_SOURCES | ew._RESEARCH_SOURCES | ew._BB_LIVE_SOURCES
     for emitted in ("momentum", "trending", "movers", "research"):
         assert emitted in known, f"{emitted} is not classified"
+
+
+# ── the fields the Scan renderer actually reads ──────────────────────────
+
+def test_a_row_carries_every_field_the_trend_renderer_reads():
+    """These rows reuse the Trend row shape, so they must BE that shape.
+
+    feeds.js reads r.trending_score for the Score cell and for the score
+    sort, not r.score. Emitting only `score` rendered "—" in Score on every
+    movers row and sorted them all as nulls — which looked correct only
+    because Alpaca returns the movers already ranked, so the stable sort
+    preserved that order by accident.
+    """
+    import movers_screener as ms
+    row = {
+        "symbol": "QNRX", "source": "movers", "agreement": True,
+        "score": 3.74, "trending_score": 3.74, "reason": "mover +18.7%",
+        "pct_change": 18.7, "price": 6.12, "rvol": 5.6, "float_m": 1.9,
+        "avg_vol_20d": 24203, "dollar_volume": 189826971, "criteria": ["mover"],
+    }
+    src = open(ms.__file__, encoding="utf-8").read()
+    for field in row:
+        assert f'"{field}":' in src, f"producer never emits {field}"
+
+
+def test_score_and_trending_score_agree():
+    """Two names for one number must not drift — the book ranks on one and
+    the panel renders the other."""
+    import movers_screener as ms
+    src = open(ms.__file__, encoding="utf-8").read()
+    i = src.index('"score":')
+    block = src[i:i + 200]
+    assert '"trending_score":' in block, (
+        "trending_score must be set next to score, from the same expression")

@@ -196,7 +196,15 @@ def fetch_rows(cfg: dict) -> list[dict]:
             "symbol": sym,
             "source": "movers",
             "agreement": True,
+            # BOTH names, deliberately. The Scan renderer reads trending_score
+            # for the Score cell and for its score sort (feeds.js), while the
+            # book's own ranking reads score — and these rows reuse the Trend
+            # row shape, where the seed sets both. Setting only `score` left
+            # every movers row showing "—" in Score and sorting as a null,
+            # which looked like correct ordering purely because Alpaca returns
+            # the movers pre-ranked.
             "score": round(min(10.0, pct / 5.0), 2),
+            "trending_score": round(min(10.0, pct / 5.0), 2),
             "reason": f"mover {pct:+.1f}%"[:48],
             "pct_change": pct,
             "price": px,
