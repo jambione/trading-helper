@@ -147,3 +147,10 @@ cache/
 .agentsroom/handoff-summary-*.md
 .grok/config.toml
 .agents/mcp_config.json
+
+# Agent/tooling scratch, local to one machine and one session.
+# .agentsroom is MCP project state. scratchpad/mini-pull holds data pulled
+# off the mini for analysis — outcomes and ledgers that are authoritative
+# THERE, and a committed copy here would be a stale fork of the truth.
+.agentsroom/
+scratchpad/mini-pull/
