@@ -9,7 +9,7 @@
 
 import { subscribe, get } from './store.js?v=134';
 import { api }       from './api.js?v=133';
-import { copyTicker, isTvClickOpenEnabled } from './tickers.js?v=145';
+import { copyTicker, isTvClickOpenEnabled } from './tickers.js?v=146';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 import * as notifications from './notifications.js?v=133';
 

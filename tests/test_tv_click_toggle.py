@@ -8,13 +8,35 @@ _TICKERS = (_ROOT / "static" / "js" / "tickers.js").read_text(encoding="utf-8")
 _FEEDS = (_ROOT / "static" / "js" / "feeds.js").read_text(encoding="utf-8")
 
 
-def test_tv_toggle_btn_in_dashboard_scan_header():
-    """Toggle button exists in dashboard.html within the scan panel header."""
-    assert 'data-tv-toggle-btn' in _HTML
-    assert 'tv-click-toggle' in _HTML
-    scan_header_idx = _HTML.index('panel-header--scan')
-    scan_body_idx = _HTML.index('scan-body')
-    assert scan_header_idx < _HTML.index('data-tv-toggle-btn') < scan_body_idx
+def test_the_tv_toggle_is_gone_from_the_header():
+    """Withdrawn 2026-08-29 after four attempts failed on a real browser.
+
+    A control that does nothing is worse than no control: it invites the
+    operator to keep trying, and every failure looked like a bug in the desk
+    rather than a browser refusing to reuse a tab.
+    """
+    assert 'data-tv-toggle-btn' not in _HTML
+
+
+def test_clicking_a_symbol_copies_it_and_nothing_else():
+    """The behaviour that has always worked, restored as the only one.
+
+    Disabled at the source rather than only hidden. 'tb:tv-click-open' is
+    already 'true' in the localStorage of every browser that tried the toggle,
+    so a check that still read that key would keep firing the broken path on
+    those machines after the button disappeared.
+    """
+    assert "const _TV_CLICK_ENABLED = false;" in _TICKERS
+    i = _TICKERS.index("export function isTvClickOpenEnabled")
+    body = _TICKERS[i:i + 260]
+    assert "if (!_TV_CLICK_ENABLED) return false;" in body, (
+        "the kill switch must come before the localStorage read")
+
+
+def test_the_url_machinery_is_kept_for_a_future_attempt():
+    """The failure was never in building the URL — it was in getting a browser
+    to reuse a tab. Leave the parts for whoever tries again."""
+    assert "export function openTradingViewChart" in _TICKERS
 
 
 def test_tv_toggle_btn_hidden_on_mobile_in_css():

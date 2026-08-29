@@ -56,7 +56,24 @@ export function clearCopiedTickers() {
 const _TV_CLICK_KEY = 'tb:tv-click-open';
 let _tvToggleBtn    = null;
 
+// Switched OFF at the source, 2026-08-29, after it failed on a real browser
+// through four attempts: a desk-agent POST that swallowed its own failures, a
+// _blank window the pop-up blocker allowed exactly once, and a named target
+// that still did not reuse the tab. Clicking a symbol copies it, which is the
+// behaviour that has always worked.
+//
+// A hard false rather than only hiding the button: 'tb:tv-click-open' is
+// already 'true' in the localStorage of every browser that tried the toggle,
+// and reading that key would keep firing the broken path on those machines
+// long after the control disappeared.
+//
+// The machinery below is left intact deliberately — the failure was never in
+// building the URL, it was in getting a browser to reuse a tab. Whoever picks
+// this up again needs the parts, not a blank page.
+const _TV_CLICK_ENABLED = false;
+
 export function isTvClickOpenEnabled() {
+  if (!_TV_CLICK_ENABLED) return false;
   if (typeof document !== 'undefined') {
     if (document.body.classList.contains('mobile') || (window.innerWidth && window.innerWidth <= 768)) {
       return false;
