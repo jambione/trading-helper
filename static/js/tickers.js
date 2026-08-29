@@ -56,21 +56,18 @@ export function clearCopiedTickers() {
 const _TV_CLICK_KEY = 'tb:tv-click-open';
 let _tvToggleBtn    = null;
 
-// Switched OFF at the source, 2026-08-29, after it failed on a real browser
-// through four attempts: a desk-agent POST that swallowed its own failures, a
-// _blank window the pop-up blocker allowed exactly once, and a named target
-// that still did not reuse the tab. Clicking a symbol copies it, which is the
-// behaviour that has always worked.
+// Kill switch, kept from the day this was briefly withdrawn. It works: a
+// NAMED window target reuses one TradingView tab and renavigates it per
+// click, which also sidesteps the pop-up blocker — only the first click
+// creates a window, and the rest navigate one that already exists.
 //
-// A hard false rather than only hiding the button: 'tb:tv-click-open' is
-// already 'true' in the localStorage of every browser that tried the toggle,
-// and reading that key would keep firing the broken path on those machines
-// long after the control disappeared.
-//
-// The machinery below is left intact deliberately — the failure was never in
-// building the URL, it was in getting a browser to reuse a tab. Whoever picks
-// this up again needs the parts, not a blank page.
-const _TV_CLICK_ENABLED = false;
+// It took four tries to get there (a desk-agent POST that swallowed its own
+// failures, a _blank window the blocker allowed exactly once, then the named
+// target, minus an opener-nulling step that would have detached the tab and
+// defeated the name lookup). Leave the switch: if it regresses, this is the
+// one line to flip, and nobody has to rediscover which of those four shapes
+// the code is currently in.
+const _TV_CLICK_ENABLED = true;
 
 export function isTvClickOpenEnabled() {
   if (!_TV_CLICK_ENABLED) return false;

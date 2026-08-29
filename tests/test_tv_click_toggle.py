@@ -8,29 +8,27 @@ _TICKERS = (_ROOT / "static" / "js" / "tickers.js").read_text(encoding="utf-8")
 _FEEDS = (_ROOT / "static" / "js" / "feeds.js").read_text(encoding="utf-8")
 
 
-def test_the_tv_toggle_is_gone_from_the_header():
-    """Withdrawn 2026-08-29 after four attempts failed on a real browser.
+def test_the_tv_toggle_is_in_the_scan_header():
+    """Restored 2026-08-29 the same day it was withdrawn.
 
-    A control that does nothing is worse than no control: it invites the
-    operator to keep trying, and every failure looked like a bug in the desk
-    rather than a browser refusing to reuse a tab.
+    It was pulled after the operator reported it doing nothing, and that
+    report was true of the version their browser had cached — but not of the
+    named-target build, which was already deployed and which they then used to
+    open four charts. The withdrawal was one commit early.
     """
-    assert 'data-tv-toggle-btn' not in _HTML
+    assert 'data-tv-toggle-btn' in _HTML
+    assert 'tv-click-toggle' in _HTML
+    scan_header_idx = _HTML.index('panel-header--scan')
+    scan_body_idx = _HTML.index('scan-body')
+    assert scan_header_idx < _HTML.index('data-tv-toggle-btn') < scan_body_idx
 
 
-def test_clicking_a_symbol_copies_it_and_nothing_else():
-    """The behaviour that has always worked, restored as the only one.
-
-    Disabled at the source rather than only hidden. 'tb:tv-click-open' is
-    already 'true' in the localStorage of every browser that tried the toggle,
-    so a check that still read that key would keep firing the broken path on
-    those machines after the button disappeared.
-    """
-    assert "const _TV_CLICK_ENABLED = false;" in _TICKERS
+def test_the_feature_is_enabled_but_keeps_its_kill_switch():
+    """One line to flip if it regresses, so nobody has to work out which of
+    the four attempted shapes the code is currently in."""
+    assert "const _TV_CLICK_ENABLED = true;" in _TICKERS
     i = _TICKERS.index("export function isTvClickOpenEnabled")
-    body = _TICKERS[i:i + 260]
-    assert "if (!_TV_CLICK_ENABLED) return false;" in body, (
-        "the kill switch must come before the localStorage read")
+    assert "if (!_TV_CLICK_ENABLED) return false;" in _TICKERS[i:i + 260]
 
 
 def test_the_url_machinery_is_kept_for_a_future_attempt():

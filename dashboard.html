@@ -208,9 +208,16 @@
                         <label class="scan-source-tab" for="scan-src-movers" title="Alpaca day movers — the one seed that is not sentiment">Movers</label>
                         <label class="scan-source-tab" for="scan-src-claude">Research</label>
                     </div>
-                    <!-- The TV Chart toggle lived here. Removed 2026-08-29: it never worked on
-                         a real browser (see isTvClickOpenEnabled in static/js/tickers.js for
-                         what was tried). Clicking a symbol copies it. -->
+                    <div class="panel-header-right scan-header-right">
+                        <button
+                            type="button"
+                            data-tv-toggle-btn
+                            class="btn btn--ghost btn--sm tv-click-toggle"
+                            title="When enabled, clicking a ticker loads its chart in your TradingView tab instead of copying"
+                        >
+                            TV Chart: OFF
+                        </button>
+                    </div>
                 </div>
 
                 <div class="scan-body">
@@ -810,7 +817,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=169"></script>
+        <script type="module" src="/static/js/app.js?v=170"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
