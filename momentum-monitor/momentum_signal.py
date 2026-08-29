@@ -2020,7 +2020,8 @@ def stocktwits_panel(st: StocktwitsTrending,
                  border_style="magenta", padding=(0, 1), expand=True)
 
 
-def movers_panel(state: dict | None, now: float | None = None):
+def movers_panel(state: dict | None, now: float | None = None,
+                 limit: int | None = None):
     """Alpaca day movers, as published by movers_screener.py via /api/state.
 
     The one desk source that is not sentiment: TRENDING is Stocktwits heat and
@@ -2038,6 +2039,15 @@ def movers_panel(state: dict | None, now: float | None = None):
     now = time.time() if now is None else now
     mv = (state or {}).get("movers") or {}
     rows = mv.get("rows") or []
+    # Bounded, and small by default. Live runs with screen=False, so a stack
+    # taller than the terminal breaks Rich's in-place redraw and the desk goes
+    # BLANK rather than clipping — which is exactly what an unbounded version
+    # of this panel did on a 107x60 window: process healthy, 7% CPU, nothing
+    # on screen. Every panel here is capped for the same reason (st_limit,
+    # claude_limit); this one was not, and it cost the operator a desk.
+    total = len(rows)
+    if limit is not None and limit > 0:
+        rows = rows[:limit]
 
     t = Table(expand=True, width=_desk_table_width(), padding=(0, 1))
     t.add_column("Symbol", ratio=1, no_wrap=True)
@@ -2080,7 +2090,8 @@ def movers_panel(state: dict | None, now: float | None = None):
     except (TypeError, ValueError):
         age = None
     stamp = f"  ·  {_age_short(age)} old" if age is not None else "  ·  [yellow]no data[/yellow]"
-    title = f"MOVERS  ·  Alpaca day gainers  ·  {len(rows)} name(s){stamp}"
+    shown = f"{len(rows)} of {total}" if total > len(rows) else f"{total}"
+    title = f"MOVERS  ·  Alpaca day gainers  ·  {shown} name(s){stamp}"
     return Panel(t, title=title, title_align="left",
                  border_style="cyan", padding=(0, 1), expand=True)
 
@@ -2802,7 +2813,9 @@ def main():
                     st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled,
                     cfg=cfg, now=t0))
             if cfg.get("desk_movers_panel", True):
-                panels.append(movers_panel(state, now=t0))
+                panels.append(movers_panel(
+                    state, now=t0,
+                    limit=int(cfg.get("desk_movers_limit", 5) or 5)))
             if gs is not None:
                 panels.append(claude_panel(
                     gs, price_map, limit=claude_limit, hotkeys_on=hotkeys.enabled,
