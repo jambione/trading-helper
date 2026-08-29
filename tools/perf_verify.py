@@ -281,9 +281,24 @@ def main() -> int:
             ceil = float(cfg_all.get("ai_movers_max_age_sec", 900.0) or 900.0)
             running = any("movers_screener.py" in ln and "grep" not in ln
                           for ln in ps.splitlines())
+            # Outside 04:00-20:00 ET the producer stops writing ON PURPOSE, so
+            # the file ages past the ceiling every night and all weekend. That
+            # is the design working, not a fault, and reporting it as FAIL
+            # would train the operator to ignore this row — the exact failure
+            # R4 above was rewritten to avoid. Read the producer's own window
+            # so the two cannot drift apart.
+            try:
+                import movers_screener as _ms
+                active = _ms._active_hours()
+            except Exception:  # noqa: BLE001
+                active = True
             if not running:
                 check("R8 movers seed producing", "FAIL",
                       "movers_screener.py is not running")
+            elif not active:
+                check("R8 movers seed producing", "PENDING",
+                      f"outside 04:00-20:00 ET — producer is idle by design, "
+                      f"last file {age/60:.0f}m old")
             elif ceil > 0 and age > ceil:
                 check("R8 movers seed producing", "FAIL",
                       f"file is {age/60:.0f}m old against a {ceil/60:.0f}m "
