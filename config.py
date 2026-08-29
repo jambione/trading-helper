@@ -1064,6 +1064,17 @@ DEFAULT_CONFIG = {
     # to judge continuity, so the filter forms no opinion rather than
     # refusing everything — which is what it did in premarket.
     "ai_movers_live_min_open_minutes": 20,
+    # Carry a name seen on the movers list earlier today even after the top-50
+    # ranking evicts it. It is re-measured and re-gated every pass, so it stays
+    # only while it still qualifies — losing a ranking contest is not failing a
+    # rule. Cleared when the ET day turns over.
+    "ai_movers_session_append":       True,
+    "ai_movers_session_max":            40,
+    # A second feed ranked by VOLUME. The gainers list is capped at 50 and its
+    # weakest member was +15.0% on 2026-08-28 — above the desk's 10% floor — so
+    # the 10-15% band is invisible to it. 0/false to use gainers only.
+    "ai_movers_use_most_actives":     True,
+    "ai_movers_actives_top":            50,
     "ai_movers_max_rows":           25,   # enrich at most this many per pass
     "ai_movers_float_refresh_per_pass": 10,  # bounded so the loop stays responsive
     "trending_screener_enabled": False,   # launch trending_screener.py
@@ -1672,6 +1683,10 @@ SAFE_CONFIG_KEYS = [
     "ai_movers_live_window_min",
     "ai_movers_min_minute_dollars",
     "ai_movers_live_min_open_minutes",
+    "ai_movers_actives_top",
+    "ai_movers_use_most_actives",
+    "ai_movers_session_max",
+    "ai_movers_session_append",
     "ai_movers_max_rows",
     "ai_movers_float_refresh_per_pass",
     "stocktwits_max_price",

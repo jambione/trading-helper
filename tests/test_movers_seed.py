@@ -454,3 +454,83 @@ def test_too_little_tape_forms_no_opinion():
     assert "ai_movers_live_min_open_minutes" in src
     assert "live / float(max(1, open_min))" in src, (
         "the denominator must be open minutes, not the wall-clock window")
+
+
+# ── session append + most-actives ────────────────────────────────────────
+
+def test_the_session_set_clears_when_the_day_turns_over():
+    """Yesterday's movers are not today's, and a set that never resets would
+    carry Friday's names into Monday's book."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import movers_screener as m
+    et = ZoneInfo("America/New_York")
+    m._session_syms = {"AAA"}
+    m._session_day = "2026-08-28"
+    m._session_reset_if_new_day(datetime(2026, 8, 28, 15, 0, tzinfo=et))
+    assert m._session_syms == {"AAA"}, "same day must not clear"
+    m._session_reset_if_new_day(datetime(2026, 8, 29, 9, 40, tzinfo=et))
+    assert m._session_syms == set(), "new ET day must clear"
+    m._session_syms, m._session_day = set(), ""
+
+
+def test_a_carried_name_is_re_measured_not_grandfathered():
+    """Retention remembers only that a name is worth re-measuring.
+
+    Alpaca caps top at 50 and ranks by percent change, so a name up 22% is
+    evicted the moment fifty others are up more — while still meeting every
+    criterion. But a carried name must be re-gated on ITS OWN current numbers,
+    rebuilt from the same daily bars everything else uses, or the book fills
+    with names that qualified an hour ago.
+    """
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert "pct = (px / prev_close - 1.0) * 100.0" in src, (
+        "a carried name needs its day change rebuilt, not remembered")
+    assert "if pct < min_pct or not (lo <= px <= hi):" in src
+    assert "_session_syms.discard(sym)" in src, (
+        "a faded name must leave the session set, not linger in it")
+
+
+def test_a_carried_name_with_no_bars_is_dropped():
+    """No bars is no opinion — and without them there is no way to re-gate."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    i = src.index("if pct is None or px is None:")
+    assert "if len(seq) < 2:" in src[i:i + 400]
+
+
+def test_most_actives_is_a_second_feed_for_the_blind_spot():
+    """The gainers list is capped at 50 and its weakest member was +15.0% on
+    2026-08-28 — ABOVE the desk's own 10% floor. Everything between the floor
+    and the day's cut is invisible to it, and the cut rises on an active
+    morning. Ranking by volume instead reaches a different slice: verified the
+    same day, AEMD at +14.7% on $112M of dollar volume, which the gainers feed
+    could not see.
+    """
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert "MostActivesRequest" in src
+    assert 'by="volume"' in src
+    i = src.index("get_most_actives")
+    block = src[i - 400:i + 500]
+    assert "cand.append((sym, None, None))" in block, (
+        "actives arrive without a percent — they must be measured, not assumed")
+
+
+def test_a_most_actives_failure_does_not_lose_the_gainers():
+    """It is a supplement. If it errors the pass continues on gainers alone."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    i = src.index("get_most_actives")
+    assert "except Exception" in src[i:i + 700]
+
+
+def test_ranked_travels_on_the_row():
+    """False once the ranking has evicted a name. Makes "why is this still
+    here" answerable without re-deriving the top 50."""
+    src = open("movers_screener.py", encoding="utf-8").read()
+    assert '"ranked": sym in ranked,' in src
+
+
+def test_the_session_knobs_ship_declared():
+    from config import DEFAULT_CONFIG
+    for k in ("ai_movers_session_append", "ai_movers_session_max",
+              "ai_movers_use_most_actives", "ai_movers_actives_top"):
+        assert k in DEFAULT_CONFIG, f"{k} missing from DEFAULT_CONFIG"

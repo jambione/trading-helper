@@ -107,6 +107,28 @@ def _active_hours(now: datetime | None = None) -> bool:
     return 4 <= now.hour < 20
 
 
+# Names seen on the movers list at any point in THIS session, and the ET day
+# they belong to. Alpaca caps top at 50 and ranks by percent change, so a name
+# up 22% is evicted the moment fifty others are up more — while still meeting
+# every criterion the desk has. Wholesale replacement drops it for losing a
+# ranking contest, which is not a rule it failed.
+#
+# Retention is not memory of a number: a retained symbol is re-measured from
+# the same daily bars as everything else and must pass every filter again.
+# What is remembered is only that it is worth re-measuring.
+_session_syms: set[str] = set()
+_session_day: str = ""
+
+
+def _session_reset_if_new_day(now: datetime | None = None) -> None:
+    """Yesterday's movers are not today's. Clear on the ET date turning over."""
+    global _session_syms, _session_day
+    day = (now or _et_now()).strftime("%Y-%m-%d")
+    if day != _session_day:
+        _session_syms = set()
+        _session_day = day
+
+
 def _rth_minutes_in_window(window_min: int, now: datetime | None = None) -> int:
     """How many of the trailing *window_min* minutes were inside RTH.
 
@@ -133,7 +155,8 @@ def fetch_rows(cfg: dict) -> list[dict]:
         return []
     from alpaca.data.historical.screener import ScreenerClient
     from alpaca.data.historical import StockHistoricalDataClient
-    from alpaca.data.requests import MarketMoversRequest, StockBarsRequest
+    from alpaca.data.requests import (MarketMoversRequest, MostActivesRequest,
+                                      StockBarsRequest)
     from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
     from alpaca.data.enums import DataFeed
 
@@ -146,6 +169,10 @@ def fetch_rows(cfg: dict) -> list[dict]:
     min_live_pct = float(cfg.get("ai_movers_min_live_pct", 0.0) or 0.0)
     min_min_dollars = float(cfg.get("ai_movers_min_minute_dollars", 2000.0) or 0.0)
     want = int(cfg.get("ai_movers_max_rows", 25) or 25)
+    keep_session = bool(cfg.get("ai_movers_session_append", True))
+    max_session = int(cfg.get("ai_movers_session_max", 40) or 40)
+
+    _session_reset_if_new_day()
 
     scr = ScreenerClient(api, sec)
     mv = scr.get_market_movers(MarketMoversRequest(top=top))
@@ -162,10 +189,42 @@ def fetch_rows(cfg: dict) -> list[dict]:
         if pct < min_pct or not is_common(sym) or not (lo <= px <= hi):
             continue
         cand.append((sym, pct, px))
+
+    # Second feed, ranked by VOLUME rather than percent change. The gainers
+    # list is capped at 50 by Alpaca and its weakest member was +15.0% on
+    # 2026-08-28 — above the desk's own 10% floor — so every name between the
+    # floor and the day's cut is structurally invisible to it, and the cut
+    # rises on an active morning. most-actives sees a different slice: names
+    # trading heavily that are not among the fifty biggest movers.
+    #
+    # These arrive without a percent change, so they are carried as unpriced
+    # candidates and measured from daily bars alongside everything else.
+    if bool(cfg.get("ai_movers_use_most_actives", True)):
+        try:
+            ma = scr.get_most_actives(MostActivesRequest(
+                by="volume", top=int(cfg.get("ai_movers_actives_top", 50) or 50)))
+            have = {x[0] for x in cand}
+            for a in (getattr(ma, "most_actives", None) or []):
+                sym = str(getattr(a, "symbol", "") or "").upper()
+                if sym and sym not in have and is_common(sym):
+                    cand.append((sym, None, None))
+                    have.add(sym)
+        except Exception as e:  # noqa: BLE001
+            print(f"[movers] most-actives failed: {e}", flush=True)
+
+    ranked = {s for s, _, _ in cand if _ is not None}
+    if keep_session:
+        _session_syms.update(ranked)
+        # Carry forward names seen earlier today that have since been ranked
+        # out. Their pct/price are recomputed below from daily bars — the
+        # ranking's own numbers are unavailable for a name it no longer lists.
+        for sym in sorted(_session_syms - ranked)[:max(0, max_session - len(cand))]:
+            cand.append((sym, None, None))
+
     if not cand:
         return []
 
-    syms = [s for s, _, _ in cand][:want]
+    syms = [s for s, _, _ in cand][:want + max_session]
     data = StockHistoricalDataClient(api, sec)
     start = datetime.now(timezone.utc) - timedelta(days=45)
     bars: dict = {}
@@ -244,8 +303,28 @@ def fetch_rows(cfg: dict) -> list[dict]:
         pass
 
     rows = []
-    for sym, pct, px in cand[:want]:
+    for sym, pct, px in cand[:want + max_session]:
         seq = bars.get(sym) or []
+        if pct is None or px is None:
+            # Carried forward, so the ranking gave us nothing. Rebuild the day
+            # change from the bars every other name is measured with: latest
+            # close against the prior session's. No bars, no opinion, no row.
+            if len(seq) < 2:
+                continue
+            try:
+                px = float(getattr(seq[-1], "close", 0) or 0)
+                prev_close = float(getattr(seq[-2], "close", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if px <= 0 or prev_close <= 0:
+                continue
+            pct = (px / prev_close - 1.0) * 100.0
+            # Re-gated, not grandfathered. A name that has faded below the
+            # floor, or out of the price band, leaves the book on its own
+            # numbers rather than on how it ranked an hour ago.
+            if pct < min_pct or not (lo <= px <= hi):
+                _session_syms.discard(sym)
+                continue
         vol = float(getattr(seq[-1], "volume", 0) or 0) if seq else 0.0
         prior = [float(getattr(b, "volume", 0) or 0) for b in seq[:-1]][-20:]
         avg = (sum(prior) / len(prior)) if prior else 0.0
@@ -291,6 +370,9 @@ def fetch_rows(cfg: dict) -> list[dict]:
             # Share of the trailing window's minutes that actually traded.
             # None means it was not measured this pass, which is not zero.
             "live_pct": (round(live_pct[sym], 3) if sym in live_pct else None),
+            # False once the top-50 ranking has evicted it; the row survives
+            # on its own numbers. Makes "why is this still here" answerable.
+            "ranked": sym in ranked,
             "dollar_volume": round(dollar_vol) if dollar_vol else None,
             "criteria": crit,
         })
