@@ -6,7 +6,7 @@
  * Emits ticker-selection by calling store.selectTicker().
  */
 
-import { subscribe, selectTicker, get } from './store.js?v=133';
+import { subscribe, selectTicker, get } from './store.js?v=134';
 import { api } from './api.js?v=133';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 

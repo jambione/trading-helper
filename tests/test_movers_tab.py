@@ -118,3 +118,21 @@ def test_the_asset_pins_moved_so_browsers_reload_the_new_code():
                                _HTML + _APP + _FEEDS + _STORE))
         assert found, f"{name} is not pinned anywhere"
         assert found == {str(pin)}, f"{name} pins disagree: {found}"
+
+
+def test_one_store_pin_across_every_module_that_imports_it():
+    """Two pins for one module is two modules.
+
+    ES modules are keyed by URL, so './store.js?v=133' and './store.js?v=134'
+    are separate instances with separate state. Subscribers registered on one
+    never receive what the other publishes, and the panels simply stop
+    updating — no error, no console warning. Shipped exactly that way on
+    2026-08-28 when the Movers tab bumped store.js in three files and left it
+    at the old pin in nine others.
+    """
+    pins = set()
+    for f in sorted((_ROOT / "static" / "js").glob("*.js")):
+        pins |= set(re.findall(r"store\.js\?v=(\d+)",
+                               f.read_text(encoding="utf-8")))
+    pins |= set(re.findall(r"store\.js\?v=(\d+)", _HTML))
+    assert len(pins) == 1, f"store.js is pinned at more than one version: {pins}"

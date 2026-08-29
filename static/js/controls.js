@@ -6,7 +6,7 @@
  */
 
 import { api } from './api.js?v=133';
-import { get, selectTicker } from './store.js?v=133';
+import { get, selectTicker } from './store.js?v=134';
 import { clearCopiedTickers } from './tickers.js?v=137';
 
 export async function clearWatchlist() {
