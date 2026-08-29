@@ -77,6 +77,10 @@ ai_suggestions.json
 ai_positions_state.json
 grok_suggestions.json
 trending_stocks.json
+# Same class as trending_stocks.json: a producer snapshot, rewritten every
+# 60s on the mini and meaningless anywhere else. It has a `ts` the seed reads
+# to refuse stale data, so a committed copy would be worse than none.
+movers_stocks.json
 
 # Local control script artifacts
 .trading.pids
