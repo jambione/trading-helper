@@ -164,9 +164,21 @@ elif ssh_mini "launchctl print gui/\$(id -u)/com.jambi.trading-desk >/dev/null 2
   # claude and agy logged out. kickstart -k is synchronous enough for the
   # health checks below; ./trading restart does its own stop/start inside.
   echo "[3/3] launchctl kickstart (GUI session — keeps the AI CLI logins)"
-  ssh_mini "launchctl kickstart -k gui/\$(id -u)/com.jambi.trading-desk" \
-    && sleep 6 \
-    && ssh_mini "cd '$MINI_REPO' && ./trading status"
+  ssh_mini "launchctl kickstart -k gui/\$(id -u)/com.jambi.trading-desk"
+  # Wait for the job to finish rather than guessing. ./trading restart stops
+  # the stack, sleeps, then starts seven processes, so a fixed sleep reported
+  # a perfectly healthy desk as "not running" the first time this shipped —
+  # the deploy was reading status during the agent's stop phase.
+  echo -n "   waiting for the agent to finish"
+  for _ in $(seq 1 30); do
+    if ssh_mini "launchctl print gui/\$(id -u)/com.jambi.trading-desk 2>/dev/null | grep -q 'state = not running'"; then
+      break
+    fi
+    echo -n "."
+    sleep 2
+  done
+  echo ""
+  ssh_mini "cd '$MINI_REPO' && ./trading status"
 else
   echo "[3/3] ./trading restart  (reloads dashboard/engine/OCR code — not full desktop)"
   echo "   note: an ssh restart logs the Claude/agy CLIs out."
@@ -202,7 +214,11 @@ echo ""
 # and ssh may bootstrap and kickstart that domain even though it may not use
 # `launchctl asuser`. See scripts/install_desk_agent.sh. The branch above
 # prefers it; this warning is now the fallback path reporting on itself.
-if ssh_mini "cd '$MINI_REPO' && grep -qE 'claude_auth=fail|agy_auth=fail' logs/ai_trader.log 2>/dev/null"; then
+# Only the CURRENT run counts. Grepping the whole file meant one bad restart
+# weeks ago kept printing this warning after every deploy, including the ones
+# that had just fixed it — the check announced a failure the log itself
+# disproved four lines further down.
+if ssh_mini "cd '$MINI_REPO' && grep -hE 'claude_auth=(ok|fail)|agy_auth=(ok|fail)' logs/ai_trader.log 2>/dev/null | tail -1 | grep -q 'fail'"; then
   echo "⚠  claude_auth=fail — this SSH restart logged the Claude CLI out."
   echo "   The credential is still in the mini's Keychain; \`claude /login\`"
   echo "   is NOT the fix. To restore Anthropic research, restart the stack"
