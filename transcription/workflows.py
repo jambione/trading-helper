@@ -371,6 +371,17 @@ def workflow_add_tv(ticker: str, dry_run: bool = False) -> bool:
     """
     ticker = ticker.upper()
 
+    if _IS_MACOS:
+        if dry_run:
+            print(f"👁️  [LOG] ADD_TV → {ticker}")
+            return True
+        try:
+            import mac_agent
+            return mac_agent.workflow_add_tv(ticker)
+        except Exception as e:
+            print(f"   ❌ ADD_TV (macOS) failed: {e}")
+            return False
+
     if not LIVE_MODE or dry_run:
         print(f"👁️  [LOG] ADD_TV → {ticker}")
         return True
@@ -459,6 +470,15 @@ def workflow_add_brave_tv(ticker: str, cfg: dict = None) -> bool:
     ticker = ticker.upper()
     cfg = cfg or {}
     tab_num = str(int(cfg.get("brave_tv_tab", 1)))
+
+    if _IS_MACOS:
+        try:
+            import mac_agent
+            tab = int(cfg.get("brave_tv_tab", 1)) if cfg else 1
+            return mac_agent.workflow_add_tv(ticker, tab_num=tab)
+        except Exception as e:
+            print(f"   ❌ ADD_BRAVE_TV (macOS) failed: {e}")
+            return False
 
     if not LIVE_MODE:
         print(f"🌐 [LOG] ADD_BRAVE_TV → {ticker}")

@@ -1094,6 +1094,41 @@ body.mobile .icon-btn {
 .panel-header--scan .panel-title {
   min-width: 4.5rem;
 }
+.scan-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+.tv-click-toggle {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tv-click-toggle.btn--active {
+  background: rgba(232, 212, 139, 0.12) !important;
+  color: var(--accent-2) !important;
+  border-color: var(--accent) !important;
+}
+
+body.mobile .tv-click-toggle,
+body.mobile [data-tv-toggle-btn] {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .tv-click-toggle,
+  [data-tv-toggle-btn] {
+    display: none !important;
+  }
+}
 .scan-sources {
   display: flex;
   align-items: center;

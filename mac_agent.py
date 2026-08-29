@@ -392,6 +392,11 @@ def workflow_add_tv(ticker: str, tab_num: int = BRAVE_TV_TAB) -> bool:
 
     browser = _find_browser()
     if not browser:
+        for candidate in ("Brave Browser", "Google Chrome"):
+            if _ensure_app_open(candidate):
+                browser = candidate
+                break
+    if not browser:
         print("  ❌ ADD_TV failed — Brave Browser / Google Chrome not running")
         return False
 

@@ -9,7 +9,7 @@
 
 import { subscribe, get } from './store.js?v=134';
 import { api }       from './api.js?v=133';
-import { copyTicker } from './tickers.js?v=137';
+import { copyTicker, isTvClickOpenEnabled } from './tickers.js?v=142';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 import * as notifications from './notifications.js?v=133';
 
@@ -990,7 +990,9 @@ function _createBookRow(r, owner) {
   }
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
-    tickerCell.title = `Copy ${sym}`;
+    tickerCell.title = isTvClickOpenEnabled()
+      ? `Load ${sym} into TradingView`
+      : `Copy ${sym}`;
     tickerCell.addEventListener('click', e => {
       e.stopPropagation();
       copyTicker(e.currentTarget, sym);
@@ -1830,7 +1832,9 @@ function _createFeedRow(r, kind, book) {
   el.addEventListener('click', () => _add(el, sym));
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
-    tickerCell.title = `Copy ${sym}`;
+    tickerCell.title = isTvClickOpenEnabled()
+      ? `Load ${sym} into TradingView`
+      : `Copy ${sym}`;
     tickerCell.addEventListener('click', e => {
       e.stopPropagation();
       copyTicker(e.currentTarget, sym);

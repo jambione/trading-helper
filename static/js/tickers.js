@@ -52,11 +52,102 @@ export function clearCopiedTickers() {
   _pushToFeed();
 }
 
+// ── TradingView click-to-open toggle ────────────────────────────
+const _TV_CLICK_KEY = 'tb:tv-click-open';
+let _tvToggleBtn    = null;
+
+export function isTvClickOpenEnabled() {
+  if (typeof document !== 'undefined') {
+    if (document.body.classList.contains('mobile') || (window.innerWidth && window.innerWidth <= 768)) {
+      return false;
+    }
+  }
+  try {
+    return localStorage.getItem(_TV_CLICK_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function openTradingViewChart(ticker) {
+  const sym = String(ticker || '').trim().toUpperCase();
+  if (!sym) return;
+
+  // 1. Direct local desk agent on port 8889 (mac_agent / windows_agent command bus)
+  try {
+    fetch('http://127.0.0.1:8889/v1/action', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ action: 'load_tv', symbol: sym, source: 'dashboard' }),
+      signal:  AbortSignal.timeout(1500),
+    }).catch(() => {
+      fetch('http://127.0.0.1:8889/add-tv', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ticker: sym }),
+        signal:  AbortSignal.timeout(1500),
+      }).catch(() => {});
+    });
+  } catch {}
+
+  // 2. Server-side automation (/api/tickers/add-tv and /api/tickers/add-wb-tv)
+  try {
+    api.addToTV(sym).catch(() => {});
+  } catch {}
+  try {
+    api.addToWBAndTV(sym).catch(() => {});
+  } catch {}
+}
+
+export function updateTickerTitles() {
+  const on = isTvClickOpenEnabled();
+  document.querySelectorAll('.cell-ticker').forEach(el => {
+    let sym = el.dataset.symbol || '';
+    if (!sym) {
+      const row = el.closest('[data-row], [data-feed-symbol], [data-symbol]');
+      sym = row?.dataset.row || row?.dataset.feedSymbol || row?.dataset.symbol || '';
+    }
+    if (!sym && el.title) {
+      sym = el.title.replace(/^Open\s+/i, '').replace(/^Load\s+/i, '').replace(/\s+(in|into)\s+TradingView.*$/i, '').replace(/^Copy\s+/i, '').trim();
+    }
+    if (sym) {
+      el.title = on ? `Load ${sym} into TradingView` : `Copy ${sym}`;
+    }
+  });
+}
+
+function _updateTvToggleBtn() {
+  if (!_tvToggleBtn) return;
+  const on = isTvClickOpenEnabled();
+  _tvToggleBtn.classList.toggle('btn--active', on);
+  _tvToggleBtn.textContent = on ? '✓ TV Chart: ON' : 'TV Chart: OFF';
+  _tvToggleBtn.title = on
+    ? 'TradingView chart loading is ON. Clicking a ticker launches/focuses TradingView and loads the ticker. Click to turn OFF.'
+    : 'TradingView chart loading is OFF. Clicking a ticker copies it to clipboard. Click to turn ON.';
+}
+
+export function initTvToggle(btn) {
+  _tvToggleBtn = btn || document.querySelector('[data-tv-toggle-btn]');
+  if (!_tvToggleBtn) return;
+  _updateTvToggleBtn();
+  _tvToggleBtn.addEventListener('click', () => {
+    const next = !isTvClickOpenEnabled();
+    try {
+      localStorage.setItem(_TV_CLICK_KEY, String(next));
+    } catch {}
+    _updateTvToggleBtn();
+    updateTickerTitles();
+  });
+}
+
 export function init(panelEl) {
   _panelEl   = panelEl;
   _rowsEl    = panelEl.querySelector('[data-ticker-rows]');
   _countEl   = panelEl.querySelector('[data-ticker-count]');
   _suggestEl = panelEl.querySelector('[data-funnel-suggest]');
+
+  const tvBtn = document.querySelector('[data-tv-toggle-btn]');
+  if (tvBtn) initTvToggle(tvBtn);
 
   // Wire sortable column headers
   panelEl.querySelectorAll('[data-sort-col]').forEach(h => {
@@ -264,10 +355,12 @@ function _createRow(row) {
   el.dataset.row = row.ticker;
   el.innerHTML = _rowHTML(row);
   el.addEventListener('click', () => selectTicker(row.ticker));
-  // Symbol name: click copies ticker (does not select the row).
+  // Symbol name: click copies ticker (or opens TradingView if enabled).
   const tickerCell = el.querySelector('.cell-ticker');
   if (tickerCell) {
-    tickerCell.title = `Copy ${row.ticker}`;
+    tickerCell.title = isTvClickOpenEnabled()
+      ? `Load ${row.ticker} into TradingView`
+      : `Copy ${row.ticker}`;
     tickerCell.addEventListener('click', e => {
       e.stopPropagation();
       copyTicker(e.currentTarget, row.ticker);
@@ -295,6 +388,13 @@ async function _removeTicker(ticker) {
 /** Copy symbol to clipboard; track in today's list (shared with Trending / AI).
  *  `el` is the symbol cell (or any element) — flash feedback on success/failure. */
 export async function copyTicker(el, ticker) {
+  if (isTvClickOpenEnabled()) {
+    try {
+      openTradingViewChart(ticker);
+    } catch (err) {
+      console.warn('[tickers] failed to open TradingView', err);
+    }
+  }
   try {
     await navigator.clipboard.writeText(ticker);
     // Append to today's copied list (deduplicated, order preserved)

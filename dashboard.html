@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=158" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=159" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -207,6 +207,16 @@
                         <label class="scan-source-tab" for="scan-src-trending">Trend</label>
                         <label class="scan-source-tab" for="scan-src-movers" title="Alpaca day movers — the one seed that is not sentiment">Movers</label>
                         <label class="scan-source-tab" for="scan-src-claude">Research</label>
+                    </div>
+                    <div class="panel-header-right scan-header-right">
+                        <button
+                            type="button"
+                            data-tv-toggle-btn
+                            class="btn btn--ghost btn--sm tv-click-toggle"
+                            title="When enabled, clicking a ticker opens its chart in TradingView instead of copying"
+                        >
+                            TV Chart: OFF
+                        </button>
                     </div>
                 </div>
 
@@ -807,7 +817,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=164"></script>
+        <script type="module" src="/static/js/app.js?v=165"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>
