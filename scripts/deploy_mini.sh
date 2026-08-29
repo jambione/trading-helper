@@ -157,8 +157,20 @@ elif [ "$FULL_SESSION" = 1 ]; then
   echo "[3/3] full session: ./trading desk"
   echo "   (shutdown → close terminals → caffeinate → startup on the Mini)"
   ssh_mini "cd '$MINI_REPO' && ./trading desk"
+elif ssh_mini "launchctl print gui/\$(id -u)/com.jambi.trading-desk >/dev/null 2>&1"; then
+  # The desk agent is loaded, so restart THROUGH it. A job in the gui/<uid>
+  # domain runs inside the console user's session and can read the login
+  # Keychain, which is the whole reason an ssh restart used to come back with
+  # claude and agy logged out. kickstart -k is synchronous enough for the
+  # health checks below; ./trading restart does its own stop/start inside.
+  echo "[3/3] launchctl kickstart (GUI session — keeps the AI CLI logins)"
+  ssh_mini "launchctl kickstart -k gui/\$(id -u)/com.jambi.trading-desk" \
+    && sleep 6 \
+    && ssh_mini "cd '$MINI_REPO' && ./trading status"
 else
   echo "[3/3] ./trading restart  (reloads dashboard/engine/OCR code — not full desktop)"
+  echo "   note: an ssh restart logs the Claude/agy CLIs out."
+  echo "   scripts/install_desk_agent.sh (on the mini) fixes that permanently."
   ssh_mini "cd '$MINI_REPO' && ./trading restart && ./trading status"
 fi
 
@@ -183,8 +195,13 @@ echo ""
 # A stack restarted over SSH cannot read the mini's login Keychain, so the
 # Claude CLI comes back logged out even though the credential is present and
 # valid — Anthropic research then silently skips every scheduled run. Grok is
-# unaffected (its credential is a file). This is a property of macOS session
-# gating, not something the script can fix, so it reports rather than pretends.
+# unaffected (its credential is a file).
+#
+# This IS fixable, contrary to what stood here before: a LaunchAgent in the
+# gui/<uid> domain runs inside the console session and inherits its Keychain,
+# and ssh may bootstrap and kickstart that domain even though it may not use
+# `launchctl asuser`. See scripts/install_desk_agent.sh. The branch above
+# prefers it; this warning is now the fallback path reporting on itself.
 if ssh_mini "cd '$MINI_REPO' && grep -qE 'claude_auth=fail|agy_auth=fail' logs/ai_trader.log 2>/dev/null"; then
   echo "⚠  claude_auth=fail — this SSH restart logged the Claude CLI out."
   echo "   The credential is still in the mini's Keychain; \`claude /login\`"

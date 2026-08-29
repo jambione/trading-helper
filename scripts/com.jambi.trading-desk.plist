@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jambi.trading-desk — restart the stack inside the mini's GUI session.
+
+  WHY THIS EXISTS
+  A stack restarted over SSH comes back with the Claude and Antigravity CLIs
+  logged out. The credential is present and valid the whole time; an SSH
+  session simply cannot read the login Keychain. Every deploy therefore cost
+  the research desk until someone walked to the mini and ran session.command.
+
+  Measured 2026-08-29, same machine, same second, only the session differing:
+
+      plain ssh          claude ok=False  agy ok=False
+      gui/501 (this)     claude ok=True   agy ok=True
+
+  launchd jobs bootstrapped into the gui/<uid> domain run inside the console
+  user's session and inherit its Keychain access, and `launchctl bootstrap`
+  and `kickstart` against that domain BOTH work from an ssh session even
+  though `launchctl asuser` does not (that needs root). So the deploy can
+  reach into the GUI session without anyone touching the machine.
+
+  AbandonProcessGroup is load-bearing: ./trading forks the stack with nohup
+  and returns, so without it launchd reaps the whole process group the moment
+  the script exits and the desk dies with it.
+
+  RunAtLoad is false on purpose. This agent is a restart mechanism, not a
+  boot policy — bringing the desk up at login is what session.command does,
+  and quietly changing that is not this file's job.
+
+  Install: scripts/install_desk_agent.sh (idempotent, safe over ssh).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jambi.trading-desk</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd /Users/jambimac/repo/trading-helper &amp;&amp; ./trading restart &amp;&amp; ./trading status</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/launch_agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jambimac/repo/trading-helper/logs/launch_agent.log</string>
+</dict>
+</plist>
