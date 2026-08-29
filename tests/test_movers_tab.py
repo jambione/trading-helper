@@ -143,3 +143,25 @@ def test_one_store_pin_across_every_module_that_imports_it():
                                f.read_text(encoding="utf-8")))
     pins |= set(re.findall(r"store\.js\?v=(\d+)", _HTML))
     assert len(pins) == 1, f"store.js is pinned at more than one version: {pins}"
+
+
+def test_every_feed_the_store_declares_is_copied_off_the_socket():
+    """Generalised, because this is the third instance of the same bug.
+
+    app.js copies snapshot keys into the store through an explicit whitelist.
+    A key the store declares but that list omits is a subscription that can
+    never fire: the server publishes it, the socket delivers it, and the panel
+    renders its empty placeholder forever with nothing in the console. The
+    Movers tab shipped exactly that way.
+
+    Only the feed keys are checked — the store also holds UI state (selected
+    ticker, connection flags) that legitimately never comes off the wire.
+    """
+    feeds = ("tickers", "funnel", "news", "engine", "trending", "movers",
+             "price_spikes", "ai_positions")
+    i = _APP.index("on('message'")
+    handler = _APP[i:_APP.index("on('connected'", i)]
+    missing = [f for f in feeds if f"snap.{f}" not in handler]
+    assert not missing, (
+        "declared by the store but never copied off the socket: "
+        + ", ".join(missing))

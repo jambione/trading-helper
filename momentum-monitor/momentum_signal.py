@@ -2020,6 +2020,71 @@ def stocktwits_panel(st: StocktwitsTrending,
                  border_style="magenta", padding=(0, 1), expand=True)
 
 
+def movers_panel(state: dict | None, now: float | None = None):
+    """Alpaca day movers, as published by movers_screener.py via /api/state.
+
+    The one desk source that is not sentiment: TRENDING is Stocktwits heat and
+    the AI panel is a thesis, while this ranks what moved and what traded.
+    Warrants and thin names are already gone — movers_screener drops them
+    before writing, because that filtering needs network calls the desk poll
+    must not make.
+
+    Renders the file's own age rather than hiding it. The producer only writes
+    between 04:00 and 20:00 ET, so outside those hours this panel is showing
+    the last session on purpose, and the seed that feeds the book refuses the
+    same file once it is older than ai_movers_max_age_sec. Reading a stale
+    ranking as live is the failure this stamp exists to prevent.
+    """
+    now = time.time() if now is None else now
+    mv = (state or {}).get("movers") or {}
+    rows = mv.get("rows") or []
+
+    t = Table(expand=True, width=_desk_table_width(), padding=(0, 1))
+    t.add_column("Symbol", ratio=1, no_wrap=True)
+    t.add_column("Last", justify="right", ratio=1, no_wrap=True)
+    t.add_column("%Chg", justify="right", ratio=1, no_wrap=True)
+    t.add_column("RVOL", justify="right", ratio=1, no_wrap=True)
+    t.add_column("Float·M", justify="right", ratio=1, no_wrap=True)
+    t.add_column("$Vol", justify="right", ratio=1, no_wrap=True)
+    t.add_column("Score", justify="right", ratio=1, no_wrap=True)
+
+    if not rows:
+        t.add_row("[dim]no movers[/dim]", "", "", "", "", "", "")
+    for r in rows:
+        try:
+            pct = float(r.get("pct_change") or 0.0)
+        except (TypeError, ValueError):
+            pct = 0.0
+        px = r.get("price")
+        rv = r.get("rvol")
+        fl = r.get("float_m")
+        dv = r.get("dollar_volume")
+        sc = r.get("trending_score", r.get("score"))
+        # rvol is legitimately None when the producer refused to divide by a
+        # dormant average. An em dash, never a zero — a missing ratio is not
+        # a small one.
+        t.add_row(
+            f"[bold cyan]{r.get('symbol', '?')}[/bold cyan]",
+            f"${float(px):,.2f}" if px is not None else "[dim]—[/dim]",
+            f"[green]+{pct:.1f}%[/green]" if pct >= 0 else f"[red]{pct:.1f}%[/red]",
+            f"{float(rv):.1f}x" if rv is not None else "[dim]—[/dim]",
+            f"{float(fl):.1f}" if fl is not None else "[dim]—[/dim]",
+            f"${float(dv)/1e6:,.1f}M" if dv else "[dim]—[/dim]",
+            f"{float(sc):.1f}" if sc is not None else "[dim]—[/dim]",
+        )
+
+    age = None
+    try:
+        if mv.get("ts"):
+            age = now - float(mv["ts"])
+    except (TypeError, ValueError):
+        age = None
+    stamp = f"  ·  {_age_short(age)} old" if age is not None else "  ·  [yellow]no data[/yellow]"
+    title = f"MOVERS  ·  Alpaca day gainers  ·  {len(rows)} name(s){stamp}"
+    return Panel(t, title=title, title_align="left",
+                 border_style="cyan", padding=(0, 1), expand=True)
+
+
 def _ai_source_cell(row: dict) -> str:
     """A = Anthropic, X = xAI, AX = both agreed. Falls back from free-form tags."""
     mark = str(row.get("source_mark") or "").upper().strip()
@@ -2736,6 +2801,8 @@ def main():
                 panels.append(stocktwits_panel(
                     st, price_map, limit=st_limit, hotkeys_on=hotkeys.enabled,
                     cfg=cfg, now=t0))
+            if cfg.get("desk_movers_panel", True):
+                panels.append(movers_panel(state, now=t0))
             if gs is not None:
                 panels.append(claude_panel(
                     gs, price_map, limit=claude_limit, hotkeys_on=hotkeys.enabled,

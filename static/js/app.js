@@ -344,6 +344,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (snap.news              !== undefined) update.news              = snap.news;
     if (snap.engine)                          update.engine            = snap.engine;
     if (snap.trending          !== undefined) update.trending          = snap.trending;
+    // A feed absent from THIS list is a feed the browser never sees, however
+    // correct the server is. /api/state carried movers, the socket delivered
+    // it, and the panel sat on "Waiting for movers data…" because the key was
+    // dropped here. Same shape as the indicator-whitelist bug: publishing a
+    // field is not the same as wiring it.
+    if (snap.movers            !== undefined) update.movers            = snap.movers;
     // Prefer merged AI list (A/X/AX); fall back to Anthropic-only publish.
     if (snap.ai_suggestions !== undefined) {
       update.ai_suggestions = snap.ai_suggestions;
