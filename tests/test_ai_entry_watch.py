@@ -5410,3 +5410,72 @@ def test_rsi_rides_on_both_snapshot_sites():
     assert src.count("**_rsi_wire_fields(rec),") == 2
     assert src.count("**_macd_wire_fields(rec),") == 2, (
         "if MACD's count changed, this test's premise needs rechecking")
+
+
+# ── shadow captures the levers it is meant to explain ────────────────────
+
+def test_shadow_records_every_macd_field_the_gate_reads():
+    """The gate could not be replayed from its own log.
+
+    MACD is the PRIMARY lever — the override's second leg and both halves of
+    the standard path — and it was absent from all 176,081 shadow rows written
+    before 2026-08-30. Two questions died on that in one afternoon: what an
+    RSI condition would cost had to be answered against arm_ok as a proxy, and
+    what lowering macd_sep_mult admits could not be answered at any price.
+    """
+    import ai_entry_watch as ew
+    rec = {"symbol": "ZZZ", "structure": {}, "indicator": {
+        "macd_gap": 0.012, "macd_sep_ratio": 2.1, "macd_gap_rising": True,
+        "macd_gap_falling": False, "macd_bull": True, "macd_cross": False,
+        "macd_ok": True, "macd_src": "realtime", "macd_age_sec": 1.4,
+        "macd_gap_prev": 0.009}}
+    row = ew._shadow_row(rec, price=1.5, price_src="tape",
+                         arm_ok=True, arm_why="ok", now=1.0)
+    for k, v in (("macd_gap", 0.012), ("macd_sep_ratio", 2.1),
+                 ("macd_gap_rising", True), ("macd_gap_falling", False),
+                 ("macd_bull", True), ("macd_ok", True),
+                 ("macd_src", "realtime"), ("macd_age_sec", 1.4)):
+        assert row[k] == v, f"shadow drops {k}"
+
+
+def test_shadow_macd_direction_stays_tri_state():
+    """None is 'too few bars to say', which the gate treats differently from
+    False. Flattening it in the log makes a refusal indistinguishable from a
+    held gap after the fact — the distinction the whole record exists for."""
+    import ai_entry_watch as ew
+    row = ew._shadow_row({"symbol": "ZZZ", "structure": {},
+                          "indicator": {"macd_gap": 0.01}},
+                         price=1.0, price_src="tape", arm_ok=None,
+                         arm_why="", now=1.0)
+    assert row["macd_gap_rising"] is None
+    assert row["macd_gap_falling"] is None
+
+
+def test_shadow_macd_names_match_the_poll_indicator_dict():
+    """A field the poll never writes is a column of Nones.
+
+    apply_live_macd populates rec['indicator']; _shadow_row reads it. The two
+    must agree on names or the log fills with nulls while the gate works fine
+    — the failure mode this desk has hit on EXH, MACD and RSI in turn.
+    """
+    src = open("ai_entry_watch.py", encoding="utf-8").read()
+    i = src.index('ind["macd_gap"] = gap')
+    block = src[i:i + 500]
+    for k in ("macd_sep_ratio", "macd_bull", "macd_cross", "macd_ok",
+              "macd_gap_rising", "macd_gap_falling", "macd_gap_prev"):
+        assert k in block, f"{k} is read by shadow but never written by the poll"
+
+
+def test_shadow_still_records_the_rsi_lever():
+    """RSI was already there and must stay — it is now an arm condition."""
+    import ai_entry_watch as ew
+    row = ew._shadow_row({"symbol": "ZZZ", "structure": {}, "indicator": {
+        "cm_rsi": 44.0, "cm_rsi_rising": True, "cm_rsi_src": "realtime",
+        "cm_rsi_age_sec": 1.1}},
+        price=1.0, price_src="tape", arm_ok=True, arm_why="ok", now=1.0)
+    assert row["cm_rsi"] == 44.0
+    assert row["cm_rsi_rising"] is True
+    assert row["cm_rsi_src"] == "realtime"
+    # Age rides under bars_age_sec by design — see the comment there on why
+    # it is not duplicated under a second name.
+    assert row["bars_age_sec"] == 1.1

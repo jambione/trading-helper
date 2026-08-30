@@ -7873,6 +7873,44 @@ def _shadow_row(
         "ind_snapshot_age_sec": dashboard_state_age_sec(),
         "sell_signal": bool(sig.get("sell_signal")) if sig else None,
         "proximity_pct": _f_or_none(sig.get("proximity_pct")) if sig else None,
+        # MACD, which was absent from every one of the 176,081 rows written
+        # before 2026-08-30. It is the PRIMARY lever — the override's second
+        # leg and both halves of the standard path — and none of it was
+        # recorded, so the entry gate could not be replayed from its own log
+        # at all. Two questions died on that in one afternoon: "what would an
+        # RSI condition cost" had to be answered against arm_ok as a proxy,
+        # and "what does lowering macd_sep_mult admit" could not be answered
+        # at any price.
+        #
+        # Every field the gate reads, under the names it reads them by, so a
+        # replay is a lookup rather than a reconstruction:
+        #   macd_gap        the size the 0.005 floor tests
+        #   macd_sep_ratio  the multiple macd_sep_mult tests
+        #   macd_gap_rising the override's MACD leg, and the "opening" term
+        #   macd_gap_falling the standard path's refusal
+        #   macd_bull/_ok   the engine's own verdicts
+        #   macd_src/_age   provenance and staleness, since the gate refuses a
+        #                   MACD not drawn on the live tape BEFORE any rule
+        #
+        # Direction stays tri-state. None is "too few bars to say", which the
+        # gate treats differently from False, and flattening it here would
+        # make a refusal indistinguishable from a held gap after the fact.
+        "macd_gap": _f_or_none(
+            sig.get("macd_gap") if sig.get("macd_gap") is not None
+            else sig.get("macd_hist")) if sig else None,
+        "macd_sep_ratio": _f_or_none(sig.get("macd_sep_ratio")) if sig else None,
+        "macd_gap_prev": _f_or_none(sig.get("macd_gap_prev")) if sig else None,
+        "macd_gap_rising": (
+            None if not sig or sig.get("macd_gap_rising") is None
+            else bool(sig.get("macd_gap_rising"))),
+        "macd_gap_falling": (
+            None if not sig or sig.get("macd_gap_falling") is None
+            else bool(sig.get("macd_gap_falling"))),
+        "macd_bull": bool(sig.get("macd_bull")) if sig else None,
+        "macd_cross": bool(sig.get("macd_cross")) if sig else None,
+        "macd_ok": bool(sig.get("macd_ok")) if sig else None,
+        "macd_src": (sig.get("macd_src") or None) if sig else None,
+        "macd_age_sec": _f_or_none(sig.get("macd_age_sec")) if sig else None,
         "entry_hour_et": _et_hour_decimal(now),
     }
 
