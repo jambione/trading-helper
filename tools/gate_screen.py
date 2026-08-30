@@ -125,6 +125,33 @@ GATES: dict[str, callable] = {
     "float_50_live":  lambda r: (_float_m(r) is None
                                  or _float_m(r) <= 50.0),
     "float_over_50":  lambda r: (_float_m(r) or -1) > 50.0,
+    # RSI as an ENTRY condition, measured against the desk's own arm verdict
+    # rather than in isolation — the question is never "does RSI predict", it
+    # is "does adding RSI to what we already do admit better drift".
+    #
+    # Anchored on arm_ok because the current gate cannot be replayed from
+    # shadow: macd_gap, macd_sep_ratio, macd_bull and macd_gap_rising are
+    # recorded on ZERO rows, and MACD is the primary lever in both the
+    # override and the standard path. arm_ok IS that gate's verdict.
+    #
+    # The bands come from where the desk actually arms, not from textbook
+    # RSI: median CM RSI-2 at an armed moment is 90.7 and 83% are over 70. A
+    # 0-50 "oversold" rule is not a filter here, it is a different strategy —
+    # it removes 52% of episodes.
+    "arm_rsi_rising": lambda r: (bool(r.get("arm_ok"))
+                                 and bool(r.get("cm_rsi_rising"))),
+    "arm_rsi_le70":   lambda r: (bool(r.get("arm_ok"))
+                                 and (_f(r.get("cm_rsi")) or 0) <= 70),
+    "arm_rsi_lt80":   lambda r: (bool(r.get("arm_ok"))
+                                 and (_f(r.get("cm_rsi")) or 0) < 80),
+    "arm_rsi_band":   lambda r: (bool(r.get("arm_ok"))
+                                 and 0 <= (_f(r.get("cm_rsi")) or -1) <= 50),
+    # The complement: what each rule would THROW AWAY. If the discards drift
+    # as well as the keeps, the rule is only costing entries.
+    "arm_rsi_cut70":  lambda r: (bool(r.get("arm_ok"))
+                                 and (_f(r.get("cm_rsi")) or 0) > 70),
+    "arm_rsi_notrise": lambda r: (bool(r.get("arm_ok"))
+                                  and not r.get("cm_rsi_rising")),
 }
 
 
