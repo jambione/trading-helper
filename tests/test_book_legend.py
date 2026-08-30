@@ -170,3 +170,20 @@ def test_every_knob_the_legend_prints_is_on_the_wire():
                  "ai_watch_arm_cm_rsi_min",
                  "ai_watch_arm_cm_rsi_allow_falling_below"):
         assert knob in SAFE_CONFIG_KEYS, f"{knob} never reaches the browser"
+
+
+def test_the_legend_renders_the_entry_and_exit_separation_from_config():
+    """Both, and both live — because the gap between them is the thing an
+    operator needs to see.
+
+    Entry arms at sep >= macd_sep_mult; the hard sell fires at
+    sep < ai_exit_macd_hard_sell_sep and falling. When those two numbers meet,
+    a position can arm already sitting on its own exit threshold, held off
+    only by the sell needing `falling` as well. Hardcoding either into the
+    legend would hide exactly that.
+    """
+    assert "n('macd_sep_mult'" in _JS
+    assert "n('ai_exit_macd_hard_sell_sep'" in _JS
+    from config import SAFE_CONFIG_KEYS
+    for k in ("macd_sep_mult", "ai_exit_macd_hard_sell_sep"):
+        assert k in SAFE_CONFIG_KEYS, f"{k} never reaches the browser"
