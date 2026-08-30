@@ -964,6 +964,7 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "exhaustion_state": exhaustion_state(rec, _push_cfg()),
             **_exhaustion_wire_fields(rec),
             **_macd_wire_fields(rec),
+            **_rsi_wire_fields(rec),
             "agreement": bool(rec.get("agreement")) if rec.get("agreement") is not None else None,
             "reason": str(rec.get("reason") or "")[:80] or None,
             "source": str(rec.get("source") or "research")[:24] or "research",
@@ -1062,6 +1063,7 @@ def _watch_row_from_record(sym: str, rec: dict, *, pad_pct: float = 0.0) -> dict
         "exhaustion_state": exhaustion_state(rec, _push_cfg()),
         **_exhaustion_wire_fields(rec),
         **_macd_wire_fields(rec),
+        **_rsi_wire_fields(rec),
         "reason": str(rec.get("reason") or "")[:80] or None,
         "wait_kind": wait_kind,
         "entry_low": entry_low_f,
@@ -5222,6 +5224,45 @@ def _price_in_or_below_zone(rec: dict, price: float, *, pad_pct: float = 0.0) ->
         frac = 0.0
     high_bound = hi * (1.0 + frac)
     return px <= high_bound
+
+
+def _rsi_wire_fields(rec: dict) -> dict:
+    """CM RSI-2 for the book's RSI column.
+
+    Third instance of the same omission. The MACD redesign shipped a column,
+    a renderer, CSS and an arm gate with nothing putting the numbers on the
+    wire; EXH did it before that. RSI had gone further still — feeds.js has
+    carried _bookRsiText, _rsiArms, _rsiStale and _fmtRsiTitle the whole
+    time, fully written, reading fields public_snapshot never sent.
+
+    Provenance is not decoration here. The engine draws its bars from the
+    Finnhub trade stream when the tape covers a name and falls back to Alpaca
+    REST when it does not, and it flips per ticker mid-session — so a level
+    without a source cannot be told apart from a level that is minutes old.
+    The book dims the fallback rather than hiding it, because absent and
+    stale want different reactions from the operator.
+
+    Direction rides with the level for the same reason it does on MACD: the
+    entry condition was a band AND a turn, and a bare number answers half of
+    it.
+    """
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    if not isinstance(ind, dict):
+        return {"cm_rsi": None, "cm_rsi_rising": None, "cm_rsi_green": False,
+                "cm_rsi_low": False, "cm_rsi_src": None,
+                "cm_rsi_age_sec": None}
+    return {
+        "cm_rsi": _f_or_none(ind.get("cm_rsi")),
+        # None, not False — "no reading yet" and "not rising" are different
+        # answers, and only the first should stop a gate from deciding.
+        "cm_rsi_rising": (
+            None if ind.get("cm_rsi_rising") is None
+            else bool(ind.get("cm_rsi_rising"))),
+        "cm_rsi_green": bool(ind.get("cm_rsi_green")),
+        "cm_rsi_low": bool(ind.get("cm_rsi_low")),
+        "cm_rsi_src": str(ind.get("cm_rsi_src") or "") or None,
+        "cm_rsi_age_sec": _f_or_none(ind.get("cm_rsi_age_sec")),
+    }
 
 
 def _macd_wire_fields(rec: dict) -> dict:

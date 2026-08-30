@@ -506,6 +506,10 @@ const _PHASE_RANK = { open: 0, ready: 1, submitted: 2, filled: 2, watching: 3 };
  *  text: "$16.95", "99.2% OB" and "+0.007 (1.1×)" do not sort as numbers, and
  *  a column that sorted by its own label would put $9 after $10. */
 function _bookSortVal(r, col) {
+  if (col === 'rsi') {
+    const v = r && r.cm_rsi != null ? Number(r.cm_rsi) : null;
+    return Number.isFinite(v) ? v : null;
+  }
   const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
   switch (col) {
     case 'last':
@@ -1191,6 +1195,13 @@ function _updateBookRow(el, r) {
     priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
+  const rsiEl = el.querySelector('.cell-rsi');
+  if (rsiEl) {
+    _setText(rsiEl, _bookRsiText(r));
+    rsiEl.className = `cell-rsi${_rsiPairClass(r)}`;
+    const rsiTip = _fmtRsiTitle(r);
+    if (rsiTip) rsiEl.title = rsiTip;
+  }
   const exhEl = el.querySelector('.cell-exh');
   if (exhEl) {
     _setText(exhEl, _bookExhText(r));
@@ -1250,6 +1261,7 @@ function _bookRowHtml(r) {
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
+    + `<div class="cell-rsi${_rsiPairClass(r)}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
     + `<div class="cell-macd${_bookMacdClass(r)}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`

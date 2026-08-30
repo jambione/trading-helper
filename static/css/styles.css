@@ -2519,16 +2519,18 @@ body.mobile [data-tv-toggle-btn] {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | EXH | MACD Gap | P&L
-     EXH is back beside MACD so the two levers read together. Hold stays
-     gone: the Stop cell shows the min-hold countdown while it runs and the
-     stop price after. Qty is display:none and must not occupy a track. */
+  /* Ticker | State | Last | Entry | Stop | RSI | EXH | MACD Gap | P&L
+     RSI sits with EXH and MACD so the three readings the arm gate cares
+     about read together. Hold stays gone: the Stop cell shows the min-hold
+     countdown while it runs and the stop price after. Qty is display:none
+     and must not occupy a track. */
   grid-template-columns:
     minmax(48px, 0.8fr)
     minmax(4.6rem, 0.95fr)
     minmax(54px, 0.8fr)
     minmax(50px, 0.7fr)
     minmax(58px, 0.8fr)
+    minmax(52px, 0.75fr)
     minmax(58px, 0.8fr)
     minmax(116px, 1.7fr)
     minmax(52px, 0.75fr);
@@ -2594,6 +2596,7 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .feed-cols--ai-book .cell-price,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
+.panel-ai-watch .feed-cols--ai-book .cell-rsi,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
 .panel-ai-watch .feed-cols--ai-book .cell-macd,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
@@ -4563,3 +4566,26 @@ body.engine-visible .engine-bar                         { display: none !importa
 .cell-exh.exh--ob   { color: var(--buy); font-weight: 600; }
 .cell-exh.exh--up   { color: var(--buy); }
 .cell-exh.exh--down { color: var(--danger); }
+
+
+/* ── Book RSI cell ─────────────────────────────────────────────────────────
+   CM RSI-2 with its direction arrow. The states say what the reading means
+   for arming, not just what it is: .rsi--arm is a reading that satisfies the
+   arm condition on its own, green/low are the engine's band flags, and
+   .rsi--stale marks a value NOT drawn on the live tape — dimmed rather than
+   hidden, because absence and "from the REST fallback" are different facts
+   and blending them is how a lever ends up trusted more than it deserves. */
+.panel-ai-watch .feed-cols--ai-book .cell-rsi {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #8a97a8);
+}
+.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--green { color: #3fb27f; }
+.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--low   { color: #e0a93b; }
+.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--arm {
+  color: #3fb27f;
+  font-weight: 600;
+}
+.panel-ai-watch .feed-cols--ai-book .cell-rsi.rsi--stale {
+  opacity: .45;
+  font-style: italic;
+}

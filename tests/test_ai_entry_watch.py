@@ -5364,3 +5364,49 @@ def test_no_tape_means_no_cross_check(monkeypatch):
     """With nothing to compare against, the ask is still the best we have."""
     _px, src, _ = _dp(monkeypatch, "X", tape=None, ask=9.40)
     assert src == "rest"
+
+
+# ── RSI on the wire ──────────────────────────────────────────────────────
+
+def test_rsi_wire_fields_shape():
+    """The link that was missing for the whole life of the RSI cell.
+
+    feeds.js has carried _bookRsiText, _rsiArms, _rsiStale and _fmtRsiTitle
+    written and complete, reading fields public_snapshot never sent — so the
+    column would have rendered "—" on every row while the engine held real
+    values. Same omission as MACD before it, and EXH before that.
+    """
+    import ai_entry_watch as ew
+    full = ew._rsi_wire_fields({"indicator": {
+        "cm_rsi": 18.4, "cm_rsi_rising": True, "cm_rsi_green": True,
+        "cm_rsi_low": True, "cm_rsi_src": "realtime", "cm_rsi_age_sec": 1.2}})
+    assert full["cm_rsi"] == 18.4
+    assert full["cm_rsi_rising"] is True
+    assert full["cm_rsi_src"] == "realtime"
+    assert full["cm_rsi_age_sec"] == 1.2
+
+
+def test_rsi_wire_survives_a_row_with_no_indicator():
+    import ai_entry_watch as ew
+    out = ew._rsi_wire_fields({})
+    assert out["cm_rsi"] is None
+    assert out["cm_rsi_src"] is None
+
+
+def test_an_absent_rsi_direction_is_none_not_false():
+    """'No reading yet' and 'not rising' are different answers. Only the first
+    should stop a gate from deciding, and False would hide that difference —
+    the same rule macd_gap_rising already follows."""
+    import ai_entry_watch as ew
+    assert ew._rsi_wire_fields({"indicator": {"cm_rsi": 61.0}})["cm_rsi_rising"] is None
+    assert ew._rsi_wire_fields(
+        {"indicator": {"cm_rsi": 61.0, "cm_rsi_rising": False}})["cm_rsi_rising"] is False
+
+
+def test_rsi_rides_on_both_snapshot_sites():
+    """public_snapshot builds rows in two places. A field added to one of them
+    is a field that appears or vanishes depending on the row's status."""
+    src = open("ai_entry_watch.py", encoding="utf-8").read()
+    assert src.count("**_rsi_wire_fields(rec),") == 2
+    assert src.count("**_macd_wire_fields(rec),") == 2, (
+        "if MACD's count changed, this test's premise needs rechecking")

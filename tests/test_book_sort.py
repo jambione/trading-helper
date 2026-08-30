@@ -33,6 +33,7 @@ COLUMNS = [
     ("last", "cell-price"),
     ("entry", "cell-entry"),
     ("stop", "cell-trail"),
+    ("rsi", "cell-rsi"),
     ("exh", "cell-exh"),
     ("macd", "cell-macd"),
     ("pl", "cell-pl"),
@@ -104,7 +105,7 @@ def test_the_book_tracks_have_pixel_minimums():
     i = _CSS.index("\n.feed-cols--ai-book {")
     block = _CSS[i:_CSS.index("}", i)]
     tracks = re.findall(r"minmax\(([^,]+),", block)
-    assert len(tracks) == 8, f"expected 8 tracks, found {len(tracks)}"
+    assert len(tracks) == 9, f"expected 9 tracks, found {len(tracks)}"
     for t in tracks:
         t = t.strip()
         assert re.fullmatch(r"\d+(\.\d+)?(px|rem)", t), (
@@ -151,7 +152,8 @@ def test_sorting_reads_raw_fields_not_the_rendered_text():
     underlying numbers or every numeric column sorts wrong."""
     i = _JS.index("function _bookSortVal")
     body = _JS[i:_JS.index("\n}", i)]
-    for field in ("r.price", "r.avg_entry", "r.exhaustion", "r.macd_gap", "r.pl"):
+    for field in ("r.price", "r.avg_entry", "r.exhaustion", "r.macd_gap",
+                  "r.cm_rsi", "r.pl"):
         assert field in body, f"{field} not read"
     assert "_bookStopPx(r)" in body, "stop must use the same shelf the cell shows"
     assert "textContent" not in body and "_fmtExh" not in body
@@ -202,3 +204,42 @@ def test_the_sort_survives_a_reload_but_never_throws():
     assert "catch" in _JS[i:i + 500]
     j = _JS.index("localStorage.setItem(_BOOK_SORT_LS")
     assert "catch" in _JS[j:j + 300]
+
+
+# ── RSI column ───────────────────────────────────────────────────────────
+
+def test_the_rsi_cell_is_rendered_and_updated_in_place():
+    """Two paths, and both must exist.
+
+    The row template builds the cell on a full repaint; the updater moves the
+    value between repaints. A cell wired into only the template shows a
+    reading that freezes at whatever it was when the row was last rebuilt —
+    which looks like a live number and is not one.
+    """
+    assert "cell-rsi${_rsiPairClass(r)}" in _JS, "not in the row template"
+    i = _JS.index("const rsiEl = el.querySelector('.cell-rsi');")
+    body = _JS[i:i + 300]
+    assert "_setText(rsiEl, _bookRsiText(r))" in body
+    assert "_rsiPairClass(r)" in body, "class must be recomputed, not just text"
+
+
+def test_the_rsi_cell_marks_a_reading_that_is_not_from_the_live_tape():
+    """The operator asked for realtime specifically. The engine flips between
+    the Finnhub stream and REST fallback per ticker, mid-session, so a
+    reading has to say which one drew it — absence and "from the fallback"
+    are different facts and blending them is how a lever gets trusted more
+    than it has earned."""
+    assert "rsi--stale" in _CSS, "no styling for a non-realtime reading"
+    i = _JS.index("function _rsiStale")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "cm_rsi_src" in body
+    assert "'realtime'" in body
+
+
+def test_rsi_sorts_on_the_reading_not_the_arrow():
+    """The cell renders "42.1↑". Sorting that as text puts every rising name
+    above every falling one regardless of level."""
+    i = _JS.index("function _bookSortVal")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "r.cm_rsi" in body
+    assert "_bookRsiText" not in body
