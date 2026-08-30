@@ -133,3 +133,40 @@ def test_mac_agent_ensures_browser_launched():
     """mac_agent ensures Brave Browser or Chrome is launched if not already open."""
     agent_code = (_ROOT / "mac_agent.py").read_text(encoding="utf-8")
     assert "_ensure_app_open(candidate)" in agent_code
+
+
+# ── osascript must never block the caller ────────────────────────────────
+
+def test_every_applescript_call_is_bounded():
+    """A GUI app that stops answering does not fail — it never replies.
+
+    2026-08-30: read_tv_symbol against Brave left the desk at 0.1% CPU for
+    hours, main thread parked in select.poll() on a child osascript that
+    never returned, showing a blank screen. The process was healthy, the
+    data was fine, Brave was running, and nothing timed out because nothing
+    was watching the clock.
+
+    Every AppleScript in mac_agent goes through _osascript, so bounding it
+    there covers all six call sites at once.
+    """
+    src = (_ROOT / "mac_agent.py").read_text(encoding="utf-8")
+    i = src.index("def _osascript(")
+    body = src[i:src.index("\ndef ", i + 10)]
+    assert "timeout=" in body, "_osascript must bound the subprocess"
+    assert "TimeoutExpired" in body, "a timeout must be caught, not raised"
+
+
+def test_a_timed_out_applescript_looks_like_a_failed_one():
+    """Callers already handle a nonzero return code. Returning that shape on
+    timeout means a hang degrades into the failure they were written for,
+    rather than a new one they have never seen."""
+    src = (_ROOT / "mac_agent.py").read_text(encoding="utf-8")
+    i = src.index("def _osascript(")
+    body = src[i:src.index("\ndef ", i + 10)]
+    assert "return -1, \"\"" in body
+
+
+def test_the_timeout_is_declared_not_inline():
+    """One number, findable, with the incident written next to it."""
+    src = (_ROOT / "mac_agent.py").read_text(encoding="utf-8")
+    assert "OSASCRIPT_TIMEOUT_SEC" in src

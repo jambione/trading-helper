@@ -188,9 +188,36 @@ def _frontmost_app() -> str:
 # macOS window helpers (AppleScript via osascript)
 # =============================================================================
 
-def _osascript(script: str) -> tuple[int, str]:
-    """Run an AppleScript snippet, return (returncode, stdout)."""
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+# Seconds before an AppleScript call is abandoned. Every osascript here talks
+# to a GUI application, and a GUI application that stops answering does not
+# fail — it simply never replies, so the caller waits forever.
+#
+# That is not hypothetical. 2026-08-30, read_tv_symbol against Brave: the desk
+# sat at 0.1% CPU for hours with its main thread parked in select.poll()
+# waiting on a child osascript that never returned, showing a blank screen. The
+# process was healthy, the data was fine, and nothing timed out because nothing
+# was watching the clock. Brave was running the whole time.
+#
+# Read-only chart polling is worth far less than the desk that runs it, so a
+# slow answer is discarded rather than waited for.
+OSASCRIPT_TIMEOUT_SEC = 5.0
+
+
+def _osascript(script: str, timeout: float | None = None) -> tuple[int, str]:
+    """Run an AppleScript snippet, return (returncode, stdout).
+
+    Always bounded. A timeout returns (-1, "") — the same shape callers
+    already handle for a nonzero return code, so a hang degrades into the
+    failure they were written for instead of a new one.
+    """
+    try:
+        r = subprocess.run(
+            ["osascript", "-e", script], capture_output=True, text=True,
+            timeout=OSASCRIPT_TIMEOUT_SEC if timeout is None else timeout)
+    except subprocess.TimeoutExpired:
+        return -1, ""
+    except Exception:  # noqa: BLE001
+        return -1, ""
     return r.returncode, r.stdout.strip()
 
 
