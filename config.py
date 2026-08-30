@@ -814,6 +814,11 @@ DEFAULT_CONFIG = {
     # as be_at_pct: 1R is ~5% of price here, so an R-only arm freezes the
     # shelf through moves that are plainly real.
     "ai_local_trail_arm_pct":       0.0,
+    # Initial stop, split from the trail give. 0 = use the trail give, which
+    # is how this shipped and changes nothing. Above 0 it sets ONLY the shelf
+    # at fill; the trail keeps give_r. See initial_local_stop for why the two
+    # were never separable and why that made the question unmeasurable.
+    "ai_local_trail_initial_give_r": 0.0,
     "ai_local_trail_give_r":           0.05,
     "ai_local_trail_give_open_r":      0.05,
     "ai_local_trail_tighten_mfe_r":    0.25,
@@ -1544,6 +1549,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_enabled",
     "ai_local_trail_arm_r",
     "ai_local_trail_give_r",
+    "ai_local_trail_initial_give_r",
     "ai_local_trail_give_open_r",
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_give_px",

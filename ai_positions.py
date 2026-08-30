@@ -2614,10 +2614,29 @@ def initial_local_stop(
     cfg: dict | None = None,
     spread_r: float | None = None,
 ) -> float | None:
-    """Working rstop at fill: entry − 0.10R (give_r), not the 5% plan stop.
+    """Working rstop at fill: entry − give_r x R, not the 5% plan stop.
 
     ``ai_local_trail_arm_r`` only delays *raising* the shelf. The live
-    rstop is always the 0.10R working shelf from the fill.
+    rstop is always the working shelf from the fill.
+
+    ``ai_local_trail_initial_give_r`` splits this from the trail. Unset, it
+    IS the trail give and nothing changes — which is how it shipped.
+
+    The split exists because the two jobs were never separable and pull in
+    opposite directions. The initial stop has to survive ordinary noise
+    before the thesis can be right or wrong; the trail has to hand back as
+    little as possible once a trade is working. One knob doing both means
+    every widening buys survival and pays for it in give-back on the same
+    move, and measurement showed exactly that: sweeping give_r from 0.05 to
+    0.50 on ten sessions produced -1.30, +0.86, -7.51, -6.33, -3.49, -10.74,
+    -9.63 — noise on a flat surface rather than a curve, because the two
+    effects cancel.
+
+    The reason to want them apart: median 15-minute adverse excursion on this
+    universe is 0.54% of price and the working stop is 0.25%, so more than
+    half of all trades are stopped by ordinary noise before the entry has
+    been tested. Whether a wide initial stop with a tight trail fixes that is
+    now a sweep instead of an argument.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
@@ -2626,7 +2645,21 @@ def initial_local_stop(
         return None
     if e <= 0:
         return None
-    give = local_trail_give(e, risk, cfg, mfe_r=0.0, spread_r=spread_r)
+    init_r = cfg.get("ai_local_trail_initial_give_r")
+    try:
+        init_r = float(init_r) if init_r is not None else 0.0
+    except (TypeError, ValueError):
+        init_r = 0.0
+    if init_r > 0:
+        # Same pipeline as the trail — percent ceiling, dollar floor and the
+        # sane-spread floor all still apply — but with give_r overridden, so
+        # the initial stop cannot quietly skip a guard the trail respects.
+        icfg = dict(cfg)
+        icfg["ai_local_trail_give_r"] = init_r
+        icfg["ai_local_trail_give_open_r"] = init_r
+        give = local_trail_give(e, risk, icfg, mfe_r=0.0, spread_r=spread_r)
+    else:
+        give = local_trail_give(e, risk, cfg, mfe_r=0.0, spread_r=spread_r)
     want = e - give
     if want >= e:
         want = e - 0.01

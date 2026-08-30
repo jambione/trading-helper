@@ -70,6 +70,9 @@ OVERLAY_KEYS = {
     # narrowing give_open_r from the live 0.2 — a variable that sweep never
     # meant to test.
     "give_open_r": "ai_local_trail_give_open_r",
+    # Initial stop, independent of the trail. The pair could not be
+    # swept apart before, so "is the stop too tight" was unanswerable.
+    "initial_give_r": "ai_local_trail_initial_give_r",
     "arm_r": "ai_local_trail_arm_r",
     "arm_pct": "ai_local_trail_arm_pct",
     "give_max_pct": "ai_local_trail_give_max_pct",
