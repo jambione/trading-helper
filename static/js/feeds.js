@@ -818,7 +818,7 @@ function _paintBookLegend(cfg, row) {
   const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 
   // null = cannot say. Never collapse that into false.
-  let macd = null, exh = null, both = null, fresh = null, live = null;
+  let macd = null, exh = null, both = null, fresh = null, live = null, rsi = null;
   if (r) {
     // PROVENANCE FIRST. The gate refuses a MACD not drawn on the live tape
     // before it looks at any of the rules below, so a legend that scored the
@@ -851,6 +851,28 @@ function _paintBookLegend(cfg, row) {
       : (_exhLeg === true || _macdLeg === true) ? true
       : (_exhLeg == null || _macdLeg == null) ? null : false;
 
+    // RSI leg. Reads the SAME three knobs cm_rsi_allows_buy does, so the
+    // legend cannot drift from the gate: band, the turn, and the deep-OS
+    // waiver. Note the gate fails CLOSED on a missing reading — so a null
+    // here is "no reading", which the gate treats as a refusal, and the row
+    // is marked unjudgeable rather than passing.
+    const rv = num(r.cm_rsi);
+    if (!n('ai_watch_arm_require_cm_rsi', 0)) {
+      rsi = null;                       // switched off: not a rule in force
+    } else if (rv == null) {
+      rsi = false;                      // no_rsi_data — the gate refuses this
+    } else if (rv > n('ai_watch_arm_cm_rsi_max', 50)
+               || rv < n('ai_watch_arm_cm_rsi_min', 0)) {
+      rsi = false;
+    } else if (r.cm_rsi_rising === true) {
+      rsi = true;
+    } else if (r.cm_rsi_rising == null) {
+      rsi = null;                       // level fine, direction unknown
+    } else {
+      const fb = n('ai_watch_arm_cm_rsi_allow_falling_below', 0);
+      rsi = (fb > 0 && rv < fb && r.pctr_rising === true);
+    }
+
     const pAge = num(r.price_age_sec), mAge = num(r.macd_age_sec);
     fresh = live === false ? false
       : (pAge == null || mAge == null) ? null
@@ -862,6 +884,12 @@ function _paintBookLegend(cfg, row) {
     ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`, macd],
     ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`, exh],
     ['EITHER', `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`, both],
+    ['RSI',   n('ai_watch_arm_require_cm_rsi', 0)
+                ? `CM RSI-2 rising${n('ai_watch_arm_cm_rsi_max', 50) < 100
+                    ? ` &nbsp;·&nbsp; ${n('ai_watch_arm_cm_rsi_min', 0)}–${n('ai_watch_arm_cm_rsi_max', 50)} band` : ''}`
+                  + `${n('ai_watch_arm_cm_rsi_allow_falling_below', 0) > 0
+                    ? ` &nbsp;·&nbsp; or falling under ${n('ai_watch_arm_cm_rsi_allow_falling_below', 0)} with EXH rising` : ''}`
+                : 'not required', rsi],
     ['FRESH', `MACD on the live tape &nbsp;·&nbsp; price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
     ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`, null],
     ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`, null],

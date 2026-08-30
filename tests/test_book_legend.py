@@ -128,3 +128,45 @@ def test_fresh_says_it_covers_the_tape():
 def test_unknown_provenance_is_not_treated_as_live():
     body = _legend()
     assert "live = src ? src === 'realtime' : null" in body
+
+
+# ── RSI leg ──────────────────────────────────────────────────────────────
+
+def test_the_legend_reads_the_same_rsi_knobs_the_gate_does():
+    """A legend that hardcodes a rule drifts from the gate the first time a
+    knob moves, and then it is worse than no legend — it asserts something
+    false about why a row did or did not arm."""
+    for knob in ("ai_watch_arm_require_cm_rsi", "ai_watch_arm_cm_rsi_max",
+                 "ai_watch_arm_cm_rsi_min",
+                 "ai_watch_arm_cm_rsi_allow_falling_below"):
+        assert knob in _JS, f"legend never reads {knob}"
+
+
+def test_a_missing_rsi_reading_shows_as_a_refusal_not_a_pass():
+    """cm_rsi_allows_buy fails CLOSED: `if rsi is None: return False,
+    "no_rsi_data"`. The legend has to agree — 35% of armed polls in the
+    historical record carried no reading, and a legend that showed those as
+    passing would explain an arm that never happened."""
+    i = _JS.index("const rv = num(r.cm_rsi);")
+    body = _JS[i:i + 900]
+    assert "rsi = false;" in body
+    assert "no_rsi_data" in body or "the gate refuses this" in body
+
+
+def test_the_rsi_leg_is_off_when_the_gate_is_off():
+    """Switched off it is not a rule in force, so it must read as
+    unjudgeable rather than as a pass — the same discipline the MACD
+    provenance check already follows."""
+    i = _JS.index("if (!n('ai_watch_arm_require_cm_rsi', 0))")
+    assert "rsi = null;" in _JS[i:i + 160]
+
+
+def test_every_knob_the_legend_prints_is_on_the_wire():
+    """The legend renders from /api/state's config, which is filtered by
+    SAFE_CONFIG_KEYS. A knob missing there reads undefined and the legend
+    quietly prints a default instead of the live value."""
+    from config import SAFE_CONFIG_KEYS
+    for knob in ("ai_watch_arm_require_cm_rsi", "ai_watch_arm_cm_rsi_max",
+                 "ai_watch_arm_cm_rsi_min",
+                 "ai_watch_arm_cm_rsi_allow_falling_below"):
+        assert knob in SAFE_CONFIG_KEYS, f"{knob} never reaches the browser"

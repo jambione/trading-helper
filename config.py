@@ -1487,6 +1487,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stream_bars_live",
     "ai_watch_arm_require_cm_rsi",
     "ai_watch_arm_cm_rsi_max",
+    # Published so the book legend prints the band the gate is actually
+    # using. Without it the legend silently falls back to a default and
+    # stops describing the rule the moment the floor is changed.
+    "ai_watch_arm_cm_rsi_min",
     "ai_watch_arm_cm_rsi_allow_falling_below",
     "ai_watch_require_realtime_rsi",
     "ai_watch_cm_rsi_local",
