@@ -68,6 +68,10 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_be_at_r",
     "ai_local_trail_be_at_pct",
     "ai_local_trail_give_r",
+    # Sets the shelf at fill independently of the trail. It changes which
+    # trades survive their first minute, so two settings must not stamp
+    # the same config_fp — outcomes could not be attributed to it.
+    "ai_local_trail_initial_give_r",
     "ai_local_trail_give_open_r",
     "ai_local_trail_give_max_pct",
     # The spread-relative shelf and its cap. Both decide the width of the
