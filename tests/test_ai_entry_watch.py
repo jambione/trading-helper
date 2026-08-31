@@ -5479,3 +5479,49 @@ def test_shadow_still_records_the_rsi_lever():
     # Age rides under bars_age_sec by design — see the comment there on why
     # it is not duplicated under a second name.
     assert row["bars_age_sec"] == 1.1
+
+
+# ── the quote-age deadlock ───────────────────────────────────────────────
+
+def test_a_missing_quote_age_is_filled_before_the_arm_check():
+    """A row without an age could never get one.
+
+    should_arm_buy runs BEFORE refresh_arm_market_data. _row_tape_stale fails
+    closed on an unknown age — correctly — so the arm is refused and the poll
+    `continue`s, and the refresh that would have SUPPLIED the age never runs.
+    The row is then stuck for the rest of the session.
+
+    Observed live 2026-08-31 09:38: ten of seventeen rows held on "stale
+    quote" / "no quote age" while the quote cache held valid ages for every
+    one of them (0.06s-22.7s), several with live MACD and EXH that would
+    otherwise have armed. Not one row was blocked by RSI, EXH or separation.
+
+    The fill reads the cache prime_quotes already warmed for the whole book,
+    so it costs a dict lookup and no API call.
+    """
+    src = open("ai_entry_watch.py", encoding="utf-8").read()
+    i = src.index("Stamp the REST quote's age too")
+    block = src[i:i + 900]
+    assert 'rec.get("last_ask_age_sec")' in block
+    assert "gt.cached_quote_age_sec(sym)" in block
+    # It must come BEFORE the arm decision, or it fixes nothing.
+    assert src.index("cached_quote_age_sec(sym)") < src.index("if not ok_arm:")
+
+
+def test_the_age_fill_never_overwrites_a_known_age():
+    """A stream age is the better reading and must win. This only fills the
+    gap where there is nothing at all."""
+    src = open("ai_entry_watch.py", encoding="utf-8").read()
+    i = src.index("Stamp the REST quote's age too")
+    block = src[i:i + 900]
+    assert '_num_or_none(rec.get("last_ask_age_sec")) is None' in block
+
+
+def test_the_staleness_guard_still_fails_closed():
+    """The fix supplies a real age; it must not weaken the rule that an
+    unprovable one is stale."""
+    import ai_entry_watch as ew
+    assert ew._row_tape_stale({"last_ask_src": "rest",
+                               "last_ask_age_sec": None}) is True
+    assert ew._row_tape_stale({"last_ask_src": "rest",
+                               "last_ask_age_sec": 1.0}) is False
