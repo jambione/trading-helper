@@ -9235,6 +9235,32 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         rec = dict(rec)
         rec["symbol"] = sym
+        # Fill a missing quote age from the cache prime_quotes warmed for the
+        # whole book above, BEFORE anything can refuse this row for lacking
+        # one. should_arm_buy runs earlier than refresh_arm_market_data, and
+        # _row_tape_stale fails closed on an unknown age — correctly — so a
+        # row that arrives without one is refused and `continue`d, and the
+        # refresh that would have supplied it never runs. It stays stuck for
+        # the session.
+        #
+        # Live 2026-08-31: ten of seventeen rows held on "stale quote" / "no
+        # quote age" while the cache had a valid age for every one (0.06-22.7s).
+        # NCRA had RSI 94.5, EXH 71.5 and a realtime MACD gap and could not arm.
+        #
+        # Must be here rather than in the `far` branch, which is where this
+        # first went: far names are the ones LEAST likely to need it, so the
+        # fix reached almost nothing and the deadlock survived the deploy.
+        #
+        # Only fills a gap — a stream age is the better reading and still
+        # wins — and supplies a REAL age, so the guard still judges it and
+        # still refuses one that cannot be proven.
+        if _num_or_none(rec.get("last_ask_age_sec")) is None:
+            try:
+                _qa = gt.cached_quote_age_sec(sym)
+                if _qa is not None:
+                    rec["last_ask_age_sec"] = float(_qa)
+            except Exception:  # noqa: BLE001
+                pass
         status = str(rec.get("status") or "").lower().strip()
         if status in _TERMINAL_STATUSES:
             continue
@@ -9369,23 +9395,6 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                         rec["last_ask_age_sec"] = float(tape[1])
             except (TypeError, ValueError):
                 pass
-            # Stamp the REST quote's age too, from the cache the poll already
-            # primed. Without this a row can never recover from a missing age:
-            # should_arm_buy runs BEFORE refresh_arm_market_data, _row_tape_stale
-            # fails closed on an unknown age (correctly), the arm is refused, the
-            # poll `continue`s — and the refresh that would have supplied the age
-            # never runs. Observed 2026-08-31 09:38: ten of seventeen rows stuck
-            # on "stale quote" / "no quote age" with valid ages sitting unread in
-            # the quote cache, several with live MACD and EXH that would have
-            # armed. A dict lookup, no extra API call: prime_quotes already ran
-            # for the whole book above.
-            if _num_or_none(rec.get("last_ask_age_sec")) is None:
-                try:
-                    _qa = gt.cached_quote_age_sec(sym)
-                    if _qa is not None:
-                        rec["last_ask_age_sec"] = float(_qa)
-                except Exception:  # noqa: BLE001
-                    pass
             # Still warm %R so the UI column and shadow log are honest —
             # without this, far names never populate exhaustion either.
             try:
