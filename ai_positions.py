@@ -25,6 +25,7 @@ Safety additions:
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 import threading
@@ -2661,11 +2662,12 @@ def initial_local_stop(
     else:
         give = local_trail_give(e, risk, cfg, mfe_r=0.0, spread_r=spread_r)
     want = e - give
-    if want >= e:
-        want = e - 0.01
     if want <= 0:
         return None
-    return round(want, 6)
+    want = math.ceil(round(want * 100.0, 4)) / 100.0
+    if want >= e:
+        want = round(e - 0.01, 2)
+    return round(want, 2)
 
 
 def _median_px(xs: list[float]) -> float | None:
@@ -2836,16 +2838,17 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         give_mfe = 0.0
     give = local_trail_give(last, risk, cfg, mfe_r=give_mfe,
                             spread_r=_pos_spread_r(pos))
-    want = float(last) - give
-    if want >= float(last):
-        want = float(last) - 0.01
+    cand = float(last) - give
     if floor is not None:
-        want = max(float(floor), want)
+        cand = max(float(floor), cand)
     if be_floor is not None:
-        want = max(want, be_floor)
+        cand = max(cand, be_floor)
+    cand = math.ceil(round(cand * 100.0, 4)) / 100.0
+    if cand >= float(last):
+        cand = round(float(last) - 0.01, 2)
     if prev is not None:
-        want = max(want, float(prev))
-    return round(want, 6)
+        cand = max(cand, float(prev))
+    return round(cand, 2)
 
 
 def _flatten_late_hold_stop(

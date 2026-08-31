@@ -2706,10 +2706,10 @@ def test_local_profit_stop_tracks_last_minus_give():
         "ai_local_trail_enabled": True, "ai_local_trail_give_r": 0.20,
         "ai_local_trail_min_give_px": 0,
     }
-    # last 8.50 − 0.2R (0.052) = 8.448, above the 8.38 plan floor.
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.448)
+    # last 8.50 − 0.2R (0.052) = 8.448 -> rounded up to whole cent 8.45
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.45)
     pos["last_seen_price"] = 8.80
-    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.748)
+    assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.75)
 
 
 def test_local_profit_stop_never_lowers():
@@ -3347,9 +3347,9 @@ def test_trail_arms_on_percent_when_r_is_too_wide_to_reach():
     frozen = cp.local_profit_stop(pos, r_only)
     tracking = cp.local_profit_stop(dict(r_only, ai_local_trail_arm_pct=0.20)
                                     and pos, dict(r_only, ai_local_trail_arm_pct=0.20))
-    # Armed on percent, the shelf is last - give instead of the seed.
+    # Armed on percent, the shelf is last - give instead of the seed (rounded up to whole cent 98.27).
     assert tracking > frozen
-    assert tracking == pytest.approx(98.61 - 98.61 * 0.0035, rel=1e-6)
+    assert tracking == pytest.approx(98.27)
 
 
 def test_percent_arm_does_not_fire_on_a_name_that_barely_moved():
