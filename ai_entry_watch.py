@@ -9487,6 +9487,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         except Exception:
             bid = None
         ask_f, px_src, px_age = apply_decision_price(rec, cfg, t0)
+        # Does the poll's own pricing call reach these rows, and what does it
+        # return? decision_price asked out-of-band gives fresh ages (DPRO 0.1s,
+        # SOFI 0.1s, ASST 0.4s) for the exact symbols published as None, under
+        # the real config, yet the record keeps None and a fill at the arm site
+        # changed nothing — so either this line is not reached for those rows
+        # or it returns None here. Counting both ends that question; seven
+        # hypotheses have already died on it.
+        try:
+            import ai_trading as _gt
+            _gt._QUOTE_PATH_STATS["poll_priced_rows"] += 1
+            if px_age is None:
+                _gt._QUOTE_PATH_STATS["poll_priced_age_none_%s" % (px_src or "none")] += 1
+        except Exception:  # noqa: BLE001
+            pass
         tape_only = px_src == "stale_tape"
         rec["last_poll_ts"] = t0
 
