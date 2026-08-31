@@ -30,8 +30,8 @@ KEYS = [
     "ai_watch_macd_exh_override_min_pct",
     "ai_watch_decision_max_age_sec", "ai_watch_macd_max_age_sec",
     "ai_watch_arm_confirm_ticks", "ai_exit_min_hold_sec",
-    "ai_exit_macd_hard_sell_sep",
     "ai_local_trail_give_max_pct", "ai_local_trail_be_at_pct",
+    "ai_dead_trade_min", "ai_eod_liquidate_time",
 ]
 
 
@@ -173,17 +173,10 @@ def test_every_knob_the_legend_prints_is_on_the_wire():
 
 
 def test_the_legend_renders_the_entry_and_exit_separation_from_config():
-    """Both, and both live — because the gap between them is the thing an
-    operator needs to see.
-
-    Entry arms at sep >= macd_sep_mult; the hard sell fires at
-    sep < ai_exit_macd_hard_sell_sep and falling. When those two numbers meet,
-    a position can arm already sitting on its own exit threshold, held off
-    only by the sell needing `falling` as well. Hardcoding either into the
-    legend would hide exactly that.
-    """
+    """Verify live rendering of entry separation and exit configuration."""
     assert "n('macd_sep_mult'" in _JS
-    assert "n('ai_exit_macd_hard_sell_sep'" in _JS
+    assert "n('ai_dead_trade_min'" in _JS
+    assert "n('ai_eod_liquidate_time'" in _JS
     from config import SAFE_CONFIG_KEYS
-    for k in ("macd_sep_mult", "ai_exit_macd_hard_sell_sep"):
+    for k in ("macd_sep_mult", "ai_dead_trade_min", "ai_eod_liquidate_time"):
         assert k in SAFE_CONFIG_KEYS, f"{k} never reaches the browser"
