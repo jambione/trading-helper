@@ -362,11 +362,17 @@ def _latest_ask(symbol: str) -> float | None:
     hit = _cached_quote(symbol)
     if hit is not None and hit[0] is not None:
         return hit[0]
-    try:
-        import desk_actions as da
-        return da._latest_ask(symbol)
-    except Exception:
-        pass
+    # desk_actions._latest_ask used to sit here. It makes the SAME
+    # get_stock_latest_quote call as the path below and returns a bare float,
+    # discarding the quote's own timestamp at the fetch site — so _quote_ts
+    # was never written, cached_quote_age_sec returned None, and _row_tape_stale
+    # refused the row for "no quote age" while holding a perfectly good ask.
+    # _cached_quote evicts at 3s, so outside the arm path (which primes first)
+    # nearly every poll landed here: 4 of 13 rows on 2026-08-31 10:35.
+    # It also degrades ask -> mid -> last trade, which decision_price then
+    # labels src="rest" — a trade print reported as a quote.
+    # Same network cost, no timestamp, worse provenance. The path below fetches
+    # the same quote and stamps it, keeping price and clock one event.
     # Fallback without desk_actions import side effects
     _load_env()
     api = os.getenv("ALPACA_API_KEY", "")

@@ -125,3 +125,80 @@ def test_effective_max_positions_scales_with_equity():
 
 def test_has_open_position_false_without_a_live_client():
     assert gt.has_open_position("NVDA") is False
+
+
+def test_latest_ask_stamps_quote_ts_when_cache_misses(monkeypatch):
+    """A REST-priced ask must carry its own quote age.
+
+    Regression for 2026-08-31: _latest_ask consulted desk_actions._latest_ask
+    before its own fallback. That path makes the same get_stock_latest_quote
+    call but returns a bare float, so _quote_ts was never written and
+    cached_quote_age_sec returned None. _row_tape_stale fails closed on an
+    unknown age — correctly — so the row was refused for "no quote age" while
+    holding a good ask. 4 of 13 rows were stuck that way at 10:35 ET.
+
+    The test drives the real path: empty price cache, a stubbed Alpaca client
+    returning a timestamped quote, and asserts the ask comes back WITH a
+    provable age rather than None.
+    """
+    import datetime as _dt
+    import sys
+    import types
+
+    import ai_trading as t
+
+    qt = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=2)
+
+    class _Q:
+        ask_price = 4.25
+        bid_price = 4.20
+        timestamp = qt
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def get_stock_latest_quote(self, req):
+            return {"ZZZT": _Q()}
+
+    # desk_actions lives under momentum-monitor/ and is NOT importable here,
+    # so the old tier-2 `try: import desk_actions` raised and fell through to
+    # the stamping path regardless — the test would pass either way. Install a
+    # working stub so tier 2 is genuinely reachable: if it ever returns, the
+    # ask is 99.0 with no age and this test fails, which is the whole point.
+    _stub = types.ModuleType("desk_actions")
+    _stub._latest_ask = lambda sym: 99.0  # bare float, no timestamp
+    monkeypatch.setitem(sys.modules, "desk_actions", _stub)
+
+    monkeypatch.setattr(t, "_quote_cache", {}, raising=False)
+    monkeypatch.setattr(t, "_quote_ts", {}, raising=False)
+    monkeypatch.setattr(t, "_load_env", lambda: None, raising=False)
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    monkeypatch.setattr(
+        "alpaca.data.historical.StockHistoricalDataClient", _Client)
+
+    ask = t._latest_ask("ZZZT")
+    age = t.cached_quote_age_sec("ZZZT")
+
+    assert ask == 4.25
+    assert age is not None, "REST ask came back without a provable quote age"
+    assert 0.0 <= age < 60.0
+
+
+def test_latest_ask_does_not_delegate_to_desk_actions():
+    """Pin the leak shut: the desk_actions tier must not come back.
+
+    It sits above the stamping fallback, so reintroducing it silently
+    reinstates ask-without-age for every symbol past the 3s cache TTL.
+    """
+    import inspect
+
+    import ai_trading as t
+
+    src = inspect.getsource(t._latest_ask)
+    body = "\n".join(
+        ln for ln in src.splitlines() if not ln.strip().startswith("#"))
+    assert "desk_actions" not in body, (
+        "_latest_ask delegates to desk_actions again — that path returns a "
+        "bare float and drops the quote timestamp")
