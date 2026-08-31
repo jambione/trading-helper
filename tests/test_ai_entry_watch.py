@@ -5479,3 +5479,33 @@ def test_shadow_still_records_the_rsi_lever():
     # Age rides under bars_age_sec by design — see the comment there on why
     # it is not duplicated under a second name.
     assert row["bars_age_sec"] == 1.1
+
+
+def test_stream_price_and_its_age_are_written_together():
+    """A print and its clock must be set in the same block.
+
+    Regression for 2026-08-31: one site wrote last_ask + last_ask_src="stream"
+    unconditionally from stream_px, then set last_ask_age_sec only when a
+    SEPARATE stream_quote() call happened to return. On a miss the row carried
+    a new price wearing the previous reading's age — the desk's oldest bug
+    class in mirror form. Every staleness guard downstream reads that pair as
+    fact, and 7 rows were published with src set and age None at 11:26 ET.
+
+    Scans the source for any block that claims src="stream" without assigning
+    the age nearby. Source-level because the writers sit deep inside the poll
+    loop, and the invariant is structural: the two assignments belong together.
+    """
+    import pathlib
+    import re
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "ai_entry_watch.py"
+    lines = src.read_text().splitlines()
+    bad = []
+    for i, ln in enumerate(lines):
+        if re.search(r'\["last_ask_src"\]\s*=\s*"stream"', ln):
+            window = "\n".join(lines[max(0, i - 6):i + 7])
+            if '["last_ask_age_sec"]' not in window:
+                bad.append(i + 1)
+    assert not bad, (
+        "last_ask_src='stream' set without last_ask_age_sec nearby at line(s) "
+        f"{bad} — a price and its clock must be one event")

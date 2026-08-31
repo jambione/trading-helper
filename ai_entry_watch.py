@@ -9374,13 +9374,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             # Keep last_ask on the tape so the book / EXH / arm all see the
             # same print the dashboard is showing (FGI 11.69 leftover).
             try:
-                if stream_px and float(stream_px) > 0:
-                    rec["last_ask"] = float(stream_px)
+                # Take the print and its clock from ONE stream_quote call.
+                # This used to write last_ask and last_ask_src from stream_px
+                # unconditionally, then set the age only when a separate
+                # stream_quote() happened to return — so a miss left a NEW
+                # price wearing the PREVIOUS reading's age, or none at all.
+                # That is the desk's oldest bug class in mirror form: not a
+                # static value with a moving age, but a moving value with a
+                # static one. Either way the pair is a fiction, and every
+                # staleness guard downstream reads it as fact.
+                tape = stream_quote(sym)
+                if tape is not None and tape[0] and float(tape[0]) > 0:
+                    rec["last_ask"] = float(tape[0])
                     rec["last_ask_src"] = "stream"
-                    # stream_quote only returns when age is known.
-                    tape = stream_quote(sym)
-                    if tape is not None:
-                        rec["last_ask_age_sec"] = float(tape[1])
+                    rec["last_ask_age_sec"] = float(tape[1])
             except (TypeError, ValueError):
                 pass
             # Still warm %R so the UI column and shadow log are honest —
