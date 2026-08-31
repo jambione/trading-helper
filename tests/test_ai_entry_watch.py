@@ -915,7 +915,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # How old the print behind last_ask is, and where it came from. The
         # staleness guards key off these, and until 8/26 they were absent
         # here while _row_tape_stale silently treated unknown age as fresh.
-        "last_ask_src", "last_ask_age_sec",
+        "last_ask_src", "last_ask_age_sec", "age_probe",
         # Whether a human called this symbol out. Separate from `source`
         # because a Trader Bro call does not take ownership of a row that
         # momentum or a research thesis already owns — it only tags it.

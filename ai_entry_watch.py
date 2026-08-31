@@ -836,6 +836,23 @@ def drop_watch_symbols(symbols) -> dict[str, dict]:
         return state
 
 
+def _age_probe(sym: str, rec: dict) -> str | None:
+    """What decision_price says about *sym* right now, when the row has no age.
+
+    Diagnostic for the unsolved "no quote age" refusals. Returns None on the
+    healthy path so it costs nothing, and never raises: a probe that can break
+    the publish is worse than the bug it is chasing.
+    """
+    try:
+        if rec.get("last_ask_age_sec") is not None:
+            return None
+        px, src, age = decision_price(sym, _lc() or {})
+        return "px=%s src=%s age=%s" % (
+            px, src, ("%.2f" % age) if age is not None else "None")
+    except Exception as exc:  # noqa: BLE001
+        return "probe_failed:%s" % str(exc)[:40]
+
+
 def public_snapshot(state: dict | None = None) -> list[dict]:
     """Operator-facing watch queue rows for positions JSON.
 
@@ -932,6 +949,18 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "last_ask": last_ask_f,
             "last_ask_src": rec.get("last_ask_src"),
             "last_ask_age_sec": _f_or_none(rec.get("last_ask_age_sec")),
+            # In-process A/B for the unsolved "no quote age" refusals. Five
+            # structural hypotheses have died against this bug, so instead of
+            # a sixth: when the record carries no age, ask decision_price
+            # RIGHT NOW, in this process, and publish what it says. Out of
+            # process it returns real ages (NEOV 0.65s, SOFI 0.44s) for the
+            # exact symbols published as None, but a separate process has a
+            # separate quote cache, which is what made the 10:32 comparison
+            # misleading. This settles it: a real age here means the writer
+            # is at fault, None means the live cache genuinely differs.
+            # Only computed for already-broken rows, so it costs nothing on
+            # the healthy path. Diagnostic — remove once the cause is known.
+            "age_probe": _age_probe(sym, rec),
             # The age the tape-staleness guard actually reads, published under
             # the name the rest of the desk uses for it. Without this the book
             # legend's FRESH row could never be evaluated at all — it went
