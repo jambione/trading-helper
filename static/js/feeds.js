@@ -892,7 +892,7 @@ function _paintBookLegend(cfg, row) {
                 : 'not required', rsi],
     ['FRESH', `MACD on the live tape &nbsp;·&nbsp; price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
     ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`, null],
-    ['EXIT',  `sep &lt; ${n('ai_exit_macd_hard_sell_sep', 1)}× falling, or gap ≤ 0 &nbsp;·&nbsp; trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}%`, null],
+    ['EXIT',  `trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}% &nbsp;·&nbsp; dead ${n('ai_dead_trade_min', 15)}m &nbsp;·&nbsp; EOD ${n('ai_eod_liquidate_time', '15:50')}`, null],
   ];
 
   const head = r

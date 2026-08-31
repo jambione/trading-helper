@@ -9825,7 +9825,17 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # Bounded: only fires for a row that has no age, and reads the batch
         # prime_quotes already warmed, so it does not spend a new REST call
         # against the 200/min budget the far prefilter exists to protect.
-        if _num_or_none(rec.get("last_ask_age_sec")) is None:
+        # Missing OR past the freshness bound. Age alone is not evidence the
+        # quote is old — it is time since we last ASKED, and rows are re-priced
+        # roughly every 20s while the poll runs at 10s. Measured 13:07 ET:
+        # SQFT published 23.2s against a live 5.4s, NEOV 22.1s against 1.3s,
+        # ASST 23.9s against 2.1s, PATH 21.1s against 3.4s. Refusing those as
+        # stale is refusing a quote nobody requested. Ask, then judge.
+        #
+        # Bounded: only fires for a row that would otherwise be refused right
+        # here, and reads the batch prime_quotes already warmed.
+        _cur_age = row_quote_age_sec(rec, now=t0)
+        if _cur_age is None or _cur_age > decision_max_age_sec(cfg):
             try:
                 _px, _src, _age = apply_decision_price(rec, cfg, t0)
                 if _px and _px > 0:

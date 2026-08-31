@@ -5569,8 +5569,8 @@ def test_missing_quote_age_is_filled_before_the_arm_decision():
              / "ai_entry_watch.py").read_text().splitlines()
 
     fill = [i for i, ln in enumerate(lines)
-            if re.match(r'^        if _num_or_none\(rec\.get\("last_ask_age_sec"\)\)'
-                        r' is None:$', ln)]
+            if re.match(r'^        if _cur_age is None or _cur_age > '
+                        r'decision_max_age_sec\(cfg\):$', ln)]
     assert fill, (
         "no-age fill missing, or not at per-record loop indent (8 spaces) — "
         "nested deeper it reaches only the rows it is meant to rescue")
@@ -5770,3 +5770,35 @@ def test_tape_staleness_guard_uses_the_recomputed_age(monkeypatch):
     monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {}, raising=False)
     bare = {"symbol": "NOPE", "last_ask": 5.0, "last_ask_src": "stream"}
     assert ew._row_tape_stale(bare)
+
+
+def test_a_stale_age_triggers_a_reprice_not_a_refusal():
+    """Age is time since we last ASKED, not proof the quote is old.
+
+    Rows are re-priced roughly every 20s while the poll runs at 10s, so a
+    published age drifts past the 8s bound while a fresh quote sits unrequested.
+    Measured 2026-08-31 13:07: SQFT published 23.2s against a live 5.4s, NEOV
+    22.1s against 1.3s, ASST 23.9s against 2.1s, PATH 21.1s against 3.4s.
+
+    The earlier fill only re-priced when the age was missing, so once the
+    symbol-keyed clock started supplying a stale-but-present age it was
+    bypassed and those rows were refused without ever being asked. The
+    condition must cover both.
+    """
+    import pathlib
+    import re
+
+    lines = (pathlib.Path(__file__).resolve().parents[1]
+             / "ai_entry_watch.py").read_text().splitlines()
+
+    hits = [i for i, ln in enumerate(lines)
+            if "_cur_age is None or _cur_age > decision_max_age_sec" in ln]
+    assert hits, "re-price no longer covers a stale-but-present age"
+
+    ln = lines[hits[0]]
+    assert re.match(r"^        if ", ln), (
+        "re-price must sit at per-record loop indent (8 spaces); nested "
+        "deeper it reaches only the rows it is meant to rescue")
+
+    arm = [i for i, l in enumerate(lines) if "ok_arm, why = should_arm_buy" in l]
+    assert arm and hits[0] < arm[0], "re-price must precede the arm decision"
