@@ -108,6 +108,10 @@ _FINGERPRINT_KEYS = (
     # on REST-fallback MACD is not the same regime as one that did not.
     "ai_watch_require_realtime_macd",
     "ai_watch_macd_max_age_sec",
+    # Whether names the quote feed cannot price are evicted from the book.
+    # It changes which symbols get a chance to arm at all, so a session that
+    # dropped them is not comparable to one that carried them.
+    "ai_watch_stale_tape_drop_polls",
     # And whether a curl back to bearish pulls the shelf under the print.
     # This changes what the exit IS, not merely how wide it sits.
     "ai_exit_macd_curl_tighten",

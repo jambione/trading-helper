@@ -836,27 +836,6 @@ def drop_watch_symbols(symbols) -> dict[str, dict]:
         return state
 
 
-def _age_probe(sym: str, rec: dict) -> str | None:
-    """What decision_price says about *sym* right now, when the row has no age.
-
-    Diagnostic for the unsolved "no quote age" refusals. Returns None on the
-    healthy path so it costs nothing, and never raises: a probe that can break
-    the publish is worse than the bug it is chasing.
-    """
-    try:
-        if rec.get("last_ask_age_sec") is not None:
-            return None
-        # Empty cfg, not load_config(): this runs inside public_snapshot, which
-        # is documented hot-path and must stay import-light, and the probe only
-        # asks WHETHER an age exists. Defaults can shift the stream/stale_tape
-        # boundary, so read src here as indicative and the age as the answer.
-        px, src, age = decision_price(sym, {})
-        return "px=%s src=%s age=%s" % (
-            px, src, ("%.2f" % age) if age is not None else "None")
-    except Exception as exc:  # noqa: BLE001
-        return "probe_failed:%s" % str(exc)[:40]
-
-
 def public_snapshot(state: dict | None = None) -> list[dict]:
     """Operator-facing watch queue rows for positions JSON.
 
@@ -952,19 +931,12 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             "stop_price": stop_f,
             "last_ask": last_ask_f,
             "last_ask_src": rec.get("last_ask_src"),
-            "last_ask_age_sec": _f_or_none(rec.get("last_ask_age_sec")),
-            # In-process A/B for the unsolved "no quote age" refusals. Five
-            # structural hypotheses have died against this bug, so instead of
-            # a sixth: when the record carries no age, ask decision_price
-            # RIGHT NOW, in this process, and publish what it says. Out of
-            # process it returns real ages (NEOV 0.65s, SOFI 0.44s) for the
-            # exact symbols published as None, but a separate process has a
-            # separate quote cache, which is what made the 10:32 comparison
-            # misleading. This settles it: a real age here means the writer
-            # is at fault, None means the live cache genuinely differs.
-            # Only computed for already-broken rows, so it costs nothing on
-            # the healthy path. Diagnostic — remove once the cause is known.
-            "age_probe": _age_probe(sym, rec),
+            # Recomputed from the quote's own timestamp, never republished as
+            # measured. A record rebuilt but not yet re-priced still reports a
+            # correct (growing) age instead of None, which is what made 5 of
+            # 11 rows read "no quote age" at 12:23 ET while the arm gate was
+            # seeing real ages the whole time.
+            "last_ask_age_sec": _f_or_none(row_quote_age_sec(rec)),
             # The age the tape-staleness guard actually reads, published under
             # the name the rest of the desk uses for it. Without this the book
             # legend's FRESH row could never be evaluated at all — it went
@@ -3499,22 +3471,41 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
         rec["last_ask"] = float(px)
         rec["last_ask_src"] = src
         rec["last_ask_age_sec"] = age
+        # The quote's OWN unix time, derived from the age we just measured
+        # against the clock that measured it: quote_ts = now - age, exactly.
+        # Storing the timestamp rather than only the age is what lets any
+        # later reader recompute a correct age instead of republishing a
+        # number that was true once. signal_engine already does this for
+        # rt_price_age_sec ("recomputed per write"); the watch record did not,
+        # so every publish landing between a record rebuild and its next
+        # pricing had no age to show and the row was labelled "no quote age"
+        # — 5 of 11 rows at 12:23 ET, while the arm gate, which runs straight
+        # after pricing, was seeing the real age the whole time.
+        #
+        # Only set when the age is provable. Unprovable must stay unprovable:
+        # inventing a timestamp here is how a stale print comes to look fresh.
+        if age is not None:
+            rec["last_ask_ts"] = float(now) - float(age)
+        else:
+            rec.pop("last_ask_ts", None)
         rec["last_trade"] = float(px) if src in ("stream", "stale_tape") else rec.get("last_trade")
-        # src="rest" with age=None should be impossible: the REST branch of
-        # decision_price reads the age from the same cache entry that supplied
-        # the ask, and the live counters say every served ask came from a
-        # STAMPED cache hit (prime_stamped 523, prime_dropped_stamp 0,
-        # cache_hit_no_stamp 0). Yet 6 rows carried exactly that at 11:14 ET.
-        # Count it where the record is written, so the contradiction is
-        # attributed to a writer rather than guessed at again — four
-        # hypotheses have already died against this bug.
-        if src == "rest" and age is None:
-            try:
-                import ai_trading as _gt
-                _gt._QUOTE_PATH_STATS["applied_rest_without_age"] += 1
-            except Exception:  # noqa: BLE001
-                pass
     return (float(px) if px else 0.0), src, age
+
+
+def row_quote_age_sec(rec: dict, now: float | None = None) -> float | None:
+    """Age of this record's quote, recomputed against the clock right now.
+
+    Prefers ``last_ask_ts`` — the quote's own time — so the answer is correct
+    whenever it is asked, not only at the instant of pricing. Falls back to the
+    stored age for records written before the timestamp existed, and returns
+    None when neither is available, because unprovable is a real answer here.
+    """
+    if not isinstance(rec, dict):
+        return None
+    ts = _num_or_none(rec.get("last_ask_ts"))
+    if ts is not None and ts > 0:
+        return max(0.0, (time.time() if now is None else float(now)) - ts)
+    return _num_or_none(rec.get("last_ask_age_sec"))
 
 
 def refresh_arm_market_data(
@@ -9262,6 +9253,12 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         return float(equity_cache or 0.0)
 
     shadow_on = bool(cfg.get("ai_shadow_log_enabled", True))
+    # Consecutive stale-tape polls before a name is dropped for having no
+    # quote feed at all. 0 disables the drop entirely.
+    try:
+        _stale_drop_after = int(cfg.get("ai_watch_stale_tape_drop_polls", 0) or 0)
+    except (TypeError, ValueError):
+        _stale_drop_after = 0
 
     # One quote call for the whole book, before the per-record fan-out below.
     # Each record that survives the tape prefilter asks for _latest_ask and
@@ -9651,8 +9648,34 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                         arm_ok=None, arm_why="tape_only", now=t0))
                 except Exception:
                     pass
+            # A name IEX cannot quote at all can never arm, but it still costs
+            # a book slot, a poll and REST budget every cycle, and it reads to
+            # the operator as a setup that might fire. Four of eleven rows were
+            # in this state at 12:23 ET on 2026-08-31, some carrying quotes
+            # days old (NCRA 239,722s, PSQL 2.8 days).
+            #
+            # Dropped only after a run of CONSECUTIVE stale polls, and the
+            # streak resets on any usable quote: a thin name pausing between
+            # prints is normal and must not be evicted for it. Same treatment
+            # attempt_cap and dead_reentry already get.
+            _n_stale = int(rec.get("stale_tape_streak") or 0) + 1
+            rec["stale_tape_streak"] = _n_stale
+            if 0 < _stale_drop_after <= _n_stale:
+                try:
+                    events.append(cp.log_event(
+                        "watch_drop", symbol=sym, reason="no_quote_feed",
+                        polls=_n_stale, src=px_src))
+                except Exception:  # noqa: BLE001
+                    events.append({"kind": "watch_drop", "symbol": sym,
+                                   "reason": "no_quote_feed"})
+                drop_watch_symbols([sym])
+                continue
             touched[sym] = rec
             continue
+
+        # Any usable quote clears the stale streak — the drop above is for
+        # names the feed cannot price at all, not for a quiet minute.
+        rec.pop("stale_tape_streak", None)
 
         # Arm / buy
         try:

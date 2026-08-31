@@ -915,7 +915,7 @@ def test_public_snapshot_shape(tmp_path, monkeypatch):
         # How old the print behind last_ask is, and where it came from. The
         # staleness guards key off these, and until 8/26 they were absent
         # here while _row_tape_stale silently treated unknown age as fresh.
-        "last_ask_src", "last_ask_age_sec", "age_probe",
+        "last_ask_src", "last_ask_age_sec",
         # Whether a human called this symbol out. Separate from `source`
         # because a Trader Bro call does not take ownership of a row that
         # momentum or a research thesis already owns — it only tags it.
@@ -5586,3 +5586,119 @@ def test_missing_quote_age_is_filled_before_the_arm_decision():
         "fill must use apply_decision_price so price, src and age come from "
         "one call — stamping a cached age onto an existing price is the "
         "reverted static-value-moving-age bug")
+
+
+def test_quote_age_is_recomputed_from_the_quotes_own_timestamp():
+    """A published age must be true when read, not when it was measured.
+
+    The record used to carry only last_ask_age_sec, computed at pricing time
+    and republished verbatim. The wire publishes faster than poll_sec, so any
+    publish landing between a record rebuild and its next pricing had no age
+    and the row read "no quote age" — 5 of 11 rows at 12:23 ET on 2026-08-31,
+    while the arm gate (which runs straight after pricing) saw real ages all
+    along. Same shape as the bars_age_sec bug: a number that was true once,
+    handed out later as if it still were.
+
+    apply_decision_price now also stores last_ask_ts, the quote's OWN time,
+    and row_quote_age_sec recomputes against it on demand.
+    """
+    import ai_entry_watch as ew
+
+    now = 1_000_000.0
+
+    # Priced 2s ago; read 30s later. The age must have grown, not frozen.
+    rec = {"last_ask_ts": now - 2.0, "last_ask_age_sec": 2.0}
+    assert abs(ew.row_quote_age_sec(rec, now=now) - 2.0) < 1e-6
+    assert abs(ew.row_quote_age_sec(rec, now=now + 30.0) - 32.0) < 1e-6, (
+        "age did not advance — it is being republished as measured")
+
+    # No timestamp: fall back to the stored age rather than inventing one.
+    assert ew.row_quote_age_sec({"last_ask_age_sec": 4.5}, now=now) == 4.5
+
+    # Neither: unprovable stays unprovable. Never 0, never "fresh".
+    assert ew.row_quote_age_sec({}, now=now) is None
+    assert ew.row_quote_age_sec({"last_ask": 10.0}, now=now) is None
+
+
+def test_apply_decision_price_stores_the_timestamp_only_when_provable():
+    """An unprovable age must not leave a timestamp behind.
+
+    Deriving quote_ts = now - age is exact when the age is real. When the age
+    is None there is nothing to derive from, and writing one anyway is how a
+    stale print comes to look fresh — the bug reverted twice today.
+    """
+    import ai_entry_watch as ew
+
+    now = 2_000_000.0
+
+    calls = {}
+
+    def fake_priced(sym, cfg, _now=None):
+        return calls[sym]
+
+    orig = ew.decision_price
+    try:
+        ew.decision_price = fake_priced
+
+        calls["AAA"] = (10.0, "rest", 3.0)
+        rec = {"symbol": "AAA"}
+        ew.apply_decision_price(rec, {}, now)
+        assert abs(rec["last_ask_ts"] - (now - 3.0)) < 1e-6
+        assert abs(ew.row_quote_age_sec(rec, now=now + 10.0) - 13.0) < 1e-6
+
+        # A later unprovable read must CLEAR the stamp, not leave the old one
+        # to keep answering for a price it no longer describes.
+        calls["AAA"] = (11.0, "rest", None)
+        ew.apply_decision_price(rec, {}, now + 60.0)
+        assert "last_ask_ts" not in rec, (
+            "stale timestamp survived an unprovable read — the row would "
+            "report a confident age for a price that has no clock")
+        assert ew.row_quote_age_sec(rec, now=now + 60.0) is None
+    finally:
+        ew.decision_price = orig
+
+
+def test_stale_tape_drop_is_off_by_default_and_needs_consecutive_polls():
+    """Eviction must require a RUN of stale polls, and ship disabled.
+
+    A name IEX cannot quote can never arm but still spends a book slot, a poll
+    and REST budget every cycle — 4 of 11 rows on 2026-08-31, some carrying
+    quotes days old. Dropping it is right; dropping a thin name that paused
+    between prints is not. The streak therefore resets on any usable quote,
+    and the knob defaults to 0 so behaviour is unchanged until it is set.
+    """
+    import re
+    import pathlib
+
+    from config import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG["ai_watch_stale_tape_drop_polls"] == 0, (
+        "eviction must ship disabled — turning it on silently changes which "
+        "symbols get a chance to arm")
+
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "ai_entry_watch.py").read_text()
+
+    # The streak must be cleared on the non-stale path, or a name that goes
+    # stale intermittently accumulates a count across unrelated polls and is
+    # eventually evicted for being thin rather than for being unquotable.
+    assert re.search(r'rec\.pop\("stale_tape_streak", None\)', src), (
+        "streak is never reset — intermittent staleness would evict a "
+        "perfectly tradeable name")
+
+    # And the drop must be guarded by the knob being positive.
+    assert "0 < _stale_drop_after <= _n_stale" in src, (
+        "drop is not gated on a positive threshold; 0 must disable it")
+
+
+def test_stale_tape_drop_knob_is_in_the_regime_fingerprint():
+    """Outcomes are unattributable if this moves without being stamped."""
+    import learn_stamps
+
+    keys = getattr(learn_stamps, "REGIME_KEYS", None)
+    if keys is None:
+        import pathlib
+        text = (pathlib.Path(learn_stamps.__file__)).read_text()
+        assert '"ai_watch_stale_tape_drop_polls"' in text
+    else:
+        assert "ai_watch_stale_tape_drop_polls" in keys

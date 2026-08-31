@@ -488,6 +488,15 @@ DEFAULT_CONFIG = {
     # name can never accumulate. 0 = rebuild strictly from candidates.
     "ai_watch_admit_grace_sec":     0.0,
     "ai_watch_admit_ticks":               1,  # consecutive qualifying polls to admit
+    # Consecutive stale-tape polls before a watch is dropped for having no
+    # quote feed at all. A name IEX cannot quote can never arm, but it still
+    # spends a book slot, a poll and REST budget every cycle, and it reads to
+    # the operator as a setup that might fire — 4 of 11 rows on 2026-08-31,
+    # some carrying quotes days old (NCRA 239,722s). The streak resets on any
+    # usable quote, so a thin name pausing between prints is never evicted for
+    # it; only a name the feed cannot price at all runs the count up.
+    # 0 disables the drop.
+    "ai_watch_stale_tape_drop_polls":     0,
     # ── Real-time tape pre-filter ───────────────────────────────────────────
     # The Finnhub WebSocket price (via the dashboard's ticker rows) is used to
     # SKIP the per-symbol Alpaca quote when price is nowhere near the zone.
