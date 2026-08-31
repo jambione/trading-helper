@@ -5702,3 +5702,40 @@ def test_stale_tape_drop_knob_is_in_the_regime_fingerprint():
         assert '"ai_watch_stale_tape_drop_polls"' in text
     else:
         assert "ai_watch_stale_tape_drop_polls" in keys
+
+
+def test_quote_timestamp_survives_a_record_rebuild(monkeypatch):
+    """The clock must outlive the record it was measured for.
+
+    poll_once rebuilds the full watch record every cycle, so a timestamp
+    stamped onto the record is discarded before the next publish reads it.
+    That is exactly what happened on 2026-08-31: storing last_ask_ts per-record
+    changed nothing, and rows kept publishing src="stream" with age=None — a
+    pair both stream writers make impossible at write time, so the age was
+    being written and then wiped.
+
+    The symbol-keyed map survives the rebuild; a fresh record for the same
+    symbol still reports a correct, growing age.
+    """
+    import ai_entry_watch as ew
+
+    now = 3_000_000.0
+    monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {}, raising=False)
+    monkeypatch.setattr(ew, "decision_price",
+                        lambda s, c, n=None: (5.0, "stream", 2.0))
+
+    rec = {"symbol": "RBLD"}
+    ew.apply_decision_price(rec, {}, now)
+    assert abs(ew.row_quote_age_sec(rec, now=now) - 2.0) < 1e-6
+
+    # The rebuild: a brand-new record, carrying nothing but the symbol.
+    rebuilt = {"symbol": "RBLD"}
+    assert abs(ew.row_quote_age_sec(rebuilt, now=now + 5.0) - 7.0) < 1e-6, (
+        "age lost across a record rebuild — this is the whole bug")
+
+    # An unprovable read must clear the map too, or a dead price keeps
+    # answering with a confident age forever.
+    monkeypatch.setattr(ew, "decision_price",
+                        lambda s, c, n=None: (5.5, "rest", None))
+    ew.apply_decision_price({"symbol": "RBLD"}, {}, now + 10.0)
+    assert ew.row_quote_age_sec({"symbol": "RBLD"}, now=now + 10.0) is None

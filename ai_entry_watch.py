@@ -99,6 +99,17 @@ _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 _wash_cooldown_until: dict[str, float] = {}
 _WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
 
+# symbol -> the quote's OWN unix time, from the last provable pricing.
+# Deliberately module-level rather than a record field: poll_once rebuilds the
+# full watch record every cycle, so a stamp written onto the record is gone
+# before the next publish reads it. That is why rows kept publishing
+# last_ask_age_sec None while the arm gate, running immediately after pricing,
+# saw real ages — and why storing the timestamp per-record fixed nothing.
+# Only ever written from the same measurement that produced the price, and
+# removed when an age is unprovable: a clock that outlives its price is the
+# bug this exists to prevent, not a feature.
+_LAST_QUOTE_TS: dict[str, float] = {}
+
 # Machine code → short operator label for the AI Watch "Blocker" column.
 _BLOCKER_LABELS: dict[str, str] = {
     "above_zone": "above zone",
@@ -3484,10 +3495,21 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
         #
         # Only set when the age is provable. Unprovable must stay unprovable:
         # inventing a timestamp here is how a stale print comes to look fresh.
+        # Kept in a symbol-keyed map, NOT on the record. poll_once rebuilds the
+        # full record every cycle, so anything stamped on it is discarded
+        # before the next publish can read it — which is why storing the
+        # timestamp per-record changed nothing: rows still published
+        # src="stream" with age=None, a pair both stream writers now make
+        # impossible at write time. The clock has to outlive the record.
+        _sym_k = str(rec.get("symbol") or "").upper().strip()
         if age is not None:
             rec["last_ask_ts"] = float(now) - float(age)
+            if _sym_k:
+                _LAST_QUOTE_TS[_sym_k] = float(now) - float(age)
         else:
             rec.pop("last_ask_ts", None)
+            if _sym_k:
+                _LAST_QUOTE_TS.pop(_sym_k, None)
         rec["last_trade"] = float(px) if src in ("stream", "stale_tape") else rec.get("last_trade")
     return (float(px) if px else 0.0), src, age
 
@@ -3503,6 +3525,12 @@ def row_quote_age_sec(rec: dict, now: float | None = None) -> float | None:
     if not isinstance(rec, dict):
         return None
     ts = _num_or_none(rec.get("last_ask_ts"))
+    if ts is None:
+        # The record is rebuilt every poll, so its own stamp is routinely gone
+        # by publish time. The symbol-keyed map outlives the rebuild.
+        sym = str(rec.get("symbol") or "").upper().strip()
+        if sym:
+            ts = _num_or_none(_LAST_QUOTE_TS.get(sym))
     if ts is not None and ts > 0:
         return max(0.0, (time.time() if now is None else float(now)) - ts)
     return _num_or_none(rec.get("last_ask_age_sec"))
