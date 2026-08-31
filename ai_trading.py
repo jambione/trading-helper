@@ -9,6 +9,7 @@ Tools exposed to the model (function calling):
 """
 from __future__ import annotations
 
+import collections
 import json
 import os
 import re
@@ -199,6 +200,19 @@ _quote_cache: dict[str, tuple[float, float | None, float | None]] = {}
 # fetch time.
 _quote_ts: dict[str, float] = {}
 
+# Where quote timestamps are won and lost. Three hypotheses about the "no quote
+# age" refusals died against the evidence on 2026-08-31 (unpolled new rows; IEX
+# not supplying a timestamp; the no-ask trade fallback) — a single-symbol probe
+# showed IEX serving a good ask AND a good timestamp for every stranded symbol,
+# so the loss is inside this process. Counting each path beats a fourth guess.
+# Read with quote_path_stats(); cheap ints, no I/O.
+_QUOTE_PATH_STATS: dict[str, int] = collections.defaultdict(int)
+
+
+def quote_path_stats() -> dict[str, int]:
+    """Snapshot of which quote paths ran, and which dropped the clock."""
+    return dict(_QUOTE_PATH_STATS)
+
 
 def prime_quotes(symbols: list[str]) -> int:
     """Fetch ask+bid for many symbols in one call. Returns symbols cached.
@@ -260,10 +274,13 @@ def prime_quotes(symbols: list[str]) -> int:
         # A stamp from the future is a skewed clock, and would read as
         # eternally fresh. Unknown is safer than wrong.
         if qts is not None and not (0 < qts <= now + 5):
+            _QUOTE_PATH_STATS["prime_ts_failed_sanity"] += 1
             qts = None
         if qts is None:
+            _QUOTE_PATH_STATS["prime_dropped_stamp"] += 1
             _quote_ts.pop(sym, None)
         else:
+            _QUOTE_PATH_STATS["prime_stamped"] += 1
             _quote_ts[sym] = qts
         n += 1
     return n
@@ -338,8 +355,11 @@ def _remember_quote_ts(symbol: str, ts) -> None:
         val = None
     now = time.time()
     if val is None or not (0 < val <= now + 5):
+        _QUOTE_PATH_STATS[
+            "remember_no_ts" if val is None else "remember_failed_sanity"] += 1
         _quote_ts.pop(sym, None)
         return
+    _QUOTE_PATH_STATS["remember_stamped"] += 1
     _quote_ts[sym] = val
 
 
@@ -359,9 +379,26 @@ def _cached_quote(symbol: str) -> tuple[float | None, float | None] | None:
 
 
 def _latest_ask(symbol: str) -> float | None:
+    # A cache hit is only usable if we ALSO hold that quote's own clock.
+    # _quote_cache and _quote_ts are separate dicts with different lifetimes:
+    # prime_quotes always writes the price but POPS the stamp whenever the
+    # batch quote carried no usable timestamp, and invalidate_quotes pops the
+    # stamp unconditionally. Either way the cache can hold a good ask with no
+    # provable age, and returning it here strands the row — cached_quote_age_sec
+    # gives None, _row_tape_stale fails closed, and the row is refused for
+    # "no quote age" every poll for the rest of the session. 8 of 10 rows on
+    # 2026-08-31 10:50, one of which (SRPT) was otherwise ready to arm.
+    #
+    # Falling through re-fetches and stamps, so price and clock stay one event.
+    # The alternative — stamping the cache's fetch time onto the price — is the
+    # bug this desk has already been bitten by twice: a static value with a
+    # moving age. Unprovable must stay unprovable; the answer is to go get the
+    # clock, never to invent one.
     hit = _cached_quote(symbol)
     if hit is not None and hit[0] is not None:
-        return hit[0]
+        if _quote_ts.get(_norm_sym(symbol)) is not None:
+            return hit[0]
+        _QUOTE_PATH_STATS["cache_hit_no_stamp"] += 1
     # desk_actions._latest_ask used to sit here. It makes the SAME
     # get_stock_latest_quote call as the path below and returns a bare float,
     # discarding the quote's own timestamp at the fetch site — so _quote_ts
@@ -401,12 +438,22 @@ def _latest_ask(symbol: str) -> float | None:
                 return ask
         except Exception:
             pass
+        # No usable ask: fall back to the last TRADE. A trade is not a quote,
+        # so it carries no quote age by definition and _quote_ts stays empty —
+        # the row is then refused as unprovable, which is correct. Counted
+        # because decision_price still labels this src="rest", so a trade print
+        # is reported to the desk as if it were a quote.
         tr = client.get_stock_latest_trade(
             StockLatestTradeRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX))
         t = tr.get(symbol) if isinstance(tr, dict) else tr
         px = float(getattr(t, "price", 0) or 0)
-        return px if px > 0 else None
+        if px > 0:
+            _QUOTE_PATH_STATS["trade_fallback_no_clock"] += 1
+            return px
+        _QUOTE_PATH_STATS["no_price_at_all"] += 1
+        return None
     except Exception:
+        _QUOTE_PATH_STATS["rest_exception"] += 1
         return None
 
 

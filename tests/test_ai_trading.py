@@ -1,6 +1,7 @@
 """Claude paper-trading tools: safety rails and dispatch."""
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -202,3 +203,74 @@ def test_latest_ask_does_not_delegate_to_desk_actions():
     assert "desk_actions" not in body, (
         "_latest_ask delegates to desk_actions again — that path returns a "
         "bare float and drops the quote timestamp")
+
+
+def test_cache_hit_without_stamp_falls_through_and_restamps(monkeypatch):
+    """A cached ask with no clock must not be served.
+
+    _quote_cache and _quote_ts are separate dicts. prime_quotes always writes
+    the price but pops the stamp when the batch quote had no usable timestamp,
+    and invalidate_quotes pops the stamp unconditionally — so the cache can
+    hold a good ask with no provable age. Returning it stranded the row:
+    cached_quote_age_sec None -> _row_tape_stale fails closed -> refused for
+    "no quote age" every poll. 8 of 10 rows on 2026-08-31 10:50.
+
+    Correct behaviour is to go and fetch the clock, never to invent one from
+    the cache's own fetch time (that is the static-value-moving-age bug).
+    """
+    import datetime as _dt
+    import sys
+    import types
+
+    import ai_trading as t
+
+    class _Q:
+        ask_price = 7.77
+        bid_price = 7.70
+        timestamp = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=1)
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def get_stock_latest_quote(self, req):
+            return {"ZZZC": _Q()}
+
+    _stub = types.ModuleType("desk_actions")
+    _stub._latest_ask = lambda sym: 99.0
+    monkeypatch.setitem(sys.modules, "desk_actions", _stub)
+
+    # Price cached and FRESH (inside the 3s TTL), but the stamp is absent —
+    # exactly the state prime_quotes leaves behind on a stampless quote.
+    monkeypatch.setattr(
+        t, "_quote_cache", {"ZZZC": (time.time(), 4.00, 3.99)}, raising=False)
+    monkeypatch.setattr(t, "_quote_ts", {}, raising=False)
+    monkeypatch.setattr(t, "_load_env", lambda: None, raising=False)
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    monkeypatch.setattr(
+        "alpaca.data.historical.StockHistoricalDataClient", _Client)
+
+    ask = t._latest_ask("ZZZC")
+
+    assert ask == 7.77, (
+        "served the stampless cached ask (4.00) instead of re-fetching a "
+        "quote whose age can be proved")
+    assert t.cached_quote_age_sec("ZZZC") is not None
+
+
+def test_cache_hit_with_stamp_is_still_served_without_refetch(monkeypatch):
+    """The common path must stay cheap — a stamped cache hit does no I/O."""
+    import ai_trading as t
+
+    def _boom(*a, **k):
+        raise AssertionError("re-fetched a quote that was already stamped")
+
+    monkeypatch.setattr(
+        t, "_quote_cache", {"ZZZD": (time.time(), 5.55, 5.50)}, raising=False)
+    monkeypatch.setattr(t, "_quote_ts", {"ZZZD": time.time() - 1.0},
+                        raising=False)
+    monkeypatch.setattr(
+        "alpaca.data.historical.StockHistoricalDataClient", _boom)
+
+    assert t._latest_ask("ZZZD") == 5.55
