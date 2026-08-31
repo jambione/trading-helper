@@ -9729,6 +9729,34 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                   detail=f"{int(wash_until - t0)}s left")
             continue
 
+        # A row must not be refused for lacking a quote age until something
+        # has tried to give it one. _row_tape_stale fails closed on an unknown
+        # age — correctly — but a record that arrives without one is then
+        # refused, continued, and never priced, so it can never recover.
+        #
+        # Measured 2026-08-31 11:54: six rows sat IN their entry zone carrying
+        # last_ask_age_sec None while decision_price, asked in the same process
+        # at the same moment, returned 0.3s / 0.5s / 2.4s / 4.4s / 5.6s / 5.6s
+        # for those exact symbols. The age existed; the record never got it.
+        #
+        # apply_decision_price is used rather than stamping an age onto the
+        # price already on the record: it writes price, src and age from ONE
+        # decision_price call, so the pair stays a single event. The earlier
+        # attempt at this took the age from the quote cache and stamped it onto
+        # whatever price was already there, which is how a stale print gets to
+        # look fresh — the desk's oldest bug, and it was reverted for it.
+        #
+        # Bounded: only fires for a row that has no age, and reads the batch
+        # prime_quotes already warmed, so it does not spend a new REST call
+        # against the 200/min budget the far prefilter exists to protect.
+        if _num_or_none(rec.get("last_ask_age_sec")) is None:
+            try:
+                _px, _src, _age = apply_decision_price(rec, cfg, t0)
+                if _px and _px > 0:
+                    ask_f = float(_px)
+            except Exception:  # noqa: BLE001
+                pass
+
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         # The counterfactual record. arm_ok False with in_zone True is the row
         # that pays for this whole mechanism: price was in the zone and the

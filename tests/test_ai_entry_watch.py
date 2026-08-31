@@ -5537,3 +5537,52 @@ def test_stream_write_is_all_three_or_none(monkeypatch):
     assert not bad, (
         f"float(tape[1]) at line(s) {bad} without a `tape[1] is not None` "
         "guard above it — a None age will throw after src is already written")
+
+
+def test_missing_quote_age_is_filled_before_the_arm_decision():
+    """The no-age fill must run at loop level, before should_arm_buy.
+
+    _row_tape_stale fails closed on an unknown age, so a record that arrives
+    without one is refused and continued before anything prices it — it can
+    never recover for the rest of the session. Measured 2026-08-31 11:54: six
+    rows sat in their entry zone with last_ask_age_sec None while
+    decision_price returned 0.3-5.6s for those same symbols in the same
+    process.
+
+    Two things are pinned, and the first one is why this test exists at all:
+
+    1. INDENTATION. The morning's attempt put this fill inside `if far:`,
+       which reaches only rows already being skipped — the fix shipped, passed
+       its test, and changed nothing. It must sit at the per-record loop level
+       (8 spaces).
+    2. ORDER. It has to run before the first should_arm_buy, or the refusal
+       has already happened.
+
+    It must also call apply_decision_price, which writes price, src and age
+    from one decision_price call. Stamping a cached age onto the price already
+    on the record is the reverted bug: a stale print wearing a fresh clock.
+    """
+    import pathlib
+    import re
+
+    lines = (pathlib.Path(__file__).resolve().parents[1]
+             / "ai_entry_watch.py").read_text().splitlines()
+
+    fill = [i for i, ln in enumerate(lines)
+            if re.match(r'^        if _num_or_none\(rec\.get\("last_ask_age_sec"\)\)'
+                        r' is None:$', ln)]
+    assert fill, (
+        "no-age fill missing, or not at per-record loop indent (8 spaces) — "
+        "nested deeper it reaches only the rows it is meant to rescue")
+
+    arm = [i for i, ln in enumerate(lines) if "ok_arm, why = should_arm_buy" in ln]
+    assert arm, "should_arm_buy call not found"
+    assert fill[0] < arm[0], (
+        f"fill at line {fill[0] + 1} runs AFTER the arm decision at "
+        f"{arm[0] + 1} — the row is already refused by then")
+
+    body = "\n".join(lines[fill[0]:fill[0] + 10])
+    assert "apply_decision_price" in body, (
+        "fill must use apply_decision_price so price, src and age come from "
+        "one call — stamping a cached age onto an existing price is the "
+        "reverted static-value-moving-age bug")
