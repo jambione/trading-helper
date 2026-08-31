@@ -846,7 +846,11 @@ def _age_probe(sym: str, rec: dict) -> str | None:
     try:
         if rec.get("last_ask_age_sec") is not None:
             return None
-        px, src, age = decision_price(sym, _lc() or {})
+        # Empty cfg, not load_config(): this runs inside public_snapshot, which
+        # is documented hot-path and must stay import-light, and the probe only
+        # asks WHETHER an age exists. Defaults can shift the stream/stale_tape
+        # boundary, so read src here as indicative and the age as the answer.
+        px, src, age = decision_price(sym, {})
         return "px=%s src=%s age=%s" % (
             px, src, ("%.2f" % age) if age is not None else "None")
     except Exception as exc:  # noqa: BLE001
@@ -9412,8 +9416,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 # static value with a moving age, but a moving value with a
                 # static one. Either way the pair is a fiction, and every
                 # staleness guard downstream reads it as fact.
+                # tape[1] is checked BEFORE any assignment on purpose. The
+                # first version of this fix assigned last_ask and src, then
+                # last_ask_age_sec = float(tape[1]) — and stream_quote can
+                # return a None age, so float(None) raised TypeError straight
+                # into the enclosing `except (TypeError, ValueError): pass`
+                # with src already written. That published src="stream" with
+                # age=None on seven rows: the very split this block exists to
+                # prevent, reintroduced by assignment order. Validate the
+                # whole tuple first, then write all three or none of them.
                 tape = stream_quote(sym)
-                if tape is not None and tape[0] and float(tape[0]) > 0:
+                if (tape is not None and tape[0] and tape[1] is not None
+                        and float(tape[0]) > 0):
                     rec["last_ask"] = float(tape[0])
                     rec["last_ask_src"] = "stream"
                     rec["last_ask_age_sec"] = float(tape[1])

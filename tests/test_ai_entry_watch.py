@@ -5509,3 +5509,31 @@ def test_stream_price_and_its_age_are_written_together():
     assert not bad, (
         "last_ask_src='stream' set without last_ask_age_sec nearby at line(s) "
         f"{bad} — a price and its clock must be one event")
+
+
+def test_stream_write_is_all_three_or_none(monkeypatch):
+    """A None age must not leave src='stream' behind.
+
+    Regression for the second attempt at the same bug on 2026-08-31: the fix
+    assigned last_ask and last_ask_src, THEN last_ask_age_sec = float(tape[1]).
+    stream_quote can hand back a None age, so float(None) raised TypeError into
+    the enclosing `except (TypeError, ValueError): pass` with src already
+    written — publishing src="stream" with age=None on seven rows, the exact
+    split the block exists to prevent. Assignment order is the whole bug, so
+    the guard must validate the tuple before touching the record.
+    """
+    import pathlib
+    import re
+
+    src_txt = (pathlib.Path(__file__).resolve().parents[1]
+               / "ai_entry_watch.py").read_text()
+    lines = src_txt.splitlines()
+    bad = []
+    for i, ln in enumerate(lines):
+        if re.search(r'\["last_ask_age_sec"\]\s*=\s*float\(tape\[1\]\)', ln):
+            guard = "\n".join(lines[max(0, i - 10):i])
+            if "tape[1] is not None" not in guard:
+                bad.append(i + 1)
+    assert not bad, (
+        f"float(tape[1]) at line(s) {bad} without a `tape[1] is not None` "
+        "guard above it — a None age will throw after src is already written")
