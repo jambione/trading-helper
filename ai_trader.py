@@ -274,6 +274,18 @@ def normalize_source(source: str | None, backend: str | None) -> str:
     return SOURCE_ANTHROPIC
 
 
+def _quote_path_stats() -> dict:
+    """Quote-path counters from ai_trading, or {} if unavailable.
+
+    Best-effort: a diagnostic must never be able to take down the publish.
+    """
+    try:
+        import ai_trading as gt
+        return gt.quote_path_stats()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _watch_source_error() -> str:
     """Last candidate-feed fetch error ('' when healthy)."""
     try:
@@ -477,6 +489,12 @@ def _positions_payload(
             # zero candidates for a whole session.
             "source_error": _watch_source_error(),
             "rejected": _watch_rejected(),
+            # Which quote paths won or lost the quote's own clock. Counters
+            # live in ai_trading's process memory, so without publishing them
+            # they cannot be read from outside — and "no quote age" refusals
+            # are diagnosable only from inside the running desk. Three guesses
+            # at this bug died on 2026-08-31 for want of exactly this.
+            "quote_paths": _quote_path_stats(),
             "decision_max_age_sec": decision_max_age,
         },
         "duel": _duel_public(),
