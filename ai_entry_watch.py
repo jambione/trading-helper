@@ -3467,6 +3467,20 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
         rec["last_ask_src"] = src
         rec["last_ask_age_sec"] = age
         rec["last_trade"] = float(px) if src in ("stream", "stale_tape") else rec.get("last_trade")
+        # src="rest" with age=None should be impossible: the REST branch of
+        # decision_price reads the age from the same cache entry that supplied
+        # the ask, and the live counters say every served ask came from a
+        # STAMPED cache hit (prime_stamped 523, prime_dropped_stamp 0,
+        # cache_hit_no_stamp 0). Yet 6 rows carried exactly that at 11:14 ET.
+        # Count it where the record is written, so the contradiction is
+        # attributed to a writer rather than guessed at again — four
+        # hypotheses have already died against this bug.
+        if src == "rest" and age is None:
+            try:
+                import ai_trading as _gt
+                _gt._QUOTE_PATH_STATS["applied_rest_without_age"] += 1
+            except Exception:  # noqa: BLE001
+                pass
     return (float(px) if px else 0.0), src, age
 
 

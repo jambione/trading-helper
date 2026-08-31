@@ -397,6 +397,7 @@ def _latest_ask(symbol: str) -> float | None:
     hit = _cached_quote(symbol)
     if hit is not None and hit[0] is not None:
         if _quote_ts.get(_norm_sym(symbol)) is not None:
+            _QUOTE_PATH_STATS["cache_hit_stamped"] += 1
             return hit[0]
         _QUOTE_PATH_STATS["cache_hit_no_stamp"] += 1
     # desk_actions._latest_ask used to sit here. It makes the SAME
