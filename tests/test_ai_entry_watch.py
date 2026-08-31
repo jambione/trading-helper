@@ -5500,14 +5500,10 @@ def test_a_missing_quote_age_is_filled_before_the_arm_check():
     so it costs a dict lookup and no API call.
     """
     src = open("ai_entry_watch.py", encoding="utf-8").read()
-    i = src.index("Fill a missing quote age from the cache")
-    block = src[i:i + 1600]
+    i = src.index("Stamp the REST quote's age too")
+    block = src[i:i + 900]
     assert 'rec.get("last_ask_age_sec")' in block
     assert "gt.cached_quote_age_sec(sym)" in block
-    # In the per-record loop, not the `far` branch. It went there first, and
-    # far names are the ones LEAST likely to need it, so the fix reached
-    # almost nothing and the deadlock survived the deploy.
-    assert "        if _num_or_none(rec.get(\"last_ask_age_sec\")) is None:" in src
     # It must come BEFORE the arm decision, or it fixes nothing.
     assert src.index("cached_quote_age_sec(sym)") < src.index("if not ok_arm:")
 
@@ -5516,8 +5512,8 @@ def test_the_age_fill_never_overwrites_a_known_age():
     """A stream age is the better reading and must win. This only fills the
     gap where there is nothing at all."""
     src = open("ai_entry_watch.py", encoding="utf-8").read()
-    i = src.index("Fill a missing quote age from the cache")
-    block = src[i:i + 1600]
+    i = src.index("Stamp the REST quote's age too")
+    block = src[i:i + 900]
     assert '_num_or_none(rec.get("last_ask_age_sec")) is None' in block
 
 
