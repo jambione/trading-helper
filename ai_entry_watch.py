@@ -398,7 +398,14 @@ def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
     ).strip().lower()
     if src in ("stale_tape", "none"):
         return True
-    age = rec.get("last_ask_age_sec")
+    # Recomputed from the quote's own timestamp, not read off the record.
+    # poll_once rebuilds the record every cycle, so the stamped age is
+    # routinely gone by the time this guard runs — and because the guard fails
+    # closed on None (rightly), a row was refused as untimed while a provable
+    # age sat in _LAST_QUOTE_TS. 11 rows carried a real age and still read
+    # "no quote age" at 12:56 ET. Falls back to the record's own fields, so a
+    # record priced before the map existed still answers.
+    age = row_quote_age_sec(rec)
     if age is None:
         age = rec.get("price_age_sec")
     try:
@@ -490,7 +497,11 @@ def derive_blocker(
         # it is wearing the first one's label.
         #
         # Display only. Both refuse identically; this names which is which.
-        if _num_or_none(rec.get("last_ask_age_sec")) is None and str(
+        # Asked via row_quote_age_sec so the label matches the guard above:
+        # reading the raw field here reported "no quote age" on 11 rows that
+        # had provable ages of 1.5s-462s, which is the opposite of the
+        # distinction this branch exists to draw.
+        if row_quote_age_sec(rec) is None and str(
                 rec.get("last_ask_src") or "").strip().lower() not in (
                 "", "none", "stale_tape"):
             return "no_quote_age", format_blocker("no_quote_age")

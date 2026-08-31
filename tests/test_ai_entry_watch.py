@@ -5739,3 +5739,34 @@ def test_quote_timestamp_survives_a_record_rebuild(monkeypatch):
                         lambda s, c, n=None: (5.5, "rest", None))
     ew.apply_decision_price({"symbol": "RBLD"}, {}, now + 10.0)
     assert ew.row_quote_age_sec({"symbol": "RBLD"}, now=now + 10.0) is None
+
+
+def test_tape_staleness_guard_uses_the_recomputed_age(monkeypatch):
+    """The gate must ask for the age, not read a field the rebuild wiped.
+
+    _row_tape_stale fails closed on an unknown age, which is correct. But it
+    read rec["last_ask_age_sec"] directly, and poll_once rebuilds the record
+    every cycle — so a row whose clock was provable in _LAST_QUOTE_TS was still
+    refused as untimed. 11 rows carried real ages of 1.5s-462s and read
+    "no quote age" at 12:56 ET on 2026-08-31.
+    """
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {"RBLD": time.time() - 2.0},
+                        raising=False)
+
+    # A rebuilt record: src survived the rebuild, the stamped age did not.
+    rebuilt = {"symbol": "RBLD", "last_ask": 5.0, "last_ask_src": "stream"}
+    assert not ew._row_tape_stale(rebuilt), (
+        "row refused as stale while a 2s age was provable for its symbol")
+
+    # And the label must agree with the guard rather than contradict it.
+    code, _label = ew.derive_blocker(rebuilt, pad_pct=0.0)
+    assert code != "no_quote_age", (
+        "labelled 'no quote age' despite a provable age — the two halves "
+        "must read the same source")
+
+    # Genuinely unprovable still refuses, and still says so.
+    monkeypatch.setattr(ew, "_LAST_QUOTE_TS", {}, raising=False)
+    bare = {"symbol": "NOPE", "last_ask": 5.0, "last_ask_src": "stream"}
+    assert ew._row_tape_stale(bare)
