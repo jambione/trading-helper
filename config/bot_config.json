@@ -145,7 +145,7 @@
   "ai_watch_require_exhaustion_data": false,
   "ai_watch_require_live_pctr": false,
   "ai_watch_require_look_ext": false,
-  "ai_watch_require_realtime_macd": true,
+  "ai_watch_require_realtime_macd": false,
   "ai_watch_require_realtime_rsi": false,
   "ai_watch_require_uptrend": true,
   "ai_watch_seed_momentum": true,
