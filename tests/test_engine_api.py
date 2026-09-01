@@ -24,7 +24,18 @@ import engine_env       # noqa: E402
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """TestClient with the env file + restart flag redirected to tmp_path."""
+    """TestClient with the env file + restart flag redirected to tmp_path.
+
+    Dashboard login is pinned OFF. These tests are about the ENGINE guard —
+    localhost vs proxied vs control secret — which sits behind the dashboard's
+    own auth middleware. That middleware is opt-in via ``require_auth`` in
+    config/secrets.json, so on the mini (auth on, public tunnel) every request
+    here returned 401 before reaching the endpoint and all twelve tests failed,
+    while the same suite passed on a laptop with auth off. A test that reports
+    the operator's secrets.json rather than the guard it names cannot be used
+    to validate a deploy on the box that actually trades.
+    """
+    monkeypatch.setattr(d, "is_auth_required", lambda: False)
     env = tmp_path / "signal_engine.env"
     env.write_text("TRADER_MODE=paper\nTAKE_PROFIT=2.0\n", encoding="utf-8")
     monkeypatch.setattr(engine_env, "ENGINE_ENV_FILE", env)
