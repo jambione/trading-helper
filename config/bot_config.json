@@ -15,7 +15,7 @@
   "ai_entry_broker_target": true,
   "ai_entry_limit_anchor": "ask",
   "ai_entry_limit_ttl_sec": 30.0,
-  "ai_entry_order_style": "limit",
+  "ai_entry_order_style": "market",
   "ai_entry_unconfirmed_ttl_sec": 900.0,
   "ai_eod_liquidate_enabled": true,
   "ai_eod_liquidate_time": "15:50",
