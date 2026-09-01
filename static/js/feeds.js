@@ -837,9 +837,14 @@ function _paintBookLegend(cfg, row) {
          && falling !== true);
 
     const ex = num(r.exhaustion), rising = r.pctr_rising;
-    exh = ex == null ? null
-      : ((ex >= n('ai_watch_exhaustion_heat_min_pct', 40) && rising === true)
-         || ex >= n('ai_watch_ob_flat_min_pct', 99));
+    // Same switch exhaustion_allows_buy uses: rules off → not a gate in force.
+    if (!n('ai_watch_exhaustion_rules', 1)) {
+      exh = null;
+    } else {
+      exh = ex == null ? null
+        : ((ex >= n('ai_watch_exhaustion_heat_min_pct', 40) && rising === true)
+           || ex >= n('ai_watch_ob_flat_min_pct', 99));
+    }
 
     // OR, matching the gate: either leg alone earns the bypass — but the
     // override sits BEHIND the provenance check, so an unusable MACD makes
@@ -882,7 +887,9 @@ function _paintBookLegend(cfg, row) {
 
   const rules = [
     ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`, macd],
-    ['EXH',   `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`, exh],
+    ['EXH',   n('ai_watch_exhaustion_rules', 1)
+                ? `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`
+                : 'not required', exh],
     ['EITHER', `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`, both],
     ['RSI',   n('ai_watch_arm_require_cm_rsi', 0)
                 ? `CM RSI-2 rising${n('ai_watch_arm_cm_rsi_max', 50) < 100
