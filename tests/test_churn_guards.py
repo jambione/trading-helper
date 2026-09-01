@@ -281,17 +281,24 @@ def test_a_dead_tape_is_still_a_stale_quote():
         assert got[0] == "stale_quote", src
 
 
-def test_stale_quote_clears_when_tape_is_fresh_again():
+def test_stale_quote_clears_when_tape_is_fresh_again(monkeypatch):
     """A leftover poller stale_quote must not stick after the print recovers.
 
     Live 2026-09-01: stream + age 24–32s under a 60s ceiling still showed
     block_code=stale_quote because derive_blocker returned the stored refuse
     after _row_tape_stale had already gone false.
+
+    The ceiling is pinned here rather than inherited: _row_tape_stale looks
+    ai_watch_decision_max_age_sec up from the live config and ignores any
+    decision_max_age_sec on the record, so an age chosen to sit under the
+    operator's current setting makes the test pass or fail on bot_config.json
+    instead of on the sticky-refuse bug it exists to catch.
     """
+    monkeypatch.setattr(
+        ew, "_push_cfg", lambda: {"ai_watch_decision_max_age_sec": 60.0})
     got = ew.derive_blocker({
         "last_ask_src": "stream",
         "last_ask_age_sec": 24.0,
-        "decision_max_age_sec": 60.0,
         "block_code": "stale_quote",
         "block_reason": "stale quote",
         "block_detail": "tape age unknown or old",
@@ -381,12 +388,31 @@ def test_off_by_default_keeps_the_fallback():
     assert DEFAULT_CONFIG["ai_watch_exhaustion_engine_only"] is False
 
 
-def test_the_local_only_guard_came_off_with_it():
-    """require_live_pctr demands pctr_src == "live", which is the LOCAL
-    computation's own label. Leaving it on while making the engine
-    authoritative would refuse every engine-sourced reading."""
-    import config
-    c = config.load_config()
-    if c.get("ai_watch_exhaustion_engine_only"):
-        assert not c.get("ai_watch_require_live_pctr"), (
-            "require_live_pctr gates on the local source that is now gone")
+def test_the_engine_stamps_the_label_the_guard_asks_for():
+    """require_live_pctr demands pctr_src == "live", and the ENGINE path is
+    what stamps it — so the two may be on together.
+
+    This test used to assert the opposite: that engine_only forces
+    require_live_pctr off, on the reading that "live" was the local
+    computation's own label. It is not. refresh_engine_exh stamps
+    pctr_src="live" from the engine's own reading once stream_bars has 21
+    minutes of history; the fallbacks are what carry "alpaca",
+    "clock_range" and "sparse_window", and refusing those is the whole
+    point of the knob. The ledger says so directly — with engine_only and
+    require_live_pctr both true, 9/42 fills on 2026-08-31 pm and 29/42 on
+    2026-09-01 logged pctr_src="live", so the pair admits names rather than
+    refusing every one.
+
+    What is worth pinning is that the producer and the gate keep naming the
+    same label. If either side is renamed alone, the gate silently refuses
+    everything and this fails.
+    """
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("def refresh_engine_exh")
+    body = src[i:i + 2600]
+    assert 'ind["pctr_src"] = "live"' in body, (
+        "the engine path must stamp the label require_live_pctr gates on")
+    j = src.index('cfg.get("ai_watch_require_live_pctr"')
+    gate = src[j:j + 400]
+    assert 'src != "live"' in gate, (
+        "the gate must still ask for the label refresh_engine_exh stamps")

@@ -31,24 +31,42 @@ import config as _config  # noqa: E402
 
 
 def _rec(pctr):
+    # pctr_src is the engine's own label for a real rolling reading; GAP's
+    # was one. Without it ai_watch_require_live_pctr refuses the record
+    # before the exemption is ever reached, and these tests stop being
+    # about the exemption.
     return {"symbol": "X", "indicator": {
         "pctr": pctr, "pctr_rising": False, "pctr_falling": False,
+        "pctr_src": "live",
         "macd_src": "realtime", "macd_age_sec": 1.0, "macd_gap": 0.02,
         "macd_sep_ratio": 2.0, "macd_bull": True,
         "macd_gap_rising": True, "macd_gap_falling": False}}
 
 
+def _exh_cfg():
+    """The operator's config with the EXH rules forced ON.
+
+    These two tests assert what exhaustion_allows_buy decides. Reading
+    ai_watch_exhaustion_rules off the live file makes them assert whether
+    the desk currently consults EXH at all, which is a different question
+    and one that flips with a knob (it went false on 2026-09-01).
+    """
+    c = dict(_config.load_config())
+    c["ai_watch_exhaustion_rules"] = True
+    return c
+
+
 # ── the flat-OB exemption is for the ceiling only ────────────────────────
 
 def test_a_pinned_reading_still_gets_the_exemption():
-    c = _config.load_config()
+    c = _exh_cfg()
     assert ew.exhaustion_allows_buy(_rec(-0.0), c) == (
         True, "overbought_macd_armed")
 
 
 def test_gap_at_eighty_percent_is_refused():
     """The trade that prompted this. Nineteen points of headroom and flat."""
-    c = _config.load_config()
+    c = _exh_cfg()
     ok, why = ew.exhaustion_allows_buy(_rec(-19.3), c)
     assert ok is False
     assert why == "not_rising_overbought"
