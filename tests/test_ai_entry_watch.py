@@ -1673,6 +1673,13 @@ def test_poll_once_does_not_clobber_a_concurrent_sync(tmp_path, monkeypatch):
 
 
 def _zone_cfg(**over):
+    # ai_watch_zone_variable off. ai_watch_zone_mode only chooses whether the
+    # DOUBLE-BOTTOM branch runs; the pullback band is gated separately by
+    # ai_watch_zone_variable (default True) and always calls symbol_ohlc. So on
+    # a box with a warm bar cache — which the mini always has — these tests took
+    # the pullback_band path and asserted offset geometry against it
+    # (entry_high 52.639 vs the 51.793 the offset rule gives). The zone tests
+    # are about the % geometry; the bar-derived band has its own coverage.
     cfg = {
         "ai_watch_synth_zone_enabled": True,
         "ai_watch_zone_offset_pct": 2.0,
@@ -1680,6 +1687,7 @@ def _zone_cfg(**over):
         "ai_watch_synth_stop_pct": 5.0,
         "ai_watch_synth_rr": 1.5,
         "ai_watch_synth_reanchor_pct": 0.0,
+        "ai_watch_zone_variable": False,
     }
     cfg.update(over)
     return cfg

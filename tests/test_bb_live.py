@@ -455,11 +455,19 @@ def test_call_outs_never_touch_mentions():
     assert dash.STATE.mention_daily == before
 
 
-def test_ingest_endpoint_accepts_bb_live():
-    """The producer's POST body reaches STATE — the seam the OCR source uses."""
+def test_ingest_endpoint_accepts_bb_live(monkeypatch):
+    """The producer's POST body reaches STATE — the seam the OCR source uses.
+
+    Login is pinned off: dashboard auth is opt-in via require_auth in
+    config/secrets.json, and _AuthMiddleware's loopback exemption for
+    /api/discord/ingest checks request.client.host, which TestClient reports
+    as "testclient". So on the mini (auth on) this returned 401 before
+    reaching the route, while the same test passed on a laptop with auth off.
+    """
     from fastapi.testclient import TestClient
 
     dash = _fresh_dashboard()
+    monkeypatch.setattr(dash, "is_auth_required", lambda: False)
     with TestClient(dash.app) as client:
         r = client.post("/api/discord/ingest", json={
             "alerts": [],
@@ -469,10 +477,11 @@ def test_ingest_endpoint_accepts_bb_live():
     assert dash.bb_live_snapshot()["current"]["ticker"] == "NRXP"
 
 
-def test_ingest_endpoint_survives_a_malformed_bb_live_field():
+def test_ingest_endpoint_survives_a_malformed_bb_live_field(monkeypatch):
     from fastapi.testclient import TestClient
 
     dash = _fresh_dashboard()
+    monkeypatch.setattr(dash, "is_auth_required", lambda: False)
     with TestClient(dash.app) as client:
         r = client.post("/api/discord/ingest", json={"alerts": [], "bb_live": "nope"})
     assert r.status_code == 200
