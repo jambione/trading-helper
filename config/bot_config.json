@@ -101,6 +101,7 @@
   "ai_watch_arm_require_cm_rsi": true,
   "ai_watch_arm_require_indicators": false,
   "ai_watch_arm_require_macd": true,
+  "ai_watch_arm_require_stream_price": true,
   "ai_watch_armable_zone_kinds": [
     "double_bottom",
     "pullback_band"
@@ -145,7 +146,7 @@
   "ai_watch_require_exhaustion_data": false,
   "ai_watch_require_live_pctr": true,
   "ai_watch_require_look_ext": false,
-  "ai_watch_require_realtime_macd": false,
+  "ai_watch_require_realtime_macd": true,
   "ai_watch_require_realtime_rsi": true,
   "ai_watch_require_uptrend": true,
   "ai_watch_seed_momentum": true,

@@ -214,6 +214,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "rsi_not_rising": "RSI↓",
     "rsi_extended": "RSI high",
     "stale_quote": "stale quote",
+    # Entry-only: ai_watch_arm_require_stream_price refused a non-stream print.
+    "stream_required": "need stream",
     # MACD momentum validation refusals
     "no_macd_data": "no MACD",
     # Provenance refusals — the reading exists but was not drawn on
@@ -425,6 +427,22 @@ def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
     return age_f > decision_max_age_sec(cfg)
 
 
+def stream_price_required_block(px_src: str | None, cfg: dict | None) -> str | None:
+    """Entry-only: when ``ai_watch_arm_require_stream_price``, require stream.
+
+    Returns ``"stream_required"`` for rest / stale_tape / none / anything that
+    is not a fresh ``stream`` print; ``None`` when the flag is off or src is
+    ``stream``. Staleness of a stream print is still the caller's
+    ``stale_tape`` / ``_row_tape_stale`` path — ``decision_price`` only emits
+    ``stream`` when the tape is within the decision max age.
+    """
+    if not bool((cfg or {}).get("ai_watch_arm_require_stream_price", False)):
+        return None
+    if str(px_src or "").strip().lower() == "stream":
+        return None
+    return "stream_required"
+
+
 def _poller_blocked(rec: dict) -> bool:
     """True when the last poll recorded a real reason it would not buy.
 
@@ -441,11 +459,22 @@ def _poller_blocked(rec: dict) -> bool:
     if _row_tape_stale(rec):
         return True
     code = str(rec.get("block_code") or "").strip().lower()
+    # Poller-stamped stream_required stays a real veto until the decision
+    # print is stream again. Do not re-read live bot_config here — that
+    # would make unit tests (and book paint) depend on whatever the desk
+    # file currently says. Enforcement lives in the poll/pre-place path.
+    if code == "stream_required":
+        src = str(
+            rec.get("last_ask_src") or rec.get("price_src") or ""
+        ).strip().lower()
+        if src != "stream":
+            return True
     # Tape is fresh (check above). A leftover data-condition refuse is not a
     # real poller veto — same rule as derive_blocker fall-through.
     if not code or code in (
         "in_zone", "placing", "at_last",
         "stale_quote", "no_quote_age", "no_quote",
+        "stream_required",
     ):
         return False
     if code.startswith("last_") or code.startswith("zone_"):
@@ -516,6 +545,15 @@ def derive_blocker(
     stored = rec.get("block_code") or rec.get("block_reason")
     if stored:
         code = str(rec.get("block_code") or stored).strip().lower()
+        # Poller-stamped stream_required: keep it visible while the print is
+        # still rest/stale/none. Once last_ask_src is stream, fall through so
+        # the column can recompute (same pattern as stale_quote recovery).
+        if code == "stream_required":
+            src = str(
+                rec.get("last_ask_src") or rec.get("price_src") or ""
+            ).strip().lower()
+            if src != "stream":
+                return code, format_blocker(code)
         # Poller may have stamped below_zone before the print recovered into
         # the armable dip window; re-evaluate geometry so the column is not
         # stuck on a stale below while price is still a valid buy.
@@ -523,10 +561,12 @@ def derive_blocker(
         # Same for tape-data refuses: stale_quote / no_quote_age must clear
         # once _row_tape_stale is false. Keeping them in `stored` locked
         # stream+young-age rows on "stale quote" after the 60s ceiling
-        # recovered the print (2026-09-01).
+        # recovered the print (2026-09-01). stream_required clears the same
+        # way once last_ask_src is stream again.
         if code in (
             "below_zone", "above_zone", "in_zone",
             "stale_quote", "no_quote_age", "no_quote",
+            "stream_required",
         ):
             pass  # fall through to live geometry / arm checks below
         else:
@@ -701,6 +741,20 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
         row["block_reason"] = row["blocker"]
         if not row.get("block_detail"):
             row["block_detail"] = "tape age unknown or old"
+        return
+    # Keep a poller-stamped stream_required refuse until the print is stream.
+    # Do not re-derive the flag from live bot_config here (tests / paint).
+    _src_now = str(
+        row.get("last_ask_src") or row.get("price_src") or ""
+    ).strip().lower()
+    if (str(row.get("block_code") or "").strip().lower() == "stream_required"
+            and _src_now != "stream"):
+        row["ready"] = False
+        row["block_code"] = "stream_required"
+        row["blocker"] = format_blocker("stream_required")
+        row["block_reason"] = row["blocker"]
+        if not row.get("block_detail"):
+            row["block_detail"] = _src_now or "not_stream"
         return
     stored = str(row.get("block_code") or "").strip()
     keep = stored in _POST_ARM_BLOCK_CODES
@@ -9747,10 +9801,21 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # Tape recovered: drop the data-condition refuse so State and ready
         # can recompute. Without this, derive_blocker kept returning the
         # stored stale_quote after a fresh stream print landed.
+        # stream_required clears the same way once px_src is stream.
         if str(rec.get("block_code") or "").strip().lower() in (
             "stale_quote", "no_quote_age", "no_quote",
+            "stream_required",
         ):
             clear_block_reason(rec)
+
+        # Entry-only: refuse REST (and any non-stream) when the desk demands
+        # a live stream print to arm. Same sites as the stale_tape block above
+        # and the pre-place refresh_arm_market_data checks below.
+        _sr = stream_price_required_block(px_src, cfg)
+        if _sr:
+            set_block_reason(rec, _sr, now=t0, detail=px_src or "not_stream")
+            touched[sym] = rec
+            continue
 
         # Arm / buy
         try:
@@ -9908,6 +9973,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if ask_f <= 0 or px_src in ("none", "stale_tape"):
             _skip("stale_quote", detail=px_src or "arm_refresh")
             continue
+        _sr = stream_price_required_block(px_src, cfg)
+        if _sr:
+            _skip(_sr, detail=px_src or "not_stream")
+            continue
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
             _arm_streak(rec, False)
@@ -10044,6 +10113,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             rec, cfg, t0, gt=gt, sig=indicators.get(sym))
         if ask_f <= 0 or px_src2 in ("none", "stale_tape"):
             _skip("stale_quote", detail=px_src2)
+            continue
+        _sr2 = stream_price_required_block(px_src2, cfg)
+        if _sr2:
+            _skip(_sr2, detail=px_src2 or "not_stream")
             continue
         if bid2_f is None:
             bid2_f = bid_f

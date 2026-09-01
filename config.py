@@ -88,6 +88,12 @@ DEFAULT_CONFIG = {
     # 0 = source check only, no age ceiling. Live desk sets 30s so a
     # "realtime" bar that has not printed in half a minute cannot arm.
     "ai_watch_macd_max_age_sec":       0.0,
+    # Entry-only: refuse to arm/place unless decision_price / refresh_arm
+    # market data returned px_src == "stream" (fresh tape). REST / stale_tape
+    # / none are blocked as stream_required. Default False so unit tests and
+    # paper configs keep existing rest-fallback behaviour; live bot_config
+    # turns it on.
+    "ai_watch_arm_require_stream_price": False,
 
     # ── Signal: volume surge ─────────────────────────────────
     "volume_surge_mult": 1.5,
@@ -1503,6 +1509,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_max_entries_per_symbol_day",
     "ai_watch_require_live_pctr",
     "ai_watch_require_realtime_macd",
+    "ai_watch_arm_require_stream_price",
     "ai_local_trail_be_at_r",
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_trade_price_only",

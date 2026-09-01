@@ -18,8 +18,12 @@ def test_watch_config_defaults_present():
         "ai_entry_zone_pad_pct",
         "ai_max_structure_calls_per_hour",
         "ai_persist_entry_decisions",
+        "ai_watch_arm_require_stream_price",
     ):
         assert key in DEFAULT_CONFIG
+    # Code default False so tests / paper keep REST fallback; live bot_config
+    # turns the stream-only arm gate on.
+    assert DEFAULT_CONFIG["ai_watch_arm_require_stream_price"] is False
     cfg = load_config()
     assert cfg["ai_watch_enabled"] is True
     # Live bot_config may flip agreement; defaults document the knobs.
@@ -4054,6 +4058,49 @@ def test_decision_price_stale_tape_when_no_rest(monkeypatch):
     monkeypatch.setattr(gt, "_latest_ask", lambda s: None)
     px, src, age = ew.decision_price("FGI", {"ai_watch_decision_max_age_sec": 8.0})
     assert px == 10.28 and src == "stale_tape" and age == 40.0
+
+
+
+def test_stream_price_required_block_rest_vs_stream():
+    """ai_watch_arm_require_stream_price: rest blocked, stream allowed."""
+    import ai_entry_watch as ew
+
+    off = {}
+    assert ew.stream_price_required_block("rest", off) is None
+    assert ew.stream_price_required_block("stream", off) is None
+    assert ew.stream_price_required_block("stale_tape", off) is None
+
+    on = {"ai_watch_arm_require_stream_price": True}
+    assert ew.stream_price_required_block("stream", on) is None
+    assert ew.stream_price_required_block("rest", on) == "stream_required"
+    assert ew.stream_price_required_block("stale_tape", on) == "stream_required"
+    assert ew.stream_price_required_block("none", on) == "stream_required"
+    assert ew.stream_price_required_block(None, on) == "stream_required"
+    assert ew.format_blocker("stream_required") == "need stream"
+
+
+def test_apply_tape_blocker_keeps_stream_required_until_stream(monkeypatch):
+    """Poller-stamped stream_required stays until last_ask_src is stream."""
+    import ai_entry_watch as ew
+
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    row = {
+        "symbol": "LIVE", "source": "momentum",
+        "entry_low": 9.596, "entry_high": 9.624, "stop_price": 9.13,
+        "zone_kind": "at_last",
+        "last_ask_src": "rest", "last_ask_age_sec": 1.0,
+        "block_code": "stream_required", "blocker": "need stream",
+    }
+    ew.apply_tape_blocker(row, 9.61)
+    assert row["ready"] is False
+    assert row["block_code"] == "stream_required"
+
+    row["last_ask_src"] = "stream"
+    row["last_ask_age_sec"] = 1.0
+    ew.apply_tape_blocker(row, 9.61)
+    assert row["ready"] is True
+    assert row["block_code"] == "in_zone"
 
 
 def test_live_exhaustion_range_fallback_for_thin_tape():
