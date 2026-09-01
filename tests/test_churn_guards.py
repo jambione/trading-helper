@@ -281,6 +281,28 @@ def test_a_dead_tape_is_still_a_stale_quote():
         assert got[0] == "stale_quote", src
 
 
+def test_stale_quote_clears_when_tape_is_fresh_again():
+    """A leftover poller stale_quote must not stick after the print recovers.
+
+    Live 2026-09-01: stream + age 24–32s under a 60s ceiling still showed
+    block_code=stale_quote because derive_blocker returned the stored refuse
+    after _row_tape_stale had already gone false.
+    """
+    got = ew.derive_blocker({
+        "last_ask_src": "stream",
+        "last_ask_age_sec": 24.0,
+        "decision_max_age_sec": 60.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+        "block_detail": "tape age unknown or old",
+        "entry_low": 10.0,
+        "entry_high": 11.0,
+        "last_ask": 10.5,
+        "status": "watching",
+    })
+    assert got[0] != "stale_quote", got
+
+
 def test_the_new_label_is_display_only():
     """Both refuse identically. This names which is which; it must not add a
     gate — should_arm_buy does not consult tape staleness, so an early skip

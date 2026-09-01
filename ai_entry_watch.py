@@ -510,12 +510,20 @@ def derive_blocker(
 
     stored = rec.get("block_code") or rec.get("block_reason")
     if stored:
-        code = str(rec.get("block_code") or stored)
+        code = str(rec.get("block_code") or stored).strip().lower()
         # Poller may have stamped below_zone before the print recovered into
         # the armable dip window; re-evaluate geometry so the column is not
         # stuck on a stale below while price is still a valid buy.
-        if code in ("below_zone", "above_zone", "in_zone"):
-            pass  # fall through to live geometry below
+        #
+        # Same for tape-data refuses: stale_quote / no_quote_age must clear
+        # once _row_tape_stale is false. Keeping them in `stored` locked
+        # stream+young-age rows on "stale quote" after the 60s ceiling
+        # recovered the print (2026-09-01).
+        if code in (
+            "below_zone", "above_zone", "in_zone",
+            "stale_quote", "no_quote_age", "no_quote",
+        ):
+            pass  # fall through to live geometry / arm checks below
         else:
             label = str(rec.get("block_reason") or format_blocker(code) or code)
             return code, label
@@ -9716,6 +9724,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # Any usable quote clears the stale streak — the drop above is for
         # names the feed cannot price at all, not for a quiet minute.
         rec.pop("stale_tape_streak", None)
+        # Tape recovered: drop the data-condition refuse so State and ready
+        # can recompute. Without this, derive_blocker kept returning the
+        # stored stale_quote after a fresh stream print landed.
+        if str(rec.get("block_code") or "").strip().lower() in (
+            "stale_quote", "no_quote_age", "no_quote",
+        ):
+            clear_block_reason(rec)
 
         # Arm / buy
         try:
