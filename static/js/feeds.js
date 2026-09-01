@@ -814,6 +814,18 @@ function _paintBookLegend(cfg, row) {
     const v = Number(c[k]);
     return Number.isFinite(v) ? v : d;
   };
+  // Not every criterion is a number. ai_eod_liquidate_time is "15:50" and
+  // ai_entry_order_style is "market"; both went through n() before, where
+  // Number("15:45") is NaN and the legend fell back to the hardcoded 15:50 —
+  // it could not have shown a changed flatten time at all.
+  const s = (k, d) => {
+    const v = c[k];
+    return (v === undefined || v === null || v === '') ? d : String(v);
+  };
+  const b = (k, d) => {
+    const v = c[k];
+    return (v === undefined || v === null) ? !!d : !!v;
+  };
   const r = row && typeof row === 'object' ? row : null;
   const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 
@@ -885,33 +897,80 @@ function _paintBookLegend(cfg, row) {
          && mAge <= n('ai_watch_macd_max_age_sec', 30));
   }
 
-  const rules = [
-    ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.5)}× &nbsp;·&nbsp; opening`, macd],
+  // ENTRY. Evaluated against the selected row where the inputs exist.
+  const entry = [
+    ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.0)}× &nbsp;·&nbsp; opening`, macd],
     ['EXH',   n('ai_watch_exhaustion_rules', 1)
                 ? `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`
                 : 'not required', exh],
     ['EITHER', `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`, both],
     ['RSI',   n('ai_watch_arm_require_cm_rsi', 0)
-                ? `CM RSI-2 rising${n('ai_watch_arm_cm_rsi_max', 50) < 100
-                    ? ` &nbsp;·&nbsp; ${n('ai_watch_arm_cm_rsi_min', 0)}–${n('ai_watch_arm_cm_rsi_max', 50)} band` : ''}`
+                ? `CM RSI-2 rising${n('ai_watch_arm_cm_rsi_max', 100) < 100
+                    ? ` &nbsp;·&nbsp; ${n('ai_watch_arm_cm_rsi_min', 0)}–${n('ai_watch_arm_cm_rsi_max', 100)} band` : ''}`
                   + `${n('ai_watch_arm_cm_rsi_allow_falling_below', 0) > 0
                     ? ` &nbsp;·&nbsp; or falling under ${n('ai_watch_arm_cm_rsi_allow_falling_below', 0)} with EXH rising` : ''}`
                 : 'not required', rsi],
-    ['FRESH', `MACD on the live tape &nbsp;·&nbsp; price ≤ ${n('ai_watch_decision_max_age_sec', 8)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 30)}s`, fresh],
-    ['HOLD',  `${n('ai_watch_arm_confirm_ticks', 1)} polls to arm &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold`, null],
-    ['EXIT',  `trail ${n('ai_local_trail_give_max_pct', 0)}% &nbsp;·&nbsp; BE at ${n('ai_local_trail_be_at_pct', 0)}% &nbsp;·&nbsp; dead ${n('ai_dead_trade_min', 15)}m &nbsp;·&nbsp; EOD ${n('ai_eod_liquidate_time', '15:50')}`, null],
+    // Provenance is a gate, not a footnote: %R and RSI are refused outright
+    // when they did not come off the live tape, so the legend has to say so
+    // or it describes a looser desk than the one running.
+    ['FRESH', `price ≤ ${n('ai_watch_decision_max_age_sec', 15)}s &nbsp;·&nbsp; MACD ≤ ${n('ai_watch_macd_max_age_sec', 60)}s`
+                + `${b('ai_watch_require_realtime_macd', 0) ? ' on the live tape' : ' (REST ok)'}`
+                + `${b('ai_watch_require_live_pctr', 0) ? ' &nbsp;·&nbsp; %R live' : ''}`
+                + `${b('ai_watch_require_realtime_rsi', 0) ? ' &nbsp;·&nbsp; RSI realtime' : ''}`, fresh],
+    ['SETUP', `R:R ≥ ${n('ai_min_reward_risk', 0.5)} &nbsp;·&nbsp; stop ≥ ${n('ai_watch_min_stop_pct', 1.5)}% `
+                + `&nbsp;·&nbsp; 1R = ${n('ai_watch_synth_stop_pct', 5)}% of price`, null],
+    ['ARM',   `${n('ai_watch_arm_confirm_ticks', 1)} agreeing polls &nbsp;·&nbsp; ${n('ai_exit_min_hold_sec', 0)}s min hold after fill`, null],
+    // The brakes. These refuse before price is looked at, so a row can clear
+    // every rule above and still not open.
+    ['BRAKE', `≤ ${n('ai_watch_max_entries_per_symbol_day', 0) || '∞'}/name/day &nbsp;·&nbsp; ${n('ai_reentry_cooldown_sec', 0)}s cooldown`
+                + `${b('ai_dead_reentry_block', 0)
+                    ? ` &nbsp;·&nbsp; no re-entry after a red exit under ${n('ai_reentry_min_mfe_r', 0.5)}R` : ''}`
+                + ` &nbsp;·&nbsp; stop at −${n('ai_daily_loss_limit_r', 0)}R`, null],
+    ['SIZE',  `${s('ai_entry_order_style', 'limit')} &nbsp;·&nbsp; ${n('ai_risk_pct', 1)}% risk &nbsp;·&nbsp; ${n('ai_max_positions', 0)} open`
+                + ` &nbsp;·&nbsp; ${n('ai_max_buys_per_poll', 0)}/poll &nbsp;·&nbsp; abort ${n('ai_fill_abort_r', 0)}R through`, null],
+  ];
+
+  // EXIT. Informational — these describe an open position, not this row.
+  //
+  // The shelf is the one line that must be COMPUTED rather than quoted. The
+  // give is min(give_r × R, give_max_pct% of price) and R is synth_stop_pct%
+  // of price, so the cap converts to give_max_pct/synth_stop_pct in R and the
+  // smaller of the two is what actually trails. Printing give_max_pct alone
+  // said "0.5%" while the shelf was really a flat 0.10R, and printing give_r
+  // alone said 0.2R — both true about a knob, neither true about the desk.
+  const _capR = n('ai_watch_synth_stop_pct', 5) > 0
+    ? n('ai_local_trail_give_max_pct', 0) / n('ai_watch_synth_stop_pct', 5)
+    : 0;
+  const _giveR = n('ai_local_trail_give_max_pct', 0) > 0
+    ? Math.min(n('ai_local_trail_give_r', 0), _capR)
+    : n('ai_local_trail_give_r', 0);
+  const exit = [
+    ['SHELF', b('ai_local_trail_enabled', 1)
+                ? `peak − ${(Math.round(_giveR * 1000) / 1000)}R`
+                  + ` &nbsp;(min of give ${n('ai_local_trail_give_r', 0)}R, cap ${n('ai_local_trail_give_max_pct', 0)}% of price)`
+                  + ` &nbsp;·&nbsp; arms at ${n('ai_local_trail_arm_r', 0)}R`
+                : 'off', null],
+    ['STOP',  `${b('ai_broker_stop_enabled', 0) ? 'broker stop' : 'software'} 1R`
+                + ` &nbsp;=&nbsp; ${n('ai_watch_synth_stop_pct', 5)}% under entry`, null],
+    ['BE',    `floor at fill +$${n('ai_breakeven_offset_px', 0)} once ${n('ai_local_trail_be_at_r', 0)}R or ${n('ai_local_trail_be_at_pct', 0)}%`, null],
+    ['DEAD',  `${n('ai_dead_trade_min', 0)}m held with MFE under ${n('ai_dead_trade_mfe_r', 0)}R`, null],
+    ['STALE', `no live quote for ${n('ai_stale_data_max_age_sec', 15)}s → close`, null],
+    ['EOD',   b('ai_eod_liquidate_enabled', 1) ? `flatten at ${s('ai_eod_liquidate_time', '15:50')}` : 'no EOD flatten', null],
   ];
 
   const head = r
     ? `<div class="lg-head">${_esc(String(r.symbol || ''))} — tap the row again to clear</div>`
     : '';
-  const html = head + rules.map(([k, v, ok]) => {
+  const paint = (list) => list.map(([k, v, ok]) => {
     const cls = ok === true ? ' lg-pass' : ok === false ? ' lg-fail' : '';
     const mark = !r || ok == null ? '' :
       `<span class="lg-mark">${ok ? '✓' : '✗'}</span>`;
     return `<div class="lg-row${cls}"><span class="lg-k">${k}</span>`
       + `<span class="lg-v">${v}</span>${mark}</div>`;
   }).join('');
+  const html = head
+    + '<div class="lg-sec">ENTRY — all must pass</div>' + paint(entry)
+    + '<div class="lg-sec">EXIT — any one fires</div>' + paint(exit);
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 

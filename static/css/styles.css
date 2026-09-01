@@ -2437,6 +2437,18 @@ body.mobile [data-tv-toggle-btn] {
   letter-spacing: 0.06em;
   padding-bottom: 3px;
 }
+/* ENTRY / EXIT divider. The two halves are different logic — entry gates are
+   an AND, exits are an OR — so they must not read as one flat list. */
+.ai-book-legend .lg-sec {
+  color: #6f6490;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-size: 9px;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--line, #322d42);
+  margin-top: 3px;
+}
+.ai-book-legend .lg-sec:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
 .ai-book-legend .lg-row { position: relative; }
 .ai-book-legend .lg-mark {
   position: absolute;

@@ -32,6 +32,21 @@ KEYS = [
     "ai_watch_arm_confirm_ticks", "ai_exit_min_hold_sec",
     "ai_local_trail_give_max_pct", "ai_local_trail_be_at_pct",
     "ai_dead_trade_min", "ai_eod_liquidate_time",
+    # The rest of what the legend now claims. A criterion the operator can
+    # change must be READ, not described: the attempt cap and the re-entry
+    # pair refuse before price is looked at, give_r is the other half of the
+    # shelf width, and be_at_r the other half of the breakeven floor.
+    "ai_watch_max_entries_per_symbol_day", "ai_reentry_cooldown_sec",
+    "ai_dead_reentry_block", "ai_reentry_min_mfe_r", "ai_daily_loss_limit_r",
+    "ai_max_positions", "ai_max_buys_per_poll", "ai_fill_abort_r",
+    "ai_entry_order_style", "ai_risk_pct",
+    "ai_local_trail_give_r", "ai_local_trail_arm_r", "ai_local_trail_enabled",
+    "ai_local_trail_be_at_r", "ai_breakeven_offset_px",
+    "ai_watch_synth_stop_pct", "ai_min_reward_risk", "ai_watch_min_stop_pct",
+    "ai_dead_trade_mfe_r", "ai_stale_data_max_age_sec",
+    "ai_broker_stop_enabled", "ai_eod_liquidate_enabled",
+    "ai_watch_require_live_pctr", "ai_watch_require_realtime_rsi",
+    "ai_watch_require_realtime_macd",
 ]
 
 
@@ -62,7 +77,8 @@ def test_no_threshold_is_written_by_hand():
     rules = [l for l in body.split("\n") if re.search(r"^\s*\['[A-Z]+',", l)]
     assert rules, "no rule rows found"
     for l in rules:
-        assert "n('" in l, f"rule row has no config lookup: {l.strip()[:70]}"
+        assert any(a in l for a in ("n('", "s('", "b('")), (
+            f"rule row has no config lookup: {l.strip()[:70]}")
 
 
 def test_the_container_exists_under_the_rows():
@@ -121,8 +137,18 @@ def test_a_non_live_macd_fails_fresh_outright():
 
 def test_fresh_says_it_covers_the_tape():
     """The row has to name what it now checks, or the panel is accurate and
-    still unreadable."""
-    assert "MACD on the live tape" in _JS
+    still unreadable.
+
+    Provenance is conditional now: MACD may run on the REST fallback
+    (ai_watch_require_realtime_macd is false), while %R and CM RSI-2 are
+    refused outright unless they came off the live tape. The row states
+    whichever is in force rather than one fixed sentence.
+    """
+    body = _legend()
+    assert "on the live tape" in body and "(REST ok)" in body, (
+        "FRESH must say which way MACD provenance is set")
+    assert "%R live" in body and "RSI realtime" in body, (
+        "FRESH must name the two provenance gates that refuse outright")
 
 
 def test_unknown_provenance_is_not_treated_as_live():
@@ -173,10 +199,18 @@ def test_every_knob_the_legend_prints_is_on_the_wire():
 
 
 def test_the_legend_renders_the_entry_and_exit_separation_from_config():
-    """Verify live rendering of entry separation and exit configuration."""
+    """Verify live rendering of entry separation and exit configuration.
+
+    The flatten time goes through s(), not n(). It is "15:50" — a string —
+    and Number("15:50") is NaN, so reading it with n() always fell through to
+    the hardcoded fallback. The legend could not have shown a changed flatten
+    time, which is exactly the drift this file exists to prevent.
+    """
     assert "n('macd_sep_mult'" in _JS
     assert "n('ai_dead_trade_min'" in _JS
-    assert "n('ai_eod_liquidate_time'" in _JS
+    assert "s('ai_eod_liquidate_time'" in _JS
+    assert "n('ai_eod_liquidate_time'" not in _JS, (
+        "a non-numeric knob read through n() renders its fallback forever")
     from config import SAFE_CONFIG_KEYS
     for k in ("macd_sep_mult", "ai_dead_trade_min", "ai_eod_liquidate_time"):
         assert k in SAFE_CONFIG_KEYS, f"{k} never reaches the browser"

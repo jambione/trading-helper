@@ -1496,6 +1496,14 @@ SAFE_CONFIG_KEYS = [
     "ai_edge_mode",
     "ai_exit_left_overbought",
     "ai_watch_exhaustion_rules",
+    # Published so the book legend can state the live entry/exit criteria
+    # instead of a fallback. The attempt cap and the dead-reentry pair are
+    # entry gates the operator changed on 2026-09-01; be_at_r is the other
+    # half of the breakeven floor (be_at_pct alone told half the story).
+    "ai_watch_max_entries_per_symbol_day",
+    "ai_watch_require_live_pctr",
+    "ai_watch_require_realtime_macd",
+    "ai_local_trail_be_at_r",
     "ai_watch_exhaustion_live",
     "ai_watch_exhaustion_trade_price_only",
     "ai_watch_stream_bars_live",
