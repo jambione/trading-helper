@@ -1053,7 +1053,7 @@ const _MACD_BLOCKER_LABELS = {
   'macd_gap_insufficient': 'MACD gap low',
   'no_macd_data': 'no MACD',
   'macd_no_recent_cross': 'wait cross',
-  'macd_bullish_gap': 'buy',
+  'macd_bullish_gap': 'ready',
 };
 
 const _MACD_BLOCKER_DESCRIPTIONS = {
@@ -1082,14 +1082,15 @@ function _bookBlockerLabel(r) {
     return _MACD_BLOCKER_LABELS[code];
   }
 
-  // A real refuse (heat low, dead today) wins over leftover "in zone" / buy.
-  if (b && !(r.ready) && !['in zone', 'in_zone', 'buy'].includes(b.toLowerCase()) && code !== 'in_zone') {
+  // A real refuse (heat low, dead today) wins over leftover "in zone" / ready.
+  if (b && !(r.ready) && !['in zone', 'in_zone', 'buy', 'ready'].includes(b.toLowerCase()) && code !== 'in_zone') {
     return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
   }
   if (code && !r.ready && !['in_zone', 'placing'].includes(code)) {
     return _MACD_BLOCKER_LABELS[code] || b || code.replace(/_/g, ' ');
   }
-  if (r.ready || phase === 'ready') return 'buy';
+  // Armable, not filled — never say "buy" here (that read as an open).
+  if (r.ready || phase === 'ready') return 'ready';
   if (b) return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
   if (detail) return detail;
   return 'watching';
@@ -1116,7 +1117,7 @@ function _bookBlockerClass(r) {
   if (phase === 'open' || (r && r.is_position)) return 'ai-book-status ai-book-status--open';
   if (phase === 'submitted') return 'ai-book-status ai-book-status--sent';
   const label = _bookBlockerLabel(r).toLowerCase();
-  if (r && r.ready && (label === 'buy' || label === 'in zone' || label === 'placing' || label === 'placing…')) {
+  if (r && r.ready && (label === 'ready' || label === 'buy' || label === 'in zone' || label === 'placing' || label === 'placing…')) {
     return 'ai-book-status ai-book-status--ready';
   }
   if (label && label !== 'watching' && label !== '—') {
@@ -1251,7 +1252,7 @@ function _updateBookRow(el, r) {
     plEl.className = `cell-pl ${isOpen ? _plClass(r) : ''}`.trim();
   }
   el.classList.toggle('feed-row--ai-open', isOpen);
-  el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'buy');
+  el.classList.toggle('feed-row--ai-ready', phase === 'ready' || statusLabel === 'ready' || statusLabel === 'buy');
   if (el.title) el.title = '';
 }
 
@@ -1277,7 +1278,7 @@ function _bookRowHtml(r) {
   const plCls = isOpen ? _plClass(r) : '';
   const rowCls = isOpen
     ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-open'
-    : ((phase === 'ready' || statusLabel === 'buy')
+    : ((phase === 'ready' || statusLabel === 'ready' || statusLabel === 'buy')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`

@@ -155,14 +155,15 @@ _BLOCKER_LABELS: dict[str, str] = {
     "trader_not_ready": "trader off",
     "not_watching": "not watching",
     "placing": "placing…",
-    "in_zone": "buy",
-    "at_last": "buy",
-    "last_exhaustion_off": "buy",
-    "last_no_exhaustion_fallback": "buy",
-    "last_overbought_hot": "buy",
-    "last_overbought": "buy",
-    "last_heating": "buy",
-    "last_in_zone_fade_ok": "buy",
+    # Armable paint — not an open. "buy" made State look like a fill.
+    "in_zone": "ready",
+    "at_last": "ready",
+    "last_exhaustion_off": "ready",
+    "last_no_exhaustion_fallback": "ready",
+    "last_overbought_hot": "ready",
+    "last_overbought": "ready",
+    "last_heating": "ready",
+    "last_in_zone_fade_ok": "ready",
     "last_late_hold": "late hold",
     "late_hold_closed": "late hold wait",
     "late_hold_not_late_admit": "not late admit",
@@ -182,8 +183,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "wait_exh": "wait EXH",
     "wait_rsi": "wait RSI",
     "exh_not_tight": "EXH wide",
-    "exh_rsi": "buy",
-    "last_exh_rsi": "buy",
+    "exh_rsi": "ready",
+    "last_exh_rsi": "ready",
     "in_zone_fade_ok": "in zone",
     "overbought_hot": "OB hot",
     "dead_reentry": "dead today",
@@ -231,8 +232,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "macd_sep_unknown": "no MACD sep",
     # Passed on confluence rather than on gap size: MACD opening while
     # EXH is at or past the threshold.
-    "macd_exh_confluence": "buy (EXH)",
-    "macd_bullish_gap": "buy",
+    "macd_exh_confluence": "ready (EXH)",
+    "macd_bullish_gap": "ready",
 }
 
 
