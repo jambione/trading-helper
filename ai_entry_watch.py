@@ -440,8 +440,13 @@ def _poller_blocked(rec: dict) -> bool:
     """
     if _row_tape_stale(rec):
         return True
-    code = str(rec.get("block_code") or "").strip()
-    if not code or code in ("in_zone", "placing", "at_last"):
+    code = str(rec.get("block_code") or "").strip().lower()
+    # Tape is fresh (check above). A leftover data-condition refuse is not a
+    # real poller veto — same rule as derive_blocker fall-through.
+    if not code or code in (
+        "in_zone", "placing", "at_last",
+        "stale_quote", "no_quote_age", "no_quote",
+    ):
         return False
     if code.startswith("last_") or code.startswith("zone_"):
         return False
