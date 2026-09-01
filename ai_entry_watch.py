@@ -1387,10 +1387,25 @@ def book_table_rows(
         except Exception:
             got = None
         if got is not None:
-            px, _age = got
+            px, age = got
             if px and px > 0:
                 r["price"] = px
                 r["last_ask"] = px
+                # Carry the print's own clock onto the row BEFORE
+                # apply_tape_blocker. Discarding age here left last_ask_age
+                # None/old on an otherwise live price, so the blocker
+                # re-stamped stale_quote on stream rows (FRVO/OLOX/WKHS).
+                try:
+                    age_f = float(age) if age is not None else None
+                except (TypeError, ValueError):
+                    age_f = None
+                if age_f is not None and age_f >= 0:
+                    r["last_ask_age_sec"] = age_f
+                    r["price_age_sec"] = age_f
+                    max_age = decision_max_age_sec(_push_cfg())
+                    if age_f <= max_age:
+                        r["last_ask_src"] = "stream"
+                        r["price_src"] = "stream"
                 # Refresh above/below from live print so BLOCKER tracks the tape.
                 # Armable overshoots (within max_r below the floor) count as
                 # in-zone — same buy geometry as should_arm_buy.
