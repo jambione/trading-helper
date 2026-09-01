@@ -405,6 +405,11 @@ def test_place_scaled_entry_250_equity_does_not_round_to_zero(
         tmp_path, monkeypatch):
     """8% of $250 is $20 — a $40 name used to be 0 shares. Risk size grows."""
     _use_tmp_state(tmp_path, monkeypatch)
+    # No live tape, same as the other place_scaled_entry tests. "aaa" is a real
+    # ticker, so on a box with a warm quote cache _live_tape_px returned AAA's
+    # actual print ($24.89 on the mini) and the fill_already_dead guard refused
+    # the order — this test then measured the machine's cache, not the sizing.
+    monkeypatch.setattr(cp, "_live_tape_px", lambda _s: None)
     monkeypatch.setattr(cp, "_entry_cfg", lambda: {
         "ai_day_scalp_dual_tranche": True,
         "ai_entry_broker_target": True,
