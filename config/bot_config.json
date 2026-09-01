@@ -4,7 +4,7 @@
   "ai_broker_stop_enabled": false,
   "ai_daily_loss_limit_r": 1.5,
   "ai_day_scalp_dual_tranche": false,
-  "ai_dead_reentry_block": false,
+  "ai_dead_reentry_block": true,
   "ai_dead_trade_mfe_r": 0.1,
   "ai_dead_trade_min": 30.0,
   "ai_duel_chance3_time": "14:30",
