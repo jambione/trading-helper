@@ -42,7 +42,7 @@
   "ai_local_trail_give_max_pct": 0.5,
   "ai_local_trail_give_open_r": 0.0,
   "ai_local_trail_give_px": 0.0,
-  "ai_local_trail_give_r": 0.2,
+  "ai_local_trail_give_r": 0.35,
   "ai_local_trail_give_spread_k": 0.0,
   "ai_local_trail_give_spread_max_r": 0.5,
   "ai_local_trail_min_give_px": 0.0,
