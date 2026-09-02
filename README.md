@@ -82,3 +82,21 @@ Tests & CI
     and a pre-commit config are included to prevent accidental key commits.
 
 If you want, I can update this README with deployment or Docker instructions.
+
+## Off-hours fill / entry A/B
+
+Pinned-fill exit replay (no re-arm):
+
+    .venv/bin/python tools/sim_fill_replay.py --tape ai_reports/tapes/YYYY-MM-DD \
+        --bars-cache ai_reports/fill_replay/bars.json --no-fetch \
+        --overlay give_r=0.35
+
+Entry+exit A/B on a packed tape (drop fills that fail NEW arm provenance,
+then replay exits). Does not write `bot_config.json`:
+
+    .venv/bin/python tools/sim_tape_ab.py --day 2026-09-01 \
+        --tape ai_reports/tapes/2026-09-01 --no-fetch \
+        --bars-cache ai_reports/fill_replay/bars.json \
+        --a 'rest+give=0.2' --b 'stream+rt_macd+give=0.35'
+
+Pack a day on the mini after the close: `tools/desk_tape.py pack --day YYYY-MM-DD`.
