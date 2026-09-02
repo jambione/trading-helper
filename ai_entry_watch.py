@@ -1508,6 +1508,20 @@ def book_table_rows(
                 if age_f is not None and age_f >= 0:
                     r["last_ask_age_sec"] = age_f
                     r["price_age_sec"] = age_f
+                    # Carry the print clock onto the row AND the process map
+                    # before apply_tape_blocker. book_table_rows used to set
+                    # age/src from young live_print/eng while leaving a stale
+                    # _LAST_QUOTE_TS from an earlier poll — row_quote_age_sec
+                    # then preferred the old ts, apply_tape_blocker restamped
+                    # stale_quote + honesty→stale_tape (GTLB Sep2 ~12:25 ET:
+                    # eng≈3.5s while entry_book painted stale_tape≈18.6).
+                    # public_snapshot (3f007f3) already writes the clock; this
+                    # is the second paint path (entry_book) that did not.
+                    _now_bk = time.time()
+                    r["last_ask_ts"] = _now_bk - age_f
+                    _sym_bk = str(r.get("symbol") or "").upper().strip()
+                    if _sym_bk:
+                        _LAST_QUOTE_TS[_sym_bk] = _now_bk - age_f
                     max_age = decision_max_age_sec(_push_cfg())
                     if age_f <= max_age:
                         r["last_ask_src"] = "stream"
@@ -4617,6 +4631,12 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 rec["last_ask"] = float(tape[0])
                 rec["last_ask_src"] = "stream"
                 rec["last_ask_age_sec"] = tape[1]
+                # Keep quote clock in map (same as apply_decision_price /
+                # book_table_rows). Sync used to leave a stale _LAST_QUOTE_TS
+                # beside a fresh stream print → book paint restamped stale.
+                rec["last_ask_ts"] = float(t0) - float(tape[1])
+                _LAST_QUOTE_TS[str(sym).upper().strip()] = (
+                    float(t0) - float(tape[1]))
                 ask_for_zone = float(tape[0])
             if ask_for_zone and not _structure_usable(rec.get("structure")):
                 ensure_offset_zone_if_needed(rec, ask_for_zone, cfg_z, t0)

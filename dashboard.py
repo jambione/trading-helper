@@ -682,6 +682,11 @@ def overlay_ai_book_live_prices(
                     # stream+stale_quote (Sep2 11:05 ET: GTLB/ALMS/ASST).
                     row["price_age_sec"] = age
                     row["last_ask_age_sec"] = age
+                    # Stamp last_ask_ts before apply_tape_blocker. Without it
+                    # row_quote_age_sec prefers a stale poller last_ask_ts /
+                    # _LAST_QUOTE_TS and restamps stale_quote over a young
+                    # eng/stream overlay (GTLB-class book vs eng mismatch).
+                    row["last_ask_ts"] = float(now) - float(age)
                 if fresh_stream:
                     row["price_src"] = "stream"
                     row["last_ask_src"] = "stream"

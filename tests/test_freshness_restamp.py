@@ -184,3 +184,75 @@ def test_live_quote_for_prefers_young_engine(monkeypatch):
     px, age = d._live_quote_for("GTLB")
     assert px == 51.59
     assert age is not None and age <= 15.0
+
+
+def test_book_table_rows_young_eng_wins_over_stale_quote_ts(monkeypatch):
+    """entry_book paint must not let stale _LAST_QUOTE_TS beat young eng.
+
+    GTLB Sep2 ~12:25 ET residual after 3f007f3: public_snapshot aligned, but
+    book_table_rows set stream age from live_print then apply_tape_blocker
+    recomputed age from an older map ts and restamped stale_tape.
+    """
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_arm_require_stream_price": True,
+    })
+    monkeypatch.setattr(ew, "stream_quote", lambda sym: (51.59, 3.5))
+    # Stale map clock from an earlier poll — the bug trigger.
+    ew._LAST_QUOTE_TS["GTLB"] = time.time() - 18.6
+    state = {
+        "GTLB": {
+            "symbol": "GTLB",
+            "status": "watching",
+            "last_ask": 51.0,
+            "last_ask_src": "stale_tape",
+            "last_ask_age_sec": 18.6,
+            "last_ask_ts": time.time() - 18.6,
+            "structure": {
+                "entry_low": 50.0,
+                "entry_high": 52.0,
+                "stop_price": 48.0,
+                "wait_kind": "wait_for_zone",
+            },
+            "score": 1.0,
+        }
+    }
+    rows = ew.book_table_rows(state=state, positions={})
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["last_ask_src"] == "stream"
+    assert row["last_ask"] == 51.59
+    assert row["last_ask_age_sec"] is not None
+    assert float(row["last_ask_age_sec"]) <= 15.0
+    assert row.get("block_code") != "stale_quote"
+
+
+def test_overlay_young_eng_does_not_restamp_stale_from_old_ts(monkeypatch):
+    """Overlay must stamp last_ask_ts so apply_tape_blocker sees young age."""
+    import dashboard as d
+
+    monkeypatch.setattr(d, "_live_quote_for", lambda sym, now=None: (51.59, 3.5))
+    monkeypatch.setattr(
+        "ai_entry_watch.decision_max_age_sec", lambda cfg=None: 15.0, raising=False)
+
+    payload = {
+        "entry_book": [{
+            "symbol": "GTLB",
+            "entry_low": 50.0,
+            "entry_high": 52.0,
+            "stop_price": 48.0,
+            "last_ask": 51.0,
+            "last_ask_src": "stale_tape",
+            "last_ask_age_sec": 18.6,
+            "last_ask_ts": time.time() - 18.6,
+            "block_code": "stale_quote",
+            "phase": "watching",
+        }],
+        "entry_watch": [],
+    }
+    out = d.overlay_ai_book_live_prices(payload)
+    row = out["entry_book"][0]
+    assert row["last_ask_src"] == "stream"
+    assert float(row["last_ask_age_sec"]) <= 15.0
+    assert row.get("block_code") != "stale_quote"
