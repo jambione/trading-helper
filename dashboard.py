@@ -686,7 +686,12 @@ def overlay_ai_book_live_prices(
                     # row_quote_age_sec prefers a stale poller last_ask_ts /
                     # _LAST_QUOTE_TS and restamps stale_quote over a young
                     # eng/stream overlay (GTLB-class book vs eng mismatch).
-                    row["last_ask_ts"] = float(now) - float(age)
+                    # Use wall time, not the early *now* arg: paint can take
+                    # long enough that now-age + wall skew pushes a ≤ceiling
+                    # print over the limit and honesty flips it back to
+                    # stale_tape (Class C Sep2: eng recovers ≤15s, overlay
+                    # self-invalidates before the next ~20s poll).
+                    row["last_ask_ts"] = time.time() - float(age)
                 if fresh_stream:
                     row["price_src"] = "stream"
                     row["last_ask_src"] = "stream"

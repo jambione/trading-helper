@@ -259,3 +259,44 @@ def test_overlay_young_eng_does_not_restamp_stale_from_old_ts(monkeypatch):
     assert row["last_ask_src"] == "stream"
     assert float(row["last_ask_age_sec"]) <= 15.0
     assert row.get("block_code") != "stale_quote"
+
+
+def test_overlay_wall_stamp_keeps_near_ceiling_young_print(monkeypatch):
+    """Class C: early *now* must not self-invalidate a ≤ceiling overlay print.
+
+    Overlay measures age against an early now, then apply_tape_blocker
+    recomputes via row_quote_age_sec(wall). Stamping last_ask_ts = now - age
+    lets paint latency push a 14s eng print over 15s → honesty→stale_tape.
+    Wall stamp (time.time() - age) keeps the decided age.
+    """
+    import dashboard as d
+
+    monkeypatch.setattr(d, "_live_quote_for", lambda sym, now=None: (51.59, 14.0))
+    monkeypatch.setattr(
+        "ai_entry_watch.decision_max_age_sec", lambda cfg=None: 15.0, raising=False)
+
+    early = time.time() - 2.5  # simulate ~2.5s of work before overlay finishes
+    payload = {
+        "entry_book": [{
+            "symbol": "GTLB",
+            "entry_low": 50.0,
+            "entry_high": 52.0,
+            "stop_price": 48.0,
+            "last_ask": 51.0,
+            "last_ask_src": "rest",
+            "last_ask_age_sec": 19.0,
+            "last_ask_ts": time.time() - 19.0,
+            "block_code": "stale_quote",
+            "phase": "watching",
+        }],
+        "entry_watch": [],
+    }
+    out = d.overlay_ai_book_live_prices(payload, now=early)
+    row = out["entry_book"][0]
+    assert row["last_ask_src"] == "stream"
+    assert float(row["last_ask_age_sec"]) == 14.0
+    assert row.get("block_code") != "stale_quote"
+    # Recomputed wall age must stay ≤ ceiling (the Class C failure mode).
+    import ai_entry_watch as ew
+    age = ew.row_quote_age_sec(row)
+    assert age is not None and age <= 15.0
