@@ -1002,22 +1002,28 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             entry_high_f = float(entry_high) if entry_high is not None else None
         except (TypeError, ValueError):
             entry_high_f = None
-        # Align decision last_ask with a young dated engine rt_* before
-        # last_ask is read / honesty restamp so desk age/src match the live
-        # tape (GTLB-class desk-vs-engine lag: eng≤ceiling while overlay/poll
-        # left stale_tape≈19.9).
+        # Align decision last_ask with live_print (young engine rt_* wins
+        # when ≤ ceiling; else freshest dated dash) before last_ask is read /
+        # honesty restamp. Fixes GTLB-class desk-vs-engine lag and avoids
+        # leaving stale_tape when only adj engine age crossed the ceiling
+        # while dash still has a young dated print.
         try:
-            _eng = _engine_rt_print(sym)
-            if _eng is not None:
-                _epx, _eage = _eng
-                if _eage <= decision_max_age_sec(None) and _epx > 0:
-                    _now_al = time.time()
-                    rec["last_ask"] = float(_epx)
-                    rec["last_ask_src"] = "stream"
-                    rec["price_src"] = "stream"
-                    rec["last_ask_age_sec"] = float(_eage)
-                    rec["last_ask_ts"] = float(_now_al) - float(_eage)
-                    _LAST_QUOTE_TS[sym] = float(_now_al) - float(_eage)
+            _lp = live_print(sym)
+            if (
+                _lp is not None
+                and _lp[0]
+                and _lp[1] is not None
+                and float(_lp[0]) > 0
+                and float(_lp[1]) <= decision_max_age_sec(None)
+            ):
+                _epx, _eage = float(_lp[0]), float(_lp[1])
+                _now_al = time.time()
+                rec["last_ask"] = _epx
+                rec["last_ask_src"] = "stream"
+                rec["price_src"] = "stream"
+                rec["last_ask_age_sec"] = _eage
+                rec["last_ask_ts"] = _now_al - _eage
+                _LAST_QUOTE_TS[sym] = _now_al - _eage
         except Exception:
             pass
         last_ask = rec.get("last_ask")
