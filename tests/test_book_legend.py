@@ -55,6 +55,12 @@ def _legend() -> str:
     return _JS[i:_JS.index("\n}", i)]
 
 
+def _criteria() -> str:
+    """Pass evaluation lives in _bookEntryCriteria (shared with cell paint)."""
+    i = _JS.index("function _bookEntryCriteria")
+    return _JS[i:_JS.index("\n}", i)]
+
+
 def test_every_threshold_reaches_the_client():
     """A key the server does not publish renders as its fallback, which is a
     legend quietly showing a number nobody set."""
@@ -83,7 +89,8 @@ def test_no_threshold_is_written_by_hand():
 
 def test_the_container_exists_under_the_rows():
     i = _HTML.index("data-ai-book-rows")
-    j = _HTML.index("data-ai-book-legend")
+    # Exact container attr — not data-ai-book-legend-toggle in the header.
+    j = _HTML.index("data-ai-book-legend>")
     assert j > i, "the legend belongs below the book, not above it"
 
 
@@ -113,7 +120,7 @@ def test_it_can_never_break_the_book():
 # could not be judged — the same distinction the desk draws everywhere else.
 
 def test_provenance_is_read_before_the_rules():
-    body = _legend()
+    body = _criteria()
     i = body.index("const src = String(r.macd_src")
     # The assignments, not the `let` line that declares them all as null.
     for later in ("const gap = num(r.macd_gap)", "_macdLeg",
@@ -123,7 +130,7 @@ def test_provenance_is_read_before_the_rules():
 
 def test_a_non_live_macd_makes_its_rules_unjudgeable():
     """null, not false: the rule is not failed, it is unreachable."""
-    body = _legend()
+    body = _criteria()
     assert "macd = live !== true ? null" in body
     assert "both = live !== true ? null" in body
 
@@ -131,7 +138,7 @@ def test_a_non_live_macd_makes_its_rules_unjudgeable():
 def test_a_non_live_macd_fails_fresh_outright():
     """FRESH is the row that is ABOUT usability, so there it is a real fail
     rather than an unknown — otherwise nothing on the panel would say why."""
-    body = _legend()
+    body = _criteria()
     assert "fresh = live === false ? false" in body
 
 
@@ -152,7 +159,7 @@ def test_fresh_says_it_covers_the_tape():
 
 
 def test_unknown_provenance_is_not_treated_as_live():
-    body = _legend()
+    body = _criteria()
     assert "live = src ? src === 'realtime' : null" in body
 
 
@@ -214,3 +221,21 @@ def test_the_legend_renders_the_entry_and_exit_separation_from_config():
     from config import SAFE_CONFIG_KEYS
     for k in ("macd_sep_mult", "ai_dead_trade_min", "ai_eod_liquidate_time"):
         assert k in SAFE_CONFIG_KEYS, f"{k} never reaches the browser"
+
+
+# ── compact legend / cell pass highlights ─────────────────────────────────
+
+def test_legend_defaults_collapsed():
+    """The ENTRY/EXIT block is hidden until the operator asks for it."""
+    assert "ai-book-legend--collapsed" in _JS
+    assert "aiBookLegendOpen" in _JS
+    assert "data-ai-book-legend-toggle" in _HTML
+    assert ".ai-book-legend--collapsed" in _CSS
+
+
+def test_cell_pass_highlight_reuses_criteria_helper():
+    """MACD / EXH / RSI / STATE cells share the legend's pass evaluation."""
+    assert "function _bookEntryCriteria" in _JS
+    assert "crit--pass" in _JS
+    assert ".crit--pass" in _CSS
+    assert "#5fcf96" in _CSS

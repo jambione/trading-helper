@@ -2431,6 +2431,22 @@ body.mobile [data-tv-toggle-btn] {
   line-height: 1.45;
 }
 .ai-book-legend:empty { display: none; }
+.ai-book-legend.ai-book-legend--collapsed {
+  display: none;
+  max-height: 0;
+  overflow: hidden;
+  padding: 0;
+  border-top: 0;
+}
+/* Criterion cleared on this row — same buy green the legend ✓ uses. */
+.panel-ai-watch .feed-cols--ai-book .crit--pass {
+  color: #5fcf96 !important;
+  font-weight: 700;
+}
+.ai-book-legend-toggle {
+  flex: 0 0 auto;
+  letter-spacing: 0.04em;
+}
 .ai-book-legend .lg-head {
   color: #c4b5fd;
   font-weight: 700;

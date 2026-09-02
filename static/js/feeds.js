@@ -95,8 +95,11 @@ export function init(panelEl, kind) {
         el.classList.toggle('is-explained',
           !!_legendFor && el.dataset.bookSymbol === _legendFor);
       });
+      // Row-click explain needs the legend visible even when the operator
+      // keeps it collapsed by default — temporary reveal, preference stays.
       _repaintBook();
     });
+    _bindBookLegendToggle(_repaintBook);
   }
 
   /** Prefer last good wire when store briefly has a clobber/empty book. */
@@ -793,31 +796,59 @@ function _announcePositions(rows) {
 /** Which book row the legend is explaining, or '' for the plain rules. */
 let _legendFor = '';
 
-/** Entry rules, rendered from the LIVE config rather than written down.
- *
- *  Hardcoding the numbers here would produce a legend that drifts from the
- *  thresholds it claims to describe — the same failure as a config knob
- *  nothing reads, and this desk has hit that three times in one session.
- *  Every value below comes off the config the server actually loaded.
- *
- *  With a row selected each rule is also EVALUATED against it, so the panel
- *  answers "what is this name missing" rather than only "what is required".
- *  A rule whose inputs are absent reads UNKNOWN, never PASS — the desk's own
- *  rule that absence is not a pass.
- */
-function _paintBookLegend(cfg, row) {
-  const el = document.querySelector('[data-ai-book-legend]');
-  if (!el) return;
+/** Legend panel open/closed. Default collapsed — the ENTRY/EXIT block eats
+ *  vertical space the book needs; criteria still paint as green cells. */
+const _BOOK_LEGEND_LS = 'aiBookLegendOpen';
+
+function _legendExpanded() {
+  try {
+    return localStorage.getItem(_BOOK_LEGEND_LS) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function _setLegendExpanded(open) {
+  try {
+    if (open) localStorage.setItem(_BOOK_LEGEND_LS, '1');
+    else localStorage.removeItem(_BOOK_LEGEND_LS);
+  } catch (e) { /* private mode: session-only */ }
+}
+
+function _syncLegendToggleBtn() {
+  const btn = document.querySelector('[data-ai-book-legend-toggle]');
+  if (!btn) return;
+  const open = _legendExpanded() || !!_legendFor;
+  btn.setAttribute('aria-pressed', open ? 'true' : 'false');
+  btn.classList.toggle('btn--active', _legendExpanded());
+  btn.title = _legendExpanded()
+    ? 'Hide entry/exit criteria legend'
+    : 'Show entry/exit criteria legend';
+  btn.textContent = 'Criteria';
+}
+
+function _bindBookLegendToggle(repaint) {
+  const btn = document.querySelector('[data-ai-book-legend-toggle]');
+  if (!btn || btn.dataset.bound === '1') return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    _setLegendExpanded(!_legendExpanded());
+    _syncLegendToggleBtn();
+    if (typeof repaint === 'function') repaint();
+  });
+  _syncLegendToggleBtn();
+}
+
+/** Shared ENTRY pass evaluation — legend marks and per-cell crit--pass.
+ *  Provenance-first, same knobs as the arm gate. null = unjudgeable. */
+function _bookEntryCriteria(cfg, row) {
   const c = cfg && typeof cfg === 'object' ? cfg : {};
-  if (!Object.keys(c).length) return;
   const n = (k, d) => {
     const v = Number(c[k]);
     return Number.isFinite(v) ? v : d;
   };
-  // Not every criterion is a number. ai_eod_liquidate_time is "15:50" and
-  // ai_entry_order_style is "market"; both went through n() before, where
-  // Number("15:45") is NaN and the legend fell back to the hardcoded 15:50 —
-  // it could not have shown a changed flatten time at all.
   const s = (k, d) => {
     const v = c[k];
     return (v === undefined || v === null || v === '') ? d : String(v);
@@ -829,7 +860,6 @@ function _paintBookLegend(cfg, row) {
   const r = row && typeof row === 'object' ? row : null;
   const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 
-  // null = cannot say. Never collapse that into false.
   let macd = null, exh = null, both = null, fresh = null, live = null, rsi = null;
   if (r) {
     // PROVENANCE FIRST. The gate refuses a MACD not drawn on the live tape
@@ -896,6 +926,38 @@ function _paintBookLegend(cfg, row) {
       : (pAge <= n('ai_watch_decision_max_age_sec', 8)
          && mAge <= n('ai_watch_macd_max_age_sec', 30));
   }
+
+  const ready = !!(r && (r.ready
+    || String(r.phase || '').toLowerCase() === 'ready'));
+
+  return { macd, exh, both, fresh, live, rsi, ready, n, s, b };
+}
+
+/** Entry rules, rendered from the LIVE config rather than written down.
+ *
+ *  Hardcoding the numbers here would produce a legend that drifts from the
+ *  thresholds it claims to describe — the same failure as a config knob
+ *  nothing reads, and this desk has hit that three times in one session.
+ *  Every value below comes off the config the server actually loaded.
+ *
+ *  With a row selected each rule is also EVALUATED against it, so the panel
+ *  answers "what is this name missing" rather than only "what is required".
+ *  A rule whose inputs are absent reads UNKNOWN, never PASS — the desk's own
+ *  rule that absence is not a pass.
+ */
+function _paintBookLegend(cfg, row) {
+  const el = document.querySelector('[data-ai-book-legend]');
+  if (!el) return;
+  _syncLegendToggleBtn();
+  // Collapsed by default. A selected row still expands so explain works.
+  const show = _legendExpanded() || !!_legendFor;
+  el.classList.toggle('ai-book-legend--collapsed', !show);
+  if (!show) return;
+
+  const c = cfg && typeof cfg === 'object' ? cfg : {};
+  if (!Object.keys(c).length) return;
+  const { macd, exh, both, fresh, rsi, n, s, b } = _bookEntryCriteria(cfg, row);
+  const r = row && typeof row === 'object' ? row : null;
 
   // ENTRY. Evaluated against the selected row where the inputs exist.
   const entry = [
@@ -1214,10 +1276,13 @@ function _updateBookRow(el, r) {
   const phase = String((r && r.phase) || 'watching').toLowerCase();
   const isOpen = phase === 'open' || r.is_position;
   const statusLabel = _bookBlockerLabel(r);
+  const crit = _bookEntryCriteria(get('config'), r);
   const statusEl = el.querySelector('.ai-book-status');
   if (statusEl && statusEl.textContent !== statusLabel) statusEl.textContent = statusLabel;
   if (statusEl) {
-    statusEl.className = _bookBlockerClass(r);
+    // STATE: ready, or FRESH when the tape ages are clean (no dedicated column).
+    statusEl.className = _bookBlockerClass(r)
+      + ((crit.ready || crit.fresh === true) ? ' crit--pass' : '');
     statusEl.title = _bookBlockerTitle(r);
   }
   const trail = _fmtStopCell(r);
@@ -1293,21 +1358,21 @@ function _updateBookRow(el, r) {
   const rsiEl = el.querySelector('.cell-rsi');
   if (rsiEl) {
     _setText(rsiEl, _bookRsiText(r));
-    rsiEl.className = `cell-rsi${_rsiPairClass(r)}`;
+    rsiEl.className = `cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}`;
     const rsiTip = _fmtRsiTitle(r);
     if (rsiTip) rsiEl.title = rsiTip;
   }
   const exhEl = el.querySelector('.cell-exh');
   if (exhEl) {
     _setText(exhEl, _bookExhText(r));
-    exhEl.className = `cell-exh${_bookExhClass(r)}`;
+    exhEl.className = `cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}`;
     const exhTip = _fmtExhTitle(r);
     if (exhTip) exhEl.title = exhTip;
   }
   const macdEl = el.querySelector('.cell-macd');
   if (macdEl) {
     _setText(macdEl, _bookMacdText(r));
-    macdEl.className = `cell-macd${_bookMacdClass(r)}`;
+    macdEl.className = `cell-macd${_bookMacdClass(r)}${crit.macd === true ? ' crit--pass' : ''}`;
     const tip = _fmtMacdTitle(r);
     if (tip) macdEl.title = tip;
   }
@@ -1328,7 +1393,9 @@ function _bookRowHtml(r) {
   const phase = String((r && r.phase) || 'watching').toLowerCase();
   const isOpen = phase === 'open' || r.is_position;
   const statusLabel = _bookBlockerLabel(r);
-  const statusCls = _bookBlockerClass(r);
+  const crit = _bookEntryCriteria(get('config'), r);
+  const statusCls = _bookBlockerClass(r)
+    + ((crit.ready || crit.fresh === true) ? ' crit--pass' : '');
   const trail = _fmtStopCell(r);
   const rawPx = r.price != null && Number.isFinite(Number(r.price))
     ? Number(r.price)
@@ -1356,9 +1423,9 @@ function _bookRowHtml(r) {
     + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
-    + `<div class="cell-rsi${_rsiPairClass(r)}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`
-    + `<div class="cell-exh${_bookExhClass(r)}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-macd${_bookMacdClass(r)}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
+    + `<div class="cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`
+    + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
+    + `<div class="cell-macd${_bookMacdClass(r)}${crit.macd === true ? ' crit--pass' : ''}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
