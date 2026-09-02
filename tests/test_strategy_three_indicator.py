@@ -207,15 +207,65 @@ def test_rsi_dip_and_turn_are_sequential_not_same_bar():
 
 
 def test_published_cm_ok_matches_the_buy_rule():
-    """evaluate_state's cm_ok is what reaches signal_state.json -> /api/state,
-    and the AI watch arms on it. If it drifts from buy_signal's own test the
-    desk buys on a different rule than the strategy is tested against."""
+    """evaluate_state's cm_ok / pctr_ok still mirror buy_signal's filter legs.
+
+    macd_ok is now *state* (bullish + separation), while buy_signal still
+    requires a recent macd_cross event. So all-three-ok no longer implies buy —
+    only the cm/pctr legs stay locked to the buy rule here.
+    """
     p = strat.params(macd_sep_mult=0.4, confirm_window=12, cm_rsi_buy_max=30.0)
     a = strat.to_arrays(strat.compute_indicators(_frame(_sine()), p))
     for i in range(30, len(a["close"]) - 1):
         st = strat.evaluate_state(a, i, p)
-        if st["cm_ok"] and st["pctr_ok"] and st["macd_ok"]:
-            assert strat.buy_signal(a, i, p), f"state says all-ok but no buy at {i}"
+        # A real buy still needs all three published ok flags.
+        if strat.buy_signal(a, i, p):
+            assert st["cm_ok"] and st["pctr_ok"] and st["macd_ok"], (
+                f"buy at {i} but state legs incomplete"
+            )
+
+
+def test_macd_ok_is_state_not_cross_event():
+    """macd_ok stays true mid-move after the cross window expires.
+
+    ASST-class: bullish with enough hist/sep must publish macd_ok even when
+    macd_cross is False. Cross remains its own ranking/preference flag.
+    """
+    import numpy as np
+    p = strat.params(macd_sep_mult=0.5, macd_min_gap=0.005, confirm_window=3)
+    # Long enough for MACD + hist std; a sustained uptrend keeps line>signal
+    # with wide hist long after any early cross falls outside confirm_window.
+    closes = np.concatenate([
+        np.linspace(50, 40, 80),   # decline to set up a cross later
+        np.linspace(40, 70, 120),  # strong sustained rally
+    ])
+    a = strat.to_arrays(strat.compute_indicators(_frame(closes), p))
+    found_ok_without_cross = False
+    for i in range(60, len(a["close"]) - 1):
+        st = strat.evaluate_state(a, i, p)
+        if st["macd_ok"]:
+            assert st["macd_bull"], f"macd_ok without bullish state at {i}"
+            assert st["macd_gap"] is not None and st["macd_gap"] >= p["macd_min_gap"]
+            if not st["macd_cross"]:
+                found_ok_without_cross = True
+                break
+    assert found_ok_without_cross, (
+        "expected at least one bar with macd_ok True and macd_cross False"
+    )
+
+
+def test_macd_cross_still_exported_separately():
+    """Cross event flag is still computed; it just does not gate macd_ok."""
+    p = strat.params(macd_sep_mult=0.4, confirm_window=12)
+    a = strat.to_arrays(strat.compute_indicators(_frame(_sine()), p))
+    saw_cross = False
+    for i in range(40, len(a["close"]) - 1):
+        st = strat.evaluate_state(a, i, p)
+        assert "macd_cross" in st and "macd_ok" in st
+        if st["macd_cross"]:
+            saw_cross = True
+            # A published cross still implies current bullish state.
+            assert st["macd_bull"]
+    assert saw_cross, "fixture should still produce some macd_cross events"
 
 
 def test_sell_needs_a_peak_above_the_level_first():

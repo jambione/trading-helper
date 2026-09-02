@@ -405,7 +405,9 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
     out["cm_rsi_low"] = bool(np.isfinite(cm) and float(cm) <= buy_max)
     out["cm_rsi_green"] = bool(out.get("cm_ok") and np.isfinite(cm) and float(cm) < 10.0)
 
-    # MACD: recent bullish cross, still bullish, wide separation
+    # MACD: current bullish *state* with enough separation — not the one-time
+    # cross *event*. macd_cross stays its own flag for ranking/preference;
+    # macd_ok must stay true mid-move after the confirm window expires.
     line, sig = a["macd_line"][i], a["macd_signal"][i]
     cross = bool(a["macd_bull"][lo:i + 1].any()) and (np.isfinite(line) and np.isfinite(sig) and line > sig)
     out["macd_fast"] = round(float(line), 4) if np.isfinite(line) else None
@@ -415,9 +417,20 @@ def evaluate_state(a: dict, i: int, p: dict) -> dict:
     out["macd_bull"] = bool(np.isfinite(line) and np.isfinite(sig) and line > sig)
     out["macd_cross"] = cross
     sep = a["macd_hist_std"][i]
-    if np.isfinite(sep) and sep > 0 and np.isfinite(a["macd_hist"][i]):
-        out["macd_sep_ratio"] = round(float(a["macd_hist"][i] / sep), 2)
-        out["macd_ok"] = bool(cross and a["macd_hist"][i] >= p["macd_sep_mult"] * sep)
+    min_gap = float(p.get("macd_min_gap", 0.005) or 0.005)
+    hist = a["macd_hist"][i]
+    if np.isfinite(hist):
+        if np.isfinite(sep) and sep > 0:
+            out["macd_sep_ratio"] = round(float(hist / sep), 2)
+            out["macd_ok"] = bool(
+                out["macd_bull"]
+                and hist >= min_gap
+                and hist >= p["macd_sep_mult"] * sep
+            )
+        else:
+            # No usable rolling std yet — same min-gap floor as buy_signal /
+            # ai_entry_watch local builder (std_h <= 0 path).
+            out["macd_ok"] = bool(out["macd_bull"] and hist >= min_gap)
     # Is the gap OPENING or CLOSING? The level says the lines are apart; it
     # cannot say whether they are still separating. A +0.03 gap that was
     # +0.08 two bars ago is momentum dying, and entering it buys the fade —
