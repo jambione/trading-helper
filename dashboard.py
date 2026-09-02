@@ -2233,6 +2233,13 @@ def freshest_prices(*sources: dict) -> dict:
     one to show — while trade_ts rides along so the age we publish can be the
     print's age rather than the fetch's. A source that cannot supply one passes
     None, which means "unknown", not "now".
+
+    A fetch with no trade clock must NOT displace a print that still has one.
+    Alpaca's fallback caches ``(price, now, None)`` when the broker omits a
+    trade timestamp; that ``obs=now`` would always beat a 0.3s desk print and
+    publish ``price_age_sec=None``, which the arm gate cannot treat as stream
+    (live 2026-09-02: EOSU/ALMS on engine tape ≤5s while watches stayed
+    ``rest`` / ``stream_required``).
     """
     merged: dict = {}
     for src in sources:
@@ -2246,7 +2253,18 @@ def freshest_prices(*sources: dict) -> dict:
             except (TypeError, ValueError):
                 trade_ts = None
             cur = merged.get(t)
-            if cur is None or obs > cur[1]:
+            if cur is None:
+                merged[t] = (p, obs, trade_ts)
+                continue
+            _cur_px, cur_obs, cur_tts = cur
+            # Keep a dated print over an undated fetch even when the fetch
+            # was "observed" more recently (fetch clock ≠ trade clock).
+            if trade_ts is None and cur_tts is not None:
+                continue
+            if cur_tts is None and trade_ts is not None:
+                merged[t] = (p, obs, trade_ts)
+                continue
+            if obs > cur_obs:
                 merged[t] = (p, obs, trade_ts)
     return merged
 
@@ -2265,7 +2283,12 @@ def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
                 # one — the published age must not claim a print happened at
                 # the moment we happened to ask.
                 trade_ts = ts if ts and 0 < ts <= now + 5 else None
-                _alpaca_price_cache[t] = (p, trade_ts or now, trade_ts)
+                # obs must not be fetch-now when trade_ts is missing — that
+                # made undated Alpaca quotes always beat a young desk print
+                # in freshest_prices (obs=now > trade_time). Keep obs=0 so
+                # a dated source wins; freshest_prices also refuses to let
+                # trade_ts=None displace a dated print.
+                _alpaca_price_cache[t] = (p, float(trade_ts or 0.0), trade_ts)
     finally:
         _alpaca_fallback_running = False
 

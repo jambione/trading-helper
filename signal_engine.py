@@ -1404,25 +1404,33 @@ def ticker_tag(sym: str) -> str:
 # ── Active-list priority ──────────────────────────────────────────────────────
 
 def pick_cold_nonbook_eviction(active: dict) -> str | None:
-    """Oldest cold, non-pinned, non-book, not-in-position symbol — or None.
+    """Oldest non-pinned, non-book, not-in-position symbol — cold before warm.
 
     When the active list is full and a book/seeded name wants in, free a slot
-    by dropping cold desk noise first. Never returns a book src, pinned, or
-    in-position ticker.
+    by dropping desk noise first. Prefer cold (never positive hist) so warm
+    momentum names keep their indicators; if every non-book slot is already
+    warm, still evict the oldest warm non-book rather than skipping the book
+    name entirely (live 2026-09-02: active full of warm/desk left STRL/CAT
+    book seeds skipped forever).
+    Never returns a book src, pinned, or in-position ticker.
     """
-    candidates: list[tuple[float, str]] = []
+    cold: list[tuple[float, str]] = []
+    warm: list[tuple[float, str]] = []
     for sym, ts in active.items():
         if getattr(ts, "pinned", False) or getattr(ts, "in_position", False):
             continue
         if str(getattr(ts, "src", "") or "").strip().lower() == "book":
             continue
+        key = (float(getattr(ts, "added_ts", 0.0) or 0.0), sym)
         if getattr(ts, "ever_positive_hist", False):
-            continue  # warm — keep over cold noise
-        candidates.append((float(getattr(ts, "added_ts", 0.0) or 0.0), sym))
-    if not candidates:
+            warm.append(key)
+        else:
+            cold.append(key)
+    pool = cold or warm
+    if not pool:
         return None
-    candidates.sort()  # oldest cold first
-    return candidates[0][1]
+    pool.sort()  # oldest first
+    return pool[0][1]
 
 
 # ── Main engine ───────────────────────────────────────────────────────────────
@@ -2076,8 +2084,20 @@ class SignalEngine:
                     # ai_watch_macd_max_age_sec is 0 today — the moment that
                     # ceiling is set it would be read off a number that
                     # understates by three orders of magnitude.
+                    #
+                    # Also: _bars_src is only flipped in _strategy_df on eval.
+                    # Between evals a name can sit bars_src=realtime with an
+                    # rt age of many minutes (MOVE 2026-09-02 ~900s). The
+                    # dashboard merges only realtime rows into desk_prices, so
+                    # claiming realtime here while aged out feeds a stale
+                    # print into the arm gate. Demote when past the stale cap.
                     if str(row.get("bars_src") or "") == "realtime":
-                        row["bars_age_sec"] = round(_age, 1)
+                        if _age > RT_BARS_MAX_STALE:
+                            row["bars_src"] = getattr(ts, "_data_source", "alpaca") or "alpaca"
+                            row["bars_age_sec"] = None
+                            row["pctr_src"] = row["bars_src"]
+                        else:
+                            row["bars_age_sec"] = round(_age, 1)
                 else:
                     row["rt_price"] = None
                     row["rt_price_age_sec"] = None

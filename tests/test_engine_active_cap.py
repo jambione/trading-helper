@@ -104,3 +104,24 @@ def test_ingest_evicts_cold_nonbook_for_book_when_full(monkeypatch):
     assert "NOIS" not in eng.active
     assert "NOIS" in unsubbed
     assert eng.active["NEWB"].src == "book"
+
+
+def test_pick_cold_nonbook_eviction_falls_back_to_warm():
+    """When every non-book slot is warm, still free the oldest for a book seed."""
+    warm_old = se.TickerState("OLDW")
+    warm_old.src = ""
+    warm_old.ever_positive_hist = True
+    warm_old.added_ts = time.time() - 300
+
+    warm_new = se.TickerState("NEWW")
+    warm_new.src = ""
+    warm_new.ever_positive_hist = True
+    warm_new.added_ts = time.time() - 50
+
+    book = se.TickerState("BOOK")
+    book.src = "book"
+    book.ever_positive_hist = True
+    book.added_ts = time.time() - 400
+
+    active = {"OLDW": warm_old, "NEWW": warm_new, "BOOK": book}
+    assert se.pick_cold_nonbook_eviction(active) == "OLDW"

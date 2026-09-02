@@ -179,12 +179,19 @@ def test_a_source_without_a_print_time_reports_unknown_not_now():
 
 
 def test_a_fresher_observation_still_wins_even_with_no_print_time():
-    """Merging on observed time is what picks the price to SHOW; the missing
-    print time only makes the age unknown, it must not lose the price."""
+    """An undated fetch must not displace a dated print just because its
+    observation clock is newer (fetch-now). That wiped price_age_sec and
+    forced REST/stream_required on live desk tape (2026-09-02). Two undated
+    sources still merge on observation time below."""
     merged = _merge({"AAAA": (10.00, T0 - 90, T0 - 90)},
                     {"AAAA": (10.50, T0, None)})
-    assert merged["AAAA"][0] == 10.50
-    assert merged["AAAA"][2] is None
+    assert merged["AAAA"][0] == 10.00
+    assert merged["AAAA"][2] == T0 - 90
+    # Both undated: fresher observation still wins.
+    merged2 = _merge({"AAAA": (10.00, T0 - 90, None)},
+                     {"AAAA": (10.50, T0, None)})
+    assert merged2["AAAA"][0] == 10.50
+    assert merged2["AAAA"][2] is None
 
 
 def test_two_element_tuples_still_merge():

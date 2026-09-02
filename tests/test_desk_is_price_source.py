@@ -204,8 +204,32 @@ def test_the_engine_recomputes_bars_age_at_write_time():
 
 def test_only_the_realtime_pipe_gets_its_age_rewritten():
     """A REST-fallback row has no trade clock here; overwriting its age with
-    the aggregator's would date an Alpaca bar by a Finnhub print."""
+    the aggregator's would date an Alpaca bar by a Finnhub print. Aged-out
+    realtime rows are demoted before rewrite so the dashboard does not merge
+    a multi-minute print as live tape."""
     src = (_ROOT / "signal_engine.py").read_text(encoding="utf-8")
     i = src.index('row["bars_age_sec"] = round(_age, 1)')
-    guard = src[i - 200:i]
+    guard = src[max(0, i - 500):i]
     assert 'bars_src' in guard and '"realtime"' in guard
+    assert "RT_BARS_MAX_STALE" in guard
+
+
+def test_undated_alpaca_fetch_does_not_displace_desk_tape():
+    """Alpaca fallback often caches (px, now, None). That must not wipe a
+    young engine/desk print's trade clock — price_age_sec=None forces REST
+    and stream_required on an otherwise live book row."""
+    now = 1_787_000_000.0
+    desk = {"EOSU": (3.50, now - 3.5, now - 3.5)}
+    alp = {"EOSU": (3.49, now, None)}  # fetch-now, no trade clock
+    got = d.freshest_prices(alp, {}, desk)
+    assert got["EOSU"][0] == 3.50
+    assert got["EOSU"][2] == pytest.approx(now - 3.5)
+
+
+def test_dated_alpaca_still_beats_older_desk():
+    now = 1_787_000_000.0
+    desk = {"AAA": (10.00, now - 45.0, now - 45.0)}
+    alp = {"AAA": (9.90, now - 2.0, now - 2.0)}
+    got = d.freshest_prices(alp, {}, desk)
+    assert got["AAA"][0] == 9.90
+    assert got["AAA"][2] == pytest.approx(now - 2.0)
