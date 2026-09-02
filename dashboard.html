@@ -911,12 +911,18 @@
                 if (!el) return;
                 function tick() {
                     const now = new Date();
-                    let h = now.getHours();
-                    const ampm = h >= 12 ? "PM" : "AM";
-                    h = h % 12 || 12;
-                    const mm = String(now.getMinutes()).padStart(2, "0");
-                    const ss = String(now.getSeconds()).padStart(2, "0");
-                    el.textContent = `${h}:${mm}:${ss} ${ampm}`;
+                    // Always show America/New_York (market clock), not the
+                    // browser's local zone — a Pacific client otherwise reads
+                    // ~3h "behind" during EDT with no TZ label on the badge.
+                    const parts = new Intl.DateTimeFormat("en-US", {
+                        timeZone: "America/New_York",
+                        hour: "numeric",
+                        minute: "2-digit",
+                        second: "2-digit",
+                        hour12: true,
+                    }).formatToParts(now);
+                    const get = (t) => (parts.find((p) => p.type === t) || {}).value || "";
+                    el.textContent = `${get("hour")}:${get("minute")}:${get("second")} ${get("dayPeriod")} ET`;
                     el.setAttribute("datetime", now.toISOString());
                 }
                 tick();
