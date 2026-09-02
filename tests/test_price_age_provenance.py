@@ -205,3 +205,49 @@ def test_absence_is_still_not_a_pass(monkeypatch):
     monkeypatch.setattr(
         ew, "_push_cfg", lambda: {"ai_watch_decision_max_age_sec": 30.0})
     assert ew._row_tape_stale({"last_ask_src": "rest"}) is True
+
+def test_update_price_refuses_older_trade_ts():
+    """REST re-learn with an older print must not displace a younger stream trade."""
+    st = _state()
+    young_ms = int((time.time() - 2.0) * 1000)
+    old_ms = int((time.time() - 90.0) * 1000)
+    st.update_price("GGG", 10.00, timestamp=young_ms)
+    st.update_price("GGG", 10.50, timestamp=old_ms)
+    with st.lock:
+        rec = st.prices["GGG"]
+    assert abs(rec["trade_ts"] - young_ms / 1000.0) < 0.01
+    assert rec["price"] == 10.00
+
+
+def test_update_price_refuses_undated_overwrite_of_dated():
+    st = _state()
+    young_ms = int((time.time() - 2.0) * 1000)
+    st.update_price("HHH", 10.00, timestamp=young_ms)
+    st.update_price("HHH", 10.50)  # no stamp — REST missing `t`
+    with st.lock:
+        rec = st.prices["HHH"]
+    assert abs(rec["trade_ts"] - young_ms / 1000.0) < 0.01
+    assert rec["price"] == 10.00
+
+
+def test_update_price_allows_newer_trade_ts():
+    st = _state()
+    old_ms = int((time.time() - 90.0) * 1000)
+    young_ms = int((time.time() - 2.0) * 1000)
+    st.update_price("III", 10.00, timestamp=old_ms)
+    st.update_price("III", 10.50, timestamp=young_ms)
+    with st.lock:
+        rec = st.prices["III"]
+    assert abs(rec["trade_ts"] - young_ms / 1000.0) < 0.01
+    assert rec["price"] == 10.50
+
+
+def test_rest_worker_stale_uses_trade_ts_not_ts_unix():
+    src = (_ROOT / "dashboard.py").read_text(encoding="utf-8")
+    i = src.index("def _finnhub_rest_poll_worker")
+    body = src[i:i + 3500]
+    assert 'd.get("trade_ts")' in body or "d.get('trade_ts')" in body
+    assert "ts_unix" not in body[body.index("stale"):body.index("to_poll")]
+    assert "Extended hours REST poll" not in body
+    assert "Finnhub REST poll" in body
+

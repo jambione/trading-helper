@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(_ROOT, "momentum-monitor"))
 from journal import journal_record  # noqa: E402
 from momentum_signal import DEFAULTS, Feed, _cell_price, momentum_table  # noqa: E402
 
-from dashboard import freshest_prices, stream_covered  # noqa: E402
+from dashboard import freshest_prices, stream_covered, _us_rth_now  # noqa: E402
 
 T0 = 1753449600.0
 CFG = {**DEFAULTS, "alert_new": False, "alert_burst": False,
@@ -226,3 +226,50 @@ def test_a_future_trade_timestamp_is_rejected():
     st = fs.FinnhubState() if hasattr(fs, "FinnhubState") else fs.FINNHUB_STATE
     st.update_price("CCCC", 10.0, 0, int((_t.time() + 600) * 1000))
     assert st.prices["CCCC"]["trade_ts"] is None
+
+def test_newer_trade_ts_beats_newer_learn_time():
+    """REST stamps obs=now on every poll. A younger stream trade must win
+    even when its learn time is older than the REST fetch clock."""
+    stream = {"AAAA": (10.00, T0 - 2, T0 - 2)}
+    rest = {"AAAA": (10.50, T0, T0 - 90)}
+    assert _merge(stream, rest)["AAAA"][0] == 10.00
+    assert _merge(rest, stream)["AAAA"][0] == 10.00
+    assert _merge(stream, rest)["AAAA"][2] == T0 - 2
+
+
+def test_newer_dated_trade_still_wins_on_trade_clock():
+    merged = _merge({"AAAA": (10.00, T0 - 30, T0 - 30)},
+                    {"AAAA": (10.50, T0 - 1, T0 - 1)})
+    assert merged["AAAA"][0] == 10.50
+    assert merged["AAAA"][2] == T0 - 1
+
+
+def test_us_rth_now_weekdays_930_to_1600_et():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    # Wednesday 2026-09-02 is a weekday.
+    rth = datetime(2026, 9, 2, 10, 0, tzinfo=et).timestamp()
+    pre = datetime(2026, 9, 2, 8, 0, tzinfo=et).timestamp()
+    post = datetime(2026, 9, 2, 16, 0, tzinfo=et).timestamp()
+    open_bell = datetime(2026, 9, 2, 9, 30, tzinfo=et).timestamp()
+    weekend = datetime(2026, 9, 5, 11, 0, tzinfo=et).timestamp()  # Saturday
+    assert _us_rth_now(rth) is True
+    assert _us_rth_now(open_bell) is True
+    assert _us_rth_now(pre) is False
+    assert _us_rth_now(post) is False  # 16:00 exclusive
+    assert _us_rth_now(weekend) is False
+
+
+def test_rest_poll_skips_rth_when_stream_connected_in_source():
+    """Pinned: price_loop must not spawn Finnhub REST mid-RTH while WS is up."""
+    root = os.path.join(os.path.dirname(__file__), "..")
+    with open(os.path.join(root, "dashboard.py"), encoding="utf-8") as _f:
+        src = _f.read()
+    i = src.index("Finnhub REST quote poll — supplements WebSocket")
+    body = src[i:i + 900]
+    assert "_allow_fh_rest" in body
+    assert "_us_rth_now" in body
+    assert "FINNHUB_STATE.connected" in body
+    assert "Extended hours REST poll" not in src[src.index("def _finnhub_rest_poll_worker"):
+                                                 src.index("def _finnhub_rest_poll_worker") + 2500]

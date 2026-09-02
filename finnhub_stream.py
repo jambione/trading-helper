@@ -65,6 +65,11 @@ class FinnhubState:
         happened, which is the only honest basis for "how old is this number".
         Collapsing the two made a 30s REST re-fetch of an unchanged price read
         as a 3-second-old tick.
+
+        Refuse to displace an existing entry that already has a *newer*
+        trade_ts. REST always stamps ts_unix=now on learn, so without this
+        guard a re-poll of an older print overwrote a younger stream trade
+        and the desk ages looked worse (rest / stale_quote).
         """
         now = time.time()
         trade_ts = (timestamp / 1000.0) if timestamp and timestamp > 0 else None
@@ -73,6 +78,14 @@ class FinnhubState:
         if trade_ts is not None and not (0 < trade_ts <= now + 5):
             trade_ts = None
         with self.lock:
+            existing = self.prices.get(ticker)
+            if existing is not None:
+                cur_tts = existing.get("trade_ts")
+                if cur_tts is not None:
+                    # Keep the younger dated print. An undated incoming
+                    # (REST missing `t`) must not wipe a dated stream tick.
+                    if trade_ts is None or float(trade_ts) < float(cur_tts):
+                        return
             self.prices[ticker] = {
                 "price":     price,
                 "volume":    volume,

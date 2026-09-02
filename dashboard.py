@@ -2264,17 +2264,18 @@ def stream_covered(fh_prices: dict, now: float,
 
 
 def freshest_prices(*sources: dict) -> dict:
-    """Merge {ticker: (price, observed_ts[, trade_ts])} maps, newest observation
-    winning. Returns {ticker: (price, observed_ts, trade_ts|None)}.
+    """Merge {ticker: (price, observed_ts[, trade_ts])} maps.
+    Returns {ticker: (price, observed_ts, trade_ts|None)}.
 
     Preferring a source over an observation time is what let a 90s-old stream
     tick beat a 5s-old Alpaca print. Ties keep the earlier source so repeated
     merges of unchanged input cannot flap between polls.
 
-    The merge runs on OBSERVED time — the most recently learned price is the
-    one to show — while trade_ts rides along so the age we publish can be the
-    print's age rather than the fetch's. A source that cannot supply one passes
-    None, which means "unknown", not "now".
+    When BOTH sides carry a trade clock, the newer trade wins — learn/fetch
+    time must not let a REST re-quote of an older print displace a younger
+    stream/desk trade (REST stamps obs=now every 30s). Undated fetches still
+    cannot displace a dated print. When neither side is dated, newer
+    observation wins.
 
     A fetch with no trade clock must NOT displace a print that still has one.
     Alpaca's fallback caches ``(price, now, None)`` when the broker omits a
@@ -2306,6 +2307,12 @@ def freshest_prices(*sources: dict) -> dict:
             if cur_tts is None and trade_ts is not None:
                 merged[t] = (p, obs, trade_ts)
                 continue
+            # Both dated: trade clock decides, not learn/fetch time.
+            if trade_ts is not None and cur_tts is not None:
+                if trade_ts > cur_tts:
+                    merged[t] = (p, obs, trade_ts)
+                continue
+            # Both undated: newer observation wins.
             if obs > cur_obs:
                 merged[t] = (p, obs, trade_ts)
     return merged
@@ -2335,28 +2342,56 @@ def _alpaca_fallback_worker(client, tickers: list, cfg: dict):
         _alpaca_fallback_running = False
 
 
-# Finnhub REST quote poll — fills prices during extended hours when WebSocket is idle.
+# Finnhub REST quote poll — fills prices outside RTH (or when WS is down).
 # Runs every 30s; only updates tickers not already covered by a live WebSocket price.
 _FINNHUB_REST_INTERVAL = 30   # seconds
 _finnhub_rest_running  = False
 
 
+def _us_rth_now(now: float | None = None) -> bool:
+    """US regular hours: weekdays 09:30–16:00 America/New_York."""
+    try:
+        dt = datetime.fromtimestamp(
+            float(time.time() if now is None else now), tz=ET)
+        if dt.weekday() >= 5:
+            return False
+        mins = dt.hour * 60 + dt.minute
+        return (9 * 60 + 30) <= mins < (16 * 60)
+    except Exception:
+        return False
+
+
 def _finnhub_rest_poll_worker(api_key: str, tickers: list):
-    """Fetch Finnhub /quote for tickers with no live WebSocket price and cache result."""
+    """Fetch Finnhub /quote for tickers with no live WebSocket price and cache result.
+
+    Intended for extended hours / stream-down. Caller should skip spawning
+    during RTH while the Finnhub WS is connected; this early-out is defense
+    in depth so a race cannot spam mid-session REST.
+    """
     global _finnhub_rest_running
     try:
+        if _us_rth_now() and FINNHUB_STATE.connected:
+            return
         with FINNHUB_STATE.lock:
             ws_has = {t for t in tickers if FINNHUB_STATE.prices.get(t, {}).get("price")}
         need = [t for t in tickers if t not in ws_has]
-        # In pre-market/after-hours, WebSocket is often idle.
-        # If tickers have no price, or price is > 60s old, poll them via REST.
+        # Outside RTH the WebSocket is often idle. Poll symbols with no price,
+        # or whose trade clock (not learn time) is > 60s old — ts_unix rewrites
+        # on every REST learn and would otherwise hide a stale print forever.
         now = time.time()
         with FINNHUB_STATE.lock:
-            stale = {t for t in tickers if (d := FINNHUB_STATE.prices.get(t)) and (now - d.get("ts_unix", 0) > 60)}
-        
+            stale = set()
+            for t in tickers:
+                d = FINNHUB_STATE.prices.get(t)
+                if not d or not d.get("price"):
+                    continue
+                tts = d.get("trade_ts")
+                if tts is None or (now - float(tts) > 60):
+                    stale.add(t)
+
         to_poll = sorted(list(set(need) | stale))[:30] # cap per cycle to respect rate limits
         if to_poll:
-            log.info(f"[PRICE] Extended hours REST poll for {len(to_poll)} tickers: {to_poll}")
+            log.info(f"[PRICE] Finnhub REST poll for {len(to_poll)} tickers: {to_poll}")
 
         fail_streak = 0
         for ticker in to_poll:
@@ -2467,10 +2502,15 @@ def _price_loop():
                     for t in stream_covered(fh_snap, now):
                         finnhub_prices[t] = float(fh_snap[t]["price"])
 
-                # Finnhub REST quote poll — supplements WebSocket during extended hours
-                # when no trades have streamed yet. 30s cadence, free-tier safe.
+                # Finnhub REST quote poll — supplements WebSocket outside RTH
+                # (or when the stream is down). Skip mid-RTH while WS is
+                # healthy: REST stamped obs=now every 30s and displaced
+                # younger stream trades / spam-logged as "extended hours".
                 fh_key = STATE.cfg.get("finnhub_key", "")
-                if fh_key and quote_universe and not _finnhub_rest_running and (now - last_fh_rest_poll > _FINNHUB_REST_INTERVAL):
+                _allow_fh_rest = (not _us_rth_now(now)) or (not FINNHUB_STATE.connected)
+                if (fh_key and quote_universe and _allow_fh_rest
+                        and not _finnhub_rest_running
+                        and (now - last_fh_rest_poll > _FINNHUB_REST_INTERVAL)):
                     last_fh_rest_poll     = now
                     _finnhub_rest_running = True
                     threading.Thread(
