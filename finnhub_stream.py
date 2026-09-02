@@ -136,21 +136,65 @@ def register_trade_callback(fn):
 
 # ── Dynamic subscription ──────────────────────────────────────
 
+# Free-tier WebSocket ceiling. Dynamic (un)subscribe rotates under this;
+# overflowing silently means no trades / no forming bars for overflow names.
+# Override with FINNHUB_MAX_SUBSCRIPTIONS if the account tier changes.
+MAX_WS_SUBSCRIPTIONS = int(os.getenv("FINNHUB_MAX_SUBSCRIPTIONS", "50"))
+
+
 def request_subscribe(tickers: list):
-    """Queue new tickers for subscription (thread-safe, works while stream runs)."""
+    """Queue new tickers for Finnhub WS subscription (thread-safe).
+
+    Respects ``MAX_WS_SUBSCRIPTIONS`` (default 50, free-tier ceiling). Symbols
+    that would overflow are NOT queued — logged via ``FINNHUB_STATE.add_log`` —
+    so overflow is loud instead of silent. Prefer ``request_unsubscribe`` to
+    free slots before rotating new names in.
+    """
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in tickers or []:
+        t = str(raw or "").upper().strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        wanted.append(t)
+    if not wanted:
+        return
+
     with FINNHUB_STATE.lock:
         already = set(FINNHUB_STATE.subscribed)
-    for t in tickers:
-        t = t.upper()
-        if t not in already:
-            _pending_subs.put(t)
+    # Count in-flight queue depth so a burst of callers cannot silent-overflow
+    # before _drain_pending runs. May briefly overcount under race; safer than
+    # undercounting past the broker ceiling.
+    pending = _pending_subs.qsize()
+    room = max(0, MAX_WS_SUBSCRIPTIONS - len(already) - pending)
+    queued = 0
+    skipped: list[str] = []
+    for t in wanted:
+        if t in already:
+            continue
+        if queued >= room:
+            skipped.append(t)
+            continue
+        _pending_subs.put(t)
+        queued += 1
+    if skipped:
+        sample = ",".join(skipped[:8])
+        if len(skipped) > 8:
+            sample += "…"
+        FINNHUB_STATE.add_log(
+            "WARN",
+            f"subscribe cap {MAX_WS_SUBSCRIPTIONS}: skipped {len(skipped)} ({sample})",
+        )
 
 
 def request_unsubscribe(tickers: list):
     """Queue tickers to unsubscribe (thread-safe). Frees a slot toward the
-    free-tier 50-symbol cap so rotating watchlists don't starve new movers."""
-    for t in tickers:
-        _pending_unsubs.put(t.upper())
+    free-tier ~50-symbol cap so rotating watchlists don't starve new movers."""
+    for t in tickers or []:
+        t = str(t or "").upper().strip()
+        if t:
+            _pending_unsubs.put(t)
 
 
 # ── WebSocket Stream ─────────────────────────────────────────
@@ -160,6 +204,15 @@ async def _drain_pending(ws):
     while not _pending_subs.empty():
         try:
             t = _pending_subs.get_nowait()
+            with FINNHUB_STATE.lock:
+                if t in FINNHUB_STATE.subscribed:
+                    continue
+                if len(FINNHUB_STATE.subscribed) >= MAX_WS_SUBSCRIPTIONS:
+                    FINNHUB_STATE.add_log(
+                        "WARN",
+                        f"subscribe cap {MAX_WS_SUBSCRIPTIONS} hit draining; drop {t}",
+                    )
+                    continue
             await ws.send(json.dumps({"type": "subscribe", "symbol": t}))
             with FINNHUB_STATE.lock:
                 FINNHUB_STATE.subscribed.add(t)
@@ -198,7 +251,7 @@ async def _finnhub_stream(api_key: str, tickers: list):
                 FINNHUB_STATE.connected = True
                 FINNHUB_STATE.add_log("INFO", f"Finnhub connected ({len(tickers)} tickers)")
 
-                for ticker in tickers[:50]:   # free tier: max 50 symbols
+                for ticker in tickers[:MAX_WS_SUBSCRIPTIONS]:  # free-tier WS ceiling
                     await ws.send(json.dumps({"type": "subscribe", "symbol": ticker}))
                     with FINNHUB_STATE.lock:
                         FINNHUB_STATE.subscribed.add(ticker)
@@ -374,6 +427,7 @@ def get_latest_price(ticker: str) -> "float | None":
 
 __all__ = [
     "FINNHUB_STATE",
+    "MAX_WS_SUBSCRIPTIONS",
     "start_finnhub_stream",
     "request_subscribe",
     "request_unsubscribe",

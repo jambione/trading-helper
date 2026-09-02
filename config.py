@@ -371,7 +371,7 @@ DEFAULT_CONFIG = {
     # this stays under it with headroom. Unlike momentum_max_tickers this is not
     # a display preference: over the ceiling, symbols silently stop receiving
     # trades. Read once at dashboard import.
-    "realtime_symbol_budget":             40,
+    "realtime_symbol_budget":             45,
     # Seed entry-watch from live desk heat (structure poller still defines levels).
     "ai_watch_seed_momentum":           True,
     "ai_watch_seed_momentum_n":           12,
@@ -509,9 +509,9 @@ DEFAULT_CONFIG = {
     # It is never used to arm: the socket carries trades, not quotes, and a
     # print at the bid would arm on a price the order cannot actually get.
     # Max symbols we push into the signal engine for indicator computation.
-    # Finnhub's free tier allows ~50 concurrent WS subscriptions desk-wide and
-    # nothing enforces it, so leave headroom for the engine's own tickers.
-    "ai_watch_engine_push_max":          24,
+    # Finnhub's free tier allows ~50 concurrent WS subscriptions desk-wide;
+    # request_subscribe enforces the ceiling, but keep push ≤ engine capacity.
+    "ai_watch_engine_push_max":          32,
     "ai_watch_stream_enabled":         True,
     "ai_watch_stream_max_age_sec":     10.0,  # older than this → fall back to REST
     "ai_watch_stream_skip_margin_pct":  1.0,  # only skip when this far outside
@@ -1187,9 +1187,9 @@ def validate_ai_config(cfg: dict) -> list[str]:
     # list, which thrashed: 305 evictions in 40 minutes and 882 rate-limit
     # errors. The two numbers have to be sized against each other or the
     # overflow is silent.
-    push_max = int(cfg.get("ai_watch_engine_push_max", 24) or 0)
+    push_max = int(cfg.get("ai_watch_engine_push_max", 32) or 0)
     mom_max = int(cfg.get("momentum_max_tickers", 8) or 0)
-    budget = int(cfg.get("realtime_symbol_budget", 40) or 0)
+    budget = int(cfg.get("realtime_symbol_budget", 45) or 0)
     if budget > 0 and push_max > 0 and mom_max + push_max > budget:
         out.append(
             f"realtime_symbol_budget ({budget}) is under momentum_max_tickers "

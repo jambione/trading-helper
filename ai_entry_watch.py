@@ -3375,20 +3375,37 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         return {"pushed": 0, "known": len(known)}
 
     # Hard cap. Finnhub's free tier allows ~50 concurrent WS subscriptions
-    # across the whole desk, and finnhub_stream.request_subscribe does not
-    # enforce it — it only mentions it in a docstring. Overflow symbols get no
-    # trades, so no forming bars, so no indicator state, so the inclusion gate
-    # rejects them. That failure is completely silent, which is worse than
-    # admitting fewer names, so leave headroom for the engine's own tickers.
+    # across the whole desk. request_subscribe now enforces the ceiling, but
+    # overflow still means no trades / no forming bars / no indicator state —
+    # so leave headroom for the engine's own tickers and prefer quality over
+    # silent starvation.
     try:
-        cap = int(_push_cfg().get("ai_watch_engine_push_max", 24) or 0)
+        cap = int(_push_cfg().get("ai_watch_engine_push_max", 32) or 0)
     except (TypeError, ValueError):
-        cap = 24
+        cap = 32
     if cap > 0:
         room = max(0, cap - len(known))
         if room <= 0:
             return {"pushed": 0, "known": len(known), "capped": True}
-        missing = missing[:room]
+        if len(missing) > room:
+            # Prefer newly admitted book symbols when slots are scarce.
+            # Equal admit_ts keeps caller (score) order via stable sort.
+            try:
+                watch = load_watch() or {}
+            except Exception:
+                watch = {}
+
+            def _admit_ts(sym: str) -> float:
+                rec = watch.get(sym) if isinstance(watch, dict) else None
+                if not isinstance(rec, dict):
+                    return 0.0
+                try:
+                    return float(rec.get("admit_ts") or 0.0)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            missing = sorted(missing, key=_admit_ts, reverse=True)
+            missing = missing[:room]
 
     # Debounce. This runs inside the 2s book sync, but a freshly pushed symbol
     # does not appear in the indicator map until the engine's next scan

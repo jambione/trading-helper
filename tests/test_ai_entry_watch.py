@@ -3059,6 +3059,41 @@ def test_capped_engine_push_sends_the_best_candidates_not_the_alphabet(monkeypat
         "capped push must keep caller ranking, not sort alphabetically")
 
 
+def test_capped_engine_push_prefers_newly_admitted_book_symbols(monkeypatch):
+    """When room is scarce, newly admitted book names beat older cold candidates."""
+    import ai_entry_watch as ew
+
+    posted = {}
+
+    def _fake_urlopen(req, timeout=None):
+        posted["tickers"] = json.loads(req.data.decode())["tickers"]
+
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(ew, "_push_cfg",
+                        lambda: {"ai_watch_engine_push_max": 2,
+                                 "scan_interval_sec": 60})
+    monkeypatch.setattr(
+        ew, "load_watch",
+        lambda: {
+            "OLDX": {"admit_ts": 1000.0},
+            "NEWY": {"admit_ts": 9000.0},
+            "MIDZ": {"admit_ts": 5000.0},
+        },
+    )
+    ew._pushed_at.clear()
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    # Caller order is worst-first for the new names; admit_ts must win.
+    ew.push_candidates_to_engine(["OLDX", "MIDZ", "NEWY"])
+    assert posted["tickers"] == ["NEWY", "MIDZ"], posted.get("tickers")
+
+
 def test_engine_push_dedupes_without_losing_order(monkeypatch):
     import ai_entry_watch as ew
 

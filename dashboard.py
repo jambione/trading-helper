@@ -96,6 +96,7 @@ from finnhub_stream import (
     FINNHUB_STATE,
     start_finnhub_stream,
     request_subscribe as _fh_subscribe,
+    request_unsubscribe as _fh_unsubscribe,
     fetch_realtime_quote as _fh_rest_quote,
     dashboard_ws_collides_with_engine,
 )
@@ -1409,10 +1410,9 @@ if TICKER_MIN_RVOL < 0:
 # Absolute ceiling on the list, candidates and desk-covered names together.
 # This is a real external limit, not a taste knob: Finnhub's free tier allows
 # ~50 concurrent WebSocket subscriptions across the whole desk, and
-# finnhub_stream.request_subscribe does not enforce it. Past the ceiling a
-# symbol silently receives no trades — no forming bars, no indicator state — so
-# overflow is invisible rather than loud. Kept below 50 to leave the engine its
-# own headroom.
+# finnhub_stream.request_subscribe now enforces ~50, but past the ceiling a
+# symbol still receives no trades — no forming bars, no indicator state — so
+# keep this budget below 50 to leave the engine its own headroom.
 try:
     _SUB_BUDGET = max(
         TICKER_MAX_COUNT,
@@ -2355,10 +2355,15 @@ def _price_loop():
                 book_syms = set()
             quote_universe = current | book_syms
 
-            # Subscribe new tickers to Finnhub as they appear; periodic scan picks them up.
-            new = (current | book_syms) - (_prev_tickers | _prev_book)
+            # Subscribe new tickers to Finnhub as they appear; unsubscribe
+            # symbols that left the watchlist/book so the ~50 WS cap rotates.
+            prev_universe = _prev_tickers | _prev_book
+            new = quote_universe - prev_universe
+            left = prev_universe - quote_universe
             if new and FINNHUB_STATE.connected:
                 _fh_subscribe(list(new))
+            if left and FINNHUB_STATE.connected:
+                _fh_unsubscribe(list(left))
             _prev_tickers = current
             _prev_book = book_syms
 

@@ -52,8 +52,8 @@ EFFICIENCY NOTES
   • Finnhub price reads are pure in-memory dict lookups — no I/O.
   • Alpaca bar fetches are rate-limited to BAR_REFRESH seconds per ticker
     AND staggered so they don't all fire in the same second.
-  • Active list is capped at MAX_ACTIVE_TICKERS (default 20, also
-    Finnhub free-tier sub limit is 50 — well within range).
+  • Active list is capped at MAX_ACTIVE_TICKERS (default 32, aligned with
+    book push; Finnhub free-tier WS cap is ~50 — leave headroom).
 
 RUN
 ───
@@ -102,6 +102,7 @@ import version
 from finnhub_stream import (
     start_finnhub_stream,
     request_subscribe as fh_request_subscribe,
+    request_unsubscribe as fh_request_unsubscribe,
     get_latest_price as fh_get_latest_price,
     FINNHUB_STATE,
 )
@@ -168,7 +169,7 @@ BAR_STAGGER    = int(os.getenv("BAR_STAGGER",    "5"))   # seconds between each 
 EXPIRY_COLD    = int(os.getenv("EXPIRY_COLD",    "180"))   # 3 min — never warmed up
 EXPIRY_WARM    = int(os.getenv("EXPIRY_WARM",    "600"))   # 10 min — showed positive hist
 
-MAX_ACTIVE_TICKERS = int(os.getenv("MAX_ACTIVE_TICKERS", "20"))  # hard cap on active list
+MAX_ACTIVE_TICKERS = int(os.getenv("MAX_ACTIVE_TICKERS", "32"))  # hard cap; align with book push
 
 # 200 was enough for every indicator computed off native bars, but the %R slow
 # line is now a 15-minute resample (signals._resampled_percent_r) and 200
@@ -431,6 +432,14 @@ def request_subscribe(tickers: list):
         fh_request_subscribe(tickers)
 
 
+def request_unsubscribe(tickers: list):
+    """Drop live-price subscriptions when a ticker leaves ``active``."""
+    if PRICE_SOURCE in ("alpaca", "both", "auto"):
+        alpaca_px.request_unsubscribe(tickers)
+    if PRICE_SOURCE in ("finnhub", "both", "auto"):
+        fh_request_unsubscribe(tickers)
+
+
 # Below this, a timestamp cannot be milliseconds: 1e11 ms is 1973, and 1e11
 # seconds is the year 5138. Anything smaller arrived as seconds.
 _MS_FLOOR = 1e11
@@ -570,6 +579,9 @@ def row_triggers_tracking(row: dict, track_desk: bool | None = None) -> tuple[bo
     """
     if not isinstance(row, dict) or not row.get("ticker"):
         return False, ""
+    # Book-seeded names need indicators/tape even without momentum heat.
+    if str(row.get("src") or "").strip().lower() == "book":
+        return True, "book"
     if row.get("mentioned"):
         return True, "mentioned"
     if row.get("mention_burst"):
@@ -883,6 +895,10 @@ class TickerState:
         # _ingest_state; while True, is_expired() stays False so RSI focus keeps
         # updating for symbols the desk is actively showing.
         self.on_desk: bool = False
+        # Provenance from the dashboard ticker list. "book" means AI Watch
+        # seeded this name for indicators/tape — prefer keeping it when the
+        # active list is full over cold desk noise.
+        self.src: str = ""
         # Failed bar-fetch attempts before first success (drives fast retry).
         self._bar_fetch_attempts: int = 0
 
@@ -1324,6 +1340,30 @@ def ticker_tag(sym: str) -> str:
     return sym.ljust(6)
 
 
+# ── Active-list priority ──────────────────────────────────────────────────────
+
+def pick_cold_nonbook_eviction(active: dict) -> str | None:
+    """Oldest cold, non-pinned, non-book, not-in-position symbol — or None.
+
+    When the active list is full and a book/seeded name wants in, free a slot
+    by dropping cold desk noise first. Never returns a book src, pinned, or
+    in-position ticker.
+    """
+    candidates: list[tuple[float, str]] = []
+    for sym, ts in active.items():
+        if getattr(ts, "pinned", False) or getattr(ts, "in_position", False):
+            continue
+        if str(getattr(ts, "src", "") or "").strip().lower() == "book":
+            continue
+        if getattr(ts, "ever_positive_hist", False):
+            continue  # warm — keep over cold noise
+        candidates.append((float(getattr(ts, "added_ts", 0.0) or 0.0), sym))
+    if not candidates:
+        return None
+    candidates.sort()  # oldest cold first
+    return candidates[0][1]
+
+
 # ── Main engine ───────────────────────────────────────────────────────────────
 
 class SignalEngine:
@@ -1481,6 +1521,9 @@ class SignalEngine:
             # Still on the dashboard ticker list → hold for RSI / proximity
             if sym in self.active:
                 self.active[sym].on_desk = True
+                src_tag = str(row.get("src") or "").strip().lower()
+                if src_tag == "book":
+                    self.active[sym].src = "book"
 
             # ── Mention velocity tracking ─────────────────────────────────────
             # Every time the dashboard says this ticker is mentioned, record it.
@@ -1513,11 +1556,23 @@ class SignalEngine:
             if sym in self.active:
                 continue  # already tracking
 
-            # Pinned compare tickers don't count against the cap
+            # Pinned compare tickers don't count against the cap.
+            # When full, prefer keeping book/watch over cold desk noise —
+            # evict a cold non-book slot before skipping a seeded/book name.
             if sum(1 for t in self.active.values() if not t.pinned) >= MAX_ACTIVE_TICKERS:
-                print(f"  [ENGINE] ⚠️  active list full ({MAX_ACTIVE_TICKERS}) "
-                      f"— skipping {sym} ({reason})")
-                continue
+                is_book = (reason == "book"
+                           or str(row.get("src") or "").strip().lower() == "book")
+                victim = pick_cold_nonbook_eviction(self.active) if is_book else None
+                if victim:
+                    print(f"  [ENGINE] ♻️  active full ({MAX_ACTIVE_TICKERS}) "
+                          f"— evicting cold {victim} for book {sym}")
+                    del self.active[victim]
+                    self._known_mentioned.discard(victim)
+                    request_unsubscribe([victim])
+                else:
+                    print(f"  [ENGINE] ⚠️  active list full ({MAX_ACTIVE_TICKERS}) "
+                          f"— skipping {sym} ({reason})")
+                    continue
 
             # Stagger bar fetches: ticker #0 fetches now, #1 in BAR_STAGGER s,
             # #2 in 2×BAR_STAGGER s, etc.  Prevents a burst of Alpaca calls
@@ -1527,6 +1582,8 @@ class SignalEngine:
 
             ts = TickerState(sym, fetch_offset_s=offset)
             ts.on_desk = True
+            if reason == "book" or str(row.get("src") or "").strip().lower() == "book":
+                ts.src = "book"
             self.active[sym] = ts
             self._known_mentioned.add(sym)
             expiry_tag = "desk-held" if ts.on_desk else (
@@ -1874,6 +1931,8 @@ class SignalEngine:
             del self.active[sym]
             # Allow re-adding if the ticker gets mentioned again later
             self._known_mentioned.discard(sym)
+            # Free the Finnhub/Alpaca subscription slot toward the ~50 cap.
+            request_unsubscribe([sym])
 
     def _write_signal_state(self):
         """
