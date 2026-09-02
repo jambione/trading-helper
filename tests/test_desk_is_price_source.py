@@ -70,20 +70,19 @@ def _desk_rows(**over):
     return {"tickers": {"AAA": base}}
 
 
-def _harvest(sig, universe={"AAA"}, now=1_787_000_000.0):
+def _harvest(sig, universe={"AAA"}, now=1_787_000_000.0, sane_max=30.0):
     """Mirror of the loop's desk-source filter, kept in step by the source
-    pin below. Only realtime, priced, dateable rows may contribute."""
+    pin below. Known finite rt age within sane max may contribute — not only
+    bars_src==realtime (PPBT Sep2)."""
     out = {}
     for t, sp in (sig.get("tickers") or {}).items():
         if not isinstance(sp, dict) or t not in universe:
-            continue
-        if str(sp.get("bars_src") or "") != "realtime":
             continue
         px, age = sp.get("rt_price"), sp.get("rt_price_age_sec")
         if px is None or age is None:
             continue
         px, age = float(px), float(age)
-        if px <= 0 or age < 0:
+        if px <= 0 or age < 0 or age > sane_max:
             continue
         tts = now - age
         if tts <= 0:
@@ -110,10 +109,21 @@ def test_the_price_taken_is_the_tapes_own_print():
     assert got["AAA"][0] == 10.0, "rt_price, not the fed-back `price`"
 
 
-def test_the_rest_fallback_does_not_contribute():
-    """bars_src flips per ticker mid-session and the fallback has no trade
-    clock worth trusting here."""
-    assert _harvest(_desk_rows(bars_src="alpaca")) == {}
+def test_young_rt_print_contributes_even_if_bars_src_is_not_realtime():
+    """PPBT Sep2: merge by known rt age, not bars_src==realtime.
+
+    bars_src flips mid-session / demotes on aged-out writes; a young socket
+    print can still sit under alpaca until the next eval. The REST fallback
+    still cannot contribute — it leaves rt_price/age None (covered below).
+    """
+    got = _harvest(_desk_rows(bars_src="alpaca", rt_price_age_sec=0.4))
+    assert "AAA" in got
+    assert got["AAA"][0] == 10.0
+
+
+def test_aged_out_rt_print_does_not_contribute():
+    """Sane max (engine RT_BARS_MAX_STALE default 30) still fail-closes."""
+    assert _harvest(_desk_rows(bars_src="realtime", rt_price_age_sec=31.0)) == {}
 
 
 def test_a_row_with_no_age_does_not_contribute():
@@ -151,9 +161,11 @@ def test_the_loop_actually_passes_the_desk_into_the_merge():
     # the loop guard below unfalsifiable.
     body = src[i:src.index("desk_prices = {}", i + 1)]
     assert '_load_signal_state()' in body, "the desk state is the source"
-    assert '"realtime"' in body, "only the realtime pipe may contribute"
     assert 'get("rt_price")' in body, "the tape's own print"
     assert 'get("rt_price_age_sec")' in body, "and that print's own clock"
+    # PPBT Sep2: age-known gate, not bars_src==realtime only.
+    assert "REALTIME_BARS_MAX_STALE" in body or "_sane_max" in body
+    assert 'bars_src") or "") != "realtime"' not in body
     # The loop guard. Re-reaching for either of these is the regression.
     assert 'get("price")' not in body, "`price` is fed back from this loop"
     assert 'get("bars_age_sec")' not in body, "bar-eval clock, not this price"

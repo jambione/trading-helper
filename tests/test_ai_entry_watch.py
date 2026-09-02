@@ -4330,6 +4330,8 @@ def test_old_stream_age_never_paints_ready(monkeypatch):
     ew.apply_tape_blocker(row, 9.61)
     assert row["ready"] is False
     assert row["block_code"] == "stale_quote"
+    # PPBT Sep2 honesty: demote stream label beside stale_quote.
+    assert row["last_ask_src"] == "stale_tape"
 
 
 def test_derive_blocker_prefers_stale_tape_over_in_zone():

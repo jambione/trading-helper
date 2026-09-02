@@ -741,6 +741,14 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
         row["block_reason"] = row["blocker"]
         if not row.get("block_detail"):
             row["block_detail"] = "tape age unknown or old"
+        # PPBT Sep2 honesty: never leave last_ask_src=stream beside
+        # block_code=stale_quote (age/src already said the print is dead).
+        _src_stale = str(
+            row.get("last_ask_src") or row.get("price_src") or ""
+        ).strip().lower()
+        if _src_stale == "stream":
+            row["last_ask_src"] = "stale_tape"
+            row["price_src"] = "stale_tape"
         return
     # Keep a poller-stamped stream_required refuse until the print is stream.
     # Do not re-derive the flag from live bot_config here (tests / paint).
@@ -1460,6 +1468,12 @@ def book_table_rows(
                     if age_f <= max_age:
                         r["last_ask_src"] = "stream"
                         r["price_src"] = "stream"
+                    else:
+                        # PPBT Sep2 honesty: never leave last_ask_src=stream
+                        # while age exceeds the decision ceiling — blocker
+                        # stamps stale_quote next; src must match.
+                        r["last_ask_src"] = "stale_tape"
+                        r["price_src"] = "stale_tape"
                 # Refresh above/below from live print so BLOCKER tracks the tape.
                 # Armable overshoots (within max_r below the floor) count as
                 # in-zone — same buy geometry as should_arm_buy.
@@ -9564,9 +9578,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 tape = stream_quote(sym)
                 if (tape is not None and tape[0] and tape[1] is not None
                         and float(tape[0]) > 0):
+                    _age_f = float(tape[1])
                     rec["last_ask"] = float(tape[0])
-                    rec["last_ask_src"] = "stream"
-                    rec["last_ask_age_sec"] = float(tape[1])
+                    rec["last_ask_age_sec"] = _age_f
+                    # PPBT Sep2 honesty: age-gate the stream label (same as
+                    # 2s paint). Old print → stale_tape, never stream+stale.
+                    if _age_f <= decision_max_age_sec(cfg):
+                        rec["last_ask_src"] = "stream"
+                    else:
+                        rec["last_ask_src"] = "stale_tape"
             except (TypeError, ValueError):
                 pass
             # Still warm %R so the UI column and shadow log are honest —

@@ -2463,11 +2463,6 @@ def _price_loop():
                             continue
                         if _t not in quote_universe:
                             continue
-                        # Only the realtime pipe. bars_src flips per ticker
-                        # mid-session, and the REST fallback has no trade
-                        # clock worth trusting here.
-                        if str(_sp.get("bars_src") or "") != "realtime":
-                            continue
                         # rt_price / rt_price_age_sec ONLY — never `price`
                         # with `bars_age_sec`. Those two are different
                         # events: `price` is the engine's last_price, which
@@ -2477,13 +2472,29 @@ def _price_loop():
                         # bar-eval time. Pairing them fed our own price back
                         # to us wearing a sub-second age it had not earned,
                         # and it would have won every race in the merge.
+                        #
+                        # PPBT Sep2 honesty: contribute when age is known and
+                        # finite (within sane max), NOT only when
+                        # bars_src=="realtime". bars_src flips mid-session and
+                        # demotes on aged-out writes; a young socket print can
+                        # still sit under alpaca until the next eval. Fail-
+                        # closed: unknown/None age never counts as stream.
                         _px = _sp.get("rt_price")
                         _age = _sp.get("rt_price_age_sec")
                         if _px is None or _age is None:
                             continue
                         _px = float(_px)
                         _age = float(_age)
-                        if _px <= 0 or _age < 0:
+                        # Match signal_engine.RT_BARS_MAX_STALE (default 30).
+                        try:
+                            _sane_max = float(
+                                os.getenv("REALTIME_BARS_MAX_STALE", "30")
+                                or 30)
+                        except (TypeError, ValueError):
+                            _sane_max = 30.0
+                        if _sane_max <= 0:
+                            _sane_max = 30.0
+                        if _px <= 0 or _age < 0 or _age > _sane_max:
                             continue
                         _tts = now - _age
                         if _tts <= 0:
