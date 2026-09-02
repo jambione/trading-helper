@@ -71,6 +71,19 @@ _last_good_positions: dict = {}
 # Sticky account day P&L snapshot (equity / day_pl) for the same reason.
 _last_good_account: dict = {}
 
+
+def _seed_sticky_account_from_disk() -> None:
+    """Hydrate equity sticky from the last wire so a bad boot does not flash —."""
+    try:
+        data = _read_json(POSITIONS_FILE)
+        acct = data.get("account") if isinstance(data, dict) else None
+        if isinstance(acct, dict) and acct.get("equity"):
+            _last_good_account.clear()
+            _last_good_account.update(acct)
+    except Exception:
+        pass
+
+
 LOOP_SLEEP = 5.0
 
 
@@ -342,9 +355,13 @@ def _positions_payload(
             _last_good_account.update(account)
     else:
         error = "trader inactive — no Alpaca session"
-        # Trader off is authoritative flat — do not sticky phantom positions.
+        # Trader off is authoritative flat for POSITIONS — do not sticky
+        # phantom open risk. But keep the last good ACCOUNT snapshot for the
+        # equity / Today header: blanking to — / $0 while paper still holds
+        # cash (2026-09-02: $237.84 wiped after a non-venv restart lost
+        # alpaca-py) is a display bug, not honest flat.
         _last_good_positions.clear()
-        _last_good_account.clear()
+        account = dict(_last_good_account) if _last_good_account else {}
 
     try:
         performance = ai_positions.performance_summary()
@@ -1104,8 +1121,22 @@ def _run_open_bell_entries(book: AiSuggestions, cfg: dict, now: float) -> None:
 
 
 def main() -> None:
+    _seed_sticky_account_from_disk()
     cfg = load_config()
     print(f"[ai] config_effective {format_config_effective(cfg)}", flush=True)
+    # Refuse to run the trading book without alpaca-py — wrong interpreter
+    # (non-venv) used to publish empty account forever while paper held cash.
+    try:
+        import alpaca  # noqa: F401
+    except ImportError:
+        src_early = resolve_trading_source(cfg)
+        if src_early in ("grok", "claude"):
+            print(
+                "[ai] FATAL: alpaca-py missing in this interpreter — "
+                "start via ./trading (uses .venv). Refusing empty equity wire.",
+                flush=True,
+            )
+            raise SystemExit(2)
     try:
         cov = ai_positions.outcomes_coverage()
         if cov.get("n_uncovered"):
