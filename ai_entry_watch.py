@@ -384,6 +384,28 @@ def _num_or_none(v):
         return None
 
 
+def honesty_restamp_stream_src(rec: dict, cfg: dict | None = None) -> None:
+    """Never leave last_ask_src=stream beside an aged-out / untimed print.
+
+    Live 2026-09-02 ~11:05 ET: stream+stale_quote pairs returned on ALMS /
+    BIAF / GTLB / ASST after ages grew through the 15s ceiling while src
+    stayed stream. public_snapshot recomputes age from _LAST_QUOTE_TS but
+    was republishing the frozen stream label; apply_tape_blocker restamped
+    only on the paint path. Arms stay at decision_max_age_sec (15) —
+    this only aligns the label with the refuse.
+    """
+    if not isinstance(rec, dict):
+        return
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if src != "stream":
+        return
+    if _row_tape_stale(rec, cfg):
+        rec["last_ask_src"] = "stale_tape"
+        rec["price_src"] = "stale_tape"
+
+
 def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
     """True when this row's print is too old (or unknown) to arm.
 
@@ -743,12 +765,7 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
             row["block_detail"] = "tape age unknown or old"
         # PPBT Sep2 honesty: never leave last_ask_src=stream beside
         # block_code=stale_quote (age/src already said the print is dead).
-        _src_stale = str(
-            row.get("last_ask_src") or row.get("price_src") or ""
-        ).strip().lower()
-        if _src_stale == "stream":
-            row["last_ask_src"] = "stale_tape"
-            row["price_src"] = "stale_tape"
+        honesty_restamp_stream_src(row)
         return
     # Keep a poller-stamped stream_required refuse until the print is stream.
     # Do not re-derive the flag from live bot_config here (tests / paint).
@@ -1019,6 +1036,9 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
                 in_zone = True
         ready = status == "armed" or (
             status == "watching" and in_zone and not _poller_blocked(rec))
+        # Restamp BEFORE derive_blocker so chip/src/block_code agree:
+        # age>15 must never publish last_ask_src=stream (Sep2 11:05 ET).
+        honesty_restamp_stream_src(rec)
         b_code, b_label = derive_blocker(rec, pad_pct=pad_pct)
         rows.append({
             "symbol": sym,
@@ -3450,16 +3470,64 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         return {"pushed": 0, "known": len(known), "error": True}
 
 
+_ENGINE_RT_CACHE: tuple[float, dict] = (0.0, {})
+_ENGINE_RT_TTL = 0.5  # seconds — signal_state.json write cadence ~1s
+
+
+def _engine_rt_print(symbol: str) -> tuple[float, float] | None:
+    """Young dated engine rt_price/rt_price_age_sec, or None.
+
+    Dashboard merge can still lose a young socket print to REST/undated
+    between loops (ASST/PPBT Sep2: realtime MACD while quote path REST).
+    decision_price/live_print must see the engine tape directly so a known
+    young age cannot be displaced by an undated REST ask.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    global _ENGINE_RT_CACHE
+    now = time.time()
+    ts, tickers = _ENGINE_RT_CACHE
+    if (now - ts) > _ENGINE_RT_TTL or not tickers:
+        try:
+            from pathlib import Path as _P
+            raw = _P(__file__).resolve().parent.joinpath("signal_state.json")
+            data = json.loads(raw.read_text(encoding="utf-8"))
+            tickers = data.get("tickers") if isinstance(data, dict) else {}
+            if not isinstance(tickers, dict):
+                tickers = {}
+            _ENGINE_RT_CACHE = (now, tickers)
+        except Exception:
+            return None
+    sp = tickers.get(sym)
+    if not isinstance(sp, dict):
+        return None
+    try:
+        px = float(sp.get("rt_price") or 0)
+        age = float(sp.get("rt_price_age_sec"))
+    except (TypeError, ValueError):
+        return None
+    if px <= 0 or age < 0:
+        return None
+    return px, age
+
+
 def live_print(symbol: str) -> tuple[float, float | None] | None:
     """Dashboard tape print: ``(price, age_sec_or_None)``.
 
     ``price_age_sec`` is the observation age. ``price_ts`` is a write clock
     and must not be used for freshness. Age None means the desk has a number
     but cannot prove it is live — callers must not treat that as fresh.
+
+    Prefers a young dated engine ``rt_*`` over dashboard REST/undated when
+    the engine age is known and strictly fresher (or dash age is unknown).
+    Keeps arms honest without loosening decision_max_age_sec.
     """
     sym = str(symbol or "").upper().strip()
     if not sym:
         return None
+    dash_px: float | None = None
+    dash_age: float | None = None
     for r in _dashboard_tickers():
         if not isinstance(r, dict):
             continue
@@ -3468,15 +3536,23 @@ def live_print(symbol: str) -> tuple[float, float | None] | None:
         try:
             px = float(r.get("price") or 0)
         except (TypeError, ValueError):
-            return None
+            px = 0.0
         if px <= 0:
-            return None
-        age: float | None
+            break
         try:
-            age = float(r.get("price_age_sec"))
+            dash_age = float(r.get("price_age_sec"))
         except (TypeError, ValueError):
-            age = None
-        return px, age
+            dash_age = None
+        dash_px = px
+        break
+    eng = _engine_rt_print(sym)
+    if eng is not None:
+        epx, eage = eng
+        # Engine wins when dash has no clock, or engine is strictly younger.
+        if dash_px is None or dash_age is None or eage < float(dash_age):
+            return epx, eage
+    if dash_px is not None:
+        return dash_px, dash_age
     return None
 
 
@@ -9581,12 +9657,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     _age_f = float(tape[1])
                     rec["last_ask"] = float(tape[0])
                     rec["last_ask_age_sec"] = _age_f
+                    # Keep the quote clock in the map (same as
+                    # apply_decision_price). Far-path used to skip this, so
+                    # public_snapshot recomputed age from an older map ts
+                    # while last_ask_src stayed stream → stream+stale_quote.
+                    rec["last_ask_ts"] = float(t0) - _age_f
+                    _LAST_QUOTE_TS[str(sym).upper().strip()] = (
+                        float(t0) - _age_f)
                     # PPBT Sep2 honesty: age-gate the stream label (same as
                     # 2s paint). Old print → stale_tape, never stream+stale.
                     if _age_f <= decision_max_age_sec(cfg):
                         rec["last_ask_src"] = "stream"
                     else:
                         rec["last_ask_src"] = "stale_tape"
+                    honesty_restamp_stream_src(rec, cfg)
             except (TypeError, ValueError):
                 pass
             # Still warm %R so the UI column and shadow log are honest —

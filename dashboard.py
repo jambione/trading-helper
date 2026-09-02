@@ -647,11 +647,19 @@ def overlay_ai_book_live_prices(
                 except Exception:
                     decision_max = 8.0
                 fresh_stream = age is not None and age <= decision_max
+                if age is not None and age >= 0:
+                    # Always carry the live clock. Leaving last_ask_age on an
+                    # older poller stamp while PRICE ticks is what painted
+                    # stream+stale_quote (Sep2 11:05 ET: GTLB/ALMS/ASST).
+                    row["price_age_sec"] = age
+                    row["last_ask_age_sec"] = age
                 if fresh_stream:
                     row["price_src"] = "stream"
                     row["last_ask_src"] = "stream"
-                    row["price_age_sec"] = age
-                    row["last_ask_age_sec"] = age
+                elif age is not None and age > decision_max:
+                    # Honesty: age>ceiling never keeps last_ask_src=stream.
+                    row["price_src"] = "stale_tape"
+                    row["last_ask_src"] = "stale_tape"
                 try:
                     lo = float(row.get("entry_low") or 0)
                     hi = float(row.get("entry_high") or 0)
