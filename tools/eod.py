@@ -43,6 +43,14 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import bars  # noqa: E402
 import shadow_report as sr  # noqa: E402
 
+# The outcome row keeps the RAW spread so the artifacts stay countable, and
+# _sane_spread_r's contract is that every CONSUMER filters them. eod.py was
+# the consumer that did not: on 2026-09-02, 5 of 6 fills carried the IEX
+# ~5.5-6.0R artifact and the headline MFE-spread printed -5.421R against a
+# -0.03R house range. A reading that wide is not a wide book, it is a bad
+# quote, and it cannot be charged to the trade.
+from ai_positions import _sane_spread_r  # noqa: E402
+
 OUTCOMES = os.path.join(ROOT, "ai_reports", "outcomes.jsonl")
 EVENTS = os.path.join(ROOT, "ai_reports", "events.jsonl")
 
@@ -160,12 +168,31 @@ def capture_stats(trades, feed: str | None = None) -> dict:
     }
 
 
-def score_session(trades, trig):
+def _sane_max():
+    from ai_positions import DEFAULT_SPREAD_R_SANE_MAX
+    c = _cfg_or_none() or {}
+    v = c.get("ai_spread_r_sane_max")
+    try:
+        return float(v) if v is not None else DEFAULT_SPREAD_R_SANE_MAX
+    except (TypeError, ValueError):
+        return DEFAULT_SPREAD_R_SANE_MAX
+
+
+def _cfg_or_none():
+    try:
+        from config import load_config
+        return load_config()
+    except Exception:
+        return None
+
+
+def score_session(trades, trig, cfg=None):
     """Per-session totals, including the cost paper never charged."""
     paper_r = paper_usd = 0.0
     live_r = 0.0
     unpaid_all, mfe_less_spread, per_r = [], [], []
     n_spread = 0
+    n_spread_bad = 0
     for d in trades:
         r = d.get("realized_r_multiple")
         u = d.get("realized_pl_usd")
@@ -178,7 +205,12 @@ def score_session(trades, trig):
             if r:
                 per_r.append(float(u) / r)
         f = d.get("features") or {}
-        sp = f.get("spread_r")
+        sp_raw = f.get("spread_r")
+        sp = _sane_spread_r(sp_raw, cfg)
+        if sp is None and sp_raw is not None:
+            # Unknown, not zero: the trade is dropped from the spread stats
+            # rather than charged a fabricated cost.
+            n_spread_bad += 1
         e, st = d.get("entry_price"), d.get("stop_price")
         unpaid = 0.0
         if sp is not None and e and st:
@@ -201,7 +233,7 @@ def score_session(trades, trig):
         live_r += r - unpaid
     dollars_per_r = statistics.median(per_r) if per_r else 0.0
     return {
-        "n": len(trades), "n_spread": n_spread,
+        "n": len(trades), "n_spread": n_spread, "n_spread_bad": n_spread_bad,
         "paper_r": paper_r, "paper_usd": paper_usd,
         "live_r": live_r, "live_usd": live_r * dollars_per_r,
         "unpaid": statistics.median(unpaid_all) if unpaid_all else None,
@@ -242,7 +274,7 @@ def main() -> int:
         print("no outcome rows")
         return 1
     trig = exit_slip_by_trade(set(days))
-    scored = {d: score_session(by_day[d], trig) for d in days}
+    scored = {d: score_session(by_day[d], trig, _cfg_or_none()) for d in days}
     today = days[-1]
     t = scored[today]
 
@@ -264,6 +296,13 @@ def main() -> int:
     if t["unpaid"] is not None:
         print(f"  paper under-charged the exit by {t['unpaid']:.3f}R per trade "
               f"(median, measured)")
+
+    if t.get("n_spread_bad"):
+        print(f"\n  NOTE: {t['n_spread_bad']} of {t['n']} fills carried a spread wider "
+              f"than {_sane_max():g}R — the IEX quote")
+        print("        artifact, not a real book. Excluded below rather than "
+              "charged as a")
+        print(f"        cost we cannot substantiate. {t['n_spread']} fill(s) priced.")
 
     print("\n  DECISION METRIC — the trade's best moment minus what it cost")
     if t["mfe_less_spread"] is not None:
@@ -288,7 +327,7 @@ def main() -> int:
     for d in days:
         s = scored[d]
         mfe = f"{s['mfe_less_spread']:+.3f}" if s["mfe_less_spread"] is not None else "—"
-        cs = capture_stats(sessions[d])
+        cs = capture_stats(by_day[d])
         av = f"{cs['median_available_r']:+.3f}" if cs["median_available_r"] is not None else "—"
         cp = f"{cs['median_capture']:.0%}" if cs["median_capture"] is not None else "—"
         if cs["median_capture"] is not None:
