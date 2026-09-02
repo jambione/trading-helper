@@ -40,6 +40,9 @@ def test_public_snapshot_never_emits_stream_with_stale_age(monkeypatch):
         "ai_watch_decision_max_age_sec": 15.0,
         "ai_watch_arm_require_stream_price": True,
     })
+    # Isolate from live signal_state / dash (mini RTH has young eng for ALMS).
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    monkeypatch.setattr(ew, "_engine_rt_print", lambda sym: None)
     now = time.time()
     state = {
         "ALMS": {
