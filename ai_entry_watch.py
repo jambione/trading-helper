@@ -9201,6 +9201,95 @@ def _arm_streak(rec: dict, ok: bool) -> int:
     return n
 
 
+def _arm_gate_snapshot(rec: dict, ask: float | None = None) -> dict:
+    """The handful of inputs the arm gate actually reads.
+
+    Field names match cm_rsi_allows_buy / macd_allows_buy / exhaustion_allows_
+    buy, so diffing two snapshots points straight at the input that moved
+    between the batch verdict and the post-refresh one. Values are read from
+    ``indicator`` first and the record second, because refresh_engine_rsi and
+    refresh_engine_macd stamp the former while the seed path fills the latter.
+
+    Cheap and total: no fetch, no raise.
+    """
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+
+    def _pick(key):
+        v = ind.get(key)
+        if v is None and isinstance(rec, dict):
+            v = rec.get(key)
+        return v
+
+    return {
+        "ask": ask,
+        "cm_rsi": _pick("cm_rsi"),
+        "cm_rsi_rising": _pick("cm_rsi_rising"),
+        "cm_rsi_src": _pick("cm_rsi_src"),
+        "pctr": _pick("pctr"),
+        "pctr_rising": _pick("pctr_rising"),
+        "macd_gap": _pick("macd_gap"),
+        "macd_src": _pick("macd_src"),
+    }
+
+
+def _log_arm_recheck(
+    cp: Any,
+    sym: str,
+    *,
+    stage: str,
+    ok: bool,
+    why: str | None,
+    before: dict,
+    after: dict,
+    why_first: str | None = None,
+    streak: int | None = None,
+    need: int | None = None,
+    px_src: str | None = None,
+) -> None:
+    """Record the arm verdicts that happen AFTER the shadow row is written.
+
+    should_arm_buy runs twice per buy-ready poll: once on the batch quote,
+    which shadow.jsonl records, and once on the re-pulled quote with
+    re-stamped indicators, which nothing recorded. A name that armed on the
+    batch and was vetoed on the refresh therefore left no trace at all -- not
+    a shadow row, not an event, only a block_reason on a record that does not
+    survive the session. GTLB did exactly that 163 times on 2026-09-02 and no
+    log on disk could say why it never bought. The confirm streak was equally
+    dark.
+
+    Written to events.jsonl rather than shadow.jsonl on purpose: every
+    existing report counts ``arm_ok is True`` shadow rows as arms, and a
+    second row per arm would silently inflate all of them.
+
+    ``stage`` is "refresh" (post-repull verdict), "confirm" (streak not yet
+    met) or "pass" (cleared both, entry gates next).
+
+    Never raises: instrumentation must not be able to stop a trade.
+    """
+    try:
+        changed = sorted(
+            k for k in after
+            if k != "ask" and before.get(k) != after.get(k)
+        )
+        cp.log_event(
+            "arm_recheck",
+            symbol=sym,
+            stage=stage,
+            ok=bool(ok),
+            why=why or None,
+            why_first=why_first or None,
+            streak=streak,
+            need=need,
+            px_src=px_src,
+            changed=changed or None,
+            before=before,
+            after=after,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def rvol_ranked(state: dict, *, live_lookup=None) -> list[tuple[str, dict]]:
     """Watch records, strongest relative volume first, then the best setup.
 
@@ -10183,6 +10272,8 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # Buy-ready on this poll's batch quote can be up to a few seconds
         # stale. Re-pull NBBO + EXH/RSI before we treat the name as a buy
         # (State, gates, and place all read what we stamp here).
+        _why_first = why
+        _arm_before = _arm_gate_snapshot(rec, ask_f)
         ask_f, px_src, _age_fresh, bid_f = refresh_arm_market_data(
             rec, cfg, t0, gt=gt, sig=indicators.get(sym))
         if ask_f <= 0 or px_src in ("none", "stale_tape"):
@@ -10194,6 +10285,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             continue
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
+            _log_arm_recheck(
+                cp, sym, stage="refresh", ok=False, why=why,
+                why_first=_why_first, px_src=px_src,
+                before=_arm_before, after=_arm_gate_snapshot(rec, ask_f))
             _arm_streak(rec, False)
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
@@ -10220,11 +10315,22 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # buy noise and sell signal.
         need_arm = _arm_confirm_ticks(cfg)
         streak = _arm_streak(rec, True)
+        _arm_after = _arm_gate_snapshot(rec, ask_f)
         if streak < need_arm:
+            _log_arm_recheck(
+                cp, sym, stage="confirm", ok=False, why="arm_confirming",
+                why_first=_why_first, px_src=px_src,
+                streak=streak, need=need_arm,
+                before=_arm_before, after=_arm_after)
             set_block_reason(rec, "arm_confirming", now=t0,
                              detail=f"{streak}/{need_arm}")
             touched[sym] = rec
             continue
+        _log_arm_recheck(
+            cp, sym, stage="pass", ok=True, why=why,
+            why_first=_why_first, px_src=px_src,
+            streak=streak, need=need_arm,
+            before=_arm_before, after=_arm_after)
 
         # Position / buy-cap gates (fail closed on errors — never place blind)
         try:

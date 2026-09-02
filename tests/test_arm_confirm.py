@@ -123,9 +123,14 @@ def test_garbage_cannot_disable_the_gate():
 
 
 def test_the_poll_resets_on_refusal_and_gates_on_the_streak():
+    # The window is a proxy for "these live in the same stretch of the poll",
+    # not a budget. It grew from 3200 when the arm recheck and the confirm
+    # streak gained their own event logging (_log_arm_recheck) -- the verdicts
+    # between the shadow row and the entry gates used to be written nowhere,
+    # so a name vetoed on the post-refresh check left no trace on disk.
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
     i = src.index("ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)")
-    body = src[i:i + 3200]
+    body = src[i:i + 4200]
     assert "_arm_streak(rec, False)" in body, "a refusal must reset the count"
     assert "streak < need_arm" in body
     assert 'set_block_reason(rec, "arm_confirming"' in body
@@ -142,3 +147,82 @@ def test_the_entry_bar_is_not_looser_than_the_exit():
 def test_the_confirming_state_has_a_label():
     from ai_entry_watch import _BLOCKER_LABELS as L
     assert L.get("arm_confirming") == "confirming"
+
+
+# --- the arm recheck log -----------------------------------------------------
+# should_arm_buy runs twice per buy-ready poll. Only the first reached
+# shadow.jsonl, so a name that armed on the batch quote and was vetoed on the
+# re-pull left no trace anywhere: GTLB did that 163 times on 2026-09-02 and
+# nothing on disk could say why it never bought.
+
+def test_snapshot_reads_indicator_first_then_the_record():
+    rec = {
+        "symbol": "GTLB",
+        "indicator": {"cm_rsi": 31.0, "cm_rsi_rising": True},
+        "pctr": -44.0,
+    }
+    snap = ew._arm_gate_snapshot(rec, 52.5)
+    assert snap["ask"] == 52.5
+    assert snap["cm_rsi"] == 31.0
+    assert snap["cm_rsi_rising"] is True
+    # not on indicator, so the record supplies it
+    assert snap["pctr"] == -44.0
+    # absent everywhere is None, never a coerced False
+    assert snap["macd_src"] is None
+
+
+def test_snapshot_survives_a_record_with_no_indicator():
+    assert ew._arm_gate_snapshot({"symbol": "X"}, None)["cm_rsi"] is None
+    assert ew._arm_gate_snapshot({}, 1.0)["cm_rsi_rising"] is None
+
+
+def test_recheck_logs_the_verdict_and_names_what_moved():
+    seen = []
+
+    class _Cp:
+        @staticmethod
+        def log_event(kind, **fields):
+            seen.append((kind, fields))
+
+    before = ew._arm_gate_snapshot(
+        {"indicator": {"cm_rsi": 31.0, "cm_rsi_rising": True}}, 52.50)
+    after = ew._arm_gate_snapshot(
+        {"indicator": {"cm_rsi": 30.4, "cm_rsi_rising": False}}, 52.55)
+    ew._log_arm_recheck(
+        _Cp, "GTLB", stage="refresh", ok=False, why="rsi_not_rising",
+        why_first="rsi_turning_up", px_src="stream",
+        before=before, after=after)
+
+    assert len(seen) == 1
+    kind, f = seen[0]
+    assert kind == "arm_recheck"
+    assert f["symbol"] == "GTLB"
+    assert f["stage"] == "refresh"
+    assert f["ok"] is False
+    assert f["why"] == "rsi_not_rising"
+    assert f["why_first"] == "rsi_turning_up"
+    # the whole point: say which input moved between the two verdicts
+    assert f["changed"] == ["cm_rsi", "cm_rsi_rising"]
+    # ask changes on every re-pull and would drown the signal
+    assert "ask" not in f["changed"]
+
+
+def test_recheck_never_raises_into_the_trading_path():
+    class _Boom:
+        @staticmethod
+        def log_event(kind, **fields):
+            raise RuntimeError("disk full")
+
+    # instrumentation must not be able to stop a trade
+    ew._log_arm_recheck(
+        _Boom, "X", stage="confirm", ok=False, why="arm_confirming",
+        before={}, after={}, streak=1, need=2)
+
+
+def test_the_poll_logs_both_dark_branches():
+    """The post-refresh veto and the confirm streak each get an event."""
+    src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
+    i = src.index("ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)")
+    body = src[i:i + 4200]
+    assert 'stage="refresh"' in body, "post-repull veto must be logged"
+    assert 'stage="confirm"' in body, "confirm streak must be logged"
