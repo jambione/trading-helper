@@ -181,6 +181,8 @@ def test_age_is_per_ticker():
 
 def _engine_stub():
     """Minimal stand-in: _strategy_df only touches rt_bars and _rt_stale."""
+    import types
+
     import signal_engine as se
 
     class _Eng:
@@ -189,6 +191,16 @@ def _engine_stub():
     eng = _Eng()
     eng.rt_bars = RealtimeBarAggregator()
     eng._rt_stale = set()
+    # Bind helpers so promote/ready paths resolve on the stub instance.
+    eng._macd_min_bars = types.MethodType(se.SignalEngine._macd_min_bars, eng)
+    eng._rt_bars_ready = types.MethodType(se.SignalEngine._rt_bars_ready, eng)
+    eng._strategy_df = types.MethodType(se.SignalEngine._strategy_df, eng)
+    eng._promote_rt_bars_if_eligible = types.MethodType(
+        se.SignalEngine._promote_rt_bars_if_eligible, eng
+    )
+    eng._eval_three_indicator = types.MethodType(
+        se.SignalEngine._eval_three_indicator, eng
+    )
     return se, eng
 
 
@@ -389,3 +401,125 @@ def test_a_zero_price_print_updates_neither_half():
     agg.on_trade("AAA", 10.00, 100, 1_787_000_000_000)
     agg.on_trade("AAA", 0.0, 100, 1_787_000_060_000)
     assert agg.last_trade("AAA") == (10.00, 1_787_000_000_000)
+
+
+# ── Seed adequacy + promote-on-eligible (2026-09-02) ─────────────────────────
+# Live: VSTM/ASST had young Finnhub asks while bars_src stayed alpaca because
+# ALPACA_RT_SKIP_REFRESH and the 0.5¢ price_moved gate skipped _strategy_df.
+
+
+def test_is_seeded_respects_min_bars():
+    agg = RealtimeBarAggregator()
+    short = pd.DataFrame({
+        "time": [f"2024-01-01T09:{m:02d}:00Z" for m in range(5)],
+        "open": [1.0] * 5, "high": [1.0] * 5,
+        "low": [1.0] * 5, "close": [1.0] * 5, "volume": [1.0] * 5,
+    })
+    agg.seed("X", short)
+    assert agg.is_seeded("X")                 # default: any sealed history
+    assert agg.is_seeded("X", min_bars=1)
+    assert not agg.is_seeded("X", min_bars=40)
+    assert agg.sealed_count("X") == 5
+
+
+def test_is_seeded_min_bars_met_after_full_seed():
+    agg = RealtimeBarAggregator()
+    agg.seed("X", _wide_frame(n=60))
+    assert agg.is_seeded("X", min_bars=40)
+    assert agg.sealed_count("X") == 60
+
+
+def test_rt_bars_ready_requires_fresh_and_warmup(monkeypatch):
+    import time as _t
+    se, eng = _engine_stub()
+    monkeypatch.setattr(se, "REALTIME_BARS", True)
+    monkeypatch.setattr(se, "RT_BARS_MAX_STALE", 120.0)
+    monkeypatch.setattr(se, "MACD_SLOW", 26)
+    monkeypatch.setattr(se, "MACD_SIG", 9)
+
+    ready, age, n = eng._rt_bars_ready("X")
+    assert ready is False and n == 0
+
+    eng.rt_bars.seed("X", _wide_frame(n=60))
+    ready, age, n = eng._rt_bars_ready("X")
+    assert ready is False          # seeded but never traded
+    assert n >= 60
+
+    eng.rt_bars.on_trade("X", 99.0, 10, int(_t.time() * 1000))
+    ready, age, n = eng._rt_bars_ready("X")
+    assert ready is True
+    assert age is not None and age < 5
+
+
+def test_promote_flips_bars_src_without_price_move(monkeypatch):
+    """The stranded-alpaca bug: rt eligible, bars_src still alpaca, no 0.5¢ move."""
+    import time as _t
+    import types
+    se, eng = _engine_stub()
+    monkeypatch.setattr(se, "REALTIME_BARS", True)
+    monkeypatch.setattr(se, "RT_BARS_MAX_STALE", 120.0)
+    monkeypatch.setattr(se, "STRATEGY_MODE", "three_indicator")
+    monkeypatch.setattr(se, "MACD_SLOW", 26)
+    monkeypatch.setattr(se, "MACD_SIG", 9)
+
+    ts = _ts_stub("VSTM")
+    ts.bars_fetched = True
+    ts._bars_src = "alpaca"
+    ts.cached_df = _wide_frame(n=60, tag=2.0)
+    ts.three_ind_state = {}
+
+    eng.rt_bars.seed("VSTM", _wide_frame(n=60, tag=1.0))
+    eng.rt_bars.on_trade("VSTM", 99.0, 10, int(_t.time() * 1000))
+
+    # Avoid full three_ind compute — promote only needs _strategy_df side effect.
+    called = {}
+
+    def _fake_eval(self, ts_, df):
+        called["n"] = len(df)
+        called["src"] = getattr(ts_, "_bars_src", None)
+
+    eng._eval_three_indicator = types.MethodType(_fake_eval, eng)
+    ok = eng._promote_rt_bars_if_eligible(ts)
+    assert ok is True
+    assert ts._bars_src == "realtime"
+    assert called["src"] == "realtime"
+    assert called["n"] >= 40
+
+
+def test_promote_noop_when_already_realtime(monkeypatch):
+    import time as _t
+    se, eng = _engine_stub()
+    monkeypatch.setattr(se, "REALTIME_BARS", True)
+    monkeypatch.setattr(se, "RT_BARS_MAX_STALE", 120.0)
+    monkeypatch.setattr(se, "STRATEGY_MODE", "three_indicator")
+
+    ts = _ts_stub("X")
+    ts.bars_fetched = True
+    ts._bars_src = "realtime"
+    ts.cached_df = _wide_frame(n=60)
+    eng.rt_bars.seed("X", _wide_frame(n=60))
+    eng.rt_bars.on_trade("X", 99.0, 10, int(_t.time() * 1000))
+
+    def _boom(*a, **k):
+        raise AssertionError("should not re-eval when already realtime")
+
+    eng._eval_three_indicator = _boom
+    assert eng._promote_rt_bars_if_eligible(ts) is False
+
+
+def test_promote_noop_when_rt_stale(monkeypatch):
+    import time as _t
+    se, eng = _engine_stub()
+    monkeypatch.setattr(se, "REALTIME_BARS", True)
+    monkeypatch.setattr(se, "RT_BARS_MAX_STALE", 120.0)
+    monkeypatch.setattr(se, "STRATEGY_MODE", "three_indicator")
+
+    ts = _ts_stub("X")
+    ts.bars_fetched = True
+    ts._bars_src = "alpaca"
+    ts.cached_df = _wide_frame(n=60)
+    eng.rt_bars.seed("X", _wide_frame(n=60))
+    eng.rt_bars.on_trade("X", 99.0, 10, int(_t.time() * 1000) - 600_000)
+
+    assert eng._promote_rt_bars_if_eligible(ts) is False
+    assert ts._bars_src == "alpaca"

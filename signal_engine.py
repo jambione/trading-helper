@@ -1750,7 +1750,7 @@ class SignalEngine:
             ALPACA_RT_SKIP_REFRESH
             and REALTIME_BARS
             and ts.bars_fetched
-            and self.rt_bars.is_seeded(ts.ticker)
+            and self.rt_bars.is_seeded(ts.ticker, min_bars=1)
         ):
             age = self.rt_bars.age_seconds(ts.ticker)
             if age is not None and age <= RT_BARS_MAX_STALE:
@@ -1762,6 +1762,9 @@ class SignalEngine:
                         # Keep subsequent-fetch timing honest without hitting Alpaca.
                         ts.last_bar_fetch = now
                         ts.last_bar_minute = current_minute
+                        # Skip must not strand bars_src=alpaca after rt is
+                        # eligible — re-eval so provenance flips to realtime.
+                        self._promote_rt_bars_if_eligible(ts)
                         return
 
         # Longer lookback until we have a successful load — thin / after-hours
@@ -1869,14 +1872,69 @@ class SignalEngine:
         # Signal check on the freshly closed bar
         open_pos = sum(1 for t in self.active.values() if t.in_position)
         if STRATEGY_MODE == "three_indicator":
-            if REALTIME_BARS and not self.rt_bars.is_seeded(ts.ticker):
-                self.rt_bars.seed(ts.ticker, df)
+            # Seed-on-admit / first fetch: require MACD-stable warmup (≥40).
+            # Re-seed when an earlier short seed somehow landed (is_seeded
+            # used to be true for any non-empty sealed buffer).
+            if REALTIME_BARS:
+                min_seed = self._macd_min_bars()
+                if len(df) >= min_seed and not self.rt_bars.is_seeded(
+                    ts.ticker, min_bars=min_seed
+                ):
+                    self.rt_bars.seed(ts.ticker, df)
+                    print(
+                        f"  [{ticker_tag(ts.ticker)}] 🌱 rt bars seeded "
+                        f"n={len(df)} (need≥{min_seed})"
+                    )
             self._eval_three_indicator(ts, self._strategy_df(ts, df))
         else:
             ts.update_momentum(hist=hist_val, price=price, rsi=rsi_val,
                                open_positions=open_pos)
 
     # ── 3-indicator strategy evaluation (gated by STRATEGY_MODE) ──────────────
+
+    def _macd_min_bars(self) -> int:
+        return MACD_SLOW + MACD_SIG + 5
+
+    def _rt_bars_ready(self, ticker: str):
+        """Fresh Finnhub rt bars with enough sealed+forming history for MACD.
+
+        Returns (ready, age_sec, bar_count). ready means age is known and
+        ≤ RT_BARS_MAX_STALE and get_bars length ≥ MACD warmup. None age is
+        never ready (seeded-but-unfed).
+        """
+        if not REALTIME_BARS:
+            return False, None, 0
+        age = self.rt_bars.age_seconds(ticker)
+        rt = self.rt_bars.get_bars(ticker)
+        n = int(len(rt)) if rt is not None else 0
+        ready = (
+            age is not None
+            and age <= RT_BARS_MAX_STALE
+            and n >= self._macd_min_bars()
+        )
+        return ready, age, n
+
+    def _promote_rt_bars_if_eligible(self, ts: TickerState) -> bool:
+        """Re-eval on rt bars when eligible so bars_src cannot stay alpaca.
+
+        ALPACA_RT_SKIP_REFRESH and the 0.5¢ price_moved gate both skip the
+        path that calls _strategy_df. A name can then sit bars_src=alpaca with
+        a young Finnhub ask (live VSTM/ASST 2026-09-02) and the arm gate
+        refuses macd_not_realtime_alpaca. Call this whenever those skips
+        would otherwise strand provenance.
+        """
+        if not (REALTIME_BARS and ts.bars_fetched and STRATEGY_MODE == "three_indicator"):
+            return False
+        if getattr(ts, "_bars_src", "") == "realtime":
+            return False
+        ready, _age, _n = self._rt_bars_ready(ts.ticker)
+        if not ready:
+            return False
+        fallback = ts.cached_df
+        if fallback is None:
+            return False
+        self._eval_three_indicator(ts, self._strategy_df(ts, fallback))
+        return getattr(ts, "_bars_src", "") == "realtime"
 
     def _strategy_df(self, ts: TickerState, fallback_df):
         """Realtime aggregated bars when enabled, sufficient, and *fresh*.
@@ -1993,9 +2051,19 @@ class SignalEngine:
         if ts.cached_df is not None and ts.last_price is not None:
             # Skip when price has not moved half a cent — the indicators would
             # be unchanged and the copy plus recompute is the expensive part.
+            # Exception: when rt bars are eligible but bars_src is still
+            # alpaca, force a promote re-eval even without price_moved so
+            # skip-refresh / quiet tape cannot strand macd_not_realtime_alpaca.
             price_moved = (
                 ts._last_computed_price is None or
                 abs(ts.last_price - ts._last_computed_price) >= 0.005
+            )
+            need_rt_promote = (
+                (not price_moved)
+                and ts.bars_fetched
+                and STRATEGY_MODE == "three_indicator"
+                and getattr(ts, "_bars_src", "") != "realtime"
+                and self._rt_bars_ready(ts.ticker)[0]
             )
             if price_moved:
                 try:
@@ -2023,6 +2091,12 @@ class SignalEngine:
                                            rsi=rsi_live)
                 except Exception as e:
                     print(f"  [engine] live recompute error for {ts.ticker}: {e}",
+                          flush=True)
+            elif need_rt_promote:
+                try:
+                    self._promote_rt_bars_if_eligible(ts)
+                except Exception as e:
+                    print(f"  [engine] rt promote error for {ts.ticker}: {e}",
                           flush=True)
 
         ts.check_count += 1
@@ -2129,6 +2203,23 @@ class SignalEngine:
                 # taken as one object. None when the ticker has never traded
                 # on this socket — absent, not stale, and the consumer must
                 # treat a missing pair as "no desk price", never as fresh.
+                # Wire visibility beside bars_src: seed readiness + rt length.
+                if REALTIME_BARS:
+                    _ready, _rage, _rn = self._rt_bars_ready(sym)
+                    row["rt_seeded"] = bool(
+                        self.rt_bars.is_seeded(sym, min_bars=1)
+                    )
+                    row["rt_bar_count"] = int(_rn)
+                    # Last-chance promote on publish so a quiet proximity
+                    # cycle cannot leave bars_src=alpaca while the tape is young.
+                    if _ready and str(row.get("bars_src") or "") != "realtime":
+                        if self._promote_rt_bars_if_eligible(ts):
+                            row = ts.proximity_state()
+                            row["rt_seeded"] = True
+                            row["rt_bar_count"] = int(_rn)
+                else:
+                    row["rt_seeded"] = False
+                    row["rt_bar_count"] = 0
                 lt = self.rt_bars.last_trade(sym) if REALTIME_BARS else None
                 if lt is not None:
                     _px, _ts_ms = lt

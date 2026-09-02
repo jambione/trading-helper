@@ -116,9 +116,21 @@ class RealtimeBarAggregator:
         with self._lock:
             self._sealed[ticker] = rows
 
-    def is_seeded(self, ticker: str) -> bool:
+    def sealed_count(self, ticker: str) -> int:
+        """Number of sealed (closed) bars for ticker — excludes forming."""
         with self._lock:
-            return bool(self._sealed.get(ticker))
+            return len(self._sealed.get(ticker, []))
+
+    def is_seeded(self, ticker: str, *, min_bars: int = 1) -> bool:
+        """True when sealed history has at least ``min_bars`` bars.
+
+        Default min_bars=1 preserves the historical "any seed" meaning.
+        Callers that need MACD-stable warmup pass min_bars=MACD_SLOW+MACD_SIG+5
+        (40) so a truncated seed is treated as not ready and can be re-seeded.
+        """
+        need = max(1, int(min_bars or 1))
+        with self._lock:
+            return len(self._sealed.get(ticker, [])) >= need
 
     # ── Live trades ─────────────────────────────────────────────────────────────
 
