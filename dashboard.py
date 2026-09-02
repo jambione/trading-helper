@@ -521,16 +521,45 @@ def _ai_book_symbols(payload: dict | None = None) -> list[str]:
 
 
 def _live_quote_for(sym: str, now: float | None = None) -> tuple[float | None, float | None]:
-    """(price, age_sec) from Finnhub/Alpaca desk feeds, or (None, None).
+    """(price, age_sec) from desk feeds + young engine rt_*, or (None, None).
 
-    Prefers the freshest trade among STATE.tickers (already merged by the price
-    loop), Finnhub stream, and the Alpaca REST cache — same sources Momentum
-    Stocks uses.
+    Prefers a young dated engine ``rt_price``/``rt_price_age_sec`` (age ≤
+    decision ceiling) over STATE/Finnhub/Alpaca so overlay paint cannot show
+    stale_tape while the engine tape is alive (GTLB Sep2 desk-vs-engine lag).
+    Otherwise picks the freshest dated trade among STATE.tickers, Finnhub
+    stream, and the Alpaca REST cache — same sources Momentum Stocks uses.
     """
     t = str(sym or "").strip().upper()
     if not t:
         return None, None
     now = float(now if now is not None else time.time())
+
+    # Young dated engine rt_* always wins for desk decision last_ask paint.
+    try:
+        _sig = _load_signal_state() or {}
+        _sp = (_sig.get("tickers") or {}).get(t) or {}
+        if isinstance(_sp, dict):
+            _epx = float(_sp.get("rt_price") or 0)
+            _eage = float(_sp.get("rt_price_age_sec"))
+            try:
+                from ai_entry_watch import decision_max_age_sec as _dec_max
+                _ceiling = float(_dec_max(None))
+            except Exception:
+                _ceiling = 15.0
+            # Advance age-at-write by signal_state mtime lag when available.
+            try:
+                _mtime = float(os.path.getmtime(
+                    os.path.join(os.path.dirname(__file__), "signal_state.json")))
+                _eage = _eage + max(0.0, now - _mtime)
+            except Exception:
+                pass
+            if _epx > 0 and _eage >= 0 and _eage <= _ceiling:
+                return round(_epx, 4), round(_eage, 1)
+    except (TypeError, ValueError):
+        pass
+    except Exception:
+        pass
+
     candidates: list[tuple[float, float]] = []  # (obs_ts, price)
 
     with STATE.lock:

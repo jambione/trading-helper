@@ -78,12 +78,72 @@ def test_live_print_prefers_younger_engine_rt(monkeypatch):
 
 
 def test_live_print_keeps_dash_when_younger_than_engine(monkeypatch):
+    """When engine is past the decision ceiling, a younger dash print wins."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
     monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
         {"ticker": "ASST", "price": 23.0, "price_age_sec": 0.5},
     ])
-    monkeypatch.setattr(ew, "_engine_rt_print", lambda sym: (23.5, 2.0))
+    monkeypatch.setattr(ew, "_engine_rt_print", lambda sym: (23.5, 20.0))
     got = ew.live_print("ASST")
     assert got == (23.0, 0.5)
+
+
+def test_live_print_young_engine_wins_even_if_dash_younger(monkeypatch):
+    """GTLB-class: eng≤ceiling always wins decision last_ask (book-wide)."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "GTLB", "price": 51.5, "price_age_sec": 1.0},
+    ])
+    monkeypatch.setattr(ew, "_engine_rt_print", lambda sym: (51.59, 2.9))
+    got = ew.live_print("GTLB")
+    assert got == (51.59, 2.9)
+
+
+def test_live_print_young_engine_wins_over_stale_dash(monkeypatch):
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "GTLB", "price": 51.5, "price_age_sec": 19.9},
+    ])
+    monkeypatch.setattr(ew, "_engine_rt_print", lambda sym: (51.59, 2.9))
+    px, src, age = ew.decision_price("GTLB", {"ai_watch_decision_max_age_sec": 15.0})
+    assert src == "stream"
+    assert age == 2.9
+    assert px == 51.59
+
+
+def test_public_snapshot_refreshes_young_engine_over_stale_rec(monkeypatch):
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_arm_require_stream_price": True,
+    })
+    monkeypatch.setattr(ew, "_engine_rt_print", lambda sym: (51.59, 2.9))
+    now = time.time()
+    state = {
+        "GTLB": {
+            "symbol": "GTLB",
+            "status": "watching",
+            "last_ask": 51.0,
+            "last_ask_src": "stale_tape",
+            "last_ask_age_sec": 19.9,
+            "last_ask_ts": now - 19.9,
+            "structure": {
+                "entry_low": 50.0,
+                "entry_high": 52.0,
+                "stop_price": 48.0,
+                "wait_kind": "wait_for_zone",
+            },
+            "score": 1.0,
+        }
+    }
+    rows = ew.public_snapshot(state)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["last_ask_src"] == "stream"
+    assert row["last_ask"] == 51.59
+    assert row["last_ask_age_sec"] is not None
+    assert row["last_ask_age_sec"] <= 15.0
+    assert row["block_code"] != "stale_quote"
 
 
 def test_live_print_engine_wins_over_undated_dash(monkeypatch):
@@ -102,3 +162,25 @@ def test_decision_price_uses_engine_over_rest_when_dash_stale(monkeypatch):
     assert src == "stream"
     assert age == 2.0
     assert px == 10.5
+
+
+def test_live_quote_for_prefers_young_engine(monkeypatch):
+    """Overlay paint must use young engine rt_* (desk-vs-engine lag fix)."""
+    import dashboard as d
+
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {
+        "tickers": {"GTLB": {"rt_price": 51.59, "rt_price_age_sec": 2.9}},
+    })
+    # Make mtime advance a no-op (age stays 2.9).
+    monkeypatch.setattr(d.os.path, "getmtime", lambda path: __import__("time").time())
+    monkeypatch.setattr(
+        "ai_entry_watch.decision_max_age_sec", lambda cfg=None: 15.0, raising=False)
+    # Stale STATE must not win.
+    class _Lock:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(d.STATE, "lock", _Lock())
+    d.STATE.tickers["GTLB"] = {"price": 51.5, "price_age_sec": 19.9}
+    px, age = d._live_quote_for("GTLB")
+    assert px == 51.59
+    assert age is not None and age <= 15.0

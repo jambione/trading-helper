@@ -1002,6 +1002,24 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
             entry_high_f = float(entry_high) if entry_high is not None else None
         except (TypeError, ValueError):
             entry_high_f = None
+        # Align decision last_ask with a young dated engine rt_* before
+        # last_ask is read / honesty restamp so desk age/src match the live
+        # tape (GTLB-class desk-vs-engine lag: eng≤ceiling while overlay/poll
+        # left stale_tape≈19.9).
+        try:
+            _eng = _engine_rt_print(sym)
+            if _eng is not None:
+                _epx, _eage = _eng
+                if _eage <= decision_max_age_sec(None) and _epx > 0:
+                    _now_al = time.time()
+                    rec["last_ask"] = float(_epx)
+                    rec["last_ask_src"] = "stream"
+                    rec["price_src"] = "stream"
+                    rec["last_ask_age_sec"] = float(_eage)
+                    rec["last_ask_ts"] = float(_now_al) - float(_eage)
+                    _LAST_QUOTE_TS[sym] = float(_now_al) - float(_eage)
+        except Exception:
+            pass
         last_ask = rec.get("last_ask")
         try:
             last_ask_f = float(last_ask) if last_ask is not None else None
@@ -3495,17 +3513,20 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         return out
 
 
-_ENGINE_RT_CACHE: tuple[float, dict] = (0.0, {})
+_ENGINE_RT_CACHE: tuple = (0.0, {}, 0.0)  # (mono_ts, tickers, file_mtime)
 _ENGINE_RT_TTL = 0.5  # seconds — signal_state.json write cadence ~1s
 
 
 def _engine_rt_print(symbol: str) -> tuple[float, float] | None:
-    """Young dated engine rt_price/rt_price_age_sec, or None.
+    """Dated engine rt_price/rt_price_age_sec, or None.
 
     Dashboard merge can still lose a young socket print to REST/undated
     between loops (ASST/PPBT Sep2: realtime MACD while quote path REST).
     decision_price/live_print must see the engine tape directly so a known
     young age cannot be displaced by an undated REST ask.
+
+    Age is advanced by time since the signal_state.json mtime: the file stores
+    age-at-write, and between engine writes a raw read understates true age.
     """
     sym = str(symbol or "").upper().strip()
     if not sym:
@@ -3513,6 +3534,9 @@ def _engine_rt_print(symbol: str) -> tuple[float, float] | None:
     global _ENGINE_RT_CACHE
     now = time.time()
     ts, tickers = _ENGINE_RT_CACHE
+    file_mtime = 0.0
+    if len(_ENGINE_RT_CACHE) >= 3:
+        file_mtime = float(_ENGINE_RT_CACHE[2] or 0.0)
     if (now - ts) > _ENGINE_RT_TTL or not tickers:
         try:
             from pathlib import Path as _P
@@ -3521,7 +3545,11 @@ def _engine_rt_print(symbol: str) -> tuple[float, float] | None:
             tickers = data.get("tickers") if isinstance(data, dict) else {}
             if not isinstance(tickers, dict):
                 tickers = {}
-            _ENGINE_RT_CACHE = (now, tickers)
+            try:
+                file_mtime = float(raw.stat().st_mtime)
+            except Exception:
+                file_mtime = now
+            _ENGINE_RT_CACHE = (now, tickers, file_mtime)
         except Exception:
             return None
     sp = tickers.get(sym)
@@ -3534,6 +3562,9 @@ def _engine_rt_print(symbol: str) -> tuple[float, float] | None:
         return None
     if px <= 0 or age < 0:
         return None
+    # Age-at-write → age-now using file mtime as write clock.
+    if file_mtime > 0:
+        age = age + max(0.0, now - file_mtime)
     return px, age
 
 
@@ -3544,9 +3575,12 @@ def live_print(symbol: str) -> tuple[float, float | None] | None:
     and must not be used for freshness. Age None means the desk has a number
     but cannot prove it is live — callers must not treat that as fresh.
 
-    Prefers a young dated engine ``rt_*`` over dashboard REST/undated when
-    the engine age is known and strictly fresher (or dash age is unknown).
-    Keeps arms honest without loosening decision_max_age_sec.
+    Young dated engine ``rt_*`` (age known and ≤ decision_max_age_sec) always
+    wins for the decision last_ask — book-wide, not ticker-specific. A lagging
+    dashboard merge / overlay print must not displace a live engine tape
+    (GTLB Sep2 11:50 ET: eng≈2.9s while desk stale_tape≈19.9). When engine is
+    older than the ceiling, it still wins over undated dash or a strictly
+    older dash age. Arms stay gated by decision_max_age_sec unchanged.
     """
     sym = str(symbol or "").upper().strip()
     if not sym:
@@ -3573,7 +3607,14 @@ def live_print(symbol: str) -> tuple[float, float | None] | None:
     eng = _engine_rt_print(sym)
     if eng is not None:
         epx, eage = eng
-        # Engine wins when dash has no clock, or engine is strictly younger.
+        try:
+            ceiling = float(decision_max_age_sec(None))
+        except Exception:
+            ceiling = 15.0
+        # Young dated engine always wins for decision last_ask.
+        if eage <= ceiling:
+            return epx, eage
+        # Past ceiling: still prefer over undated dash or older dash.
         if dash_px is None or dash_age is None or eage < float(dash_age):
             return epx, eage
     if dash_px is not None:
