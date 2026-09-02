@@ -128,11 +128,14 @@ def test_subsequent_path_requires_bars_fetched():
 # 2026-07-27 while the clock read 2026-07-30.
 
 class _FakeResp:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200, headers=None):
         self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise se.requests.HTTPError(f"{self.status_code}", response=self)
 
     def json(self):
         return self._payload

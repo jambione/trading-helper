@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Mapping, Any
+import os
+import random
+import threading
 import time
 import logging
 
@@ -7,20 +10,146 @@ import pandas as pd
 
 _SORT_WARNED = False
 
+# Process-wide pacing for Alpaca data REST. Free-tier IEX 429s when many
+# symbols warm/refresh bars in parallel; a floor between requests stops the
+# stampede without needing paid SIP.
+_ALPACA_MIN_INTERVAL_S = float(os.getenv("ALPACA_MIN_INTERVAL_S", "0.35"))
+_throttle_lock = threading.Lock()
+_throttle_next_ok = 0.0  # monotonic
+
+# Coalesce identical 429 warnings so one storm is one line per backoff window.
+_warn_lock = threading.Lock()
+_last_429_warn_key = ""
+_last_429_warn_mono = 0.0
+_429_WARN_GAP_S = 5.0
+
+
+def parse_retry_after(headers: Mapping[str, Any] | None) -> Optional[float]:
+    """Seconds from a Retry-After header, or None if absent/unusable."""
+    if not headers:
+        return None
+    raw = None
+    try:
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    except Exception:
+        raw = None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def retry_after_from_exc(exc: BaseException) -> Optional[float]:
+    """Best-effort Retry-After from an Alpaca/HTTP exception."""
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        headers = getattr(resp, "headers", None)
+        wait = parse_retry_after(headers)
+        if wait is not None:
+            return wait
+    # Some SDK errors only put the number in the message.
+    msg = str(exc)
+    low = msg.lower()
+    if "retry-after" in low or "retry after" in low:
+        import re
+        m = re.search(r"retry[- ]after[=:\s]+(\d+(?:\.\d+)?)", low)
+        if m:
+            try:
+                return max(0.0, float(m.group(1)))
+            except ValueError:
+                pass
+    return None
+
+
+def backoff_seconds(
+    attempt: int,
+    *,
+    base_wait: float = 1.0,
+    retry_after: Optional[float] = None,
+    cap: float = 60.0,
+) -> float:
+    """Retry-After if present, else exponential backoff with full jitter."""
+    if retry_after is not None and retry_after > 0:
+        # Small jitter so concurrent waiters don't re-stampede on the same second.
+        return min(cap, float(retry_after) + random.uniform(0.0, 0.25))
+    exp = base_wait * (2 ** max(0, attempt))
+    return min(cap, random.uniform(0.0, exp))
+
+
+def warn_429(where: str, wait: float, detail: str = "") -> None:
+    """Log a 429 at warning, coalesced so identical lines don't flood."""
+    global _last_429_warn_key, _last_429_warn_mono
+    key = f"{where}|{wait:.1f}|{detail[:40]}"
+    now = time.monotonic()
+    with _warn_lock:
+        if key == _last_429_warn_key and (now - _last_429_warn_mono) < _429_WARN_GAP_S:
+            return
+        _last_429_warn_key = key
+        _last_429_warn_mono = now
+    extra = f" — {detail[:120]}" if detail else ""
+    logging.warning("[ALPACA] 429 %s; backing off %.1fs%s", where, wait, extra)
+
+
+def throttle_alpaca_request(min_interval: Optional[float] = None) -> float:
+    """Block until the process-wide Alpaca request slot is free. Returns wait."""
+    global _throttle_next_ok
+    interval = _ALPACA_MIN_INTERVAL_S if min_interval is None else float(min_interval)
+    if interval <= 0:
+        return 0.0
+    with _throttle_lock:
+        now = time.monotonic()
+        wait = _throttle_next_ok - now
+        if wait > 0:
+            _throttle_next_ok = _throttle_next_ok + interval
+        else:
+            wait = 0.0
+            _throttle_next_ok = now + interval
+    if wait > 0:
+        time.sleep(wait)
+    return wait
+
+
+def reset_alpaca_throttle_for_tests() -> None:
+    """Test helper — clear pacing / warn coalescing state."""
+    global _throttle_next_ok, _last_429_warn_key, _last_429_warn_mono
+    with _throttle_lock:
+        _throttle_next_ok = 0.0
+    with _warn_lock:
+        _last_429_warn_key = ""
+        _last_429_warn_mono = 0.0
+
 
 def retry_with_backoff(max_retries: int = 3, base_wait: float = 1.0):
-    """Decorator for Alpaca API calls — exponential backoff on 429/503."""
+    """Decorator for Alpaca API calls — Retry-After / exponential+jitter on 429/503."""
     def decorator(func):
         def wrapper(*args, **kwargs):
             for attempt in range(max_retries):
                 try:
+                    throttle_alpaca_request()
                     return func(*args, **kwargs)
                 except Exception as e:
                     err = str(e)
-                    retryable = "429" in err or "503" in err or "rate" in err.lower() or "service unavailable" in err.lower()
+                    retryable = (
+                        "429" in err
+                        or "503" in err
+                        or "rate" in err.lower()
+                        or "service unavailable" in err.lower()
+                    )
                     if retryable and attempt < max_retries - 1:
-                        wait = base_wait * (2 ** attempt)
-                        logging.warning(f"[ALPACA] {func.__name__} retry {attempt+1}/{max_retries} in {wait}s — {err[:80]}")
+                        wait = backoff_seconds(
+                            attempt,
+                            base_wait=base_wait,
+                            retry_after=retry_after_from_exc(e),
+                        )
+                        if "429" in err or "rate" in err.lower():
+                            warn_429(func.__name__, wait, err)
+                        else:
+                            logging.warning(
+                                "[ALPACA] %s retry %d/%d in %.1fs — %s",
+                                func.__name__, attempt + 1, max_retries, wait, err[:80],
+                            )
                         time.sleep(wait)
                     else:
                         raise

@@ -107,6 +107,7 @@ from finnhub_stream import (
     FINNHUB_STATE,
 )
 import alpaca_price_poll as alpaca_px
+import alpaca_api
 from finnhub_stream import register_trade_callback as fh_register_trade_callback
 
 # ── Import Massive API client (optional — activated by MASSIVE_API_KEY) ───────
@@ -188,6 +189,12 @@ BAR_LOOKBACK_THIN  = int(os.getenv("BAR_LOOKBACK_THIN", "20"))
 # don't wait a full minute on empty IEX responses).
 BAR_FAIL_RETRY_S   = int(os.getenv("BAR_FAIL_RETRY_S",  "20"))
 BAR_TIMEFRAME  = os.getenv("BAR_TIMEFRAME",  "1Min")
+# When Finnhub realtime bars are fresh for a symbol, skip routine Alpaca
+# bar refresh (still seed / recover via Alpaca). Occasional safety refresh
+# keeps cached_df from rotting if the tape goes quiet later.
+ALPACA_RT_SKIP_REFRESH = os.getenv("ALPACA_RT_SKIP_REFRESH", "1") in ("1", "true", "yes")
+ALPACA_RT_SAFETY_REFRESH_S = float(os.getenv("ALPACA_RT_SAFETY_REFRESH_S", "300"))
+ALPACA_BAR_MAX_RETRIES = int(os.getenv("ALPACA_BAR_MAX_RETRIES", "4"))
 
 # When on, every symbol on the dashboard ticker list (momentum desk universe)
 # is eligible for engine tracking — not only transcription "mentioned" /
@@ -610,6 +617,9 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
 
     Strategy:
       Free-tier IEX feed only (no SIP — that requires a paid Alpaca data plan).
+      HTTP 429s respect Retry-After (else exponential backoff + jitter).
+      Process-wide throttle spaces multi-symbol warm/refresh so 32 names do
+      not stampede the free IEX quota.
     """
     if not api_key or not secret_key:
         return None
@@ -628,8 +638,11 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
     min_needed = MACD_SLOW + MACD_SIG + 5   # 40 bars minimum for stable MACD
 
     # iex is free. sip needs Algo Trader Plus and matches TradingView highs/lows.
+    # Live engine stays on IEX unless explicitly configured — do not enable paid SIP here.
     feed_name = (os.getenv("ALPACA_BAR_FEED") or "iex").strip().lower()
     feeds = ("sip",) if feed_name == "sip" else ("iex",)
+    max_retries = max(1, int(ALPACA_BAR_MAX_RETRIES))
+
     for feed in feeds:
         # sort=desc, NOT asc. `limit` truncates from whichever end the sort
         # starts at, so ascending returned the OLDEST `count` bars in the
@@ -644,37 +657,85 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
             "feed":      feed,
             "sort":      "desc",
         }
-        try:
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            resp.raise_for_status()
-            bars = resp.json().get("bars", [])
+        for attempt in range(max_retries):
+            try:
+                alpaca_api.throttle_alpaca_request()
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                code = getattr(resp, "status_code", None)
+                if code == 429:
+                    wait = alpaca_api.backoff_seconds(
+                        attempt,
+                        base_wait=1.0,
+                        retry_after=alpaca_api.parse_retry_after(resp.headers),
+                    )
+                    alpaca_api.warn_429(
+                        f"fetch_bars({symbol})",
+                        wait,
+                        f"attempt {attempt + 1}/{max_retries}",
+                    )
+                    if attempt >= max_retries - 1:
+                        break
+                    time.sleep(wait)
+                    continue
+                if isinstance(code, int) and code >= 500:
+                    wait = alpaca_api.backoff_seconds(attempt, base_wait=1.0)
+                    if attempt < max_retries - 1:
+                        print(
+                            f"  [BARS] {symbol}: HTTP {resp.status_code} on {feed}; "
+                            f"backoff {wait:.1f}s (attempt {attempt + 1}/{max_retries})",
+                            flush=True,
+                        )
+                        time.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                resp.raise_for_status()
+                bars = resp.json().get("bars", [])
 
-            if not bars:
-                print(f"  [BARS] {symbol}: no bars on {feed} feed (start={start_dt[:10]})")
-                continue
+                if not bars:
+                    print(f"  [BARS] {symbol}: no bars on {feed} feed (start={start_dt[:10]})")
+                    break
 
-            df = pd.DataFrame(bars).rename(columns={
-                "o": "open", "h": "high", "l": "low",
-                "c": "close", "v": "volume", "t": "time",
-            })
-            for col in ("open", "high", "low", "close", "volume"):
-                df[col] = df[col].astype(float)
-            # Back to oldest-first: the API gave us newest-first so that
-            # `limit` kept the recent end, but every indicator reads forward
-            # and takes .iloc[-1] as "now".
-            df = df.iloc[::-1].reset_index(drop=True)
+                df = pd.DataFrame(bars).rename(columns={
+                    "o": "open", "h": "high", "l": "low",
+                    "c": "close", "v": "volume", "t": "time",
+                })
+                for col in ("open", "high", "low", "close", "volume"):
+                    df[col] = df[col].astype(float)
+                # Back to oldest-first: the API gave us newest-first so that
+                # `limit` kept the recent end, but every indicator reads forward
+                # and takes .iloc[-1] as "now".
+                df = df.iloc[::-1].reset_index(drop=True)
 
-            if len(df) >= min_needed:
-                print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓"
-                      f" (lookback={lookback}d)")
-                return df
+                if len(df) >= min_needed:
+                    print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓"
+                          f" (lookback={lookback}d)")
+                    return df
 
-            # Not enough yet — try the next feed
-            print(f"  [BARS] {symbol}: only {len(df)} bars on {feed} "
-                  f"(need {min_needed}, lookback={lookback}d) — trying next feed…")
+                # Not enough yet — try the next feed
+                print(f"  [BARS] {symbol}: only {len(df)} bars on {feed} "
+                      f"(need {min_needed}, lookback={lookback}d) — trying next feed…")
+                break
 
-        except Exception as e:
-            print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
+            except requests.HTTPError as e:
+                code = getattr(getattr(e, "response", None), "status_code", None)
+                if code == 429 and attempt < max_retries - 1:
+                    wait = alpaca_api.backoff_seconds(
+                        attempt,
+                        base_wait=1.0,
+                        retry_after=alpaca_api.retry_after_from_exc(e),
+                    )
+                    alpaca_api.warn_429(
+                        f"fetch_bars({symbol})",
+                        wait,
+                        f"attempt {attempt + 1}/{max_retries}",
+                    )
+                    time.sleep(wait)
+                    continue
+                print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
+                break
+            except Exception as e:
+                print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
+                break
 
     print(f"  [BARS] {symbol}: ❌ could not get {min_needed} bars on any feed "
           f"(lookback={lookback}d) — skipping this cycle")
@@ -1643,6 +1704,28 @@ class SignalEngine:
                 return   # not yet ~1 minute since last fetch
             if secs_past_minute < fire_at:
                 return   # stagger slot not reached yet in this minute
+
+        # Prefer Finnhub realtime bars when live: skip routine Alpaca refresh
+        # once seeded so 32 active symbols do not stampede free-tier IEX.
+        # Still allow a slow safety refresh so cached_df can recover if the
+        # tape later goes quiet. Does not touch arm gates.
+        if (
+            ALPACA_RT_SKIP_REFRESH
+            and REALTIME_BARS
+            and ts.bars_fetched
+            and self.rt_bars.is_seeded(ts.ticker)
+        ):
+            age = self.rt_bars.age_seconds(ts.ticker)
+            if age is not None and age <= RT_BARS_MAX_STALE:
+                rt = self.rt_bars.get_bars(ts.ticker)
+                min_needed_rt = MACD_SLOW + MACD_SIG + 5
+                if rt is not None and len(rt) >= min_needed_rt:
+                    since = now - ts.last_bar_fetch
+                    if since < ALPACA_RT_SAFETY_REFRESH_S:
+                        # Keep subsequent-fetch timing honest without hitting Alpaca.
+                        ts.last_bar_fetch = now
+                        ts.last_bar_minute = current_minute
+                        return
 
         # Longer lookback until we have a successful load — thin / after-hours
         # names often lack 40×1m IEX bars inside the short steady-state window.
