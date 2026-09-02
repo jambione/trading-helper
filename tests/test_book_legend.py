@@ -239,3 +239,36 @@ def test_cell_pass_highlight_reuses_criteria_helper():
     assert "crit--pass" in _JS
     assert ".crit--pass" in _CSS
     assert "#5fcf96" in _CSS
+
+# ── row-context: ENTRY vs EXIT ────────────────────────────────────────────
+#
+# Selecting an open position should not dump the arm checklist on top of
+# exit rules the operator is already living inside. Watch rows get ENTRY;
+# open / submitted rows get EXIT; Criteria with no selection stays ENTRY-only.
+
+
+def test_legend_detects_open_rows_like_the_book():
+    """Same signals _bookRows / RStop already use — do not invent a third."""
+    i = _JS.index("function _legendRowIsOpen")
+    body = _JS[i:_JS.index("\n}", i)]
+    assert "r.is_position" in body
+    assert "phase === 'open'" in body
+    assert "phase === 'submitted'" in body
+
+
+def test_open_row_shows_exit_section_only():
+    body = _legend()
+    assert "showEntry = !isOpen" in body
+    assert "showExit = isOpen" in body
+    assert "if (showEntry)" in body
+    assert "if (showExit)" in body
+    # Must not unconditionally concatenate both sections anymore.
+    assert "html = head\n    + '<div class=\"lg-sec\">ENTRY" not in body
+
+
+def test_no_selection_defaults_to_entry_only():
+    """Criteria toggle with no row: ENTRY, not the full both-block."""
+    body = _legend()
+    assert "const isOpen = _legendRowIsOpen(r)" in body
+    assert "showEntry = !isOpen" in body
+    assert "showExit = isOpen" in body

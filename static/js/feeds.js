@@ -81,10 +81,9 @@ export function init(panelEl, kind) {
     );
     _bindBookSort(_repaintBook);
 
-    // Click a row to have the legend explain THAT name: each rule is
-    // evaluated against it and marked pass / fail / unknown. Click the same
-    // row again to go back to the plain rules. Delegated, because rows are
-    // re-rendered on every paint.
+    // Click a row to have the legend explain THAT name. Open positions get
+    // EXIT only; watch rows get ENTRY only (pass/fail marks). Click again to
+    // clear. Delegated, because rows are re-rendered on every paint.
     bookRowsEl.addEventListener('click', (ev) => {
       const row = ev.target && ev.target.closest
         ? ev.target.closest('[data-book-symbol]') : null;
@@ -933,7 +932,16 @@ function _bookEntryCriteria(cfg, row) {
   return { macd, exh, both, fresh, live, rsi, ready, n, s, b };
 }
 
-/** Entry rules, rendered from the LIVE config rather than written down.
+/** Same open-row test _bookRows / RStop use: is_position or open/submitted. */
+function _legendRowIsOpen(r) {
+  if (!r || typeof r !== 'object') return false;
+  const phase = String(r.phase || '').toLowerCase();
+  const status = String(r.status || '').toLowerCase();
+  return !!(r.is_position || phase === 'open' || phase === 'submitted'
+    || status === 'filled' || status === 'submitted');
+}
+
+/** Entry/exit rules, rendered from the LIVE config rather than written down.
  *
  *  Hardcoding the numbers here would produce a legend that drifts from the
  *  thresholds it claims to describe — the same failure as a config knob
@@ -944,6 +952,10 @@ function _bookEntryCriteria(cfg, row) {
  *  answers "what is this name missing" rather than only "what is required".
  *  A rule whose inputs are absent reads UNKNOWN, never PASS — the desk's own
  *  rule that absence is not a pass.
+ *
+ *  Section choice follows the row: an OPEN position (is_position / phase open)
+ *  shows EXIT only; a watch-only row shows ENTRY only. Criteria with no row
+ *  selected defaults to ENTRY only — not the full both-block.
  */
 function _paintBookLegend(cfg, row) {
   const el = document.querySelector('[data-ai-book-legend]');
@@ -958,6 +970,10 @@ function _paintBookLegend(cfg, row) {
   if (!Object.keys(c).length) return;
   const { macd, exh, both, fresh, rsi, n, s, b } = _bookEntryCriteria(cfg, row);
   const r = row && typeof row === 'object' ? row : null;
+  const isOpen = _legendRowIsOpen(r);
+  // Open → EXIT only. Watch / no selection → ENTRY only.
+  const showEntry = !isOpen;
+  const showExit = isOpen;
 
   // ENTRY. Evaluated against the selected row where the inputs exist.
   const entry = [
@@ -992,7 +1008,7 @@ function _paintBookLegend(cfg, row) {
                 + ` &nbsp;·&nbsp; ${n('ai_max_buys_per_poll', 0)}/poll &nbsp;·&nbsp; abort ${n('ai_fill_abort_r', 0)}R through`, null],
   ];
 
-  // EXIT. Informational — these describe an open position, not this row.
+  // EXIT. Informational — these describe an open position.
   //
   // The shelf is the one line that must be COMPUTED rather than quoted. The
   // give is min(give_r × R, give_max_pct% of price) and R is synth_stop_pct%
@@ -1021,7 +1037,7 @@ function _paintBookLegend(cfg, row) {
   ];
 
   const head = r
-    ? `<div class="lg-head">${_esc(String(r.symbol || ''))} — tap the row again to clear</div>`
+    ? `<div class="lg-head">${_esc(String(r.symbol || ''))} — ${isOpen ? 'EXIT' : 'ENTRY'} · tap row again to clear</div>`
     : '';
   const paint = (list) => list.map(([k, v, ok]) => {
     const cls = ok === true ? ' lg-pass' : ok === false ? ' lg-fail' : '';
@@ -1030,9 +1046,9 @@ function _paintBookLegend(cfg, row) {
     return `<div class="lg-row${cls}"><span class="lg-k">${k}</span>`
       + `<span class="lg-v">${v}</span>${mark}</div>`;
   }).join('');
-  const html = head
-    + '<div class="lg-sec">ENTRY — all must pass</div>' + paint(entry)
-    + '<div class="lg-sec">EXIT — any one fires</div>' + paint(exit);
+  let html = head;
+  if (showEntry) html += '<div class="lg-sec">ENTRY — all must pass</div>' + paint(entry);
+  if (showExit) html += '<div class="lg-sec">EXIT — any one fires</div>' + paint(exit);
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 
