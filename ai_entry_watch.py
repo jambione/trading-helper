@@ -3533,10 +3533,12 @@ def _engine_rt_print(symbol: str) -> tuple[float, float] | None:
         return None
     global _ENGINE_RT_CACHE
     now = time.time()
-    ts, tickers = _ENGINE_RT_CACHE
-    file_mtime = 0.0
-    if len(_ENGINE_RT_CACHE) >= 3:
-        file_mtime = float(_ENGINE_RT_CACHE[2] or 0.0)
+    _cache = _ENGINE_RT_CACHE
+    ts = float(_cache[0] or 0.0)
+    tickers = _cache[1] if len(_cache) > 1 else {}
+    if not isinstance(tickers, dict):
+        tickers = {}
+    file_mtime = float(_cache[2] or 0.0) if len(_cache) >= 3 else 0.0
     if (now - ts) > _ENGINE_RT_TTL or not tickers:
         try:
             from pathlib import Path as _P
