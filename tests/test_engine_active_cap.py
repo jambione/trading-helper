@@ -47,7 +47,7 @@ def test_pick_cold_nonbook_eviction_none_when_only_book():
 def test_expire_tickers_calls_unsubscribe(monkeypatch):
     unsubbed = []
 
-    monkeypatch.setattr(se, "request_unsubscribe", lambda syms: unsubbed.extend(syms))
+    monkeypatch.setattr(se, "request_unsubscribe", lambda syms, **kw: unsubbed.extend(syms))
 
     class _Eng:
         active = {}
@@ -68,7 +68,7 @@ def test_expire_tickers_calls_unsubscribe(monkeypatch):
 
 def test_ingest_evicts_cold_nonbook_for_book_when_full(monkeypatch):
     unsubbed = []
-    monkeypatch.setattr(se, "request_unsubscribe", lambda syms: unsubbed.extend(syms))
+    monkeypatch.setattr(se, "request_unsubscribe", lambda syms, **kw: unsubbed.extend(syms))
     monkeypatch.setattr(se, "request_subscribe", lambda syms: None)
     monkeypatch.setattr(se, "MAX_ACTIVE_TICKERS", 2)
     monkeypatch.setattr(se, "get_latest_price", lambda s: None)

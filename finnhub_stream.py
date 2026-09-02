@@ -141,6 +141,29 @@ def register_trade_callback(fn):
 # Override with FINNHUB_MAX_SUBSCRIPTIONS if the account tier changes.
 MAX_WS_SUBSCRIPTIONS = int(os.getenv("FINNHUB_MAX_SUBSCRIPTIONS", "50"))
 
+# Watch/book/seed symbols — never evict these for non-book rotation.
+# Updated by the engine/dashboard from the live entry_watch / entry_book set
+# (book-wide; never a hardcoded ticker list).
+_PRIORITY_SYMS: set[str] = set()
+_PRIORITY_LOCK = threading.Lock()
+
+
+def set_subscribe_priority(tickers: list) -> None:
+    """Mark symbols that must keep a Finnhub WS slot (watch/book/seed)."""
+    global _PRIORITY_SYMS
+    pri: set[str] = set()
+    for raw in tickers or []:
+        t = str(raw or "").upper().strip()
+        if t:
+            pri.add(t)
+    with _PRIORITY_LOCK:
+        _PRIORITY_SYMS = pri
+
+
+def get_subscribe_priority() -> set[str]:
+    with _PRIORITY_LOCK:
+        return set(_PRIORITY_SYMS)
+
 
 def request_subscribe(tickers: list):
     """Queue new tickers for Finnhub WS subscription (thread-safe).
@@ -149,6 +172,10 @@ def request_subscribe(tickers: list):
     that would overflow are NOT queued — logged via ``FINNHUB_STATE.add_log`` —
     so overflow is loud instead of silent. Prefer ``request_unsubscribe`` to
     free slots before rotating new names in.
+
+    Priority (watch/book/seed) symbols: if the cap would skip them, drop
+    non-priority subscribers first so MOVE-on-book is never starved by desk
+    noise. Non-priority overflow still skips loudly.
     """
     wanted: list[str] = []
     seen: set[str] = set()
@@ -161,6 +188,7 @@ def request_subscribe(tickers: list):
     if not wanted:
         return
 
+    priority = get_subscribe_priority()
     with FINNHUB_STATE.lock:
         already = set(FINNHUB_STATE.subscribed)
     # Count in-flight queue depth so a burst of callers cannot silent-overflow
@@ -168,11 +196,30 @@ def request_subscribe(tickers: list):
     # undercounting past the broker ceiling.
     pending = _pending_subs.qsize()
     room = max(0, MAX_WS_SUBSCRIPTIONS - len(already) - pending)
+
+    need = [t for t in wanted if t not in already]
+    if not need:
+        return
+
+    # Free non-priority slots when priority names would otherwise be skipped.
+    pri_need = [t for t in need if t in priority]
+    if pri_need and room < len(pri_need):
+        victims = [
+            s for s in already
+            if s not in priority and s not in seen
+        ]
+        # Prefer quiet rotation victims; order is arbitrary among non-priority.
+        free_n = min(len(victims), len(pri_need) - room)
+        for v in victims[:free_n]:
+            _pending_unsubs.put(v)
+            already.discard(v)
+        room = max(0, MAX_WS_SUBSCRIPTIONS - len(already) - pending)
+
     queued = 0
     skipped: list[str] = []
-    for t in wanted:
-        if t in already:
-            continue
+    # Prefer priority names when room is still scarce.
+    ordered = [t for t in need if t in priority] + [t for t in need if t not in priority]
+    for t in ordered:
         if queued >= room:
             skipped.append(t)
             continue
@@ -188,13 +235,21 @@ def request_subscribe(tickers: list):
         )
 
 
-def request_unsubscribe(tickers: list):
+def request_unsubscribe(tickers: list, *, force: bool = False):
     """Queue tickers to unsubscribe (thread-safe). Frees a slot toward the
-    free-tier ~50-symbol cap so rotating watchlists don't starve new movers."""
+    free-tier ~50-symbol cap so rotating watchlists don't starve new movers.
+
+    Watch/book/seed priority symbols are kept unless ``force=True`` — never
+    drop a live book name to make room for desk noise.
+    """
+    priority = set() if force else get_subscribe_priority()
     for t in tickers or []:
         t = str(t or "").upper().strip()
-        if t:
-            _pending_unsubs.put(t)
+        if not t:
+            continue
+        if t in priority:
+            continue
+        _pending_unsubs.put(t)
 
 
 # ── WebSocket Stream ─────────────────────────────────────────
@@ -431,6 +486,8 @@ __all__ = [
     "start_finnhub_stream",
     "request_subscribe",
     "request_unsubscribe",
+    "set_subscribe_priority",
+    "get_subscribe_priority",
     "fetch_realtime_quote",
     "get_latest_price",
 ]

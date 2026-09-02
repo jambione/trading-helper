@@ -439,12 +439,16 @@ def request_subscribe(tickers: list):
         fh_request_subscribe(tickers)
 
 
-def request_unsubscribe(tickers: list):
-    """Drop live-price subscriptions when a ticker leaves ``active``."""
+def request_unsubscribe(tickers: list, *, force: bool = False):
+    """Drop live-price subscriptions when a ticker leaves ``active``.
+
+    ``force=True`` bypasses Finnhub watch-book priority protection — required
+    when a name has truly expired off the book after the off-desk grace.
+    """
     if PRICE_SOURCE in ("alpaca", "both", "auto"):
         alpaca_px.request_unsubscribe(tickers)
     if PRICE_SOURCE in ("finnhub", "both", "auto"):
-        fh_request_unsubscribe(tickers)
+        fh_request_unsubscribe(tickers, force=force)
 
 
 # Below this, a timestamp cannot be milliseconds: 1e11 ms is 1973, and 1e11
@@ -960,6 +964,8 @@ class TickerState:
         # seeded this name for indicators/tape — prefer keeping it when the
         # active list is full over cold desk noise.
         self.src: str = ""
+        # When a book name loses on_desk, start a grace clock (see is_expired).
+        self._book_off_desk_ts: Optional[float] = None
         # Failed bar-fetch attempts before first success (drives fast retry).
         self._bar_fetch_attempts: int = 0
 
@@ -973,6 +979,8 @@ class TickerState:
 
     def time_left_s(self) -> float:
         """Seconds remaining before expiry (if no position)."""
+        if str(getattr(self, "src", "") or "").strip().lower() == "book":
+            return float("inf")  # book/watch/seed — never expire
         if self.on_desk:
             return float("inf")  # held by desk presence
         if self.cooled_at is not None:
@@ -984,6 +992,24 @@ class TickerState:
             return False   # pinned compare tickers never expire
         if self.in_position:
             return False   # never expire an open position
+        # Watch/book/seed names must keep Finnhub tape for the arm gate.
+        # Expiring them unsubscribe()s the socket — live 2026-09-02 the engine
+        # cycled ALMS/FRVO/NVAX (and any other book row that briefly lost
+        # on_desk after a dashboard blip) and arms died on stale_quote while
+        # MACD/RSI were fine. Book-wide: every src=book name, not a ticker list.
+        #
+        # While on_desk: never expire. After leaving the desk, grant EXPIRY_COLD
+        # grace so a one-poll empty ticker list cannot kill the socket, but a
+        # name that truly left the watch book still frees its slot.
+        if str(getattr(self, "src", "") or "").strip().lower() == "book":
+            if self.on_desk:
+                self._book_off_desk_ts = None
+                return False
+            off = getattr(self, "_book_off_desk_ts", None)
+            if off is None:
+                self._book_off_desk_ts = time.time()
+                return False
+            return (time.time() - float(off)) > float(EXPIRY_COLD)
         # Keep symbols the momentum desk is still showing so RSI / proximity
         # stay live; normal age/cool expiry applies once they leave the list.
         if self.on_desk:
@@ -1208,6 +1234,8 @@ class TickerState:
         return {
             "strategy":       "three_indicator",
             "pinned":         self.pinned,
+            # Provenance for active-list priority / never-expire book rule.
+            "src":            str(getattr(self, "src", "") or ""),
             "price":          round(self.last_price, 4) if self.last_price else None,
             "proximity_pct":  pct,
             "status":         status,
@@ -1590,6 +1618,7 @@ class SignalEngine:
             # Still on the dashboard ticker list → hold for RSI / proximity
             if sym in self.active:
                 self.active[sym].on_desk = True
+                self.active[sym]._book_off_desk_ts = None
                 src_tag = str(row.get("src") or "").strip().lower()
                 if src_tag == "book":
                     self.active[sym].src = "book"
@@ -2001,6 +2030,40 @@ class SignalEngine:
 
     # ── Expiry ────────────────────────────────────────────────────────────────
 
+    def _refresh_book_subscriptions(self):
+        """Re-assert Finnhub/Alpaca subs for every src=book active name.
+
+        Book-wide (entry_watch / entry_book / seed) — not a hardcode list.
+        Cheap when already subscribed; repairs WS drops and post-restart gaps
+        without waiting for expire→re-add. Also marks them priority so the
+        free-tier cap drops non-book first.
+        """
+        book = [
+            sym for sym, ts in self.active.items()
+            if str(getattr(ts, "src", "") or "").strip().lower() == "book"
+        ]
+        # Priority = still on the desk ticker list. Off-desk book names keep
+        # their existing sub through the grace window but do not block cap
+        # rotation forever.
+        priority = [
+            sym for sym, ts in self.active.items()
+            if str(getattr(ts, "src", "") or "").strip().lower() == "book"
+            and bool(getattr(ts, "on_desk", False))
+        ]
+        if not book:
+            try:
+                from finnhub_stream import set_subscribe_priority
+                set_subscribe_priority(priority)
+            except Exception:
+                pass
+            return
+        request_subscribe(book)
+        try:
+            from finnhub_stream import set_subscribe_priority
+            set_subscribe_priority(priority)
+        except Exception:
+            pass
+
     def _expire_tickers(self):
         """
         Drop tickers that have been watched too long with no signal.
@@ -2023,7 +2086,8 @@ class SignalEngine:
             # Allow re-adding if the ticker gets mentioned again later
             self._known_mentioned.discard(sym)
             # Free the Finnhub/Alpaca subscription slot toward the ~50 cap.
-            request_unsubscribe([sym])
+            # force=True: book priority must not block a true post-grace expiry.
+            request_unsubscribe([sym], force=True)
 
     def _write_signal_state(self):
         """
@@ -2217,7 +2281,8 @@ class SignalEngine:
                     self._refresh_bars(ts)
                     self._check_proximity(ts)
 
-                # 3. Drop expired tickers
+                # 3. Keep watch-book Finnhub slots alive, then drop true expiry
+                self._refresh_book_subscriptions()
                 self._expire_tickers()
 
                 # 4. Write signal_state.json so the dashboard can render

@@ -3384,9 +3384,13 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
 
     The engine only evaluates its own watchlist, which is fed by Discord
     mentions — so the trending names on this book had no indicator data at all
-    and an indicator gate would reject everything. Push the delta (never the
-    full list on every 2s tick) so the engine has bars/state ready by the time
-    the gate asks for it, one scan_interval_sec later.
+    and an indicator gate would reject everything.
+
+    Continuously re-assert EVERY live entry_watch / entry_book / seed symbol
+    onto the dashboard ticker log with src=book (book-wide — not a hardcoded
+    list). A delta-only push left names "known" in signal_state after an
+    ai_trader-only restart while the ticker log briefly emptied, so the engine
+    lost on_desk, expired them, and Finnhub unsubscribed — stale_quote arms.
     """
     # Preserve caller order — desk_candidate_rows ranks by score, and the cap
     # below truncates. Alphabetising first meant a capped push sent the
@@ -3405,25 +3409,20 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         return {"pushed": 0, "known": 0}
     known = set(_engine_indicator_map())
     missing = [s for s in wanted if s not in known]
-    if not missing:
-        return {"pushed": 0, "known": len(known)}
 
-    # Hard cap. Finnhub's free tier allows ~50 concurrent WS subscriptions
-    # across the whole desk. request_subscribe now enforces the ceiling, but
-    # overflow still means no trades / no forming bars / no indicator state —
-    # so leave headroom for the engine's own tickers and prefer quality over
-    # silent starvation.
+    # Hard cap applies to net-new engine adds only. Refresh of already-known
+    # book names always proceeds so the ticker log stays seeded.
     try:
         cap = int(_push_cfg().get("ai_watch_engine_push_max", 32) or 0)
     except (TypeError, ValueError):
         cap = 32
-    if cap > 0:
+    capped = False
+    if cap > 0 and missing:
         room = max(0, cap - len(known))
         if room <= 0:
-            return {"pushed": 0, "known": len(known), "capped": True}
-        if len(missing) > room:
-            # Prefer newly admitted book symbols when slots are scarce.
-            # Equal admit_ts keeps caller (score) order via stable sort.
+            missing = []
+            capped = True
+        elif len(missing) > room:
             try:
                 watch = load_watch() or {}
             except Exception:
@@ -3438,22 +3437,42 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
                 except (TypeError, ValueError):
                     return 0.0
 
-            missing = sorted(missing, key=_admit_ts, reverse=True)
-            missing = missing[:room]
+            missing = sorted(missing, key=_admit_ts, reverse=True)[:room]
 
-    # Debounce. This runs inside the 2s book sync, but a freshly pushed symbol
-    # does not appear in the indicator map until the engine's next scan
-    # (scan_interval_sec, 60s) — so without this it stays "missing" and we
-    # re-POST it ~30 times per symbol while waiting.
+    # Debounce. Missing names: wait ~2 scan intervals (engine catch-up).
+    # Already-known book names: re-assert every ~30s so a blip cannot leave
+    # them off the ticker log / Finnhub priority set for long.
     now = time.monotonic()
     try:
-        hold = float(_push_cfg().get("scan_interval_sec", 60) or 60) * 2.0
+        hold_missing = float(_push_cfg().get("scan_interval_sec", 60) or 60) * 2.0
     except (TypeError, ValueError):
-        hold = 120.0
-    missing = [m for m in missing if m not in _pushed_at or (now - _pushed_at[m]) > hold]
-    if not missing:
-        return {"pushed": 0, "known": len(known), "debounced": True}
+        hold_missing = 120.0
+    hold_refresh = 30.0
+
+    to_push: list[str] = []
     for m in missing:
+        if m not in _pushed_at or (now - _pushed_at[m]) > hold_missing:
+            to_push.append(m)
+    for s in wanted:
+        if s in missing:
+            continue
+        if s not in _pushed_at or (now - _pushed_at[s]) > hold_refresh:
+            to_push.append(s)
+    # Dedupe preserve order
+    seen_p: set[str] = set()
+    ordered: list[str] = []
+    for t in to_push:
+        if t not in seen_p:
+            seen_p.add(t)
+            ordered.append(t)
+    to_push = ordered
+
+    if not to_push:
+        out = {"pushed": 0, "known": len(known), "debounced": True}
+        if capped:
+            out["capped"] = True
+        return out
+    for m in to_push:
         _pushed_at[m] = now
     try:
         with _dash_urlopen(
@@ -3461,13 +3480,19 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
             # src="book" marks these as data subscriptions, not momentum
             # candidates — the Momentum panel filters them out so pushing the
             # whole book does not bury the panel it seeds from.
-            data=json.dumps({"tickers": missing, "src": "book"}).encode("utf-8"),
+            data=json.dumps({"tickers": to_push, "src": "book"}).encode("utf-8"),
             method="POST",
         ):
             pass
-        return {"pushed": len(missing), "known": len(known)}
+        out = {"pushed": len(to_push), "known": len(known)}
+        if capped:
+            out["capped"] = True
+        return out
     except Exception:
-        return {"pushed": 0, "known": len(known), "error": True}
+        out = {"pushed": 0, "known": len(known), "error": True}
+        if capped:
+            out["capped"] = True
+        return out
 
 
 _ENGINE_RT_CACHE: tuple[float, dict] = (0.0, {})

@@ -2386,11 +2386,26 @@ def _price_loop():
                 book_syms = set()
             quote_universe = current | book_syms
 
+            # Watch/book/seed always preferred on this process's Finnhub WS.
+            try:
+                from finnhub_stream import set_subscribe_priority
+                set_subscribe_priority(list(book_syms))
+            except Exception:
+                pass
+
             # Subscribe new tickers to Finnhub as they appear; unsubscribe
             # symbols that left the watchlist/book so the ~50 WS cap rotates.
+            # Never drop a live book name here — even a one-cycle empty
+            # ai_positions_state during ai_trader restart used to unsubscribe
+            # the whole watch book and starve arms with stale_quote.
             prev_universe = _prev_tickers | _prev_book
             new = quote_universe - prev_universe
             left = prev_universe - quote_universe
+            try:
+                protect = set(book_syms) | set(_committed_symbols())
+            except Exception:
+                protect = set(book_syms)
+            left -= protect
             if new and FINNHUB_STATE.connected:
                 _fh_subscribe(list(new))
             if left and FINNHUB_STATE.connected:
@@ -2768,10 +2783,16 @@ def _snapshot() -> dict:
     claude_positions   = load_ai_positions()
     # Live Finnhub/Alpaca prints on AI Watch rows (up to 4Hz WS), independent of
     # the ~20s REST poller that owns arming last_ask on disk.
+    book_syms: list[str] = []
     try:
         book_syms = _ai_book_symbols(claude_positions)
         if book_syms:
             _fh_subscribe(book_syms)
+            try:
+                from finnhub_stream import set_subscribe_priority
+                set_subscribe_priority(book_syms)
+            except Exception:
+                pass
         claude_positions = overlay_ai_book_live_prices(claude_positions)
     except Exception:
         pass
@@ -2827,6 +2848,25 @@ def _snapshot() -> dict:
             if fif_ts and now_ts - fif_ts <= _FIND_IT_FIRST_TTL:
                 d["find_it_first"] = True
             rows.append(d)
+
+        # Ensure every live AI Watch / seed symbol is visible to the engine
+        # with src=book — even when load_tickers() briefly omitted them.
+        # Book-wide: every name from entry_book/entry_watch/positions.
+        try:
+            _bs = [str(s).upper() for s in (book_syms or [])]
+        except Exception:
+            _bs = []
+        if _bs:
+            present = {r.get("ticker") for r in rows}
+            for t in _bs:
+                if not t or t in present:
+                    continue
+                d = dict(STATE.tickers.get(t, {}))
+                d["ticker"] = t
+                d["src"] = "book"
+                d["mentioned"] = t in mention_rank
+                rows.append(d)
+                present.add(t)
 
         # Morning-funnel overlay — attach the compact per-symbol score to any
         # watchlist row the funnel also ranked, so the badge reads inline.
