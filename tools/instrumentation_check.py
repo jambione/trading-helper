@@ -176,6 +176,20 @@ def check(day: date, stale_sec: float, now: datetime) -> tuple[list[str], bool]:
                 failed = True
         lines.append(f"  {name:<10} " + "  ".join(parts))
 
+    # Confirm-streak health. Informational — a collapse does not mean the
+    # loggers are silent, so it never fails this check. IREN-class (many
+    # arm_ok, max streak 1) shows up here hourly via the watchdog.
+    lines.append("")
+    try:
+        import confirm_health as ch
+        per_sym = ch.accumulate(counts.get("shadow") or [], counts.get("events") or [])
+        summary = ch.summarize(per_sym, need=ch.resolve_need(per_sym))
+        lines.append(f"  CONFIRM STREAK  {ch.one_liner(summary)}")
+        if summary.get("warn"):
+            lines.append(f"  ^ confirm_health_warn: {summary.get('warn_reason')}")
+    except Exception as e:  # noqa: BLE001
+        lines.append(f"  CONFIRM STREAK  unavailable ({e})")
+
     if failed:
         lines.append("")
         lines.append("  ^ something that should be recording is not. A day that"

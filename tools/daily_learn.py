@@ -12,9 +12,12 @@ hand after the close:
 
 Artifacts (under AI_REPORT_DIR / ai_reports/):
   daily/YYYY-MM-DD.md      human EOD note (includes replay tuner brief)
-  daily/YYYY-MM-DD.json    machine roll-up
+  daily/YYYY-MM-DD.json    machine roll-up (includes confirm_health)
   daily_ledger.jsonl       one line per day (hybrid forward-test board)
   replay_ab/YYYY-MM-DD.*   counterfactual overlay ranking (tools/replay_ab.py)
+
+Confirm-streak health (IREN-class): confirm_ready_rate and streak1_stuck are
+aggregated from shadow arm_ok + arm_recheck streak fields. No arm-gate change.
 """
 from __future__ import annotations
 
@@ -35,6 +38,7 @@ sys.path.insert(0, str(_ROOT / "tools"))
 
 from ai_paths import resolve_report_dir  # noqa: E402
 from learn_stamps import regime_stamp  # noqa: E402
+import confirm_health as ch  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 
@@ -156,6 +160,17 @@ def build_payload(day: date) -> dict[str, Any]:
     osum = outcomes_summary(outcomes)
     funnel = (desk or {}).get("funnel") if isinstance(desk, dict) else None
     replay = _replay_tune(day)
+    try:
+        confirm = ch.build_for_day(
+            day,
+            shadow_path=rd / "shadow.jsonl",
+            events_path=rd / "events.jsonl",
+            ledger_path=rd / "daily_ledger.jsonl",
+        )
+    except Exception as e:  # noqa: BLE001
+        confirm = {"ok": False, "error": str(e), "n_streak": 0, "n_ready": 0,
+                   "n_stuck": 0, "confirm_ready_rate": None, "need": None,
+                   "warn": False, "streak1_stuck": [], "symbols": []}
     best = (replay or {}).get("best_candidate") or (replay or {}).get("best_hypothesis") or {}
     ledger = {
         "day": day.isoformat(),
@@ -182,6 +197,7 @@ def build_payload(day: date) -> dict[str, Any]:
         "replay_best": best.get("name"),
         "replay_best_delta_usd": best.get("delta_usd"),
         "replay_verdict": best.get("verdict"),
+        **ch.ledger_fields(confirm),
     }
     return {
         "day": day.isoformat(),
@@ -192,6 +208,7 @@ def build_payload(day: date) -> dict[str, Any]:
         "desk": desk,
         "fill_truth": fills,
         "replay": replay,
+        "confirm_health": confirm,
         "ledger": ledger,
     }
 
@@ -253,11 +270,43 @@ def _md(payload: dict[str, Any]) -> str:
         lines.append(f"- skipped: {replay.get('skipped')}")
     else:
         lines.append(f"- unavailable: {replay.get('error') or 'not run'}")
+    lines.extend(["", "## Confirm streak health"])
+    chs = payload.get("confirm_health") or {}
+    if chs.get("error"):
+        lines.append(f"- unavailable: {chs.get('error')}")
+    elif not chs or ((chs.get("n_streak") or 0) == 0 and (chs.get("n_arm_ok_syms") or 0) == 0):
+        lines.append("- no arm_ok / streak rows")
+    else:
+        n_ready, n_streak = chs.get("n_ready"), chs.get("n_streak")
+        rate = chs.get("confirm_ready_rate")
+        pct = f"{100.0 * rate:.0f}%" if isinstance(rate, (int, float)) else "n/a"
+        lines.append(
+            f"- confirm_ready_rate: {n_ready}/{n_streak} = {pct} "
+            f"(need={chs.get('need')})"
+        )
+        stuck = chs.get("streak1_stuck") or []
+        if stuck:
+            names = ", ".join(
+                f"{r.get('symbol')}(arm_ok={r.get('n_arm_ok')}, "
+                f"max={r.get('max_streak')})"
+                for r in stuck[:12]
+            )
+            lines.append(f"- streak1_stuck: {len(stuck)}  {names}")
+        else:
+            lines.append("- streak1_stuck: 0")
+        if chs.get("warn"):
+            lines.append(f"- WARN confirm_health_warn: {chs.get('warn_reason')}")
+        if chs.get("prior_day"):
+            lines.append(
+                f"- prior {chs.get('prior_day')}: "
+                f"rate={chs.get('prior_rate')} stuck={chs.get('prior_stuck')}"
+            )
     lines.extend([
         "",
         "## How to re-run",
         "```",
         f"venv/bin/python tools/daily_learn.py --day {day}",
+        f"venv/bin/python tools/confirm_health.py --day {day}",
         f"venv/bin/python tools/desk_tape.py pack --day {day}",
         f"venv/bin/python tools/replay_ab.py --day {day}",
         f"venv/bin/python tools/replay_ab.py --search --days 10",
@@ -305,6 +354,10 @@ def write_artifacts(payload: dict[str, Any]) -> dict[str, str]:
     json_path.write_text(
         json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
     append_ledger(payload["ledger"], ledger_path)
+    try:
+        ch.emit_summary_events(payload.get("confirm_health") or {})
+    except Exception:
+        pass
     return {
         "md": str(md_path),
         "json": str(json_path),

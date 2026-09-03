@@ -107,3 +107,37 @@ def test_md_includes_replay_hypothesis():
     assert "hybrid-exit" in text
     assert "do not change config" in text
     assert "Replay tuner" in text
+
+
+def test_md_includes_confirm_health():
+    payload = {
+        "day": "2026-09-03",
+        "generated_at": "2026-09-03T20:05:00+00:00",
+        "regime": {},
+        "outcomes": {"n": 0, "n_scored": 0, "win_rate": None, "avg_r": None,
+                     "sum_r": None, "sum_pl_usd": None,
+                     "by_close_reason": {}, "by_entry_path": {},
+                     "by_edge_mode": {}, "by_entry_exhaustion_state": {}},
+        "desk": {"funnel": {}},
+        "fill_truth": {"ok": False, "error": "test"},
+        "replay": {"ok": False, "error": "not run"},
+        "confirm_health": {
+            "need": 2,
+            "n_ready": 8,
+            "n_streak": 13,
+            "confirm_ready_rate": 8 / 13,
+            "n_stuck": 1,
+            "streak1_stuck": [
+                {"symbol": "IREN", "n_arm_ok": 21, "max_streak": 1,
+                 "n_confirm": 21, "n_pass": 0},
+            ],
+            "warn": True,
+            "warn_reason": "rate collapsed 80% → 62% (n=13)",
+        },
+        "ledger": {},
+    }
+    text = dl._md(payload)
+    assert "Confirm streak health" in text
+    assert "8/13" in text
+    assert "IREN" in text
+    assert "confirm_health_warn" in text
