@@ -149,8 +149,9 @@ cache/
 .agents/mcp_config.json
 
 # Agent/tooling scratch, local to one machine and one session.
-# .agentsroom is MCP project state. scratchpad/mini-pull holds data pulled
-# off the mini for analysis — outcomes and ledgers that are authoritative
-# THERE, and a committed copy here would be a stale fork of the truth.
+# .agentsroom is MCP project state. scratchpad/ is for throwaway digs —
+# keep the README tracked; everything else (incl. mini-pull mirrors of
+# outcomes/ledgers that are authoritative THERE) stays local and uncommitted.
 .agentsroom/
-scratchpad/mini-pull/
+scratchpad/**
+!scratchpad/README.md
