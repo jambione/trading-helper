@@ -180,6 +180,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Exhaustion / continuation arm refusals.
     "heating_too_low": "heat low",
     "already_extended": "extended",
+    # Soft OB + elevated RSI (still <= hard RSI max). HPE-class chase.
+    "late_heat": "late heat",
+    "soft_overbought": "late heat",
     "wait_exh": "wait EXH",
     "wait_rsi": "wait RSI",
     "exh_not_tight": "EXH wide",
@@ -6228,6 +6231,43 @@ def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     return True, "rsi_in_band"
 
 
+def late_heat_blocks_buy(record: dict, cfg: dict) -> str | None:
+    """Refuse a new long that is already overbought AND RSI-near-cap.
+
+    The hard RSI max (live ``ai_watch_arm_cm_rsi_max`` = 60) did not catch
+    HPE on 2026-09-03: RSI 59.6 in-band, EXH 83.5 overbought, why
+    ``last_overbought``, then MFE 0 / −0.10R in ~2.5 min. BULL the same
+    session also armed ``last_overbought`` (EXH 85.0) but RSI 46.3 and
+    paid +0.53R. A blunt ``ai_watch_exhaustion_heat_max_pct`` ~80 would
+    have killed both. Conjunction with a soft RSI floor (default 55,
+    still below the hard 60) is the separator.
+
+    Uses the desk's existing overbought definition (``exhaustion_state``,
+    rte_threshold) rather than a parallel EXH ceiling. Off when
+    ``ai_watch_soft_ob_enabled`` is false or the RSI floor is 0. Missing
+    RSI abstains — ``cm_rsi_allows_buy`` already named that when the RSI
+    gate is on. Does not loosen RSI max 60, MACD gap, or the EXH override.
+    """
+    if not bool(cfg.get("ai_watch_soft_ob_enabled", False)):
+        return None
+    try:
+        rsi_floor = float(cfg.get("ai_watch_soft_ob_rsi_min", 55.0) or 0.0)
+    except (TypeError, ValueError):
+        rsi_floor = 55.0
+    if rsi_floor <= 0:
+        return None
+    if exhaustion_state(record, cfg) != "overbought":
+        return None
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None:
+        return None
+    if rsi + 1e-9 >= rsi_floor:
+        return "late_heat"
+    return None
+
+
 def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     """Buy side of the exhaustion / momentum gate.
 
@@ -8653,6 +8693,15 @@ def should_arm_buy(
         elif zone_win <= 0:
             return False, exh_why
         # zone_win > 0: stay on the name; zone entry starts a wait below.
+
+    # Soft overbought / late-heat: already in the OB band AND RSI is
+    # already near the hard cap. Runs after the EXH allow so we do not
+    # mask a real fade (not_rising_overbought) with late_heat, and after
+    # the RSI hard-max so rsi_extended still wins above 60.
+    if exh_ok:
+        late = late_heat_blocks_buy(record, cfg)
+        if late:
+            return False, late
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
     # 20% of equity, then −1R in under a minute. Last-mode used to skip

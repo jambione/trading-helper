@@ -640,6 +640,14 @@ DEFAULT_CONFIG = {
     # 0 = no cap. A 50 ceiling parked AMLX (EXH ~86) as "extended"
     # while it was in/below the zone; operator wants those fills.
     "ai_watch_exhaustion_heat_max_pct": 0.0,
+    # Soft overbought / late-heat arm veto. Refuse when the name is already
+    # in the overbought band AND RSI is at/above this floor (still below the
+    # hard RSI max). Separates HPE-class (RSI 59.6 + EXH 83.5 OB, −0.10R)
+    # from BULL-class (RSI 46.3 + EXH 85 OB, +0.53R) on 2026-09-03. A blunt
+    # heat_max ~80 would have killed both. 0 / enabled false = off. Does
+    # not change RSI max 60, macd_min_gap, or the EXH override.
+    "ai_watch_soft_ob_enabled": True,
+    "ai_watch_soft_ob_rsi_min": 55.0,
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          False,
@@ -1326,6 +1334,8 @@ _EFFECTIVE_KEYS = (
     "ai_local_trail_arm_r",
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
+    "ai_watch_soft_ob_enabled",
+    "ai_watch_soft_ob_rsi_min",
     "ai_watch_ob_allow_hot",
     "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_ob_flat_min_pct",
@@ -1557,6 +1567,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_heat_max_pct",
+    "ai_watch_soft_ob_enabled",
+    "ai_watch_soft_ob_rsi_min",
     "ai_watch_ob_allow_hot",
     "ai_watch_in_zone_ignore_fade",
     "ai_watch_zone_exh_window_sec",

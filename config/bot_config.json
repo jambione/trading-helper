@@ -158,6 +158,8 @@
   "ai_watch_seed_research_n": 12,
   "ai_watch_seed_trending": true,
   "ai_watch_seed_trending_n": 20,
+  "ai_watch_soft_ob_enabled": true,
+  "ai_watch_soft_ob_rsi_min": 55.0,
   "ai_watch_start_time": "04:00",
   "ai_watch_synth_reanchor_pct": 0.0,
   "ai_watch_synth_rr": 1.0,

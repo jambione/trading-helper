@@ -4264,6 +4264,97 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     assert ok and why.startswith("last_overbought")
 
 
+def _soft_ob_cfg(**over):
+    """Live-shaped last-mode knobs for the late-heat conjunction."""
+    cfg = _last_cfg(
+        ai_watch_soft_ob_enabled=True,
+        ai_watch_soft_ob_rsi_min=55.0,
+        ai_watch_ob_allow_hot=False,
+        ai_watch_arm_require_cm_rsi=True,
+        ai_watch_arm_cm_rsi_max=60.0,
+        ai_watch_arm_cm_rsi_require_rising=False,
+        ai_watch_require_realtime_rsi=False,
+        ai_watch_arm_require_macd=False,
+    )
+    cfg.update(over)
+    return cfg
+
+
+def _ob_rec(*, symbol, rsi, exh, source="trending"):
+    rec = _armable_rec()
+    rec["symbol"] = symbol
+    rec["source"] = source
+    rec["structure"]["zone_kind"] = "at_last"
+    rec["structure"]["synthetic"] = True
+    rec["structure"]["reward_risk"] = 0.6
+    rec["indicator"]["pctr"] = float(exh) - 100.0
+    rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_falling"] = False
+    rec["indicator"]["cm_rsi"] = rsi
+    rec["indicator"]["cm_rsi_rising"] = True
+    rec["indicator"]["cm_rsi_src"] = "realtime"
+    return rec
+
+
+def test_late_heat_blocks_hpe_keeps_bull():
+    """Sep 3 counterfactual: HPE-class OB+RSI~60 blocked; BULL OB+RSI 46 allowed.
+
+    Both armed last_overbought live. A blunt heat_max~80 would have killed
+    BULL (EXH 85, +0.53R) along with HPE (EXH 83.5, −0.10R / MFE 0).
+    """
+    import ai_entry_watch as ew
+
+    cfg = _soft_ob_cfg()
+    hpe = _ob_rec(symbol="HPE", rsi=59.6, exh=83.5, source="momentum")
+    ok, why = ew.should_arm_buy(hpe, ask=50.44, bid=50.40, cfg=cfg)
+    assert ok is False and why == "late_heat"
+    assert ew.format_blocker("late_heat") == "late heat"
+    assert ew.late_heat_blocks_buy(hpe, cfg) == "late_heat"
+
+    bull = _ob_rec(symbol="BULL", rsi=46.3, exh=85.0, source="trending")
+    ok, why = ew.should_arm_buy(bull, ask=9.37, bid=9.35, cfg=cfg)
+    assert ok and why == "last_overbought"
+    assert ew.late_heat_blocks_buy(bull, cfg) is None
+
+
+def test_late_heat_does_not_block_heating_even_with_high_rsi():
+    """GLXY-class heat 75.8 is not overbought; RSI 53 still arms."""
+    import ai_entry_watch as ew
+
+    cfg = _soft_ob_cfg()
+    rec = _ob_rec(symbol="GLXY", rsi=53.1, exh=75.8, source="xai")
+    ok, why = ew.should_arm_buy(rec, ask=26.67, bid=26.60, cfg=cfg)
+    assert ok and why == "last_heating"
+    assert ew.late_heat_blocks_buy(rec, cfg) is None
+
+    # Heating + RSI 59.6 is still not the HPE chase (not yet OB).
+    rec["indicator"]["cm_rsi"] = 59.6
+    ok, why = ew.should_arm_buy(rec, ask=26.67, bid=26.60, cfg=cfg)
+    assert ok and why == "last_heating"
+
+
+def test_late_heat_off_and_floor_zero_leave_hpe_class_armed():
+    import ai_entry_watch as ew
+
+    hpe = _ob_rec(symbol="HPE", rsi=59.6, exh=83.5, source="momentum")
+    ok, why = ew.should_arm_buy(
+        hpe, ask=50.44, bid=50.40, cfg=_soft_ob_cfg(ai_watch_soft_ob_enabled=False))
+    assert ok and why == "last_overbought"
+
+    ok, why = ew.should_arm_buy(
+        hpe, ask=50.44, bid=50.40, cfg=_soft_ob_cfg(ai_watch_soft_ob_rsi_min=0.0))
+    assert ok and why == "last_overbought"
+
+
+def test_rsi_hard_max_still_wins_above_sixty():
+    """Do not rename rsi_extended to late_heat when RSI is already illegal."""
+    import ai_entry_watch as ew
+
+    rec = _ob_rec(symbol="HOT", rsi=61.0, exh=83.5, source="momentum")
+    ok, why = ew.should_arm_buy(rec, ask=50.44, bid=50.40, cfg=_soft_ob_cfg())
+    assert ok is False and why == "rsi_extended"
+
+
 def test_build_last_zone_stop_is_synth_pct_under_the_tape():
     import ai_entry_watch as ew
 
