@@ -243,20 +243,28 @@ DEFAULT_CONFIG = {
     # poller does not re-place every 20s (2026-08-11 QMCO thrash).
     "ai_wash_cooldown_sec":      1800.0,
     # ── Entry order shape ───────────────────────────────────────────────────
-    # "market" (desk default) or "limit". Market fills at the ask at execution;
-    # size_by_risk / stop still size off the quote at arm, so a gap-through
-    # fill can exceed ai_watch_synth_stop_pct and ai_max_position_pct on thin
-    # IEX books. Limit was the old default (ask + pad, capped at zone top) to
-    # bound that; operator chose market for immediacy over that cap.
+    # "market" (desk default) or "limit". With broker stops ON, market means a
+    # true market/bracket parent. With ai_broker_stop_enabled=false (local-stop
+    # desk), "market" still submits a *marketable* DAY limit at send-ask×(1+pad)
+    # — bare ask rests and misses on thin IEX (GLXY 2026-09-03). Limit style
+    # pads then hard-caps at the zone top.
     "ai_entry_order_style":    "market",
-    # Used only when ai_entry_order_style is "limit": marketable pad above the
-    # ask, then hard-capped at the zone top.
+    # Marketable pad above the ask. Limit style: then hard-capped at zone top.
+    # Local-stop + market style: same pad, optionally dollar-capped via
+    # ai_entry_marketable_pad_max_px (no zone cap — immediacy over geometry).
     "ai_entry_limit_pad_pct":     0.15,
+    # Dollar cap on the marketable pad for local-stop market-style entries
+    # (ask*(1+pad) never more than ask+this). 0 disables the dollar cap.
+    "ai_entry_marketable_pad_max_px": 0.05,
     # An unfilled entry limit is cancelled after this long: if price left the
     # zone the setup is gone, and re-evaluating beats leaving a stale order
     # resting while the zone re-anchors away from it. Distinct from
     # ai_entry_unconfirmed_ttl_sec, which covers a *filled* but unconfirmed fill.
     "ai_entry_limit_ttl_sec":     30.0,
+    # Atomic confirm→submit (Package B): refuse place if send-ask moved more
+    # than this from the streak-pass print (pct OR absolute cents).
+    "ai_entry_confirm_max_slip_pct": 1.0,
+    "ai_entry_confirm_max_slip_px":  0.10,
     # True → stop-MARKET (default: gap through the trigger still fills).
     # False → stop-LIMIT with ai_stop_limit_slip_pct room; can miss entirely
     # on the high-RVOL names this book selects for.
@@ -1325,6 +1333,8 @@ _EFFECTIVE_KEYS = (
     "ai_watch_zone_mode",
     "ai_eod_liquidate_time",
     "ai_entry_order_style",
+    "ai_entry_confirm_max_slip_pct",
+    "ai_entry_confirm_max_slip_px",
 )
 
 
@@ -1670,7 +1680,10 @@ SAFE_CONFIG_KEYS = [
     "ai_wash_cooldown_sec",
     "ai_entry_order_style",
     "ai_entry_limit_pad_pct",
+    "ai_entry_marketable_pad_max_px",
     "ai_entry_limit_ttl_sec",
+    "ai_entry_confirm_max_slip_pct",
+    "ai_entry_confirm_max_slip_px",
     "ai_stop_use_market",
     "ai_stop_limit_slip_pct",
     "ai_entry_zone_pad_pct",

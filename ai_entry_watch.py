@@ -219,6 +219,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_quote": "stale quote",
     # Entry-only: ai_watch_arm_require_stream_price refused a non-stream print.
     "stream_required": "need stream",
+    # Atomic confirm→submit (Package B): send ask moved / tape died after pass.
+    "confirm_slip": "confirm slip",
+    "confirm_stale": "confirm stale",
     # MACD momentum validation refusals
     "no_macd_data": "no MACD",
     # Provenance refusals — the reading exists but was not drawn on
@@ -4618,6 +4621,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "block_code", "block_reason", "block_ts", "block_detail",
             "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
             "zone_touch_ts", "arm_streak", "arm_streak_poll",
+            "confirm_ask", "confirm_ask_ts", "confirm_px_src",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
@@ -9202,6 +9206,50 @@ def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
 _POLL_SEQ = 0
 
 
+
+def _confirm_slip_limits(cfg: dict | None) -> tuple[float, float]:
+    """Max ask move between streak-pass and place: (pct, absolute $)."""
+    cfg = cfg or {}
+    try:
+        pct = max(0.0, float(cfg.get("ai_entry_confirm_max_slip_pct", 1.0) or 0.0))
+    except (TypeError, ValueError):
+        pct = 1.0
+    try:
+        px = max(0.0, float(cfg.get("ai_entry_confirm_max_slip_px", 0.10) or 0.0))
+    except (TypeError, ValueError):
+        px = 0.10
+    return pct, px
+
+
+def _confirm_slip_ok(
+    confirm_ask: float | None,
+    send_ask: float | None,
+    cfg: dict | None = None,
+) -> tuple[bool, str]:
+    """True when send ask is still the same tape state as the streak pass.
+
+    FRVO 2026-09-03: streak 2 at ask 17.52, then stream_required / ask 18.32
+    before submit — confirm and send were not one atomic quote. Refuse rather
+    than chase the jump.
+    """
+    try:
+        c = float(confirm_ask or 0)
+        s = float(send_ask or 0)
+    except (TypeError, ValueError):
+        return False, "bad_ask"
+    if c <= 0 or s <= 0:
+        return False, "bad_ask"
+    pct_lim, px_lim = _confirm_slip_limits(cfg)
+    jump = abs(s - c)
+    jump_pct = 100.0 * jump / c
+    # Either threshold may bind; 0 disables that leg.
+    if px_lim > 0 and jump > px_lim + 1e-9:
+        return False, f"jump_${jump:.4f}>${px_lim:.2f}"
+    if pct_lim > 0 and jump_pct > pct_lim + 1e-9:
+        return False, f"jump_{jump_pct:.2f}%>{pct_lim:.2f}%"
+    return True, ""
+
+
 def _arm_confirm_ticks(cfg: dict | None) -> int:
     """How many consecutive polls must agree before a buy is placed."""
     try:
@@ -10388,6 +10436,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             why_first=_why_first, px_src=px_src,
             streak=streak, need=need_arm,
             before=_arm_before, after=_arm_after)
+        # Package B: freeze the quote that earned streak-pass so the pre-place
+        # refresh can refuse a jump / stale stream instead of chasing it.
+        rec["confirm_ask"] = float(ask_f)
+        rec["confirm_ask_ts"] = float(t0)
+        rec["confirm_px_src"] = str(px_src or "") or None
 
         # Position / buy-cap gates (fail closed on errors — never place blind)
         try:
@@ -10487,19 +10540,41 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         # Re-pull again immediately before place — gates above can take long
         # enough that the buy-ready refresh is no longer the live print.
+        confirm_ask = rec.get("confirm_ask")
         ask_f, px_src2, _age2, bid2_f = refresh_arm_market_data(
             rec, cfg, t0, gt=gt, sig=indicators.get(sym))
         if ask_f <= 0 or px_src2 in ("none", "stale_tape"):
-            _skip("stale_quote", detail=px_src2)
+            _arm_streak(rec, False, seq=poll_seq)
+            for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
+                rec.pop(_k, None)
+            _skip("confirm_stale", detail=px_src2 or "stale_quote",
+                  confirm_ask=confirm_ask)
             continue
         _sr2 = stream_price_required_block(px_src2, cfg)
         if _sr2:
-            _skip(_sr2, detail=px_src2 or "not_stream")
+            # After a clean streak pass, a non-stream print is confirm_stale
+            # (FRVO-class), not a fresh stream_required veto with no provenance.
+            _arm_streak(rec, False, seq=poll_seq)
+            for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
+                rec.pop(_k, None)
+            _skip("confirm_stale", detail=px_src2 or "not_stream",
+                  confirm_ask=confirm_ask)
+            continue
+        slip_ok, slip_why = _confirm_slip_ok(confirm_ask, ask_f, cfg)
+        if not slip_ok:
+            _arm_streak(rec, False, seq=poll_seq)
+            for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
+                rec.pop(_k, None)
+            _skip("confirm_slip", detail=slip_why, confirm_ask=confirm_ask,
+                  send_ask=ask_f)
             continue
         if bid2_f is None:
             bid2_f = bid_f
         ok_arm2, why2 = should_arm_buy(rec, ask=ask_f, bid=bid2_f, cfg=cfg, now=t0)
         if not ok_arm2:
+            _arm_streak(rec, False, seq=poll_seq)
+            for _k in ("confirm_ask", "confirm_ask_ts", "confirm_px_src"):
+                rec.pop(_k, None)
             _skip(f"recheck_{why2}")
             continue
 

@@ -3782,3 +3782,56 @@ def test_anchor_falls_back_to_ask_when_the_book_is_unusable(monkeypatch):
     assert _anchor(monkeypatch, "mid", bid=None) == pytest.approx(76.37, abs=0.005)
     assert _anchor(monkeypatch, "mid", bid=76.30) == pytest.approx(76.37, abs=0.005)
     assert _anchor(monkeypatch, "bid", bid=0.0) == pytest.approx(76.37, abs=0.005)
+
+
+# ── Package A: marketable local-stop when style=market ───────────────────────
+
+def test_marketable_local_limit_pads_and_dollar_caps(monkeypatch):
+    _lim_cfg(monkeypatch, ai_entry_limit_pad_pct=0.15,
+             ai_entry_marketable_pad_max_px=0.05)
+    # 40.50 * 1.0015 = 40.56075, but ask+$0.05 cap → 40.55
+    assert cp._marketable_local_limit(40.50) == 40.55
+    # Higher ask: pad alone would be large; dollar cap binds.
+    # 100 * 1.0015 = 100.15, but ask+0.05 = 100.05
+    assert cp._marketable_local_limit(100.0) == 100.05
+    _lim_cfg(monkeypatch, ai_entry_limit_pad_pct=0.15,
+             ai_entry_marketable_pad_max_px=0.0)
+    assert cp._marketable_local_limit(100.0) == 100.15
+
+
+def test_local_stop_market_style_uses_padded_limit_and_stamps_ttl_anchor(
+        tmp_path, monkeypatch):
+    """GLXY-class: market + broker_stop off must not rest a bare ask.
+
+    Bare ask left entry_limit_price=None so the 30s limit TTL never bound and
+    the order sat until entry_unconfirmed_expired (~15m).
+    """
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_broker_stop_enabled": False,
+        "ai_entry_order_style": "market",
+        "ai_entry_limit_pad_pct": 0.15,
+        "ai_entry_marketable_pad_max_px": 0.05,
+        "ai_entry_limit_ttl_sec": 30.0,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(entry_low=40.0, entry_high=41.0, stop_price=38.0,
+                             target_1=42.0)
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=40.50)
+    assert out["ok"] is True
+    assert stub.limit_calls, "expected naked marketable limit"
+    lim = float(stub.limit_calls[0]["price"])
+    assert lim == pytest.approx(40.55, abs=0.001)
+    assert lim > 40.50
+    state = json.loads(_state_path(tmp_path).read_text())
+    pos = state["NVDA"]
+    assert pos["entry_limit_price"] == pytest.approx(40.55, abs=0.001), (
+        "TTL anchor must be the resting limit, not None"
+    )

@@ -1107,6 +1107,41 @@ def _entry_limit_price(
     return px if px > 0 else None
 
 
+
+def _marketable_local_limit(
+    current_ask: float | None,
+    cfg: dict[str, Any] | None = None,
+) -> float | None:
+    """Marketable DAY limit for local-stop + market-style entries.
+
+    With ``ai_broker_stop_enabled=false``, a bare ask limit rests and often
+    never fills on thin IEX (GLXY 2026-09-03: limit $26.67 while tape walked
+    to ~$26.76, then ``entry_unconfirmed_expired``). Pad above the *send* ask
+    so the order takes liquidity; optional dollar cap keeps the pad small on
+    higher-priced names. No zone cap — this path chose immediacy over geometry.
+    """
+    cfg = cfg if isinstance(cfg, dict) else _entry_cfg()
+    try:
+        ask = float(current_ask or 0)
+    except (TypeError, ValueError):
+        ask = 0.0
+    if ask <= 0:
+        return None
+    try:
+        pad = max(0.0, float(cfg.get("ai_entry_limit_pad_pct", 0.15) or 0.0)) / 100.0
+    except (TypeError, ValueError):
+        pad = 0.0015
+    px = ask * (1.0 + pad)
+    try:
+        cap = float(cfg.get("ai_entry_marketable_pad_max_px", 0.05) or 0.0)
+    except (TypeError, ValueError):
+        cap = 0.05
+    if cap > 0:
+        px = min(px, ask + cap)
+    px = round(px, 2)
+    return px if px > 0 else None
+
+
 def desk_click(symbol: str) -> dict[str, Any]:
     """Operator click on the book: flatten if long, else force a buy.
 
@@ -1526,9 +1561,16 @@ def place_scaled_entry(
     parent_qty = int(total_qty)
     broker_stop = bool(cfg.get("ai_broker_stop_enabled", True))
 
+    # Local-stop desk: always a marketable limit so TTL binds and the order
+    # can take liquidity. Market style used to fall through to bare ask with
+    # entry_limit_price=None — 30s TTL never applied and GLXY-class rests missed.
+    placed_entry_limit = entry_limit
+    if not broker_stop and placed_entry_limit is None:
+        placed_entry_limit = _marketable_local_limit(current_ask, cfg)
+
     def _place_parent():
         if not broker_stop:
-            lim = entry_limit if entry_limit is not None else current_ask
+            lim = placed_entry_limit
             if not lim or lim <= 0:
                 return {"ok": False, "status": "no_limit"}
             out = alpaca_trader.buy_limit_at_price(
@@ -1539,6 +1581,7 @@ def place_scaled_entry(
                 out["buy_order_id"] = out.get("order_id")
                 out["stop_order_id"] = None
                 out["target_order_id"] = None
+                out["limit_px"] = float(lim)
             return out
         if entry_limit is not None:
             return alpaca_trader.buy_limit_bracket(
@@ -1635,7 +1678,7 @@ def place_scaled_entry(
         "qty_b": qty_b,
         "total_qty": total_qty,
         "entry_price": sizing_entry,
-        "entry_limit_price": entry_limit,
+        "entry_limit_price": (placed_entry_limit if not broker_stop else entry_limit),
         "tranche_a_order_id": result_a.get("buy_order_id"),
         # The take-profit leg — NOT the parent buy. "Has tranche A scaled out?"
         # must key off this; the parent fills at entry. Dual path attaches this

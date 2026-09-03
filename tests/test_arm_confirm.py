@@ -267,3 +267,29 @@ def test_the_poll_logs_both_dark_branches():
     body = src[i:i + 4200]
     assert 'stage="refresh"' in body, "post-repull veto must be logged"
     assert 'stage="confirm"' in body, "confirm streak must be logged"
+
+
+# ── Package B: atomic confirm→submit slip gate ───────────────────────────────
+
+def test_confirm_slip_ok_within_and_beyond_limits():
+    import ai_entry_watch as ew
+    cfg = {"ai_entry_confirm_max_slip_pct": 1.0,
+           "ai_entry_confirm_max_slip_px": 0.10}
+    ok, why = ew._confirm_slip_ok(17.52, 17.55, cfg)
+    assert ok is True
+    assert why == ""
+    # FRVO-class jump 17.52 → 18.32
+    ok, why = ew._confirm_slip_ok(17.52, 18.32, cfg)
+    assert ok is False
+    assert "jump_" in why
+    # Absolute cents binds before pct on a cheap name
+    ok, why = ew._confirm_slip_ok(5.00, 5.12, cfg)
+    assert ok is False
+
+
+def test_confirm_slip_disabled_legs():
+    import ai_entry_watch as ew
+    cfg = {"ai_entry_confirm_max_slip_pct": 0.0,
+           "ai_entry_confirm_max_slip_px": 0.0}
+    ok, why = ew._confirm_slip_ok(10.0, 12.0, cfg)
+    assert ok is True
