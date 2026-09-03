@@ -129,7 +129,7 @@
   "ai_watch_macd_exh_override_min_pct": 70.0,
   "ai_watch_macd_max_age_sec": 60.0,
   "ai_watch_max_entries_per_symbol_day": 1,
-  "ai_watch_max_float_m": 0.0,
+  "ai_watch_max_float_m": 800.0,
   "ai_watch_min_pct_change": 0.0,
   "ai_watch_min_price": 2.0,
   "ai_watch_min_rvol": 2.0,

@@ -2122,7 +2122,8 @@ def test_live_sync_path_records_admission_provenance(tmp_path, monkeypatch):
 
 def test_inclusion_requires_rvol_for_momentum_and_trending():
     """Popularity/flag alone isn't evidence of a real dislocation — relative
-    volume has to back it up, for both sources. Research rows are exempt."""
+    volume has to back it up. Known-thin refuses; unknown abstains, including
+    research that has no rvol yet."""
     import ai_entry_watch as ew
 
     cfg = _incl_cfg(ai_watch_require_indicators=False, ai_watch_min_rvol=2.0)
@@ -2150,11 +2151,34 @@ def test_inclusion_requires_rvol_for_momentum_and_trending():
     ok, met, why = ew.passes_inclusion(mom_ok, cfg, indicators={})
     assert ok is True and "rvol" in met and "mom_open" in met
 
-    # Research-sourced rows carry no rvol at all — must not be gated on it.
+    # Movers were exempt; WOOF 0.72 occupied the book on 2026-09-03.
+    woof = {"symbol": "WOOF", "price": 8.0, "pct_change": 12.0, "rvol": 0.72,
+            "source": "movers", "criteria": ["mover"]}
+    ok, _m, why = ew.passes_inclusion(woof, cfg, indicators={})
+    assert ok is False and why == "thin_rvol"
+
+    move = {"symbol": "MOVE", "price": 8.0, "pct_change": 15.0, "rvol": 0.06,
+            "source": "movers"}
+    ok, _m, why = ew.passes_inclusion(move, cfg, indicators={})
+    assert ok is False and why == "thin_rvol"
+
+    mover_unknown = {"symbol": "QNRX", "price": 6.0, "pct_change": 18.0,
+                     "rvol": None, "source": "movers"}
+    ok, met, why = ew.passes_inclusion(mover_unknown, cfg, indicators={})
+    assert ok is True, f"unknown movers rvol was rejected: {why}"
+    assert "rvol" not in met
+
+    # Research with no rvol yet still admits (quote arrives after sit).
     research = {"symbol": "AAA", "price": 20.0, "pct_change": 3.0,
                 "source": "anthropic"}
     ok, _m, why = ew.passes_inclusion(research, cfg, indicators={})
     assert ok is True
+
+    # Research with a KNOWN-thin reading is not a free pass.
+    thin_research = {"symbol": "WOOF", "price": 8.0, "pct_change": 3.0,
+                     "rvol": 0.72, "source": "xai"}
+    ok, _m, why = ew.passes_inclusion(thin_research, cfg, indicators={})
+    assert ok is False and why == "thin_rvol"
 
 
 def test_unknown_rvol_and_missing_ext_abstain_rather_than_reject():

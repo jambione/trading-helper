@@ -23,6 +23,12 @@ a watchlist if they are not handled here:
   trade. Eight of the top fifty. A price band alone does not remove them
   (some print above $2), so symbols are filtered by shape as well.
 
+  Levered / inverse ETPs own the rest of a raw percent ranking. On
+  2026-09-03 the book ate TSLL, MSTX, MST, CONL, CIF*, HODU, CRCG, CSEX
+  — 2x/3x and single-stock levered products a long-only common-stock
+  desk cannot trade. Same shape of filter as warrants: a cheap ticker
+  test plus a small denylist, no network.
+
   Liquidity is a question about TODAY, not about the average. The first
   version of this floored the 20-day mean, on the theory that QNRX's 1281x
   was a divide-by-nothing. Checked against SIP it is nothing of the kind:
@@ -92,6 +98,60 @@ def is_common(sym: str) -> bool:
     if not s.isalpha() or not s or len(s) > 5:
         return False
     return not (len(s) == 5 and s[-1] in "WURQ")
+
+
+# Single-stock 2x/inverse names that do not carry 2X/3X in the ticker.
+# Add a symbol when it shows up on the movers list; keep this small.
+# Sibling share classes of a listed name belong here too (MSTU with MSTX)
+# so the next product on the same underlying does not need a second incident.
+_LEVERED_DENY = frozenset({
+    "TSLL", "TSLQ", "TSLZ", "TSLR",   # TSLA 2x / inverse
+    "MSTX", "MSTU", "MSTZ", "MST",    # MSTR levered — not MSTR itself
+    "CONL", "CONI",                   # COIN 2x
+    "HODU", "CRCG", "CSEX",           # 2026-09-03 book
+    "NVDL", "NVDX", "NVDU",           # NVDA 2x family
+})
+
+# Issuer-name tokens that mean "this is a leveraged / inverse product".
+# Bare BULL/BEAR are NOT here: BULL is Webull common stock.
+_LEVERED_NAME_MARKERS = (
+    " 2X", " 3X", "2X ", "3X ", "-2X", "-3X", "2X-", "3X-",
+    "INVERSE", "LEVERED", "LEVERAGED",
+    "ULTRASHORT", "ULTRA SHORT", "ULTRAPRO", "ULTRA PRO",
+    "BULL 2X", "BEAR 2X", "BULL 3X", "BEAR 3X",
+    "DAILY TARGET 2X", "DAILY TARGET 3X",
+    "-1X", " -1X",
+)
+
+
+def is_levered_etp(sym: str, name: str = "") -> bool:
+    """True for inverse / 2x / 3x products the desk cannot trade as stock.
+
+    Alpaca's movers ranking is raw percent-change; single-stock 2x names
+    (TSLL, MSTX, CONL) crowd the top the same way warrants do. A price
+    band does not remove them.
+
+    Two cheap tests, no network — same shape as is_common:
+
+      1. Ticker heuristics: 2X/3X in the symbol, CIF* except Cipher
+         Mining (CIFR), plus a small denylist of names the heuristics
+         miss.
+      2. Issuer-name markers when a name is supplied (Direxion Daily
+         ... Bull 2X Shares). Bare 'BULL' is not a marker; BULL the
+         stock must stay.
+    """
+    s = str(sym or "").upper().strip()
+    n = str(name or "").upper()
+    if n and any(tag in n for tag in _LEVERED_NAME_MARKERS):
+        return True
+    if "2X" in s or "3X" in s:
+        return True
+    if not s.isalpha() or not s:
+        return False
+    # CIF* levered products, not Cipher Mining (CIFR).
+    if s.startswith("CIF") and s != "CIFR":
+        return True
+    return s in _LEVERED_DENY
 
 
 def _et_now() -> datetime:
@@ -186,7 +246,9 @@ def fetch_rows(cfg: dict) -> list[dict]:
             px = float(getattr(g, "price", 0) or 0)
         except (TypeError, ValueError):
             continue
-        if pct < min_pct or not is_common(sym) or not (lo <= px <= hi):
+        name = str(getattr(g, "name", "") or getattr(g, "company_name", "") or "")
+        if (pct < min_pct or not is_common(sym) or is_levered_etp(sym, name)
+                or not (lo <= px <= hi)):
             continue
         cand.append((sym, pct, px))
 
@@ -206,7 +268,9 @@ def fetch_rows(cfg: dict) -> list[dict]:
             have = {x[0] for x in cand}
             for a in (getattr(ma, "most_actives", None) or []):
                 sym = str(getattr(a, "symbol", "") or "").upper()
-                if sym and sym not in have and is_common(sym):
+                name = str(getattr(a, "name", "") or getattr(a, "company_name", "") or "")
+                if (sym and sym not in have and is_common(sym)
+                        and not is_levered_etp(sym, name)):
                     cand.append((sym, None, None))
                     have.add(sym)
         except Exception as e:  # noqa: BLE001
@@ -322,7 +386,7 @@ def fetch_rows(cfg: dict) -> list[dict]:
             # Re-gated, not grandfathered. A name that has faded below the
             # floor, or out of the price band, leaves the book on its own
             # numbers rather than on how it ranked an hour ago.
-            if pct < min_pct or not (lo <= px <= hi):
+            if pct < min_pct or not (lo <= px <= hi) or is_levered_etp(sym):
                 _session_syms.discard(sym)
                 continue
         vol = float(getattr(seq[-1], "volume", 0) or 0) if seq else 0.0

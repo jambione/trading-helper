@@ -505,10 +505,14 @@ DEFAULT_CONFIG = {
     "ai_position_shadow_enabled":      True,
     "ai_watch_min_adx":                 0.0,  # 0 = off until the engine publishes ADX
     # Maximum float in MILLIONS of shares. Finnhub profile2.floatingShare,
-    # cached by float_feed. 0 = no float filter. Measured 2026-08-28: names
-    # over 50M float were 438 of 507 historical trades and reached +0.25R on
-    # 8% of them, against 45% for names under 20M.
-    "ai_watch_max_float_m":         0.0,
+    # cached by float_feed. 0 = no float filter.
+    #
+    # 50 was the 2026-08-28 measurement cut (names >=50M were 438/507 trades
+    # and reached +0.25R on 8% of them) and is TOO TIGHT for this desk: it
+    # would have dropped BULL (532M) while the mega-floats occupying the
+    # book on 2026-09-03 were HPE 1324 / SOFI 1290 / RIVN 1447. 800 keeps
+    # BULL with margin and still refuses those three. Do not set 50.
+    "ai_watch_max_float_m":       800.0,
     "ai_watch_min_price":               2.0,  # match movers band; no sub-$2 pennies
     # Seconds a name stays on the book after the panels stop offering it.
     # The book is rebuilt from each cycle's candidate list, so a marginal name

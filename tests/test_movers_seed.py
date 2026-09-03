@@ -59,6 +59,38 @@ def test_junk_symbols_are_refused():
         assert not ms.is_common(sym)
 
 
+@pytest.mark.parametrize("sym", [
+    "TSLL", "MSTX", "MST", "CONL", "HODU", "CRCG", "CSEX",
+    "CIFX", "CIFY", "NVDL", "NVDX",
+    "ABC2X", "T3X",
+])
+def test_levered_and_inverse_etps_are_refused(sym):
+    """Same job as the warrant filter: they dominate a percent ranking
+    and none of them is common stock the desk can trade."""
+    assert ms.is_levered_etp(sym)
+
+
+@pytest.mark.parametrize("sym", [
+    "AAPL", "TSLA", "MSTR", "CIFR", "BULL", "HPE", "SOFI", "RIVN",
+    "QNRX", "COIN", "NVDA",
+])
+def test_common_stock_is_not_mistaken_for_a_levered_etp(sym):
+    """MSTR is MicroStrategy, CIFR is Cipher Mining, BULL is Webull.
+    A root-prefix heuristic that swept those would empty the book of
+    the names the float cap is trying to keep."""
+    assert not ms.is_levered_etp(sym)
+    assert ms.is_common(sym)
+
+
+def test_issuer_name_marks_a_levered_product_the_ticker_does_not():
+    """Alpaca sometimes supplies a name. 2X in the name is enough even
+    when the ticker is not on the denylist."""
+    assert ms.is_levered_etp("XYZ", "Direxion Daily Foo Bull 2X Shares")
+    assert ms.is_levered_etp("QQQ", "ProShares UltraPro QQQ")
+    assert not ms.is_levered_etp("BULL", "Webull Corporation")
+    assert not ms.is_levered_etp("XYZ", "Acme Industrial Corp")
+
+
 def test_off_hours_polling_backs_off():
     """Outside 04:00-20:00 ET the movers list is a frozen copy of the last
     session; polling it every minute buys nothing and spends quota."""
@@ -96,6 +128,20 @@ def test_a_mover_reaches_the_book(tmp_path, monkeypatch):
     got = _seeded()
     assert [r["symbol"] for r in got] == ["QNRX"]
     assert got[0]["source"] == "movers", "the tag is how this source stays measurable"
+
+
+def test_known_thin_rvol_does_not_seed_a_mover(tmp_path, monkeypatch):
+    """WOOF 0.72 and MOVE 0.06 occupied the book on 2026-09-03 because
+    movers were exempt from the known-thin gate. A None still seeds —
+    that is a producer who could not divide, not a thin tape."""
+    _write(tmp_path, monkeypatch, [
+        {"symbol": "WOOF", "pct_change": 18.0, "price": 6.0, "rvol": 0.72},
+        {"symbol": "MOVE", "pct_change": 22.0, "price": 6.0, "rvol": 0.06},
+        {"symbol": "HOT", "pct_change": 18.0, "price": 6.0, "rvol": 5.0},
+        {"symbol": "UNK", "pct_change": 18.0, "price": 6.0, "rvol": None},
+    ])
+    got = _seeded({"ai_watch_min_rvol": 2.0})
+    assert [r["symbol"] for r in got] == ["HOT", "UNK"]
 
 
 def test_an_rvol_the_producer_could_not_compute_stays_none(tmp_path, monkeypatch):
@@ -486,7 +532,7 @@ def test_a_carried_name_is_re_measured_not_grandfathered():
     src = open("movers_screener.py", encoding="utf-8").read()
     assert "pct = (px / prev_close - 1.0) * 100.0" in src, (
         "a carried name needs its day change rebuilt, not remembered")
-    assert "if pct < min_pct or not (lo <= px <= hi):" in src
+    assert "if pct < min_pct or not (lo <= px <= hi) or is_levered_etp(sym):" in src
     assert "_session_syms.discard(sym)" in src, (
         "a faded name must leave the session set, not linger in it")
 
@@ -510,7 +556,7 @@ def test_most_actives_is_a_second_feed_for_the_blind_spot():
     assert "MostActivesRequest" in src
     assert 'by="volume"' in src
     i = src.index("get_most_actives")
-    block = src[i - 400:i + 500]
+    block = src[i - 400:i + 800]
     assert "cand.append((sym, None, None))" in block, (
         "actives arrive without a percent — they must be measured, not assumed")
 

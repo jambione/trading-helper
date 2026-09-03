@@ -3271,6 +3271,10 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                             rvol = float(r["rvol"])
                         except (TypeError, ValueError):
                             rvol = None
+                    # Known-thin tape never occupies a movers slot. Unknown
+                    # abstains — a producer None is not a failing ratio.
+                    if rvol is not None and min_rvol > 0 and rvol < min_rvol:
+                        continue
                     seen.add(s)
                     row = dict(r)
                     row["symbol"] = s
@@ -3348,6 +3352,14 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         dvol = float(tr.get("vol_session"))
                     except (TypeError, ValueError):
                         dvol = None
+                # Known-thin tape never occupies a research slot. Unknown
+                # abstains — a thesis with no rvol yet still seeds.
+                try:
+                    rv = float(rvol_src) if rvol_src is not None else None
+                except (TypeError, ValueError):
+                    rv = None
+                if rv is not None and min_rvol > 0 and rv < min_rvol:
+                    continue
                 seen.add(s)
                 added += 1
                 row = dict(r)
@@ -4264,18 +4276,18 @@ def passes_inclusion(
                 return False, met, "not_uptrend"
             met.append("uptrend")
 
-    # Momentum and trending both need evidence of unusual activity, not just
-    # popularity — a flat RVOL means nothing dislocated today regardless of
-    # score or a flag. Research-sourced rows are untouched by this gate.
+    # Known-thin RVOL refuses; unknown abstains. Momentum, trending, movers
+    # and research share this — a 0.72x name occupying the book is a slot
+    # taken from something that might actually dislocate (WOOF 0.72 / MOVE
+    # 0.06 on 2026-09-03). Research with no reading yet still sits (the
+    # quote arrives after admit). Same rule apply_look_highlights already
+    # uses: "unknown rvol neither passes nor blocks."
     #
-    # A KNOWN-low RVOL rejects; an UNKNOWN one abstains. The producer
-    # (trending_screener) publishes rvol=None on every row whenever the volume
-    # refresh has not resolved, so failing closed on absence empties the book
-    # outright rather than filtering it — 15 candidates to 0 on 2026-08-06.
-    # Same rule apply_look_highlights already uses: "unknown rvol neither
-    # passes nor blocks." Absence of evidence is not evidence of absence; the
-    # remaining conjunctive gates still have to pass.
-    if source in ("momentum", "trending") or mom_soft:
+    # The producer (trending_screener) publishes rvol=None on every row
+    # whenever the volume refresh has not resolved, so failing closed on
+    # absence empties the book outright rather than filtering it — 15
+    # candidates to 0 on 2026-08-06.
+    if source in ("momentum", "trending", "movers") or mom_soft or is_research:
         if source == "trending":
             min_rvol = float(
                 cfg.get("ai_watch_trending_min_rvol",

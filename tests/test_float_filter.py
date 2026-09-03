@@ -96,14 +96,33 @@ def test_zero_disables_the_filter(monkeypatch):
     assert ew.passes_inclusion(_row(), _cfg(ai_watch_max_float_m=0))[0] is True
 
 
-def test_it_is_off_by_default():
+def test_it_ships_at_800_not_50():
+    """50M was the 2026-08-28 statistical cut and is too tight: BULL is
+    532M and is a keeper; HPE/SOFI/RIVN (~1.3B) are the names to refuse.
+    0 disables. Do not ship 50."""
     from config import DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["ai_watch_max_float_m"] == 0.0
+    cap = float(DEFAULT_CONFIG["ai_watch_max_float_m"])
+    assert cap == 800.0
+    assert cap >= 532.0, "BULL 532M must stay"
+    assert cap < 1290.0, "SOFI 1290M must go"
 
 
 def test_the_knob_reaches_the_live_config():
     import config
     assert "ai_watch_max_float_m" in config.load_config()
+
+
+def test_sep3_counterfactual_keeps_bull_drops_hpe(monkeypatch):
+    """2026-09-03: HPE 1324 / SOFI 1290 / RIVN 1447 out; BULL 532 kept."""
+    def _fl(sym):
+        return {"BULL": 532.0, "HPE": 1324.0, "SOFI": 1290.0, "RIVN": 1447.0}[sym]
+    monkeypatch.setattr(float_feed, "float_shares", _fl)
+    cfg = _cfg(ai_watch_max_float_m=800.0)
+    ok, met, _why = ew.passes_inclusion(_row("BULL"), cfg)
+    assert ok is True and "low_float" in met
+    for mega in ("HPE", "SOFI", "RIVN"):
+        ok, _met, why = ew.passes_inclusion(_row(mega), cfg)
+        assert ok is False and why == "float_too_big", mega
 
 
 def test_the_refusal_has_a_label():
