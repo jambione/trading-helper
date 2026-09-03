@@ -432,6 +432,16 @@ DEFAULT_CONFIG = {
     # Admission floor only. Arm uses ai_watch_arm_min_rvol (0 = zone+ratchet).
     "ai_watch_min_rvol":                2.0,
     "ai_watch_arm_min_rvol":            0.0,
+    # Credibility bound, not a heat ceiling. A relative-volume reading above
+    # this is not a hot name, it is a broken number, and the desk must not
+    # size a trade off one. Of the 24 at_last entries taken at rvol >= 8
+    # through 2026-09-03, nineteen read between 26.8 and 1144.6 — the top of
+    # that range clusters around 1000, which is an arithmetic fault, not a
+    # tape. Those nineteen averaged -0.236R against -0.035R for the book as a
+    # whole and cost -4.48R. The five plausible 8-20 readings are left alone:
+    # this refuses what cannot be true, and takes no view on what is merely
+    # extreme. 0 disables.
+    "ai_watch_arm_rvol_sane_max":      25.0,
     # Cap how many LOOK tags apply_look_highlights may set panel-wide.
     "ai_watch_look_max":                  20,
     # False (default after 2026-08-11): allow non-EXT trending heat onto the
@@ -1305,6 +1315,7 @@ _EFFECTIVE_KEYS = (
     "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_ob_flat_min_pct",
     "ai_watch_arm_confirm_ticks",
+    "ai_watch_arm_rvol_sane_max",
     "ai_watch_rank_rvol_band",
     "ai_watch_rank_move_band",
     "ai_watch_max_entries_per_symbol_day",
@@ -1492,6 +1503,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_open_seed_min_pct",
     "ai_watch_min_rvol",
     "ai_watch_arm_min_rvol",
+    "ai_watch_arm_rvol_sane_max",
     "ai_watch_look_max",
     "ai_watch_require_look_ext",
     "ai_watch_synth_zone_enabled",

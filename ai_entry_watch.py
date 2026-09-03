@@ -190,6 +190,9 @@ _BLOCKER_LABELS: dict[str, str] = {
     "dead_reentry": "dead today",
     "loser_reentry": "dead today",
     "thin_rvol": "rvol low",
+    # Not "too hot" — the number itself is not believable, so nothing was
+    # measured. See ai_watch_arm_rvol_sane_max.
+    "rvol_implausible": "rvol bad",
     "look_wash": "WASH",
     "not_heating_cooling": "cooling",
     "not_heating_flat": "flat",
@@ -8591,6 +8594,21 @@ def should_arm_buy(
         risk_pct_of_px = 100.0 * (a - _stop) / a
         if risk_pct_of_px < min_stop_pct:
             return False, "stop_too_tight"
+
+    # Believe the reading before thresholding it. An RVOL the feed cannot
+    # have produced (the 2026-09-03 audit found nineteen arms taken between
+    # 26.8x and 1144.6x, clustered near 1000 — an arithmetic fault, not a
+    # tape) is not a hot name, and sizing a trade off it is a calculation on
+    # data known to be wrong. Refuse instead: this is a credibility bound,
+    # and it deliberately takes no view on merely extreme readings.
+    try:
+        sane_rvol = float(cfg.get("ai_watch_arm_rvol_sane_max", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        sane_rvol = 0.0
+    if sane_rvol > 0:
+        rv_sane = _arm_rvol(record)
+        if rv_sane is not None and rv_sane > sane_rvol:
+            return False, "rvol_implausible"
 
     # Arm RVOL is separate from admission. Default 0: the ratchet owns the
     # trade once price is in the zone. Set ai_watch_arm_min_rvol to restore
