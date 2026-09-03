@@ -329,3 +329,50 @@ def test_broker_stop_mode_is_unchanged(tmp_path, monkeypatch):
         ai_broker_stop_enabled=True,
     )
     assert [u["symbol"] for u in rep["unprotected"]] == ["BKKT"]
+
+
+def test_managed_without_shelf_stamps_from_known_stop(tmp_path, monkeypatch):
+    """Local-stop desk: missing shelf + known R → stamp, not a broker slap."""
+    monkeypatch.setattr(cp, "_cfg_all", lambda: {
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+        "ai_local_trail_enabled": True,
+    })
+    rep, fake = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"BKKT": {"qty": 5.0, "mkt_val": 42.08}},
+        orders=[],
+        state={"BKKT": {
+            "entry_price": 8.47, "stop_price": 8.00,
+            "entry_stop_price": 8.00, "risk_per_share": 0.47,
+            "entry_confirmed": True,
+        }},
+        ai_broker_stop_enabled=False,
+        ai_heal_unprotected=False,
+    )
+    assert [u["symbol"] for u in rep["unprotected"]] == ["BKKT"]
+    assert "BKKT" not in fake.closed
+    heals = [e for e in (rep.get("heal_events") or [])
+             if e.get("event") == "unprotected_local_healed"]
+    assert heals, rep.get("heal_events")
+    st = json.loads((tmp_path / "state.json").read_text())
+    assert st["BKKT"]["local_stop_price"] > 0
+    assert st["BKKT"].get("closing_reason") is None
+
+
+def test_managed_without_shelf_or_stop_flattens_local(tmp_path, monkeypatch):
+    """No shelf and no recoverable stop → unprotected_local flatten."""
+    rep, fake = _reconcile(
+        monkeypatch, tmp_path,
+        positions={"BKKT": {"qty": 5.0, "mkt_val": 42.08}},
+        orders=[],
+        state={"BKKT": {"entry_price": 8.47, "entry_confirmed": True}},
+        ai_broker_stop_enabled=False,
+        ai_heal_unprotected=False,
+    )
+    assert [u["symbol"] for u in rep["unprotected"]] == ["BKKT"]
+    assert "BKKT" in fake.closed
+    assert any(
+        e.get("event") == "unprotected_local"
+        for e in (rep.get("heal_events") or [])
+    )

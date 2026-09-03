@@ -1026,9 +1026,11 @@ DEFAULT_CONFIG = {
     #
     # Local ratchet is the stop of record. Do not slap a broker stop onto a
     # naked fill (08-13: 185 heal failures vs 3 heals). Set True to restore
-    # the old broker-heal loop.
+    # the old broker-heal loop. Local-stop missing-shelf heal/flatten
+    # (unprotected_local) is independent of this flag.
     "ai_heal_unprotected":           False,
     # False = parent buy is a bare limit; local trail / dead_trade flatten.
+    # Do not flip True overnight: broker OTOCO is a real architecture fork.
     "ai_broker_stop_enabled":        False,
     # Re-home broker-live symbols missing from positions_state when we can
     # recover stop/entry from entry_ok (or a resting stop). Enables heal +

@@ -1708,18 +1708,23 @@ def place_scaled_entry(
             "ok": False, "error": err, "ticker": ticker,
             "tranche_a": result_a, "tranche_b": None,
         }
-    if place_target and not result_a.get("target_order_id"):
-        log_event(
-            "entry_warn", symbol=ticker,
-            reason="target_order_id_missing_from_response",
-            note="OTOCO submitted with target; will reconcile/heal if naked",
-        )
-    if not result_a.get("stop_order_id"):
-        log_event(
-            "entry_warn", symbol=ticker,
-            reason="stop_order_id_missing_from_response",
-            note="heal will attach stop if still unprotected after fill",
-        )
+    # Broker OTOCO / stop-only parent: missing leg ids are healed after fill.
+    # Local-stop desk never submits those legs (buy_limit_at_price +
+    # stop_order_id=None by design) — do not cry wolf as if a bracket was
+    # expected. That warn fired on every local_stop_only submit.
+    if broker_stop:
+        if place_target and not result_a.get("target_order_id"):
+            log_event(
+                "entry_warn", symbol=ticker,
+                reason="target_order_id_missing_from_response",
+                note="OTOCO submitted with target; will reconcile/heal if naked",
+            )
+        if not result_a.get("stop_order_id"):
+            log_event(
+                "entry_warn", symbol=ticker,
+                reason="stop_order_id_missing_from_response",
+                note="heal will attach stop if still unprotected after fill",
+            )
 
     # Runner is bookkeeping only — same parent order / same resting stop.
     result_b = {
@@ -1741,6 +1746,27 @@ def place_scaled_entry(
         dual = False
         scale_out_pct = 0.0
         logical_dual = False
+    protection_mode = "broker" if broker_stop else "local_stop"
+    local_stop_px = (
+        stop_price if (late_hold or h4_swing)
+        else (initial_local_stop(sizing_entry, risk_px, cfg) or stop_price)
+    )
+    if not broker_stop:
+        loc_ok = _num(local_stop_px)
+        if loc_ok is None or loc_ok <= 0:
+            # Order already accepted — flatten rather than book a naked long.
+            try:
+                alpaca_trader.cancel_open_orders(ticker)
+            except Exception:
+                pass
+            if _held_qty(ticker) > 0:
+                try:
+                    alpaca_trader.close_out(ticker)
+                except Exception:
+                    pass
+            err = "flattened: local_stop_price could not be stamped"
+            log_event("unprotected_local", symbol=ticker, reason=err)
+            return {"ok": False, "error": err, "ticker": ticker}
     row = {
         "qty_a": qty_a,
         "qty_b": qty_b,
@@ -1767,10 +1793,8 @@ def place_scaled_entry(
         "risk_per_share": max(0.0, sizing_entry - stop_price),
         # Disaster floor — never overwritten when stop_price ratchets.
         "entry_stop_price": stop_price,
-        "local_stop_price": (
-            stop_price if (late_hold or h4_swing)
-            else (initial_local_stop(sizing_entry, risk_px, cfg) or stop_price)
-        ),
+        "local_stop_price": local_stop_px,
+        "protection_mode": protection_mode,
         "late_hold": late_hold,
         "h4_swing": h4_swing,
         "target_1": target_1,
@@ -1845,6 +1869,8 @@ def place_scaled_entry(
         duel_source=src, strategy=strategy, dual=bool(qty_b > 0),
         t1_attach_pending=t1_attach_pending,
         parent_qty=parent_qty,
+        protection_mode=protection_mode,
+        local_stop_price=local_stop_px,
     )
     try:
         import ai_duel as duel
@@ -1865,6 +1891,8 @@ def place_scaled_entry(
         "qty_b": qty_b,
         "stop_price": stop_price,
         "target_1": target_1,
+        "local_stop_price": local_stop_px,
+        "protection_mode": protection_mode,
         "tranche_a": result_a,
         "tranche_b": result_b,
         "strategy": strategy,
@@ -3204,6 +3232,9 @@ def apply_local_trail(
         # hazard as the stale-plan case below and it was missing the same
         # guard — a seed above the print flattens on the very next trigger.
         loc = _shelf_under_print(seed or floor, last, pos)
+        if loc is not None and loc > 0:
+            pos["local_stop_price"] = loc
+            changed = True
     elif seed is not None and loc + 1e-9 < seed:
         # Plan-stop leftover (5% floor) is not the working shelf.
         loc = _shelf_under_print(seed, last, pos)
@@ -4200,7 +4231,16 @@ def _adopt_unmanaged(
             "total_qty": int(qty_a + qty_b) if qty_b else int(qty),
             "entry_price": entry,
             "stop_price": stop,
+            "entry_stop_price": stop,
             "risk_per_share": max(0.0, entry - stop),
+            "local_stop_price": (
+                initial_local_stop(entry, max(0.0, entry - stop), _cfg_all())
+                or stop
+            ),
+            "protection_mode": (
+                "broker" if _cfg_flag("ai_broker_stop_enabled", True)
+                else "local_stop"
+            ),
             "target_1": target,
             "entry_time": float((ok or {}).get("ts") or now),
             "entry_confirmed": True,
@@ -4289,6 +4329,121 @@ def _restop_at_available(sym: str, stop_price: float, failed: Any) -> dict | Non
         log_event("unprotected_heal_resized", symbol=sym, qty=qty,
                   stop_price=stop_price)
     return out
+
+
+def _seed_local_stop(pos: dict[str, Any]) -> float | None:
+    """Recover a software shelf from known entry levels. None = cannot stamp.
+
+    Does not invent a percent-of-price stop when R is unknown — same rule as
+    broker heal: flatten rather than guess a thesis we never had.
+    """
+    loc = _num(pos.get("local_stop_price"))
+    if loc is not None and loc > 0:
+        return loc
+    entry = _num(pos.get("entry_price"))
+    # Require an explicit stop thesis. _risk_basis falls back to entry-0 when
+    # stop_price is missing, which would invent a 100% R shelf.
+    frozen = _num(pos.get("risk_per_share"))
+    stop = _num(pos.get("entry_stop_price")) or _num(pos.get("stop_price"))
+    if frozen and frozen > 0:
+        risk = frozen
+    elif entry and stop and entry > stop:
+        risk = entry - stop
+    else:
+        risk = 0.0
+    floor = stop if (stop and stop > 0) else None
+    if floor is None and entry and risk > 0:
+        floor = entry - risk
+    seed = None
+    if entry and entry > 0 and risk and risk > 0:
+        seed = initial_local_stop(entry, risk, _cfg_all())
+    want = seed or floor
+    if want is None or want <= 0:
+        return None
+    last = _num(pos.get("last_seen_price"))
+    if last is not None and last > 0:
+        want = _shelf_under_print(want, last, pos)
+    if want is None or want <= 0:
+        return None
+    if entry and want >= entry:
+        return None
+    return float(want)
+
+
+def _flatten_unprotected_local(
+    ticker: str, pos: dict[str, Any], events: list[dict[str, Any]],
+) -> None:
+    """Market-flatten a managed long that has no stampable software shelf."""
+    import alpaca_trader
+    try:
+        alpaca_trader.cancel_open_orders(ticker)
+    except Exception:
+        pass
+    out = alpaca_trader.close_out(ticker) or {}
+    if isinstance(out, dict) and out.get("order_id"):
+        pos["close_order_id"] = str(out["order_id"])
+    pos["closing_reason"] = pos.get("closing_reason") or "unprotected_local"
+    events.append({"ticker": ticker, "event": "unprotected_local"})
+    log_event("unprotected_local", symbol=ticker)
+
+
+def _ensure_local_protection(
+    ticker: str, pos: dict[str, Any], events: list[dict[str, Any]],
+    *, live: bool = False, stamp: bool = True,
+) -> tuple[bool, bool]:
+    """When broker stops are off, every confirmed live long needs a shelf.
+
+    Stamp from known levels, or flatten with ``unprotected_local``. Independent
+    of ``ai_heal_unprotected`` (that flag is the broker-stop slap, off by
+    design on this desk).
+
+    ``live`` is for reconcile: a broker-open row is already a fill, even if
+    ``entry_confirmed`` was never stamped.
+    ``stamp`` False (manage tick): only flatten when unrecoverable; the trail
+    persists a seedable shelf without a heal event on every quiet tick.
+
+    Returns ``(changed, closed)``.
+    """
+    if _cfg_flag("ai_broker_stop_enabled", True):
+        return False, False
+    if pos.get("closing_reason"):
+        return False, False
+    if not (pos.get("entry_confirmed") or live):
+        return False, False
+    loc = _num(pos.get("local_stop_price"))
+    if loc is not None and loc > 0:
+        return False, False
+    want = _seed_local_stop(pos)
+    if want is not None and want > 0:
+        if not stamp:
+            return False, False
+        pos["local_stop_price"] = want
+        events.append({
+            "ticker": ticker, "event": "unprotected_local_healed",
+            "stop_price": want,
+        })
+        log_event("unprotected_local_healed", symbol=ticker, stop_price=want)
+        return True, False
+    _flatten_unprotected_local(ticker, pos, events)
+    return True, True
+
+
+def _heal_unprotected_local(
+    unprotected: list[dict[str, Any]], state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Reconcile counterpart: stamp or flatten managed rows missing a shelf."""
+    events: list[dict[str, Any]] = []
+    if not unprotected or _cfg_flag("ai_broker_stop_enabled", True):
+        return events
+    for u in unprotected:
+        sym = str(u.get("symbol") or "").upper()
+        if not sym or sym not in state:
+            continue
+        pos = state.get(sym) or {}
+        changed, _closed = _ensure_local_protection(sym, pos, events, live=True)
+        if changed:
+            state[sym] = pos
+    return events
 
 
 def _heal_unprotected(
@@ -4700,6 +4855,7 @@ def reconcile_broker(now: float | None = None) -> dict[str, Any]:
         heal_events: list[dict[str, Any]] = []
         if unprotected:
             heal_events = _heal_unprotected(unprotected, state)
+            heal_events.extend(_heal_unprotected_local(unprotected, state))
 
         changed = bool(adopt_events or heal_events)
         if changed:
@@ -5107,6 +5263,15 @@ def manage_open_positions(
         # ai_position_shadow_enabled — the runner's stop must not depend on
         # whether logging happens to be on.
         _update_excursions(pos, _num(pos.get("last_seen_price")))
+
+        # Local-stop desk: a confirmed live long with no shelf is naked.
+        # Flatten if we cannot recover a shelf; otherwise the trail stamps it.
+        _ch, _closed = _ensure_local_protection(
+            ticker, pos, events, stamp=False)
+        if _ch:
+            changed = True
+        if _closed:
+            continue
 
         # Local profit trail: raise a software shelf under the high and
         # market-flatten if last prints through it. Does not wait for T1.

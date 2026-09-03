@@ -2168,6 +2168,133 @@ def test_place_scaled_entry_naked_limit_when_broker_stop_off(tmp_path, monkeypat
     assert pos["entry_stop_price"] == pytest.approx(38.0)
     assert pos["local_stop_price"] == pytest.approx(
         40.5 - 0.10 * (40.5 - 38.0))
+    assert pos.get("protection_mode") == "local_stop"
+    assert out.get("protection_mode") == "local_stop"
+    assert out.get("local_stop_price") == pytest.approx(pos["local_stop_price"])
+
+
+def test_local_stop_entry_does_not_warn_otoco_missing_stop(tmp_path, monkeypatch):
+    """local_stop_only sets stop_order_id=None on purpose — not an OTOCO miss."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    events = tmp_path / "events.jsonl"
+    events.write_text("")
+    monkeypatch.setattr(cp, "EVENTS_PATH", events)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": True,
+        "ai_entry_broker_target": True,
+        "ai_watch_synth_scale_out_pct": 50.0,
+        "ai_max_position_pct": 25.0,
+        "ai_broker_stop_enabled": False,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(entry_low=40.0, entry_high=41.0, stop_price=38.0,
+                             target_1=42.0)
+    out = cp.place_scaled_entry(
+        "nvda", decision, account_equity=50_000.0, risk_pct=1.0,
+        current_ask=40.5)
+    assert out["ok"] is True
+    rows = [json.loads(l) for l in events.read_text().splitlines() if l.strip()]
+    warns = [r for r in rows if r.get("kind") == "entry_warn"]
+    assert not any(
+        r.get("reason") == "stop_order_id_missing_from_response" for r in warns
+    ), warns
+    assert not any(
+        r.get("reason") == "target_order_id_missing_from_response" for r in warns
+    ), warns
+    oks = [r for r in rows if r.get("kind") == "entry_ok"]
+    assert oks and oks[-1].get("protection_mode") == "local_stop"
+    assert oks[-1].get("local_stop_price") is not None
+
+
+def test_manage_stamps_missing_local_stop_when_broker_off(tmp_path, monkeypatch):
+    """Confirmed live long, shelf missing, known R → stamp, do not flatten."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=40.5, entry_stop_price=38.0, stop_price=38.0,
+        risk_per_share=2.5, target_1=42.0,
+        last_seen_price=40.6, peak_price=40.6, mfe_r=0.04,
+        entry_confirmed=True, tranche_a_filled=False,
+        qty_a=10, qty_b=10, total_qty=20,
+    )
+    state = json.loads(_state_path(tmp_path).read_text())
+    state["NVDA"].pop("local_stop_price", None)
+    _state_path(tmp_path).write_text(json.dumps(state))
+    cfg = {
+        "ai_broker_stop_enabled": False,
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.10,
+        "ai_local_trail_min_give_px": 0,
+        "ai_dead_trade_min": 0,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+        "ai_position_shadow_enabled": False,
+        "ai_stale_data_max_age_sec": 15.0,
+        "ai_heal_unprotected": False,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_broker_stop_enabled": False,
+        "ai_local_trail_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+    }.get(key, default))
+    stub = _StubBrokerManage(order_status="new", current_price=40.6)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert "NVDA" not in stub.closed
+    assert not any(e.get("event") == "unprotected_local" for e in events)
+    st = json.loads(_state_path(tmp_path).read_text())
+    assert st["NVDA"]["local_stop_price"] is not None
+    assert st["NVDA"]["local_stop_price"] > 0
+    assert st["NVDA"].get("closing_reason") is None
+
+
+def test_manage_flattens_unprotected_local_when_shelf_unrecoverable(
+        tmp_path, monkeypatch):
+    """No shelf, no stop, no R — capital first, flatten unprotected_local."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_price=None, entry_stop_price=None, stop_price=None,
+        risk_per_share=None, target_1=42.0,
+        last_seen_price=40.6,
+        entry_confirmed=True, tranche_a_filled=False,
+        qty_a=10, qty_b=0, total_qty=10,
+    )
+    state = json.loads(_state_path(tmp_path).read_text())
+    state["NVDA"].pop("local_stop_price", None)
+    state["NVDA"]["entry_price"] = None
+    state["NVDA"]["stop_price"] = None
+    state["NVDA"]["entry_stop_price"] = None
+    state["NVDA"]["risk_per_share"] = None
+    _state_path(tmp_path).write_text(json.dumps(state))
+    cfg = {
+        "ai_broker_stop_enabled": False,
+        "ai_local_trail_enabled": True,
+        "ai_dead_trade_min": 0,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+        "ai_position_shadow_enabled": False,
+        "ai_heal_unprotected": False,
+    }
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_broker_stop_enabled": False,
+        "ai_local_trail_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+    }.get(key, default))
+    stub = _StubBrokerManage(order_status="new", current_price=40.6)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    events = cp.manage_open_positions(now=1_000_100.0)
+    assert "NVDA" in stub.closed
+    assert any(e.get("event") == "unprotected_local" for e in events)
+    st = json.loads(_state_path(tmp_path).read_text())
+    assert st["NVDA"]["closing_reason"] == "unprotected_local"
 
 
 def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):

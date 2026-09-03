@@ -1028,7 +1028,7 @@ function _paintBookLegend(cfg, row) {
                   + ` &nbsp;(min of give ${n('ai_local_trail_give_r', 0)}R, cap ${n('ai_local_trail_give_max_pct', 0)}% of price)`
                   + ` &nbsp;·&nbsp; arms at ${n('ai_local_trail_arm_r', 0)}R`
                 : 'off', null],
-    ['STOP',  `${b('ai_broker_stop_enabled', 0) ? 'broker stop' : 'software'} 1R`
+    ['STOP',  `${b('ai_broker_stop_enabled', 0) ? 'broker' : 'local_stop'} 1R`
                 + ` &nbsp;=&nbsp; ${n('ai_watch_synth_stop_pct', 5)}% under entry`, null],
     ['BE',    `floor at fill +$${n('ai_breakeven_offset_px', 0)} once ${n('ai_local_trail_be_at_r', 0)}R or ${n('ai_local_trail_be_at_pct', 0)}%`, null],
     ['DEAD',  `${n('ai_dead_trade_min', 0)}m held with MFE under ${n('ai_dead_trade_mfe_r', 0)}R`, null],
@@ -1588,7 +1588,7 @@ function _stopCellTitle(r) {
   const shelf = _bookStopPx(r);
   const peak = r && r.peak_price != null ? Number(r.peak_price) : NaN;
   const bits = [
-    'Ratchet shelf (software). Raises with the print, never lowers.',
+    'Ratchet shelf (local_stop). Raises with the print, never lowers.',
     'Sells a market order when LAST ≤ shelf — after min-hold if that is on.',
   ];
   if (last != null) bits.push(`last $${last.toFixed(2)}`);
