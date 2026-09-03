@@ -96,9 +96,9 @@ def test_missing_spread_reading_applies_no_floor():
         pytest.approx(0.05)
 
 
-def test_open_seed_knob_defaults_to_shipped_behaviour():
+def test_open_seed_knob_defaults_to_real_heat():
     from config import DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["ai_watch_open_seed_min_pct"] == 0.0
+    assert DEFAULT_CONFIG["ai_watch_open_seed_min_pct"] == 8.0
 
 
 def test_open_seed_knob_is_distinct_from_the_big_mover_knob():

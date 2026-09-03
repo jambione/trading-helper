@@ -430,10 +430,10 @@ DEFAULT_CONFIG = {
     # Gates _big_mover_from_dashboard ONLY. The soft open seed
     # (mom_open_soft) has its own knob below and ignores this one.
     "ai_watch_min_pct_change":         50.0,  # day chg % for momentum big-mover seed
-    # Soft open seed floor. 0.0 = admit as shipped, which is where most
-    # admissions come from (median lands at +8.2%). Raise it to make the
-    # desk wait for a bigger move before seeding.
-    "ai_watch_open_seed_min_pct":      0.0,
+    # Soft open seed floor. Raised to 8 so mom_open_soft / mom+trending
+    # paths need real heat (blocks HPE-class +4.8% late chase). 0.0 would
+    # admit as originally shipped (median landed at +8.2%).
+    "ai_watch_open_seed_min_pct":      8.0,
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
     # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
@@ -503,7 +503,7 @@ DEFAULT_CONFIG = {
     # over 50M float were 438 of 507 historical trades and reached +0.25R on
     # 8% of them, against 45% for names under 20M.
     "ai_watch_max_float_m":         0.0,
-    "ai_watch_min_price":               1.0,  # no sub-$1 names
+    "ai_watch_min_price":               2.0,  # match movers band; no sub-$2 pennies
     # Seconds a name stays on the book after the panels stop offering it.
     # The book is rebuilt from each cycle's candidate list, so a marginal name
     # (rvol crossing 2.0, pct_change crossing zero) is dropped and re-added

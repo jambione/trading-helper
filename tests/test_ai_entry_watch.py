@@ -319,20 +319,29 @@ def test_research_seed_respects_cap_and_flag(tmp_path, monkeypatch):
     assert len(rows) == 2
 
 
-def test_trending_seeds_green_panel_names_without_score_floor(tmp_path, monkeypatch):
-    """TREND tab names that are green belong on the shortlist.
+def test_trending_seeds_require_numeric_claim_without_ext(tmp_path, monkeypatch):
+    """TREND claim floors bind even when ai_watch_require_look_ext is false.
 
-    Score is a rank, not a gate — SENS +9.8% / 4.8 sat on the panel and
-    never reached the book because 4.8 < 5.0 and 9.8 < 15.
+    Need score > min OR pct ≥ min OR rvol ≥ min. Green alone is not enough
+    (AI +1%/score 3 clutter). EXT stays optional — do not flip require_ext.
     """
     import ai_entry_watch as ew
 
     (tmp_path / "trending_stocks.json").write_text(json.dumps({
         "rows": [
-            {"symbol": "SENS", "trending_score": 4.8, "pct_change": 9.86,
-             "price": 8.80, "is_equity": True},
-            {"symbol": "SLS", "trending_score": 7.5, "pct_change": 0.62,
-             "price": 13.08, "is_equity": True},
+            # AI-class: score 3.09 < 5, pct +1 < 8 → refuse
+            {"symbol": "AI", "trending_score": 3.09, "pct_change": 1.0,
+             "price": 25.0, "is_equity": True},
+            # BULL-class: score 6.35 > 5 → admit on score
+            {"symbol": "BULL", "trending_score": 6.35, "pct_change": 2.0,
+             "price": 13.0, "is_equity": True},
+            # NTSK-class: score low, pct +10.5 ≥ 8 → admit on day move
+            {"symbol": "NTSK", "trending_score": 3.0, "pct_change": 10.5,
+             "price": 12.0, "is_equity": True},
+            # elevated rvol claim with weak score/pct → admit on rvol
+            {"symbol": "HEAT", "trending_score": 2.0, "pct_change": 1.0,
+             "rvol": 2.0, "price": 9.0, "is_equity": True},
+            # red day → refuse
             {"symbol": "CIFR", "trending_score": 9.9, "pct_change": -9.22,
              "price": 16.80, "is_equity": True},
         ],
@@ -341,13 +350,16 @@ def test_trending_seeds_green_panel_names_without_score_floor(tmp_path, monkeypa
     rows = ew.desk_candidate_rows(_seed_cfg(
         ai_watch_seed_trending=True,
         ai_watch_trending_min_score=5.0,
-        ai_watch_trending_min_pct_change=15.0,
+        ai_watch_trending_min_pct_change=8.0,
+        ai_watch_trending_min_rvol=1.5,
         ai_watch_require_look_ext=False,
     ))
     by = {r["symbol"]: r for r in rows}
-    assert "SENS" in by and by["SENS"]["source"] == "trending"
-    assert "SLS" in by
+    assert "AI" not in by
     assert "CIFR" not in by
+    assert by["BULL"]["source"] == "trending"
+    assert by["NTSK"]["source"] == "trending"
+    assert by["HEAT"]["source"] == "trending"
 
 
 def test_inclusion_retries_trending_when_momentum_is_thin():

@@ -3144,12 +3144,15 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     # Long-only: refuse red days when we know the change.
                     if pct is not None and pct <= 0:
                         continue
-                    # On the TREND panel and green is enough to shortlist
-                    # (score ranks; it is not a hard floor). require_look_ext
-                    # still needs a numeric claim so the EXT-only path stays
-                    # tight. SENS +9.8% / score 4.8 sat on the panel and
-                    # never reached the book.
-                    if require_ext and not (score_ok or pct_ok or rvol_ok):
+                    # Always need a numeric claim (score / day move / rvol),
+                    # even when EXT is optional. Leaving this behind
+                    # require_look_ext let low-heat TREND clutter (AI +1% /
+                    # score 3, RIVN/TGTX/RUN/EBS) occupy the book while
+                    # real heat (NTSK +10%, BULL score 6+) had to share
+                    # slots. EXT stays optional — do not flip
+                    # ai_watch_require_look_ext (historical: ~10 names /
+                    # 4 fills when hard-EXT).
+                    if not (score_ok or pct_ok or rvol_ok):
                         continue
                     seen.add(s)
                     crit: list[str] = []
