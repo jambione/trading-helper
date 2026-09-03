@@ -271,12 +271,19 @@ class _StubBroker:
         self.cancel_calls: list[str] = []
         self.close_calls: list[str] = []
         self.limit_calls: list[dict] = []
+        self.broker_positions: dict = {}
 
     def is_active(self):
         return True
 
     def market_is_open(self):
         return self._market_open
+
+    def get_positions_detail(self):
+        return self.broker_positions
+
+    def get_open_positions(self):
+        return self.broker_positions
 
     def size_by_risk(self, equity, risk_pct, entry, stop):
         return alpaca_trader.size_by_risk(equity, risk_pct, entry, stop)
@@ -435,6 +442,67 @@ def test_place_scaled_entry_250_equity_does_not_round_to_zero(
         "bbb", decision, account_equity=2_500.0, risk_pct=1.0, current_ask=40.0)
     assert grown["ok"] is True, grown
     assert stub.calls[0]["qty"] > qty_250
+
+
+def test_place_scaled_entry_sizes_from_free_equity_not_one_percent_risk(
+        tmp_path, monkeypatch):
+    """Live ~$238 / 3 slots / $26 / $1 stop must buy multiple shares."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_live_tape_px", lambda _s: None)
+    monkeypatch.setattr(cp, "_buying_power", lambda: None)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": False,
+        "ai_broker_stop_enabled": False,
+        "ai_max_positions": 5,
+        "ai_position_slot_equity": 60.0,
+        "ai_max_position_pct": 8.0,
+        "ai_risk_pct": 1.0,
+        "ai_size_from_free_equity": True,
+        "ai_max_open_risk_pct": 5.0,
+        "ai_watch_arm_below_zone": True,
+    })
+    stub = _StubBroker()
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(
+        entry_low=25.0, entry_high=27.0, stop_price=25.0, target_1=28.0)
+    out = cp.place_scaled_entry(
+        "zzz", decision, account_equity=238.0, risk_pct=1.0, current_ask=26.0)
+    assert out["ok"] is True, out
+    qty = stub.calls[0]["qty"]
+    # 238/3/26 ≈ 3. 1% risk alone is 2 shares; must not stay at 1.
+    assert qty >= 3
+
+
+def test_place_scaled_entry_third_slot_uses_leftover_equity(
+        tmp_path, monkeypatch):
+    """Two open names occupying capital: third entry sizes off leftover."""
+    _use_tmp_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(cp, "_live_tape_px", lambda _s: None)
+    monkeypatch.setattr(cp, "_buying_power", lambda: None)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: {
+        "ai_day_scalp_dual_tranche": False,
+        "ai_broker_stop_enabled": False,
+        "ai_max_positions": 5,
+        "ai_position_slot_equity": 60.0,
+        "ai_max_position_pct": 8.0,
+        "ai_size_from_free_equity": True,
+        "ai_max_open_risk_pct": 5.0,
+        "ai_watch_arm_below_zone": True,
+    })
+    stub = _StubBroker()
+    stub.broker_positions = {
+        "AAA": {"qty": 2, "mkt_val": 90.0, "avg_entry": 45.0},
+        "BBB": {"qty": 3, "mkt_val": 90.0, "avg_entry": 30.0},
+    }
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+    decision = _buy_decision(
+        entry_low=25.0, entry_high=27.0, stop_price=25.0, target_1=28.0)
+    out = cp.place_scaled_entry(
+        "zzz", decision, account_equity=238.0, risk_pct=1.0, current_ask=26.0)
+    assert out["ok"] is True, out
+    qty = stub.calls[0]["qty"]
+    # leftover $58 / 1 slot / $26 = 2, not the empty-book 3.
+    assert qty == 2
 
 
 def test_place_scaled_entry_refuses_to_order_brackets_outside_market_hours(

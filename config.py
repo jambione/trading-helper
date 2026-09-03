@@ -223,6 +223,12 @@ DEFAULT_CONFIG = {
     "ai_max_buys_per_poll":        1,
     "ai_max_sells_per_poll":       5,
     "ai_risk_pct":               1.0,
+    # Size each new entry from leftover (unoccupied) equity across remaining
+    # slots so a ~$250 / 3-slot book buys multiple shares of a $25–50 name
+    # instead of the 1-share ticket 1% risk-of-equity produces. Slot COUNT
+    # still comes from ai_position_slot_equity / ai_max_positions. False
+    # restores the old risk-then-cap_long_qty path.
+    "ai_size_from_free_equity":  True,
     "ai_trade_style": "Day scalp",
     # Must be <= ai_watch_synth_rr or every synthetic zone self-blocks on the
     # reward_risk gate in should_arm_buy. Day scalp uses sub-1R first targets.
@@ -1307,6 +1313,7 @@ _EFFECTIVE_KEYS = (
     "ai_max_position_pct_cheap",
     "ai_watch_cheap_price",
     "ai_risk_pct",
+    "ai_size_from_free_equity",
     "require_protective_exit",
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
@@ -1446,6 +1453,7 @@ SAFE_CONFIG_KEYS = [
     "ai_max_buys_per_poll",
     "ai_max_sells_per_poll",
     "ai_risk_pct",
+    "ai_size_from_free_equity",
     "ai_trade_style",
     "desk_product",
     "ai_h4_paper",

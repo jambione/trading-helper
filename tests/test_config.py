@@ -78,6 +78,8 @@ def test_corrupted_bot_config_falls_back_to_defaults(tmp_cfg):
 
 def test_stop_market_and_pdt_defaults():
     assert cfg_mod.DEFAULT_CONFIG["ai_stop_use_market"] is True
+    assert cfg_mod.DEFAULT_CONFIG["ai_size_from_free_equity"] is True
+    assert "ai_size_from_free_equity" in cfg_mod.SAFE_CONFIG_KEYS
 
 
 def test_default_product_is_observe():

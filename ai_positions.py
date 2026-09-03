@@ -1465,7 +1465,7 @@ def place_scaled_entry(
         log_event("entry_fail", symbol=ticker, reason=err)
         return {"ok": False, "error": err, "ticker": ticker}
 
-    from desk_risk import cap_long_qty, limits_from_cfg
+    from desk_risk import cap_long_qty, limits_from_cfg, size_long_from_free_equity
 
     limits = limits_from_cfg(account_equity, cfg)
     max_pos_pct = float(limits.max_position_pct)
@@ -1474,44 +1474,112 @@ def place_scaled_entry(
     except (TypeError, ValueError):
         cheap_px = 5.0
     cheap_pct = float(limits.max_position_pct_cheap)
-    if cheap_px > 0 and cheap_pct > 0 and sizing_entry < cheap_px:
+    cheap_name = bool(cheap_px > 0 and cheap_pct > 0 and sizing_entry < cheap_px)
+    if cheap_name:
         if max_pos_pct <= 0 or cheap_pct < max_pos_pct:
             max_pos_pct = cheap_pct
 
-    risk_qty = alpaca_trader.size_by_risk(
-        account_equity, risk_pct, sizing_entry, stop_price)
-    total_qty = cap_long_qty(
-        risk_qty,
-        equity=account_equity,
-        price=sizing_entry,
-        max_position_pct=max_pos_pct,
-    )
-    if total_qty != risk_qty:
+    size_free = cfg.get("ai_size_from_free_equity", True)
+    if isinstance(size_free, str):
+        size_free = size_free.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        size_free = bool(size_free)
+
+    bp = _buying_power()
+    if size_free:
+        open_notional, open_count = _open_book_snapshot(skip_symbol=ticker)
+        try:
+            raw_max_pct = float(cfg.get("ai_max_position_pct", 8.0) or 0.0)
+        except (TypeError, ValueError):
+            raw_max_pct = 8.0
+        try:
+            max_open_risk = float(
+                cfg.get("ai_max_open_risk_pct", DEFAULT_MAX_OPEN_RISK_PCT)
+                or DEFAULT_MAX_OPEN_RISK_PCT)
+        except (TypeError, ValueError):
+            max_open_risk = DEFAULT_MAX_OPEN_RISK_PCT
+        plan = size_long_from_free_equity(
+            account_equity=float(account_equity),
+            price=float(sizing_entry),
+            stop=float(stop_price),
+            risk_pct=float(risk_pct),
+            open_notional=open_notional,
+            open_count=open_count,
+            max_positions=int(limits.max_positions),
+            slot_equity=float(limits.slot_equity),
+            max_position_pct=raw_max_pct,
+            cheap=cheap_name,
+            cheap_pct=cheap_pct if cheap_name else 0.0,
+            max_open_risk_pct=max_open_risk,
+            buying_power=bp,
+        )
+        risk_qty = plan.risk_qty
+        total_qty = plan.qty
         log_event(
-            "size_capped", symbol=ticker, risk_qty=risk_qty,
-            capped_qty=total_qty, max_position_pct=max_pos_pct,
+            "size_plan", symbol=ticker,
+            free_equity=plan.free_equity,
+            remaining_slots=plan.remaining_slots,
+            target_notional=plan.target_notional,
+            risk_qty=plan.risk_qty,
+            notional_qty=plan.notional_qty,
+            final_qty=plan.qty,
+            capped_by=plan.capped_by or None,
+            open_notional=plan.open_notional,
+            open_count=plan.open_count,
             equity=round(float(account_equity), 2),
             max_positions=limits.max_positions,
         )
-    if total_qty <= 0:
-        err = (
-            f"risk-sized qty rounded to 0 shares"
-            if risk_qty <= 0
-            else f"position cap {max_pos_pct:g}% of equity rounds to 0 shares"
+        if total_qty <= 0:
+            if bp is not None and "buying_power" in (plan.capped_by or ""):
+                err = (
+                    f"insufficient buying power: need "
+                    f"${max(plan.target_notional, sizing_entry):,.0f}, "
+                    f"have ${bp:,.0f}"
+                )
+            elif plan.notional_qty <= 0 and risk_qty <= 0:
+                err = "risk-sized qty rounded to 0 shares"
+            else:
+                err = (
+                    f"free-equity slot "
+                    f"${plan.target_notional:,.0f} / {plan.remaining_slots} "
+                    f"rounds to 0 shares"
+                )
+            log_event("entry_fail", symbol=ticker, reason=err)
+            return {"ok": False, "error": err}
+    else:
+        risk_qty = alpaca_trader.size_by_risk(
+            account_equity, risk_pct, sizing_entry, stop_price)
+        total_qty = cap_long_qty(
+            risk_qty,
+            equity=account_equity,
+            price=sizing_entry,
+            max_position_pct=max_pos_pct,
         )
-        log_event("entry_fail", symbol=ticker, reason=err)
-        return {"ok": False, "error": err}
+        if total_qty != risk_qty:
+            log_event(
+                "size_capped", symbol=ticker, risk_qty=risk_qty,
+                capped_qty=total_qty, max_position_pct=max_pos_pct,
+                equity=round(float(account_equity), 2),
+                max_positions=limits.max_positions,
+            )
+        if total_qty <= 0:
+            err = (
+                f"risk-sized qty rounded to 0 shares"
+                if risk_qty <= 0
+                else f"position cap {max_pos_pct:g}% of equity rounds to 0 shares"
+            )
+            log_event("entry_fail", symbol=ticker, reason=err)
+            return {"ok": False, "error": err}
 
-    # Buying power. Nothing checked this anywhere, so an over-sized order came
-    # back as a raw Alpaca rejection string in the UI's blocker column.
-    bp = _buying_power()
-    if bp is not None and total_qty * sizing_entry > bp:
-        err = (
-            f"insufficient buying power: need ${total_qty * sizing_entry:,.0f}, "
-            f"have ${bp:,.0f}"
-        )
-        log_event("entry_fail", symbol=ticker, reason=err)
-        return {"ok": False, "error": err}
+        # Buying power. Nothing checked this anywhere, so an over-sized order
+        # came back as a raw Alpaca rejection string in the UI's blocker column.
+        if bp is not None and total_qty * sizing_entry > bp:
+            err = (
+                f"insufficient buying power: need "
+                f"${total_qty * sizing_entry:,.0f}, have ${bp:,.0f}"
+            )
+            log_event("entry_fail", symbol=ticker, reason=err)
+            return {"ok": False, "error": err}
 
     # Option A day scalp: dual *bookkeeping* on ONE parent buy (full size +
     # stop). Partial T1 is attached after fill so we never submit a second
@@ -1888,6 +1956,35 @@ def apply_position_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]
     if changed:
         _save_state(state)
     return events
+
+
+def _open_book_snapshot(skip_symbol: str | None = None) -> tuple[float, int]:
+    """(open_notional, open_count) for free-equity sizing.
+
+    Broker positions first — same source ``ai_trading._open_position_count``
+    uses to enforce max_positions. Fallback to managed state when the
+    trader is off or the call fails (tests, dashboard-only process).
+    """
+    from desk_risk import open_book_notional
+
+    rows = None
+    try:
+        import alpaca_trader
+        detail = alpaca_trader.get_positions_detail()
+        if isinstance(detail, dict):
+            rows = detail
+        elif detail is None:
+            plain = alpaca_trader.get_open_positions()
+            if isinstance(plain, dict):
+                rows = plain
+    except Exception:
+        rows = None
+    if rows is None:
+        try:
+            rows = _load_state()
+        except Exception:
+            rows = {}
+    return open_book_notional(rows or {}, skip_symbol=skip_symbol)
 
 
 def _buying_power() -> float | None:

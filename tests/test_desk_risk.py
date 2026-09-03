@@ -14,7 +14,10 @@ from desk_risk import (  # noqa: E402
     equity_book_limits,
     limits_from_cfg,
     next_phase,
+    open_book_notional,
     plan_long,
+    position_notional,
+    size_long_from_free_equity,
     stop_for_phase,
     trade_r,
     trail_stop_level,
@@ -295,3 +298,136 @@ def test_cap_long_qty_lets_risk_size_grow():
     assert cap_long_qty(40, equity=10_000.0, price=10.0, max_position_pct=8.0) == 40
     # Tight stop that wants 200 sh is clamped to 80.
     assert cap_long_qty(200, equity=10_000.0, price=10.0, max_position_pct=8.0) == 80
+
+
+def test_position_notional_prefers_live_mv():
+    assert position_notional({"mkt_val": 80.0, "qty": 2, "avg_entry": 10.0}) == 80.0
+    assert position_notional({"qty": 2, "current": 11.0, "avg_entry": 10.0}) == 22.0
+    assert position_notional({"total_qty": 3, "entry_price": 10.0}) == 30.0
+    assert position_notional({"qty": 0, "mkt_val": 0}) == 0.0
+
+
+def test_open_book_notional_skips_closed_and_symbol():
+    rows = {
+        "AAA": {"qty": 2, "mkt_val": 80.0},
+        "BBB": {"qty": 1, "avg_entry": 40.0},
+        "CCC": {"qty": 4, "mkt_val": 50.0, "closing_reason": "stop"},
+        "DDD": {"qty": 0, "mkt_val": 12.0},
+    }
+    notional, count = open_book_notional(rows)
+    assert count == 2
+    assert notional == 120.0
+    notional, count = open_book_notional(rows, skip_symbol="aaa")
+    assert count == 1
+    assert notional == 40.0
+
+
+def test_free_equity_empty_book_buys_multiple_shares_not_one_percent_risk():
+    """~$238, 3 slots, $26 name, $1 stop → ~3 shares, not 1 from 1% risk."""
+    plan = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=25.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+        max_open_risk_pct=5.0,
+    )
+    # 238/3/26 = 3.05 → 3 shares. 1% risk alone is 2.38/1 = 2.
+    assert plan.remaining_slots == 3
+    assert plan.free_equity == 238.0
+    assert plan.notional_qty == 3
+    assert plan.risk_qty == 2
+    assert plan.qty == 3
+
+
+def test_free_equity_third_entry_sizes_off_leftover_not_full_book():
+    """Two opens tying up capital: third ticket uses leftover / 1 slot."""
+    empty = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=25.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+    )
+    leftover = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=25.0,
+        risk_pct=1.0,
+        open_notional=180.0,
+        open_count=2,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+    )
+    assert empty.qty == 3
+    assert leftover.remaining_slots == 1
+    assert leftover.free_equity == 58.0
+    # 58/26 = 2; must not reuse the full $238/3 slot.
+    assert leftover.qty == 2
+    assert leftover.qty < empty.qty
+
+
+def test_free_equity_large_account_keeps_risk_size_then_8pct_cap():
+    """$50k / 8 slots / 25% cap: 1% of equity with $2.50 stop is 200 sh."""
+    plan = size_long_from_free_equity(
+        account_equity=50_000.0,
+        price=40.5,
+        stop=38.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=8,
+        slot_equity=250.0,
+        max_position_pct=25.0,
+    )
+    # Slot would be 50000/8/40.5 = 154; risk 200 is larger and under 25%.
+    assert plan.notional_qty == 154
+    assert plan.risk_qty == 200
+    assert plan.qty == 200
+
+
+def test_free_equity_downsizes_to_buying_power():
+    plan = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=25.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+        buying_power=40.0,
+    )
+    assert plan.qty == 1
+    assert "buying_power" in plan.capped_by
+
+
+def test_free_equity_wide_stop_hits_open_risk_ceiling_not_account_blowup():
+    """3 shares of $26 with a $5 stop is $15 risk (>5% of $238) → shrink."""
+    plan = size_long_from_free_equity(
+        account_equity=238.0,
+        price=26.0,
+        stop=21.0,
+        risk_pct=1.0,
+        open_notional=0.0,
+        open_count=0,
+        max_positions=3,
+        slot_equity=60.0,
+        max_position_pct=8.0,
+        max_open_risk_pct=5.0,
+    )
+    # 5% of 238 = $11.90 / $5 = 2 shares.
+    assert plan.notional_qty == 3
+    assert plan.qty == 2
+    assert "open_risk" in plan.capped_by
+

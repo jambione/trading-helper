@@ -302,6 +302,230 @@ def cap_long_qty(
         return max(0, cap_qty)
     return q
 
+
+@dataclass(frozen=True)
+class FreeEquitySize:
+    """Result of sizing one long off leftover (unoccupied) equity.
+
+    ``qty`` is whole shares. The other fields are for logs / tests.
+    ``capped_by`` is a comma-joined list of clamps that reduced qty
+    (empty when the raw max(slot, risk) ticket stood).
+    """
+
+    qty: int
+    risk_qty: int
+    notional_qty: int
+    free_equity: float
+    open_notional: float
+    open_count: int
+    remaining_slots: int
+    target_notional: float
+    capped_by: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def position_notional(row: Any) -> float:
+    """Live market value if present, else current×qty, else entry×qty."""
+    if not isinstance(row, dict):
+        return 0.0
+    for key in ("mkt_val", "market_value"):
+        if key in row and row.get(key) is not None:
+            mv = _f(row.get(key), 0.0)
+            if mv != 0.0:
+                return abs(mv)
+    qty = abs(_f(row.get("qty"), 0.0))
+    if qty <= 0:
+        qty = abs(_f(row.get("total_qty"), 0.0))
+    if qty <= 0:
+        return 0.0
+    for key in ("current", "current_price"):
+        px = _f(row.get(key), 0.0)
+        if px > 0:
+            return qty * px
+    for key in ("avg_entry", "avg_entry_price", "entry_price"):
+        px = _f(row.get(key), 0.0)
+        if px > 0:
+            return qty * px
+    return 0.0
+
+
+def open_book_notional(
+    positions: Any,
+    *,
+    skip_symbol: str | None = None,
+) -> tuple[float, int]:
+    """(open_notional, open_count) from broker or managed-state rows.
+
+    Skips zero-qty rows, the optional ``skip_symbol``, and managed rows
+    already marked ``closing_reason``. Count matches how max_positions is
+    enforced (one slot per open name).
+    """
+    if not isinstance(positions, dict):
+        return 0.0, 0
+    skip = (skip_symbol or "").upper().strip()
+    total = 0.0
+    count = 0
+    for raw_sym, row in positions.items():
+        sym = str(raw_sym or "").upper().strip()
+        if skip and sym == skip:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if row.get("closing_reason"):
+            continue
+        qty = abs(_f(row.get("qty"), 0.0))
+        if qty <= 0:
+            qty = abs(_f(row.get("total_qty"), 0.0))
+        if qty <= 0:
+            continue
+        total += position_notional(row)
+        count += 1
+    return round(max(0.0, total), 4), count
+
+
+def size_long_from_free_equity(
+    *,
+    account_equity: float,
+    price: float,
+    stop: float,
+    risk_pct: float,
+    open_notional: float,
+    open_count: int,
+    max_positions: int,
+    slot_equity: float = 0.0,
+    max_position_pct: float = 0.0,
+    cheap: bool = False,
+    cheap_pct: float = 0.0,
+    max_open_risk_pct: float = 5.0,
+    buying_power: float | None = None,
+) -> FreeEquitySize:
+    """Size a long from leftover equity across remaining slots.
+
+    Rule (small-account first; documented so the 1-share tickets don't
+    come back):
+
+    * ``free_equity = max(0, account_equity - open_notional)``
+    * ``remaining_slots = max(1, max_positions - open_count)``
+    * ``target_notional = free_equity / remaining_slots``  (this is the
+      size we want — ~3 shares of a $26 name on a $238 / 3-slot book,
+      not the 1 share that 1% risk-of-equity produces)
+    * ``qty = max(notional_qty, risk_qty)`` so a large account with a
+      tight stop still gets the classic 1%-of-equity ticket
+    * then clamp:
+      - never more than leftover cash (can't spend occupied capital)
+      - on a *small* book (configured % of equity still below one
+        ``slot_equity``) never more than the slot notional, except a
+        1-share floor when one share fits in free equity
+      - on a *large* book, configured ``max_position_pct`` of account
+        equity (the 8% name cap)
+      - cheap names: ``cheap_pct`` of account equity
+      - one trade cannot risk more than ``max_open_risk_pct`` of equity
+        (existing book-risk ceiling; 3–4 full slots at ~1R of a 4% stop
+        stay well under this)
+      - buying power: downsize rather than hard-fail when BP is known
+
+    ``max_position_pct`` is the *configured* cap (8%), not the inflated
+    ``limits.max_position_pct`` that equity_book_limits uses as a $slot
+    affordability floor on tiny accounts.
+    """
+    eq = max(0.0, _f(account_equity, 0.0))
+    px = _f(price, 0.0)
+    stp = _f(stop, 0.0)
+    open_n = max(0.0, _f(open_notional, 0.0))
+    open_c = max(0, _i(open_count, 0))
+    max_pos = max(1, _i(max_positions, 1))
+    free = max(0.0, eq - open_n)
+    remaining = max(1, max_pos - open_c)
+    target = free / float(remaining) if remaining else 0.0
+
+    if px <= 0:
+        return FreeEquitySize(
+            qty=0, risk_qty=0, notional_qty=0,
+            free_equity=round(free, 4), open_notional=round(open_n, 4),
+            open_count=open_c, remaining_slots=remaining,
+            target_notional=round(target, 4), capped_by="bad_price",
+        )
+
+    notional_qty = int(target // px) if target > 0 else 0
+    per_share = px - stp
+    if eq > 0 and per_share > 0:
+        risk_qty = max(0, int((eq * max(0.0, _f(risk_pct, 0.0)) / 100.0) // per_share))
+    else:
+        risk_qty = 0
+
+    qty = max(notional_qty, risk_qty)
+    clamps: list[str] = []
+
+    free_cap = int(free // px) if free > 0 else 0
+    if qty > free_cap:
+        qty = free_cap
+        clamps.append("free_equity")
+
+    slot_eq = _f(slot_equity, 0.0)
+    cfg_pct = _f(max_position_pct, 0.0)
+    cfg_cap_dollars = eq * cfg_pct / 100.0 if eq > 0 and cfg_pct > 0 else 0.0
+    large_account = (
+        cfg_cap_dollars > 0
+        and (slot_eq <= 0 or cfg_cap_dollars + 1e-9 >= slot_eq)
+    )
+    if large_account:
+        conc_qty = int(cfg_cap_dollars // px)
+        if qty > conc_qty:
+            qty = max(0, conc_qty)
+            clamps.append("concentration")
+    else:
+        # Small book: slot notional is the size. Risk may not inflate past
+        # one slot (a $100 name with 1% risk of $238 would otherwise take
+        # 2 shares ≈ 84% of the book). Keep a 1-share floor so a name
+        # dearer than one slot can still be bought when leftover cash
+        # covers it — same idea as cap_long_qty promoting 0 → 1.
+        slot_max = notional_qty
+        if slot_max < 1 and free_cap >= 1:
+            slot_max = 1
+        if slot_max >= 0 and qty > slot_max:
+            qty = slot_max
+            clamps.append("slot_notional")
+
+    if cheap and cheap_pct > 0 and eq > 0:
+        cheap_qty = int((eq * _f(cheap_pct, 0.0) / 100.0) // px)
+        if qty > cheap_qty:
+            qty = max(0, cheap_qty)
+            clamps.append("cheap")
+
+    max_open = _f(max_open_risk_pct, 0.0)
+    if max_open > 0 and per_share > 0 and eq > 0:
+        risk_ceil = int((eq * max_open / 100.0) // per_share)
+        if qty > risk_ceil:
+            qty = max(0, risk_ceil)
+            clamps.append("open_risk")
+
+    if qty == 0 and free_cap >= 1 and not (cheap and cheap_pct > 0 and int((eq * _f(cheap_pct, 0.0) / 100.0) // px) < 1):
+        qty = 1
+        clamps.append("min_share")
+
+    if buying_power is not None:
+        bp = _f(buying_power, 0.0)
+        if bp >= 0:
+            bp_qty = int(bp // px) if bp > 0 else 0
+            if qty > bp_qty:
+                qty = max(0, bp_qty)
+                clamps.append("buying_power")
+
+    return FreeEquitySize(
+        qty=int(qty),
+        risk_qty=int(risk_qty),
+        notional_qty=int(notional_qty),
+        free_equity=round(free, 4),
+        open_notional=round(open_n, 4),
+        open_count=open_c,
+        remaining_slots=remaining,
+        target_notional=round(target, 4),
+        capped_by=",".join(clamps),
+    )
+
+
 def dynamic_max_price(equity: float, cfg: dict[str, Any] | None = None) -> float:
     """Float the max_price upper limit based on account equity and risk limits.
     
