@@ -333,5 +333,6 @@
   "tv_webhook_secret": "",
   "use_rvol": true,
   "volume_surge_mult": 1.5,
-  "wr_length": 14
+  "wr_length": 14,
+  "ai_movers_min_live_pct": 0.0
 }
