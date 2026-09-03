@@ -104,11 +104,52 @@ def test_any_no_resets_the_streak():
 
 
 def test_the_streak_does_not_survive_a_restart():
-    """Kept on the record, not on disk — after a restart the desk should
-    re-earn its evidence rather than act on a count it cannot see behind."""
+    """After a restart the desk re-earns its evidence rather than acting on a
+    count it cannot see the readings behind.
+
+    The count now DOES persist to disk (it has to — see the rebuild test
+    below), so "not written down" is no longer what enforces this. The poll
+    sequence is: it restarts at 1 with the process, so a stored poll number
+    from before the restart can never be "the immediately preceding poll".
+    """
+    rec = {"arm_streak": 4, "arm_streak_poll": 900}   # yesterday's process
+    assert ew._arm_streak(rec, True, seq=1) == 1
+
+
+def test_the_rebuild_must_not_eat_the_count():
+    """IREN, 2026-09-03: 21 arm-YES verdicts, streak=1 on every one.
+
+    sync_watch_from_source_panels rebuilds each row every 2s and carries over
+    only a whitelist of keys. arm_streak was not on it, and the arm poll runs
+    every ~13s, so the counter was wiped between every pair of polls and
+    ai_watch_arm_confirm_ticks=2 could only ever be met by a name the sync
+    happened to skip. Arming was a race, not a confirmation.
+    """
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
-    i = src.index("def _arm_streak")
-    assert "rec[\"arm_streak\"]" in src[i:i + 900]
+    i = src.index('"block_code", "block_reason", "block_ts", "block_detail",')
+    carried = src[i:i + 400]
+    assert '"arm_streak"' in carried, "the 2s rebuild must carry the count"
+    assert '"arm_streak_poll"' in carried, "...and the poll it was earned on"
+
+
+def test_non_consecutive_polls_do_not_accumulate():
+    """Two YES verdicts with a poll between them are not two in a row.
+
+    This is what the poll number buys: the paths that leave the arm loop
+    early (stale_quote, stream_required, tape_only, a batch-stage NO) do not
+    all call the reset, and a count that trusted them would arm on evidence
+    gathered minutes apart.
+    """
+    rec = {}
+    assert ew._arm_streak(rec, True, seq=10) == 1
+    assert ew._arm_streak(rec, True, seq=12) == 1   # poll 11 said something else
+    assert ew._arm_streak(rec, True, seq=13) == 2   # now it is consecutive
+
+
+def test_consecutive_polls_accumulate_to_the_bar():
+    rec = {}
+    got = [ew._arm_streak(rec, True, seq=s) for s in (5, 6, 7)]
+    assert got == [1, 2, 3]
 
 
 def test_one_tick_restores_the_old_behaviour():
@@ -131,7 +172,7 @@ def test_the_poll_resets_on_refusal_and_gates_on_the_streak():
     src = (_ROOT / "ai_entry_watch.py").read_text(encoding="utf-8")
     i = src.index("ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)")
     body = src[i:i + 4200]
-    assert "_arm_streak(rec, False)" in body, "a refusal must reset the count"
+    assert "_arm_streak(rec, False" in body, "a refusal must reset the count"
     assert "streak < need_arm" in body
     assert 'set_block_reason(rec, "arm_confirming"' in body
 

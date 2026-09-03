@@ -4605,12 +4605,16 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         # sync wiped live %R (and the last block reason) every cycle, so the
         # wire stayed exhaustion_state=unknown even though poll_once had just
         # stamped pctr — and in-zone names refused under require_exhaustion_data.
+        #
+        # arm_streak/arm_streak_poll are here for the same reason and were the
+        # same bug: this rebuild runs every 2s and the arm poll every ~13s, so
+        # a counter it did not carry could never reach two. See _arm_streak.
         if isinstance(prev.get("indicator"), dict) and prev["indicator"]:
             rec["indicator"] = dict(prev["indicator"])
         for k in (
             "block_code", "block_reason", "block_ts", "block_detail",
             "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
-            "zone_touch_ts",
+            "zone_touch_ts", "arm_streak", "arm_streak_poll",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
@@ -9175,6 +9179,11 @@ def _rank_rvol(rec: dict, live_lookup=None) -> float | None:
     return None
 
 
+# Monotonic poll counter. Only _arm_streak reads it, to tell "the previous
+# poll" from "some earlier poll". Process-local on purpose — see _arm_streak.
+_POLL_SEQ = 0
+
+
 def _arm_confirm_ticks(cfg: dict | None) -> int:
     """How many consecutive polls must agree before a buy is placed."""
     try:
@@ -9183,20 +9192,46 @@ def _arm_confirm_ticks(cfg: dict | None) -> int:
         return 1
 
 
-def _arm_streak(rec: dict, ok: bool) -> int:
+def _arm_streak(rec: dict, ok: bool, *, seq: int | None = None) -> int:
     """Count consecutive arm-YES verdicts on *rec*; any NO resets it.
 
     Mirrors the exit's confirmation streak. Kept on the record so it survives
     the poll but not a restart, which is the right lifetime: after a restart
     the desk should re-earn its evidence rather than act on a count it cannot
     see the readings behind.
+
+    CONSECUTIVE IS ENFORCED BY POLL NUMBER, not by remembering to reset on
+    every refusal. A count that only advances when the previous YES came from
+    the immediately preceding poll cannot be fooled by the paths that leave
+    the loop early — stale_quote, stream_required, tape_only, or a batch-stage
+    NO, none of which called the reset. Before this, IREN on 2026-09-03 logged
+    twenty-one arm-YES verdicts and `streak=1` on every one, five of them on
+    consecutive polls: the 2s ``sync_watch_from_source_panels`` rebuild dropped
+    ``arm_streak`` (it was not in the carry-over list), so the counter restarted
+    every ~13s and ai_watch_arm_confirm_ticks=2 could only be satisfied by a
+    name the sync happened to skip. That made arming a race, not a
+    confirmation, and it is why five of the eighteen qualifying runs that day
+    opened while thirteen did not.
+
+    A restart resets it by construction: the module-level sequence starts over,
+    so the stored poll number can no longer be "the previous one".
     """
     if not isinstance(rec, dict):
         return 1 if ok else 0
     if not ok:
         rec.pop("arm_streak", None)
+        rec.pop("arm_streak_poll", None)
         return 0
-    n = int(rec.get("arm_streak") or 0) + 1
+    n = int(rec.get("arm_streak") or 0)
+    if seq is None:
+        n += 1
+    else:
+        try:
+            prev = int(rec.get("arm_streak_poll"))
+        except (TypeError, ValueError):
+            prev = None
+        n = n + 1 if (prev is not None and prev == int(seq) - 1 and n > 0) else 1
+        rec["arm_streak_poll"] = int(seq)
     rec["arm_streak"] = n
     return n
 
@@ -9554,6 +9589,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     events: list[dict] = []
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
+
+    global _POLL_SEQ
+    _POLL_SEQ += 1
+    poll_seq = _POLL_SEQ
 
     if not cfg.get("ai_watch_enabled", True):
         return [{"kind": "watch_skip", "reason": "disabled"}]
@@ -10289,7 +10328,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 cp, sym, stage="refresh", ok=False, why=why,
                 why_first=_why_first, px_src=px_src,
                 before=_arm_before, after=_arm_gate_snapshot(rec, ask_f))
-            _arm_streak(rec, False)
+            _arm_streak(rec, False, seq=poll_seq)
             if why in ("wait_setup", "hard_no", "spread", "above_zone",
                        "below_zone", "reward_risk", "no_structure",
                        "late_hold_closed", "late_hold_not_late_admit"):
@@ -10314,7 +10353,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # held to a higher standard of evidence than the entry will always
         # buy noise and sell signal.
         need_arm = _arm_confirm_ticks(cfg)
-        streak = _arm_streak(rec, True)
+        streak = _arm_streak(rec, True, seq=poll_seq)
         _arm_after = _arm_gate_snapshot(rec, ask_f)
         if streak < need_arm:
             _log_arm_recheck(
