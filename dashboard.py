@@ -691,7 +691,17 @@ def overlay_ai_book_live_prices(
                     # print over the limit and honesty flips it back to
                     # stale_tape (Class C Sep2: eng recovers ≤15s, overlay
                     # self-invalidates before the next ~20s poll).
-                    row["last_ask_ts"] = time.time() - float(age)
+                    _wall_ts = time.time() - float(age)
+                    row["last_ask_ts"] = _wall_ts
+                    # Keep the process map in lockstep — apply_tape_blocker /
+                    # honesty otherwise prefer a lagging _LAST_QUOTE_TS and
+                    # restamp stale_quote beside eng age ≤5s (APLD/SMCI).
+                    if sym:
+                        try:
+                            from ai_entry_watch import _LAST_QUOTE_TS as _lqt
+                            _lqt[sym] = _wall_ts
+                        except Exception:
+                            pass
                 if fresh_stream:
                     row["price_src"] = "stream"
                     row["last_ask_src"] = "stream"
@@ -699,7 +709,11 @@ def overlay_ai_book_live_prices(
                     # (BIAF/SNDG after ba79b10) even if zone levels are missing
                     # and apply_tape_blocker is skipped below.
                     try:
-                        from ai_entry_watch import clear_tape_data_block_if_stream_fresh
+                        from ai_entry_watch import (
+                            align_stream_clock_if_field_young,
+                            clear_tape_data_block_if_stream_fresh,
+                        )
+                        align_stream_clock_if_field_young(row)
                         clear_tape_data_block_if_stream_fresh(row)
                     except Exception:
                         pass

@@ -344,6 +344,109 @@ _TAPE_DATA_BLOCK_CODES = frozenset({
 })
 
 
+def _stream_field_age_sec(rec: dict) -> float | None:
+    """Stamped last_ask_age_sec / price_age_sec on the row, if provable."""
+    if not isinstance(rec, dict):
+        return None
+    for k in ("last_ask_age_sec", "price_age_sec"):
+        try:
+            v = rec.get(k)
+            if v is None:
+                continue
+            f = float(v)
+            if f >= 0:
+                return f
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def align_stream_clock_if_field_young(
+    rec: dict,
+    cfg: dict | None = None,
+    *,
+    now: float | None = None,
+) -> bool:
+    """When src=stream and field age is young, fix a lagging *map* clock.
+
+    Class C / GTLB: paint stamped ``last_ask_age_sec``=2–5s (eng) with
+    src=stream but left ``_LAST_QUOTE_TS`` on an older poller clock and
+    omitted ``last_ask_ts``. ``row_quote_age_sec`` preferred the map,
+    ``apply_tape_blocker`` restamped stale_quote, honesty demoted stream —
+    desk showed stale_quote beside eng age ≤5s.
+
+    Only realign when the row has **no** ``last_ask_ts``. An explicit old
+    ``last_ask_ts`` with a frozen young field is the honesty case (field is
+    the lie; demote). Returns True when the clock was realigned.
+    """
+    if not isinstance(rec, dict):
+        return False
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if src != "stream":
+        return False
+    # Explicit row ts owns the clock — do not override a dated stamp with a
+    # frozen field age (test_public_snapshot_never_emits_stream_with_stale_age).
+    if _num_or_none(rec.get("last_ask_ts")) is not None:
+        return False
+    field = _stream_field_age_sec(rec)
+    if field is None:
+        return False
+    ceiling = decision_max_age_sec(cfg)
+    if field > ceiling:
+        return False
+    mapped = row_quote_age_sec(rec, now=now)
+    # Map already agrees (or is younger) — nothing to fix.
+    if mapped is not None and mapped <= field + 0.25:
+        return False
+    tnow = float(now if now is not None else time.time())
+    ts = tnow - float(field)
+    rec["last_ask_ts"] = ts
+    rec["last_ask_age_sec"] = float(field)
+    rec["price_age_sec"] = float(field)
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if sym:
+        _LAST_QUOTE_TS[sym] = ts
+    return True
+
+
+def _paint_trust_young_stream_field(
+    rec: dict,
+    cfg: dict | None = None,
+    *,
+    now: float | None = None,
+) -> bool:
+    """Paint-time: young stream field age overwrites a lagging row/map clock.
+
+    Used only by ``apply_tape_blocker`` (live overlay / book paint). When eng
+    just wrote last_ask_age_sec≤ceiling with src=stream, that is the print
+    the operator sees — do not let an older last_ask_ts restamp stale_quote.
+    """
+    if not isinstance(rec, dict):
+        return False
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if src != "stream":
+        return False
+    field = _stream_field_age_sec(rec)
+    if field is None:
+        return False
+    ceiling = decision_max_age_sec(cfg)
+    if field > ceiling:
+        return False
+    tnow = float(now if now is not None else time.time())
+    ts = tnow - float(field)
+    rec["last_ask_ts"] = ts
+    rec["last_ask_age_sec"] = float(field)
+    rec["price_age_sec"] = float(field)
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if sym:
+        _LAST_QUOTE_TS[sym] = ts
+    return True
+
+
 def clear_tape_data_block_if_stream_fresh(
     rec: dict,
     cfg: dict | None = None,
@@ -361,9 +464,11 @@ def clear_tape_data_block_if_stream_fresh(
     ).strip().lower()
     if src != "stream":
         return False
+    # Prefer field age when the map clock lags (Class C).
+    align_stream_clock_if_field_young(rec, cfg)
     age = row_quote_age_sec(rec)
     if age is None:
-        age = rec.get("last_ask_age_sec")
+        age = _stream_field_age_sec(rec)
     try:
         age_f = float(age) if age is not None else None
     except (TypeError, ValueError):
@@ -471,6 +576,9 @@ def honesty_restamp_stream_src(rec: dict, cfg: dict | None = None) -> None:
     was republishing the frozen stream label; apply_tape_blocker restamped
     only on the paint path. Arms stay at decision_max_age_sec (15) —
     this only aligns the label with the refuse.
+
+    Before demoting, realign a lagging map clock when the stamped field age
+    is still young (Class C / APLD-SMCI after 9eacec7).
     """
     if not isinstance(rec, dict):
         return
@@ -479,6 +587,7 @@ def honesty_restamp_stream_src(rec: dict, cfg: dict | None = None) -> None:
     ).strip().lower()
     if src != "stream":
         return
+    align_stream_clock_if_field_young(rec, cfg)
     if _row_tape_stale(rec, cfg):
         rec["last_ask_src"] = "stale_tape"
         rec["price_src"] = "stale_tape"
@@ -1387,6 +1496,11 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
         return
     if lo <= 0 or hi <= 0 or last <= 0:
         return
+    # Paint authority: if overlay/eng just stamped src=stream with a young
+    # field age, that age wins over a lagging last_ask_ts / _LAST_QUOTE_TS
+    # (Class C / APLD-SMCI). honesty_restamp still demotes when only a
+    # frozen field remains beside a truly old row ts.
+    _paint_trust_young_stream_field(row)
     if _row_tape_stale(row):
         row["ready"] = False
         row["block_code"] = "stale_quote"

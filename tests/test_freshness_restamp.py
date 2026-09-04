@@ -260,6 +260,91 @@ def test_live_quote_for_prefers_young_engine(monkeypatch):
     assert age is not None and age <= 15.0
 
 
+def test_align_stream_clock_fixes_lagging_map_before_blocker(monkeypatch):
+    """Class C / APLD-SMCI: young field age must beat lagging _LAST_QUOTE_TS.
+
+    Paint stamped last_ask_age_sec=2.9 with src=stream while the map still
+    held ~40s; apply_tape_blocker then restamped stale_quote and honesty
+    demoted stream — desk showed stale_quote beside eng age ≤5s.
+    """
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_arm_mode": "last",
+    })
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_row_arm_refuse", lambda *_a, **_k: None)
+    ew._LAST_QUOTE_TS["APLD"] = time.time() - 40.0
+    row = {
+        "symbol": "APLD", "source": "xai",
+        "entry_low": 25.0, "entry_high": 27.0, "stop_price": 24.0,
+        "zone_kind": "at_last",
+        "last_ask_src": "stream",
+        "last_ask_age_sec": 2.9,
+        # Deliberately omit last_ask_ts — map is the only clock (the bug).
+        "block_code": "stale_quote",
+        "blocker": "stale quote",
+        "block_reason": "stale quote",
+    }
+    assert ew.row_quote_age_sec(row) is not None
+    assert ew.row_quote_age_sec(row) > 15.0  # map lies
+    assert ew.align_stream_clock_if_field_young(row) is True
+    assert ew.row_quote_age_sec(row) <= 15.0
+    ew.apply_tape_blocker(row, 26.36)
+    assert row["last_ask_src"] == "stream"
+    assert row.get("block_code") != "stale_quote"
+
+
+def test_apply_tape_blocker_trusts_young_field_over_old_row_ts(monkeypatch):
+    """Paint: stream + young field must clear stale_quote even if row ts is old."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_arm_mode": "last",
+    })
+    monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
+    monkeypatch.setattr(ew, "_row_arm_refuse", lambda *_a, **_k: None)
+    ew._LAST_QUOTE_TS["SMCI"] = time.time() - 55.0
+    row = {
+        "symbol": "SMCI", "source": "trending",
+        "entry_low": 38.0, "entry_high": 41.0, "stop_price": 37.0,
+        "zone_kind": "at_last",
+        "last_ask_src": "stream",
+        "last_ask_age_sec": 3.0,
+        "last_ask_ts": time.time() - 55.0,  # lagging poller ts
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+        "blocker": "stale quote",
+    }
+    ew.apply_tape_blocker(row, 39.4)
+    assert row["last_ask_src"] == "stream"
+    assert row.get("block_code") != "stale_quote"
+    assert str(row.get("block_reason") or "").lower() != "stale quote"
+    assert ew.row_quote_age_sec(row) <= 15.0
+
+
+def test_true_thin_stale_still_refuses(monkeypatch):
+    """Do not clear stale_quote when the print is genuinely old."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "_push_cfg", lambda: {
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_arm_mode": "last",
+    })
+    row = {
+        "symbol": "SNDG", "source": "momentum",
+        "entry_low": 10.0, "entry_high": 11.0, "stop_price": 9.0,
+        "zone_kind": "at_last",
+        "last_ask_src": "stale_tape",
+        "last_ask_age_sec": 120.0,
+        "last_ask_ts": time.time() - 120.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+    }
+    ew.apply_tape_blocker(row, 10.5)
+    assert row["block_code"] == "stale_quote"
+    assert row["last_ask_src"] == "stale_tape"
+
+
 def test_book_table_rows_young_eng_wins_over_stale_quote_ts(monkeypatch):
     """entry_book paint must not let stale _LAST_QUOTE_TS beat young eng.
 
