@@ -616,3 +616,123 @@ def test_the_knob_is_off_by_default_and_reaches_the_live_config():
     from config import DEFAULT_CONFIG, load_config
     assert DEFAULT_CONFIG["ai_watch_ob_allow_flat_when_macd_armed"] is False
     assert "ai_watch_ob_allow_flat_when_macd_armed" in load_config()
+
+
+# ── EXH+RSI arm + MACD closing veto only ─────────────────────────────────
+# require_macd off drops the size/bullish stack; block_narrowing alone still
+# refuses a gap that is actively closing. Missing MACD fails open.
+
+VETO = {
+    "ai_watch_arm_require_macd": False,
+    "ai_watch_macd_block_narrowing": True,
+}
+
+
+def test_helper_closing_gap_refuses_even_when_require_macd_is_off():
+    rec = _rec(macd_gap_rising=False, macd_gap_falling=True, macd_gap_prev=0.08)
+    why = ew.macd_narrowing_blocks_buy(rec, VETO, fail_open_unknown=True)
+    assert why == "macd_gap_narrowing"
+    assert "0.08" in str(rec.get("block_detail"))
+
+
+def test_helper_flat_and_opening_pass_under_veto_only():
+    assert ew.macd_narrowing_blocks_buy(
+        _rec(macd_gap_rising=False, macd_gap_falling=False),
+        VETO, fail_open_unknown=True) is None
+    assert ew.macd_narrowing_blocks_buy(
+        _rec(macd_gap_rising=True, macd_gap_falling=False),
+        VETO, fail_open_unknown=True) is None
+
+
+def test_helper_unknown_direction_fails_open_in_veto_only_mode():
+    assert ew.macd_narrowing_blocks_buy(
+        _rec(), VETO, fail_open_unknown=True) is None
+    assert ew.macd_narrowing_blocks_buy(
+        {"symbol": "AAA"}, VETO, fail_open_unknown=True) is None
+
+
+def test_helper_unknown_direction_still_refuses_on_full_macd_path():
+    why = ew.macd_narrowing_blocks_buy(
+        _rec(), ON, fail_open_unknown=False)
+    assert why == "macd_gap_dir_unknown"
+
+
+def _veto_arm_cfg(**over):
+    cfg = {
+        "ai_watch_arm_mode": "last",
+        "ai_watch_tv_exh_rsi": False,
+        "ai_watch_exhaustion_rules": True,
+        "ai_watch_require_exhaustion_data": False,
+        "ai_watch_exhaustion_heat_min_pct": 0.0,
+        "ai_watch_exhaustion_heat_max_pct": 0.0,
+        "ai_watch_ob_allow_hot": True,
+        "ai_watch_arm_require_indicators": False,
+        "ai_watch_arm_require_cm_rsi": False,
+        "ai_watch_soft_ob_enabled": False,
+        "ai_watch_mistimed_heat_enabled": False,
+        "ai_min_reward_risk": 0.5,
+        "ai_watch_min_stop_pct": 0,
+        "ai_watch_synth_stop_pct": 5.0,
+        "ai_watch_synth_rr": 0.6,
+        "ai_watch_arm_require_macd": False,
+        "ai_watch_macd_block_narrowing": True,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def _veto_arm_rec(**ind):
+    base = {
+        "pctr": -20.0, "pctr_rising": True, "pctr_falling": False,
+        "cm_rsi": 40.0, "cm_rsi_rising": True,
+    }
+    base.update(ind)
+    return {
+        "symbol": "AAA",
+        "status": "watching",
+        "structure": {
+            "decision": "BUY",
+            "zone_kind": "at_last",
+            "entry_low": 9.0, "entry_high": 11.0,
+            "stop_price": 8.5, "target_1": 12.0, "reward_risk": 0.6,
+            "synthetic": True,
+        },
+        "indicator": base,
+    }
+
+
+def test_should_arm_vetoes_closing_gap_without_requiring_macd_size():
+    """EXH+RSI would arm; closing MACD alone stops the open — no min_gap."""
+    rec = _veto_arm_rec(
+        macd_fast=0.10, macd_slow=0.05, macd_gap=0.01,
+        macd_gap_rising=False, macd_gap_falling=True, macd_gap_prev=0.04)
+    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=_veto_arm_cfg())
+    assert ok is False
+    assert why == "macd_gap_narrowing"
+
+
+def test_should_arm_allows_opening_gap_under_exh_rsi_without_min_gap():
+    """A tiny opening gap used to die on macd_gap_too_close under full MACD."""
+    rec = _veto_arm_rec(
+        macd_fast=0.10, macd_slow=0.099, macd_gap=0.001,
+        macd_gap_rising=True, macd_gap_falling=False, macd_gap_prev=0.0005)
+    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=_veto_arm_cfg())
+    assert ok is True
+    assert why.startswith("last_")
+
+
+def test_should_arm_allows_missing_macd_under_veto_only():
+    rec = _veto_arm_rec()  # no macd_* fields
+    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=_veto_arm_cfg())
+    assert ok is True
+    assert why.startswith("last_")
+
+
+def test_should_arm_skips_narrowing_veto_when_block_narrowing_is_off():
+    rec = _veto_arm_rec(
+        macd_gap=0.05, macd_gap_rising=False, macd_gap_falling=True,
+        macd_gap_prev=0.08)
+    cfg = _veto_arm_cfg(ai_watch_macd_block_narrowing=False)
+    ok, why = ew.should_arm_buy(rec, ask=10.0, bid=9.99, cfg=cfg)
+    assert ok is True
+    assert why.startswith("last_")

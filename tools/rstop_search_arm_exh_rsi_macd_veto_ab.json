@@ -1,0 +1,8 @@
+{
+  "min_n": 10,
+  "description": "A/B simpler arming with optional MACD closing veto. Cells: EXH+RSI only (require_macd=false, block_narrowing=false); EXH+RSI + closing-gap veto (false/true — target hybrid); full MACD size stack with/without narrowing (true/false, true/true). Exhaustion, CM RSI, mistimed_heat, require_exh_rising, and live trail stay on.",
+  "search": {
+    "require_macd": [false, true],
+    "macd_block_narrowing": [false, true]
+  }
+}

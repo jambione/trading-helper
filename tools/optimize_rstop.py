@@ -125,7 +125,8 @@ OVERLAY_KEYS = {
     "trail_enabled": "ai_local_trail_enabled",
     # Arm-gate A/B: MACD is the first-fail open-starver (~94% of shadow refuses).
     # require_macd=False leaves EXH + CM RSI (+ mistimed_heat if live) as the
-    # simpler open path the desk wants to measure.
+    # simpler open path. macd_block_narrowing stays independent: with
+    # require_macd off it still vetoes a closing gap (fail-open if no MACD).
     "require_macd": "ai_watch_arm_require_macd",
     "macd_min_gap": "macd_min_gap",
     "macd_block_narrowing": "ai_watch_macd_block_narrowing",

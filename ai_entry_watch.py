@@ -7269,34 +7269,57 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
                 record["block_detail"] = "no bullish cross in confirm window"
             return False, "macd_no_recent_cross"
 
-    # Is the gap OPENING or CLOSING? Every test above measures the SIZE of the
-    # separation; none of them says which way it is going, and a wide gap that
-    # is closing is momentum dying. Entering it buys the fade — a +0.03 gap
-    # that was +0.08 two bars ago passes every size test on this list.
-    #
-    # A FLAT gap is allowed through: the rule is "do not open into a closing
-    # gap", and flat is not closing. Tightening that to "must be actively
-    # widening" is a second, stricter knob, not a reinterpretation of this one.
-    #
-    # Unknown direction is refused rather than waved through — same rule as
-    # everywhere else on this desk, and here it means the name has too few
-    # bars for the trend_lookback comparison to mean anything.
-    if bool(cfg.get("ai_watch_macd_block_narrowing", False)):
-        rising = ind.get("macd_gap_rising")
-        falling = ind.get("macd_gap_falling")
-        if rising is None and falling is None:
-            if isinstance(record, dict):
-                record["block_detail"] = "gap direction unknown (needs bars)"
-            return False, "macd_gap_dir_unknown"
-        if bool(falling):
-            prev = _f_or_none(ind.get("macd_gap_prev"))
-            if isinstance(record, dict):
-                record["block_detail"] = (
-                    f"gap closing {prev:+.4f} -> {gap:+.4f}"
-                    if prev is not None else f"gap closing (now {gap:+.4f})")
-            return False, "macd_gap_narrowing"
+    # Direction last: size tests above do not say which way the gap is moving.
+    narrow_why = macd_narrowing_blocks_buy(
+        record, cfg, fail_open_unknown=False)
+    if narrow_why:
+        return False, narrow_why
 
     return True, "macd_bullish_gap"
+
+
+def macd_narrowing_blocks_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    fail_open_unknown: bool = False,
+) -> str | None:
+    """Refuse when the MACD gap is closing. Returns a reason or ``None``.
+
+    Independent of ``ai_watch_arm_require_macd``: the size/bullish stack is the
+    positive gate; this is the "do not open into a closing gap" veto. Flat is
+    not closing. When ``fail_open_unknown`` is True (EXH+RSI arm / MACD
+    veto-only), missing indicator or unknown direction does not block — MACD
+    is a veto, not a requirement. The full MACD path keeps fail-closed on
+    unknown direction so State still names ``macd_gap_dir_unknown``.
+    """
+    if not bool(cfg.get("ai_watch_macd_block_narrowing", False)):
+        return None
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    rising = ind.get("macd_gap_rising")
+    falling = ind.get("macd_gap_falling")
+    if rising is None and falling is None:
+        if fail_open_unknown:
+            return None
+        if isinstance(record, dict):
+            record["block_detail"] = "gap direction unknown (needs bars)"
+        return "macd_gap_dir_unknown"
+    if not bool(falling):
+        return None
+    gap = _f_or_none(
+        ind.get("macd_gap") if ind.get("macd_gap") is not None
+        else ind.get("macd_hist"))
+    prev = _f_or_none(ind.get("macd_gap_prev"))
+    if isinstance(record, dict):
+        if prev is not None and gap is not None:
+            record["block_detail"] = (
+                f"gap closing {prev:+.4f} -> {gap:+.4f}")
+        elif gap is not None:
+            record["block_detail"] = f"gap closing (now {gap:+.4f})"
+        else:
+            record["block_detail"] = "gap closing"
+    return "macd_gap_narrowing"
 
 
 def cm_rsi_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
@@ -10002,6 +10025,19 @@ def should_arm_buy(
         mistimed = mistimed_heat_blocks_buy(record, cfg, exh_why=exh_why)
         if mistimed:
             return False, mistimed
+
+    # MACD closing-gap veto without the size/bullish stack. When
+    # require_macd is on, macd_allows_buy already ran narrowing above.
+    # When it is off, EXH+RSI (and soft OB / mistimed) are the open path;
+    # block_narrowing alone still refuses a gap that is actively closing.
+    # Fail-open on missing MACD so this veto cannot re-starve opens the
+    # way macd_src_unknown did under the full gate.
+    if (not bool(cfg.get("ai_watch_arm_require_macd", False))
+            and bool(cfg.get("ai_watch_macd_block_narrowing", False))):
+        narrow_why = macd_narrowing_blocks_buy(
+            record, cfg, fail_open_unknown=True)
+        if narrow_why:
+            return False, narrow_why
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
     # 20% of equity, then −1R in under a minute. Last-mode used to skip

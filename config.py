@@ -61,6 +61,11 @@ DEFAULT_CONFIG = {
     # while the momentum it is meant to ride is already over. Judged on
     # trend_lookback (2 bars), the same basis as cm_rsi_rising.
     #
+    # Independent of ai_watch_arm_require_macd: with require_macd off, EXH+RSI
+    # arm the open and this knob alone still vetoes a closing gap (fail-open
+    # when direction is unknown). With require_macd on, it runs last inside
+    # the full size/bullish stack and unknown direction refuses.
+    #
     # A FLAT gap still passes — the rule is "do not open into a closing gap",
     # and flat is not closing. False = shipped behaviour (size only).
     "ai_watch_macd_block_narrowing": False,

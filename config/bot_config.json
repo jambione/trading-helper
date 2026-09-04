@@ -114,7 +114,7 @@
   "ai_watch_arm_mode": "last",
   "ai_watch_arm_require_cm_rsi": true,
   "ai_watch_arm_require_indicators": false,
-  "ai_watch_arm_require_macd": true,
+  "ai_watch_arm_require_macd": false,
   "ai_watch_arm_require_stream_price": true,
   "ai_watch_armable_zone_kinds": [
     "double_bottom",
