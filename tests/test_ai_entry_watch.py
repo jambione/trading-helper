@@ -3719,12 +3719,13 @@ def test_ensure_live_exhaustion_stamps_pctr_for_the_buy_gate(monkeypatch):
     ok, why = ew.exhaustion_allows_buy(rec, cfg)
     # Rising ≥ 50 or refuse heating_too_low / not_rising_*; never no %R
     # once live %R is stamped.
-    assert why != "no_exhaustion_data"
+    assert why not in ("no_exhaustion_data", "exh_rising_required")
     assert ok is True and why in ("overbought", "heating") or (
         not ok and why in (
             "heating_too_low", "already_extended",
             "not_rising_cooling", "not_rising_flat",
             "not_rising_overbought", "not_rising_heating",
+            "exh_falling", "exh_not_rising",
         )
     )
 
@@ -3790,7 +3791,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         },
     }
     ok, why = ew.exhaustion_allows_buy(hot_fade, cfg)
-    assert ok is False and why == "not_rising_overbought"
+    assert ok is False and why in ("exh_falling", "not_rising_overbought")
     hot_bro = dict(too_hot, source="bb_live")
     ok, why = ew.exhaustion_allows_buy(hot_bro, cfg)
     assert ok is True and why == "overbought_hot"
@@ -3803,7 +3804,7 @@ def test_exhaustion_allows_buy_rising_past_heat_min():
         },
     }
     ok, why = ew.exhaustion_allows_buy(cool, cfg)
-    assert ok is False and why == "not_rising_overbought"
+    assert ok is False and why in ("exh_falling", "not_rising_overbought")
 
     heat_low = {
         "symbol": "LOW",
@@ -3888,8 +3889,10 @@ def test_arm_refuses_no_exhaustion_when_require_data():
         "ai_watch_require_db_zone": False,
     }
     ok, why = ew.should_arm_buy(rec, ask=31.5, bid=31.4, cfg=cfg)
-    assert not ok and why == "no_exhaustion_data"
-    assert ew.format_blocker("no_exhaustion_data") == "no %R"
+    # require_exh_rising (default on) names the missing reading as needing
+    # EXH↑ rather than the older no_exhaustion_data label.
+    assert not ok and why in ("no_exhaustion_data", "exh_rising_required")
+    assert ew.format_blocker(why) in ("no %R", "need EXH↑")
 
 
 def test_apply_tape_blocker_keeps_real_refuse_and_names_geometry(monkeypatch):
@@ -4277,7 +4280,7 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     rec["indicator"]["pctr_rising"] = False
     rec["indicator"]["pctr_falling"] = True
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
-    assert ok is False and why == "not_rising_cooling"
+    assert ok is False and why in ("exh_falling", "not_rising_cooling")
 
     rec["indicator"]["pctr_rising"] = True
     rec["indicator"]["pctr_falling"] = False
@@ -4288,7 +4291,7 @@ def test_arm_at_last_refuses_cooling_and_buys_rising_or_ob():
     rec["indicator"]["pctr_rising"] = False
     rec["indicator"]["pctr_falling"] = True
     ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=_last_cfg())
-    assert ok is False and why == "not_rising_overbought"
+    assert ok is False and why in ("exh_falling", "not_rising_overbought")
 
     rec["indicator"]["pctr_falling"] = False
     rec["indicator"]["pctr_rising"] = True
@@ -4384,6 +4387,9 @@ def test_mistimed_heat_blocks_gtlb_keeps_bull():
     OB never fired because EXH was not overbought and/or pass RSI was under
     55. BULL the prior session was last_overbought + RSI 46.3 (+0.53R); that
     path stays on soft OB and must not be killed by a heating-only veto.
+
+    RSI hard max stays 60 — mistimed_heat (not a lower hard max) is the
+    separator so BULL-class early OB heats still clear.
     """
     import ai_entry_watch as ew
     from config import DEFAULT_CONFIG
@@ -4391,8 +4397,11 @@ def test_mistimed_heat_blocks_gtlb_keeps_bull():
     assert DEFAULT_CONFIG["ai_watch_mistimed_heat_enabled"] is True
     assert DEFAULT_CONFIG["ai_watch_mistimed_heat_rsi_min"] == 52.0
     assert DEFAULT_CONFIG["ai_watch_mistimed_heat_rsi_peak_min"] == 55.0
+    assert DEFAULT_CONFIG["ai_watch_require_exh_rising"] is True
+    # Live bot_config keeps RSI hard max at 60; mistimed_heat (floor 52) is
+    # the heating-band chase veto — do not tighten hard max to 55.
 
-    cfg = _mistimed_cfg()
+    cfg = _mistimed_cfg(ai_watch_require_exh_rising=True)
     # Pass-tick shape: heating band, RSI 53.3 (under soft OB floor, over 52).
     gtlb = _ob_rec(symbol="GTLB", rsi=53.3, exh=75.0, source="anthropic")
     assert ew.exhaustion_state(gtlb, cfg) == "heating"
@@ -4411,18 +4420,52 @@ def test_mistimed_heat_blocks_gtlb_keeps_bull():
     ok, why = ew.should_arm_buy(gtlb_dip, ask=49.40, bid=49.38, cfg=cfg)
     assert ok is False and why == "mistimed_heat"
 
-    # BULL-class: overbought + RSI 46 — soft OB allows; mistimed_heat skips
-    # non-heating paths.
+    # BULL-class: overbought + RSI 46 + rising EXH — soft OB allows;
+    # mistimed_heat skips non-heating paths. RSI max 60 untouched.
     bull = _ob_rec(symbol="BULL", rsi=46.3, exh=85.0, source="trending")
     ok, why = ew.should_arm_buy(bull, ask=9.37, bid=9.35, cfg=cfg)
     assert ok and why == "last_overbought"
     assert ew.mistimed_heat_blocks_buy(bull, cfg, exh_why="overbought") is None
 
-    # Early healthy heat: heating + RSI 46 still arms.
+    # Early healthy heat: heating + RSI 46 + rising EXH still arms.
     early = _ob_rec(symbol="EARLY", rsi=46.0, exh=72.0, source="momentum")
     ok, why = ew.should_arm_buy(early, ask=12.0, bid=11.98, cfg=cfg)
     assert ok and why == "last_heating"
     assert ew.mistimed_heat_blocks_buy(early, cfg, exh_why="heating") is None
+
+
+def test_require_exh_rising_blocks_falling_and_allows_early_heat():
+    """Positive early timing: rising EXH + low RSI arms; falling EXH refuses."""
+    import ai_entry_watch as ew
+
+    cfg = _mistimed_cfg(ai_watch_require_exh_rising=True)
+
+    early = _ob_rec(symbol="EARLY", rsi=42.0, exh=55.0, source="momentum")
+    ok, why = ew.should_arm_buy(early, ask=12.0, bid=11.98, cfg=cfg)
+    assert ok and why == "last_heating"
+
+    falling = _ob_rec(symbol="FADE", rsi=42.0, exh=70.0, source="momentum")
+    falling["indicator"]["pctr_rising"] = False
+    falling["indicator"]["pctr_falling"] = True
+    ok, why = ew.exhaustion_allows_buy(falling, cfg)
+    assert ok is False and why == "exh_falling"
+    ok, why = ew.should_arm_buy(falling, ask=12.0, bid=11.98, cfg=cfg)
+    assert ok is False and why == "exh_falling"
+    assert ew.format_blocker("exh_falling") == "EXH falling"
+
+    # Unknown EXH cannot fall through no_exhaustion_fallback when rising required.
+    blind = _ob_rec(symbol="BLIND", rsi=40.0, exh=50.0, source="momentum")
+    blind["indicator"].pop("pctr", None)
+    blind["indicator"]["pctr_rising"] = False
+    blind["indicator"]["pctr_falling"] = False
+    # Force unknown: no pctr value
+    for k in list(blind["indicator"]):
+        if k.startswith("pctr"):
+            blind["indicator"].pop(k, None)
+    ok, why = ew.exhaustion_allows_buy(
+        blind, {**cfg, "ai_watch_require_exhaustion_data": False,
+                "ai_watch_exhaustion_fallback": True})
+    assert ok is False and why == "exh_rising_required"
 
 
 def test_mistimed_heat_off_leaves_gtlb_class_armed():
@@ -4573,7 +4616,12 @@ def test_apply_tape_blocker_last_mode_ready_above_band(monkeypatch):
     import ai_entry_watch as ew
 
     monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
-    monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    # Geometry paint test — disable gaining-EXH so missing indicator does
+    # not steal READY from an above-band last-mode row.
+    monkeypatch.setattr(
+        ew, "_push_cfg",
+        lambda: _last_cfg(ai_watch_require_exh_rising=False,
+                          ai_watch_exhaustion_fallback=True))
     row = {
         "symbol": "UMAC", "source": "momentum", "rvol": 3.8,
         "entry_low": 32.74, "entry_high": 33.23, "stop_price": 32.0,
@@ -5067,7 +5115,7 @@ def test_exhaustion_blanks_when_there_is_no_trade_to_close_on(monkeypatch):
     assert rec["indicator"]["pctr"] is None
     assert rec["indicator"]["pctr_src"] == "no_trade_price"
     ok, why = ew.exhaustion_allows_buy(rec, cfg)
-    assert ok is False and why == "no_exhaustion_data"
+    assert ok is False and why in ("no_exhaustion_data", "exh_rising_required")
 
 
 def test_exhaustion_trade_price_only_can_be_turned_off(monkeypatch):

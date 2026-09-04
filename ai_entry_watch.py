@@ -223,6 +223,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "not_rising_overbought": "OB fade",
     "not_rising_heating": "not rising",
     "not_rising_unknown": "no %R",
+    # Explicit EXH direction refuses (ai_watch_require_exh_rising).
+    "exh_falling": "EXH falling",
+    "exh_not_rising": "EXH flat",
+    "exh_rising_required": "need EXH↑",
     "not_continuation_cooling": "cooling",
     "not_continuation_flat": "flat",
     "not_continuation_unknown": "no %R",
@@ -3287,9 +3291,41 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 # Its own knob, defaulting to 0.0 = admit as before, so this
                 # is a truthful name for existing behaviour and a real dial
                 # for the admission-latency work (see HANDOFF.md §5).
-                if open_seed_min_pct > 0:
-                    seed_pct = _pct_change_value(r.get("pct_change"))
-                    if seed_pct is None or seed_pct < open_seed_min_pct:
+                # Young stream on the desk: curated mom moves fast — a name
+                # that already prints can use a slightly lower day-chg floor
+                # so it is not dead on arrival waiting for open_seed_min_pct.
+                seed_pct = _pct_change_value(r.get("pct_change"))
+                stream_age = None
+                for _ak in ("price_age_sec", "rt_price_age_sec", "last_ask_age_sec"):
+                    if r.get(_ak) is not None:
+                        try:
+                            stream_age = float(r.get(_ak))
+                            break
+                        except (TypeError, ValueError):
+                            pass
+                try:
+                    stream_young_max = float(
+                        cfg.get("ai_watch_stream_max_age_sec", 10.0) or 10.0)
+                except (TypeError, ValueError):
+                    stream_young_max = 10.0
+                has_young_stream = (
+                    stream_age is not None
+                    and stream_young_max > 0
+                    and stream_age <= stream_young_max
+                )
+                try:
+                    stream_min_pct = float(
+                        cfg.get("ai_watch_open_seed_stream_min_pct", 5.0) or 0.0)
+                except (TypeError, ValueError):
+                    stream_min_pct = 5.0
+                need_pct = open_seed_min_pct
+                if has_young_stream and stream_min_pct > 0:
+                    if open_seed_min_pct <= 0:
+                        need_pct = 0.0
+                    else:
+                        need_pct = min(open_seed_min_pct, stream_min_pct)
+                if need_pct > 0:
+                    if seed_pct is None or seed_pct < need_pct:
                         continue
                 if _is_wash_look(r):
                     continue
@@ -3303,15 +3339,24 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     dvol = None
                 on_tr = s in tr_rank
                 # Prefer trending-overlap, then |day chg| as a soft rank only.
-                pct = _pct_change_value(r.get("pct_change"))
+                # Boost names that already have a young stream print so the
+                # book fills with armable mom heat, not stale ETP leftovers.
+                pct = seed_pct
                 rank = float(tr_rank.get(s) or 0.0)
                 if not on_tr:
                     rank = abs(pct or 0.0)
+                if has_young_stream:
+                    rank += 50.0
                 reason = (
                     f"mom+trending {tr_rank[s]:.0f}"
                     if on_tr
                     else "momentum desk"
                 )
+                if has_young_stream:
+                    reason = (reason + " stream")[:40]
+                crit = ["mom_open", "mom_trending"] if on_tr else ["mom_open"]
+                if has_young_stream:
+                    crit = list(crit) + ["mom_stream"]
                 open_scored.append((rank, {
                     "symbol": s,
                     "trending_score": round(rank, 2),
@@ -3324,7 +3369,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     "rvol": r.get("rvol"),
                     "dollar_volume": (dvol * px) if (dvol and px) else None,
                     # Soft seed: skip score/indicators only — not RVOL.
-                    "criteria": ["mom_open", "mom_trending"] if on_tr else ["mom_open"],
+                    "criteria": crit,
                     "bypass_inclusion": False,
                     "mom_open_soft": True,
                 }))
@@ -6707,13 +6752,19 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
     TV desk mode: both %R lines in the overbought band (red boxes),
     optionally close together, then CM RSI-2 at/under buy_max.
 
-    Legacy: buy when fast %R is **rising**, or the name is already
-    **overbought and not falling**. Heat min/max still apply there.
+    Legacy / continuation: buy when fast %R is **rising** (gaining heat),
+    or the name is already **overbought and not falling**. Heat min/max
+    still apply. With ``ai_watch_require_exh_rising`` (default on for
+    paper scalp_legacy), falling EXH is an explicit refuse, flat EXH is
+    refused except the pinned-ceiling + MACD-armed exemption, and a
+    missing reading cannot fall through ``no_exhaustion_fallback``.
 
-    A missing reading REFUSES under ai_watch_require_exhaustion_data.
+    Intent (2026-09-04): more early opens (low RSI + rising EXH + open
+    MACD), fewer late chases (falling EXH / high RSI heat).
     """
     if not bool(cfg.get("ai_watch_exhaustion_rules", True)):
         return True, "exhaustion_off"
+    require_rising = bool(cfg.get("ai_watch_require_exh_rising", True))
     # The reading has to BE the indicator before it is allowed to decide.
     #
     # pctr_src says how the number was produced. "live" is a rolling %R(length)
@@ -6739,16 +6790,30 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return _tv_exh_rsi_allows_buy(record, cfg)
     state = exhaustion_state(record, cfg)
     if state == "unknown":
+        # Gaining-EXH rule needs a reading. Fallback used to arm blind when
+        # require_exhaustion_data was false — that is a late/unknown chase,
+        # not an early heat.
+        if require_rising:
+            return False, "exh_rising_required"
         if bool(cfg.get("ai_watch_require_exhaustion_data", True)):
             return False, "no_exhaustion_data"
         if bool(cfg.get("ai_watch_exhaustion_fallback", True)):
             return True, "no_exhaustion_fallback"
         return False, "no_exhaustion_data"
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
-    if state == "overbought":
-        if ind.get("pctr_falling"):
+    # Falling EXH is never an open — explicit reason for the operator column.
+    if ind.get("pctr_falling") or state == "cooling":
+        if require_rising:
+            return False, "exh_falling"
+        if state == "overbought":
             return False, "not_rising_overbought"
+        return False, f"not_rising_{state}"
+    if state == "overbought":
         if bool(cfg.get("ai_watch_ob_allow_hot", True)) and _hot_ob_source(record):
+            # Hot-OB free pass still needs rising when the gaining-EXH rule
+            # is on — otherwise it re-opens the late-chase door.
+            if require_rising and not ind.get("pctr_rising"):
+                return False, "exh_not_rising"
             return True, "overbought_hot"
         # A name pinned at the top of its range cannot be "rising".
         #
@@ -6800,6 +6865,8 @@ def exhaustion_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, "already_extended"
     ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
     if not ind.get("pctr_rising"):
+        if require_rising:
+            return False, "exh_not_rising"
         return False, f"not_rising_{state}"
     if state == "overbought":
         return True, "overbought"
@@ -9115,9 +9182,18 @@ def should_arm_buy(
     if not exh_ok:
         # Optional: cooling EXH may still fill. Last-mode does not also
         # demand the leftover pullback band. Zone mode still does.
+        # Never waive an explicit falling-EXH refuse when gaining-EXH is
+        # required — that knob exists to stop late chases into a rollover.
+        _exh_hard = str(exh_why or "") in (
+            "exh_falling", "exh_not_rising", "exh_rising_required",
+        )
         fade_ok = (
-            bool(cfg.get("ai_watch_in_zone_ignore_fade", False))
-            and str(exh_why).startswith("not_rising")
+            (not _exh_hard)
+            and bool(cfg.get("ai_watch_in_zone_ignore_fade", False))
+            and (
+                str(exh_why).startswith("not_rising")
+                or str(exh_why) in ("exh_not_rising",)
+            )
         )
         if last_mode and fade_ok:
             exh_ok, exh_why = True, "in_zone_fade_ok"

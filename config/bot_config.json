@@ -143,6 +143,8 @@
   "ai_watch_ob_allow_hot": false,
   "ai_watch_ob_flat_min_pct": 99.0,
   "ai_watch_open_seed_min_pct": 8.0,
+  "ai_watch_open_seed_stream_min_pct": 5.0,
+  "ai_watch_require_exh_rising": true,
   "ai_watch_poll_sec": 10.0,
   "ai_watch_rank_move_band": 2.0,
   "ai_watch_rank_rvol_band": 0.5,

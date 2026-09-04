@@ -440,6 +440,10 @@ DEFAULT_CONFIG = {
     # paths need real heat (blocks HPE-class +4.8% late chase). 0.0 would
     # admit as originally shipped (median landed at +8.2%).
     "ai_watch_open_seed_min_pct":      8.0,
+    # When the desk already has a young stream print, mom_open may use this
+    # lower day-chg floor so curated heat is not dead on arrival waiting for
+    # open_seed_min_pct. 0 = no stream shortcut (always use open_seed_min_pct).
+    "ai_watch_open_seed_stream_min_pct": 5.0,
     # Same bar as momentum_min_rvol (dashboard watchlist). Known rvol below
     # this refuses AI Watch admission; unknown abstains (provisional).
     # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
@@ -659,6 +663,12 @@ DEFAULT_CONFIG = {
     # 0 = no cap. A 50 ceiling parked AMLX (EXH ~86) as "extended"
     # while it was in/below the zone; operator wants those fills.
     "ai_watch_exhaustion_heat_max_pct": 0.0,
+    # Require gaining EXH (pctr_rising) to arm. Falling EXH → exh_falling;
+    # flat → exh_not_rising (except pinned-ceiling + MACD-armed). Missing
+    # reading → exh_rising_required (no blind no_exhaustion_fallback).
+    # Intent: more early opens, fewer late chases. RSI hard max stays 60;
+    # mistimed_heat + soft_ob still separate GTLB/HPE from BULL (RSI 46 OB).
+    "ai_watch_require_exh_rising": True,
     # Soft overbought / late-heat arm veto. Refuse when the name is already
     # in the overbought band AND RSI is at/above this floor (still below the
     # hard RSI max). Separates HPE-class (RSI 59.6 + EXH 83.5 OB, −0.10R)
@@ -1366,6 +1376,7 @@ _EFFECTIVE_KEYS = (
     "ai_local_trail_arm_r",
     "ai_watch_arm_mode",
     "ai_watch_exhaustion_heat_max_pct",
+    "ai_watch_require_exh_rising",
     "ai_watch_soft_ob_enabled",
     "ai_watch_soft_ob_rsi_min",
     "ai_watch_mistimed_heat_enabled",
@@ -1564,6 +1575,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_trending_min_score",
     "ai_watch_min_pct_change",
     "ai_watch_open_seed_min_pct",
+    "ai_watch_open_seed_stream_min_pct",
     "ai_watch_min_rvol",
     "ai_watch_arm_min_rvol",
     "ai_watch_arm_rvol_sane_max",
@@ -1602,6 +1614,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_exit_give_pct",
     "ai_watch_exhaustion_heat_min_pct",
     "ai_watch_exhaustion_heat_max_pct",
+    "ai_watch_require_exh_rising",
     "ai_watch_soft_ob_enabled",
     "ai_watch_soft_ob_rsi_min",
     "ai_watch_mistimed_heat_enabled",
