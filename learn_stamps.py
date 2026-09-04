@@ -112,6 +112,8 @@ _FINGERPRINT_KEYS = (
     # Gaining-EXH requirement — falling/flat EXH arms are a different regime.
     "ai_watch_require_exh_rising",
     "ai_watch_open_seed_stream_min_pct",
+    "ai_watch_movers_min_rvol",
+    "ai_watch_hot_move_rvol_waive_pct",
     # Whether the lever must come off the live tape. A session that armed
     # on REST-fallback MACD is not the same regime as one that did not.
     "ai_watch_require_realtime_macd",

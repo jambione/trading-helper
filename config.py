@@ -399,7 +399,7 @@ DEFAULT_CONFIG = {
     # movers_screener.py for why the producer, not this poll, drops warrants
     # and floors the RVOL denominator.
     "ai_watch_seed_movers":             True,
-    "ai_watch_seed_movers_n":             12,
+    "ai_watch_seed_movers_n":             16,
     "ai_watch_movers_min_pct_change":   10.0,
     # Judge a movers row on a live quote rather than on whatever the producer
     # recorded. 0/false keeps the file's own price and pct_change, which go
@@ -449,6 +449,11 @@ DEFAULT_CONFIG = {
     # Trending seed uses ai_watch_trending_min_rvol (default 1.5) instead.
     # Admission floor only. Arm uses ai_watch_arm_min_rvol (0 = zone+ratchet).
     "ai_watch_min_rvol":                2.0,
+    # Movers SIP rvol runs lower than desk IEX; a shared 2.0 floor emptied
+    # the movers shortlist on 2026-09-04 (BIAF/LABX wiped at 0.8–1.8x).
+    "ai_watch_movers_min_rvol":         1.0,
+    # Day-chg % that waives known-thin RVOL at seed + inclusion. 0 = off.
+    "ai_watch_hot_move_rvol_waive_pct": 20.0,
     "ai_watch_arm_min_rvol":            0.0,
     # Credibility bound, not a heat ceiling. A relative-volume reading above
     # this is not a hot name, it is a broken number, and the desk must not
@@ -1577,6 +1582,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_open_seed_min_pct",
     "ai_watch_open_seed_stream_min_pct",
     "ai_watch_min_rvol",
+    "ai_watch_movers_min_rvol",
+    "ai_watch_hot_move_rvol_waive_pct",
     "ai_watch_arm_min_rvol",
     "ai_watch_arm_rvol_sane_max",
     "ai_watch_look_max",

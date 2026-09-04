@@ -3192,6 +3192,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
     cfg = cfg if isinstance(cfg, dict) else {}
     rows: list[dict] = []
     seen: set[str] = set()
+    _clear_seed_drops()
     try:
         from desk_risk import dynamic_max_price
         eq = float(dashboard_state().get("ai_positions", {}).get("account", {}).get("equity") or 0.0)
@@ -3275,12 +3276,16 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     continue
                 if not _price_under_cap(r.get("price"), max_price):
                     continue
-                # Known-thin tape never seeds: same floor as passes_inclusion.
+                # Known-thin tape: hot day-move waives (same as movers).
                 try:
                     rv = float(r.get("rvol")) if r.get("rvol") is not None else None
                 except (TypeError, ValueError):
                     rv = None
-                if rv is not None and min_rvol > 0 and rv < min_rvol:
+                seed_pct = _pct_change_value(r.get("pct_change"))
+                if rvol_blocks_admit(
+                        rv, seed_pct, cfg, source="momentum") == "thin_rvol":
+                    _note_seed_drop("momentum", s, "thin_rvol",
+                                    pct=seed_pct, rvol=rv)
                     continue
                 # This path deliberately does NOT use ai_watch_min_pct_change:
                 # that knob gates _big_mover_from_dashboard, and this is the
@@ -3294,7 +3299,6 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 # Young stream on the desk: curated mom moves fast — a name
                 # that already prints can use a slightly lower day-chg floor
                 # so it is not dead on arrival waiting for open_seed_min_pct.
-                seed_pct = _pct_change_value(r.get("pct_change"))
                 stream_age = None
                 for _ak in ("price_age_sec", "rt_price_age_sec", "last_ask_age_sec"):
                     if r.get(_ak) is not None:
@@ -3456,8 +3460,11 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     if rvol is not None and rvol > 10.0:
                         # e.g. 150 meaning 150% → 1.5x
                         rvol = rvol / 100.0
-                    # Known-thin tape never seeds.
-                    if rvol is not None and tr_min_rvol > 0 and rvol < tr_min_rvol:
+                    # Known-thin: hot day-move waives (same helper as movers).
+                    if rvol_blocks_admit(
+                            rvol, pct, cfg, source="trending") == "thin_rvol":
+                        _note_seed_drop("trending", s, "thin_rvol",
+                                        pct=pct, rvol=rvol, score=score)
                         continue
                     # Need at least one claim: score, day move, or elevated rvol.
                     score_ok = score > min_score
@@ -3469,6 +3476,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     )
                     # Long-only: refuse red days when we know the change.
                     if pct is not None and pct <= 0:
+                        _note_seed_drop("trending", s, "red", pct=pct)
                         continue
                     # Always need a numeric claim (score / day move / rvol),
                     # even when EXT is optional. Leaving this behind
@@ -3479,6 +3487,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     # ai_watch_require_look_ext (historical: ~10 names /
                     # 4 fills when hard-EXT).
                     if not (score_ok or pct_ok or rvol_ok):
+                        _note_seed_drop("trending", s, "no_claim",
+                                        pct=pct, rvol=rvol, score=score)
                         continue
                     seen.add(s)
                     crit: list[str] = []
@@ -3581,9 +3591,13 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                             src_used = "desk" if cand is live else "trending"
                             break
                     if not _price_under_cap(px_src, max_price):
+                        _note_seed_drop("movers", s, "price_cap", price=px_src)
                         continue
                     pct = _pct_change_value(pct_src)
                     if pct is None or pct < mv_min_pct:
+                        _note_seed_drop(
+                            "movers", s, "pct_low", pct=pct,
+                            file_pct=_pct_change_value(r.get("pct_change")))
                         continue
                     # rvol is NOT enriched, deliberately. The producer computes
                     # it from SIP daily bars on both sides; the desk's reading
@@ -3598,9 +3612,13 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                             rvol = float(r["rvol"])
                         except (TypeError, ValueError):
                             rvol = None
-                    # Known-thin tape never occupies a movers slot. Unknown
-                    # abstains — a producer None is not a failing ratio.
-                    if rvol is not None and min_rvol > 0 and rvol < min_rvol:
+                    # Known-thin tape: movers use a lower floor than the desk
+                    # general min_rvol, and a hot day-move waives it so
+                    # BIAF/LABX-class +20% names reach the book (2026-09-04).
+                    if rvol_blocks_admit(
+                            rvol, pct, cfg, source="movers") == "thin_rvol":
+                        _note_seed_drop("movers", s, "thin_rvol",
+                                        pct=pct, rvol=rvol)
                         continue
                     seen.add(s)
                     row = dict(r)
@@ -3682,12 +3700,21 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     except (TypeError, ValueError):
                         dvol = None
                 # Known-thin tape never occupies a research slot. Unknown
-                # abstains — a thesis with no rvol yet still seeds.
+                # abstains — a thesis with no rvol yet still seeds. Hot-move
+                # waive applies so a green research name is not wiped by
+                # borderline rvol the same way movers were.
                 try:
                     rv = float(rvol_src) if rvol_src is not None else None
                 except (TypeError, ValueError):
                     rv = None
-                if rv is not None and min_rvol > 0 and rv < min_rvol:
+                if rvol_blocks_admit(
+                        rv, pct_f, cfg, source="research") == "thin_rvol":
+                    _note_seed_drop("research", s, "thin_rvol",
+                                    pct=pct_f, rvol=rv)
+                    continue
+                if s in seen:
+                    # Mom/movers already own the row — do not let research
+                    # re-claim a stream-ready momentum seat.
                     continue
                 seen.add(s)
                 added += 1
@@ -3755,11 +3782,49 @@ _pushed_at: dict[str, float] = {}
 
 # Last sync's rejections, for the wire (why a name is NOT on the book).
 _last_rejected: list[dict] = []
+# Seed-path drops (before inclusion): source -> reason -> count / samples.
+# Cleared at the start of each desk_candidate_rows pass; snapshotted into
+# admit_funnel.json so a full movers panel with an empty book is diagnosable.
+_seed_drop_counts: dict[str, dict[str, int]] = {}
+_seed_drop_samples: dict[str, list[dict]] = {}
+_SEED_DROP_SAMPLE_CAP = 8
 
 
 def last_rejected() -> list[dict]:
     """Most recent inclusion-gate rejections: [{symbol, reason, criteria}]."""
     return list(_last_rejected)
+
+
+def _clear_seed_drops() -> None:
+    _seed_drop_counts.clear()
+    _seed_drop_samples.clear()
+
+
+def _note_seed_drop(
+    source: str,
+    symbol: str,
+    reason: str,
+    **extra,
+) -> None:
+    src = str(source or "seed").strip().lower() or "seed"
+    why = str(reason or "unknown").strip() or "unknown"
+    bucket = _seed_drop_counts.setdefault(src, {})
+    bucket[why] = int(bucket.get(why) or 0) + 1
+    samples = _seed_drop_samples.setdefault(src, [])
+    if len(samples) < _SEED_DROP_SAMPLE_CAP:
+        row = {"symbol": str(symbol or "").upper(), "reason": why, "source": src}
+        for k, v in extra.items():
+            if v is not None:
+                row[k] = v
+        samples.append(row)
+
+
+def seed_drop_snapshot() -> dict:
+    """Copy of the last desk_candidate_rows seed-drop tallies."""
+    return {
+        "counts": {s: dict(c) for s, c in _seed_drop_counts.items()},
+        "samples": {s: list(v) for s, v in _seed_drop_samples.items()},
+    }
 
 
 def _push_cfg() -> dict:
@@ -4482,6 +4547,73 @@ def _engine_indicator_map() -> dict[str, dict]:
     return out
 
 
+def hot_move_rvol_waive_pct(cfg: dict | None = None) -> float:
+    """Day-chg % at/above which known-thin RVOL no longer blocks admission.
+
+    2026-09-04 midday: movers panel held BIAF +52% / LABX +23% / CBRG +23%
+    with SIP rvol 0.8–1.8x against ``ai_watch_min_rvol=2.0``, so the seed
+    wiped every real momentum name before inclusion. Unknown rvol still
+    abstains; known-thin below the floor still refuses *unless* the day
+    move clears this waive. 0 disables the waive.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_hot_move_rvol_waive_pct", 20.0) or 0.0))
+    except (TypeError, ValueError):
+        return 20.0
+
+
+def _admit_min_rvol(source: str, cfg: dict) -> float:
+    """RVOL floor for admission/seed, source-aware.
+
+    Movers get ``ai_watch_movers_min_rvol`` (default 1.0) — SIP movers rvol
+    runs structurally lower than the desk's IEX ratio, and a shared 2.0
+    floor emptied the movers shortlist on 2026-09-04. Trending keeps its
+    own floor. Momentum / research use ``ai_watch_min_rvol``.
+    """
+    src = str(source or "").strip().lower()
+    try:
+        if src == "movers":
+            return max(0.0, float(
+                cfg.get("ai_watch_movers_min_rvol", 1.0) or 0.0))
+        if src == "trending":
+            return max(0.0, float(
+                cfg.get("ai_watch_trending_min_rvol",
+                         cfg.get("ai_watch_min_rvol", 2.0))
+                or 0.0))
+        return max(0.0, float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0))
+    except (TypeError, ValueError):
+        return 2.0
+
+
+def rvol_blocks_admit(
+    rvol: float | None,
+    pct: float | None,
+    cfg: dict,
+    *,
+    source: str = "",
+) -> str | None:
+    """Return ``thin_rvol`` when known-thin RVOL should refuse, else None.
+
+    Unknown (None) abstains. Hot day-move waives the floor so +20% movers
+    are not wiped by a 1.5x SIP ratio.
+    """
+    min_rvol = _admit_min_rvol(source, cfg)
+    if min_rvol <= 0 or rvol is None:
+        return None
+    try:
+        rv = float(rvol)
+    except (TypeError, ValueError):
+        return None
+    if rv + 1e-12 >= min_rvol:
+        return None
+    waive = hot_move_rvol_waive_pct(cfg)
+    if waive > 0 and pct is not None and float(pct) + 1e-12 >= waive:
+        return None
+    return "thin_rvol"
+
+
 def passes_inclusion(
     row: dict,
     cfg: dict,
@@ -4623,25 +4755,28 @@ def passes_inclusion(
     # quote arrives after admit). Same rule apply_look_highlights already
     # uses: "unknown rvol neither passes nor blocks."
     #
-    # The producer (trending_screener) publishes rvol=None on every row
-    # whenever the volume refresh has not resolved, so failing closed on
-    # absence empties the book outright rather than filtering it — 15
-    # candidates to 0 on 2026-08-06.
+    # Hot day-move (≥ ai_watch_hot_move_rvol_waive_pct) waives the floor so
+    # BIAF +52% / LABX +23% are not wiped by SIP rvol 0.8–1.8x while the
+    # movers panel is full of real momentum (2026-09-04 midday).
     if source in ("momentum", "trending", "movers") or mom_soft or is_research:
-        if source == "trending":
-            min_rvol = float(
-                cfg.get("ai_watch_trending_min_rvol",
-                        cfg.get("ai_watch_min_rvol", 2.0))
-                or 0.0
-            )
-        else:
-            min_rvol = float(cfg.get("ai_watch_min_rvol", 2.0) or 0.0)
-        if min_rvol > 0:
-            rvol_f = _f_or_none(row.get("rvol"))
-            if rvol_f is not None:
-                if rvol_f < min_rvol:
-                    return False, met, "thin_rvol"
+        src_for_rvol = source or ("momentum" if mom_soft else "")
+        rvol_f = _f_or_none(row.get("rvol"))
+        pct_for_rvol = _pct_change_value(row.get("pct_change"))
+        thin = rvol_blocks_admit(
+            rvol_f, pct_for_rvol, cfg, source=src_for_rvol)
+        if thin:
+            return False, met, thin
+        if rvol_f is not None:
+            floor = _admit_min_rvol(src_for_rvol, cfg)
+            if floor > 0 and rvol_f + 1e-12 >= floor:
                 met.append("rvol")
+            elif (
+                floor > 0
+                and hot_move_rvol_waive_pct(cfg) > 0
+                and pct_for_rvol is not None
+                and pct_for_rvol + 1e-12 >= hot_move_rvol_waive_pct(cfg)
+            ):
+                met.append("hot_move_rvol_waive")
 
     # Soft mom_open path: after price + rvol (+ uptrend above), admit without
     # score / EXT / indicator gates.
@@ -4884,11 +5019,85 @@ def sync_watch_from_source_panels(
         _last_rejected.clear()
         _last_rejected.extend(rejected)
         _log_rejects(rejected, by_symbol, cfg, t0)
+        try:
+            write_admit_funnel(
+                candidates=list(by_symbol.values()),
+                kept=candidates,
+                rejected=rejected,
+                now=t0,
+            )
+        except Exception:
+            pass
     except Exception:
         pass
 
     with _WATCH_LOCK:
         return _sync_watch_locked(candidates, t0, cfg)
+
+
+def write_admit_funnel(
+    *,
+    candidates: list[dict],
+    kept: list[dict],
+    rejected: list[dict],
+    now: float | None = None,
+) -> dict:
+    """Persist seed-drop + inclusion reject tallies for the midday funnel dig.
+
+    Written to ``REPORT_DIR/admit_funnel.json`` every sync so a full movers
+    panel with a tiny watch book is attributable without grepping logs.
+    """
+    from collections import Counter
+
+    t0 = float(now if now is not None else time.time())
+    seed = seed_drop_snapshot()
+    by_src = Counter(
+        str(r.get("source") or "") for r in (candidates or []) if isinstance(r, dict))
+    kept_src = Counter(
+        str(r.get("source") or "") for r in (kept or []) if isinstance(r, dict))
+    rej_reasons = Counter(
+        str(r.get("reason") or "") for r in (rejected or []) if isinstance(r, dict))
+    payload = {
+        "ts": round(t0, 2),
+        "n_candidates": len(candidates or []),
+        "n_kept": len(kept or []),
+        "n_rejected": len(rejected or []),
+        "candidates_by_source": dict(by_src),
+        "kept_by_source": dict(kept_src),
+        "inclusion_reject_reasons": dict(rej_reasons),
+        "seed_drops": seed,
+        "kept_symbols": [
+            str(r.get("symbol") or "").upper()
+            for r in (kept or []) if isinstance(r, dict) and r.get("symbol")
+        ],
+    }
+    path = REPORT_DIR / "admit_funnel.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        pass
+    # Also stamp a compact event so the day journal sees the funnel.
+    try:
+        import ai_positions as cp
+        top_seed = {
+            f"{src}:{why}": n
+            for src, bucket in (seed.get("counts") or {}).items()
+            for why, n in (bucket or {}).items()
+        }
+        cp.log_event(
+            "admit_funnel",
+            n_candidates=payload["n_candidates"],
+            n_kept=payload["n_kept"],
+            n_rejected=payload["n_rejected"],
+            inclusion=dict(rej_reasons.most_common(8)),
+            seed_drops=dict(sorted(top_seed.items(), key=lambda kv: -kv[1])[:12]),
+        )
+    except Exception:
+        pass
+    return payload
 
 
 def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = None) -> dict:
