@@ -1,0 +1,7 @@
+{
+  "min_n": 10,
+  "description": "A/B simpler arming: live MACD stack vs EXH+RSI only (MACD off). Both cells keep exhaustion_rules, CM RSI, mistimed_heat, require_exh_rising, and the live trail (give_r=0.35). Cell require_macd=true is baseline; false is the simpler open path.",
+  "search": {
+    "require_macd": [true, false]
+  }
+}

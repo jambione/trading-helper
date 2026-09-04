@@ -123,6 +123,16 @@ OVERLAY_KEYS = {
     # The live 0.10R working shelf is what closed the 86-second scalp; a
     # last-hour hold cannot be tested while that shelf is seeded on every fill.
     "trail_enabled": "ai_local_trail_enabled",
+    # Arm-gate A/B: MACD is the first-fail open-starver (~94% of shadow refuses).
+    # require_macd=False leaves EXH + CM RSI (+ mistimed_heat if live) as the
+    # simpler open path the desk wants to measure.
+    "require_macd": "ai_watch_arm_require_macd",
+    "macd_min_gap": "macd_min_gap",
+    "macd_block_narrowing": "ai_watch_macd_block_narrowing",
+    "macd_exh_override": "ai_watch_macd_exh_override",
+    "require_cm_rsi": "ai_watch_arm_require_cm_rsi",
+    "require_exh_rising": "ai_watch_require_exh_rising",
+    "mistimed_heat": "ai_watch_mistimed_heat_enabled",
 }
 VERDICT_CANDIDATE = "candidate"
 VERDICT_HYPOTHESIS = "hypothesis"
