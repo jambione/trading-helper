@@ -18,7 +18,9 @@ from config import DEFAULT_CONFIG  # noqa: E402
 
 def test_stream_subscribe_grace_knobs_default():
     assert DEFAULT_CONFIG["ai_watch_stream_subscribe_grace_sec"] == 90.0
-    assert DEFAULT_CONFIG["ai_watch_stale_timeout_quiet_max_sec"] == 900.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_quiet_max_sec"] == 180.0
+    assert DEFAULT_CONFIG["ai_watch_no_trade_after_subscribe_sec"] == 300.0
+    assert DEFAULT_CONFIG["ai_watch_admit_max_tape_age_sec"] == 120.0
 
 
 def test_decision_price_prefers_stale_tape_over_rest_when_ws_exists(monkeypatch):
@@ -56,16 +58,16 @@ def test_decision_price_young_stream_still_wins(monkeypatch):
 
 
 def test_quiet_dated_tape_is_not_dead_for_stale_timeout(monkeypatch):
-    """A 3–10 min-old Finnhub print is quiet, not a stale_timeout drop."""
-    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 400.0)
+    """A print younger than quiet_max is quiet; older starts the dead clock."""
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 120.0)
     rec = {"symbol": "AEHG", "last_ask_src": "stale_tape", "admit_ts": 1.0}
     cfg = {
-        "ai_watch_stale_timeout_quiet_max_sec": 900.0,
+        "ai_watch_stale_timeout_quiet_max_sec": 180.0,
         "ai_watch_stale_timeout_include_need_stream": False,
     }
     assert not ew._stale_feed_condition(rec, "stale_tape", cfg, now=1000.0)
-    # Truly ancient tape still counts as dead.
-    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 2000.0)
+    # Past quiet_max (AEHG-class 10–14 min book ages) counts as dead.
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 400.0)
     assert ew._stale_feed_condition(rec, "stale_tape", cfg, now=1000.0)
     # quiet_max 0 disables the quiet protection.
     assert ew._stale_feed_condition(

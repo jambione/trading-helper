@@ -344,10 +344,11 @@ def clear_tape_data_block_if_stream_fresh(
     rec: dict,
     cfg: dict | None = None,
 ) -> bool:
-    """Clear sticky tape-data blocks when last_ask_src=stream and age is young.
+    """Clear sticky tape-data blocks when last_ask_src=stream and age ≤ ceiling.
 
-    Returns True when a block was cleared. Does nothing when the print is
-    still stale_tape / untimed / non-stream — those must keep refusing.
+    Ceiling is ``ai_watch_decision_max_age_sec`` (default 15s). Returns True
+    when a block was cleared. Does nothing for stale_tape / untimed /
+    non-stream — those must keep refusing.
     """
     if not isinstance(rec, dict):
         return False
@@ -356,7 +357,14 @@ def clear_tape_data_block_if_stream_fresh(
     ).strip().lower()
     if src != "stream":
         return False
-    if _row_tape_stale(rec, cfg):
+    age = row_quote_age_sec(rec)
+    if age is None:
+        age = rec.get("last_ask_age_sec")
+    try:
+        age_f = float(age) if age is not None else None
+    except (TypeError, ValueError):
+        age_f = None
+    if age_f is None or age_f > decision_max_age_sec(cfg):
         return False
     code = str(rec.get("block_code") or "").strip().lower()
     if code not in _TAPE_DATA_BLOCK_CODES:
@@ -632,16 +640,37 @@ def _young_stream_alive(
 def stale_timeout_quiet_max_sec(cfg: dict | None = None) -> float:
     """Max age of a known WS/engine print that still counts as 'quiet, not dead'.
 
-    Thin names print every few minutes on Finnhub; dropping them at 6 min of
-    stale_tape while a 3–10 min-old trade exists starved AEHG/AOUT-class
-    arms on 2026-09-04. 0 = any dated tape blocks the dead-tape clock.
+    Thin names print every few minutes on Finnhub. 180s default (was 900):
+    AEHG/AOUT/LABX parked 10–14 min of dated-but-dead book prints as false
+    opportunity while quiet_max blocked the drop clock. 0 = any dated tape
+    blocks the dead-tape clock.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
         return max(0.0, float(
-            cfg.get("ai_watch_stale_timeout_quiet_max_sec", 900.0) or 0.0))
+            cfg.get("ai_watch_stale_timeout_quiet_max_sec", 180.0) or 0.0))
     except (TypeError, ValueError):
-        return 900.0
+        return 180.0
+
+
+def no_trade_after_subscribe_sec(cfg: dict | None = None) -> float:
+    """Seconds after admit+grace with no young stream before drop. 0 = off."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_no_trade_after_subscribe_sec", 300.0) or 0.0))
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def admit_max_tape_age_sec(cfg: dict | None = None) -> float:
+    """Max live_print age to admit a name. 0 disables the admit tape gate."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_admit_max_tape_age_sec", 120.0) or 0.0))
+    except (TypeError, ValueError):
+        return 120.0
 
 
 def _stale_feed_condition(
@@ -866,6 +895,92 @@ def _maybe_stale_timeout_drop(
     return True
 
 
+def _maybe_no_trade_after_subscribe_drop(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Drop a watch that never got a young stream print after subscribe.
+
+    Dig 2026-09-04: AEHG/AOUT/LABX stayed Finnhub-book-subscribed with
+    3–14 min-old rt ages — quiet_max treated them as alive, so the book
+    filled with permanent stale_quote false opportunities. After admit +
+    subscribe grace + ``ai_watch_no_trade_after_subscribe_sec``, require a
+    young stream (age ≤ decision ceiling) or drop.
+    """
+    limit = no_trade_after_subscribe_sec(cfg)
+    if limit <= 0:
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status in ("submitted", "filled"):
+        return False
+    try:
+        if gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    admitted = _f_or_none(rec.get("admit_ts"))
+    if admitted is None or admitted <= 0:
+        return False
+    grace = stale_timeout_grace_sec(cfg)
+    try:
+        sub_grace = float(
+            (cfg or {}).get("ai_watch_stream_subscribe_grace_sec", grace)
+            or grace)
+    except (TypeError, ValueError):
+        sub_grace = grace
+    wait = max(0.0, float(grace), float(sub_grace)) + float(limit)
+    if float(now) - float(admitted) < wait:
+        return False
+    ceiling = decision_max_age_sec(cfg)
+    # Young live tape (≤ decision ceiling) → keep.
+    age_f: float | None = None
+    try:
+        got = live_print(sym)
+        if got is not None and got[1] is not None:
+            age_f = float(got[1])
+            if age_f <= ceiling:
+                _clear_stale_feed_since(rec)
+                return False
+    except Exception:
+        pass
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if age_f is None:
+        age = row_quote_age_sec(rec, now=now)
+        if age is None:
+            age = rec.get("last_ask_age_sec")
+        try:
+            age_f = float(age) if age is not None else None
+        except (TypeError, ValueError):
+            age_f = None
+    if src == "stream" and age_f is not None and age_f <= ceiling:
+        _clear_stale_feed_since(rec)
+        return False
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="no_stream_trade",
+            elapsed_sec=round(float(now) - float(admitted), 1),
+            age_sec=round(age_f, 1) if age_f is not None else None,
+            src=src or None))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "watch_drop",
+            "symbol": sym,
+            "reason": "no_stream_trade",
+            "elapsed_sec": round(float(now) - float(admitted), 1),
+        })
+    _mark_stale_timeout_block(sym, now, cfg)
+    drop_watch_symbols([sym])
+    return True
+
+
 def _poller_blocked(rec: dict) -> bool:
     """True when the last poll recorded a real reason it would not buy.
 
@@ -989,8 +1104,11 @@ def derive_blocker(
         if code in (
             "below_zone", "above_zone", "in_zone",
             "stale_quote", "no_quote_age", "no_quote",
-            "stream_required",
+            "stream_required", "await_stream",
         ):
+            # Persist the clear on stream+age≤ceiling so file/UI cannot keep
+            # sticky stale_quote beside a young stream stamp.
+            clear_tape_data_block_if_stream_fresh(rec)
             pass  # fall through to live geometry / arm checks below
         else:
             label = str(rec.get("block_reason") or format_blocker(code) or code)
@@ -4774,6 +4892,25 @@ def passes_inclusion(
         # Cool lifted by a live print — keep going; criteria note for logs.
         if "reseed_allowed_stream" not in met:
             met = list(met) + ["reseed_allowed_stream"]
+    # Prefer not admitting names with no / dead tape over filling the book
+    # with permanent stale_quote rows (AEHG/AOUT/LABX-class after ba79b10).
+    tape_max = admit_max_tape_age_sec(cfg)
+    if tape_max > 0 and sym:
+        try:
+            tape = live_print(sym)
+        except Exception:
+            tape = None
+        if tape is None or tape[1] is None:
+            # Row may already carry a dated ask from the seed producer.
+            row_age = _f_or_none(row.get("price_age_sec"))
+            if row_age is None:
+                row_age = _f_or_none(row.get("last_ask_age_sec"))
+            if row_age is None:
+                return False, met, "no_tape"
+            if float(row_age) > tape_max:
+                return False, met, "stale_tape_admit"
+        elif float(tape[1]) > tape_max:
+            return False, met, "stale_tape_admit"
     source = str(row.get("source") or "").strip().lower()
     is_research = source in _RESEARCH_SOURCES
 
@@ -5317,6 +5454,10 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         for k in (
             "block_code", "block_reason", "block_ts", "block_detail",
             "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
+            # Keep the quote clock across the 2s rebuild — dropping age/ts
+            # left stale_tape rows with age=None while engine still had 3–14m
+            # prints (AEHG/LABX), which made UI and drop logic disagree.
+            "last_ask_age_sec", "last_ask_ts", "price_age_sec", "price_src",
             "zone_touch_ts", "arm_streak", "arm_streak_poll",
             "confirm_ask", "confirm_ask_ts", "confirm_px_src",
             "arm_confirm_rsi_max",
@@ -11167,6 +11308,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 events=events, cp=cp, gt=gt,
             ):
                 continue
+            if _maybe_no_trade_after_subscribe_drop(
+                rec, sym=sym, cfg=cfg, now=t0,
+                events=events, cp=cp, gt=gt,
+            ):
+                continue
             touched[sym] = rec
             continue
 
@@ -11205,6 +11351,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             set_block_reason(rec, _sr, now=t0, detail=px_src or "not_stream")
             if _maybe_stale_timeout_drop(
                 rec, sym=sym, px_src=px_src, cfg=cfg, now=t0,
+                events=events, cp=cp, gt=gt,
+            ):
+                continue
+            if _maybe_no_trade_after_subscribe_drop(
+                rec, sym=sym, cfg=cfg, now=t0,
                 events=events, cp=cp, gt=gt,
             ):
                 continue

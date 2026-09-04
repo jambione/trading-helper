@@ -556,8 +556,16 @@ DEFAULT_CONFIG = {
     # Default false — early RTH subscribe lag must not burn the admit window.
     "ai_watch_stale_timeout_include_need_stream": False,
     # Known WS/engine print younger than this is quiet tape, not dead — do
-    # not start the stale_timeout drop clock (thin names print every few min).
-    "ai_watch_stale_timeout_quiet_max_sec": 900.0,
+    # not start the stale_timeout drop clock. 180s (was 900): AEHG/AOUT/LABX
+    # parked for 10–14 min of dated-but-dead book prints as false opportunity.
+    "ai_watch_stale_timeout_quiet_max_sec": 180.0,
+    # After admit + subscribe grace, if no young stream print for this long,
+    # drop the watch (Finnhub subscribed but never trades / tape went dark).
+    # 0 disables. Default 5 min.
+    "ai_watch_no_trade_after_subscribe_sec": 300.0,
+    # Refuse admit when live tape is missing or older than this (seconds).
+    # Prefer an empty slot over a permanent stale_quote row. 0 disables.
+    "ai_watch_admit_max_tape_age_sec": 120.0,
     # Post-admit Finnhub subscribe grace: paint await_stream instead of sticky
     # need-stream, and re-assert WS sub. Defaults to stale_timeout_grace_sec.
     "ai_watch_stream_subscribe_grace_sec": 90.0,
@@ -1758,6 +1766,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stale_timeout_reseed_sec",
     "ai_watch_stale_timeout_include_need_stream",
     "ai_watch_stale_timeout_quiet_max_sec",
+    "ai_watch_no_trade_after_subscribe_sec",
+    "ai_watch_admit_max_tape_age_sec",
     "ai_watch_stream_subscribe_grace_sec",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",

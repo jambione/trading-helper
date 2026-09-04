@@ -132,7 +132,8 @@ def test_passes_inclusion_refuses_levered_etp(monkeypatch):
         {"symbol": "MST", "price": 8.0, "pct_change": 20.0, "rvol": 5.0,
          "criteria": ["mom_open"], "dollar_volume": 5e6},
         {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
-         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0,
+         "ai_watch_admit_max_tape_age_sec": 0},
     )
     assert ok is False
     assert why == "levered_etp"
@@ -145,9 +146,13 @@ def test_stale_timeout_knobs_default_around_six_minutes():
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_grace_sec"] == 90.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 300.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_include_need_stream"] is False
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_quiet_max_sec"] == 180.0
+    assert DEFAULT_CONFIG["ai_watch_no_trade_after_subscribe_sec"] == 300.0
+    assert DEFAULT_CONFIG["ai_watch_admit_max_tape_age_sec"] == 120.0
     assert ew.stale_timeout_sec({}) == 360.0
     assert ew.stale_timeout_reseed_sec({}) == 300.0
     assert ew.stale_timeout_grace_sec({}) == 90.0
+    assert ew.stale_timeout_quiet_max_sec({}) == 180.0
     assert ew.stale_timeout_sec({"ai_watch_stale_timeout_sec": 0}) == 0.0
 
 
@@ -302,7 +307,8 @@ def test_stale_timeout_refuses_reseed_while_tape_dead(monkeypatch):
         {"symbol": "ZZZ", "price": 5.0, "pct_change": 10.0, "rvol": 4.0,
          "criteria": ["mom_open"], "dollar_volume": 2e6},
         {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
-         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0,
+         "ai_watch_admit_max_tape_age_sec": 0},
     )
     assert ok is False and why == "stale_timeout_reseed_block"
     ew._STALE_TIMEOUT_UNTIL.clear()
@@ -331,7 +337,8 @@ def test_reseed_allowed_when_young_stream_appears(monkeypatch):
     ok, met, why = ew.passes_inclusion(
         row,
         {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
-         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0,
+         "ai_watch_admit_max_tape_age_sec": 0},
     )
     # Cool already cleared; admit proceeds (may still fail other gates —
     # at least not reseed_block).
@@ -384,3 +391,130 @@ def test_sync_drops_levered_etp_already_on_book(tmp_path, monkeypatch):
         cfg={"ai_watch_admit_grace_sec": 0}, now=10_000.0)
     assert "MST" not in state
     assert "AAPL" in state
+
+
+def test_no_trade_after_subscribe_drops_aehg_class(tmp_path, monkeypatch):
+    """Finnhub-book name with only a 10+ min-old print is dropped after N min."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 5_000_000.0
+    ew.save_watch({
+        "AEHG": {
+            "symbol": "AEHG",
+            "status": "watching",
+            "last_ask": 6.85,
+            "last_ask_src": "stale_tape",
+            "admit_ts": t0 - 600.0,  # 10 min on book
+            "block_code": "stale_quote",
+        },
+    })
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (6.85, 850.0))
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 850.0)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    rec = ew.load_watch()["AEHG"]
+    events: list = []
+    dropped = ew._maybe_no_trade_after_subscribe_drop(
+        rec, sym="AEHG",
+        cfg={
+            "ai_watch_no_trade_after_subscribe_sec": 300.0,
+            "ai_watch_stale_timeout_grace_sec": 90.0,
+            "ai_watch_stream_subscribe_grace_sec": 90.0,
+            "ai_watch_decision_max_age_sec": 15.0,
+            "ai_watch_stale_timeout_reseed_sec": 300.0,
+        },
+        now=t0, events=events, cp=_CP, gt=_GT,
+    )
+    assert dropped is True
+    assert any(e.get("reason") == "no_stream_trade" for e in events)
+    assert "AEHG" not in ew.load_watch()
+
+
+def test_no_trade_drop_keeps_young_stream(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 6_000_000.0
+    rec = {
+        "symbol": "SMCI",
+        "status": "watching",
+        "last_ask_src": "stream",
+        "last_ask_age_sec": 3.0,
+        "admit_ts": t0 - 600.0,
+    }
+    ew.save_watch({"SMCI": dict(rec)})
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (40.0, 3.0))
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    events: list = []
+    dropped = ew._maybe_no_trade_after_subscribe_drop(
+        rec, sym="SMCI",
+        cfg={
+            "ai_watch_no_trade_after_subscribe_sec": 300.0,
+            "ai_watch_stale_timeout_grace_sec": 90.0,
+            "ai_watch_decision_max_age_sec": 15.0,
+        },
+        now=t0, events=events, cp=_CP, gt=_GT,
+    )
+    assert dropped is False
+    assert "SMCI" in ew.load_watch()
+
+
+def test_passes_inclusion_refuses_stale_tape_admit(monkeypatch):
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (12.0, 400.0))
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "LABX", "price": 12.0, "pct_change": 18.0, "rvol": 3.0,
+         "criteria": ["mom_open"], "dollar_volume": 2e6},
+        {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0,
+         "ai_watch_admit_max_tape_age_sec": 120.0},
+    )
+    assert ok is False and why == "stale_tape_admit"
+
+
+def test_passes_inclusion_refuses_no_tape(monkeypatch):
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "DARK", "price": 8.0, "pct_change": 20.0, "rvol": 4.0,
+         "criteria": ["mom_open"], "dollar_volume": 2e6},
+        {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0,
+         "ai_watch_admit_max_tape_age_sec": 120.0},
+    )
+    assert ok is False and why == "no_tape"
+
+
+def test_clear_stale_quote_on_stream_age_le_15():
+    now = __import__("time").time()
+    rec = {
+        "symbol": "SNDG",
+        "last_ask_src": "stream",
+        "last_ask_age_sec": 8.0,
+        "last_ask_ts": now - 8.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+    }
+    assert ew.clear_tape_data_block_if_stream_fresh(
+        rec, {"ai_watch_decision_max_age_sec": 15.0}) is True
+    assert rec.get("block_code") is None

@@ -1852,6 +1852,8 @@ def _incl_cfg(**over):
         "ai_watch_min_price": 1.0,
         "ai_watch_admit_ticks": 1,
         "ai_min_dollar_volume": 0.0,
+        # Unit fixtures rarely stub live_print; production default is 120.
+        "ai_watch_admit_max_tape_age_sec": 0,
     }
     cfg.update(over)
     return cfg
