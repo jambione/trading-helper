@@ -11415,6 +11415,31 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 _gt._QUOTE_PATH_STATS["poll_priced_age_none_%s" % (px_src or "none")] += 1
         except Exception:  # noqa: BLE001
             pass
+        # Class C file-path: never leave stale_quote on disk when eng/live
+        # print is young (SNXX blip: eng≈2s + block=stale_quote while paint
+        # already cleared). Re-stamp stream from live_print and clear.
+        try:
+            _lp_now = live_print(sym)
+            if (
+                _lp_now is not None
+                and _lp_now[0]
+                and _lp_now[1] is not None
+                and float(_lp_now[0]) > 0
+                and float(_lp_now[1]) <= decision_max_age_sec(cfg)
+            ):
+                _epx, _eage = float(_lp_now[0]), float(_lp_now[1])
+                rec["last_ask"] = _epx
+                rec["last_ask_src"] = "stream"
+                rec["price_src"] = "stream"
+                rec["last_ask_age_sec"] = _eage
+                rec["last_ask_ts"] = float(t0) - _eage
+                _LAST_QUOTE_TS[str(sym).upper().strip()] = float(t0) - _eage
+                ask_f, px_src, px_age = _epx, "stream", _eage
+                clear_tape_data_block_if_stream_fresh(rec, cfg)
+        except Exception:
+            pass
+        if str(px_src or "").strip().lower() == "stream":
+            clear_tape_data_block_if_stream_fresh(rec, cfg)
         tape_only = px_src == "stale_tape"
         rec["last_poll_ts"] = t0
 
