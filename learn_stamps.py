@@ -112,6 +112,8 @@ _FINGERPRINT_KEYS = (
     # It changes which symbols get a chance to arm at all, so a session that
     # dropped them is not comparable to one that carried them.
     "ai_watch_stale_tape_drop_polls",
+    "ai_watch_stale_timeout_sec",
+    "ai_watch_stale_timeout_reseed_sec",
     # And whether a curl back to bearish pulls the shelf under the print.
     # This changes what the exit IS, not merely how wide it sits.
     "ai_exit_macd_curl_tighten",

@@ -1,0 +1,295 @@
+"""Levered ETP filter on non-movers seeds + stale_timeout watch drop.
+
+2026-09-04: MST sat on the AI watch book from 09:30 via the momentum seed
+(movers already filtered levered ETPs). Same class of names can also stick
+forever on stale_tape / need-stream when Finnhub never delivers a live trade.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+import ai_entry_watch as ew  # noqa: E402
+import ticker_filters as tf  # noqa: E402
+from config import DEFAULT_CONFIG  # noqa: E402
+
+
+# ── shared helper ─────────────────────────────────────────────────────────
+
+def test_ticker_filters_matches_movers_reexport():
+    import movers_screener as ms
+
+    for sym in ("MST", "MSTX", "TSLL", "CONL", "NVDL", "CIFX"):
+        assert tf.is_levered_etp(sym) and ms.is_levered_etp(sym)
+    for sym in ("MSTR", "CIFR", "BULL", "AAPL", "TSLA"):
+        assert not tf.is_levered_etp(sym) and not ms.is_levered_etp(sym)
+
+
+# ── A: ETP on non-movers seed / admit ─────────────────────────────────────
+
+def _seed_cfg(**over):
+    c = {
+        "ai_watch_seed_momentum": False,
+        "ai_watch_seed_momentum_open": False,
+        "ai_watch_seed_trending": False,
+        "ai_watch_seed_movers": False,
+        "ai_watch_seed_research": False,
+        "ai_watch_seed_bb_live": False,
+        "ai_max_price": 100.0,
+        "ai_watch_min_rvol": 0.0,
+        "ai_watch_open_seed_min_pct": 0.0,
+        "ai_watch_min_pct_change": 0.0,
+        "ai_watch_trending_min_score": 0.0,
+        "ai_watch_trending_min_pct_change": 0.0,
+        "ai_watch_trending_min_rvol": 0.0,
+        "ai_watch_require_look_ext": False,
+    }
+    c.update(over)
+    return c
+
+
+def test_momentum_seed_skips_levered_etp(monkeypatch):
+    """MST-class must not reach the shortlist via momentum flags."""
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "MST", "price": 8.0, "pct_change": 40.0, "rvol": 5.0,
+         "find_it_first": True, "mention_window": 1},
+        {"ticker": "AAPL", "price": 180.0, "pct_change": 3.0, "rvol": 2.0,
+         "find_it_first": True, "mention_window": 1},
+    ])
+    rows = ew.desk_candidate_rows(_seed_cfg(
+        ai_watch_seed_momentum=True, ai_watch_seed_momentum_n=12,
+        ai_max_price=500.0,
+    ))
+    syms = {r["symbol"] for r in rows}
+    assert "MST" not in syms
+    assert "AAPL" in syms
+
+
+def test_momentum_open_seed_skips_levered_etp(monkeypatch, tmp_path):
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    monkeypatch.setattr(ew, "_dashboard_tickers", lambda: [
+        {"ticker": "TSLL", "price": 12.0, "pct_change": 8.0, "rvol": 4.0},
+        {"ticker": "SOFI", "price": 10.0, "pct_change": 6.0, "rvol": 3.0},
+    ])
+    (tmp_path / "trending_stocks.json").write_text(
+        json.dumps({"rows": []}), encoding="utf-8")
+    rows = ew.desk_candidate_rows(_seed_cfg(
+        ai_watch_seed_momentum_open=True, ai_watch_seed_momentum_open_n=10,
+    ))
+    syms = {r["symbol"] for r in rows}
+    assert "TSLL" not in syms
+    assert "SOFI" in syms
+
+
+def test_trending_seed_skips_levered_etp(monkeypatch, tmp_path):
+    monkeypatch.setattr(ew, "ROOT", tmp_path)
+    (tmp_path / "trending_stocks.json").write_text(json.dumps({
+        "rows": [
+            {"symbol": "MSTX", "trending_score": 20.0, "pct_change": 25.0,
+             "rvol": 5.0, "price": 15.0, "is_equity": True},
+            {"symbol": "NVDA", "trending_score": 18.0, "pct_change": 4.0,
+             "rvol": 3.0, "price": 120.0, "is_equity": True},
+        ],
+    }), encoding="utf-8")
+    rows = ew.desk_candidate_rows(_seed_cfg(
+        ai_watch_seed_trending=True, ai_watch_seed_trending_n=20,
+        ai_max_price=500.0,
+    ))
+    syms = {r["symbol"] for r in rows}
+    assert "MSTX" not in syms
+    assert "NVDA" in syms
+
+
+def test_research_seed_skips_levered_etp(monkeypatch):
+    monkeypatch.setattr(ew, "research_candidate_rows", lambda: [
+        {"symbol": "CONL", "source": "xai", "reason": "levered thesis"},
+        {"symbol": "PLTR", "source": "xai", "reason": "real thesis"},
+    ])
+    monkeypatch.setattr(ew, "_live_quote_map", lambda: (
+        {"CONL": {"price": 40.0, "pct_change": 5.0, "rvol": 3.0},
+         "PLTR": {"price": 30.0, "pct_change": 2.0, "rvol": 2.0}},
+        {},
+    ))
+    rows = ew.desk_candidate_rows(_seed_cfg(
+        ai_watch_seed_research=True, ai_watch_seed_research_n=12,
+        ai_max_price=100.0,
+    ))
+    syms = {r["symbol"] for r in rows}
+    assert "CONL" not in syms
+    assert "PLTR" in syms
+
+
+def test_passes_inclusion_refuses_levered_etp(monkeypatch):
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "MST", "price": 8.0, "pct_change": 20.0, "rvol": 5.0,
+         "criteria": ["mom_open"], "dollar_volume": 5e6},
+        {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
+    )
+    assert ok is False
+    assert why == "levered_etp"
+
+
+# ── B: stale_timeout drop ────────────────────────────────────────────────
+
+def test_stale_timeout_knobs_default_around_six_minutes():
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 360.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 1800.0
+    assert ew.stale_timeout_sec({}) == 360.0
+    assert ew.stale_timeout_sec({"ai_watch_stale_timeout_sec": 0}) == 0.0
+
+
+def test_stale_timeout_drop_after_n_minutes(tmp_path, monkeypatch):
+    """A name stuck on stale_tape with no young trade_ts is dropped."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 1_000_000.0
+    ew.save_watch({
+        "DEAD": {
+            "symbol": "DEAD",
+            "status": "watching",
+            "last_ask": 5.0,
+            "last_ask_src": "stale_tape",
+            "price_src": "stale_tape",
+            "stale_feed_since": t0 - 400.0,
+        },
+    })
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 400.0)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    rec = ew.load_watch()["DEAD"]
+    events: list = []
+    dropped = ew._maybe_stale_timeout_drop(
+        rec, sym="DEAD", px_src="stale_tape",
+        cfg={"ai_watch_stale_timeout_sec": 360.0,
+             "ai_watch_stale_timeout_reseed_sec": 1800.0},
+        now=t0, events=events, cp=_CP, gt=_GT,
+    )
+    assert dropped is True
+    assert any(e.get("reason") == "stale_timeout" for e in events)
+    assert "DEAD" not in ew.load_watch()
+    assert ew._stale_timeout_blocked("DEAD", t0 + 10.0)
+
+
+def test_stale_timeout_does_not_drop_open_position(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 2_000_000.0
+    rec = {
+        "symbol": "HELD",
+        "status": "watching",
+        "last_ask_src": "stale_tape",
+        "stale_feed_since": t0 - 900.0,
+    }
+    ew.save_watch({"HELD": dict(rec)})
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 900.0)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(sym):
+            return sym == "HELD"
+
+    events: list = []
+    dropped = ew._maybe_stale_timeout_drop(
+        rec, sym="HELD", px_src="stale_tape",
+        cfg={"ai_watch_stale_timeout_sec": 360.0},
+        now=t0, events=events, cp=_CP, gt=_GT,
+    )
+    assert dropped is False
+    assert not events
+    assert "HELD" in ew.load_watch()
+
+
+def test_stale_timeout_need_stream_also_counts(monkeypatch):
+    """need-stream (stream_required) with no young trade_ts starts the clock."""
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 120.0)
+    rec = {"symbol": "QUIET", "block_code": "stream_required"}
+    cfg = {"ai_watch_arm_require_stream_price": True,
+           "ai_watch_stream_max_age_sec": 10.0}
+    assert ew._stale_feed_condition(rec, "rest", cfg, now=1_000_000.0)
+
+
+def test_stale_timeout_refuses_reseed(monkeypatch):
+    import time as _time
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    now = _time.time()
+    ew._mark_stale_timeout_block("ZZZ", now, {
+        "ai_watch_stale_timeout_reseed_sec": 600.0,
+    })
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "ZZZ", "price": 5.0, "pct_change": 10.0, "rvol": 4.0,
+         "criteria": ["mom_open"], "dollar_volume": 2e6},
+        {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
+    )
+    assert ok is False and why == "stale_timeout"
+    ew._STALE_TIMEOUT_UNTIL.clear()
+
+
+def test_young_trade_ts_prevents_stale_timeout_condition():
+    rec = {"symbol": "LIVE", "last_ask_ts": 1_000_000.0 - 2.0}
+    assert ew._young_trade_ts(rec, 1_000_000.0, {"ai_watch_stream_max_age_sec": 10})
+    assert not ew._stale_feed_condition(
+        rec, "stale_tape", {}, now=1_000_000.0)
+
+
+def test_sync_drops_levered_etp_already_on_book(tmp_path, monkeypatch):
+    """MST left on the book from a prior momentum seed must leave on sync."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew.save_watch({
+        "MST": {
+            "symbol": "MST",
+            "status": "watching",
+            "source": "momentum",
+            "last_ask": 7.0,
+            "structure": {"entry_low": 6.0, "entry_high": 7.5},
+            "structure_ts": 1.0,
+            "last_candidate_ts": 1.0,
+        },
+        "AAPL": {
+            "symbol": "AAPL",
+            "status": "watching",
+            "source": "momentum",
+            "last_ask": 180.0,
+            "structure": {"entry_low": 175.0, "entry_high": 182.0},
+            "structure_ts": 1.0,
+            "last_candidate_ts": 1.0,
+        },
+    })
+    monkeypatch.setattr(ew, "desk_candidate_rows", lambda cfg=None: [
+        {"symbol": "AAPL", "source": "momentum", "price": 180.0,
+         "pct_change": 2.0, "rvol": 2.0, "criteria": ["mom_open"],
+         "agreement": True, "score": 2.0, "reason": "desk"},
+    ])
+    monkeypatch.setattr(ew, "apply_inclusion_gate",
+                        lambda rows, cfg, indicators=None: (rows, []))
+    monkeypatch.setattr(ew, "push_candidates_to_engine", lambda *_a, **_k: None)
+    monkeypatch.setattr(ew, "_engine_indicator_map", lambda: {})
+    monkeypatch.setattr(ew, "_log_rejects", lambda *_a, **_k: None)
+
+    state = ew.sync_watch_from_source_panels(
+        cfg={"ai_watch_admit_grace_sec": 0}, now=10_000.0)
+    assert "MST" not in state
+    assert "AAPL" in state

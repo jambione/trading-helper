@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 import desk_auth  # noqa: E402
 import desk_core  # noqa: E402
 from ai_paths import resolve_report_dir  # noqa: E402
+from ticker_filters import is_levered_etp  # noqa: E402
 
 REPORT_DIR = resolve_report_dir()
 WATCH_STATE_PATH = REPORT_DIR / "entry_watch_state.json"
@@ -98,6 +99,13 @@ _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 # produced 39 BUY_ERRORs and a close_out thrash on QMCO/AIFA.
 _wash_cooldown_until: dict[str, float] = {}
 _WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
+
+# After a stale_timeout drop, refuse re-seed until this clock. Same shape as
+# wash cooldown: a name Finnhub never prices must not bounce straight back
+# onto the book and re-occupy a slot.
+_STALE_TIMEOUT_UNTIL: dict[str, float] = {}
+_STALE_TIMEOUT_DEFAULT_SEC = 360.0  # 6 min RTH
+_STALE_TIMEOUT_RESEED_DEFAULT_SEC = 1800.0  # 30 min
 
 # symbol -> the quote's OWN unix time, from the last provable pricing.
 # Deliberately module-level rather than a record field: poll_once rebuilds the
@@ -222,6 +230,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_quote": "stale quote",
     # Entry-only: ai_watch_arm_require_stream_price refused a non-stream print.
     "stream_required": "need stream",
+    "stale_timeout": "stale timeout",
+    "levered_etp": "levered ETP",
     # Atomic confirm→submit (Package B): send ask moved / tape died after pass.
     "confirm_slip": "confirm slip",
     "confirm_stale": "confirm stale",
@@ -472,6 +482,156 @@ def stream_price_required_block(px_src: str | None, cfg: dict | None) -> str | N
     if str(px_src or "").strip().lower() == "stream":
         return None
     return "stream_required"
+
+
+def stale_timeout_sec(cfg: dict | None = None) -> float:
+    """Seconds a watch may sit on stale_tape / need-stream before drop.
+
+    0 disables. Default ~6 min RTH — long enough for a thin name to print,
+    short enough that a Finnhub-dead symbol does not own a book slot all day.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_stale_timeout_sec", _STALE_TIMEOUT_DEFAULT_SEC)
+            or 0.0))
+    except (TypeError, ValueError):
+        return _STALE_TIMEOUT_DEFAULT_SEC
+
+
+def stale_timeout_reseed_sec(cfg: dict | None = None) -> float:
+    """How long a stale_timeout drop refuses re-seed. 0 = no reseed block."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_stale_timeout_reseed_sec",
+                    _STALE_TIMEOUT_RESEED_DEFAULT_SEC)
+            or 0.0))
+    except (TypeError, ValueError):
+        return _STALE_TIMEOUT_RESEED_DEFAULT_SEC
+
+
+def _young_trade_ts(rec: dict, now: float, cfg: dict | None = None) -> bool:
+    """True when the row has a provably young trade/quote timestamp."""
+    age = row_quote_age_sec(rec, now=now)
+    if age is None:
+        return False
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        max_age = float(cfg.get("ai_watch_stream_max_age_sec", 10.0) or 10.0)
+    except (TypeError, ValueError):
+        max_age = 10.0
+    if max_age <= 0:
+        max_age = 10.0
+    return age <= max_age
+
+
+def _stale_feed_condition(
+    rec: dict,
+    px_src: str | None,
+    cfg: dict | None,
+    *,
+    now: float,
+) -> bool:
+    """True when the row is stuck on stale_tape / need-stream with no young tape.
+
+    Matches the operator paint: ``stale_tape`` / ``stale quote`` and
+    ``need stream`` (stream_required) when Finnhub never delivers a live
+    trade. A young trade_ts clears the condition even if px_src is still
+    rest — the feed is alive.
+    """
+    if _young_trade_ts(rec, now, cfg):
+        return False
+    src = str(px_src or rec.get("last_ask_src") or rec.get("price_src")
+              or "").strip().lower()
+    if src in ("stale_tape", "none", ""):
+        return True
+    if stream_price_required_block(src, cfg) == "stream_required":
+        return True
+    code = str(rec.get("block_code") or "").strip().lower()
+    return code in ("stale_quote", "stream_required", "no_quote_age", "no_quote")
+
+
+def _stale_timeout_blocked(symbol: str, now: float) -> bool:
+    """True while a prior stale_timeout drop is still refusing re-seed."""
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return False
+    until = float(_STALE_TIMEOUT_UNTIL.get(sym) or 0.0)
+    if until <= 0:
+        return False
+    if now >= until:
+        _STALE_TIMEOUT_UNTIL.pop(sym, None)
+        return False
+    return True
+
+
+def _mark_stale_timeout_block(symbol: str, now: float, cfg: dict | None) -> None:
+    cool = stale_timeout_reseed_sec(cfg)
+    sym = str(symbol or "").upper().strip()
+    if not sym or cool <= 0:
+        return
+    _STALE_TIMEOUT_UNTIL[sym] = float(now) + cool
+
+
+def _clear_stale_feed_since(rec: dict) -> None:
+    if isinstance(rec, dict):
+        rec.pop("stale_feed_since", None)
+
+
+def _maybe_stale_timeout_drop(
+    rec: dict,
+    *,
+    sym: str,
+    px_src: str | None,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> bool:
+    """Drop a watch stuck on stale_tape / need-stream past the timeout.
+
+    Returns True when the symbol was dropped (caller should ``continue``).
+    Never drops submitted/filled rows or open broker positions.
+    """
+    limit = stale_timeout_sec(cfg)
+    if limit <= 0:
+        _clear_stale_feed_since(rec)
+        return False
+    if not _stale_feed_condition(rec, px_src, cfg, now=now):
+        _clear_stale_feed_since(rec)
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status in ("submitted", "filled"):
+        return False
+    try:
+        if gt.has_open_position(sym):
+            return False
+    except Exception:
+        pass
+    since = _f_or_none(rec.get("stale_feed_since"))
+    if since is None or since <= 0 or since > now:
+        rec["stale_feed_since"] = float(now)
+        return False
+    elapsed = float(now) - float(since)
+    if elapsed < limit:
+        return False
+    try:
+        events.append(cp.log_event(
+            "watch_drop", symbol=sym, reason="stale_timeout",
+            elapsed_sec=round(elapsed, 1), src=px_src,
+            block=str(rec.get("block_code") or "")))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "watch_drop",
+            "symbol": sym,
+            "reason": "stale_timeout",
+            "elapsed_sec": round(elapsed, 1),
+        })
+    _mark_stale_timeout_block(sym, now, cfg)
+    drop_watch_symbols([sym])
+    return True
 
 
 def _poller_blocked(rec: dict) -> bool:
@@ -2602,6 +2762,8 @@ def _momentum_flagged_from_dashboard(max_price: Any) -> list[tuple[float, dict]]
         s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
         if not s or not s[0].isalpha():
             continue
+        if is_levered_etp(s):
+            continue
         if not _price_under_cap(r.get("price"), max_price):
             continue
         # Rank: BURST > FIRST > NEW
@@ -2686,6 +2848,8 @@ def _big_mover_from_dashboard(
             continue
         s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
         if not s or not s[0].isalpha():
+            continue
+        if is_levered_etp(s):
             continue
         if not _price_under_cap(r.get("price"), max_price):
             continue
@@ -2993,6 +3157,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
                 if not s or not s[0].isalpha() or s in seen:
                     continue
+                if is_levered_etp(s):
+                    continue
                 if not _price_under_cap(r.get("price"), max_price):
                     continue
                 # Known-thin tape never seeds: same floor as passes_inclusion.
@@ -3085,6 +3251,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         continue
                     s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
                     if not s or not s[0].isalpha():
+                        continue
+                    if is_levered_etp(s):
                         continue
                     if not _price_under_cap(r.get("price"), max_price):
                         continue
@@ -3234,6 +3402,10 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     s = str(r.get("symbol") or "").upper().strip()
                     if not s or not s[0].isalpha() or s in seen:
                         continue
+                    # Defense in depth: movers_screener already drops these,
+                    # but a stale movers_stocks.json must not re-admit them.
+                    if is_levered_etp(s):
+                        continue
                     # Live quote first, the file second. The file's numbers are
                     # as old as the last producer write, and the gates below
                     # decide on them — so a name that popped at 09:35 and has
@@ -3307,6 +3479,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     break
                 s = str(r.get("symbol") or "").upper().strip()
                 if not s:
+                    continue
+                if is_levered_etp(s):
                     continue
                 live = desk_rows.get(s) or {}
                 tr = tr_by.get(s) or {}
@@ -4176,8 +4350,12 @@ def passes_inclusion(
         return False, list(row.get("criteria") or []), "look_wash"
     sym = str(row.get("symbol") or "").upper().strip()
     met = list(row.get("criteria") or [])
+    if sym and is_levered_etp(sym):
+        return False, met, "levered_etp"
     if sym and _dead_reentry_blocked(sym, time.time(), cfg):
         return False, met, "dead_reentry"
+    if sym and _stale_timeout_blocked(sym, time.time()):
+        return False, met, "stale_timeout"
     source = str(row.get("source") or "").strip().lower()
     is_research = source in _RESEARCH_SOURCES
 
@@ -4571,7 +4749,12 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         src = str(r.get("source") or "").lower()
         if src not in _PANEL_SOURCES:
             continue
-        if _dead_reentry_blocked(sym, t0, cfg if isinstance(cfg, dict) else {}):
+        if is_levered_etp(sym):
+            continue
+        cfg_d = cfg if isinstance(cfg, dict) else {}
+        if _dead_reentry_blocked(sym, t0, cfg_d):
+            continue
+        if _stale_timeout_blocked(sym, t0):
             continue
         merged[sym] = r
 
@@ -4585,7 +4768,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             status = str(rec.get("status") or "").lower().strip()
             if status in ("submitted", "filled"):
                 continue
-            if _dead_reentry_blocked(key, t0, cfg_d):
+            if is_levered_etp(key) or _dead_reentry_blocked(key, t0, cfg_d):
                 cleaned.pop(key, None)
         if cleaned != old:
             save_watch(cleaned)
@@ -4640,6 +4823,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
             "zone_touch_ts", "arm_streak", "arm_streak_poll",
             "confirm_ask", "confirm_ask_ts", "confirm_px_src",
+            "stale_feed_since", "stale_tape_streak",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
@@ -4713,12 +4897,18 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         # aimed at. This keeps the ROW alive, not the verdict; every gate
         # still runs on every poll. 0 disables.
         if status not in ("submitted", "filled") and not is_duel:
+            if is_levered_etp(key):
+                continue
             try:
                 _grace = float((cfg or {}).get("ai_watch_admit_grace_sec", 0) or 0)
             except (TypeError, ValueError):
                 _grace = 0.0
-            if _grace > 0 and not _dead_reentry_blocked(
-                    key, t0, cfg if isinstance(cfg, dict) else {}):
+            cfg_g = cfg if isinstance(cfg, dict) else {}
+            if (
+                _grace > 0
+                and not _dead_reentry_blocked(key, t0, cfg_g)
+                and not _stale_timeout_blocked(key, t0)
+            ):
                 _seen = _f_or_none(rec.get("last_candidate_ts"))
                 if _seen is not None and (t0 - _seen) <= _grace:
                     new_state[key] = dict(rec)
@@ -4729,8 +4919,11 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 continue
             if (
                 status not in ("submitted", "filled")
-                and _dead_reentry_blocked(
-                    key, t0, cfg if isinstance(cfg, dict) else {}
+                and (
+                    is_levered_etp(key)
+                    or _dead_reentry_blocked(
+                        key, t0, cfg if isinstance(cfg, dict) else {}
+                    )
                 )
             ):
                 continue
@@ -9863,6 +10056,27 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         status = str(rec.get("status") or "").lower().strip()
         if status in _TERMINAL_STATUSES:
             continue
+        # Levered / inverse ETPs must never occupy the AI watch book. Movers
+        # already filters them; momentum/trending historically did not, so
+        # MST/MSTX/TSLL sat on the book from the open with a dead tape.
+        if status not in ("submitted", "filled") and is_levered_etp(sym):
+            held = False
+            try:
+                held = bool(gt.has_open_position(sym))
+            except Exception:
+                held = False
+            if not held:
+                try:
+                    events.append(cp.log_event(
+                        "watch_drop", symbol=sym, reason="levered_etp"))
+                except Exception:
+                    events.append({
+                        "kind": "watch_drop",
+                        "symbol": sym,
+                        "reason": "levered_etp",
+                    })
+                drop_watch_symbols([sym])
+                continue
         if (
             status not in ("submitted", "filled")
             and _dead_reentry_blocked(sym, t0, cfg)
@@ -10265,6 +10479,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                                    "reason": "no_quote_feed"})
                 drop_watch_symbols([sym])
                 continue
+            # Time-based eviction (default ~6 min): poll streak above is
+            # optional and ships off; this catches Finnhub-dead names that
+            # paint stale_tape / need stream indefinitely.
+            if _maybe_stale_timeout_drop(
+                rec, sym=sym, px_src=px_src, cfg=cfg, now=t0,
+                events=events, cp=cp, gt=gt,
+            ):
+                continue
             touched[sym] = rec
             continue
 
@@ -10287,8 +10509,15 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         _sr = stream_price_required_block(px_src, cfg)
         if _sr:
             set_block_reason(rec, _sr, now=t0, detail=px_src or "not_stream")
+            if _maybe_stale_timeout_drop(
+                rec, sym=sym, px_src=px_src, cfg=cfg, now=t0,
+                events=events, cp=cp, gt=gt,
+            ):
+                continue
             touched[sym] = rec
             continue
+        # Fresh stream print: clear any stale-feed clock.
+        _clear_stale_feed_since(rec)
 
         # Arm / buy
         try:

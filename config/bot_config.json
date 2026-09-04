@@ -91,6 +91,8 @@
   "ai_volume_poll": 60.0,
   "ai_watch_admit_grace_sec": 180.0,
   "ai_watch_admit_ticks": 1,
+  "ai_watch_stale_timeout_sec": 360.0,
+  "ai_watch_stale_timeout_reseed_sec": 1800.0,
   "ai_watch_arm_below_zone": true,
   "ai_watch_arm_below_zone_max_r": 1.0,
   "ai_watch_arm_cm_rsi_allow_falling_below": 20.0,
