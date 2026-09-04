@@ -399,7 +399,7 @@ DEFAULT_CONFIG = {
     # movers_screener.py for why the producer, not this poll, drops warrants
     # and floors the RVOL denominator.
     "ai_watch_seed_movers":             True,
-    "ai_watch_seed_movers_n":             16,
+    "ai_watch_seed_movers_n":             8,
     "ai_watch_movers_min_pct_change":   10.0,
     # Judge a movers row on a live quote rather than on whatever the producer
     # recorded. 0/false keeps the file's own price and pct_change, which go
@@ -563,9 +563,22 @@ DEFAULT_CONFIG = {
     # drop the watch (Finnhub subscribed but never trades / tape went dark).
     # 0 disables. Default 5 min.
     "ai_watch_no_trade_after_subscribe_sec": 300.0,
+    # Reseed cool after a no_stream_trade drop (longer than generic stale_timeout
+    # reseed so thin +20% micro names do not bounce straight back onto the book).
+    # 0 falls back to ai_watch_stale_timeout_reseed_sec.
+    "ai_watch_no_trade_reseed_sec": 900.0,
     # Refuse admit when live tape is missing or older than this (seconds).
     # Prefer an empty slot over a permanent stale_quote row. 0 disables.
     "ai_watch_admit_max_tape_age_sec": 120.0,
+    # Movers seats: liquidity floors so micro-float no-trade names do not crowd
+    # out stream-ready trending / higher-$vol names. 0 = off for that floor.
+    "ai_watch_movers_min_dollar_volume": 2_000_000.0,
+    "ai_watch_movers_min_price": 5.0,
+    # Stricter tape age for movers admit (seconds). 0 = use admit_max_tape_age.
+    "ai_watch_movers_admit_max_tape_age_sec": 60.0,
+    # Max watching rows that may sit on stale_tape at once. Excess dropped
+    # (lowest $vol / oldest first). 0 = no stale_tape seats; <0 = unlimited.
+    "ai_watch_max_stale_tape_seats": 2,
     # Post-admit Finnhub subscribe grace: paint await_stream instead of sticky
     # need-stream, and re-assert WS sub. Defaults to stale_timeout_grace_sec.
     "ai_watch_stream_subscribe_grace_sec": 90.0,
@@ -1767,7 +1780,12 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stale_timeout_include_need_stream",
     "ai_watch_stale_timeout_quiet_max_sec",
     "ai_watch_no_trade_after_subscribe_sec",
+    "ai_watch_no_trade_reseed_sec",
     "ai_watch_admit_max_tape_age_sec",
+    "ai_watch_movers_min_dollar_volume",
+    "ai_watch_movers_min_price",
+    "ai_watch_movers_admit_max_tape_age_sec",
+    "ai_watch_max_stale_tape_seats",
     "ai_watch_stream_subscribe_grace_sec",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",

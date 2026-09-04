@@ -518,3 +518,129 @@ def test_clear_stale_quote_on_stream_age_le_15():
     assert ew.clear_tape_data_block_if_stream_fresh(
         rec, {"ai_watch_decision_max_age_sec": 15.0}) is True
     assert rec.get("block_code") is None
+
+
+def test_no_trade_reseed_longer_than_generic():
+    assert DEFAULT_CONFIG["ai_watch_no_trade_reseed_sec"] == 900.0
+    assert ew.no_trade_reseed_sec({}) == 900.0
+    assert ew.no_trade_reseed_sec({
+        "ai_watch_no_trade_reseed_sec": 0,
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+    }) == 300.0
+
+
+def test_no_stream_trade_uses_long_reseed(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 7_000_000.0
+    ew.save_watch({
+        "THIN": {
+            "symbol": "THIN", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (3.0, 400.0))
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    rec = ew.load_watch()["THIN"]
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        rec, sym="THIN",
+        cfg={
+            "ai_watch_no_trade_after_subscribe_sec": 300.0,
+            "ai_watch_no_trade_reseed_sec": 900.0,
+            "ai_watch_stale_timeout_grace_sec": 90.0,
+            "ai_watch_decision_max_age_sec": 15.0,
+            "ai_watch_stale_timeout_reseed_sec": 300.0,
+        },
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is True
+    until = ew._STALE_TIMEOUT_UNTIL.get("THIN", 0)
+    assert until >= t0 + 890.0  # long cool, not 300
+
+
+def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 8_000_000.0
+    state = {
+        "KEEP_HI": {
+            "symbol": "KEEP_HI", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 50e6,
+            "last_ask_age_sec": 40.0,
+        },
+        "KEEP_MID": {
+            "symbol": "KEEP_MID", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 10e6,
+            "last_ask_age_sec": 50.0,
+        },
+        "DROP_LO": {
+            "symbol": "DROP_LO", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 100e3,
+            "last_ask_age_sec": 200.0,
+        },
+        "STREAM": {
+            "symbol": "STREAM", "status": "watching",
+            "last_ask_src": "stream", "last_ask_age_sec": 3.0,
+            "admit_dollar_volume": 1e3,
+        },
+    }
+    ew.save_watch(state)
+    monkeypatch.setattr(ew, "row_quote_age_sec",
+                        lambda rec, now=None: rec.get("last_ask_age_sec"))
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    events: list = []
+    dropped = ew._enforce_stale_tape_seat_cap(
+        state, cfg={"ai_watch_max_stale_tape_seats": 2,
+                    "ai_watch_no_trade_reseed_sec": 900.0},
+        now=t0, events=events, cp=_CP, gt=_GT)
+    assert dropped == ["DROP_LO"]
+    assert "DROP_LO" not in ew.load_watch()
+    assert "KEEP_HI" in ew.load_watch() and "STREAM" in ew.load_watch()
+
+
+def test_passes_inclusion_movers_min_price_and_dvol(monkeypatch):
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (4.0, 5.0))
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    cfg = {
+        "ai_watch_require_uptrend": False, "ai_watch_min_price": 2.0,
+        "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0,
+        "ai_watch_movers_min_price": 5.0,
+        "ai_watch_movers_min_dollar_volume": 2e6,
+        "ai_watch_movers_admit_max_tape_age_sec": 60.0,
+        "ai_watch_admit_max_tape_age_sec": 120.0,
+    }
+    ok, _m, why = ew.passes_inclusion(
+        {"symbol": "CBRG", "source": "movers", "price": 4.0,
+         "pct_change": 25.0, "rvol": 3.0, "dollar_volume": 5e6,
+         "criteria": []},
+        cfg)
+    assert ok is False and why == "below_min_price"
+
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (8.0, 5.0))
+    ok, _m, why = ew.passes_inclusion(
+        {"symbol": "THIN", "source": "movers", "price": 8.0,
+         "pct_change": 25.0, "rvol": 3.0, "dollar_volume": 500e3,
+         "criteria": []},
+        cfg)
+    assert ok is False and why == "thin_dollar_volume"

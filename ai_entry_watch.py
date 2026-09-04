@@ -243,6 +243,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     "await_stream": "await stream",
     "stale_timeout": "stale timeout",
     "stale_timeout_reseed_block": "stale reseed",
+    "stale_tape_cap": "stale seat cap",
+    "stale_tape_admit": "tape too old",
+    "no_tape": "no tape",
+    "no_stream_trade": "no stream trade",
     "levered_etp": "levered ETP",
     # Atomic confirm→submit (Package B): send ask moved / tape died after pass.
     "confirm_slip": "confirm slip",
@@ -663,6 +667,18 @@ def no_trade_after_subscribe_sec(cfg: dict | None = None) -> float:
         return 300.0
 
 
+def no_trade_reseed_sec(cfg: dict | None = None) -> float:
+    """Reseed cool after a no_stream_trade drop. 0 → stale_timeout_reseed_sec."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        v = float(cfg.get("ai_watch_no_trade_reseed_sec", 900.0) or 0.0)
+    except (TypeError, ValueError):
+        v = 900.0
+    if v > 0:
+        return v
+    return stale_timeout_reseed_sec(cfg)
+
+
 def admit_max_tape_age_sec(cfg: dict | None = None) -> float:
     """Max live_print age to admit a name. 0 disables the admit tape gate."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -671,6 +687,27 @@ def admit_max_tape_age_sec(cfg: dict | None = None) -> float:
             cfg.get("ai_watch_admit_max_tape_age_sec", 120.0) or 0.0))
     except (TypeError, ValueError):
         return 120.0
+
+
+def movers_admit_max_tape_age_sec(cfg: dict | None = None) -> float:
+    """Movers-only tape age ceiling. 0 → use admit_max_tape_age_sec."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        v = float(cfg.get("ai_watch_movers_admit_max_tape_age_sec", 60.0) or 0.0)
+    except (TypeError, ValueError):
+        v = 60.0
+    if v > 0:
+        return max(0.0, v)
+    return admit_max_tape_age_sec(cfg)
+
+
+def max_stale_tape_seats(cfg: dict | None = None) -> int:
+    """Max watching stale_tape rows. <0 = unlimited."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return int(cfg.get("ai_watch_max_stale_tape_seats", 2))
+    except (TypeError, ValueError):
+        return 2
 
 
 def _stale_feed_condition(
@@ -822,8 +859,14 @@ def _consume_reseed_stream_clear(symbol: str) -> bool:
     return False
 
 
-def _mark_stale_timeout_block(symbol: str, now: float, cfg: dict | None) -> None:
-    cool = stale_timeout_reseed_sec(cfg)
+def _mark_stale_timeout_block(
+    symbol: str,
+    now: float,
+    cfg: dict | None,
+    *,
+    cool_sec: float | None = None,
+) -> None:
+    cool = float(cool_sec) if cool_sec is not None else stale_timeout_reseed_sec(cfg)
     sym = str(symbol or "").upper().strip()
     if not sym or cool <= 0:
         return
@@ -976,9 +1019,78 @@ def _maybe_no_trade_after_subscribe_drop(
             "reason": "no_stream_trade",
             "elapsed_sec": round(float(now) - float(admitted), 1),
         })
-    _mark_stale_timeout_block(sym, now, cfg)
+    _mark_stale_timeout_block(
+        sym, now, cfg, cool_sec=no_trade_reseed_sec(cfg))
     drop_watch_symbols([sym])
     return True
+
+
+def _enforce_stale_tape_seat_cap(
+    state: dict,
+    *,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+) -> list[str]:
+    """Drop excess watching stale_tape rows so liquid stream names keep seats.
+
+    Keeps up to ``ai_watch_max_stale_tape_seats`` (highest $vol, youngest age).
+    Returns dropped symbols. <0 disables.
+    """
+    cap = max_stale_tape_seats(cfg)
+    if cap < 0 or not isinstance(state, dict):
+        return []
+    stale: list[tuple[str, dict, float, float]] = []
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        status = str(rec.get("status") or "").lower().strip()
+        if status in ("submitted", "filled", "armed"):
+            continue
+        src = str(
+            rec.get("last_ask_src") or rec.get("price_src") or ""
+        ).strip().lower()
+        if src != "stale_tape":
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        try:
+            if gt is not None and gt.has_open_position(sym):
+                continue
+        except Exception:
+            pass
+        dvol = _f_or_none(rec.get("admit_dollar_volume")) or 0.0
+        age = row_quote_age_sec(rec, now=now)
+        if age is None:
+            age = _f_or_none(rec.get("last_ask_age_sec"))
+        age_f = float(age) if age is not None else 1e9
+        stale.append((sym, rec, float(dvol), age_f))
+    if len(stale) <= cap:
+        return []
+    # Keep best first: high $vol, then younger tape.
+    stale.sort(key=lambda t: (-t[2], t[3], t[0]))
+    dropped: list[str] = []
+    for sym, _rec, dvol, age_f in stale[cap:]:
+        try:
+            events.append(cp.log_event(
+                "watch_drop", symbol=sym, reason="stale_tape_cap",
+                age_sec=round(age_f, 1) if age_f < 1e8 else None,
+                dollar_volume=round(dvol, 0) if dvol else None,
+                cap=cap))
+        except Exception:  # noqa: BLE001
+            events.append({
+                "kind": "watch_drop", "symbol": sym,
+                "reason": "stale_tape_cap",
+            })
+        _mark_stale_timeout_block(
+            sym, now, cfg, cool_sec=no_trade_reseed_sec(cfg))
+        dropped.append(sym)
+    if dropped:
+        drop_watch_symbols(dropped)
+    return dropped
 
 
 def _poller_blocked(rec: dict) -> bool:
@@ -3834,6 +3946,19 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     if not _price_under_cap(px_src, max_price):
                         _note_seed_drop("movers", s, "price_cap", price=px_src)
                         continue
+                    try:
+                        mv_min_px = float(
+                            cfg.get("ai_watch_movers_min_price", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        mv_min_px = 0.0
+                    try:
+                        px_f = float(px_src) if px_src is not None else None
+                    except (TypeError, ValueError):
+                        px_f = None
+                    if mv_min_px > 0 and (px_f is None or px_f < mv_min_px):
+                        _note_seed_drop(
+                            "movers", s, "below_min_price", price=px_src)
+                        continue
                     pct = _pct_change_value(pct_src)
                     if pct is None or pct < mv_min_pct:
                         _note_seed_drop(
@@ -3861,6 +3986,33 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         _note_seed_drop("movers", s, "thin_rvol",
                                         pct=pct, rvol=rvol)
                         continue
+                    try:
+                        mv_min_dv = float(
+                            cfg.get("ai_watch_movers_min_dollar_volume", 0.0)
+                            or 0.0)
+                    except (TypeError, ValueError):
+                        mv_min_dv = 0.0
+                    dvol = r.get("dollar_volume")
+                    try:
+                        dvol_f = float(dvol) if dvol is not None else None
+                    except (TypeError, ValueError):
+                        dvol_f = None
+                    if dvol_f is None and px_f is not None:
+                        # Recover $vol from share volume when the file only
+                        # carries day volume.
+                        for vk in ("vol_session", "day_vol", "volume"):
+                            try:
+                                sh = float(r.get(vk)) if r.get(vk) is not None else None
+                            except (TypeError, ValueError):
+                                sh = None
+                            if sh is not None and sh > 0:
+                                dvol_f = sh * px_f
+                                break
+                    if mv_min_dv > 0 and (dvol_f is None or dvol_f < mv_min_dv):
+                        _note_seed_drop(
+                            "movers", s, "thin_dollar_volume",
+                            dollar_volume=dvol_f, price=px_src)
+                        continue
                     seen.add(s)
                     row = dict(r)
                     row["symbol"] = s
@@ -3869,6 +4021,8 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     row["pct_change"] = pct
                     row["price"] = px_src
                     row["quote_src"] = src_used
+                    if dvol_f is not None:
+                        row["dollar_volume"] = dvol_f
                     rows.append(row)
                     if len([x for x in rows
                             if x.get("source") == "movers"]) >= max(1, n):
@@ -4892,9 +5046,15 @@ def passes_inclusion(
         # Cool lifted by a live print — keep going; criteria note for logs.
         if "reseed_allowed_stream" not in met:
             met = list(met) + ["reseed_allowed_stream"]
+    source = str(row.get("source") or "").strip().lower()
+    is_research = source in _RESEARCH_SOURCES
     # Prefer not admitting names with no / dead tape over filling the book
     # with permanent stale_quote rows (AEHG/AOUT/LABX-class after ba79b10).
-    tape_max = admit_max_tape_age_sec(cfg)
+    # Movers get a tighter ceiling so thin +20% names need a live print.
+    tape_max = (
+        movers_admit_max_tape_age_sec(cfg) if source == "movers"
+        else admit_max_tape_age_sec(cfg)
+    )
     if tape_max > 0 and sym:
         try:
             tape = live_print(sym)
@@ -4911,8 +5071,6 @@ def passes_inclusion(
                 return False, met, "stale_tape_admit"
         elif float(tape[1]) > tape_max:
             return False, met, "stale_tape_admit"
-    source = str(row.get("source") or "").strip().lower()
-    is_research = source in _RESEARCH_SOURCES
 
     price = row.get("price")
     try:
@@ -4920,6 +5078,13 @@ def passes_inclusion(
     except (TypeError, ValueError):
         price_f = None
     min_price = float(cfg.get("ai_watch_min_price", 1.0) or 0.0)
+    if source == "movers":
+        try:
+            mv_min_px = float(cfg.get("ai_watch_movers_min_price", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            mv_min_px = 0.0
+        if mv_min_px > 0:
+            min_price = max(min_price, mv_min_px)
     # Two different facts under one label. A name with no price still cannot be
     # admitted — nothing downstream can size or zone it — but calling that
     # "below_min_price" reports a penny stock that was screened out, which is a
@@ -4955,6 +5120,14 @@ def passes_inclusion(
         met.append("mom_open")
 
     min_dv = float(cfg.get("ai_min_dollar_volume", 0.0) or 0.0)
+    if source == "movers":
+        try:
+            mv_dv = float(
+                cfg.get("ai_watch_movers_min_dollar_volume", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            mv_dv = 0.0
+        if mv_dv > 0:
+            min_dv = max(min_dv, mv_dv)
     if min_dv > 0:
         dv = row.get("dollar_volume")
         try:
@@ -11835,6 +12008,21 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 rec["status"] = "watching"
 
         touched[sym] = rec
+
+    # Cap how many stale_tape rows may occupy the book so liquid stream-ready
+    # trending / higher-$vol names keep seats (target sustained stream% ≥50).
+    try:
+        with _WATCH_LOCK:
+            _cap_state = dict(load_watch() or {})
+        for _k, _v in touched.items():
+            if isinstance(_v, dict):
+                _cap_state[_k] = _v
+        _cap_dropped = _enforce_stale_tape_seat_cap(
+            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt)
+        for _s in _cap_dropped:
+            touched.pop(_s, None)
+    except Exception:
+        pass
 
     merge_watch_records(touched)
     return events
