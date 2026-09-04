@@ -130,6 +130,8 @@ def test_public_snapshot_refreshes_young_engine_over_stale_rec(monkeypatch):
             "last_ask_src": "stale_tape",
             "last_ask_age_sec": 19.9,
             "last_ask_ts": now - 19.9,
+            "block_code": "stale_quote",
+            "block_reason": "stale quote",
             "structure": {
                 "entry_low": 50.0,
                 "entry_high": 52.0,
@@ -147,6 +149,75 @@ def test_public_snapshot_refreshes_young_engine_over_stale_rec(monkeypatch):
     assert row["last_ask_age_sec"] is not None
     assert row["last_ask_age_sec"] <= 15.0
     assert row["block_code"] != "stale_quote"
+    # Underlying rec must also drop the sticky tape-data refuse.
+    assert state["GTLB"].get("block_code") != "stale_quote"
+
+
+def test_clear_tape_data_block_when_stream_fresh():
+    """BIAF/SNDG: stream+young must clear sticky stale_quote on the record."""
+    now = time.time()
+    rec = {
+        "symbol": "BIAF",
+        "last_ask_src": "stream",
+        "price_src": "stream",
+        "last_ask_age_sec": 2.0,
+        "last_ask_ts": now - 2.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+        "block_detail": "tape age unknown or old",
+    }
+    assert ew.clear_tape_data_block_if_stream_fresh(rec) is True
+    assert rec.get("block_code") is None
+    assert rec.get("block_reason") is None
+
+
+def test_clear_tape_data_block_keeps_stale_tape():
+    rec = {
+        "symbol": "SNDG",
+        "last_ask_src": "stale_tape",
+        "last_ask_age_sec": 2.0,
+        "last_ask_ts": time.time() - 2.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+    }
+    assert ew.clear_tape_data_block_if_stream_fresh(rec) is False
+    assert rec["block_code"] == "stale_quote"
+
+
+def test_apply_decision_price_clears_stale_quote_on_stream(monkeypatch):
+    monkeypatch.setattr(ew, "decision_price", lambda *a, **k: (10.5, "stream", 1.5))
+    rec = {
+        "symbol": "SMCI",
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+        "last_ask_src": "stale_tape",
+    }
+    px, src, age = ew.apply_decision_price(
+        rec, {"ai_watch_decision_max_age_sec": 15.0}, time.time())
+    assert src == "stream" and px == 10.5 and age == 1.5
+    assert rec["last_ask_src"] == "stream"
+    assert rec.get("block_code") != "stale_quote"
+
+
+def test_should_arm_buy_refuses_stale_tape_src():
+    rec = {
+        "symbol": "BIAF",
+        "status": "watching",
+        "last_ask_src": "stale_tape",
+        "structure": {
+            "decision": "WAIT",
+            "wait_kind": "wait_for_zone",
+            "entry_low": 10.0,
+            "entry_high": 10.2,
+            "stop_price": 9.5,
+            "target_1": 11.0,
+            "reward_risk": 1.0,
+        },
+    }
+    ok, why = ew.should_arm_buy(
+        rec, ask=10.1, bid=10.0, cfg={"desk_product": "scalp_legacy"})
+    assert ok is False
+    assert why == "stale_quote"
 
 
 def test_live_print_engine_wins_over_undated_dash(monkeypatch):

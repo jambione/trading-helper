@@ -330,6 +330,41 @@ def clear_block_reason(rec: dict) -> None:
         rec.pop(k, None)
 
 
+# Data-condition refuses that must not survive a fresh stream print.
+# Sync used to copy block_code=stale_quote from prev then overwrite
+# last_ask_src=stream (BIAF/SNDG/SMCI 2026-09-04) — file and paint then
+# showed stream+young beside "stale quote".
+_TAPE_DATA_BLOCK_CODES = frozenset({
+    "stale_quote", "no_quote_age", "no_quote",
+    "stream_required", "await_stream",
+})
+
+
+def clear_tape_data_block_if_stream_fresh(
+    rec: dict,
+    cfg: dict | None = None,
+) -> bool:
+    """Clear sticky tape-data blocks when last_ask_src=stream and age is young.
+
+    Returns True when a block was cleared. Does nothing when the print is
+    still stale_tape / untimed / non-stream — those must keep refusing.
+    """
+    if not isinstance(rec, dict):
+        return False
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if src != "stream":
+        return False
+    if _row_tape_stale(rec, cfg):
+        return False
+    code = str(rec.get("block_code") or "").strip().lower()
+    if code not in _TAPE_DATA_BLOCK_CODES:
+        return False
+    clear_block_reason(rec)
+    return True
+
+
 def release_orphaned_submits(
     symbols: list[str] | None = None,
     *,
@@ -1133,6 +1168,8 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
         # block_code=stale_quote (age/src already said the print is dead).
         honesty_restamp_stream_src(row)
         return
+    # Stream+fresh: drop sticky tape-data refuse before geometry recompute.
+    clear_tape_data_block_if_stream_fresh(row)
     # Keep a poller-stamped stream_required refuse until the print is stream.
     # Do not re-derive the flag from live bot_config here (tests / paint).
     _src_now = str(
@@ -1390,6 +1427,8 @@ def public_snapshot(state: dict | None = None) -> list[dict]:
                 rec["last_ask_age_sec"] = _eage
                 rec["last_ask_ts"] = _now_al - _eage
                 _LAST_QUOTE_TS[sym] = _now_al - _eage
+                # Drop sticky stale_quote once paint has a young stream print.
+                clear_tape_data_block_if_stream_fresh(rec)
         except Exception:
             pass
         last_ask = rec.get("last_ask")
@@ -1892,6 +1931,7 @@ def book_table_rows(
                     if age_f <= max_age:
                         r["last_ask_src"] = "stream"
                         r["price_src"] = "stream"
+                        clear_tape_data_block_if_stream_fresh(r)
                     else:
                         # PPBT Sep2 honesty: never leave last_ask_src=stream
                         # while age exceeds the decision ceiling — blocker
@@ -4297,6 +4337,10 @@ def apply_decision_price(rec: dict, cfg: dict | None, now: float) -> tuple[float
             rec.pop("last_ask_ts", None)
             if _sym_k:
                 _LAST_QUOTE_TS.pop(_sym_k, None)
+        # After the clock is stamped: drop sticky tape-data refuses so the
+        # file/paint cannot keep "stale quote" beside stream+young (BIAF/SNDG).
+        if str(src or "").strip().lower() == "stream":
+            clear_tape_data_block_if_stream_fresh(rec, cfg)
         rec["last_trade"] = float(px) if src in ("stream", "stale_tape") else rec.get("last_trade")
     return (float(px) if px else 0.0), src, age
 
@@ -5303,6 +5347,9 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 rec["last_ask_ts"] = float(t0) - float(tape[1])
                 _LAST_QUOTE_TS[str(sym).upper().strip()] = (
                     float(t0) - float(tape[1]))
+                # Sync copies block_code from prev then may stamp stream —
+                # clear sticky stale_quote here or the file keeps both.
+                clear_tape_data_block_if_stream_fresh(rec, cfg_z)
                 ask_for_zone = float(tape[0])
             if ask_for_zone and not _structure_usable(rec.get("structure")):
                 ensure_offset_zone_if_needed(rec, ask_for_zone, cfg_z, t0)
@@ -9222,6 +9269,14 @@ def should_arm_buy(
     status = str(record.get("status") or "").lower().strip()
     if status not in _ARMABLE_STATUSES:
         return False, "not_watching"
+    # Never arm when the decision src is explicitly stale_tape / none.
+    # Full _row_tape_stale (fail-closed on missing age) stays in the poller /
+    # refresh path — unit tests often call should_arm_buy without a clock.
+    _src_arm = str(
+        record.get("last_ask_src") or record.get("price_src") or ""
+    ).strip().lower()
+    if _src_arm in ("stale_tape", "none"):
+        return False, "stale_quote"
 
     structure = record.get("structure")
     if not isinstance(structure, dict):
@@ -10858,6 +10913,7 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     # 2s paint). Old print → stale_tape, never stream+stale.
                     if _age_f <= decision_max_age_sec(cfg):
                         rec["last_ask_src"] = "stream"
+                        clear_tape_data_block_if_stream_fresh(rec, cfg)
                     else:
                         rec["last_ask_src"] = "stale_tape"
                     honesty_restamp_stream_src(rec, cfg)

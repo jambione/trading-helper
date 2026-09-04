@@ -695,6 +695,14 @@ def overlay_ai_book_live_prices(
                 if fresh_stream:
                     row["price_src"] = "stream"
                     row["last_ask_src"] = "stream"
+                    # Drop sticky stale_quote when overlay has stream+young
+                    # (BIAF/SNDG after ba79b10) even if zone levels are missing
+                    # and apply_tape_blocker is skipped below.
+                    try:
+                        from ai_entry_watch import clear_tape_data_block_if_stream_fresh
+                        clear_tape_data_block_if_stream_fresh(row)
+                    except Exception:
+                        pass
                 elif age is not None and age > decision_max:
                     # Honesty: age>ceiling never keeps last_ask_src=stream.
                     row["price_src"] = "stale_tape"

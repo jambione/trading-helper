@@ -4167,6 +4167,8 @@ def test_apply_tape_blocker_keeps_stream_required_until_stream(monkeypatch):
 
     monkeypatch.setattr(ew, "_desk_rvol", lambda _s: None)
     monkeypatch.setattr(ew, "_push_cfg", lambda: _last_cfg())
+    # Isolate from live EXH/RSI arm gates — this test is about stream_required.
+    monkeypatch.setattr(ew, "_row_arm_refuse", lambda *_a, **_k: None)
     row = {
         "symbol": "LIVE", "source": "momentum",
         "entry_low": 9.596, "entry_high": 9.624, "stop_price": 9.13,
@@ -4181,6 +4183,8 @@ def test_apply_tape_blocker_keeps_stream_required_until_stream(monkeypatch):
     row["last_ask_src"] = "stream"
     row["last_ask_age_sec"] = 1.0
     ew.apply_tape_blocker(row, 9.61)
+    assert row["block_code"] != "stream_required"
+    assert row["block_code"] != "stale_quote"
     assert row["ready"] is True
     assert row["block_code"] == "in_zone"
 
