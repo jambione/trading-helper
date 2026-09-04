@@ -1,0 +1,11 @@
+{
+  "min_n": 10,
+  "description": "A/B be_at after give_max_pct=1.75 is live. Old: be_at_r=0.1 + be_at_pct=0.4 (BE at ~0.4% of price). New: be_at_r=0.35 + be_at_pct=0 (BE at 0.35R ≈ give width). give_r/open/max_pct pinned to the post-4f186fb live trail.",
+  "search": {
+    "give_r": [0.35],
+    "give_open_r": [0.35],
+    "give_max_pct": [1.75],
+    "be_at_r": [0.1, 0.35],
+    "be_at_pct": [0.4, 0.0]
+  }
+}
