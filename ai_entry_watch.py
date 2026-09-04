@@ -100,12 +100,13 @@ _STRUCTURE_BUDGET_WINDOW_SEC = 3600.0
 _wash_cooldown_until: dict[str, float] = {}
 _WASH_COOLDOWN_SEC = 1800.0  # 30 minutes
 
-# After a stale_timeout drop, refuse re-seed until this clock. Same shape as
-# wash cooldown: a name Finnhub never prices must not bounce straight back
-# onto the book and re-occupy a slot.
+# After a stale_timeout drop, refuse re-seed until this clock — but only while
+# the tape is still dead. A young stream print clears the cool immediately
+# (see _stale_timeout_blocked). 30m cool starved selection on 2026-09-04.
 _STALE_TIMEOUT_UNTIL: dict[str, float] = {}
 _STALE_TIMEOUT_DEFAULT_SEC = 360.0  # 6 min RTH
-_STALE_TIMEOUT_RESEED_DEFAULT_SEC = 1800.0  # 30 min
+_STALE_TIMEOUT_RESEED_DEFAULT_SEC = 300.0  # 5 min (was 30m — too hungry)
+_STALE_TIMEOUT_GRACE_DEFAULT_SEC = 90.0  # don't count until on-book this long
 
 # symbol -> the quote's OWN unix time, from the last provable pricing.
 # Deliberately module-level rather than a record field: poll_once rebuilds the
@@ -235,6 +236,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Entry-only: ai_watch_arm_require_stream_price refused a non-stream print.
     "stream_required": "need stream",
     "stale_timeout": "stale timeout",
+    "stale_timeout_reseed_block": "stale reseed",
     "levered_etp": "levered ETP",
     # Atomic confirm→submit (Package B): send ask moved / tape died after pass.
     "confirm_slip": "confirm slip",
@@ -489,7 +491,7 @@ def stream_price_required_block(px_src: str | None, cfg: dict | None) -> str | N
 
 
 def stale_timeout_sec(cfg: dict | None = None) -> float:
-    """Seconds a watch may sit on stale_tape / need-stream before drop.
+    """Seconds a watch may sit on dead stale_tape before drop.
 
     0 disables. Default ~6 min RTH — long enough for a thin name to print,
     short enough that a Finnhub-dead symbol does not own a book slot all day.
@@ -504,7 +506,12 @@ def stale_timeout_sec(cfg: dict | None = None) -> float:
 
 
 def stale_timeout_reseed_sec(cfg: dict | None = None) -> float:
-    """How long a stale_timeout drop refuses re-seed. 0 = no reseed block."""
+    """How long a stale_timeout drop refuses re-seed while tape is still dead.
+
+    0 = no reseed block. Default 300s (was 1800 — starved selection when
+    Finnhub was merely slow). A young stream print clears the cool even
+    inside the window — see ``_stale_timeout_blocked``.
+    """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
         return max(0.0, float(
@@ -513,6 +520,22 @@ def stale_timeout_reseed_sec(cfg: dict | None = None) -> float:
             or 0.0))
     except (TypeError, ValueError):
         return _STALE_TIMEOUT_RESEED_DEFAULT_SEC
+
+
+def stale_timeout_grace_sec(cfg: dict | None = None) -> float:
+    """Seconds on-book before the stale_timeout clock may start.
+
+    Early RTH Finnhub subscribe lag used to burn the only admit window when
+    need-stream counted from t=0. 0 disables the grace.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_stale_timeout_grace_sec",
+                    _STALE_TIMEOUT_GRACE_DEFAULT_SEC)
+            or 0.0))
+    except (TypeError, ValueError):
+        return _STALE_TIMEOUT_GRACE_DEFAULT_SEC
 
 
 def _young_trade_ts(rec: dict, now: float, cfg: dict | None = None) -> bool:
@@ -530,6 +553,41 @@ def _young_trade_ts(rec: dict, now: float, cfg: dict | None = None) -> bool:
     return age <= max_age
 
 
+def _young_stream_alive(
+    symbol: str,
+    cfg: dict | None = None,
+    *,
+    now: float | None = None,
+    row: dict | None = None,
+) -> bool:
+    """True when Finnhub (or the desk tape) has a young dated print right now.
+
+    Used to clear a reseed cool: a name that was dropped for dead tape but
+    now has a live stream must be allowed back onto the book immediately.
+    """
+    t = float(now if now is not None else time.time())
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        max_age = float(cfg.get("ai_watch_stream_max_age_sec", 10.0) or 10.0)
+    except (TypeError, ValueError):
+        max_age = 10.0
+    if max_age <= 0:
+        max_age = 10.0
+    # Candidate / watch row first — admit path often already has last_ask_ts.
+    if isinstance(row, dict) and _young_trade_ts(row, t, cfg):
+        return True
+    try:
+        got = live_print(symbol)
+    except Exception:
+        got = None
+    if got is None or got[1] is None:
+        return False
+    try:
+        return float(got[1]) <= max_age
+    except (TypeError, ValueError):
+        return False
+
+
 def _stale_feed_condition(
     rec: dict,
     px_src: str | None,
@@ -537,12 +595,12 @@ def _stale_feed_condition(
     *,
     now: float,
 ) -> bool:
-    """True when the row is stuck on stale_tape / need-stream with no young tape.
+    """True when the row is on *dead* stale_tape with no young trade_ts.
 
-    Matches the operator paint: ``stale_tape`` / ``stale quote`` and
-    ``need stream`` (stream_required) when Finnhub never delivers a live
-    trade. A young trade_ts clears the condition even if px_src is still
-    rest — the feed is alive.
+    Default counts only ``stale_tape`` / ``none`` / empty — not brief
+    need-stream/rest right after admit (early RTH subscribe lag). Set
+    ``ai_watch_stale_timeout_include_need_stream`` to also count
+    stream_required. A young trade_ts always clears the condition.
     """
     if _young_trade_ts(rec, now, cfg):
         return False
@@ -550,14 +608,43 @@ def _stale_feed_condition(
               or "").strip().lower()
     if src in ("stale_tape", "none", ""):
         return True
+    if not bool((cfg or {}).get("ai_watch_stale_timeout_include_need_stream", False)):
+        return False
     if stream_price_required_block(src, cfg) == "stream_required":
         return True
     code = str(rec.get("block_code") or "").strip().lower()
     return code in ("stale_quote", "stream_required", "no_quote_age", "no_quote")
 
 
-def _stale_timeout_blocked(symbol: str, now: float) -> bool:
-    """True while a prior stale_timeout drop is still refusing re-seed."""
+def _on_book_grace_ok(rec: dict, cfg: dict | None, now: float) -> bool:
+    """False while the name is still inside the post-admit subscribe grace."""
+    grace = stale_timeout_grace_sec(cfg)
+    if grace <= 0:
+        return True
+    admitted = _f_or_none(rec.get("admit_ts"))
+    if admitted is None or admitted <= 0:
+        # No admit stamp — do not start the dead-tape clock yet.
+        return False
+    return (float(now) - float(admitted)) >= grace
+
+
+# Symbols whose reseed cool was cleared by a live stream this process —
+# consumed once by passes_inclusion / sync for a clear log line.
+_RESEED_STREAM_CLEARED: set[str] = set()
+
+
+def _stale_timeout_blocked(
+    symbol: str,
+    now: float,
+    *,
+    cfg: dict | None = None,
+    row: dict | None = None,
+) -> bool:
+    """True while a prior stale_timeout drop refuses re-seed (tape still dead).
+
+    Clears immediately when a young stream print is available — the admit
+    path logs ``reseed_allowed_stream`` via ``_consume_reseed_stream_clear``.
+    """
     sym = str(symbol or "").upper().strip()
     if not sym:
         return False
@@ -567,7 +654,21 @@ def _stale_timeout_blocked(symbol: str, now: float) -> bool:
     if now >= until:
         _STALE_TIMEOUT_UNTIL.pop(sym, None)
         return False
+    if _young_stream_alive(sym, cfg, now=now, row=row):
+        _STALE_TIMEOUT_UNTIL.pop(sym, None)
+        _RESEED_STREAM_CLEARED.add(sym)
+        return False
     return True
+
+
+def _consume_reseed_stream_clear(symbol: str) -> bool:
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return False
+    if sym in _RESEED_STREAM_CLEARED:
+        _RESEED_STREAM_CLEARED.discard(sym)
+        return True
+    return False
 
 
 def _mark_stale_timeout_block(symbol: str, now: float, cfg: dict | None) -> None:
@@ -594,13 +695,18 @@ def _maybe_stale_timeout_drop(
     cp,
     gt,
 ) -> bool:
-    """Drop a watch stuck on stale_tape / need-stream past the timeout.
+    """Drop a watch stuck on dead stale_tape past the timeout.
 
     Returns True when the symbol was dropped (caller should ``continue``).
-    Never drops submitted/filled rows or open broker positions.
+    Never drops submitted/filled rows or open broker positions. Does not
+    start the clock during post-admit grace, and by default ignores brief
+    need-stream (subscribe lag) — only pure stale_tape counts.
     """
     limit = stale_timeout_sec(cfg)
     if limit <= 0:
+        _clear_stale_feed_since(rec)
+        return False
+    if not _on_book_grace_ok(rec, cfg, now):
         _clear_stale_feed_since(rec)
         return False
     if not _stale_feed_condition(rec, px_src, cfg, now=now):
@@ -4358,8 +4464,15 @@ def passes_inclusion(
         return False, met, "levered_etp"
     if sym and _dead_reentry_blocked(sym, time.time(), cfg):
         return False, met, "dead_reentry"
-    if sym and _stale_timeout_blocked(sym, time.time()):
-        return False, met, "stale_timeout"
+    # Reseed cool after a stale_timeout drop — only while tape is still dead.
+    # A young stream clears the cool (reseed_allowed_stream); otherwise refuse
+    # as stale_timeout_reseed_block so logs are not confused with the drop.
+    if sym and _stale_timeout_blocked(sym, time.time(), cfg=cfg, row=row):
+        return False, met, "stale_timeout_reseed_block"
+    if sym and _consume_reseed_stream_clear(sym):
+        # Cool lifted by a live print — keep going; criteria note for logs.
+        if "reseed_allowed_stream" not in met:
+            met = list(met) + ["reseed_allowed_stream"]
     source = str(row.get("source") or "").strip().lower()
     is_research = source in _RESEARCH_SOURCES
 
@@ -4758,8 +4871,9 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         cfg_d = cfg if isinstance(cfg, dict) else {}
         if _dead_reentry_blocked(sym, t0, cfg_d):
             continue
-        if _stale_timeout_blocked(sym, t0):
+        if _stale_timeout_blocked(sym, t0, cfg=cfg_d, row=r):
             continue
+        _consume_reseed_stream_clear(sym)  # cool may have just cleared
         merged[sym] = r
 
     # Empty sources at startup: keep prior state to avoid wipe race.
@@ -4912,7 +5026,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             if (
                 _grace > 0
                 and not _dead_reentry_blocked(key, t0, cfg_g)
-                and not _stale_timeout_blocked(key, t0)
+                and not _stale_timeout_blocked(key, t0, cfg=cfg_g, row=rec)
             ):
                 _seen = _f_or_none(rec.get("last_candidate_ts"))
                 if _seen is not None and (t0 - _seen) <= _grace:

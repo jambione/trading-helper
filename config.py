@@ -531,13 +531,21 @@ DEFAULT_CONFIG = {
     # it; only a name the feed cannot price at all runs the count up.
     # 0 disables the drop.
     "ai_watch_stale_tape_drop_polls":     0,
-    # Wall-clock eviction for watches stuck on stale_tape / need-stream with
-    # no young trade_ts. Poll-count above ships off; this is the live default
-    # (~6 min RTH). 0 disables. Open positions are never dropped.
+    # Wall-clock eviction for watches stuck on *dead* stale_tape with no
+    # young trade_ts. Poll-count above ships off; this is the live default
+    # (~6 min RTH). 0 disables. Open positions are never dropped. By default
+    # brief need-stream after admit does NOT count (subscribe lag).
     "ai_watch_stale_timeout_sec":         360.0,
-    # After a stale_timeout drop, refuse re-seed for this long so the same
-    # Finnhub-dead name does not bounce straight back onto the book.
-    "ai_watch_stale_timeout_reseed_sec":  1800.0,
+    # Seconds on-book before the stale_timeout clock may start (Finnhub
+    # subscribe grace). 0 = start immediately.
+    "ai_watch_stale_timeout_grace_sec":   90.0,
+    # After a stale_timeout drop, refuse re-seed for this long *while the
+    # tape is still dead*. A young stream print clears the cool immediately.
+    # 300s default (was 1800 — starved selection on 2026-09-04). 0 = off.
+    "ai_watch_stale_timeout_reseed_sec":  300.0,
+    # When true, need-stream/rest also advances the stale_timeout clock.
+    # Default false — early RTH subscribe lag must not burn the admit window.
+    "ai_watch_stale_timeout_include_need_stream": False,
     # ── Real-time tape pre-filter ───────────────────────────────────────────
     # The Finnhub WebSocket price (via the dashboard's ticker rows) is used to
     # SKIP the per-symbol Alpaca quote when price is nowhere near the zone.
@@ -1720,7 +1728,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_admit_grace_sec",
     "ai_watch_stale_tape_drop_polls",
     "ai_watch_stale_timeout_sec",
+    "ai_watch_stale_timeout_grace_sec",
     "ai_watch_stale_timeout_reseed_sec",
+    "ai_watch_stale_timeout_include_need_stream",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",
     "ai_watch_stream_max_age_sec",

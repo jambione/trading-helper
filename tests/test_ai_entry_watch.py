@@ -20,14 +20,18 @@ def test_watch_config_defaults_present():
         "ai_persist_entry_decisions",
         "ai_watch_arm_require_stream_price",
         "ai_watch_stale_timeout_sec",
+        "ai_watch_stale_timeout_grace_sec",
         "ai_watch_stale_timeout_reseed_sec",
+        "ai_watch_stale_timeout_include_need_stream",
     ):
         assert key in DEFAULT_CONFIG
     # Code default False so tests / paper keep REST fallback; live bot_config
     # turns the stream-only arm gate on.
     assert DEFAULT_CONFIG["ai_watch_arm_require_stream_price"] is False
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 360.0
-    assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 1800.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_grace_sec"] == 90.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 300.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_include_need_stream"] is False
     cfg = load_config()
     assert cfg["ai_watch_enabled"] is True
     # Live bot_config may flip agreement; defaults document the knobs.

@@ -142,9 +142,24 @@ def test_passes_inclusion_refuses_levered_etp(monkeypatch):
 
 def test_stale_timeout_knobs_default_around_six_minutes():
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_sec"] == 360.0
-    assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 1800.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_grace_sec"] == 90.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 300.0
+    assert DEFAULT_CONFIG["ai_watch_stale_timeout_include_need_stream"] is False
     assert ew.stale_timeout_sec({}) == 360.0
+    assert ew.stale_timeout_reseed_sec({}) == 300.0
+    assert ew.stale_timeout_grace_sec({}) == 90.0
     assert ew.stale_timeout_sec({"ai_watch_stale_timeout_sec": 0}) == 0.0
+
+
+def _drop_cfg(**over):
+    c = {
+        "ai_watch_stale_timeout_sec": 360.0,
+        "ai_watch_stale_timeout_grace_sec": 0.0,  # tests control the clock
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+        "ai_watch_stale_timeout_include_need_stream": False,
+    }
+    c.update(over)
+    return c
 
 
 def test_stale_timeout_drop_after_n_minutes(tmp_path, monkeypatch):
@@ -159,6 +174,7 @@ def test_stale_timeout_drop_after_n_minutes(tmp_path, monkeypatch):
             "last_ask": 5.0,
             "last_ask_src": "stale_tape",
             "price_src": "stale_tape",
+            "admit_ts": t0 - 1000.0,
             "stale_feed_since": t0 - 400.0,
         },
     })
@@ -178,8 +194,7 @@ def test_stale_timeout_drop_after_n_minutes(tmp_path, monkeypatch):
     events: list = []
     dropped = ew._maybe_stale_timeout_drop(
         rec, sym="DEAD", px_src="stale_tape",
-        cfg={"ai_watch_stale_timeout_sec": 360.0,
-             "ai_watch_stale_timeout_reseed_sec": 1800.0},
+        cfg=_drop_cfg(),
         now=t0, events=events, cp=_CP, gt=_GT,
     )
     assert dropped is True
@@ -196,6 +211,7 @@ def test_stale_timeout_does_not_drop_open_position(tmp_path, monkeypatch):
         "symbol": "HELD",
         "status": "watching",
         "last_ask_src": "stale_tape",
+        "admit_ts": t0 - 1000.0,
         "stale_feed_since": t0 - 900.0,
     }
     ew.save_watch({"HELD": dict(rec)})
@@ -214,7 +230,7 @@ def test_stale_timeout_does_not_drop_open_position(tmp_path, monkeypatch):
     events: list = []
     dropped = ew._maybe_stale_timeout_drop(
         rec, sym="HELD", px_src="stale_tape",
-        cfg={"ai_watch_stale_timeout_sec": 360.0},
+        cfg=_drop_cfg(),
         now=t0, events=events, cp=_CP, gt=_GT,
     )
     assert dropped is False
@@ -222,30 +238,102 @@ def test_stale_timeout_does_not_drop_open_position(tmp_path, monkeypatch):
     assert "HELD" in ew.load_watch()
 
 
-def test_stale_timeout_need_stream_also_counts(monkeypatch):
-    """need-stream (stream_required) with no young trade_ts starts the clock."""
+def test_need_stream_does_not_count_by_default(monkeypatch):
+    """Brief need-stream after admit must not start the dead-tape clock."""
     monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 120.0)
-    rec = {"symbol": "QUIET", "block_code": "stream_required"}
+    rec = {"symbol": "QUIET", "block_code": "stream_required",
+           "admit_ts": 1_000_000.0 - 200.0}
     cfg = {"ai_watch_arm_require_stream_price": True,
-           "ai_watch_stream_max_age_sec": 10.0}
+           "ai_watch_stream_max_age_sec": 10.0,
+           "ai_watch_stale_timeout_include_need_stream": False}
+    assert not ew._stale_feed_condition(rec, "rest", cfg, now=1_000_000.0)
+    # Opt-in still available for desks that want it.
+    cfg["ai_watch_stale_timeout_include_need_stream"] = True
     assert ew._stale_feed_condition(rec, "rest", cfg, now=1_000_000.0)
 
 
-def test_stale_timeout_refuses_reseed(monkeypatch):
+def test_stale_timeout_grace_blocks_instant_clock(tmp_path, monkeypatch):
+    """Newly admitted names get subscribe grace before the clock starts."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 3_000_000.0
+    rec = {
+        "symbol": "NEW",
+        "status": "watching",
+        "last_ask_src": "stale_tape",
+        "admit_ts": t0 - 30.0,  # only 30s on book
+        "stale_feed_since": t0 - 30.0,
+    }
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 400.0)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    events: list = []
+    dropped = ew._maybe_stale_timeout_drop(
+        rec, sym="NEW", px_src="stale_tape",
+        cfg=_drop_cfg(ai_watch_stale_timeout_grace_sec=90.0),
+        now=t0, events=events, cp=_CP, gt=_GT,
+    )
+    assert dropped is False
+    assert "stale_feed_since" not in rec  # clock cleared during grace
+
+
+def test_stale_timeout_refuses_reseed_while_tape_dead(monkeypatch):
     import time as _time
     ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._RESEED_STREAM_CLEARED.clear()
     now = _time.time()
     ew._mark_stale_timeout_block("ZZZ", now, {
         "ai_watch_stale_timeout_reseed_sec": 600.0,
     })
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
     ok, _met, why = ew.passes_inclusion(
         {"symbol": "ZZZ", "price": 5.0, "pct_change": 10.0, "rvol": 4.0,
          "criteria": ["mom_open"], "dollar_volume": 2e6},
         {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
          "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
     )
-    assert ok is False and why == "stale_timeout"
+    assert ok is False and why == "stale_timeout_reseed_block"
     ew._STALE_TIMEOUT_UNTIL.clear()
+
+
+def test_reseed_allowed_when_young_stream_appears(monkeypatch):
+    """30m cool must not starve a name that now has a live Finnhub print."""
+    import time as _time
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._RESEED_STREAM_CLEARED.clear()
+    now = _time.time()
+    ew._mark_stale_timeout_block("BACK", now, {
+        "ai_watch_stale_timeout_reseed_sec": 1800.0,  # old hungry cool
+    })
+    assert "BACK" in ew._STALE_TIMEOUT_UNTIL
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (12.5, 1.5))
+    row = {"symbol": "BACK", "price": 12.5, "pct_change": 8.0, "rvol": 3.0,
+           "criteria": ["mom_open"], "dollar_volume": 3e6,
+           "last_ask_ts": now - 1.5, "last_ask_src": "stream"}
+    assert ew._stale_timeout_blocked(
+        "BACK", now + 10.0, cfg={"ai_watch_stream_max_age_sec": 10.0}, row=row
+    ) is False
+    assert "BACK" not in ew._STALE_TIMEOUT_UNTIL
+    assert ew._consume_reseed_stream_clear("BACK") is True
+
+    ok, met, why = ew.passes_inclusion(
+        row,
+        {"ai_watch_require_uptrend": False, "ai_watch_min_price": 1.0,
+         "ai_min_dollar_volume": 0.0, "ai_watch_max_float_m": 0},
+    )
+    # Cool already cleared; admit proceeds (may still fail other gates —
+    # at least not reseed_block).
+    assert why != "stale_timeout_reseed_block"
+    assert why != "stale_timeout"
 
 
 def test_young_trade_ts_prevents_stale_timeout_condition():
