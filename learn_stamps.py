@@ -126,6 +126,8 @@ _FINGERPRINT_KEYS = (
     "ai_watch_stale_timeout_grace_sec",
     "ai_watch_stale_timeout_reseed_sec",
     "ai_watch_stale_timeout_include_need_stream",
+    "ai_watch_stale_timeout_quiet_max_sec",
+    "ai_watch_stream_subscribe_grace_sec",
     # And whether a curl back to bearish pulls the shelf under the print.
     # This changes what the exit IS, not merely how wide it sits.
     "ai_exit_macd_curl_tighten",

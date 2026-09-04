@@ -95,6 +95,8 @@
   "ai_watch_stale_timeout_grace_sec": 90.0,
   "ai_watch_stale_timeout_reseed_sec": 300.0,
   "ai_watch_stale_timeout_include_need_stream": false,
+  "ai_watch_stale_timeout_quiet_max_sec": 900.0,
+  "ai_watch_stream_subscribe_grace_sec": 90.0,
   "ai_watch_arm_below_zone": true,
   "ai_watch_arm_below_zone_max_r": 1.0,
   "ai_watch_arm_cm_rsi_allow_falling_below": 20.0,

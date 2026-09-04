@@ -157,6 +157,9 @@ def _drop_cfg(**over):
         "ai_watch_stale_timeout_grace_sec": 0.0,  # tests control the clock
         "ai_watch_stale_timeout_reseed_sec": 300.0,
         "ai_watch_stale_timeout_include_need_stream": False,
+        # 0 = any dated tape is still "quiet"; tests that want a true dead
+        # drop set age high or leave this 0 and use src=none.
+        "ai_watch_stale_timeout_quiet_max_sec": 0.0,
     }
     c.update(over)
     return c

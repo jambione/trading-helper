@@ -555,6 +555,12 @@ DEFAULT_CONFIG = {
     # When true, need-stream/rest also advances the stale_timeout clock.
     # Default false — early RTH subscribe lag must not burn the admit window.
     "ai_watch_stale_timeout_include_need_stream": False,
+    # Known WS/engine print younger than this is quiet tape, not dead — do
+    # not start the stale_timeout drop clock (thin names print every few min).
+    "ai_watch_stale_timeout_quiet_max_sec": 900.0,
+    # Post-admit Finnhub subscribe grace: paint await_stream instead of sticky
+    # need-stream, and re-assert WS sub. Defaults to stale_timeout_grace_sec.
+    "ai_watch_stream_subscribe_grace_sec": 90.0,
     # ── Real-time tape pre-filter ───────────────────────────────────────────
     # The Finnhub WebSocket price (via the dashboard's ticker rows) is used to
     # SKIP the per-symbol Alpaca quote when price is nowhere near the zone.
@@ -1751,6 +1757,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stale_timeout_grace_sec",
     "ai_watch_stale_timeout_reseed_sec",
     "ai_watch_stale_timeout_include_need_stream",
+    "ai_watch_stale_timeout_quiet_max_sec",
+    "ai_watch_stream_subscribe_grace_sec",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",
     "ai_watch_stream_max_age_sec",

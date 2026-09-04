@@ -239,6 +239,8 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_quote": "stale quote",
     # Entry-only: ai_watch_arm_require_stream_price refused a non-stream print.
     "stream_required": "need stream",
+    # Post-admit Finnhub subscribe grace — not the same as a dead tape.
+    "await_stream": "await stream",
     "stale_timeout": "stale timeout",
     "stale_timeout_reseed_block": "stale reseed",
     "levered_etp": "levered ETP",
@@ -592,6 +594,21 @@ def _young_stream_alive(
         return False
 
 
+def stale_timeout_quiet_max_sec(cfg: dict | None = None) -> float:
+    """Max age of a known WS/engine print that still counts as 'quiet, not dead'.
+
+    Thin names print every few minutes on Finnhub; dropping them at 6 min of
+    stale_tape while a 3–10 min-old trade exists starved AEHG/AOUT-class
+    arms on 2026-09-04. 0 = any dated tape blocks the dead-tape clock.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get("ai_watch_stale_timeout_quiet_max_sec", 900.0) or 0.0))
+    except (TypeError, ValueError):
+        return 900.0
+
+
 def _stale_feed_condition(
     rec: dict,
     px_src: str | None,
@@ -599,15 +616,27 @@ def _stale_feed_condition(
     *,
     now: float,
 ) -> bool:
-    """True when the row is on *dead* stale_tape with no young trade_ts.
+    """True when the row is on *dead* tape with no usable trade_ts.
 
     Default counts only ``stale_tape`` / ``none`` / empty — not brief
-    need-stream/rest right after admit (early RTH subscribe lag). Set
+    need-stream/rest right after admit (early RTH subscribe lag). A known
+    dated print younger than ``ai_watch_stale_timeout_quiet_max_sec`` is
+    quiet tape, not dead — do not start the drop clock. Set
     ``ai_watch_stale_timeout_include_need_stream`` to also count
     stream_required. A young trade_ts always clears the condition.
     """
     if _young_trade_ts(rec, now, cfg):
         return False
+    # Quiet-but-subscribed: engine/dash still has a dated print within the
+    # quiet window — Finnhub delivered something; waiting for the next trade.
+    # quiet_max <= 0 disables this protection (any stale_tape can be dead).
+    age = row_quote_age_sec(rec, now=now)
+    quiet_max = stale_timeout_quiet_max_sec(cfg)
+    if quiet_max > 0 and age is not None and age <= quiet_max:
+        src_q = str(px_src or rec.get("last_ask_src") or rec.get("price_src")
+                    or "").strip().lower()
+        if src_q in ("stale_tape", "stream"):
+            return False
     src = str(px_src or rec.get("last_ask_src") or rec.get("price_src")
               or "").strip().lower()
     if src in ("stale_tape", "none", ""):
@@ -617,7 +646,8 @@ def _stale_feed_condition(
     if stream_price_required_block(src, cfg) == "stream_required":
         return True
     code = str(rec.get("block_code") or "").strip().lower()
-    return code in ("stale_quote", "stream_required", "no_quote_age", "no_quote")
+    return code in ("stale_quote", "stream_required", "no_quote_age", "no_quote",
+                    "await_stream")
 
 
 def _on_book_grace_ok(rec: dict, cfg: dict | None, now: float) -> bool:
@@ -630,6 +660,59 @@ def _on_book_grace_ok(rec: dict, cfg: dict | None, now: float) -> bool:
         # No admit stamp — do not start the dead-tape clock yet.
         return False
     return (float(now) - float(admitted)) >= grace
+
+
+def _within_subscribe_grace(rec: dict, cfg: dict | None, now: float) -> bool:
+    """True during post-admit Finnhub subscribe grace (await_stream window)."""
+    try:
+        grace = float(
+            (cfg or {}).get("ai_watch_stream_subscribe_grace_sec",
+                            stale_timeout_grace_sec(cfg))
+            or 0.0)
+    except (TypeError, ValueError):
+        grace = stale_timeout_grace_sec(cfg)
+    if grace <= 0:
+        return False
+    admitted = _f_or_none(rec.get("admit_ts"))
+    if admitted is None or admitted <= 0:
+        return True
+    return (float(now) - float(admitted)) < grace
+
+
+def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
+    """Force Finnhub priority + subscribe and engine book push for watch names.
+
+    Called on admit/re-admit so AEHG/AOUT-class are not left on REST while
+    SCAN already prints. Merges into the existing priority set (does not
+    wipe desk/engine priorities). Safe no-op when Finnhub is unavailable.
+    """
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in symbols or []:
+        t = str(raw or "").upper().strip()
+        if not t or not t.isalpha() or not (2 <= len(t) <= 5) or t in seen:
+            continue
+        seen.add(t)
+        wanted.append(t)
+    out = {"requested": len(wanted), "subscribed": 0, "pushed": 0}
+    if not wanted:
+        return out
+    try:
+        from finnhub_stream import (
+            set_subscribe_priority, get_subscribe_priority, request_subscribe,
+        )
+        pri = get_subscribe_priority() | set(wanted)
+        set_subscribe_priority(sorted(pri))
+        request_subscribe(wanted)
+        out["subscribed"] = len(wanted)
+    except Exception:
+        pass
+    try:
+        pushed = push_candidates_to_engine(wanted)
+        out["pushed"] = int((pushed or {}).get("pushed") or 0)
+    except Exception:
+        pass
+    return out
 
 
 # Symbols whose reseed cool was cleared by a live stream this process —
@@ -4129,9 +4212,11 @@ def decision_price(
     Returns ``(price, src, age_sec)`` where src is ``stream``, ``rest``,
     ``stale_tape``, or ``none``.
 
-    Fresh dashboard tape (Finnhub/Alpaca stream, age ≤ max) wins: that is
-    the print the operator sees. Otherwise a just-fetched REST ask. A tape
-    print with unknown or old age is ``stale_tape`` and must not arm.
+    Fresh dashboard/engine tape (age ≤ max) wins: that is the print the
+    operator sees. When a dated WS/engine trade EXISTS but is older than
+    the ceiling, return ``stale_tape`` — never disguise it as ``rest``.
+    Painting rest while Finnhub holds a trade made AEHG/AOUT look
+    unsubscribed (need stream) on 2026-09-04 while SCAN showed the print.
     """
     max_age = decision_max_age_sec(cfg)
     tape = live_print(symbol)
@@ -4146,6 +4231,10 @@ def decision_price(
         ask_f = float(ask) if ask is not None else 0.0
     except Exception:
         ask_f = 0.0
+    # Dated WS/engine tape present but old: honest stale_tape beats REST.
+    # REST remains available only when there is no dated tape at all.
+    if tape is not None and tape[0] and tape[0] > 0 and tape[1] is not None:
+        return tape[0], "stale_tape", tape[1]
     if ask_f > 0:
         # Cross-check the REST ask against the last print before trusting it.
         # Nothing did, and on 2026-08-21 the quote on thin names ran far above
@@ -4162,16 +4251,7 @@ def decision_price(
         # A quote this far from the tape is not a wide market, it is a wrong
         # number. Fall through to stale_tape, which already must not arm.
         # 0 disables the check.
-        dev = _ask_max_dev_pct(cfg)
-        if (dev > 0 and tape is not None and tape[0] and tape[0] > 0
-                and abs(ask_f - tape[0]) / tape[0] * 100.0 > dev):
-            return tape[0], "stale_tape", tape[1]
-        # The REST ask now carries the quote's own age when Alpaca supplied
-        # one. It used to return None unconditionally, which read downstream
-        # as "cannot prove it is live" and — because every guard failed open
-        # — was then treated as fresh. A freshly FETCHED quote is not a
-        # freshly QUOTED one: premarket 8/26 this path served an IEX ask of
-        # 0.00 behind a quote 14 hours old. None still means unprovable.
+        # (Tape-without-age already returned above; this path is REST-only.)
         try:
             rest_age = gt.cached_quote_age_sec(symbol)
         except Exception:  # noqa: BLE001
@@ -5245,6 +5325,18 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         # offering never ages out of it.
         rec["last_candidate_ts"] = t0
         new_state[sym] = rec
+
+    # Force Finnhub priority + subscribe for every live watch name (and
+    # especially brand-new admits) so AEHG/AOUT are not left on REST while
+    # SCAN already prints. Cheap when already subscribed.
+    try:
+        newly = [
+            s for s in new_state
+            if s not in old or not isinstance(old.get(s), dict)
+        ]
+        ensure_watch_stream(list(new_state.keys()) or newly)
+    except Exception:
+        pass
 
     # Keep in-flight paper entries even if they left the panels (still managing).
     # Also keep daily A/X duel champions (research) — desk-only sync would drop them.
@@ -10509,6 +10601,13 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     if not state:
         return events
 
+    # Re-assert Finnhub priority/subscribe for the live book every poll —
+    # cheap when already subscribed; repairs WS drops after admit.
+    try:
+        ensure_watch_stream(list(state.keys()))
+    except Exception:
+        pass
+
     # Only the records this poll actually touched get written back, so a
     # concurrent sync's adds/drops survive (see merge_watch_records).
     touched: dict[str, dict] = {}
@@ -11021,10 +11120,10 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # Tape recovered: drop the data-condition refuse so State and ready
         # can recompute. Without this, derive_blocker kept returning the
         # stored stale_quote after a fresh stream print landed.
-        # stream_required clears the same way once px_src is stream.
+        # stream_required / await_stream clear the same way once px_src is stream.
         if str(rec.get("block_code") or "").strip().lower() in (
             "stale_quote", "no_quote_age", "no_quote",
-            "stream_required",
+            "stream_required", "await_stream",
         ):
             clear_block_reason(rec)
 
@@ -11033,6 +11132,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # and the pre-place refresh_arm_market_data checks below.
         _sr = stream_price_required_block(px_src, cfg)
         if _sr:
+            # Post-admit subscribe grace: Finnhub may not have printed yet.
+            # Paint await_stream (not sticky need-stream) and re-assert the
+            # WS sub — do not start the dead-tape drop clock here.
+            if _within_subscribe_grace(rec, cfg, t0):
+                try:
+                    ensure_watch_stream([sym])
+                except Exception:
+                    pass
+                set_block_reason(
+                    rec, "await_stream", now=t0,
+                    detail=f"{px_src or 'not_stream'} subscribe_grace")
+                _clear_stale_feed_since(rec)
+                touched[sym] = rec
+                continue
             set_block_reason(rec, _sr, now=t0, detail=px_src or "not_stream")
             if _maybe_stale_timeout_drop(
                 rec, sym=sym, px_src=px_src, cfg=cfg, now=t0,
