@@ -659,6 +659,17 @@ DEFAULT_CONFIG = {
     # not change RSI max 60, macd_min_gap, or the EXH override.
     "ai_watch_soft_ob_enabled": True,
     "ai_watch_soft_ob_rsi_min": 55.0,
+    # Mistimed heating-band chase (GTLB 2026-09-04). Soft OB only covers
+    # overbought+RSI≥55; a name still in the heat band with mid/high RSI
+    # used to arm (confirm RSI ~59, pass 53.3 → MFE ~0.01R). Heating-only:
+    # BULL-class last_overbought + RSI 46 stays on soft OB and is untouched.
+    # Pass floor 52 blocks GTLB's 53.3; peak floor 55 is the backup when RSI
+    # dips under the pass floor after printing hot on earlier confirm ticks.
+    # Default ON for paper scalp_legacy. Does not change RSI hard max 60,
+    # soft OB, macd_min_gap, or the EXH override.
+    "ai_watch_mistimed_heat_enabled": True,
+    "ai_watch_mistimed_heat_rsi_min": 52.0,
+    "ai_watch_mistimed_heat_rsi_peak_min": 55.0,
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          False,
@@ -1349,6 +1360,9 @@ _EFFECTIVE_KEYS = (
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_soft_ob_enabled",
     "ai_watch_soft_ob_rsi_min",
+    "ai_watch_mistimed_heat_enabled",
+    "ai_watch_mistimed_heat_rsi_min",
+    "ai_watch_mistimed_heat_rsi_peak_min",
     "ai_watch_ob_allow_hot",
     "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_ob_flat_min_pct",
@@ -1582,6 +1596,9 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_heat_max_pct",
     "ai_watch_soft_ob_enabled",
     "ai_watch_soft_ob_rsi_min",
+    "ai_watch_mistimed_heat_enabled",
+    "ai_watch_mistimed_heat_rsi_min",
+    "ai_watch_mistimed_heat_rsi_peak_min",
     "ai_watch_ob_allow_hot",
     "ai_watch_in_zone_ignore_fade",
     "ai_watch_zone_exh_window_sec",

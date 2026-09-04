@@ -104,6 +104,11 @@ _FINGERPRINT_KEYS = (
     # requires 0.8x separation.
     "ai_watch_macd_exh_override",
     "ai_watch_macd_exh_override_min_pct",
+    # Heating-band RSI chase veto (GTLB). Changes which last_heating arms
+    # clear; soft OB covers overbought only.
+    "ai_watch_mistimed_heat_enabled",
+    "ai_watch_mistimed_heat_rsi_min",
+    "ai_watch_mistimed_heat_rsi_peak_min",
     # Whether the lever must come off the live tape. A session that armed
     # on REST-fallback MACD is not the same regime as one that did not.
     "ai_watch_require_realtime_macd",

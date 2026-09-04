@@ -191,6 +191,10 @@ _BLOCKER_LABELS: dict[str, str] = {
     # Soft OB + elevated RSI (still <= hard RSI max). HPE-class chase.
     "late_heat": "late heat",
     "soft_overbought": "late heat",
+    # Heating-band chase: RSI already mid/high while EXH is only heating
+    # (GTLB 2026-09-04). Soft OB does not cover this — it needs overbought.
+    "mistimed_heat": "mistimed heat",
+    "heat_extended": "mistimed heat",
     "wait_exh": "wait EXH",
     "wait_rsi": "wait RSI",
     "exh_not_tight": "EXH wide",
@@ -4823,6 +4827,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "exh_was_overbought", "pctr_fall_since", "last_trade", "last_ask_src",
             "zone_touch_ts", "arm_streak", "arm_streak_poll",
             "confirm_ask", "confirm_ask_ts", "confirm_px_src",
+            "arm_confirm_rsi_max",
             "stale_feed_since", "stale_tape_streak",
         ):
             if prev.get(k) is not None:
@@ -6470,6 +6475,115 @@ def late_heat_blocks_buy(record: dict, cfg: dict) -> str | None:
         return None
     if rsi + 1e-9 >= rsi_floor:
         return "late_heat"
+    return None
+
+
+def _note_confirm_rsi(record: dict) -> float | None:
+    """Track peak cm_rsi across the current arm-confirm streak.
+
+    GTLB 2026-09-04: confirm ticks printed ~59.3 then the pass tick 53.3.
+    Soft OB never saw overbought, and a pass-only floor of 55 would have
+    missed the chase. Peak across the streak catches that. Cleared when
+    ``_arm_streak`` resets.
+    """
+    if not isinstance(record, dict):
+        return None
+    ind = record.get("indicator") if isinstance(record.get("indicator"), dict) else {}
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None:
+        return _f_or_none(record.get("arm_confirm_rsi_max"))
+    prev = _f_or_none(record.get("arm_confirm_rsi_max"))
+    if prev is None or rsi > prev:
+        record["arm_confirm_rsi_max"] = float(rsi)
+        return float(rsi)
+    return float(prev)
+
+
+def mistimed_heat_detail(record: dict, cfg: dict | None = None) -> str:
+    """Operator/log detail for a mistimed_heat refuse."""
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    peak = _f_or_none(record.get("arm_confirm_rsi_max")) if isinstance(record, dict) else None
+    if peak is None:
+        peak = rsi
+    elif rsi is not None:
+        peak = max(peak, rsi)
+    exh = exhaustion_pct(record) if isinstance(record, dict) else None
+    state = exhaustion_state(record, cfg or {}) if isinstance(record, dict) else "?"
+    parts = [f"why=heating state={state}"]
+    if rsi is not None:
+        parts.append(f"rsi={rsi:.1f}")
+    if peak is not None:
+        parts.append(f"peak={peak:.1f}")
+    if exh is not None:
+        parts.append(f"exh={exh:.1f}")
+    return " ".join(parts)
+
+
+def mistimed_heat_blocks_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    exh_why: str | None = None,
+) -> str | None:
+    """Refuse a heating-band arm that is already RSI-extended (GTLB chase).
+
+    Soft OB (``late_heat``) only fires on **overbought** + RSI≥55. GTLB on
+    2026-09-04 armed ``last_heating`` with confirm RSI ~59.3 / pass 53.3,
+    EXH still in the heat band — soft OB never ran. MFE ~0.01R then local
+    trail −0.13R.
+
+    Rule (heating path only — BULL-class ``last_overbought`` + RSI 46 stays
+    on soft OB and is untouched here):
+
+      refuse when exh_why is heating AND (
+          pass cm_rsi ≥ ai_watch_mistimed_heat_rsi_min   (default 52)
+          OR confirm-window peak ≥ ai_watch_mistimed_heat_rsi_peak_min
+             (default 55; 0 disables the peak leg)
+      )
+
+    Pass floor 52 blocks GTLB's 53.3 without needing the peak; the peak
+    leg is the backup when RSI dips under the pass floor after printing
+    hot on earlier confirm ticks. Early healthy heats (RSI ~46) clear
+    both. Does not change RSI hard max 60, soft OB, macd_min_gap, or
+    the EXH override.
+    """
+    if not bool(cfg.get("ai_watch_mistimed_heat_enabled", True)):
+        return None
+    why = str(exh_why or "").strip().lower()
+    # Accept raw exhaustion why or the last_/zone_ wrapped form.
+    if why.startswith("last_"):
+        why = why[5:]
+    elif why.startswith("zone_"):
+        why = why[5:]
+    if why != "heating":
+        return None
+    try:
+        rsi_floor = float(cfg.get("ai_watch_mistimed_heat_rsi_min", 52.0) or 0.0)
+    except (TypeError, ValueError):
+        rsi_floor = 52.0
+    try:
+        peak_floor = float(
+            cfg.get("ai_watch_mistimed_heat_rsi_peak_min", 55.0) or 0.0)
+    except (TypeError, ValueError):
+        peak_floor = 55.0
+    if rsi_floor <= 0 and peak_floor <= 0:
+        return None
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    rsi = _f_or_none(ind.get("cm_rsi"))
+    if rsi is None:
+        return None
+    peak = _f_or_none(record.get("arm_confirm_rsi_max")) if isinstance(record, dict) else None
+    if peak is None:
+        peak = rsi
+    else:
+        peak = max(float(peak), float(rsi))
+    if rsi_floor > 0 and rsi + 1e-9 >= rsi_floor:
+        return "mistimed_heat"
+    if peak_floor > 0 and peak + 1e-9 >= peak_floor:
+        return "mistimed_heat"
     return None
 
 
@@ -8907,6 +9021,13 @@ def should_arm_buy(
         late = late_heat_blocks_buy(record, cfg)
         if late:
             return False, late
+        # Heating-band chase (GTLB): soft OB needs overbought, so a name
+        # still in the heat band with mid/high RSI used to arm. Peak RSI
+        # across confirm ticks is noted by the poller before this runs on
+        # later ticks; current RSI is always considered too.
+        mistimed = mistimed_heat_blocks_buy(record, cfg, exh_why=exh_why)
+        if mistimed:
+            return False, mistimed
 
     # Cheap pullback/offset + overbought is the HCTI/BYSI dump: $2 spike,
     # 20% of equity, then −1R in under a minute. Last-mode used to skip
@@ -9544,6 +9665,7 @@ def _arm_streak(rec: dict, ok: bool, *, seq: int | None = None) -> int:
     if not ok:
         rec.pop("arm_streak", None)
         rec.pop("arm_streak_poll", None)
+        rec.pop("arm_confirm_rsi_max", None)
         return 0
     n = int(rec.get("arm_streak") or 0)
     if seq is None:
@@ -9553,6 +9675,10 @@ def _arm_streak(rec: dict, ok: bool, *, seq: int | None = None) -> int:
             prev = int(rec.get("arm_streak_poll"))
         except (TypeError, ValueError):
             prev = None
+        # Streak restart also drops the confirm-window RSI peak — a new
+        # evidence run must not inherit a hot print from a broken streak.
+        if not (prev is not None and prev == int(seq) - 1 and n > 0):
+            rec.pop("arm_confirm_rsi_max", None)
         n = n + 1 if (prev is not None and prev == int(seq) - 1 and n > 0) else 1
         rec["arm_streak_poll"] = int(seq)
     rec["arm_streak"] = n
@@ -10681,6 +10807,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         if _sr:
             _skip(_sr, detail=px_src or "not_stream")
             continue
+        # Peak RSI across the confirm window must be visible to mistimed_heat
+        # on later ticks (GTLB: confirm ~59.3, pass 53.3). Current RSI alone
+        # is enough when the pass print is already ≥ the floor.
         ok_arm, why = should_arm_buy(rec, ask=ask_f, bid=bid_f, cfg=cfg, now=t0)
         if not ok_arm:
             _log_arm_recheck(
@@ -10693,7 +10822,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                        "late_hold_closed", "late_hold_not_late_admit"):
                 _skip(why)
             else:
-                set_block_reason(rec, why or "blocked", now=t0)
+                detail = (
+                    mistimed_heat_detail(rec, cfg)
+                    if why == "mistimed_heat" else None
+                )
+                set_block_reason(rec, why or "blocked", now=t0, detail=detail)
                 touched[sym] = rec
             continue
 
@@ -10713,6 +10846,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # buy noise and sell signal.
         need_arm = _arm_confirm_ticks(cfg)
         streak = _arm_streak(rec, True, seq=poll_seq)
+        # After streak update (which may clear peak on a restart), note this
+        # tick's RSI so the next poll's mistimed_heat sees the window max.
+        _note_confirm_rsi(rec)
         _arm_after = _arm_gate_snapshot(rec, ask_f)
         if streak < need_arm:
             _log_arm_recheck(

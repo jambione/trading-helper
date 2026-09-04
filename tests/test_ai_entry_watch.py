@@ -4346,19 +4346,101 @@ def test_late_heat_blocks_hpe_keeps_bull():
 
 
 def test_late_heat_does_not_block_heating_even_with_high_rsi():
-    """GLXY-class heat 75.8 is not overbought; RSI 53 still arms."""
+    """Soft OB still ignores heating — mistimed_heat owns that band now."""
     import ai_entry_watch as ew
 
-    cfg = _soft_ob_cfg()
+    cfg = _soft_ob_cfg(ai_watch_mistimed_heat_enabled=False)
     rec = _ob_rec(symbol="GLXY", rsi=53.1, exh=75.8, source="xai")
     ok, why = ew.should_arm_buy(rec, ask=26.67, bid=26.60, cfg=cfg)
     assert ok and why == "last_heating"
     assert ew.late_heat_blocks_buy(rec, cfg) is None
 
-    # Heating + RSI 59.6 is still not the HPE chase (not yet OB).
+    # Heating + RSI 59.6 is still not the HPE soft-OB chase (not yet OB).
     rec["indicator"]["cm_rsi"] = 59.6
     ok, why = ew.should_arm_buy(rec, ask=26.67, bid=26.60, cfg=cfg)
     assert ok and why == "last_heating"
+    assert ew.late_heat_blocks_buy(rec, cfg) is None
+
+
+def _mistimed_cfg(**over):
+    """Live-shaped last-mode knobs for the mistimed-heat heating veto."""
+    cfg = _soft_ob_cfg(
+        ai_watch_mistimed_heat_enabled=True,
+        ai_watch_mistimed_heat_rsi_min=52.0,
+        ai_watch_mistimed_heat_rsi_peak_min=55.0,
+    )
+    cfg.update(over)
+    return cfg
+
+
+def test_mistimed_heat_blocks_gtlb_keeps_bull():
+    """2026-09-04 GTLB: last_heating + RSI mid-50s blocked; Sep 3 BULL allowed.
+
+    GTLB armed last_heating on stream (confirm RSI ~59.3, pass 53.3) — soft
+    OB never fired because EXH was not overbought and/or pass RSI was under
+    55. BULL the prior session was last_overbought + RSI 46.3 (+0.53R); that
+    path stays on soft OB and must not be killed by a heating-only veto.
+    """
+    import ai_entry_watch as ew
+    from config import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG["ai_watch_mistimed_heat_enabled"] is True
+    assert DEFAULT_CONFIG["ai_watch_mistimed_heat_rsi_min"] == 52.0
+    assert DEFAULT_CONFIG["ai_watch_mistimed_heat_rsi_peak_min"] == 55.0
+
+    cfg = _mistimed_cfg()
+    # Pass-tick shape: heating band, RSI 53.3 (under soft OB floor, over 52).
+    gtlb = _ob_rec(symbol="GTLB", rsi=53.3, exh=75.0, source="anthropic")
+    assert ew.exhaustion_state(gtlb, cfg) == "heating"
+    assert ew.late_heat_blocks_buy(gtlb, cfg) is None
+    ok, why = ew.should_arm_buy(gtlb, ask=49.40, bid=49.38, cfg=cfg)
+    assert ok is False and why == "mistimed_heat"
+    assert ew.format_blocker("mistimed_heat") == "mistimed heat"
+    assert ew.mistimed_heat_blocks_buy(gtlb, cfg, exh_why="heating") == "mistimed_heat"
+    detail = ew.mistimed_heat_detail(gtlb, cfg)
+    assert "rsi=53.3" in detail and "why=heating" in detail
+
+    # Confirm-window peak alone: pass RSI dipped under 52 but peak was 59.3.
+    gtlb_dip = _ob_rec(symbol="GTLB", rsi=51.0, exh=74.0, source="anthropic")
+    gtlb_dip["arm_confirm_rsi_max"] = 59.3
+    assert ew.late_heat_blocks_buy(gtlb_dip, cfg) is None
+    ok, why = ew.should_arm_buy(gtlb_dip, ask=49.40, bid=49.38, cfg=cfg)
+    assert ok is False and why == "mistimed_heat"
+
+    # BULL-class: overbought + RSI 46 — soft OB allows; mistimed_heat skips
+    # non-heating paths.
+    bull = _ob_rec(symbol="BULL", rsi=46.3, exh=85.0, source="trending")
+    ok, why = ew.should_arm_buy(bull, ask=9.37, bid=9.35, cfg=cfg)
+    assert ok and why == "last_overbought"
+    assert ew.mistimed_heat_blocks_buy(bull, cfg, exh_why="overbought") is None
+
+    # Early healthy heat: heating + RSI 46 still arms.
+    early = _ob_rec(symbol="EARLY", rsi=46.0, exh=72.0, source="momentum")
+    ok, why = ew.should_arm_buy(early, ask=12.0, bid=11.98, cfg=cfg)
+    assert ok and why == "last_heating"
+    assert ew.mistimed_heat_blocks_buy(early, cfg, exh_why="heating") is None
+
+
+def test_mistimed_heat_off_leaves_gtlb_class_armed():
+    import ai_entry_watch as ew
+
+    gtlb = _ob_rec(symbol="GTLB", rsi=53.3, exh=75.0, source="anthropic")
+    ok, why = ew.should_arm_buy(
+        gtlb, ask=49.40, bid=49.38,
+        cfg=_mistimed_cfg(ai_watch_mistimed_heat_enabled=False))
+    assert ok and why == "last_heating"
+
+
+def test_note_confirm_rsi_tracks_peak_and_clears_with_streak():
+    import ai_entry_watch as ew
+
+    rec = _ob_rec(symbol="GTLB", rsi=59.3, exh=75.0)
+    assert ew._note_confirm_rsi(rec) == pytest.approx(59.3)
+    rec["indicator"]["cm_rsi"] = 53.3
+    assert ew._note_confirm_rsi(rec) == pytest.approx(59.3)
+    assert rec["arm_confirm_rsi_max"] == pytest.approx(59.3)
+    ew._arm_streak(rec, False, seq=3)
+    assert "arm_confirm_rsi_max" not in rec
 
 
 def test_late_heat_off_and_floor_zero_leave_hpe_class_armed():
@@ -5724,9 +5806,11 @@ def test_stream_price_and_its_age_are_written_together():
     src = pathlib.Path(__file__).resolve().parents[1] / "ai_entry_watch.py"
     lines = src.read_text().splitlines()
     bad = []
+    # ±20: writers set age first, then several clock/map comments, then src.
+    # The invariant is same-block pairing, not a six-line adjacency.
     for i, ln in enumerate(lines):
         if re.search(r'\["last_ask_src"\]\s*=\s*"stream"', ln):
-            window = "\n".join(lines[max(0, i - 6):i + 7])
+            window = "\n".join(lines[max(0, i - 20):i + 7])
             if '["last_ask_age_sec"]' not in window:
                 bad.append(i + 1)
     assert not bad, (
