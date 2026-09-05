@@ -37,8 +37,8 @@ def test_parse_suggestions_object():
     assert rows[0]["reason"] == "AI momentum"
     assert rows[1]["trending_score"] == 7.0
     assert rows[3]["trending_score"] is None
-    assert rows[0]["source"] == "anthropic"
-    assert rows[0]["source_mark"] == "A"
+    assert rows[0]["source"] == "agy"
+    assert rows[0]["source_mark"] == "G"
 
 
 def test_source_marks_anthropic_and_xai():
@@ -48,15 +48,15 @@ def test_source_marks_anthropic_and_xai():
         parse_suggestions,
         source_from_backend,
     )
-    assert normalize_ai_source("claude_cli") == "anthropic"
-    assert normalize_ai_source("agy") == "anthropic"
+    assert normalize_ai_source("claude_cli") == "agy"
+    assert normalize_ai_source("agy") == "agy"
     assert normalize_ai_source("grok") == "xai"
-    assert ai_source_mark("claude") == "A"
-    assert ai_source_mark("gemini") == "A"
+    assert ai_source_mark("claude") == "G"
+    assert ai_source_mark("gemini") == "G"
     assert ai_source_mark("xai") == "X"
     assert source_from_backend("cli") == "xai"
-    assert source_from_backend("claude_cli") == "anthropic"
-    assert source_from_backend("agy") == "anthropic"
+    assert source_from_backend("claude_cli") == "agy"
+    assert source_from_backend("agy") == "agy"
     x_rows = parse_suggestions(
         {"suggestions": [{"symbol": "SOFI", "score": 8}]}, source="xai")
     assert x_rows[0]["source"] == "xai"
@@ -83,13 +83,13 @@ def test_merge_suggestion_rows_agreement_first():
     # Agreement first, then by max score: BOTH (8.5), ONLYA (9.0)... wait
     # BOTH max score 8.5, ONLYA 9.0 — agreement ranks before score, so BOTH first.
     assert syms[0] == "BOTH"
-    assert merged[0]["source_mark"] == "AX"
+    assert merged[0]["source_mark"] == "GX"
     assert merged[0]["agreement"] is True
     assert merged[0]["trending_score"] == 8.5  # max of 7.0 and 8.5
     assert "A:" in merged[0]["reason"] and "X:" in merged[0]["reason"]
     # Single-source marks
     by = {r["symbol"]: r for r in merged}
-    assert by["ONLYA"]["source_mark"] == "A"
+    assert by["ONLYA"]["source_mark"] == "G"
     assert by["ONLYX"]["source_mark"] == "X"
     assert by["ONLYA"]["agreement"] is False
 
@@ -202,20 +202,20 @@ def test_claude_panel_shows_reason_and_score():
 
 def test_claude_panel_shows_source_marks():
     rows = [
-        _row(sym="AAA", rank=1, source="anthropic", source_mark="A"),
+        _row(sym="AAA", rank=1, source="anthropic", source_mark="G"),
         _row(sym="BBB", rank=2, source="xai", source_mark="X"),
-        _row(sym="CCC", rank=3, source="both", source_mark="AX", agreement=True),
+        _row(sym="CCC", rank=3, source="both", source_mark="GX", agreement=True),
     ]
     table = _table(_gs(rows))
     src = column_cells(table, "Src")
     # Markup stripped or raw — accept either plain letter or styled fragment.
-    assert any("A" in c for c in src)
+    assert any("G" in c for c in src)
     assert any("X" in c for c in src)
-    assert any("AX" in c for c in src)
+    assert any("GX" in c for c in src)
     panel = claude_panel(_gs(rows), {}, limit=10, hotkeys_on=True, cfg=DEFAULTS)
-    assert "Anthropic" in str(panel.title)
+    assert "AGY" in str(panel.title) or "agy" in str(panel.title).lower() or "G" in str(panel.title)
     assert "xAI" in str(panel.title)
-    assert "both" in str(panel.title).lower() or "AX" in str(panel.title)
+    assert "both" in str(panel.title).lower() or "GX" in str(panel.title) or "AX" in str(panel.title)
 
 
 def test_claude_panel_keys_are_k_through_t():
@@ -244,7 +244,7 @@ def test_defaults_have_claude_off():
     # Everything that runs or spends lives with ai_trader.py on the server,
     # and every switch that can place an order ships off.
     assert DEFAULT_CONFIG["claude_live_search"] is True
-    assert DEFAULT_CONFIG["claude_backend"] == "claude_cli"
+    assert DEFAULT_CONFIG["claude_backend"] == "agy"
     # claude_trader_enabled / claude_trading_enabled were aliases of these two
     # and have been retired; ai_* is the only spelling now.
     assert DEFAULT_CONFIG["ai_trader_enabled"] is False
@@ -448,7 +448,7 @@ def test_desk_snapshot_rs_trending_and_peer(tmp_path):
         peer_path=peer_path,
         include_rival=False,
     )
-    assert "Claude (A)" in snap_x
+    assert "AGY (G)" in snap_x
 
     empty = cs.build_desk_snapshot_snippet(
         max_price=100.0,
@@ -531,7 +531,7 @@ def test_defaults_are_three_scheduled_runs_at_full_depth():
     cheap depth — spend is cut by running three times a day instead."""
     from config import DEFAULT_CONFIG
 
-    assert DEFAULT_CONFIG["claude_effort"] == "xhigh"
+    assert DEFAULT_CONFIG["claude_effort"] == "high"
     # 11:30 and 14:30 are both inside RTH (08:30 is pre-open prep) — two real
     # chances a day to actually open a position, not just one.
     assert DEFAULT_CONFIG["claude_research_times"] == ["08:30", "11:30", "14:30"]

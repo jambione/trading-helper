@@ -3132,7 +3132,8 @@ def _price_under_cap(px: Any, max_price: Any) -> bool:
 
 
 _RESEARCH_SOURCES = frozenset({
-    "research", "xai", "anthropic", "grok", "claude", "a", "x", "ax", "ai",
+    "research", "xai", "agy", "google", "gemini", "anthropic", "grok", "claude",
+    "a", "g", "x", "ax", "gx", "ai",
 })
 # Desk heat: seeds that name a symbol without carrying a thesis about it.
 # A new seed source MUST be registered here. Omitted, it is not recognised as
@@ -5436,14 +5437,30 @@ def apply_inclusion_gate(
 
 
 def research_candidate_rows() -> list[dict]:
-    """Current AI Research board rows (Grok + Anthropic), as watch candidates."""
+    """Current AI Research board rows (Grok + Anthropic), as watch candidates.
+
+    Also reads seed-rank boards (``seed_rank_*.json``): those are AI ranks of
+    the non-AI seed union and must land on the watchlist without placing
+    orders. Free-research boards stay first so an open thesis is not silently
+    replaced by a ranker row when both list the same name; seed-rank fills
+    gaps and refreshes on its own schedule.
+    """
     out: list[dict] = []
     seen: set[str] = set()
-    # Grok last so it wins on overlap when both boards list the same name.
+    # Grok last among free-research so it wins on overlap. Seed-rank boards
+    # follow so they auto-admit without stomping an active free-research row.
     for path, default_src in (
-        (ROOT / "claude_suggestions.json", "anthropic"),
-        (ROOT / "suggestions.json", "anthropic"),
+        (ROOT / "agy_suggestions.json", "agy"),
+        (ROOT / "claude_suggestions.json", "agy"),  # legacy filename
+        (ROOT / "suggestions.json", "agy"),
         (ROOT / "grok_suggestions.json", "xai"),
+        # Agreement board first among seed-rank files; G/X mirrors are the
+        # same intersection when ai_seed_rank_require_agreement is on.
+        (ROOT / "seed_rank_gx.json", "agy"),
+        (ROOT / "seed_rank_ax.json", "agy"),  # legacy agreement filename
+        (ROOT / "seed_rank_agy.json", "agy"),
+        (ROOT / "seed_rank_claude.json", "agy"),  # legacy filename
+        (ROOT / "seed_rank_grok.json", "xai"),
     ):
         if not path.exists():
             continue
@@ -5453,11 +5470,20 @@ def research_candidate_rows() -> list[dict]:
             continue
         if not isinstance(raw, dict):
             continue
+        # Stale seed-rank boards must not re-seed yesterday's list.
+        if str(raw.get("kind") or "") == "seed_rank":
+            try:
+                age = time.time() - float(raw.get("ts") or 0)
+            except (TypeError, ValueError):
+                age = 1e9
+            # Slightly over one hourly slot so a missed tick does not wipe the board.
+            if age > 75 * 60:
+                continue
         file_src = str(raw.get("source") or default_src).lower().strip()
         if file_src in ("xai", "grok"):
             src_label = "xai"
-        elif file_src in ("anthropic", "claude"):
-            src_label = "anthropic"
+        elif file_src in ("agy", "google", "gemini", "anthropic", "claude"):
+            src_label = "agy"
         else:
             src_label = default_src
         rows = raw.get("rows") or raw.get("suggestions") or raw.get("items") or []
@@ -5470,16 +5496,16 @@ def research_candidate_rows() -> list[dict]:
             if not s or not s[0].isalpha() or s in seen:
                 continue
             seen.add(s)
+            reason = str(r.get("reason") or r.get("summary") or "research")[:80]
             out.append({
                 "symbol": s,
                 "trending_score": _score_from_row(r),
                 "score": _score_from_row(r),
-                "reason": str(r.get("reason") or r.get("summary") or "research")[:80],
+                "reason": reason,
                 "agreement": True,
                 "source": src_label,
             })
     return out
-
 
 def research_universe_symbols() -> set[str]:
     """Symbols currently on AI Research boards (Grok + Anthropic wires)."""

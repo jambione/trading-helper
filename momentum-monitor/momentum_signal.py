@@ -2097,26 +2097,27 @@ def movers_panel(state: dict | None, now: float | None = None,
 
 
 def _ai_source_cell(row: dict) -> str:
-    """A = Anthropic, X = xAI, AX = both agreed. Falls back from free-form tags."""
+    """G = Google AGY, X = xAI, GX = both agreed. Falls back from free-form tags."""
     mark = str(row.get("source_mark") or "").upper().strip()
     if not mark:
         try:
             from ai_suggest import ai_source_mark, normalize_ai_source
             src = normalize_ai_source(row.get("source"))
             if src == "both" or row.get("agreement"):
-                mark = "AX"
+                mark = "GX"
             else:
                 mark = ai_source_mark(row.get("source")).upper()
         except Exception:  # noqa: BLE001
             mark = "?"
-    if mark in ("C", "CLAUDE", "ANTHROPIC"):
-        mark = "A"
-    if mark in ("G", "GROK"):
+    # Legacy Claude/Anthropic/A → G (AGY). Grok stays X (not bare "G").
+    if mark in ("C", "CLAUDE", "ANTHROPIC", "A", "AGY", "GOOGLE", "GEMINI"):
+        mark = "G"
+    if mark in ("GROK",):
         mark = "X"
-    if mark in ("BOTH", "AX", "A+X", "XA"):
-        return "[bold white on blue] AX [/]"
-    if mark == "A":
-        return "[bold magenta]A[/bold magenta]"
+    if mark in ("BOTH", "AX", "A+X", "XA", "GX", "G+X", "XG"):
+        return "[bold white on blue] GX [/]"
+    if mark == "G":
+        return "[bold magenta]G[/bold magenta]"
     if mark == "X":
         return "[bold cyan]X[/bold cyan]"
     return f"[dim]{mark or '?'}[/dim]"
@@ -2130,7 +2131,7 @@ def claude_panel(gs: AiSuggestions,
                now: float | None = None) -> Panel:
     """AI suggestions — same market columns as TRENDING + Src + Why + LOOK.
 
-    Src: A = Anthropic (Claude), X = xAI (Grok).
+    Src: G = Google AGY, X = xAI (Grok).
     """
     from stocktwits_trending import fmt_vol, range_cell
 
@@ -2241,8 +2242,8 @@ def claude_panel(gs: AiSuggestions,
             err = err[:67] + "…"
         status_s = f"  ·  [dim]{err}[/dim]"
     title = (
-        f"AI  ·  [magenta]A[/]=Anthropic  [cyan]X[/]=xAI  "
-        f"[white on blue]AX[/]=both  ·  K-T load TV"
+        f"AI  ·  [magenta]G[/]=AGY  [cyan]X[/]=xAI  "
+        f"[white on blue]GX[/]=both  ·  K-T load TV"
         f"{cap}{look_n}{trade_s}{trade_n}"
         f"{model_s}{stamp}{q}{status_s}"
     )

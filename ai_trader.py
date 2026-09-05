@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-"""Server-side AI research desk (Anthropic + Grok).
+"""Server-side AI research desk (Google AGY + Grok).
 
 Runs scheduled research prompts for one or both sources, turns qualifying
 ideas from the *single trading owner* into Alpaca paper brackets, and
 enforces stop / scale-out / trailing / time-stop rules mechanically.
 Publishes JSON that dashboard.py merges into /api/state:
 
-    claude_suggestions.json   Anthropic ranked ideas (source A)
+    agy_suggestions.json      Google AGY ranked ideas (source G)
     grok_suggestions.json     xAI / Grok ranked ideas (source X)
     ai_positions_state.json   open positions, orders, performance
                               (also writes legacy claude_positions_state.json)
 
-The dashboard merges both into ai_suggestions (A / X / AX). Exactly one
+The dashboard merges both into ai_suggestions (G / X / GX). Exactly one
 source may place orders (``ai_trading_enabled`` / ``claude_trading_enabled``
-vs ``grok_trading_enabled``). Prefer Grok as the trading CLI; Anthropic as
-research-only. If both flags are true, Grok wins and Claude trading is
+vs ``grok_trading_enabled``). Prefer Grok as the trading CLI; AGY as
+research-only. If both flags are true, Grok wins and AGY trading is
 forced off for that process.
 
 The momentum monitor is a renderer only — it reads /api/state and originates
@@ -558,7 +558,7 @@ def _claude_auth_remedy() -> str:
             "help. Restart the stack from a Terminal window on this machine."
         )
     return (
-        "No Claude credential found in this machine's login Keychain. "
+        "No AGY/Claude credential found in this machine's login Keychain. "
         "Run `claude /login` from a Terminal on this machine, then restart "
         "the stack from that same Terminal."
     )
@@ -600,7 +600,7 @@ def resolve_trading_source(cfg: dict) -> str:
     """Single book owner: ``grok`` | ``claude`` | ``off``.
 
     Prefer explicit ``ai_trading_source``. Legacy boolean flags still work:
-    if both Claude and Grok trading flags are true, Grok wins.
+    if both AGY and Grok trading flags are true, Grok wins.
     """
     raw = str(cfg.get("ai_trading_source") or "").strip().lower()
     if raw in ("grok", "claude", "off", "none", "false", "0"):
@@ -639,7 +639,7 @@ def apply_trading_source(cfg: dict, source: str) -> dict:
 
 
 def _build_suggestions(cfg: dict) -> AiSuggestions:
-    """Anthropic research source (optional paper trading)."""
+    """Google AGY research source (optional paper trading)."""
     trading = bool(_cfg(cfg, "ai_trading_enabled", False))
     return AiSuggestions(
         max_price=_cfg(cfg, "ai_max_price"),
@@ -1187,7 +1187,7 @@ def main() -> None:
               f"{gs_a.research_times or '(interval)'} ET — "
               f"next {gs_a.next_run_label() or 'n/a'}", flush=True)
         if n:
-            print(f"[ai] hydrated {n} Anthropic idea(s) from "
+            print(f"[ai] hydrated {n} AGY idea(s) from "
                   f"{CLAUDE_SUGGESTIONS_FILE.name}", flush=True)
         from ai_suggest import is_agy_backend
         if is_agy_backend(gs_a.backend, gs_a.cli_bin):
@@ -1228,10 +1228,10 @@ def main() -> None:
                 print(f"[ai] WARNING: claude_auth probe failed: {e}",
                       flush=True)
         if gs_a.trading and gs_a.trading_mode == "off":
-            print("[ai] WARNING: Claude trading requested but no Alpaca "
+            print("[ai] WARNING: AGY trading requested but no Alpaca "
                   "session — check signal_engine.env", flush=True)
     else:
-        print("[ai] Anthropic research off (claude_research_enabled=false)",
+        print("[ai] AGY research off (claude_research_enabled=false)",
               flush=True)
 
     if grok_on:
@@ -1508,6 +1508,16 @@ def main() -> None:
 
         _tick_source(gs_a, CLAUDE_SUGGESTIONS_FILE, SOURCE_ANTHROPIC, t0, "A")
         _tick_source(gs_x, GROK_SUGGESTIONS_FILE, SOURCE_XAI, t0, "X")
+
+        # Seed-rank: freeze desk seeds → both AIs rank ≤5 → watchlist only.
+        # Never places; sync_watch picks up seed_rank_*.json.
+        try:
+            import seed_rank
+            started = seed_rank.tick(cfg, t0)
+            if started:
+                print(f"[ai] seed_rank started for {started}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ai] seed_rank tick failed: {e}", flush=True)
 
         if trading and book is not None and _open_bell_due(cfg, t0):
             try:

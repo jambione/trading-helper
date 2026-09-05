@@ -735,7 +735,8 @@ function _aiPosBadge(ticker) {
   const book = get('ai_positions') || {};
   const pos = (book.positions || {})[String(ticker || '').toUpperCase()];
   if (!pos) return '';
-  const owner = String(book.book_owner || '').toLowerCase() === 'claude' ? 'Claude' : 'Grok';
+  const _own = String(book.book_owner || '').toLowerCase();
+  const owner = (_own === 'claude' || _own === 'agy') ? 'AGY' : 'Grok';
   const qtyN = Math.abs(Number(pos.qty) || 0);
   const qty = Number.isInteger(qtyN) ? `${qtyN}sh` : `${qtyN.toFixed(2)}sh`;
   const pl = Number(pos.pl);

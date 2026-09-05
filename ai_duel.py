@@ -22,14 +22,16 @@ from ai_paths import resolve_report_dir
 ET = ZoneInfo("America/New_York")
 DUEL_STATE_PATH = resolve_report_dir() / "duel_state.json"
 
-SOURCE_A = "anthropic"
+SOURCE_A = "agy"  # Google AGY (legacy values anthropic/claude still normalize)
 SOURCE_X = "xai"
-_VALID_SOURCES = frozenset({SOURCE_A, SOURCE_X, "claude", "grok"})
+_VALID_SOURCES = frozenset({
+    SOURCE_A, SOURCE_X, "agy", "google", "gemini", "anthropic", "claude", "grok",
+})
 
 
 def _norm_source(raw: str | None) -> str | None:
     s = str(raw or "").strip().lower()
-    if s in ("anthropic", "claude", "a"):
+    if s in ("agy", "google", "gemini", "anthropic", "claude", "a", "g"):
         return SOURCE_A
     if s in ("xai", "grok", "x"):
         return SOURCE_X
@@ -281,7 +283,7 @@ def _upsert_watch_champion(
         "duel_source": src,
         "duel_chance": rec.get("chance"),
         "duel_day": day,
-        "source_mark": rec.get("source_mark") or ("A" if src == SOURCE_A else "X"),
+        "source_mark": rec.get("source_mark") or ("G" if src == SOURCE_A else "X"),
         "structure": prev.get("structure"),
         "structure_ts": prev.get("structure_ts", 0.0),
         "last_poll_ts": prev.get("last_poll_ts", 0.0),
@@ -391,7 +393,7 @@ def register_champion_from_rows(
     rec = {
         "symbol": sym,
         "source": src,
-        "source_mark": "A" if src == SOURCE_A else "X",
+        "source_mark": "G" if src == SOURCE_A else "X",
         "chance": ch,
         "score": top.get("trending_score", top.get("score")),
         "reason": str(top.get("reason") or "")[:120],

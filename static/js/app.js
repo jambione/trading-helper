@@ -350,14 +350,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // dropped here. Same shape as the indicator-whitelist bug: publishing a
     // field is not the same as wiring it.
     if (snap.movers            !== undefined) update.movers            = snap.movers;
-    // Prefer merged AI list (A/X/AX); fall back to Anthropic-only publish.
+    // Prefer merged AI list (G/X/GX); fall back to AGY-only publish.
     if (snap.ai_suggestions !== undefined) {
       update.ai_suggestions = snap.ai_suggestions;
       update.claude_suggestions = snap.ai_suggestions;
     } else if (snap.claude_suggestions !== undefined) {
       update.claude_suggestions = snap.claude_suggestions;
     }
-    // Shared AI paper book (Grok/Claude owner).
+    // Shared AI paper book (Grok/AGY owner).
     if (snap.ai_positions !== undefined) {
       update.ai_positions = snap.ai_positions;
     } else if (snap.claude_positions !== undefined) {
@@ -405,7 +405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const nPos = p.positions && typeof p.positions === 'object'
       ? Object.keys(p.positions).length : 0;
     const ownerLabel = owner === 'grok' || source === 'grok' ? 'Grok'
-      : owner === 'claude' || source === 'claude' ? 'Claude'
+      : owner === 'claude' || source === 'claude' || owner === 'agy' || source === 'agy' ? 'AGY'
       : 'AI';
 
     if (dot) {

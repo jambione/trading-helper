@@ -218,7 +218,7 @@ DEFAULT_CONFIG = {
     "rs_min_adr_pct":             3.0,
 
     # ── AI trader (ai_trader.py) — multi-source research desk ─────────────────
-    # Shared process/settings (ai_*). Anthropic-specific knobs stay claude_*.
+    # Shared process/settings (ai_*). AGY slot still uses legacy claude_* keys.
     # Grok-specific knobs stay grok_*. Monitor is display-only.
     #
     # Legacy claude_trader_enabled / claude_trading_enabled / claude_max_price
@@ -1135,18 +1135,38 @@ DEFAULT_CONFIG = {
     # 0.0 = track the real-time price every poll (no deadband).
     "ai_watch_synth_reanchor_pct":     0.0,
 
-    # Anthropic (Claude) research source — provider-specific.
-    # claude_backend=agy (and claude_cli_bin=agy, claude_model=gemini-…)
-    # runs this same slot through Antigravity CLI instead of Claude Code.
-    # Duel still treats it as source A vs Grok's X.
+    # Google AGY research source — legacy key prefix claude_* (do not reintroduce Claude).
+    # Google AGY research slot (legacy key prefix claude_* — do not reintroduce
+    # Claude Code as the default). Prefer agy / gemini via these keys or agy_*.
+    # Duel marks: G (AGY) vs X (Grok).
     "claude_research_enabled":   False,
-    "claude_backend":       "claude_cli",
-    "claude_cli_bin":          "claude",
-    "claude_model":            "sonnet",
-    "claude_effort":            "xhigh",  # low|medium|high|xhigh|max; agy: high
+    "claude_backend":       "agy",
+    "claude_cli_bin":          "agy",
+    "claude_model":            "gemini-3-pro-high",
+    "claude_effort":            "high",  # agy: low|medium|high
+    "agy_backend":             "agy",
+    "agy_cli_bin":             "agy",
+    "agy_model":               "gemini-3-pro-high",
     "claude_research_times": ["08:30", "11:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
+    # Seed-only AI ranker (momentum+trending+movers → ≤5 names → watchlist).
+    # Google AGY + Grok; recommend only; agreement required; never places.
+    "ai_seed_rank_enabled": False,
+    "ai_seed_rank_times": [
+        "09:25",
+        "10:00", "11:00", "12:00", "13:00", "14:00",
+        "15:00",
+    ],
+    "ai_seed_rank_weekdays_only": True,
+    "ai_seed_rank_catchup_min": 45,
+    "ai_seed_rank_max": 5,
+    "ai_seed_rank_agy": True,
+    "ai_seed_rank_claude": True,  # legacy alias for ai_seed_rank_agy
+    "ai_seed_rank_grok": True,
+    "ai_seed_rank_require_agreement": True,  # both models must list the name
+    "ai_seed_rank_require_setup": False,  # mechanical stage-1 pre-filter
+    "ai_seed_rank_max_shares_m": 30.0,
     "claude_request_timeout":   600.0,
     "claude_live_search":        True,
     # web_x = web_search + x_search on xAI API; Claude CLI uses WebSearch/WebFetch.

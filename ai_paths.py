@@ -22,8 +22,10 @@ REPORT_DIR = ROOT / "ai_reports"
 # live events.jsonl mid-session. Overriding here covers all of them at once.
 REPORT_DIR_ENV = "AI_REPORT_DIR"
 
-# Wire files (per-source idea feeds — names stay source-scoped on purpose)
-CLAUDE_SUGGESTIONS_FILE = ROOT / "claude_suggestions.json"
+# Wire files (per-source idea feeds — names stay source-scoped on purpose).
+# Google AGY is the G-side research slot; claude_suggestions.json is a legacy alias.
+AGY_SUGGESTIONS_FILE = ROOT / "agy_suggestions.json"
+CLAUDE_SUGGESTIONS_FILE = AGY_SUGGESTIONS_FILE  # legacy name
 GROK_SUGGESTIONS_FILE = ROOT / "grok_suggestions.json"
 
 

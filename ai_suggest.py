@@ -592,39 +592,44 @@ def _best_suggestions_payload(text: str) -> Any:
 
 
 # Canonical AI research sources (desk marks + merge provenance).
-# Display letters: A = Anthropic (Claude), X = xAI (Grok).
-SOURCE_ANTHROPIC = "anthropic"
+# Display letters: G = Google AGY, X = xAI (Grok), GX = both agree.
+# Legacy names anthropic/claude/A/AX still normalize here.
+SOURCE_AGY = "agy"
+SOURCE_ANTHROPIC = SOURCE_AGY  # legacy alias — do not use in new code
 SOURCE_XAI = "xai"
 SOURCE_MARK = {
-    SOURCE_ANTHROPIC: "A",
+    SOURCE_AGY: "G",
     SOURCE_XAI: "X",
 }
+AGREEMENT_MARK = "GX"
 
 
 def normalize_ai_source(value: str | None) -> str:
-    """Map backend / free-form tags to ``anthropic`` | ``xai`` | ``unknown``."""
+    """Map backend / free-form tags to ``agy`` | ``xai`` | ``both`` | ``unknown``."""
     s = (value or "").strip().lower()
     if not s:
         return "unknown"
-    if s in ("a", "anthropic", "claude", "claude_cli",
-             "agy", "gemini", "gemini_cli", "antigravity"):
-        return SOURCE_ANTHROPIC
+    if s in ("g", "agy", "google", "gemini", "gemini_cli", "antigravity",
+             "a", "anthropic", "claude", "claude_cli"):
+        return SOURCE_AGY
     if s in ("x", "xai", "grok", "grok_cli", "cli", "api"):
         # ``cli`` / ``api`` are the historical Grok backends in this module.
         return SOURCE_XAI
-    if s in ("both", "ax", "a+x", "xa", "merged"):
+    if s in ("both", "ax", "a+x", "xa", "gx", "g+x", "xg", "merged"):
         return "both"
-    if "anthropic" in s or s.startswith("claude"):
-        return SOURCE_ANTHROPIC
+    if "agy" in s or "gemini" in s or "anthropic" in s or s.startswith("claude"):
+        return SOURCE_AGY
     if "xai" in s or "grok" in s:
         return SOURCE_XAI
     return "unknown"
 
 
 def ai_source_mark(value: str | None) -> str:
-    """Single-letter desk mark: A (Anthropic), X (xAI), ? (unknown)."""
-    return SOURCE_MARK.get(normalize_ai_source(value), "?")
-
+    """Desk mark: G (Google AGY), X (xAI), GX (agreement), ? (unknown)."""
+    src = normalize_ai_source(value)
+    if src == "both":
+        return AGREEMENT_MARK
+    return SOURCE_MARK.get(src, "?")
 
 def source_from_backend(backend: str | None) -> str:
     """Canonical source id for a claude_suggest backend string."""
@@ -655,15 +660,15 @@ def merge_suggestion_rows(
     *,
     max_rows: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Union Claude (A) + Grok (X) lists into one ranked desk list.
+    """Union Google AGY (G) + Grok (X) lists into one ranked desk list.
 
     Sort key (pre-trade quality, not predicted P&L):
-      1. Agreement first (both sources named the symbol) — mark ``AX``
-      2. Higher max(score_A, score_X)
+      1. Agreement first (both sources named the symbol) — mark ``GX``
+      2. Higher max(score_G, score_X)
       3. Better (lower) min list rank among sources that listed it
 
     Each output row keeps ``sources`` (list), ``source`` (primary tag),
-    ``source_mark`` (``A`` / ``X`` / ``AX``), and combined ``reason`` when both
+    ``source_mark`` (``G`` / ``X`` / ``GX``), and combined ``reason`` when both
     spoke. Does not place trades.
     """
     by_sym: dict[str, dict[str, Any]] = {}
@@ -716,7 +721,7 @@ def merge_suggestion_rows(
         merged["sources"] = list(sources)
         if both:
             merged["source"] = "both"
-            merged["source_mark"] = "AX"
+            merged["source_mark"] = AGREEMENT_MARK
         else:
             only = sources[0]
             merged["source"] = only
@@ -2390,7 +2395,7 @@ def _peer_suggestions_path(backend: str | None) -> tuple[Path, str]:
     """Other research wire for this backend + short label."""
     src = source_from_backend(backend)
     if src == SOURCE_XAI:
-        return CLAUDE_SUGGESTIONS_FILE, "Claude (A)"
+        return CLAUDE_SUGGESTIONS_FILE, "AGY (G)"
     return GROK_SUGGESTIONS_FILE, "Grok (X)"
 
 
@@ -2451,7 +2456,7 @@ def build_rival_duel_snippet(
             sc = snap.get("score") or {}
             if isinstance(sc, dict) and sc:
                 bits = []
-                for k, label in (("anthropic", "A"), ("xai", "X")):
+                for k, label in (("agy", "G"), ("anthropic", "G"), ("xai", "X")):
                     row = sc.get(k) if isinstance(sc.get(k), dict) else None
                     if not row:
                         continue
@@ -2629,14 +2634,16 @@ def tag_agreement_on_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sym = str(r.get("symbol") or "").upper()
         if not sym:
             continue
-        if r.get("agreement") is True or r.get("source_mark") == "AX":
+        mark = str(r.get("source_mark") or "").upper()
+        if r.get("agreement") is True or mark in ("GX", "AX"):
             r["agreement"] = True
+            r["source_mark"] = AGREEMENT_MARK
             continue
         both_wire = sym in a_syms and sym in x_syms
         src = str(r.get("source") or "").lower()
-        if both_wire or src in ("both", "ax"):
+        if both_wire or src in ("both", "ax", "gx", "agy+xai"):
             r["agreement"] = True
-            r.setdefault("source_mark", "AX")
+            r["source_mark"] = AGREEMENT_MARK
         else:
             r.setdefault("agreement", False)
     return rows

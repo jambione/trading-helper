@@ -67,7 +67,7 @@ def test_register_champions_a_and_x(duel_path, monkeypatch):
         cfg=CFG,
         now=now,
     )
-    assert a["symbol"] == "CMG" and a["source_mark"] == "A"
+    assert a["symbol"] == "CMG" and a["source_mark"] == "G"
     assert x["symbol"] == "SOFI" and x["source_mark"] == "X"
 
 
@@ -113,7 +113,7 @@ def test_mid_window_then_final_winner(duel_path, monkeypatch):
     assert st["phase"] == "trial"
     assert st["trial_liquidated"] is False
     assert "11:20" in st["windows_scored"]
-    assert st["totals"]["anthropic"] == pytest.approx(1.0)
+    assert st["totals"]["agy"] == pytest.approx(1.0)
     assert st["totals"]["xai"] == pytest.approx(-0.5)
 
     # After close, can register next window champions
@@ -127,7 +127,7 @@ def test_mid_window_then_final_winner(duel_path, monkeypatch):
     now_final = datetime(2026, 8, 3, 14, 20, tzinfo=et).timestamp()
     out2 = duel.run_window_liquidate_and_score(CFG, now_final)
     assert out2["final"] is True
-    assert out2["winner"] == "anthropic"
+    assert out2["winner"] == "agy"
     st2 = duel.load_state(now_final)
     assert st2["phase"] == "scored"
     assert st2["trial_liquidated"] is True
@@ -181,7 +181,7 @@ def test_research_allowed_winner_only_after_c3(duel_path):
     path.write_text(json.dumps({
         "day": "2026-08-03",
         "phase": "scored",
-        "winner": "anthropic",
+        "winner": "agy",
         "trial_liquidated": True,
         "champions": {},
         "score": {},
@@ -212,7 +212,7 @@ def test_register_blocked_while_leg_open(duel_path, monkeypatch):
         [{"symbol": "BBB", "score": 9.5}], source="anthropic", cfg=CFG, now=now + 60)
     assert again is None
     st = duel.load_state(now)
-    assert st["champions"]["anthropic"]["symbol"] == "AAA"
+    assert st["champions"]["agy"]["symbol"] == "AAA"
 
 
 def test_save_state_writes_file(duel_path):
@@ -223,8 +223,8 @@ def test_save_state_writes_file(duel_path):
     now = datetime(2026, 8, 3, 10, 0, tzinfo=et).timestamp()
     st = duel.load_state(now)
     st["phase"] = "trial"
-    st["totals"] = {"anthropic": 1.5, "xai": -0.25}
+    st["totals"] = {"agy": 1.5, "xai": -0.25}
     duel.save_state(st)
     assert duel_path.exists()
     raw = json.loads(duel_path.read_text(encoding="utf-8"))
-    assert raw["totals"]["anthropic"] == pytest.approx(1.5)
+    assert raw["totals"]["agy"] == pytest.approx(1.5)
