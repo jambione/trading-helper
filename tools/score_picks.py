@@ -270,6 +270,17 @@ def main() -> int:
         print("\n  nothing scorable yet.")
         return 0
 
+    # A ladder produces a positive median on ANY selection — it books small
+    # gains often and leaves the losers to run. The null test on 2026-09-05
+    # scored 60 random moments at a +0.40% median and a -0.50% mean. So the
+    # median leg of the bar is nearly free under this policy, the mean is
+    # what the account tracks, and eligible-within is what actually decides.
+    if tv and statistics.median(tv) > 0 > statistics.fmean(tv):
+        print("\n  NOTE  positive median with a negative mean is what a ladder"
+              "\n        does to any selection, including a random one. The"
+              "\n        mean is the account's number; the control below is"
+              "\n        what says whether the picks carry information.")
+
     print()
     ps = N.paired_stats(diffs)
     if ps["n"]:
