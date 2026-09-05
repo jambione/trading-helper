@@ -73,7 +73,9 @@ def _clean(tmp_path, monkeypatch):
 
 
 def _run(rows, stamps, rsi, cfg=None, now=1_000_000.0 + 60 * 999):
-    return ss.evaluate(["AAA"], cfg or {}, now, ew=FakeEW(rows, stamps, rsi))
+    # The knob ships OFF (the rule was falsified); tests opt in explicitly.
+    cfg = {"ai_strength_signal_enabled": True} if cfg is None else cfg
+    return ss.evaluate(["AAA"], cfg, now, ew=FakeEW(rows, stamps, rsi))
 
 
 # ── the rule ─────────────────────────────────────────────────────────────

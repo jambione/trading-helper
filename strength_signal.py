@@ -1,27 +1,43 @@
 #!/usr/bin/env python3
-"""Log the strength entry as it happens. Places nothing, ever.
+"""Log the strength entry as it happens. Places nothing, ever. DEFAULT OFF.
 
-THE RULE (validated 2026-09-05 over 2026-08-24..09-04, n=363)
+FALSIFIED 2026-09-05, hours after it was written. Left in the tree because
+the falsification is worth keeping next to the rule, and because the
+detector itself (closed-bar evaluation, one fire per bar) is reusable if a
+rule ever earns forward collection. Turn it on only with a rule that has
+passed a jitter profile.
+
+THE RULE THAT FAILED (measured 2026-09-05 over 2026-08-24..09-04)
 
     setup    EXH crosses UP through 75      — the name heads into overbought
     trigger  first CLOSED bar within 20 where CM RSI-2 >= 90 and EXH >= 60
     fill     the NEXT bar's open
     exit     EXH leaves overbought; 2% ratchet; -5% hard; 120m cap
 
-    +0.86%/trade, 10/10 sessions, 3.9 sigma vs same-name controls, breakeven
-    at a ~1.0% round trip, and still +0.43% with the 20 best trades removed.
+    It measured +0.86%/trade at 10/10 sessions and 3.9 sigma against
+    same-name controls. That was wrong, in three compounding ways:
+
+      * the universe scanned a whole day's bars for names that only joined
+        the book later — trading 09:45 on a name admitted at 11:00
+      * bars start 09:25 with extended hours off, so the 21-bar %R window is
+        compressed before ~09:51 and EXH >= 75 fires on nothing
+      * fixing both leaves +0.37% at n=127, and a jitter profile then shows
+        NO PEAK AT THE SIGNAL: t-3 +1.30%, t-1 +1.01%, t +0.37%, t+1 -0.43%.
+        Monotone. The trigger is late to a spike already running, and t-3 is
+        unreachable because it is conditioned on a future RSI print.
+
+    A real entry signal peaks at the signal. Run a jitter profile before
+    believing any rule; eligible-within at 3.9 sigma did not catch this.
 
     The same setup entered on RSI-2 <= 20 — waiting for the pullback — loses
     1.25%/trade at 0/10 sessions. A name that keeps running never prints a
     low RSI-2, so "wait for the dip" selects the ones that rolled over.
 
-WHY THIS EXISTS RATHER THAN A CONFIG CHANGE
-    That measurement has no holdout. Roughly seventy configurations were
-    searched over the same ten sessions, and three results looked this strong
-    earlier the same day and dissolved under a control. So the rule earns
-    forward validation on sessions it has never seen, not capital. This
-    module writes what it would have done; tools/score_strength.py prices it
-    afterwards. Nothing here can reach the order path.
+WHY IT WAS NEVER SHIPPED AS A CONFIG CHANGE
+    No holdout: ~70 configurations were searched over the same ten sessions,
+    which turns p=0.001 into roughly p=0.07 on its own. So it was only ever
+    going to be collected forward, never traded — and then it did not even
+    survive that far. Nothing here can reach the order path regardless.
 
 WHY BARS AND NOT POLLS
     The poll runs every ~5s and EXH moves inside a forming minute, so a
@@ -29,12 +45,11 @@ WHY BARS AND NOT POLLS
     Every reading here comes off CLOSED 1-minute bars, one evaluation per
     bar per symbol, which is the same series the rule was fitted on.
 
-THE ONE-BAR CONSTRAINT
-    Filling at the next bar's open keeps +0.86%; one full bar later is
-    -0.16% and 3/10 sessions. If this is ever wired to the order path, the
-    order has to be in within a minute of the signal bar's close — and the
-    latency between this row's `fired_at` and its `bar_ts` is the number
-    that says whether the desk can do that. It is logged for that reason.
+LATENCY, STILL LOGGED
+    `latency_sec` (fired_at - bar_ts) rides on every row. It was written for
+    this rule's one-bar constraint, and it is worth keeping for any future
+    one: it is the measurement that says whether this desk can act inside a
+    bar at all, independent of which signal it is chasing.
 """
 from __future__ import annotations
 
@@ -55,7 +70,7 @@ _STATE: dict[tuple[str, str], dict] = {}
 
 FAST = 21          # rte_fast_length — the desk's own %R window
 DEFAULTS = {
-    "ai_strength_signal_enabled": True,
+    "ai_strength_signal_enabled": False,   # falsified; see the header
     "ai_strength_cross": 75.0,       # EXH level the setup crosses upward
     "ai_strength_rsi_min": 90.0,     # CM RSI-2 that triggers the entry
     "ai_strength_exh_floor": 60.0,   # EXH must still be engaged at the trigger
