@@ -171,16 +171,43 @@ def test_clear_tape_data_block_when_stream_fresh():
     assert rec.get("block_reason") is None
 
 
-def test_clear_tape_data_block_keeps_stale_tape():
+def test_clear_tape_data_block_promotes_false_stale_young_age(monkeypatch):
+    """Class C CAPR: stale_tape label + age≤ceiling must promote and clear.
+
+    clear_tape_data_block used to require src=stream first, so a false
+    stale_tape label beside a young dated age could never recover.
+    """
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
     rec = {
-        "symbol": "SNDG",
+        "symbol": "CAPR",
+        "last_ask": 8.29,
         "last_ask_src": "stale_tape",
         "last_ask_age_sec": 2.0,
         "last_ask_ts": time.time() - 2.0,
         "block_code": "stale_quote",
         "block_reason": "stale quote",
     }
+    assert ew.clear_tape_data_block_if_stream_fresh(rec) is True
+    assert rec["last_ask_src"] == "stream"
+    assert rec.get("block_code") is None
+
+
+def test_clear_tape_data_block_keeps_true_thin_stale_tape(monkeypatch):
+    """True thin: old stale_tape must keep refusing (no promote)."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    rec = {
+        "symbol": "SNDG",
+        "last_ask": 10.5,
+        "last_ask_src": "stale_tape",
+        "last_ask_age_sec": 120.0,
+        "last_ask_ts": time.time() - 120.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+    }
     assert ew.clear_tape_data_block_if_stream_fresh(rec) is False
+    assert rec["last_ask_src"] == "stale_tape"
     assert rec["block_code"] == "stale_quote"
 
 
@@ -326,6 +353,7 @@ def test_apply_tape_blocker_trusts_young_field_over_old_row_ts(monkeypatch):
 def test_true_thin_stale_still_refuses(monkeypatch):
     """Do not clear stale_quote when the print is genuinely old."""
     monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
     monkeypatch.setattr(ew, "_push_cfg", lambda: {
         "ai_watch_decision_max_age_sec": 15.0,
         "ai_watch_arm_mode": "last",
@@ -343,6 +371,102 @@ def test_true_thin_stale_still_refuses(monkeypatch):
     ew.apply_tape_blocker(row, 10.5)
     assert row["block_code"] == "stale_quote"
     assert row["last_ask_src"] == "stale_tape"
+
+
+def test_promote_false_stale_from_young_field_age(monkeypatch):
+    """stale_tape + age≤ceiling → stream; should_arm must not return stale_quote."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    now = time.time()
+    rec = {
+        "symbol": "CAPR",
+        "status": "watching",
+        "last_ask": 8.29,
+        "last_ask_src": "stale_tape",
+        "price_src": "stale_tape",
+        "last_ask_age_sec": 10.1,
+        "last_ask_ts": now - 10.1,
+        "block_code": "stale_quote",
+        "structure": {
+            "decision": "BUY",
+            "entry_low": 8.0,
+            "entry_high": 8.5,
+            "stop_price": 7.5,
+            "target_1": 9.5,
+            "wait_kind": "wait_for_zone",
+        },
+    }
+    assert ew.promote_stream_src_if_print_fresh(rec) is True
+    assert rec["last_ask_src"] == "stream"
+    ok, why = ew.should_arm_buy(
+        rec, ask=8.29, bid=8.28,
+        cfg={
+            "ai_watch_decision_max_age_sec": 15.0,
+            "ai_watch_arm_mode": "last",
+            "desk_product": "scalp_legacy",
+            "ai_watch_arm_require_macd": False,
+            "ai_watch_require_exh_rising": False,
+            "ai_watch_arm_require_cm_rsi": False,
+            "ai_watch_soft_ob_enabled": False,
+            "ai_watch_mistimed_heat_enabled": False,
+            "ai_watch_macd_block_narrowing": False,
+        },
+        now=now,
+    )
+    assert why != "stale_quote"
+    assert why != "tape_only"
+
+
+def test_promote_from_young_live_print_not_field(monkeypatch):
+    """live_print young recovers empty/stale label even without field age."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: (12.5, 3.0))
+    rec = {
+        "symbol": "SDOT",
+        "last_ask": 13.0,
+        "last_ask_src": "stale_tape",
+        "last_ask_age_sec": 90.0,
+        "last_ask_ts": time.time() - 90.0,
+        "block_code": "stale_quote",
+    }
+    assert ew.promote_stream_src_if_print_fresh(rec) is True
+    assert rec["last_ask_src"] == "stream"
+    assert rec["last_ask"] == 12.5
+    assert float(rec["last_ask_age_sec"]) == 3.0
+    assert ew.clear_tape_data_block_if_stream_fresh(rec) is True
+    assert rec.get("block_code") is None
+
+
+def test_no_promote_without_prints_keeps_thin_refusal(monkeypatch):
+    """No young live_print and no young field → true thin stays refused."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    rec = {
+        "symbol": "LGCL",
+        "status": "watching",
+        "last_ask": 2.1,
+        "last_ask_src": "stale_tape",
+        "last_ask_age_sec": 67.4,
+        "last_ask_ts": time.time() - 67.4,
+        "block_code": "stale_quote",
+        "structure": {
+            "decision": "BUY",
+            "entry_low": 2.0,
+            "entry_high": 2.2,
+            "stop_price": 1.8,
+            "target_1": 2.5,
+            "wait_kind": "wait_for_zone",
+        },
+    }
+    assert ew.promote_stream_src_if_print_fresh(rec) is False
+    assert rec["last_ask_src"] == "stale_tape"
+    ok, why = ew.should_arm_buy(
+        rec, ask=2.1, bid=2.0,
+        cfg={"ai_watch_decision_max_age_sec": 15.0, "desk_product": "scalp_legacy"},
+        now=time.time(),
+    )
+    assert ok is False
+    assert why == "stale_quote"
 
 
 def test_book_table_rows_young_eng_wins_over_stale_quote_ts(monkeypatch):
@@ -415,6 +539,41 @@ def test_overlay_young_eng_does_not_restamp_stale_from_old_ts(monkeypatch):
     assert row["last_ask_src"] == "stream"
     assert float(row["last_ask_age_sec"]) <= 15.0
     assert row.get("block_code") != "stale_quote"
+
+
+def test_live_quote_for_prefers_finnhub_trade_ts_not_learn_time(monkeypatch):
+    """Finnhub age must use trade_ts, not ts_unix (learn time).
+
+    Preferring ts_unix made every remembered print look age≈0 — desk stream
+    while poller STATE (trade_ts age) correctly said stale_tape.
+    """
+    import dashboard as d
+
+    monkeypatch.setattr(d, "_load_signal_state", lambda: {"tickers": {}})
+    now = time.time()
+    trade_ts = now - 40.0
+    with d.STATE.lock:
+        d.STATE.tickers.pop("THIN", None)
+    with d.FINNHUB_STATE.lock:
+        d.FINNHUB_STATE.prices["THIN"] = {
+            "price": 3.5,
+            "ts_unix": now,          # just learned / still in memory
+            "trade_ts": trade_ts,    # print itself is 40s old
+        }
+    with d._alpaca_cache_lock:
+        d._alpaca_price_cache.pop("THIN", None)
+    px, age = d._live_quote_for("THIN", now=now)
+    assert px == 3.5
+    assert age is not None and age >= 39.0
+    # Undated Finnhub (REST) must not claim a young age via ts_unix alone.
+    with d.FINNHUB_STATE.lock:
+        d.FINNHUB_STATE.prices["THIN"] = {
+            "price": 3.5,
+            "ts_unix": now,
+            "trade_ts": None,
+        }
+    px2, age2 = d._live_quote_for("THIN", now=now)
+    assert px2 is None and age2 is None
 
 
 def test_overlay_wall_stamp_keeps_near_ceiling_young_print(monkeypatch):

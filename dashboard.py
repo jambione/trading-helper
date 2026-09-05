@@ -587,8 +587,17 @@ def _live_quote_for(sym: str, now: float | None = None) -> tuple[float | None, f
     except (TypeError, ValueError):
         fpx = 0.0
     if fpx > 0:
-        ts = float(fh.get("ts_unix") or fh.get("trade_ts") or 0)
-        candidates.append((ts if ts > 0 else 0.0, fpx))
+        # Prefer trade_ts (print clock). ts_unix is learn time and made every
+        # remembered Finnhub print look age≈0 — desk painted stream while the
+        # poller (STATE trade_ts age) correctly said tape_only / stale_tape.
+        # Undated remembered prints must not claim freshness (REST path).
+        try:
+            _tts = fh.get("trade_ts")
+            ts = float(_tts) if _tts is not None else 0.0
+        except (TypeError, ValueError):
+            ts = 0.0
+        if ts > 0:
+            candidates.append((ts, fpx))
 
     with _alpaca_cache_lock:
         ap = _alpaca_price_cache.get(t)

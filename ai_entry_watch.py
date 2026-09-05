@@ -447,6 +447,92 @@ def _paint_trust_young_stream_field(
     return True
 
 
+def promote_stream_src_if_print_fresh(
+    rec: dict,
+    cfg: dict | None = None,
+    *,
+    now: float | None = None,
+) -> bool:
+    """Force ``last_ask_src=stream`` when a dated print is ≤ decision ceiling.
+
+    Closes the Class C false-stale hole where ``src`` stayed ``stale_tape`` /
+    ``none`` / empty beside a young field age (CAPR Aug25: ``tape_age`` ≤15
+    with ``arm_why=tape_only``) or a young ``live_print``, while
+    ``clear_tape_data_block_if_stream_fresh`` required ``src=stream`` first
+    and could never recover the label.
+
+    True thin (age unknown or > ceiling, and no young live_print) is
+    unchanged — including no-trade-after-subscribe names with no prints.
+    """
+    if not isinstance(rec, dict):
+        return False
+    ceiling = decision_max_age_sec(cfg)
+    tnow = float(now if now is not None else time.time())
+    sym = str(rec.get("symbol") or "").upper().strip()
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+
+    if src == "stream":
+        align_stream_clock_if_field_young(rec, cfg, now=tnow)
+        age = row_quote_age_sec(rec, now=tnow)
+        if age is None:
+            age = _stream_field_age_sec(rec)
+        try:
+            age_f = float(age) if age is not None else None
+        except (TypeError, ValueError):
+            age_f = None
+        return age_f is not None and age_f <= ceiling
+
+    # 1) live_print young wins (engine / dash) — same evidence as poller rescue.
+    try:
+        lp = live_print(sym) if sym else None
+    except Exception:
+        lp = None
+    if lp is not None and lp[0] and lp[1] is not None:
+        try:
+            epx, eage = float(lp[0]), float(lp[1])
+        except (TypeError, ValueError):
+            epx, eage = 0.0, None
+        if epx > 0 and eage is not None and eage <= ceiling:
+            rec["last_ask"] = epx
+            rec["last_ask_src"] = "stream"
+            rec["price_src"] = "stream"
+            rec["last_ask_age_sec"] = float(eage)
+            rec["price_age_sec"] = float(eage)
+            rec["last_ask_ts"] = tnow - float(eage)
+            if sym:
+                _LAST_QUOTE_TS[sym] = tnow - float(eage)
+            return True
+
+    # 2) Row already carries a young dated age under a false stale/empty label.
+    # Prefer the same clock authority as row_quote_age_sec: an explicit old
+    # last_ask_ts owns the age (honesty case — frozen young field is the lie).
+    # Only fall back to the field when no dated stamp proves the print is old.
+    age = row_quote_age_sec(rec, now=tnow)
+    if age is None:
+        age = _stream_field_age_sec(rec)
+    try:
+        age_f = float(age) if age is not None else None
+    except (TypeError, ValueError):
+        age_f = None
+    if age_f is not None and age_f <= ceiling:
+        try:
+            px = float(rec.get("last_ask") or rec.get("price") or 0)
+        except (TypeError, ValueError):
+            px = 0.0
+        if px > 0:
+            rec["last_ask_src"] = "stream"
+            rec["price_src"] = "stream"
+            rec["last_ask_age_sec"] = float(age_f)
+            rec["price_age_sec"] = float(age_f)
+            rec["last_ask_ts"] = tnow - float(age_f)
+            if sym:
+                _LAST_QUOTE_TS[sym] = tnow - float(age_f)
+            return True
+    return False
+
+
 def clear_tape_data_block_if_stream_fresh(
     rec: dict,
     cfg: dict | None = None,
@@ -454,11 +540,14 @@ def clear_tape_data_block_if_stream_fresh(
     """Clear sticky tape-data blocks when last_ask_src=stream and age ≤ ceiling.
 
     Ceiling is ``ai_watch_decision_max_age_sec`` (default 15s). Returns True
-    when a block was cleared. Does nothing for stale_tape / untimed /
-    non-stream — those must keep refusing.
+    when a block was cleared. Promotes a false ``stale_tape`` / empty label
+    first when a young dated print is present; true thin (untimed / old /
+    no print) still refuses.
     """
     if not isinstance(rec, dict):
         return False
+    # Recover false stale labels before the src==stream gate (Class C).
+    promote_stream_src_if_print_fresh(rec, cfg)
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
@@ -605,6 +694,8 @@ def _row_tape_stale(rec: dict, cfg: dict | None = None) -> bool:
     """
     if not isinstance(rec, dict):
         return False
+    # False stale_tape/none beside a young dated print → promote, then judge.
+    promote_stream_src_if_print_fresh(rec, cfg)
     src = str(
         rec.get("last_ask_src") or rec.get("price_src") or ""
     ).strip().lower()
@@ -1500,6 +1591,7 @@ def apply_tape_blocker(row: dict, px: float | None) -> None:
     # field age, that age wins over a lagging last_ask_ts / _LAST_QUOTE_TS
     # (Class C / APLD-SMCI). honesty_restamp still demotes when only a
     # frozen field remains beside a truly old row ts.
+    promote_stream_src_if_print_fresh(row)
     _paint_trust_young_stream_field(row)
     if _row_tape_stale(row):
         row["ready"] = False
@@ -9838,6 +9930,9 @@ def should_arm_buy(
     # Never arm when the decision src is explicitly stale_tape / none.
     # Full _row_tape_stale (fail-closed on missing age) stays in the poller /
     # refresh path — unit tests often call should_arm_buy without a clock.
+    # Promote false stale labels first so stream+young cannot return
+    # stale_quote / tape_only (Class C CAPR/SDOT).
+    promote_stream_src_if_print_fresh(record, cfg, now=now)
     _src_arm = str(
         record.get("last_ask_src") or record.get("price_src") or ""
     ).strip().lower()
@@ -11574,32 +11669,23 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                 _gt._QUOTE_PATH_STATS["poll_priced_age_none_%s" % (px_src or "none")] += 1
         except Exception:  # noqa: BLE001
             pass
-        # Class C file-path: never leave stale_quote on disk when eng/live
-        # print is young (SNXX blip: eng≈2s + block=stale_quote while paint
-        # already cleared). Re-stamp stream from live_print and clear.
-        try:
-            _lp_now = live_print(sym)
-            if (
-                _lp_now is not None
-                and _lp_now[0]
-                and _lp_now[1] is not None
-                and float(_lp_now[0]) > 0
-                and float(_lp_now[1]) <= decision_max_age_sec(cfg)
-            ):
-                _epx, _eage = float(_lp_now[0]), float(_lp_now[1])
-                rec["last_ask"] = _epx
-                rec["last_ask_src"] = "stream"
-                rec["price_src"] = "stream"
-                rec["last_ask_age_sec"] = _eage
-                rec["last_ask_ts"] = float(t0) - _eage
-                _LAST_QUOTE_TS[str(sym).upper().strip()] = float(t0) - _eage
-                ask_f, px_src, px_age = _epx, "stream", _eage
-                clear_tape_data_block_if_stream_fresh(rec, cfg)
-        except Exception:
-            pass
-        if str(px_src or "").strip().lower() == "stream":
+        # Class C file-path: never leave stale_quote / tape_only on disk when
+        # eng/live print OR a young dated row age is present (SNXX blip;
+        # CAPR false stale_tape beside tape_age≤ceiling). Promote label,
+        # re-stamp ask from the row, clear tape-data blocks.
+        if promote_stream_src_if_print_fresh(rec, cfg, now=t0):
+            try:
+                _epx = float(rec.get("last_ask") or 0)
+            except (TypeError, ValueError):
+                _epx = 0.0
+            if _epx > 0:
+                ask_f = _epx
+            px_src = "stream"
+            px_age = rec.get("last_ask_age_sec")
             clear_tape_data_block_if_stream_fresh(rec, cfg)
-        tape_only = px_src == "stale_tape"
+        elif str(px_src or "").strip().lower() == "stream":
+            clear_tape_data_block_if_stream_fresh(rec, cfg)
+        tape_only = str(px_src or "").strip().lower() == "stale_tape"
         rec["last_poll_ts"] = t0
 
         structure = rec.get("structure") if isinstance(rec.get("structure"), dict) else None
