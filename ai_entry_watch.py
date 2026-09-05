@@ -5161,6 +5161,19 @@ def passes_inclusion(
         # Cool lifted by a live print — keep going; criteria note for logs.
         if "reseed_allowed_stream" not in met:
             met = list(met) + ["reseed_allowed_stream"]
+    # Admission range-position filter. Off by default (cap 0), so this only
+    # writes down what it WOULD have refused until out-of-sample days say
+    # whether the 2026-09-05 gradient holds. Fails open and swallows its own
+    # exceptions: an admission experiment must not be able to empty the book.
+    try:
+        import admission_filter
+        _rp = admission_filter.check(row, cfg, time.time(),
+                                     ew=sys.modules[__name__])
+        if _rp:
+            return False, met, _rp
+    except Exception:
+        pass
+
     source = str(row.get("source") or "").strip().lower()
     is_research = source in _RESEARCH_SOURCES
     # Prefer not admitting names with no / dead tape over filling the book
