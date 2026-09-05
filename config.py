@@ -69,6 +69,20 @@ DEFAULT_CONFIG = {
     # A FLAT gap still passes — the rule is "do not open into a closing gap",
     # and flat is not closing. False = shipped behaviour (size only).
     "ai_watch_macd_block_narrowing": False,
+    # The other half of MACD direction, as its own veto: refuse to open when
+    # the fast line is at or below the slow line (a negative histogram is the
+    # same statement). Independent of ai_watch_arm_require_macd, fail-open on
+    # missing MACD.
+    #
+    # Why it is separate from require_macd. That flag bundles direction with
+    # SIZE (macd_min_gap, macd_sep_mult) and AVAILABILITY (no_macd_data,
+    # macd_src_unknown, macd_stale_bars). Measured 2026-08-31..09-04 the
+    # bundle refused 84-94% of every arm decision, macd_bearish the largest
+    # single reason each session; turning it off to stop size and
+    # availability starving opens drops the direction test with them. This
+    # knob is the EXH+RSI arm path keeping "not crossed down" without the
+    # rest. False = shipped behaviour.
+    "ai_watch_macd_block_bearish": False,
     # Confluence override (operator, 8/26): MACD open and RISING at any gap
     # while %R exhaustion is RISING and at or past
     # ai_watch_macd_exh_override_min_pct arms the entry regardless of

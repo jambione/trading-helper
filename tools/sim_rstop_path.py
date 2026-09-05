@@ -126,20 +126,79 @@ def make_rec(
 def replay_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     """Desk config with the knobs a replay cannot honour turned to bars.
 
-    There is no signal engine behind a replay. The desk runs with
-    ai_watch_cm_rsi_local=False because the engine publishes CM RSI-2 for it;
-    carried into a sim that setting makes should_arm_buy answer no_rsi_data on
-    every single bar. Bars are the only source here, so compute it from them.
+    There is no signal engine behind a replay, and two live settings assume
+    one is there.
+
+    ai_watch_cm_rsi_local=False, because the engine publishes CM RSI-2 for
+    the desk; carried into a sim that setting makes should_arm_buy answer
+    no_rsi_data on every single bar. Bars are the only source here, so
+    compute it from them.
+
+    ai_watch_macd_max_age_sec=60 (live) asks how long ago the MACD bars
+    printed. live_macd stamps macd_src=realtime but no age, and under a
+    positive ceiling a missing age is refused as macd_src_unknown — so every
+    bar of every require_macd=true cell answered that, which is how the
+    arm-gate A/B returned n=0 on 2026-09-05 and read as "MACD refuses
+    everything" when it was the sim that could not answer. A replay has no
+    wall clock to be late against: the bars are exactly as old as the bar it
+    is standing on. Ceiling drops to source-only.
 
     Idempotent, and applied inside try_arm so that every caller gets it —
     tools/optimize_rstop.py drives its own book walk and only shares this
     function, so a fix parked in walk_symbol left the sweep still armless.
     """
-    if cfg.get("ai_watch_cm_rsi_local") is True:
+    try:
+        max_age = float(cfg.get("ai_watch_macd_max_age_sec", 0) or 0)
+    except (TypeError, ValueError):
+        max_age = 0.0
+    if cfg.get("ai_watch_cm_rsi_local") is True and max_age <= 0:
         return cfg
     out = dict(cfg)
     out["ai_watch_cm_rsi_local"] = True
+    out["ai_watch_macd_max_age_sec"] = 0.0
     return out
+
+
+def apply_macd_direction(
+    rec: dict,
+    symbol: str,
+    px: float,
+    cfg: dict,
+    now: float,
+) -> bool:
+    """Fill macd_gap_rising / _falling / _prev from the bars the sim arms on.
+
+    live_macd publishes how far APART the lines are; which way they are
+    MOVING comes off the signal engine (strategy_three_indicator.evaluate),
+    and a replay has no engine. Left unset, macd_narrowing_blocks_buy answers
+    macd_gap_dir_unknown on every bar inside the full stack (it fails closed
+    there by design), so require_macd=true places nothing — a broken
+    simulation, not a gate refusing every trade.
+
+    Same series and same lookback as the live rule: ew.macd_series over the
+    primed 1m closes with the forming minute folded in, then a strict > / <
+    against the reading `trend_lookback` bars back. Flat is neither rising
+    nor falling, matching strategy_three_indicator._rising / _falling.
+    """
+    ind = rec.get("indicator") if isinstance(rec, dict) else None
+    if not isinstance(ind, dict):
+        return False
+    rows = ew.symbol_ohlc(symbol, cfg, now)
+    if not rows:
+        return False
+    closes = [float(r[2]) for r in rows] + [float(px)]
+    built = ew.macd_series(closes, cfg)
+    if built is None:
+        return False
+    hist = built[2]
+    look = ew.cm_rsi_trend_lookback(cfg)
+    if look < 1 or len(hist) <= look:
+        return False
+    cur, prev = hist[-1], hist[-1 - look]
+    ind["macd_gap_rising"] = bool(cur > prev)
+    ind["macd_gap_falling"] = bool(cur < prev)
+    ind["macd_gap_prev"] = round(float(prev), 4)
+    return True
 
 
 def try_arm(
@@ -151,6 +210,14 @@ def try_arm(
     cfg = replay_cfg(cfg)
     try:
         ew.apply_live_exhaustion(rec, px, cfg, now)
+    except Exception:
+        pass
+    # After apply_live_exhaustion: live_macd runs inside it and writes the
+    # size fields, so direction is filled onto the same reading rather than
+    # onto one the next call overwrites.
+    try:
+        apply_macd_direction(
+            rec, str(rec.get("symbol") or ""), px, cfg, now)
     except Exception:
         pass
     return ew.should_arm_buy(rec, ask=px, bid=None, cfg=cfg)

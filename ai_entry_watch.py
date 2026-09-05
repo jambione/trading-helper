@@ -6222,6 +6222,35 @@ def _ema_series(values: list[float], span: int) -> list[float]:
     return out
 
 
+def macd_series(
+    closes: list[float],
+    cfg: dict,
+) -> tuple[list[float], list[float], list[float]] | None:
+    """(fast line, signal line, histogram) over *closes*, or None if short.
+
+    Extracted from live_macd so a replay can rebuild the same histogram the
+    desk armed on. Direction (macd_gap_rising / macd_gap_falling) is
+    published by the signal engine, and the sims run with no engine behind
+    them — tools/sim_rstop_path.py has to derive it from the bars. A second
+    copy of this arithmetic in tools/ would drift from the one the desk
+    trades, which is why cm_rsi_series is shared the same way.
+    """
+    try:
+        fast_p = int(cfg.get("macd_fast", 12) or 12)
+        slow_p = int(cfg.get("macd_slow", 26) or 26)
+        sig_p = int(cfg.get("macd_signal", 9) or 9)
+    except (TypeError, ValueError):
+        fast_p, slow_p, sig_p = 12, 26, 9
+    if len(closes) < max(slow_p + sig_p, 20):
+        return None
+    ema_fast = _ema_series(closes, fast_p)
+    ema_slow = _ema_series(closes, slow_p)
+    macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
+    signal_line = _ema_series(macd_line, sig_p)
+    hist = [m - s for m, s in zip(macd_line, signal_line)]
+    return macd_line, signal_line, hist
+
+
 def live_macd(
     symbol: str,
     price: float,
@@ -6241,20 +6270,10 @@ def live_macd(
     if len(rows) < 15:
         return None
     closes = [float(r[2]) for r in rows] + [px]
-    try:
-        fast_p = int(cfg.get("macd_fast", 12) or 12)
-        slow_p = int(cfg.get("macd_slow", 26) or 26)
-        sig_p = int(cfg.get("macd_signal", 9) or 9)
-    except (TypeError, ValueError):
-        fast_p, slow_p, sig_p = 12, 26, 9
-    if len(closes) < max(slow_p + sig_p, 20):
+    built = macd_series(closes, cfg)
+    if built is None:
         return None
-
-    ema_fast = _ema_series(closes, fast_p)
-    ema_slow = _ema_series(closes, slow_p)
-    macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
-    signal_line = _ema_series(macd_line, sig_p)
-    hist = [m - s for m, s in zip(macd_line, signal_line)]
+    macd_line, signal_line, hist = built
 
     cur_line = macd_line[-1]
     cur_sig = signal_line[-1]
@@ -7276,6 +7295,63 @@ def macd_allows_buy(record: dict, cfg: dict) -> tuple[bool, str]:
         return False, narrow_why
 
     return True, "macd_bullish_gap"
+
+
+def macd_bearish_blocks_buy(
+    record: dict,
+    cfg: dict,
+    *,
+    fail_open_unknown: bool = True,
+) -> str | None:
+    """Refuse when the MACD lines are crossed down. Reason or ``None``.
+
+    Sibling of macd_narrowing_blocks_buy, and independent of
+    ``ai_watch_arm_require_macd`` for the same reason: this is a veto, not
+    the positive gate.
+
+    Why it is its own knob. ``require_macd`` bundles three different
+    questions — DIRECTION (crossed down, gap closing), SIZE (macd_min_gap,
+    macd_sep_mult) and AVAILABILITY (no_macd_data, macd_src_unknown,
+    macd_stale_bars). Measured over 2026-08-31..09-04 the bundle refused
+    84-94% of every arm decision the desk made, with macd_bearish the single
+    largest reason each session (2,175-4,846/day). Turning the bundle off to
+    stop the size and availability tests starving opens also drops the
+    direction test, which is the half that says the trade is wrong rather
+    than merely small. This keeps that half alone: a name whose fast line
+    sits below its slow line is not an open, whatever the gap measures.
+
+    Fail-open on missing MACD by default, like the narrowing veto — failing
+    closed here would reintroduce the availability refusals that the EXH+RSI
+    arm path exists to avoid.
+    """
+    if not bool(cfg.get("ai_watch_macd_block_bearish", False)):
+        return None
+    ind = record.get("indicator") if isinstance(record, dict) else None
+    ind = ind if isinstance(ind, dict) else {}
+    fast = _f_or_none(
+        ind.get("macd_fast") if ind.get("macd_fast") is not None
+        else ind.get("macd_line"))
+    slow = _f_or_none(
+        ind.get("macd_slow") if ind.get("macd_slow") is not None
+        else ind.get("macd_signal"))
+    gap = _f_or_none(
+        ind.get("macd_gap") if ind.get("macd_gap") is not None
+        else ind.get("macd_hist"))
+    if fast is None or slow is None or gap is None:
+        if fail_open_unknown:
+            return None
+        if isinstance(record, dict):
+            record["block_detail"] = "no realtime MACD (needs 1-min bars)"
+        return "no_macd_data"
+    # Same test, same wording as the one inside macd_allows_buy: a negative
+    # histogram and a fast line at or under the signal are both "crossed
+    # down", so the two paths cannot disagree about what bearish means.
+    if fast > slow and gap > 0:
+        return None
+    if isinstance(record, dict):
+        record["block_detail"] = (
+            f"fast {fast:.4f} <= slow {slow:.4f} (gap {gap:+.4f})")
+    return "macd_bearish"
 
 
 def macd_narrowing_blocks_buy(
@@ -10026,12 +10102,20 @@ def should_arm_buy(
         if mistimed:
             return False, mistimed
 
-    # MACD closing-gap veto without the size/bullish stack. When
-    # require_macd is on, macd_allows_buy already ran narrowing above.
-    # When it is off, EXH+RSI (and soft OB / mistimed) are the open path;
-    # block_narrowing alone still refuses a gap that is actively closing.
-    # Fail-open on missing MACD so this veto cannot re-starve opens the
+    # MACD DIRECTION vetoes without the size/bullish stack. When require_macd
+    # is on, macd_allows_buy already ran both of these inside it — bearish
+    # first, narrowing last — so the same precedence is kept here.
+    # When it is off, EXH+RSI (and soft OB / mistimed) are the open path and
+    # these two alone refuse a crossed-down or actively closing gap.
+    # Fail-open on missing MACD so neither veto can re-starve opens the
     # way macd_src_unknown did under the full gate.
+    if (not bool(cfg.get("ai_watch_arm_require_macd", False))
+            and bool(cfg.get("ai_watch_macd_block_bearish", False))):
+        bear_why = macd_bearish_blocks_buy(
+            record, cfg, fail_open_unknown=True)
+        if bear_why:
+            return False, bear_why
+
     if (not bool(cfg.get("ai_watch_arm_require_macd", False))
             and bool(cfg.get("ai_watch_macd_block_narrowing", False))):
         narrow_why = macd_narrowing_blocks_buy(
