@@ -578,6 +578,12 @@ def log_event(kind: str, **fields: Any) -> dict[str, Any]:
             f.write(json.dumps(row, default=str) + "\n")
     except Exception:
         pass
+    # Package 1 decision ledger (observe-only). Fail-open — never block.
+    try:
+        import decision_ledger as _dl
+        _dl.log_from_event(str(kind), **row)
+    except Exception:
+        pass
     with _event_lock:
         _recent_events.append(row)
         if len(_recent_events) > _EVENT_RING_MAX:
@@ -660,6 +666,13 @@ def log_shadow_sample(row: dict[str, Any]) -> None:
         SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
         with SHADOW_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, default=str) + "\n")
+        # Package 1 decision ledger — densest hook (1 row / symbol / poll).
+        # Fail-open: ledger errors must never affect shadow or trading.
+        try:
+            import decision_ledger as _dl
+            _dl.log_from_shadow(payload)
+        except Exception:
+            pass
     except Exception:
         pass
 
