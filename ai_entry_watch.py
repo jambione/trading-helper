@@ -12283,5 +12283,20 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         pass
 
+    # Forward validation for the strength entry (EXH crosses 75 -> CM RSI-2
+    # >= 90). Log-only by construction: strength_signal cannot reach the
+    # order path, swallows its own exceptions, and reads the bars this poll
+    # already warmed. It is here rather than in the record loop because the
+    # rule is defined on CLOSED 1-minute bars, not on 5-second polls.
+    #
+    # It measured +0.86%/trade at 10/10 sessions in-sample on 2026-08-24..
+    # 09-04, with no holdout and ~70 configurations searched over those same
+    # days. These rows are the out-of-sample days it has not seen.
+    try:
+        import strength_signal
+        strength_signal.evaluate(list(touched.keys()), cfg, t0, ew=sys.modules[__name__])
+    except Exception:
+        pass
+
     merge_watch_records(touched)
     return events
