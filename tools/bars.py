@@ -157,6 +157,56 @@ def fetch_hl(sym: str, day: str, feed: str = "sip") -> tuple[list | None, list |
     return out
 
 
+_OHLC_CACHE: dict = {}
+
+
+def fetch_ohlc(sym: str, day: str, feed: str = "sip"):
+    """(stamps, highs, lows, closes) of 1m RTH bars. ``None`` x4 when absent.
+
+    ``fetch`` gives closes and ``fetch_hl`` gives highs, and neither can walk
+    a path: deciding whether a stop was hit before a target needs the low and
+    the high of every bar in order. Every exit study on 2026-09-05 hand-rolled
+    this same request, which is the fourth-near-copy problem this module was
+    written to end — see the header.
+    """
+    sym = str(sym).upper()
+    key = (sym, day, feed)
+    if key in _OHLC_CACHE:
+        return _OHLC_CACHE[key]
+    cl = client()
+    if cl is None:
+        _OHLC_CACHE[key] = (None, None, None, None)
+        return _OHLC_CACHE[key]
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
+
+    out = (None, None, None, None)
+    try:
+        d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=ET)
+        df = cl.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=sym,
+            timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+            start=d.replace(hour=9, minute=25).astimezone(timezone.utc),
+            end=d.replace(hour=16, minute=5).astimezone(timezone.utc),
+            limit=10000, extended_hours=False,
+            feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX,
+        )).df
+        import pandas as pd
+        if df is not None and not df.empty:
+            if isinstance(df.index, pd.MultiIndex):
+                df = df.xs(sym, level="symbol")
+            df = df.sort_index()
+            out = ([t.timestamp() for t in df.index],
+                   [float(v) for v in df["high"]],
+                   [float(v) for v in df["low"]],
+                   [float(v) for v in df["close"]])
+    except Exception:
+        out = (None, None, None, None)
+    _OHLC_CACHE[key] = out
+    return out
+
+
 def fetch_many(syms, day: str, feed: str = "sip", chunk: int = 100) -> None:
     """Warm the cache for many symbols with few requests.
 
