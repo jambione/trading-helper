@@ -171,3 +171,20 @@ def test_shadow_hook_via_log_shadow_sample(tmp_path, monkeypatch):
 
 def test_mapper_coverage_matches_buckets_module():
     assert buckets.arm_bucket("cheap_ob_band") == "heat"
+
+
+def test_log_event_hook_does_not_double_kind(tmp_path, monkeypatch):
+    """log_event must reach the ledger (kind only once in kwargs)."""
+    import ai_positions as cp
+
+    events = tmp_path / "events.jsonl"
+    ledger = tmp_path / "decision_ledger.jsonl"
+    monkeypatch.setattr(cp, "EVENTS_PATH", events)
+    dl.set_ledger_path_for_tests(ledger)
+    cp.log_event("entry_fail", symbol="HOOK", reason="spread")
+    assert ledger.exists()
+    got = json.loads(ledger.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert got["symbol"] == "HOOK"
+    assert got["stage"] == "entry"
+    assert got["arm_bucket"] == "spread"
+    assert got["event_kind"] == "entry_fail"

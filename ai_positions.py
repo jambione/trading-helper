@@ -579,9 +579,11 @@ def log_event(kind: str, **fields: Any) -> dict[str, Any]:
     except Exception:
         pass
     # Package 1 decision ledger (observe-only). Fail-open — never block.
+    # Do not splat ``kind`` twice into log_from_event (TypeError → silent miss).
     try:
         import decision_ledger as _dl
-        _dl.log_from_event(str(kind), **row)
+        _fields = {k: v for k, v in row.items() if k != "kind"}
+        _dl.log_from_event(str(kind), **_fields)
     except Exception:
         pass
     with _event_lock:
