@@ -130,6 +130,12 @@ OVERLAY_KEYS = {
     "require_macd": "ai_watch_arm_require_macd",
     "macd_min_gap": "macd_min_gap",
     "macd_block_narrowing": "ai_watch_macd_block_narrowing",
+    # The other direction veto, separable from require_macd for the same
+    # reason narrowing is: the bundle answers direction, size and
+    # availability at once, and only the first is a statement about the
+    # trade. Both vetoes fail open on a missing reading, so a cell with
+    # require_macd off and these two on is "direction only, no starving".
+    "macd_block_bearish": "ai_watch_macd_block_bearish",
     "macd_exh_override": "ai_watch_macd_exh_override",
     "require_cm_rsi": "ai_watch_arm_require_cm_rsi",
     "require_exh_rising": "ai_watch_require_exh_rising",

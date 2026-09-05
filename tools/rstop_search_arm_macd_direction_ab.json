@@ -1,0 +1,9 @@
+{
+  "min_n": 10,
+  "description": "MACD as DIRECTION ONLY: the 2x2 of block_bearish x block_narrowing with require_macd off in every cell, so size (macd_min_gap, macd_sep_mult) and availability (no_macd_data, macd_src_unknown, macd_stale_bars) are retired throughout and only the two direction vetoes vary. Cell (false,false) is EXH+RSI with no MACD at all; (true,false) is 'not crossed down'; (false,true) is the shipped 2026-09-04 config; (true,true) is both vetoes. Both fail open on a missing reading, so no cell can reintroduce an availability refusal. Exhaustion, CM RSI, mistimed_heat, require_exh_rising and the live trail stay on. READ FIRST: neither veto checks provenance - 39% of readings carry macd_src=alpaca with no age at all and direction is realtime-and-under-30s on only 48% of rows, so every cell here scores a veto that is acting on a stale reading about half the time. That is a property of the live gate, not of the sim; it caps what this grid can settle.",
+  "search": {
+    "require_macd": [false],
+    "macd_block_bearish": [false, true],
+    "macd_block_narrowing": [false, true]
+  }
+}
