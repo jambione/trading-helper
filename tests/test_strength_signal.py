@@ -1,16 +1,18 @@
-"""The strength entry's forward-validation logger.
+"""The burst+RSI logger: fires once, on closed bars, and stamps its latency.
 
-The rule it watches for — EXH crossing up through 75, then CM RSI-2 >= 90
-within 20 bars — measured +0.86%/trade at 10/10 sessions in-sample, and the
-same setup entered on RSI-2 <= 20 lost 1.25%. That gap is the whole reason
-these rows are being collected, and it is why the polarity below is asserted
-explicitly: a sign flip here would quietly log the losing half.
+The rule it watches — premarket mention burst, then the first closed bar at
+or after 09:30 with CM RSI-2 >= 70 — measured +2.56%/trade at 10/10 sessions
+in-sample, and the same entry taken with RSI LOW loses. That polarity is
+asserted explicitly below: a sign flip here would quietly collect the losing
+half and look identical in the log.
 
-Two properties matter more than the arithmetic:
+Three properties matter more than the arithmetic:
 
-  * it evaluates CLOSED bars only, once each. The rule was fitted on 1m bars
-    and the poll runs every 5 seconds, so firing on a forming bar would be a
-    different signal wearing the same name.
+  * latency_sec is the point. The measured result falls from +2.56% at the
+    signal bar to +0.72% one bar later, so how fast this desk reacts decides
+    which number it lives at. A row without that field is worthless.
+  * closed bars only, once each. RSI-2 moves inside a forming minute, and
+    firing on one would be a different signal wearing the same name.
   * it cannot raise. A logging experiment that can take the watch poll down
     is a worse trade than any it could find.
 """
@@ -25,9 +27,13 @@ sys.path.insert(0, str(_ROOT))
 
 import strength_signal as ss  # noqa: E402
 
+# 2026-09-08 (a Tuesday): ~10:00 ET inside RTH, and ~09:00 ET premarket.
+OPEN_TS = 1788876000.0
+PRE_TS = OPEN_TS - 3600.0
+
 
 class FakeEW:
-    """Just the two accessors strength_signal reads off ai_entry_watch."""
+    """The three accessors strength_signal reads off ai_entry_watch."""
 
     def __init__(self, rows, stamps, rsi):
         self._rows, self._stamps, self._rsi = rows, stamps, rsi
@@ -42,26 +48,17 @@ class FakeEW:
         return self._rsi[:len(closes)]
 
 
-def _flat(n, px=10.0):
-    # Close in the MIDDLE of each bar's range, so EXH sits near 50 and has
-    # somewhere to cross up from. A close at the bar's high pins EXH at 100
-    # and no crossing can ever be detected — which is what the first draft
-    # of this fixture did.
-    return [(px, px * 0.99, px * 0.995) for _ in range(n)]
-
-
-def _series(n_flat=30, cross_at=None, top=None):
-    """Bars that sit flat, then rise so EXH crosses, then a trigger bar."""
-    rows = _flat(n_flat)
-    if cross_at:
-        for _ in range(cross_at):
-            rows.append((10.4, 10.3, 10.35))     # lifts EXH through 75
-    if top:
-        for _ in range(top):
-            rows.append((10.9, 10.8, 10.85))     # the surge
-    rows.append((10.9, 10.8, 10.85))             # forming bar, never scored
-    stamps = [1_000_000.0 + 60.0 * i for i in range(len(rows))]
+def _bars(n=30, end_ts=OPEN_TS):
+    rows = [(10.1, 9.9, 10.0) for _ in range(n)]
+    stamps = [end_ts - 60.0 * (n - 1 - k) for k in range(n)]
     return rows, stamps
+
+
+def _burst_file(tmp_path, symbols, ts=PRE_TS):
+    with (tmp_path / "signal_shadow.jsonl").open("w") as fh:
+        for s in symbols:
+            fh.write(json.dumps({"ts": ts, "ticker": s,
+                                 "signal": "mention_burst"}) + "\n")
 
 
 @pytest.fixture(autouse=True)
@@ -72,109 +69,120 @@ def _clean(tmp_path, monkeypatch):
     ss.reset_state()
 
 
-def _run(rows, stamps, rsi, cfg=None, now=1_000_000.0 + 60 * 999):
-    # The knob ships OFF (the rule was falsified); tests opt in explicitly.
-    cfg = {"ai_strength_signal_enabled": True} if cfg is None else cfg
-    return ss.evaluate(["AAA"], cfg, now, ew=FakeEW(rows, stamps, rsi))
+def _run(rows, stamps, rsi, cfg=None, now=OPEN_TS):
+    return ss.evaluate(["AAA"], cfg or {}, now, ew=FakeEW(rows, stamps, rsi))
 
 
 # ── the rule ─────────────────────────────────────────────────────────────
 
-def test_a_crossing_alone_does_not_fire():
-    """The setup is not the entry — the trigger is a later bar."""
-    rows, stamps = _series(cross_at=3)
-    assert _run(rows, stamps, [50.0] * len(rows)) == []
+def test_a_burst_name_with_strong_rsi_fires(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    out = _run(rows, stamps, [85.0] * len(rows))
+    assert len(out) == 1
+    assert out[0]["symbol"] == "AAA"
+    assert out[0]["cm_rsi"] >= 70.0
+    assert out[0]["rule"] == "premarket_burst_rsi2"
 
 
-def test_crossing_then_strength_fires():
-    rows, stamps = _series(cross_at=3, top=2)
-    ss.reset_state()
-    # First pass establishes the crossing; the trigger bar arrives after.
-    out = None
-    for cut in range(23, len(rows) + 1):
-        out = _run(rows[:cut], stamps[:cut], [95.0] * cut)
-        if out:
-            break
-    assert out, "crossing followed by RSI-2 >= 90 should fire"
-    row = out[0]
-    assert row["symbol"] == "AAA"
-    assert row["cm_rsi"] >= 90.0
-    assert row["exh"] >= 60.0
-    assert row["bars_since_cross"] >= 1
+def test_weak_rsi_does_not_fire_it_is_the_losing_half(tmp_path):
+    """RSI LOW on this setup was the losing arm. A sign flip must not pass."""
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    assert _run(rows, stamps, [20.0] * len(rows)) == []
 
 
-def test_low_rsi_never_fires_it_is_the_losing_half():
-    """RSI-2 <= 20 after the same setup lost 1.25%/trade at 0/10 sessions.
-
-    A sign flip here would log that arm and call it the strategy.
-    """
-    rows, stamps = _series(cross_at=3, top=2)
-    for cut in range(23, len(rows) + 1):
-        assert _run(rows[:cut], stamps[:cut], [5.0] * cut) == []
+def test_a_name_with_no_premarket_burst_is_skipped(tmp_path):
+    _burst_file(tmp_path, ["ZZZ"])          # someone else burst, not AAA
+    rows, stamps = _bars()
+    assert _run(rows, stamps, [85.0] * len(rows)) == []
 
 
-def test_the_setup_expires():
-    rows, stamps = _series(cross_at=3)
-    for _ in range(40):                       # long past wait_bars
-        rows.append((10.4, 10.3, 10.35))
-    rows.append((10.4, 10.3, 10.35))
-    stamps = [1_000_000.0 + 60.0 * i for i in range(len(rows))]
-    fired = []
-    for cut in range(23, len(rows) + 1):
-        fired += _run(rows[:cut], stamps[:cut], [95.0] * cut)
-    # Whatever fires must be inside the window, never a stale setup.
-    assert all(r["bars_since_cross"] <= 20 for r in fired)
+def test_an_rth_burst_does_not_count_as_premarket(tmp_path):
+    _burst_file(tmp_path, ["AAA"], ts=OPEN_TS - 60.0)
+    rows, stamps = _bars()
+    assert _run(rows, stamps, [85.0] * len(rows)) == []
 
 
-# ── evaluates closed bars, once each ─────────────────────────────────────
-
-def test_the_forming_bar_is_never_scored():
-    rows, stamps = _series(cross_at=3, top=2)
-    rsi = [95.0] * len(rows)
-    first = _run(rows, stamps, rsi)
-    # Re-running with the same bars must not produce a second row.
-    assert _run(rows, stamps, rsi) == []
-    assert len(first) <= 1
+def test_nothing_fires_before_the_open(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars(end_ts=PRE_TS)
+    assert _run(rows, stamps, [85.0] * len(rows), now=PRE_TS) == []
 
 
-def test_a_row_is_written_to_the_log():
-    rows, stamps = _series(cross_at=3, top=2)
-    out = []
-    for cut in range(23, len(rows) + 1):
-        out += _run(rows[:cut], stamps[:cut], [95.0] * cut)
-    if not out:
-        pytest.skip("fixture did not trigger; covered by the firing test")
-    logged = [json.loads(x) for x in
-              Path(ss.log_path()).read_text().splitlines() if x.strip()]
-    assert logged and logged[0]["kind"] == "strength_signal"
-    assert "latency_sec" in logged[0]      # the one-bar constraint's evidence
-    assert "rule" in logged[0]             # knobs travel with the row
+# ── once, on closed bars ─────────────────────────────────────────────────
+
+def test_it_fires_once_per_name_day(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    rsi = [85.0] * len(rows)
+    assert len(_run(rows, stamps, rsi)) == 1
+    assert _run(rows, stamps, rsi) == []          # same bar, no second row
+
+
+def test_the_forming_bar_is_not_scored(tmp_path):
+    """The last row may still be forming, so the reading comes from the one
+    before it — the same series the rule was fitted on."""
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    out = _run(rows, stamps, [85.0] * len(rows))
+    assert out and out[0]["bars"] == len(rows) - 1
+
+
+def test_mismatched_stamps_are_refused_not_guessed(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    assert _run(rows, stamps[:-3], [85.0] * len(rows)) == []
+
+
+# ── latency is the point ─────────────────────────────────────────────────
+
+def test_latency_is_measured_from_the_closed_bar(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    out = _run(rows, stamps, [85.0] * len(rows), now=OPEN_TS + 7.0)
+    assert out
+    assert out[0]["latency_sec"] == pytest.approx(
+        (OPEN_TS + 7.0) - out[0]["bar_ts"], abs=0.2)
+    assert out[0]["latency_sec"] > 0
+
+
+def test_the_logged_row_carries_what_a_scorer_needs(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
+    _run(rows, stamps, [85.0] * len(rows))
+    rec = json.loads(Path(ss.log_path()).read_text().splitlines()[0])
+    for k in ("bar_ts", "fired_at", "latency_sec", "cm_rsi", "price",
+              "params", "burst_universe"):
+        assert k in rec, k
 
 
 # ── it cannot take the poll down ─────────────────────────────────────────
 
 class Exploding:
     def symbol_ohlc(self, *a, **k):
-        raise RuntimeError("bars are on fire")
+        raise RuntimeError("no bars")
 
     def _cached_ohlc_stamps(self, *a, **k):
-        raise RuntimeError("so are the stamps")
+        raise RuntimeError("no stamps")
 
     def cm_rsi_series(self, *a, **k):
-        raise RuntimeError("and the rsi")
+        raise RuntimeError("no rsi")
 
 
-def test_a_broken_bar_source_is_swallowed():
-    assert ss.evaluate(["AAA"], {}, 1.0, ew=Exploding()) == []
+def test_a_broken_bar_source_is_swallowed(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    assert ss.evaluate(["AAA"], {}, OPEN_TS, ew=Exploding()) == []
 
 
-def test_mismatched_stamps_are_refused_not_guessed():
-    rows, stamps = _series(cross_at=3, top=2)
-    assert _run(rows, stamps[:-4], [95.0] * len(rows)) == []
+def test_a_missing_burst_file_fires_nothing(tmp_path):
+    """No file is no information, not "no bursts". Record less, never more."""
+    rows, stamps = _bars()
+    assert _run(rows, stamps, [85.0] * len(rows)) == []
 
 
-def test_disabled_does_nothing():
-    rows, stamps = _series(cross_at=3, top=2)
+def test_disabled_does_nothing(tmp_path):
+    _burst_file(tmp_path, ["AAA"])
+    rows, stamps = _bars()
     cfg = {"ai_strength_signal_enabled": False}
-    for cut in range(23, len(rows) + 1):
-        assert _run(rows[:cut], stamps[:cut], [95.0] * cut, cfg) == []
+    assert _run(rows, stamps, [85.0] * len(rows), cfg) == []

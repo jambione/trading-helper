@@ -1,62 +1,63 @@
 #!/usr/bin/env python3
-"""Log the strength entry as it happens. Places nothing, ever. DEFAULT OFF.
+"""Log the burst+RSI entry as it happens, with its latency. Places nothing.
 
-FALSIFIED 2026-09-05, hours after it was written. Left in the tree because
-the falsification is worth keeping next to the rule, and because the
-detector itself (closed-bar evaluation, one fire per bar) is reusable if a
-rule ever earns forward collection. Turn it on only with a rule that has
-passed a jitter profile.
+THE RULE
+    universe   names with a MENTION BURST premarket (04:00-09:30) today
+    trigger    first CLOSED 1m bar at/after 09:30 with CM RSI-2 >= 70
+    (measured) fill at the next bar's open; exit is an ATR-2.0x ratchet plus
+               an RSI-2 <= 30 reversal exit, -5% hard
 
-THE RULE THAT FAILED (measured 2026-09-05 over 2026-08-24..09-04)
+    Measured 2026-09-05 on 105 premarket-burst names, 2026-08-24..09-04:
 
-    setup    EXH crosses UP through 75      — the name heads into overbought
-    trigger  first CLOSED bar within 20 where CM RSI-2 >= 90 and EXH >= 60
-    fill     the NEXT bar's open
-    exit     EXH leaves overbought; 2% ratchet; -5% hard; 120m cap
+        P(+3% before -3%)      71%     (an ungated open entry is 49%)
+        entry + exit           +2.56% mean, +1.46% median, 10/10 sessions
+        exit parameter plateau 48 of 48 neighbouring cells positive
+        cost at the signal     +1.10% at 0.60% round trip
 
-    It measured +0.86%/trade at 10/10 sessions and 3.9 sigma against
-    same-name controls. That was wrong, in three compounding ways:
+    The operator's model is that the entry only has to pick a direction --
+    the ratchet handles where the move stops. 71% up-before-down is that
+    precondition, and it is the first thing measured that supplies it.
 
-      * the universe scanned a whole day's bars for names that only joined
-        the book later — trading 09:45 on a name admitted at 11:00
-      * bars start 09:25 with extended hours off, so the 21-bar %R window is
-        compressed before ~09:51 and EXH >= 75 fires on nothing
-      * fixing both leaves +0.37% at n=127, and a jitter profile then shows
-        NO PEAK AT THE SIGNAL: t-3 +1.30%, t-1 +1.01%, t +0.37%, t+1 -0.43%.
-        Monotone. The trigger is late to a spike already running, and t-3 is
-        unreachable because it is conditioned on a future RSI print.
+WHY IT IS LOGGED AND NOT TRADED
 
-    A real entry signal peaks at the signal. Run a jitter profile before
-    believing any rule; eligible-within at 3.9 sigma did not catch this.
+    The edge is one bar wide, and the honest bar was missed:
 
-    The same setup entered on RSI-2 <= 20 — waiting for the pullback — loses
-    1.25%/trade at 0/10 sessions. A name that keeps running never prints a
-    low RSI-2, so "wait for the dip" selects the ones that rolled over.
+        t    +2.56%  10/10          t+1 at 0.20% cost  +0.72%  7/10
+        t+1  +0.72%   7/10          t+1 at 0.40% cost  +0.52%  6/10, median -0.06%
+        t+2  +1.14%   7/10          t+1 at 0.60% cost  +0.32%  6/10, median -0.26%
 
-WHY IT WAS NEVER SHIPPED AS A CONFIG CHANGE
-    No holdout: ~70 configurations were searched over the same ten sessions,
-    which turns p=0.001 into roughly p=0.07 on its own. So it was only ever
-    going to be collected forward, never traded — and then it did not even
-    survive that far. Nothing here can reach the order path regardless.
+    "t" already means filling at the open of the bar AFTER the signal, which
+    is arguably a print you cannot decide to take. One further bar and the
+    median goes negative once realistic costs are charged. The pre-registered
+    bar was "t+1 positive at 0.40-0.60% cost with 7+ sessions" and it came
+    back 6/10 with a negative median. It is not dead; it is not proven.
 
-WHY BARS AND NOT POLLS
-    The poll runs every ~5s and EXH moves inside a forming minute, so a
-    crossing detected on a poll is not the crossing the backtest measured.
-    Every reading here comes off CLOSED 1-minute bars, one evaluation per
-    bar per symbol, which is the same series the rule was fitted on.
+    Two numbers decide which world this lives in, and NEITHER has ever been
+    measured on this desk:
 
-LATENCY, STILL LOGGED
-    `latency_sec` (fired_at - bar_ts) rides on every row. It was written for
-    this rule's one-bar constraint, and it is worth keeping for any future
-    one: it is the measurement that says whether this desk can act inside a
-    bar at all, independent of which signal it is chasing.
+      latency_sec  seconds from bar close to an order being in. Puts the
+                   desk at t (+2.56%) or at t+1 (+0.72% falling to marginal).
+      real spread  at these names at these moments, which picks the column
+                   in that cost table.
+
+    No further backtesting produces either. That is what this log is for.
+
+    A predecessor rule (EXH crossing 75 then RSI-2 >= 90) was logged here and
+    FALSIFIED the same day -- point-in-time and warm-up bugs were 57% of it,
+    and its jitter profile had no peak at the signal at all. This rule differs
+    in that its jitter is a plateau, its exit neighbourhood is uniformly
+    positive, and it survives a 1% round trip at the signal bar. It is still
+    in-sample: ten sessions, and the ones it was found on.
+
+EVALUATES CLOSED BARS ONLY
+    The poll runs every ~5s and RSI-2 moves inside a forming minute, so
+    firing on a forming bar would be a different signal wearing this name.
 """
 from __future__ import annotations
 
 import json
 import os
 import threading
-import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -64,24 +65,25 @@ ET = ZoneInfo("America/New_York")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 _LOCK = threading.Lock()
-# (symbol, ET date) -> {"last_bar": float, "cross_ts": float|None,
-#                       "cross_i": int|None, "fired": bool}
-_STATE: dict[tuple[str, str], dict] = {}
+_STATE: dict[tuple[str, str], dict] = {}          # (sym, day) -> last_bar/fired
+_BURSTS: dict[str, tuple[float, set[str]]] = {}   # day -> (loaded_at, symbols)
 
-FAST = 21          # rte_fast_length — the desk's own %R window
+RTH_OPEN_MIN = 9 * 60 + 30
+PREMARKET_MIN = 4 * 60
+BURST_REFRESH_SEC = 300.0
+
 DEFAULTS = {
-    "ai_strength_signal_enabled": False,   # falsified; see the header
-    "ai_strength_cross": 75.0,       # EXH level the setup crosses upward
-    "ai_strength_rsi_min": 90.0,     # CM RSI-2 that triggers the entry
-    "ai_strength_exh_floor": 60.0,   # EXH must still be engaged at the trigger
-    "ai_strength_wait_bars": 20,     # bars the setup stays live after crossing
+    "ai_strength_signal_enabled": True,
+    "ai_strength_rsi_min": 70.0,
+    "ai_strength_rsi_period": 2,
+    "ai_strength_require_burst": True,
     "ai_strength_one_per_day": True,
 }
 
 
 def _cfg(cfg: dict, key: str):
-    val = (cfg or {}).get(key)
-    return DEFAULTS[key] if val is None else val
+    v = (cfg or {}).get(key)
+    return DEFAULTS[key] if v is None else v
 
 
 def _f(cfg: dict, key: str) -> float:
@@ -91,59 +93,85 @@ def _f(cfg: dict, key: str) -> float:
         return float(DEFAULTS[key])
 
 
+def report_dir() -> str:
+    return os.environ.get("AI_REPORT_DIR") or os.path.join(ROOT, "ai_reports")
+
+
 def log_path() -> str:
-    base = os.environ.get("AI_REPORT_DIR") or os.path.join(ROOT, "ai_reports")
-    return os.path.join(base, "strength_signals.jsonl")
+    return os.path.join(report_dir(), "strength_signals.jsonl")
 
 
-def exh_at(rows, i: int, n: int = FAST) -> float | None:
-    """100 + Williams %R over the trailing *n* bars — the desk's definition.
+def _et_minutes(ts: float) -> int:
+    d = datetime.fromtimestamp(ts, ET)
+    return d.hour * 60 + d.minute
 
-    rows are (high, low, close), the shape ai_entry_watch.symbol_ohlc returns.
+
+def premarket_bursts(day: str, now: float) -> set[str]:
+    """Symbols with an 04:00-09:30 mention burst today, from signal_shadow.
+
+    Cached on a timer: the set can still grow until 09:30, and re-reading a
+    large jsonl on every 5-second poll would be its own problem.
     """
-    if i < 0 or i >= len(rows):
-        return None
-    lo_i = max(0, i - n + 1)
-    win = rows[lo_i:i + 1]
+    hit = _BURSTS.get(day)
+    if hit and (now - hit[0]) < BURST_REFRESH_SEC:
+        return hit[1]
+    syms: set[str] = set()
+    path = os.path.join(report_dir(), "signal_shadow.jsonl")
     try:
-        hh = max(float(r[0]) for r in win)
-        ll = min(float(r[1]) for r in win)
-        c = float(rows[i][2])
-    except (TypeError, ValueError, IndexError):
-        return None
-    if hh <= ll:
-        return None
-    return 100.0 * (c - ll) / (hh - ll)
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                    ts = float(r["ts"])
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    continue
+                if str(r.get("signal") or "") != "mention_burst":
+                    continue
+                d = datetime.fromtimestamp(ts, ET)
+                if d.strftime("%Y-%m-%d") != day:
+                    continue
+                if not (PREMARKET_MIN <= _et_minutes(ts) < RTH_OPEN_MIN):
+                    continue
+                sym = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+                if sym:
+                    syms.add(sym)
+    except OSError:
+        # A missing burst file is not "no bursts", it is no information. With
+        # require_burst on, nothing fires — the safe way for a logger to be
+        # wrong is to record less, never to record something it did not see.
+        pass
+    _BURSTS[day] = (now, syms)
+    return syms
 
 
 def evaluate(symbols, cfg: dict, now: float, *, ew=None) -> list[dict]:
-    """Evaluate every watched name on its newest CLOSED bar.
-
-    Returns the signal rows written (usually none). Never raises: a logging
-    experiment must not be able to take the poll down.
-    """
+    """Evaluate every watched name on its newest CLOSED bar. Never raises."""
     out: list[dict] = []
     if not bool(_cfg(cfg, "ai_strength_signal_enabled")):
         return out
     if ew is None:
         import ai_entry_watch as ew  # noqa: PLC0415
-    cross = _f(cfg, "ai_strength_cross")
-    rsi_min = _f(cfg, "ai_strength_rsi_min")
-    floor = _f(cfg, "ai_strength_exh_floor")
-    try:
-        wait = int(_cfg(cfg, "ai_strength_wait_bars"))
-    except (TypeError, ValueError):
-        wait = 20
-    one_per_day = bool(_cfg(cfg, "ai_strength_one_per_day"))
+    if _et_minutes(now) < RTH_OPEN_MIN:
+        return out                                   # the rule starts at the open
     day = datetime.fromtimestamp(now, ET).strftime("%Y-%m-%d")
+    need_burst = bool(_cfg(cfg, "ai_strength_require_burst"))
+    bursts = premarket_bursts(day, now) if need_burst else None
+    rsi_min = _f(cfg, "ai_strength_rsi_min")
+    try:
+        period = max(2, int(_cfg(cfg, "ai_strength_rsi_period")))
+    except (TypeError, ValueError):
+        period = 2
+    one_per_day = bool(_cfg(cfg, "ai_strength_one_per_day"))
 
     for raw in symbols or ():
         sym = str(raw or "").upper().strip()
         if not sym:
             continue
+        if bursts is not None and sym not in bursts:
+            continue
         try:
-            row = _evaluate_one(sym, day, cfg, now, ew, cross, rsi_min,
-                                floor, wait, one_per_day)
+            row = _one(sym, day, cfg, now, ew, rsi_min, period, one_per_day,
+                       len(bursts) if bursts is not None else None)
         except Exception:
             continue
         if row:
@@ -153,56 +181,35 @@ def evaluate(symbols, cfg: dict, now: float, *, ew=None) -> list[dict]:
     return out
 
 
-def _evaluate_one(sym, day, cfg, now, ew, cross, rsi_min, floor, wait,
-                  one_per_day) -> dict | None:
+def _one(sym, day, cfg, now, ew, rsi_min, period, one_per_day,
+         burst_count) -> dict | None:
     rows = ew.symbol_ohlc(sym, cfg, now)
-    if not rows or len(rows) < FAST + 3:
+    if not rows or len(rows) < period + 5:
         return None
     stamps = ew._cached_ohlc_stamps(sym, cfg, now)
     if not stamps or len(stamps) != len(rows):
         return None
 
-    # The last row may still be forming, so the newest CLOSED bar is the one
-    # before it. Evaluating a forming bar would fire on a reading that can
-    # still change, which is not the series the rule was measured on.
+    # The newest CLOSED bar is the one before the (possibly forming) last.
     i = len(rows) - 2
-    if i < FAST:
+    if i < period + 2:
         return None
     bar_ts = float(stamps[i])
+    if _et_minutes(bar_ts) < RTH_OPEN_MIN:
+        return None
 
     key = (sym, day)
     with _LOCK:
-        st = _STATE.get(key)
-        if st is None:
-            st = {"last_bar": 0.0, "cross_ts": None, "cross_i": None,
-                  "fired": False}
-            _STATE[key] = st
+        st = _STATE.setdefault(key, {"last_bar": 0.0, "fired": False})
         if bar_ts <= st["last_bar"]:
-            return None                      # already scored this bar
+            return None                              # already scored this bar
         st["last_bar"] = bar_ts
         if st["fired"] and one_per_day:
             return None
-        prev_cross_i, prev_cross_ts = st["cross_i"], st["cross_ts"]
-
-    e_now, e_prev = exh_at(rows, i), exh_at(rows, i - 1)
-    if e_now is None or e_prev is None:
-        return None
-
-    # SETUP: crossing up through the level, on closed bars.
-    if e_prev < cross <= e_now:
-        with _LOCK:
-            _STATE[key]["cross_i"] = i
-            _STATE[key]["cross_ts"] = bar_ts
-        return None                          # the trigger is a later bar
-
-    if prev_cross_i is None or (i - prev_cross_i) > wait:
-        return None
-    if e_now < floor:
-        return None
 
     closes = [float(r[2]) for r in rows[:i + 1]]
     try:
-        series = ew.cm_rsi_series(closes, 2)
+        series = ew.cm_rsi_series(closes, period)
     except Exception:
         return None
     if not series:
@@ -216,23 +223,22 @@ def _evaluate_one(sym, day, cfg, now, ew, cross, rsi_min, floor, wait,
 
     return {
         "kind": "strength_signal",
+        "rule": "premarket_burst_rsi2",
         "symbol": sym,
         "day": day,
-        # bar_ts is what a scorer must fill from: the entry is the NEXT
-        # bar's open. fired_at minus bar_ts is the desk's latency, and the
-        # rule dies if that exceeds one bar.
+        # The backtest priced the entry at the NEXT bar's open. fired_at minus
+        # bar_ts is this desk's own latency, and the measured result falls
+        # from +2.56% to +0.72% one bar late — so this field IS the answer.
         "bar_ts": bar_ts,
         "fired_at": float(now),
         "latency_sec": round(float(now) - bar_ts, 1),
-        "exh": round(e_now, 2),
-        "exh_prev": round(e_prev, 2),
         "cm_rsi": round(rsi, 2),
+        "rsi_period": period,
         "price": round(float(rows[i][2]), 4),
-        "cross_ts": prev_cross_ts,
-        "bars_since_cross": i - prev_cross_i,
-        # Stamped so a row stays interpretable if the knobs are ever changed.
-        "rule": {"cross": cross, "rsi_min": rsi_min, "exh_floor": floor,
-                 "wait_bars": wait},
+        "bars": i + 1,
+        "burst_universe": burst_count,
+        "params": {"rsi_min": rsi_min,
+                   "require_burst": bool(_cfg(cfg, "ai_strength_require_burst"))},
     }
 
 
@@ -251,3 +257,4 @@ def reset_state() -> None:
     """Tests only."""
     with _LOCK:
         _STATE.clear()
+        _BURSTS.clear()

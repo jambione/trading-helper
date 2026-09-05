@@ -12333,7 +12333,14 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     # days. These rows are the out-of-sample days it has not seen.
     try:
         import strength_signal
-        strength_signal.evaluate(list(touched.keys()), cfg, t0, ew=sys.modules[__name__])
+        _sigs = strength_signal.evaluate(
+            list(touched.keys()), cfg, t0, ew=sys.modules[__name__])
+        if _sigs:
+            # Entry path for the same rule, behind TWO gates that both ship
+            # safe (ai_strength_trade_enabled False, ai_strength_trade_dry_run
+            # True). With defaults it decides and logs and sends nothing.
+            import strength_trade
+            strength_trade.consider(_sigs, cfg, t0, cp=cp, gt=gt)
     except Exception:
         pass
 
