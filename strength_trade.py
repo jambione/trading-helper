@@ -56,6 +56,9 @@ _PLACED: set[tuple[str, str]] = set()
 RTH_OPEN_MIN = 9 * 60 + 30
 RTH_LAST_ENTRY_MIN = 15 * 60          # no new entries in the last hour
 
+# Declared fill for live/dry rows. Same vocabulary as strength_signal.
+FILL_MODEL_DEFAULT = "next_open"
+
 DEFAULTS = {
     "ai_strength_trade_enabled": False,
     "ai_strength_trade_dry_run": True,
@@ -64,6 +67,7 @@ DEFAULTS = {
     "ai_strength_trail_pct": 2.0,      # tested optimum; desk default is 1.75
     "ai_strength_scale_out_pct": 0.0,  # the ladder measured worse
     "ai_strength_max_open": 3,         # of the desk's 5 seats
+    "ai_strength_fill_model": FILL_MODEL_DEFAULT,
 }
 
 
@@ -80,8 +84,14 @@ def _f(cfg: dict, key: str) -> float:
 
 
 def log_path() -> str:
+    """Dry-run and live decisions share one row shape in plan_b_burst.jsonl.
+
+    strength_trades.jsonl is kept as a symlink-compatible alias name only in
+    docs; the canonical path is plan_b_burst.jsonl so holdout scoring and the
+    operator switch read one file.
+    """
     base = os.environ.get("AI_REPORT_DIR") or os.path.join(ROOT, "ai_reports")
-    return os.path.join(base, "strength_trades.jsonl")
+    return os.path.join(base, "plan_b_burst.jsonl")
 
 
 def _et_minutes(ts: float) -> int:
@@ -154,15 +164,62 @@ def consider(signals, cfg: dict, now: float, *, cp=None, gt=None,
     return out
 
 
+def _signal_bar_ts(sig) -> float | None:
+    for key in ("signal_bar_ts", "bar_ts"):
+        try:
+            v = (sig or {}).get(key)
+            if v is not None:
+                return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _consider_one(sig, cfg, now, day, dry, cp, gt, equity) -> dict | None:
     sym = str((sig or {}).get("symbol") or "").upper().strip()
     if not sym:
         return None
-    base = {"kind": "strength_trade", "symbol": sym, "day": day,
-            "ts": float(now), "dry_run": dry,
-            "signal_bar_ts": (sig or {}).get("bar_ts"),
-            "latency_sec": (sig or {}).get("latency_sec"),
-            "cm_rsi": (sig or {}).get("cm_rsi")}
+    signal_bar_ts = _signal_bar_ts(sig)
+    decision_ts = float(now)
+    try:
+        latency_sec = (sig or {}).get("latency_sec")
+        if latency_sec is None and signal_bar_ts is not None:
+            latency_sec = round(decision_ts - float(signal_bar_ts), 1)
+        else:
+            latency_sec = float(latency_sec) if latency_sec is not None else None
+    except (TypeError, ValueError):
+        latency_sec = None
+    fill_model = str(
+        (sig or {}).get("fill_model")
+        or _cfg(cfg, "ai_strength_fill_model")
+        or FILL_MODEL_DEFAULT
+    )
+    rsi = (sig or {}).get("cm_rsi")
+    if rsi is None:
+        rsi = (sig or {}).get("rsi")
+    base = {
+        "kind": "plan_b_burst",
+        "rule": "premarket_burst_rsi2",
+        "symbol": sym,
+        "day": day,
+        "ts": decision_ts,
+        "dry_run": dry,
+        "signal_ts": (sig or {}).get("decision_ts") or (sig or {}).get("fired_at"),
+        "signal_bar_ts": signal_bar_ts,
+        "bar_ts": signal_bar_ts,
+        "decision_ts": decision_ts,
+        "latency_sec": latency_sec,
+        "fill_model": fill_model,
+        "cm_rsi": rsi,
+        "rsi": rsi,
+        "burst_universe": (sig or {}).get("burst_universe"),
+        "burst_required": (sig or {}).get("burst_required"),
+        "burst_features": {
+            "burst_universe": (sig or {}).get("burst_universe"),
+            "burst_required": (sig or {}).get("burst_required"),
+            "rule": (sig or {}).get("rule") or "premarket_burst_rsi2",
+        },
+    }
 
     def refuse(reason):
         return dict(base, action="skip", reason=reason)

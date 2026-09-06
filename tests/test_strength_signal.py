@@ -153,8 +153,12 @@ def test_the_logged_row_carries_what_a_scorer_needs(tmp_path):
     _run(rows, stamps, [85.0] * len(rows))
     rec = json.loads(Path(ss.log_path()).read_text().splitlines()[0])
     for k in ("bar_ts", "fired_at", "latency_sec", "cm_rsi", "price",
-              "params", "burst_universe"):
+              "params", "burst_universe",
+              "signal_bar_ts", "decision_ts", "fill_model"):
         assert k in rec, k
+    assert rec["fill_model"] == "next_open"
+    assert rec["signal_bar_ts"] == rec["bar_ts"]
+    assert rec["decision_ts"] == rec["fired_at"]
 
 
 # ── it cannot take the poll down ─────────────────────────────────────────

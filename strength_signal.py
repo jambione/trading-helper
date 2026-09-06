@@ -72,12 +72,20 @@ RTH_OPEN_MIN = 9 * 60 + 30
 PREMARKET_MIN = 4 * 60
 BURST_REFRESH_SEC = 300.0
 
+# Honest fill for this rule: decide on a CLOSED bar, so the earliest
+# executable print is the NEXT bar's open. signal_close is the optimistic
+# counterfactual only — never the pass/fail model.
+FILL_MODEL_DEFAULT = "next_open"
+FILL_MODELS = ("signal_close", "next_open", "next_bar_close")
+
 DEFAULTS = {
     "ai_strength_signal_enabled": True,
     "ai_strength_rsi_min": 70.0,
     "ai_strength_rsi_period": 2,
     "ai_strength_require_burst": True,
     "ai_strength_one_per_day": True,
+    # Declared fill model stamped on every row. Pass/fail uses next_open.
+    "ai_strength_fill_model": FILL_MODEL_DEFAULT,
 }
 
 
@@ -221,24 +229,36 @@ def _one(sym, day, cfg, now, ew, rsi_min, period, one_per_day,
     with _LOCK:
         _STATE[key]["fired"] = True
 
+    decision_ts = float(now)
+    latency_sec = round(decision_ts - bar_ts, 1)
+    fill_model = str(_cfg(cfg, "ai_strength_fill_model") or FILL_MODEL_DEFAULT)
+    if fill_model not in FILL_MODELS:
+        fill_model = FILL_MODEL_DEFAULT
+
     return {
         "kind": "strength_signal",
         "rule": "premarket_burst_rsi2",
         "symbol": sym,
         "day": day,
-        # The backtest priced the entry at the NEXT bar's open. fired_at minus
-        # bar_ts is this desk's own latency, and the measured result falls
-        # from +2.56% to +0.72% one bar late — so this field IS the answer.
+        # Latency honesty (non-negotiable). Pass/fail uses fill_model
+        # next_open, not the optimistic signal_close counterfactual.
+        # bar_ts / fired_at kept as aliases for older scorers.
+        "signal_bar_ts": bar_ts,
         "bar_ts": bar_ts,
-        "fired_at": float(now),
-        "latency_sec": round(float(now) - bar_ts, 1),
+        "decision_ts": decision_ts,
+        "fired_at": decision_ts,
+        "latency_sec": latency_sec,
+        "fill_model": fill_model,
         "cm_rsi": round(rsi, 2),
+        "rsi": round(rsi, 2),
         "rsi_period": period,
         "price": round(float(rows[i][2]), 4),
         "bars": i + 1,
         "burst_universe": burst_count,
+        "burst_required": bool(_cfg(cfg, "ai_strength_require_burst")),
         "params": {"rsi_min": rsi_min,
-                   "require_burst": bool(_cfg(cfg, "ai_strength_require_burst"))},
+                   "require_burst": bool(_cfg(cfg, "ai_strength_require_burst")),
+                   "fill_model": fill_model},
     }
 
 

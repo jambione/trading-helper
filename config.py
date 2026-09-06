@@ -739,6 +739,24 @@ DEFAULT_CONFIG = {
     "ai_watch_mistimed_heat_enabled": True,
     "ai_watch_mistimed_heat_rsi_min": 52.0,
     "ai_watch_mistimed_heat_rsi_peak_min": 55.0,
+
+    # ── Plan B burst (premarket burst + RSI-2 >= 70). SAFE OFF. ──
+    # Isolated from Plan A: these knobs do not OR into cool/EXH/soft_ob/
+    # mistimed arm gates. Live orders require BOTH trade_enabled=True AND
+    # trade_dry_run=False. See docs/PLAN_B_BURST.md.
+    "ai_strength_signal_enabled": True,   # log signals + latency only
+    "ai_strength_trade_enabled": False,   # nothing reaches the order path
+    "ai_strength_trade_dry_run": True,    # even if enabled, places nothing
+    "ai_strength_rsi_min": 70.0,          # HIGH polarity (low RSI failed)
+    "ai_strength_rsi_period": 2,
+    "ai_strength_require_burst": True,
+    "ai_strength_one_per_day": True,
+    "ai_strength_fill_model": "next_open",  # pass/fail model; not signal_close
+    "ai_strength_stop_pct": 5.0,
+    "ai_strength_target_pct": 8.0,
+    "ai_strength_trail_pct": 2.0,
+    "ai_strength_scale_out_pct": 0.0,     # ladder measured worse
+    "ai_strength_max_open": 3,            # tighter of this vs desk book cap
     # Trending / momentum names already in the overbought band may still arm
     # (in or below the zone). Research stays on the 90-cap.
     "ai_watch_ob_allow_hot":          False,
@@ -1453,6 +1471,10 @@ _EFFECTIVE_KEYS = (
     "ai_watch_mistimed_heat_enabled",
     "ai_watch_mistimed_heat_rsi_min",
     "ai_watch_mistimed_heat_rsi_peak_min",
+    "ai_strength_trade_enabled",
+    "ai_strength_trade_dry_run",
+    "ai_strength_signal_enabled",
+    "ai_strength_fill_model",
     "ai_watch_ob_allow_hot",
     "ai_watch_ob_allow_flat_when_macd_armed",
     "ai_watch_ob_flat_min_pct",
@@ -1693,6 +1715,10 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_mistimed_heat_enabled",
     "ai_watch_mistimed_heat_rsi_min",
     "ai_watch_mistimed_heat_rsi_peak_min",
+    "ai_strength_trade_enabled",
+    "ai_strength_trade_dry_run",
+    "ai_strength_signal_enabled",
+    "ai_strength_fill_model",
     "ai_watch_ob_allow_hot",
     "ai_watch_in_zone_ignore_fade",
     "ai_watch_zone_exh_window_sec",

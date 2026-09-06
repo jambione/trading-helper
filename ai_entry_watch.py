@@ -12408,23 +12408,17 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
     except Exception:
         pass
 
-    # Forward validation for the strength entry (EXH crosses 75 -> CM RSI-2
-    # >= 90). Log-only by construction: strength_signal cannot reach the
-    # order path, swallows its own exceptions, and reads the bars this poll
-    # already warmed. It is here rather than in the record loop because the
-    # rule is defined on CLOSED 1-minute bars, not on 5-second polls.
-    #
-    # It measured +0.86%/trade at 10/10 sessions in-sample on 2026-08-24..
-    # 09-04, with no holdout and ~70 configurations searched over those same
-    # days. These rows are the out-of-sample days it has not seen.
+    # Plan B burst path (premarket mention burst → first closed 1m bar at/
+    # after 09:30 with CM RSI-2 >= 70). Isolated from Plan A arm gates:
+    # this block never OR's into cool/EXH/soft_ob/mistimed, and cannot
+    # weaken those refusals. strength_signal logs only; strength_trade is
+    # behind TWO gates that both ship safe (enabled False, dry_run True).
+    # See docs/PLAN_B_BURST.md. Closed bars only — not 5-second polls.
     try:
         import strength_signal
         _sigs = strength_signal.evaluate(
             list(touched.keys()), cfg, t0, ew=sys.modules[__name__])
         if _sigs:
-            # Entry path for the same rule, behind TWO gates that both ship
-            # safe (ai_strength_trade_enabled False, ai_strength_trade_dry_run
-            # True). With defaults it decides and logs and sends nothing.
             import strength_trade
             strength_trade.consider(_sigs, cfg, t0, cp=cp, gt=gt)
     except Exception:

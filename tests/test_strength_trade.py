@@ -34,8 +34,19 @@ DRY = {"ai_strength_trade_enabled": True}
 
 
 def _sig(sym="AAA", price=10.0):
-    return {"symbol": sym, "price": price, "bar_ts": OPEN_TS - 60,
-            "latency_sec": 3.4, "cm_rsi": 85.0}
+    return {
+        "symbol": sym,
+        "price": price,
+        "signal_bar_ts": OPEN_TS - 60,
+        "bar_ts": OPEN_TS - 60,
+        "decision_ts": OPEN_TS - 56.6,
+        "latency_sec": 3.4,
+        "cm_rsi": 85.0,
+        "fill_model": "next_open",
+        "burst_universe": 12,
+        "burst_required": True,
+        "rule": "premarket_burst_rsi2",
+    }
 
 
 class FakeCP:
@@ -217,10 +228,25 @@ def test_no_signals_is_a_no_op():
 def test_every_decision_is_logged_with_its_latency():
     cp = FakeCP()
     st.consider([_sig()], DRY, OPEN_TS, cp=cp, gt=FakeGT())
+    assert st.log_path().endswith("plan_b_burst.jsonl")
     rec = json.loads(Path(st.log_path()).read_text().splitlines()[0])
     assert rec["action"] == "would_place"
+    assert rec["kind"] == "plan_b_burst"
     assert rec["latency_sec"] == 3.4        # carried from the signal
     assert rec["signal_bar_ts"] == OPEN_TS - 60
+    assert rec["decision_ts"] == OPEN_TS
+    assert rec["fill_model"] == "next_open"
+    assert "burst_features" in rec
+    assert rec["dry_run"] is True
+
+
+def test_dry_run_never_calls_order_apis():
+    """enable True + dry_run True must append a row and never place."""
+    cp = FakeCP()
+    out = st.consider([_sig()], DRY, OPEN_TS, cp=cp, gt=FakeGT())
+    assert cp.placed == []
+    assert out and out[0]["action"] == "would_place"
+    assert Path(st.log_path()).is_file()
 
 
 def test_a_broken_position_count_refuses_rather_than_placing():
