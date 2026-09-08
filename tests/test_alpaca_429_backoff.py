@@ -36,6 +36,16 @@ def _reset_throttle():
     aa.reset_alpaca_throttle_for_tests()
 
 
+def test_connect_data_client_enlarges_https_pool():
+    """Dashboard mid-RTH was spamming 'Connection pool is full … pool size: 10'."""
+    client = aa.connect_data_client({"api_key": "PK_TEST", "secret_key": "SK_TEST"})
+    session = client._session
+    adapter = session.get_adapter("https://data.alpaca.markets")
+    assert adapter._pool_connections == 20
+    assert adapter._pool_maxsize == 32
+    assert adapter._pool_block is True
+
+
 def test_parse_retry_after_seconds():
     assert aa.parse_retry_after({"Retry-After": "2"}) == 2.0
     assert aa.parse_retry_after({"retry-after": "1.5"}) == 1.5

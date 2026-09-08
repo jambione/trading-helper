@@ -2558,7 +2558,15 @@ def _price_loop():
                 # Fallback: Alpaca REST for tickers not covered by Finnhub.
                 # Runs in a background thread — never blocks this loop.
                 # Polls every 5s when Finnhub has gaps; every 2s when Finnhub is down.
-                alpaca_tickers = [t for t in quote_universe if t not in finnhub_prices]
+                # Cap ≤15 per poll (book-first, then watchlist/hottest) so one
+                # fallback cannot open a connection-pool stampede mid-RTH.
+                need = {t for t in quote_universe if t not in finnhub_prices}
+                alpaca_tickers: list = []
+                for t in list(book_syms) + list(tickers):
+                    if t in need and t not in alpaca_tickers:
+                        alpaca_tickers.append(t)
+                        if len(alpaca_tickers) >= 15:
+                            break
                 poll_interval  = 2.0 if not FINNHUB_STATE.connected else 5.0
                 if alpaca_tickers and not _alpaca_fallback_running and (now - last_alpaca_poll > poll_interval):
                     last_alpaca_poll       = now
@@ -3102,29 +3110,126 @@ def _snapshot() -> dict:
 
 _SNAP_LOCK = threading.Lock()
 _SNAP_CACHE: tuple[float, dict] = (0.0, {})
-_SNAP_TTL = 0.20  # share one snapshot across HTTP + the 4Hz WebSocket
+_SNAP_TTL = 1.0  # Momentum polls ~2s; 1s is enough (was 0.20)
+_SNAP_REBUILDING = False
+_SNAP_LAST_TIMING_LOG = 0.0  # monotonic; throttle [SNAP] rebuilt lines ≤1/10s
+
+
+def _snap_log_timing(elapsed: float, snap: dict) -> None:
+    """Cheap INFO line once per rebuild, throttled to ≤1/10s."""
+    global _SNAP_LAST_TIMING_LOG
+    now = time.monotonic()
+    if now - _SNAP_LAST_TIMING_LOG < 10.0:
+        return
+    _SNAP_LAST_TIMING_LOG = now
+    n = len(snap.get("tickers") or []) if isinstance(snap, dict) else 0
+    log.info("[SNAP] rebuilt in %.2fs n_tickers=%d", elapsed, n)
+
+
+def _snap_rebuild_worker() -> None:
+    """Single-flight background refresh; swaps cache under _SNAP_LOCK only."""
+    global _SNAP_CACHE, _SNAP_REBUILDING
+    try:
+        t0 = time.monotonic()
+        snap = _snapshot()
+        elapsed = time.monotonic() - t0
+        with _SNAP_LOCK:
+            _SNAP_CACHE = (time.monotonic(), snap)
+        _snap_log_timing(elapsed, snap)
+    except Exception:
+        log.exception("[SNAP] background rebuild failed")
+    finally:
+        with _SNAP_LOCK:
+            _SNAP_REBUILDING = False
 
 
 def snapshot() -> dict:
-    """Latest desk snapshot, reused briefly so pollers don't stampede.
+    """Latest desk snapshot with stale-while-revalidate.
 
     /api/state and each WebSocket used to run ``_snapshot`` on the default
     executor. A handful of desk clients plus one browser tab meant a dozen
     copies in flight, all taking STATE.lock, and /auth/login queued behind
     them until it timed out.
+
+    Once any good cache exists, callers return it immediately (even past TTL)
+    and at most one background thread refreshes. ``_SNAP_LOCK`` only guards
+    the cache swap / single-flight flag — readers never wait on a slow
+    ``_snapshot()`` after the first successful build. Cold start (empty cache)
+    still builds synchronously under that same single-flight flag.
     """
-    global _SNAP_CACHE
+    global _SNAP_CACHE, _SNAP_REBUILDING
     now = time.monotonic()
     ts, val = _SNAP_CACHE
     if val and now - ts < _SNAP_TTL:
         return val
+
+    kick = False
+    stale = None
     with _SNAP_LOCK:
         ts, val = _SNAP_CACHE
-        if val and time.monotonic() - ts < _SNAP_TTL:
+        now = time.monotonic()
+        if val and now - ts < _SNAP_TTL:
             return val
+        stale = val if val else None
+        if not _SNAP_REBUILDING:
+            _SNAP_REBUILDING = True
+            kick = True
+
+    if stale is not None:
+        # Warm path: serve stale immediately; refresh in the background.
+        if kick:
+            threading.Thread(
+                target=_snap_rebuild_worker,
+                daemon=True,
+                name="snap-rebuild",
+            ).start()
+        return stale
+
+    # Cold start: no cache yet. Owner builds here; others wait for it.
+    if kick:
+        try:
+            t0 = time.monotonic()
+            snap = _snapshot()
+            elapsed = time.monotonic() - t0
+            with _SNAP_LOCK:
+                _SNAP_CACHE = (time.monotonic(), snap)
+            _snap_log_timing(elapsed, snap)
+            return snap
+        finally:
+            with _SNAP_LOCK:
+                _SNAP_REBUILDING = False
+
+    # Another thread owns the cold-start build — poll until cache appears.
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        ts, val = _SNAP_CACHE
+        if val:
+            return val
+        with _SNAP_LOCK:
+            rebuilding = _SNAP_REBUILDING
+        if not rebuilding:
+            break
+        time.sleep(0.05)
+    # Rebuild finished empty/failed, or timed out — try once more ourselves.
+    with _SNAP_LOCK:
+        ts, val = _SNAP_CACHE
+        if val:
+            return val
+        if _SNAP_REBUILDING:
+            # Still in flight after wait; return empty rather than stampede.
+            return val or {}
+        _SNAP_REBUILDING = True
+    try:
+        t0 = time.monotonic()
         snap = _snapshot()
-        _SNAP_CACHE = (time.monotonic(), snap)
+        elapsed = time.monotonic() - t0
+        with _SNAP_LOCK:
+            _SNAP_CACHE = (time.monotonic(), snap)
+        _snap_log_timing(elapsed, snap)
         return snap
+    finally:
+        with _SNAP_LOCK:
+            _SNAP_REBUILDING = False
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────

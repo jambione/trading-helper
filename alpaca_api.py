@@ -161,7 +161,21 @@ def retry_with_backoff(max_retries: int = 3, base_wait: float = 1.0):
 def connect_data_client(cfg: dict):
     """Return an Alpaca StockHistoricalDataClient for bar/price fetching."""
     from alpaca.data.historical import StockHistoricalDataClient
-    return StockHistoricalDataClient(cfg["api_key"], cfg["secret_key"])
+    from requests.adapters import HTTPAdapter
+
+    client = StockHistoricalDataClient(cfg["api_key"], cfg["secret_key"])
+    # Mid-RTH the dashboard shares one data client across price fallback,
+    # bars, and snapshot helpers. urllib3's default pool_maxsize=10 then
+    # logs "Connection pool is full … pool size: 10" and stalls /api/state.
+    # Enlarge the pool and block for a free slot instead of opening extras.
+    session = getattr(client, "_session", None)
+    if session is not None:
+        adapter = HTTPAdapter(
+            pool_connections=20, pool_maxsize=32, pool_block=True,
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+    return client
 
 
 # Basic-plan SIP is historical only: anything newer than ~15 minutes 403s.
