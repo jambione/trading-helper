@@ -71,7 +71,7 @@ a product change needs no restart.
 | `ai_trade_style` | Day scalp | cosmetic |
 | `ai_watch_start_time` | **04:00** ET | premarket shadow; buys still RTH |
 | `ai_h4_paper` / `ai_h3_paper` / `ai_late_hold_paper` | false | keep them false, see §4 |
-| `ai_local_trail_give_r` | 0.10 | ≈0.497% of price, since 1R ≈ 4.97% |
+| `ai_local_trail_give_r` / `give_max_pct` | **0.20** / **1.00** | Wed 2026-09-09 tight leash (was 0.35 / 1.75; Tue give≈1.75% unbound). Effective give = min(give_r×R, max_pct% of price); with synth_stop 5% both bind at ~1% |
 | `ai_local_trail_give_spread_k` | **1.0** | floors the give at 1×spread — the shelf can no longer sit inside the book |
 | `ai_local_trail_give_spread_max_r` | **0.50** | caps that floor. RTH spread_r runs p90 **5.56R**, and uncapped k=1 would park the shelf 5.5R down, which is no stop at all |
 | `ai_local_trail_be_at_spread_k` | **1.0** | won't protect a gain until it clears one round trip |
