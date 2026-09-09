@@ -74,8 +74,8 @@ from ticker_extract import is_valid_ticker  # noqa: E402
 import desk_auth  # noqa: E402
 
 ROOT          = Path(__file__).parent
-# Optional Swift binary fallback (native Python capture is preferred — same process
-# that already holds Screen Recording on macOS 15+/26).
+# Prefer DiscordOCR.app when present — stable TCC identity for Screen Recording.
+# Homebrew Python / PyObjC native path is fallback only (Cellar moves reset grants).
 _OCR_APP_BIN  = ROOT / "DiscordOCR.app" / "Contents" / "MacOS" / "discord_ocr"
 _OCR_FLAT     = ROOT / "discord_ocr"
 OCR_BINARY    = _OCR_APP_BIN if _OCR_APP_BIN.exists() else _OCR_FLAT
@@ -1119,30 +1119,33 @@ def _scanner_card_signature(card: dict) -> str:
 # ── OCR + delivery ────────────────────────────────────────────────────────────
 
 def _ocr_command(cfg: dict) -> list[str]:
-    """Build the Swift-binary command (fallback only). Empty list = use native."""
+    """Build OCR command. Prefer DiscordOCR.app; empty list = native PyObjC fallback."""
     owner = str(cfg.get("discord_window_owner") or "Discord")
     title = str(cfg.get("discord_window_title") or "").strip()
-    if _native_ocr is not None and _native_ocr.available():
-        return []  # signal: native path
     if OCR_BINARY.exists():
         if OCR_SCRIPT.exists() and OCR_SCRIPT.stat().st_mtime > OCR_BINARY.stat().st_mtime:
             print("[discord] WARNING: discord_ocr.swift is newer than the compiled binary — "
                   "rebuild with:  bash scripts/build_ocr.sh", flush=True)
         cmd = [str(OCR_BINARY)]
-    elif OCR_SCRIPT.exists():
+        cmd += ["--owner", owner]
+        if title:
+            cmd += ["--title", title]
+        return cmd
+    if _native_ocr is not None and _native_ocr.available():
+        return []  # signal: native PyObjC fallback (no stable .app)
+    if OCR_SCRIPT.exists():
         cmd = ["swift", str(OCR_SCRIPT)]
-    else:
-        print("[discord] ERROR: native OCR unavailable and discord_ocr not found.", flush=True)
-        print("  Install PyObjC Quartz, or:  bash scripts/build_ocr.sh", flush=True)
-        raise SystemExit(1)
-    cmd += ["--owner", owner]
-    if title:
-        cmd += ["--title", title]
-    return cmd
+        cmd += ["--owner", owner]
+        if title:
+            cmd += ["--title", title]
+        return cmd
+    print("[discord] ERROR: DiscordOCR.app missing and native OCR unavailable.", flush=True)
+    print("  Build with:  bash scripts/build_ocr.sh   (or install PyObjC Quartz)", flush=True)
+    raise SystemExit(1)
 
 
 def _run_ocr_native(cfg: dict) -> tuple[list[str], bool]:
-    """In-process capture + Vision OCR (preferred — uses Python's Screen Recording)."""
+    """In-process capture + Vision OCR (fallback when DiscordOCR.app is absent)."""
     assert _native_ocr is not None
     owner = str(cfg.get("discord_window_owner") or "Discord")
     title = str(cfg.get("discord_window_title") or "").strip()
@@ -1197,7 +1200,7 @@ def _run_ocr_binary(cmd: list[str]) -> tuple[list[str], bool]:
 
 
 def _run_ocr(cmd: list[str], cfg: dict | None = None) -> tuple[list[str], bool]:
-    """Run one OCR pass. Prefers native Python capture; falls back to Swift binary.
+    """Run one OCR pass. Prefers DiscordOCR.app binary; native PyObjC is fallback.
 
     Returns (lines, ok). ok=False = process-level failure (no window, permission,
     crash) — distinct from a successful capture with zero text lines.
