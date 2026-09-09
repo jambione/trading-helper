@@ -1084,9 +1084,10 @@ DEFAULT_CONFIG = {
     # name is 0.4R; cap keeps the 0.10R identity.
     "ai_local_trail_min_give_max_r":   0.20,
     # Green catch-up time-decay: while last > entry, idle raises local_stop
-    # toward last − min_cushion in step_r chunks (raise-only overlay on
-    # give_r). Jonathan 2026-09-09: ON for Thu live — score capture vs
-    # early-scratch; flip off Friday if runners get taxed.
+    # toward last − min_cushion in step_r chunks; at ceiling + idle overtake
+    # to last (trail-hit, no dip). Raise-only overlay on give_r.
+    # Jonathan 2026-09-09: ON for Thu live — score capture vs early-scratch;
+    # flip off Friday if runners get taxed.
     "ai_local_trail_time_decay_enabled": True,
     "ai_local_trail_decay_idle_sec":  8.0,
     "ai_local_trail_decay_step_r":    0.05,

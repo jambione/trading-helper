@@ -107,7 +107,8 @@ DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX = 0.06
 DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R = 0.20
 # Green catch-up time-decay trail (overlay on the static give_r shelf).
 # While last > entry, idle ~8s with no new peak raises local_stop toward
-# last − min_cushion in step_r chunks. Raise-only; off when not green.
+# last − min_cushion in step_r chunks. At ceiling + idle: overtake to last
+# so trail-hit liquidates green without a dip. Raise-only; off when not green.
 # Jonathan 2026-09-09: live ON for Thu — score capture vs early-scratch;
 # flip off Friday if runners get taxed.
 DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED = True
@@ -2965,10 +2966,12 @@ def green_catchup_raise(
 
     Primary gate is ``last > entry``. On a new peak the idle clock resets; after
     ``ai_local_trail_decay_idle_sec`` with no new peak, step up by
-    ``ai_local_trail_decay_step_r`` × R (raise-only, never above the min-give
-    floor under last). Returns the absolute stop to demand, or None when the
-    overlay is inactive this tick. Does not replace static give_r — caller
-    takes ``max(static, this)``.
+    ``ai_local_trail_decay_step_r`` × R (raise-only). When a step would reach
+    or clamp to the min-give ceiling under last, **overtake**: return stop at
+    ``last`` so the next shelf tick's trail-hit liquidates green without
+    requiring a dip into the stop. Returns the absolute stop to demand, or
+    None when the overlay is inactive this tick. Does not replace static
+    give_r — caller takes ``max(static, this)``.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get(
@@ -2987,6 +2990,7 @@ def green_catchup_raise(
         pos.pop("trail_decay_idle_since", None)
         pos.pop("trail_decay_last_step_at", None)
         pos.pop("trail_decay_peak", None)
+        pos.pop("trail_decay_overtake", None)
         return None
     try:
         max_mfe = float(cfg.get(
@@ -3056,10 +3060,17 @@ def green_catchup_raise(
         pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
         return None
     raised = float(prev) + n_steps * step_px
-    # Raise-only forever; never above last − min_give; never loosen.
+    # Raise-only forever; never loosen.
     raised = max(raised, float(prev))
-    if raised > ceiling:
-        raised = ceiling
+    # Overtake-at-ceiling: while still green, when this idle step would clamp
+    # to (or past) last − min_cushion — or the shelf is already parked there —
+    # set stop >= last so trail-hit liquidates without needing a 1¢ dip.
+    at_ceiling = float(prev) + 1e-9 >= ceiling - 1e-9
+    would_clamp = raised + 1e-9 >= ceiling
+    if at_ceiling or would_clamp:
+        pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
+        pos["trail_decay_overtake"] = True
+        return round(float(last), 2)
     if raised + 1e-9 >= float(last):
         raised = float(last) - max(cushion, 0.01)
     if raised + 1e-9 <= float(prev):
@@ -3071,6 +3082,7 @@ def green_catchup_raise(
         pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
         return None
     pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
+    pos.pop("trail_decay_overtake", None)
     return round(raised, 2)
 
 
@@ -3199,8 +3211,12 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: floa
         cand = max(cand, float(prev))
     # Green catch-up time-decay overlay: walk the shelf up toward
     # last − min_cushion on idle while green. Does not replace give_r.
+    # Overtake-at-ceiling may return stop >= last — pass that through so
+    # the next trail-hit liquidates green without a dip.
     catch = green_catchup_raise(pos, cfg, now=now)
     if catch is not None:
+        if float(catch) + 1e-9 >= float(last):
+            return round(float(catch), 2)
         cand = max(float(cand), float(catch))
         if prev is not None:
             cand = max(cand, float(prev))
@@ -3531,6 +3547,20 @@ def apply_local_trail(
                 peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
                 give_r=local_trail_give_r(pos.get("mfe_r"), _cfg_all()),
             )
+            if pos.pop("trail_decay_overtake", None):
+                events.append({
+                    "ticker": ticker, "event": "green_catchup_overtake",
+                    "from_stop": prev_local, "to_stop": want,
+                    "last": _num(pos.get("last_seen_price")),
+                    "peak": pos.get("peak_price"),
+                    "mfe_r": pos.get("mfe_r"),
+                })
+                log_event(
+                    "green_catchup_overtake", symbol=ticker,
+                    from_stop=prev_local, to_stop=want,
+                    last=_num(pos.get("last_seen_price")),
+                    peak=pos.get("peak_price"), mfe_r=pos.get("mfe_r"),
+                )
         if (
             _premarket_working_sell_on()
             and str(pos.get("working_sell_state") or "") != "flatten"

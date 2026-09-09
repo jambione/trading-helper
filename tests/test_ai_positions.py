@@ -2995,17 +2995,82 @@ def test_green_catchup_raise_only_never_loosens():
     assert got >= 10.40 - 1e-9
 
 
-def test_green_catchup_floor_under_last():
-    """Never raise through last − min_cushion (one tick when min_give_px=0)."""
+def test_green_catchup_climbs_toward_ceiling():
+    """Idle steps walk the shelf up under last without overtaking mid-gap."""
+    pos = _green_catchup_pos()  # local_stop 10.30, last 10.50, ceiling 10.49
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    assert cp.local_profit_stop(pos, cfg, now=t0) == pytest.approx(10.30)
+    # Three idle steps: 10.35, 10.40, 10.45 — still under ceiling.
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.35)
+    pos["local_stop_price"] = got
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 16.0)
+    assert got == pytest.approx(10.40)
+    pos["local_stop_price"] = got
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 24.0)
+    assert got == pytest.approx(10.45)
+    assert got < 10.50 - 1e-9
+    assert not pos.get("trail_decay_overtake")
+
+
+def test_green_catchup_overtake_at_ceiling():
+    """At ceiling + idle: overtake stop >= last so trail-hit needs no dip."""
+    # Shelf already one step under ceiling; next idle step would clamp → overtake.
+    pos = _green_catchup_pos(local_stop_price=10.45)
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)  # arm idle
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got >= 10.50 - 1e-9
+    assert got == pytest.approx(10.50)
+    assert pos.get("trail_decay_overtake") is True
+
+
+def test_green_catchup_overtake_when_already_at_ceiling():
+    """prev already at last−cushion + idle → overtake to last."""
+    pos = _green_catchup_pos(local_stop_price=10.49)  # ceiling with min_give=0
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.50)
+    assert pos.get("trail_decay_overtake") is True
+
+
+def test_green_catchup_red_no_overtake():
+    """last ≤ entry: no overtake even if shelf sits at/through ceiling."""
+    pos = _green_catchup_pos(
+        last_seen_price=9.90, peak_price=10.50, mfe_r=0.50,
+        local_stop_price=10.49,
+    )
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    pos["trail_decay_peak"] = 10.50
+    pos["trail_decay_last_step_at"] = t0
+    pos["trail_decay_idle_since"] = t0
+    got = cp.green_catchup_raise(pos, cfg, now=t0 + 30.0)
+    assert got is None
+    assert not pos.get("trail_decay_overtake")
+
+
+def test_green_catchup_new_peak_no_overtake():
+    """New peak resets idle — no overtake even with shelf near ceiling."""
     pos = _green_catchup_pos(local_stop_price=10.48)
     cfg = _green_catchup_cfg()
     t0 = 1_000_000.0
     cp.local_profit_stop(pos, cfg, now=t0)
-    # Many steps: ceiling is last − 0.01 = 10.49
-    got = cp.local_profit_stop(pos, cfg, now=t0 + 800.0)
-    assert got <= 10.49 + 1e-9
-    assert got < 10.50 - 1e-9
-    assert got >= 10.48 - 1e-9
+    pos["last_seen_price"] = 10.60
+    pos["peak_price"] = 10.60
+    # Peak reset at t0+7.5; still under idle → static raise only, no overtake.
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 7.5)
+    # Static give 0.20R → 10.40; raise-only from 10.48 keeps 10.48
+    assert got == pytest.approx(10.48)
+    assert not pos.get("trail_decay_overtake")
+    # Still shy of idle after peak — no overtake.
+    got2 = cp.local_profit_stop(pos, cfg, now=t0 + 14.0)
+    assert got2 == pytest.approx(10.48)
+    assert not pos.get("trail_decay_overtake")
 
 
 def test_green_catchup_disabled_flag_noops():
