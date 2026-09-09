@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~10:27 ET; tonight: entry help #1, time-decay #2).
+Last updated: **2026-09-09** (~11:01 ET; after-close path locked: score → heat_max → green catch-up).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -29,18 +29,27 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 
 ---
 
+## After close 2026-09-09 (locked path)
+
+1. **Score Wed capture** under live `give_r=0.20` / `give_max_pct=1%` (MFE≥0.25R median capture vs Tue; not day P&L alone).
+2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok. Optional follow-on later: `ai_watch_macd_block_bearish` for IRD-class (separate ship).
+3. **Exit #2 — green catch-up time-decay** (design agreed): when `last > entry`, on ~8s idle raise `local_stop` toward `last − min_cushion` (small `0.05R` steps, raise-only). Banks pause-in-green instead of price falling to stop. Defaults off → replay Tue+Wed → enable. Does not replace entry help for day $.
+4. Parked same night unless score demands: tape readiness (Thu), momentum cap, summary-vs-local_stop honesty, DiscordOCR pin (~16:15).
+
 ## Next (ranked)
 
-1. **Entry help (tonight #1)** — After Wed close score: tighten *what we open*, not the leash. Bundle: (a) refuse / demote late-heat no-MFE (FSLY-class: +% already extended, cm/pctr/macd not ok); (b) heating quality — prefer heating + RSI≤60 + non-narrowing MACD; (c) momentum cap/rebalance (`seed_momentum_open_n`) don’t kill — IRD Wed = MFE 0 / −0.31R poster child; Tue momentum ~39% seed budget, negative $. **Cool EXH↑ arm_ok=0 is a label tautology** — redesign later, don’t flip mid-week. One concrete entry lever for Thu if capture score allows.
-2. **Time-decay trail (stall-only) — tonight #2** — After entry help (or if entry slips). While MFE is thin / no new peak, step `local_stop` up toward last on a clock (prefer **5–10s**, not raw 2s); never loosen; floor under last (give_max / min tick); replay must not wreck SMR-class winners. Do **not** stack on live 0.20/1% mid-session.
+1. **Entry help — heat_max 65–70** — Tonight after Wed score. See after-close path.
+2. **Green catch-up trail (time-decay)** — Tonight #2 after heat_max. Stop rises to the gain when last > entry; idle ~8s; step 0.05R; floor under last; decay off when not green. Replay before enable.
 3. **Movers hygiene** — WYHG-class fat spread was Tue’s biggest single $ hole (−$1.28), separate from momentum.
-4. **Thu tape readiness** — Poller paint-trust parity (CLI brief ready); optional ceiling 15→20 after. Still useful; ranks behind entry help for tonight.
-5. **Plan B dry-run scoreboard** — Only if Plan A still flat after leash + tape with clean n.
-6. **Bob float/volume pack** — Confirmation tips; not a new strategy.
-7. **ATR-scaled trail A/B** — Parked until MFE exists routinely (related to time-decay; pick one trail experiment at a time).
-8. **Declutter / ledger simplification** — Incl. summary showing floor `stop` instead of live `local_stop` (IONQ-class honesty). After baselines stabilize.
-9. **DiscordOCR.app TCC pin** — **Scheduled after Wed 2026-09-09 close (~16:15 ET).** Prefer stable `DiscordOCR.app` binary over Homebrew `Python.app` for OCR so Screen Recording / “access other apps” survives brew upgrades. Do not ship mid-RTH.
-10. **Multi-tenant Trader Bro** — After consistent profit only.
+4. **Thu tape readiness** — Poller paint-trust parity (CLI brief ready); optional ceiling 15→20 after.
+5. **IRD follow-on** — `ai_watch_macd_block_bearish=true` and/or momentum cap — separate from heat_max.
+6. **Plan B dry-run scoreboard** — Only if Plan A still flat after leash + tape with clean n.
+7. **Bob float/volume pack** — Confirmation tips; not a new strategy.
+8. **ATR-scaled trail A/B** — Parked (pick one trail experiment: green catch-up first).
+9. **Declutter / ledger simplification** — Incl. summary showing floor `stop` instead of live `local_stop`.
+10. **DiscordOCR.app TCC pin** — **~16:15 ET Wed 2026-09-09.** Prefer `DiscordOCR.app` over Homebrew `Python.app`.
+11. **Multi-tenant Trader Bro** — After consistent profit only.
+
 
 ---
 
