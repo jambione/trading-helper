@@ -1083,6 +1083,15 @@ DEFAULT_CONFIG = {
     # Dollar floor may not exceed this many R. $0.06 on a $3 last-mode
     # name is 0.4R; cap keeps the 0.10R identity.
     "ai_local_trail_min_give_max_r":   0.20,
+    # Green catch-up time-decay: while last > entry, idle raises local_stop
+    # toward last − min_cushion in step_r chunks (raise-only overlay on
+    # give_r). Jonathan 2026-09-09: ON for Thu live — score capture vs
+    # early-scratch; flip off Friday if runners get taxed.
+    "ai_local_trail_time_decay_enabled": True,
+    "ai_local_trail_decay_idle_sec":  8.0,
+    "ai_local_trail_decay_step_r":    0.05,
+    # Optional MFE ceiling for decay; 0 = off (green gate alone).
+    "ai_local_trail_decay_max_mfe_r": 0.0,
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
     # 0.30 let FGI/SPAI/TDIC open 2R in the hole on a stale ask (08-14).
     "ai_fill_abort_r":                 0.15,
@@ -1800,6 +1809,10 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_be_at_spread_k",
     "ai_local_trail_min_give_px",
     "ai_local_trail_min_give_max_r",
+    "ai_local_trail_time_decay_enabled",
+    "ai_local_trail_decay_idle_sec",
+    "ai_local_trail_decay_step_r",
+    "ai_local_trail_decay_max_mfe_r",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
     "ai_shelf_tick_sec",

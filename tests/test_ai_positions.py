@@ -2912,6 +2912,130 @@ def test_local_profit_stop_tracks_last_minus_give():
     assert cp.local_profit_stop(pos, cfg) == pytest.approx(8.75)
 
 
+
+def _green_catchup_cfg(**extra):
+    cfg = {
+        "ai_local_trail_enabled": True,
+        "ai_local_trail_give_r": 0.20,
+        "ai_local_trail_give_max_pct": 0.0,  # off so 0.20R gap stays fat for catch-up
+        "ai_local_trail_min_give_px": 0.0,
+        "ai_local_trail_arm_r": 0.0,
+        "ai_local_trail_time_decay_enabled": True,
+        "ai_local_trail_decay_idle_sec": 8.0,
+        "ai_local_trail_decay_step_r": 0.05,
+        "ai_local_trail_decay_max_mfe_r": 0.0,
+    }
+    cfg.update(extra)
+    return cfg
+
+
+def _green_catchup_pos(**extra):
+    # entry 10, risk 1.0 → 0.05R step = $0.05; give_r 0.20 → static shelf
+    # last−0.20. Start with a fat gap under a green print.
+    pos = {
+        "entry_price": 10.00,
+        "entry_stop_price": 9.00,
+        "risk_per_share": 1.00,
+        "last_seen_price": 10.50,
+        "peak_price": 10.50,
+        "mfe_r": 0.50,
+        "local_stop_price": 10.30,  # last − 0.20R static give
+    }
+    pos.update(extra)
+    return pos
+
+
+def test_green_catchup_idle_raises_while_green():
+    """After idle_sec with no new peak, shelf steps up toward last − min_give."""
+    pos = _green_catchup_pos()
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    # First tick: arm idle clock, no raise yet.
+    assert cp.local_profit_stop(pos, cfg, now=t0) == pytest.approx(10.30)
+    assert pos.get("trail_decay_peak") == pytest.approx(10.50)
+    # Still under idle: no raise.
+    assert cp.local_profit_stop(pos, cfg, now=t0 + 7.0) == pytest.approx(10.30)
+    # Idle elapsed: one 0.05R step → 10.35
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.35)
+    pos["local_stop_price"] = got
+    # Another idle period: another step.
+    got2 = cp.local_profit_stop(pos, cfg, now=t0 + 16.0)
+    assert got2 == pytest.approx(10.40)
+
+
+def test_green_catchup_red_does_not_raise():
+    """last ≤ entry: decay off — do not yank stop into a loss."""
+    pos = _green_catchup_pos(
+        last_seen_price=9.90, peak_price=10.50, mfe_r=0.50,
+        local_stop_price=10.30,
+    )
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    # Seed timers while green first, then go red.
+    pos_green = _green_catchup_pos()
+    cp.local_profit_stop(pos_green, cfg, now=t0)
+    pos["trail_decay_peak"] = pos_green.get("trail_decay_peak")
+    pos["trail_decay_last_step_at"] = t0
+    pos["trail_decay_idle_since"] = t0
+    # Raise-only static keeps 10.30 even though last−give is lower; decay must
+    # not add another step while red.
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 30.0)
+    assert got == pytest.approx(10.30)
+    assert "trail_decay_peak" not in pos  # cleared on red
+
+
+def test_green_catchup_raise_only_never_loosens():
+    pos = _green_catchup_pos(local_stop_price=10.40)
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)  # arm
+    # Even after long idle, never below the stored shelf.
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 80.0)
+    assert got >= 10.40 - 1e-9
+
+
+def test_green_catchup_floor_under_last():
+    """Never raise through last − min_cushion (one tick when min_give_px=0)."""
+    pos = _green_catchup_pos(local_stop_price=10.48)
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    # Many steps: ceiling is last − 0.01 = 10.49
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 800.0)
+    assert got <= 10.49 + 1e-9
+    assert got < 10.50 - 1e-9
+    assert got >= 10.48 - 1e-9
+
+
+def test_green_catchup_disabled_flag_noops():
+    pos = _green_catchup_pos()
+    cfg = _green_catchup_cfg(ai_local_trail_time_decay_enabled=False)
+    t0 = 1_000_000.0
+    assert cp.local_profit_stop(pos, cfg, now=t0) == pytest.approx(10.30)
+    assert cp.local_profit_stop(pos, cfg, now=t0 + 60.0) == pytest.approx(10.30)
+    assert pos.get("trail_decay_peak") is None
+
+
+def test_green_catchup_new_peak_resets_idle():
+    pos = _green_catchup_pos()
+    cfg = _green_catchup_cfg()
+    t0 = 1_000_000.0
+    cp.local_profit_stop(pos, cfg, now=t0)
+    # Almost idle, then a new peak — clock resets, no step yet.
+    pos["last_seen_price"] = 10.60
+    pos["peak_price"] = 10.60
+    # Static give: 10.60 − 0.20 = 10.40; raise-only from 10.30 → 10.40
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 7.5)
+    assert got == pytest.approx(10.40)
+    pos["local_stop_price"] = got
+    # New peak just armed; not idle yet at +7.5 from reset... reset was at t0+7.5
+    got2 = cp.local_profit_stop(pos, cfg, now=t0 + 14.0)  # 6.5s after peak
+    assert got2 == pytest.approx(10.40)
+    got3 = cp.local_profit_stop(pos, cfg, now=t0 + 15.5)  # 8s after peak
+    assert got3 == pytest.approx(10.45)
+
+
 def test_local_profit_stop_never_lowers():
     pos = {
         "entry_price": 8.64, "entry_stop_price": 8.38,

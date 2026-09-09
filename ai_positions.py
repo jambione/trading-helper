@@ -105,6 +105,16 @@ DEFAULT_FILL_ABORT_R = 0.15
 # dollar floor is wider than min_give_max_r × R (cheap last-mode names).
 DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX = 0.06
 DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R = 0.20
+# Green catch-up time-decay trail (overlay on the static give_r shelf).
+# While last > entry, idle ~8s with no new peak raises local_stop toward
+# last − min_cushion in step_r chunks. Raise-only; off when not green.
+# Jonathan 2026-09-09: live ON for Thu — score capture vs early-scratch;
+# flip off Friday if runners get taxed.
+DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED = True
+DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC = 8.0
+DEFAULT_LOCAL_TRAIL_DECAY_STEP_R = 0.05
+# Optional: only decay while mfe_r is under this. 0 = off (green gate alone).
+DEFAULT_LOCAL_TRAIL_DECAY_MAX_MFE_R = 0.0
 # Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
 # is a different trade on every name: at 2.5% it is 2.5R behind a 1%-wide stop
 # and 0.5R behind a 5%-wide one, so on the tight double-bottom zones the runner
@@ -2908,7 +2918,163 @@ def _trail_last_for_stop(pos: dict[str, Any]) -> float | None:
     return _num(pos.get("last_seen_price"))
 
 
-def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | None:
+
+def _trail_min_cushion_px(
+    last: float | None,
+    risk: float | None,
+    cfg: dict | None = None,
+) -> float:
+    """Tightest cushion the shelf may sit under *last* (min_give floor).
+
+    Green catch-up walks toward ``last − this``, never above it. Reuses the
+    same min_give_px / min_give_max_r rules as ``local_trail_give`` so the
+    overlay cannot park tighter than the static trail's dollar floor.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        floor = float(cfg.get(
+            "ai_local_trail_min_give_px", DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX)
+            or 0.0)
+    except (TypeError, ValueError):
+        floor = DEFAULT_LOCAL_TRAIL_MIN_GIVE_PX
+    try:
+        r = float(risk) if risk is not None else 0.0
+    except (TypeError, ValueError):
+        r = 0.0
+    if floor > 0 and r > 0:
+        try:
+            max_r = float(cfg.get(
+                "ai_local_trail_min_give_max_r",
+                DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R,
+            ) or 0.0)
+        except (TypeError, ValueError):
+            max_r = DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R
+        if max_r > 0:
+            floor = min(floor, max_r * r)
+    # One tick when no dollar floor is configured (live min_give_px=0).
+    return max(0.01, float(floor) if floor > 0 else 0.01)
+
+
+def green_catchup_raise(
+    pos: dict[str, Any],
+    cfg: dict | None = None,
+    *,
+    now: float | None = None,
+) -> float | None:
+    """Time-decay overlay: raise local_stop toward last−min_cushion while green.
+
+    Primary gate is ``last > entry``. On a new peak the idle clock resets; after
+    ``ai_local_trail_decay_idle_sec`` with no new peak, step up by
+    ``ai_local_trail_decay_step_r`` × R (raise-only, never above the min-give
+    floor under last). Returns the absolute stop to demand, or None when the
+    overlay is inactive this tick. Does not replace static give_r — caller
+    takes ``max(static, this)``.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get(
+        "ai_local_trail_time_decay_enabled",
+        DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED,
+    )):
+        return None
+    last = _trail_last_for_stop(pos)
+    entry = _num(pos.get("entry_price"))
+    prev = _num(pos.get("local_stop_price"))
+    risk = _risk_basis(pos)
+    if last is None or last <= 0 or entry is None or entry <= 0:
+        return None
+    # Red / flat: decay OFF — do not yank the stop into a loss.
+    if float(last) <= float(entry) + 1e-9:
+        pos.pop("trail_decay_idle_since", None)
+        pos.pop("trail_decay_last_step_at", None)
+        pos.pop("trail_decay_peak", None)
+        return None
+    try:
+        max_mfe = float(cfg.get(
+            "ai_local_trail_decay_max_mfe_r",
+            DEFAULT_LOCAL_TRAIL_DECAY_MAX_MFE_R,
+        ) or 0.0)
+    except (TypeError, ValueError):
+        max_mfe = DEFAULT_LOCAL_TRAIL_DECAY_MAX_MFE_R
+    if max_mfe > 0:
+        mfe = _num(pos.get("mfe_r"))
+        if mfe is not None and float(mfe) + 1e-9 >= max_mfe:
+            return None
+    try:
+        idle_need = float(cfg.get(
+            "ai_local_trail_decay_idle_sec",
+            DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC,
+        ) or DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC)
+    except (TypeError, ValueError):
+        idle_need = DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC
+    idle_need = max(0.0, idle_need)
+    try:
+        step_r = float(cfg.get(
+            "ai_local_trail_decay_step_r",
+            DEFAULT_LOCAL_TRAIL_DECAY_STEP_R,
+        ) or DEFAULT_LOCAL_TRAIL_DECAY_STEP_R)
+    except (TypeError, ValueError):
+        step_r = DEFAULT_LOCAL_TRAIL_DECAY_STEP_R
+    step_r = max(0.0, step_r)
+    if idle_need <= 0 or step_r <= 0:
+        return None
+
+    t = float(now) if now is not None else time.time()
+    peak = _num(pos.get("peak_price"))
+    if peak is None or peak <= 0:
+        peak = float(last)
+    else:
+        peak = max(float(peak), float(last))
+    prev_peak = _num(pos.get("trail_decay_peak"))
+    if prev_peak is None or peak > float(prev_peak) + 1e-9:
+        pos["trail_decay_peak"] = peak
+        pos["trail_decay_idle_since"] = t
+        pos["trail_decay_last_step_at"] = t
+        return None
+
+    last_step = _num(pos.get("trail_decay_last_step_at"))
+    if last_step is None:
+        pos["trail_decay_last_step_at"] = t
+        pos.setdefault("trail_decay_idle_since", t)
+        return None
+
+    elapsed = t - float(last_step)
+    if elapsed + 1e-9 < idle_need:
+        return None
+    n_steps = int(elapsed // idle_need)
+    if n_steps < 1:
+        return None
+
+    try:
+        r = float(risk) if risk is not None else 0.0
+    except (TypeError, ValueError):
+        r = 0.0
+    step_px = step_r * r if r > 0 else 0.01
+    cushion = _trail_min_cushion_px(last, risk, cfg)
+    ceiling = float(last) - cushion
+    if prev is None:
+        # Nothing to raise yet — static trail owns the seed.
+        pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
+        return None
+    raised = float(prev) + n_steps * step_px
+    # Raise-only forever; never above last − min_give; never loosen.
+    raised = max(raised, float(prev))
+    if raised > ceiling:
+        raised = ceiling
+    if raised + 1e-9 >= float(last):
+        raised = float(last) - max(cushion, 0.01)
+    if raised + 1e-9 <= float(prev):
+        # Already at/through the floor — bank the clock so we do not spin.
+        pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
+        return None
+    raised = math.ceil(round(raised * 100.0, 4)) / 100.0
+    if raised + 1e-9 <= float(prev):
+        pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
+        return None
+    pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
+    return round(raised, 2)
+
+
+def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None, *, now: float | None = None) -> float | None:
     """Trail just under the damped last: rises as price grows, never lowers.
 
     ``local_stop = max(prev, last − give, plan floor)``.
@@ -3031,6 +3197,16 @@ def local_profit_stop(pos: dict[str, Any], cfg: dict | None = None) -> float | N
         cand = round(float(last) - 0.01, 2)
     if prev is not None:
         cand = max(cand, float(prev))
+    # Green catch-up time-decay overlay: walk the shelf up toward
+    # last − min_cushion on idle while green. Does not replace give_r.
+    catch = green_catchup_raise(pos, cfg, now=now)
+    if catch is not None:
+        cand = max(float(cand), float(catch))
+        if prev is not None:
+            cand = max(cand, float(prev))
+        cand = math.ceil(round(cand * 100.0, 4)) / 100.0
+        if cand >= float(last):
+            cand = round(float(last) - 0.01, 2)
     return round(cand, 2)
 
 
