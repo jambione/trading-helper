@@ -350,6 +350,85 @@ def test_apply_tape_blocker_trusts_young_field_over_old_row_ts(monkeypatch):
     assert ew.row_quote_age_sec(row) <= 15.0
 
 
+def test_should_arm_buy_paint_trust_parity_with_old_row_ts(monkeypatch):
+    """Poller arm: stream + young field must beat lagging last_ask_ts.
+
+    Same Class C fixture as apply_tape_blocker paint-trust — without this,
+    promote alone leaves the old ts and arm/paint disagree.
+    """
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    now = time.time()
+    ew._LAST_QUOTE_TS["SMCI"] = now - 55.0
+    rec = {
+        "symbol": "SMCI",
+        "status": "watching",
+        "last_ask": 39.4,
+        "last_ask_src": "stream",
+        "price_src": "stream",
+        "last_ask_age_sec": 3.0,
+        "last_ask_ts": now - 55.0,  # lagging poller ts
+        "block_code": "stale_quote",
+        "structure": {
+            "decision": "BUY",
+            "entry_low": 38.0,
+            "entry_high": 41.0,
+            "stop_price": 37.0,
+            "target_1": 43.0,
+            "reward_risk": 1.5,
+            "wait_kind": "wait_for_zone",
+        },
+    }
+    # Promote alone cannot realign when an explicit old ts is present.
+    assert ew.promote_stream_src_if_print_fresh(dict(rec), now=now) is False
+    assert ew.row_quote_age_sec(rec, now=now) > 15.0
+    ok, why = ew.should_arm_buy(
+        rec, ask=39.4, bid=39.3,
+        cfg={
+            "ai_watch_decision_max_age_sec": 15.0,
+            "ai_watch_arm_mode": "last",
+            "desk_product": "scalp_legacy",
+            "ai_watch_arm_require_macd": False,
+            "ai_watch_require_exh_rising": False,
+            "ai_watch_arm_require_cm_rsi": False,
+            "ai_watch_soft_ob_enabled": False,
+            "ai_watch_mistimed_heat_enabled": False,
+            "ai_watch_macd_block_narrowing": False,
+        },
+        now=now,
+    )
+    assert why != "stale_quote"
+    assert why != "tape_only"
+    assert rec["last_ask_src"] == "stream"
+    assert ew.row_quote_age_sec(rec, now=now) <= 15.0
+
+
+def test_class_c_poller_paint_trust_clears_sticky_stale(monkeypatch):
+    """Class C poller order: promote then paint-trust clears sticky stale_quote."""
+    monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)
+    monkeypatch.setattr(ew, "live_print", lambda sym: None)
+    now = time.time()
+    ew._LAST_QUOTE_TS["APLD"] = now - 40.0
+    rec = {
+        "symbol": "APLD",
+        "last_ask": 26.36,
+        "last_ask_src": "stream",
+        "price_src": "stream",
+        "last_ask_age_sec": 2.9,
+        "last_ask_ts": now - 40.0,
+        "block_code": "stale_quote",
+        "block_reason": "stale quote",
+    }
+    _promoted = ew.promote_stream_src_if_print_fresh(rec, now=now)
+    _paint_trusted = ew._paint_trust_young_stream_field(rec, now=now)
+    assert _promoted is False
+    assert _paint_trusted is True
+    assert ew.clear_tape_data_block_if_stream_fresh(rec) is True
+    assert rec.get("block_code") is None
+    assert rec["last_ask_src"] == "stream"
+    assert ew.row_quote_age_sec(rec, now=now) <= 15.0
+
+
 def test_true_thin_stale_still_refuses(monkeypatch):
     """Do not clear stale_quote when the print is genuinely old."""
     monkeypatch.setattr(ew, "decision_max_age_sec", lambda cfg=None: 15.0)

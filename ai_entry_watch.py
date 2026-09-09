@@ -417,11 +417,13 @@ def _paint_trust_young_stream_field(
     *,
     now: float | None = None,
 ) -> bool:
-    """Paint-time: young stream field age overwrites a lagging row/map clock.
+    """Young stream field age overwrites a lagging row/map clock.
 
-    Used only by ``apply_tape_blocker`` (live overlay / book paint). When eng
-    just wrote last_ask_age_sec≤ceiling with src=stream, that is the print
-    the operator sees — do not let an older last_ask_ts restamp stale_quote.
+    Used by ``apply_tape_blocker`` (live overlay / book paint) and the same
+    check on the Class C poller path + ``should_arm_buy`` so arm/promote
+    cannot disagree with paint. When eng just wrote last_ask_age_sec≤ceiling
+    with src=stream, that is the print the operator sees — do not let an
+    older last_ask_ts restamp stale_quote / tape_only.
     """
     if not isinstance(rec, dict):
         return False
@@ -9931,8 +9933,11 @@ def should_arm_buy(
     # Full _row_tape_stale (fail-closed on missing age) stays in the poller /
     # refresh path — unit tests often call should_arm_buy without a clock.
     # Promote false stale labels first so stream+young cannot return
-    # stale_quote / tape_only (Class C CAPR/SDOT).
+    # stale_quote / tape_only (Class C CAPR/SDOT). Then paint-trust the
+    # young field over a lagging last_ask_ts — same order as
+    # apply_tape_blocker — so poller arm cannot disagree with overlay.
     promote_stream_src_if_print_fresh(record, cfg, now=now)
+    _paint_trust_young_stream_field(record, cfg, now=now)
     _src_arm = str(
         record.get("last_ask_src") or record.get("price_src") or ""
     ).strip().lower()
@@ -11672,8 +11677,11 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         # Class C file-path: never leave stale_quote / tape_only on disk when
         # eng/live print OR a young dated row age is present (SNXX blip;
         # CAPR false stale_tape beside tape_age≤ceiling). Promote label,
-        # re-stamp ask from the row, clear tape-data blocks.
-        if promote_stream_src_if_print_fresh(rec, cfg, now=t0):
+        # then paint-trust young field over lagging last_ask_ts (same as
+        # apply_tape_blocker), re-stamp ask from the row, clear tape-data.
+        _promoted = promote_stream_src_if_print_fresh(rec, cfg, now=t0)
+        _paint_trusted = _paint_trust_young_stream_field(rec, cfg, now=t0)
+        if _promoted or _paint_trusted:
             try:
                 _epx = float(rec.get("last_ask") or 0)
             except (TypeError, ValueError):
