@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~12:10 ET; occupancy vision = keep 2+ opens all day).
+Last updated: **2026-09-09** (~12:26 ET; tonight + occupancy dig + tape ship; movers/IRD parked).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -33,9 +33,12 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 
 1. **Score Wed capture** under live `give_r=0.20` / `give_max_pct=1%` (MFE≥0.25R median capture vs Tue; not day P&L alone).
 2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok.
-3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — turn off `ai_watch_macd_block_narrowing` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; **clear watchlist State reasons that are MACD-gap/narrowing clutter** (e.g. `macd_gap_narrowing` / “MACD closing” style arm states tied to gap); remove MACD-gap column/chip from dashboard watchlist. Don’t leave zombie MACD-gap states operators still read. Scope = **arm/state/UI for gap**; don’t silently gut separate MACD *exit* paths in the same ship unless they’re already dead. Bearish block stays a *later* IRD tool. **Not** the entry-quality fix (heat_max is).
-4. **Exit #2 — green catch-up time-decay** (design agreed): when `last > entry`, on ~8s idle raise `local_stop` toward `last − min_cushion` (small `0.05R` steps, raise-only). Banks pause-in-green instead of price falling to stop. Defaults off → replay Tue+Wed → enable. Does not replace entry help for day $.
-5. Parked same night unless score demands: tape readiness (Thu), momentum cap, summary-vs-local_stop honesty, DiscordOCR pin (~16:15), **all-day occupancy / watchlist refill** (see Next #5).
+3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — turn off `ai_watch_macd_block_narrowing` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; clear MACD-gap State clutter; remove MACD-gap column/chip from dashboard watchlist. Scope = arm/state/UI for gap; don’t gut separate MACD *exit* paths same ship. Bearish block = later IRD tool.
+4. **Occupancy dig (tonight, no knob unless dig screams one)** — seed→admit→seat→arm→open conversion; vision = fed book → **2+ concurrent opens all day**. Wed noon: n_book=1, long flat occupancy. Output: ranked causes + at most **one** candidate lever for Thu — don’t ship movers/mom-cap/bearish/reseed cool in the same breath as heat_max.
+5. **Thu tape — paint-trust poller parity (ship tonight)** — CLI brief already ready; optional age ceiling 15→20 only if parity alone isn’t the story. Live for Thu RTH.
+6. **Exit #2 — green catch-up time-decay** — when `last > entry`, ~8s idle raise `local_stop` toward `last − min_cushion` (0.05R steps, raise-only). Defaults **off** → replay Tue+Wed → enable (code can land tonight; don’t enable live until replay).
+7. **Same-night side:** DiscordOCR.app pin ~16:15.
+8. **Explicitly NOT same-night ships:** movers hygiene, momentum cap, `macd_block_bearish`, occupancy knobs (reseed cool / dead_reentry / TOD trending floor) — dig/notes OK; ship after Thu sees heat_max + tape. Summary-vs-local_stop honesty stays parked.
 
 ## Next (ranked)
 
