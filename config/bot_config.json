@@ -135,7 +135,7 @@
   "ai_watch_decision_max_age_sec": 15.0,
   "ai_watch_exhaustion_engine_only": true,
   "ai_watch_exhaustion_fallback": true,
-  "ai_watch_exhaustion_heat_max_pct": 0.0,
+  "ai_watch_exhaustion_heat_max_pct": 70.0,
   "ai_watch_exhaustion_heat_min_pct": 40.0,
   "ai_watch_exhaustion_rules": true,
   "ai_watch_in_zone_ignore_fade": false,
