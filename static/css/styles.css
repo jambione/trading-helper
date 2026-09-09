@@ -2413,7 +2413,8 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .ai-book-table-header .th-last,
 .panel-ai-watch .ai-book-table-header .th-entry,
 .panel-ai-watch .ai-book-table-header .th-stop,
-.panel-ai-watch .ai-book-table-header .th-macd,
+.panel-ai-watch .ai-book-table-header .th-rsi,
+.panel-ai-watch .ai-book-table-header .th-exh,
 .panel-ai-watch .ai-book-table-header .th-pl { text-align: right; }
 
 /* Entry rules, under the book. Values come from the live config at render
@@ -2547,11 +2548,11 @@ body.mobile [data-tv-toggle-btn] {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | RSI | EXH | MACD | P&L
-     RSI + EXH are the live arm levers; MACD remains for exit/display
-     (gap-narrowing arm veto off). Hold stays gone: the Stop cell shows the
-     min-hold countdown while it runs and the stop price after. Qty is
-     display:none and must not occupy a track. */
+  /* Ticker | State | Last | Entry | Stop | RSI | EXH | P&L
+     RSI + EXH are the live arm levers. MACD column removed — not an arm
+     gate anymore (exit engine still uses MACD off-screen). Hold stays gone:
+     the Stop cell shows the min-hold countdown while it runs and the stop
+     price after. Qty is display:none and must not occupy a track. */
   grid-template-columns:
     minmax(48px, 0.8fr)
     minmax(4.6rem, 0.95fr)
@@ -2560,7 +2561,6 @@ body.mobile [data-tv-toggle-btn] {
     minmax(58px, 0.8fr)
     minmax(52px, 0.75fr)
     minmax(58px, 0.8fr)
-    minmax(116px, 1.7fr)
     minmax(52px, 0.75fr);
   width: 100%;
   box-sizing: border-box;
@@ -2626,23 +2626,8 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
 .panel-ai-watch .feed-cols--ai-book .cell-rsi,
 .panel-ai-watch .feed-cols--ai-book .cell-exh,
-.panel-ai-watch .feed-cols--ai-book .cell-macd,
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
-
-.panel-ai-watch .feed-cols--ai-book .cell-macd {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
-.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--bull { color: #4ade80; font-weight: 600; }
-.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--wide { color: #34d399; font-weight: 700; }
-.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--narrow { color: #fbbf24; }
-.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--bear { color: #f87171; }
-.panel-ai-watch .feed-cols--ai-book .cell-macd.macd--stale {
-  color: #6b7280;
-  font-style: italic;
-  text-decoration: underline dotted rgba(148, 163, 184, 0.55);
-}
 }
 /* Drawn on REST fallback bars rather than the live Finnhub tape. Same
    treatment as a non-live %R: dimmed and dashed, so a reading the desk should
@@ -2656,7 +2641,7 @@ body.mobile [data-tv-toggle-btn] {
 
 /* Mobile Book: two lines per row so every field fits without horizontal scroll.
    Line 1 — identity + money: Ticker | State | Last | Entry | P&L
-   Line 2 — exit / signals:   Stop   | Hold  | EXH  | RSI
+   Line 2 — exit / signals:   Stop   | RSI   | EXH
    Qty stays desk-col-extra (hidden). State stays visible (no squeeze hide). */
 body.mobile .panel-ai-watch .feed-cols--ai-book {
   grid-template-columns:
@@ -2667,7 +2652,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book {
     minmax(0, 1fr);
   grid-template-areas:
     "ticker state last entry pl"
-    "stop   exh   macd  macd  macd";
+    "stop   rsi   exh   exh   exh";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
@@ -2684,8 +2669,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book > .th-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-stop,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
-body.mobile .panel-ai-watch .feed-cols--ai-book > .th-macd,
-body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-macd { grid-area: macd; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-rsi,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-pl,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-pl { grid-area: pl; }
 body.mobile .panel-ai-watch .ai-book-table-header .feed-cols--ai-book {
@@ -2710,7 +2695,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-price,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold,
-body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-rsi,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
   font-size: 12px;
 }
 @media (max-width: 700px) {
@@ -2723,15 +2709,13 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
       minmax(0, 1fr);
     grid-template-areas:
       "ticker state last entry pl"
-      "stop   exh   macd  macd  macd";
+      "stop   rsi   exh   exh   exh";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
   }
   .panel-ai-watch .feed-cols--ai-book > .th-ticker,
   .panel-ai-watch .feed-cols--ai-book > .cell-ticker { grid-area: ticker; }
-  .panel-ai-watch .feed-cols--ai-book > .th-macd,
-  .panel-ai-watch .feed-cols--ai-book > .cell-macd { grid-area: macd; }
   .panel-ai-watch .feed-cols--ai-book > .th-exh,
   .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
   .panel-ai-watch .feed-cols--ai-book > .th-state,
@@ -2742,8 +2726,6 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-macd {
   .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
   .panel-ai-watch .feed-cols--ai-book > .th-stop,
   .panel-ai-watch .feed-cols--ai-book > .cell-trail { grid-area: stop; }
-  .panel-ai-watch .feed-cols--ai-book > .th-exh,
-  .panel-ai-watch .feed-cols--ai-book > .cell-exh { grid-area: exh; }
   .panel-ai-watch .feed-cols--ai-book > .th-rsi,
   .panel-ai-watch .feed-cols--ai-book > .cell-rsi { grid-area: rsi; }
   .panel-ai-watch .feed-cols--ai-book > .th-pl,

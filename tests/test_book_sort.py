@@ -35,7 +35,6 @@ COLUMNS = [
     ("stop", "cell-trail"),
     ("rsi", "cell-rsi"),
     ("exh", "cell-exh"),
-    ("macd", "cell-macd"),
     ("pl", "cell-pl"),
 ]
 
@@ -105,7 +104,7 @@ def test_the_book_tracks_have_pixel_minimums():
     i = _CSS.index("\n.feed-cols--ai-book {")
     block = _CSS[i:_CSS.index("}", i)]
     tracks = re.findall(r"minmax\(([^,]+),", block)
-    assert len(tracks) == 9, f"expected 9 tracks, found {len(tracks)}"
+    assert len(tracks) == 8, f"expected 8 tracks, found {len(tracks)}"
     for t in tracks:
         t = t.strip()
         assert re.fullmatch(r"\d+(\.\d+)?(px|rem)", t), (
@@ -178,8 +177,9 @@ def test_the_default_ordering_is_still_phase_first():
 
 
 def test_a_chosen_column_is_not_pre_sorted_by_phase():
-    """Clicking MACD must order the whole book by gap. Grouping by phase
-    first would silently defeat the click while looking like it worked."""
+    """Clicking a value column must order the whole book by that value.
+    Grouping by phase first would silently defeat the click while looking
+    like it worked."""
     i = _JS.index("function _sortBookRows")
     body = _JS[i:_JS.index("\n/** Active book sort", i)]
     tail = body[body.index("const dir ="):]

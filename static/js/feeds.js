@@ -543,8 +543,8 @@ function _bookSortVal(r, col) {
  *  in and what is about to fire" without being asked.
  *
  *  When the operator picks a column, that column wins outright and phase is
- *  NOT used as a pre-sort: the point of clicking MACD is to see the whole
- *  book in histogram order, and grouping by phase first would silently defeat it.
+ *  NOT used as a pre-sort: the point of clicking a column is to see the whole
+ *  book in that order, and grouping by phase first would silently defeat it.
  *  Unknowns always sink to the bottom in either direction — a name with no
  *  reading is not the best or the worst, and floating "—" to the top of a
  *  descending sort is how a blank column looks like a leader. */
@@ -998,14 +998,17 @@ function _paintBookLegend(cfg, row) {
   const showExit = isOpen;
 
   // ENTRY. Evaluated against the selected row where the inputs exist.
+  // Hide MACD from the ENTRY legend when no arm MACD flag is on — it is not
+  // a gate, so advertising "not required" still looks like a live column.
+  const _macdArmOn = b('ai_watch_arm_require_macd', 0)
+    || b('ai_watch_macd_block_narrowing', 0)
+    || b('ai_watch_macd_block_bearish', 0);
   const entry = [
-    ['MACD',  (b('ai_watch_arm_require_macd', 0)
-                || b('ai_watch_macd_block_narrowing', 0)
-                || b('ai_watch_macd_block_bearish', 0))
-                ? (b('ai_watch_arm_require_macd', 0)
-                    ? `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.0)}× &nbsp;·&nbsp; opening`
-                    : `${b('ai_watch_macd_block_bearish', 0) ? 'not bearish' : ''}${b('ai_watch_macd_block_bearish', 0) && b('ai_watch_macd_block_narrowing', 0) ? ' &nbsp;·&nbsp; ' : ''}${b('ai_watch_macd_block_narrowing', 0) ? 'gap not closing' : ''}`)
-                : 'not required', macd],
+    ...(_macdArmOn
+      ? [['MACD', b('ai_watch_arm_require_macd', 0)
+          ? `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.0)}× &nbsp;·&nbsp; opening`
+          : `${b('ai_watch_macd_block_bearish', 0) ? 'not bearish' : ''}${b('ai_watch_macd_block_bearish', 0) && b('ai_watch_macd_block_narrowing', 0) ? ' &nbsp;·&nbsp; ' : ''}${b('ai_watch_macd_block_narrowing', 0) ? 'gap not closing' : ''}`, macd]]
+      : []),
     ['EXH',   n('ai_watch_exhaustion_rules', 1)
                 ? `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`
                 : 'not required', exh],
@@ -1440,13 +1443,6 @@ function _updateBookRow(el, r) {
     const exhTip = _fmtExhTitle(r);
     if (exhTip) exhEl.title = exhTip;
   }
-  const macdEl = el.querySelector('.cell-macd');
-  if (macdEl) {
-    _setText(macdEl, _bookMacdText(r));
-    macdEl.className = `cell-macd${_bookMacdClass(r)}${crit.macd === true ? ' crit--pass' : ''}`;
-    const tip = _fmtMacdTitle(r);
-    if (tip) macdEl.title = tip;
-  }
   _setText(el.querySelector('.cell-qty'), qty);
   const plEl = el.querySelector('.cell-pl');
   if (plEl) {
@@ -1496,7 +1492,6 @@ function _bookRowHtml(r) {
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`
     + `<div class="cell-exh${_bookExhClass(r)}${crit.exh === true ? ' crit--pass' : ''}"${_fmtExhTitle(r) ? ` title="${_esc(_fmtExhTitle(r))}"` : ''}>${_esc(_bookExhText(r))}</div>`
-    + `<div class="cell-macd${_bookMacdClass(r)}${crit.macd === true ? ' crit--pass' : ''}"${_fmtMacdTitle(r) ? ` title="${_esc(_fmtMacdTitle(r))}"` : ''}>${_esc(_bookMacdText(r))}</div>`
     + `<div class="cell-qty">${_esc(qty)}</div>`
     + `<div class="cell-pl ${plCls}">${_esc(pl)}</div>`
     + `</div></div>`;
