@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~11:22 ET; after-close + #1b drop macd-gap narrowing arm).
+Last updated: **2026-09-09** (~11:23 ET; #1b includes ledger/legend alignment).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -33,7 +33,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 
 1. **Score Wed capture** under live `give_r=0.20` / `give_max_pct=1%` (MFE≥0.25R median capture vs Tue; not day P&L alone).
 2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok.
-3. **Declutter #1b — remove macd-gap narrowing from the arm path** — turn off `ai_watch_macd_block_narrowing` (and stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Not** the entry-quality fix (heat_max is). Keep `macd_block_bearish` as a *later* optional IRD tool — do not ship bearish in the same change.
+3. **Declutter #1b — remove macd-gap narrowing from the arm path** — turn off `ai_watch_macd_block_narrowing` (and stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Ledger must stay aligned:** drop/retire `macd_gap_narrowing` from arm_why → bucket map, decision_ledger reasons, and any desk/UI veto legend so the one-story ledger doesn’t keep a dead MACD-gap row. **Not** the entry-quality fix (heat_max is). Keep `macd_block_bearish` as a *later* optional IRD tool — do not ship bearish in the same change.
 4. **Exit #2 — green catch-up time-decay** (design agreed): when `last > entry`, on ~8s idle raise `local_stop` toward `last − min_cushion` (small `0.05R` steps, raise-only). Banks pause-in-green instead of price falling to stop. Defaults off → replay Tue+Wed → enable. Does not replace entry help for day $.
 5. Parked same night unless score demands: tape readiness (Thu), momentum cap, summary-vs-local_stop honesty, DiscordOCR pin (~16:15).
 
