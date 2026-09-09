@@ -1160,11 +1160,11 @@ DEFAULT_CONFIG = {
     "claude_research_enabled":   False,
     "claude_backend":       "agy",
     "claude_cli_bin":          "agy",
-    "claude_model":            "gemini-3-pro-high",
+    "claude_model":            "gemini-3.1-pro-high",
     "claude_effort":            "high",  # agy: low|medium|high
     "agy_backend":             "agy",
     "agy_cli_bin":             "agy",
-    "agy_model":               "gemini-3-pro-high",
+    "agy_model":               "gemini-3.1-pro-high",
     "claude_research_times": ["08:30", "11:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,

@@ -58,6 +58,7 @@ def test_call_agy_cli_parses_the_probe_envelope(monkeypatch, tmp_path):
         return _P()
 
     monkeypatch.setattr(m.subprocess, "run", _run)
+    # Default model ends with -high -> must NOT pass a separate --effort.
     text = m.call_agy_cli("Reply PONG", timeout=90, effort="xhigh")
     assert text.strip() == "PONG"
     cmd = captured["cmd"]
@@ -66,8 +67,32 @@ def test_call_agy_cli_parses_the_probe_envelope(monkeypatch, tmp_path):
     assert "--output-format" in cmd and "json" in cmd
     assert "--dangerously-skip-permissions" not in cmd
     assert "--model" in cmd and m.DEFAULT_AGY_MODEL in cmd
-    assert "--effort" in cmd and "high" in cmd
+    assert "--effort" not in cmd
     assert captured["kw"].get("cwd") == str(tmp_path)
+
+    # Explicit *-high model likewise skips --effort.
+    captured.clear()
+    m.call_agy_cli(
+        "Reply PONG",
+        model="gemini-3.1-pro-high",
+        timeout=90,
+        effort="high",
+    )
+    cmd = captured["cmd"]
+    assert "--model" in cmd and "gemini-3.1-pro-high" in cmd
+    assert "--effort" not in cmd
+
+    # Non-suffix model still accepts --effort.
+    captured.clear()
+    m.call_agy_cli(
+        "Reply PONG",
+        model="gemini-3.1-pro",
+        timeout=90,
+        effort="medium",
+    )
+    cmd = captured["cmd"]
+    assert "--model" in cmd and "gemini-3.1-pro" in cmd
+    assert "--effort" in cmd and "medium" in cmd
 
 
 def test_call_agy_cli_raises_on_auth_error(monkeypatch):

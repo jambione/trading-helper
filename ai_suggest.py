@@ -1806,6 +1806,10 @@ def call_agy_cli(
 
     model_id = _agy_model(model)
     effort_id = _agy_effort(effort)
+    # Model ids that already encode effort (...-low|...-medium|...-high) reject
+    # a separate --effort flag; only pass it for bare / non-suffix models.
+    if effort_id and re.search(r"-(?:low|medium|high)$", model_id, re.I):
+        effort_id = None
     cmd = [
         binary,
         "-p", prompt,

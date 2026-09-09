@@ -360,5 +360,6 @@
   "use_rvol": true,
   "volume_surge_mult": 1.5,
   "wr_length": 14,
-  "ai_movers_min_live_pct": 0.0
+  "ai_movers_min_live_pct": 0.0,
+  "agy_model": "gemini-3.1-pro-high"
 }
