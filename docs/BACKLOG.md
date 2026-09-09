@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (pre-open Wed).
+Last updated: **2026-09-09** (~09:00 ET; DiscordOCR pin queued post-close).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -38,7 +38,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 5. **Bob float/volume pack** — Confirmation tips; not a new strategy.
 6. **ATR-scaled trail A/B** — Parked until MFE exists routinely.
 7. **Declutter / ledger simplification** — After baselines stabilize.
-8. **DiscordOCR.app TCC pin** — Survive Homebrew Python path changes (macOS “access other apps” nag).
+8. **DiscordOCR.app TCC pin** — **Scheduled after Wed 2026-09-09 close.** Prefer stable `DiscordOCR.app` binary over Homebrew `Python.app` for OCR so Screen Recording / “access other apps” survives brew upgrades. Do not ship mid-RTH.
 9. **Multi-tenant Trader Bro** — After consistent profit only.
 
 ---
