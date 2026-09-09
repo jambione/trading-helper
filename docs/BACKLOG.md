@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~11:24 ET; #1b clears MACD-gap arm states too).
+Last updated: **2026-09-09** (~11:42 ET; midday book refill parked on backlog).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -35,7 +35,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok.
 3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — turn off `ai_watch_macd_block_narrowing` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; **clear watchlist State reasons that are MACD-gap/narrowing clutter** (e.g. `macd_gap_narrowing` / “MACD closing” style arm states tied to gap); remove MACD-gap column/chip from dashboard watchlist. Don’t leave zombie MACD-gap states operators still read. Scope = **arm/state/UI for gap**; don’t silently gut separate MACD *exit* paths in the same ship unless they’re already dead. Bearish block stays a *later* IRD tool. **Not** the entry-quality fix (heat_max is).
 4. **Exit #2 — green catch-up time-decay** (design agreed): when `last > entry`, on ~8s idle raise `local_stop` toward `last − min_cushion` (small `0.05R` steps, raise-only). Banks pause-in-green instead of price falling to stop. Defaults off → replay Tue+Wed → enable. Does not replace entry help for day $.
-5. Parked same night unless score demands: tape readiness (Thu), momentum cap, summary-vs-local_stop honesty, DiscordOCR pin (~16:15).
+5. Parked same night unless score demands: tape readiness (Thu), momentum cap, summary-vs-local_stop honesty, DiscordOCR pin (~16:15), **midday book refill** (see Next).
 
 ## Next (ranked)
 
@@ -43,13 +43,14 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 2. **Green catch-up trail (time-decay)** — Tonight #2 after heat_max. Stop rises to the gain when last > entry; idle ~8s; step 0.05R; floor under last; decay off when not green. Replay before enable.
 3. **Movers hygiene** — WYHG-class fat spread was Tue’s biggest single $ hole (−$1.28), separate from momentum.
 4. **Thu tape readiness** — Poller paint-trust parity (CLI brief ready); optional ceiling 15→20 after.
-5. **MACD declutter** — drop narrowing/gap arm veto after heat_max (#1b). Bearish block / momentum cap stay separate follow-ons.
-6. **Plan B dry-run scoreboard** — Only if Plan A still flat after leash + tape with clean n.
-7. **Bob float/volume pack** — Confirmation tips; not a new strategy.
-8. **ATR-scaled trail A/B** — Parked (pick one trail experiment: green catch-up first).
-9. **Declutter / ledger simplification** — Incl. summary showing floor `stop` instead of live `local_stop`.
-10. **DiscordOCR.app TCC pin** — **~16:15 ET Wed 2026-09-09.** Prefer `DiscordOCR.app` over Homebrew `Python.app`.
-11. **Multi-tenant Trader Bro** — After consistent profit only.
+5. **Midday book refill** — Open looks packed; midday book thins (~4 seats) even though trending/movers/research still seed. Not a broken funnel: `dead_reentry` (max 1 entry/symbol/day), stale/no-tape drops (~6m + reseed cool 5–15m, stale-seat cap 2), admit gates (range_pos / min_price / not_uptrend), harder midday %/score/rvol, batched research, momentum seats often 0. Dig after heat_max + MACD-gap declutter — possible levers: reseed cool, dead_reentry policy, time-of-day trending floor, momentum seat fill. **Not** mid-RTH.
+6. **MACD declutter** — drop narrowing/gap arm veto after heat_max (#1b). Bearish block / momentum cap stay separate follow-ons.
+7. **Plan B dry-run scoreboard** — Only if Plan A still flat after leash + tape with clean n.
+8. **Bob float/volume pack** — Confirmation tips; not a new strategy.
+9. **ATR-scaled trail A/B** — Parked (pick one trail experiment: green catch-up first).
+10. **Declutter / ledger simplification** — Incl. summary showing floor `stop` instead of live `local_stop`.
+11. **DiscordOCR.app TCC pin** — **~16:15 ET Wed 2026-09-09.** Prefer `DiscordOCR.app` over Homebrew `Python.app`.
+12. **Multi-tenant Trader Bro** — After consistent profit only.
 
 
 ---
