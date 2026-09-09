@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~11:24 ET; #1b also drops MACD-gap from watchlist).
+Last updated: **2026-09-09** (~11:24 ET; #1b clears MACD-gap arm states too).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -33,7 +33,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 
 1. **Score Wed capture** under live `give_r=0.20` / `give_max_pct=1%` (MFE≥0.25R median capture vs Tue; not day P&L alone).
 2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok.
-3. **Declutter #1b — remove macd-gap from arms + watchlist** — turn off `ai_watch_macd_block_narrowing` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align surfaces:** retire `macd_gap_narrowing` from arm_why → bucket map, decision_ledger, desk veto legend, **and remove MACD-gap from the dashboard watchlist** (column/chip — don’t leave a dead control). Keep other MACD display/exits only if still live; gap-as-arm is the cut. **Not** the entry-quality fix (heat_max is). Keep `macd_block_bearish` as a *later* optional IRD tool — not same ship.
+3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — turn off `ai_watch_macd_block_narrowing` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; **clear watchlist State reasons that are MACD-gap/narrowing clutter** (e.g. `macd_gap_narrowing` / “MACD closing” style arm states tied to gap); remove MACD-gap column/chip from dashboard watchlist. Don’t leave zombie MACD-gap states operators still read. Scope = **arm/state/UI for gap**; don’t silently gut separate MACD *exit* paths in the same ship unless they’re already dead. Bearish block stays a *later* IRD tool. **Not** the entry-quality fix (heat_max is).
 4. **Exit #2 — green catch-up time-decay** (design agreed): when `last > entry`, on ~8s idle raise `local_stop` toward `last − min_cushion` (small `0.05R` steps, raise-only). Banks pause-in-green instead of price falling to stop. Defaults off → replay Tue+Wed → enable. Does not replace entry help for day $.
 5. Parked same night unless score demands: tape readiness (Thu), momentum cap, summary-vs-local_stop honesty, DiscordOCR pin (~16:15).
 
