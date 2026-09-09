@@ -6939,11 +6939,11 @@ def _rsi_wire_fields(rec: dict) -> dict:
 
 
 def _macd_wire_fields(rec: dict) -> dict:
-    """MACD momentum for the book's MACD Gap column.
+    """MACD momentum for the book's MACD column (exit/display).
 
-    The 8/26 redesign made MACD the entry lever and added the column, the
-    renderer, the CSS and the arm gate — but nothing ever put the numbers on
-    the wire, so every row rendered "—" while the engine had real values.
+    The 8/26 redesign made MACD an entry lever and added the column; gap
+    narrowing as an arm veto is now opt-in via ai_watch_macd_block_narrowing
+    (off after #1b declutter). Still on the wire for exits + desk display.
     Sibling of _exhaustion_wire_fields for exactly the same reason.
 
     Direction travels with size. Every other field here says how far apart

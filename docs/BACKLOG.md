@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~12:26 ET; tonight + occupancy dig + tape ship; movers/IRD parked).
+Last updated: **2026-09-09** (~16:00 ET; #1b MACD-gap declutter shipped — narrowing off).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -33,7 +33,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 
 1. **Score Wed capture** under live `give_r=0.20` / `give_max_pct=1%` (MFE≥0.25R median capture vs Tue; not day P&L alone).
 2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok.
-3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — turn off `ai_watch_macd_block_narrowing` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; clear MACD-gap State clutter; remove MACD-gap column/chip from dashboard watchlist. Scope = arm/state/UI for gap; don’t gut separate MACD *exit* paths same ship. Bearish block = later IRD tool.
+3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — **SHIPPED** — `ai_watch_macd_block_narrowing=false` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; clear MACD-gap State clutter; remove MACD-gap column/chip from dashboard watchlist. Scope = arm/state/UI for gap; don’t gut separate MACD *exit* paths same ship. Bearish block = later IRD tool.
 4. **Occupancy dig (tonight, no knob unless dig screams one)** — seed→admit→seat→arm→open conversion; vision = fed book → **2+ concurrent opens all day**. Wed noon: n_book=1, long flat occupancy. Output: ranked causes + at most **one** candidate lever for Thu — don’t ship movers/mom-cap/bearish/reseed cool in the same breath as heat_max.
 5. **Thu tape — paint-trust poller parity (ship tonight)** — CLI brief already ready; optional age ceiling 15→20 only if parity alone isn’t the story. Live for Thu RTH.
 6. **Exit #2 — green catch-up time-decay** — when `last > entry`, ~8s idle raise `local_stop` toward `last − min_cushion` (0.05R steps, raise-only). Defaults **off** → replay Tue+Wed → enable (code can land tonight; don’t enable live until replay).

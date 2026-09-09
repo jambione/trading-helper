@@ -97,7 +97,7 @@ def test_the_sort_indicator_matches_the_scan_tables():
 
 def test_the_book_tracks_have_pixel_minimums():
     """Why an inline arrow is safe here. If any book track were sized by its
-    content, a longer header ("MACD GAP ↑") would widen the column and pull it
+    content, a longer header ("MACD ↑") would widen the column and pull it
     off its values — the alignment bug arriving by a new road."""
     # Anchored at line start: the bare selector defines the tracks. Several
     # descendant rules (.ai-book-table-header .feed-cols--ai-book, the mobile
@@ -178,7 +178,7 @@ def test_the_default_ordering_is_still_phase_first():
 
 
 def test_a_chosen_column_is_not_pre_sorted_by_phase():
-    """Clicking MACD GAP must order the whole book by gap. Grouping by phase
+    """Clicking MACD must order the whole book by gap. Grouping by phase
     first would silently defeat the click while looking like it worked."""
     i = _JS.index("function _sortBookRows")
     body = _JS[i:_JS.index("\n/** Active book sort", i)]

@@ -1697,6 +1697,12 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_exhaustion_trade_price_only",
     "ai_watch_stream_bars_live",
     "ai_watch_arm_require_cm_rsi",
+    # MACD arm levers — legend/State must match the live gate (require_macd
+    # already false; narrowing off retires gap-as-arm clutter).
+    "ai_watch_arm_require_macd",
+    "ai_watch_macd_block_narrowing",
+    "ai_watch_macd_block_bearish",
+    "ai_watch_macd_exh_override",
     "ai_watch_arm_cm_rsi_max",
     # Published so the book legend prints the band the gate is actually
     # using. Without it the legend silently falls back to a default and

@@ -543,8 +543,8 @@ function _bookSortVal(r, col) {
  *  in and what is about to fire" without being asked.
  *
  *  When the operator picks a column, that column wins outright and phase is
- *  NOT used as a pre-sort: the point of clicking MACD GAP is to see the whole
- *  book in gap order, and grouping by phase first would silently defeat it.
+ *  NOT used as a pre-sort: the point of clicking MACD is to see the whole
+ *  book in histogram order, and grouping by phase first would silently defeat it.
  *  Unknowns always sink to the bottom in either direction — a name with no
  *  reading is not the best or the worst, and floating "—" to the top of a
  *  descending sort is how a blank column looks like a leader. */
@@ -872,10 +872,28 @@ function _bookEntryCriteria(cfg, row) {
 
     const gap = num(r.macd_gap), sep = num(r.macd_sep_ratio);
     const falling = r.macd_gap_falling;
-    macd = live !== true ? null
-      : (gap == null || sep == null) ? null
-      : (gap > n('macd_min_gap', 0.005) && sep >= n('macd_sep_mult', 1.5)
-         && falling !== true);
+    // Same honesty as RSI: if no MACD arm lever is in force, the legend must
+    // not tick gap/sep/opening as if they still gate the open. require_macd
+    // owns size; block_narrowing / block_bearish are the direction vetoes.
+    const requireMacd = b('ai_watch_arm_require_macd', 0);
+    const blockNarrow = b('ai_watch_macd_block_narrowing', 0);
+    const blockBear = b('ai_watch_macd_block_bearish', 0);
+    if (!requireMacd && !blockNarrow && !blockBear) {
+      macd = null;                       // switched off: not a rule in force
+    } else if (!requireMacd && (blockNarrow || blockBear)) {
+      // Direction-only path (EXH+RSI arm + MACD vetoes).
+      const bear = (gap != null) ? gap <= 0 : null;
+      if (live !== true) macd = null;
+      else if (blockBear && bear === true) macd = false;
+      else if (blockNarrow && falling === true) macd = false;
+      else if ((blockBear && bear == null) || (blockNarrow && falling == null)) macd = null;
+      else macd = true;
+    } else {
+      macd = live !== true ? null
+        : (gap == null || sep == null) ? null
+        : (gap > n('macd_min_gap', 0.005) && sep >= n('macd_sep_mult', 1.5)
+           && falling !== true);
+    }
 
     const ex = num(r.exhaustion), rising = r.pctr_rising;
     // Same switch exhaustion_allows_buy uses: rules off → not a gate in force.
@@ -893,9 +911,13 @@ function _bookEntryCriteria(cfg, row) {
     const _exhLeg = ex == null ? null
       : (ex >= n('ai_watch_macd_exh_override_min_pct', 70) && rising === true);
     const _macdLeg = r.macd_gap_rising == null ? null : r.macd_gap_rising === true;
-    both = live !== true ? null
-      : (_exhLeg === true || _macdLeg === true) ? true
-      : (_exhLeg == null || _macdLeg == null) ? null : false;
+    if (!b('ai_watch_macd_exh_override', 0)) {
+      both = null;                      // override off: not a rule in force
+    } else {
+      both = live !== true ? null
+        : (_exhLeg === true || _macdLeg === true) ? true
+        : (_exhLeg == null || _macdLeg == null) ? null : false;
+    }
 
     // RSI leg. Reads the SAME three knobs cm_rsi_allows_buy does, so the
     // legend cannot drift from the gate: band, the turn, and the deep-OS
@@ -977,11 +999,19 @@ function _paintBookLegend(cfg, row) {
 
   // ENTRY. Evaluated against the selected row where the inputs exist.
   const entry = [
-    ['MACD',  `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.0)}× &nbsp;·&nbsp; opening`, macd],
+    ['MACD',  (b('ai_watch_arm_require_macd', 0)
+                || b('ai_watch_macd_block_narrowing', 0)
+                || b('ai_watch_macd_block_bearish', 0))
+                ? (b('ai_watch_arm_require_macd', 0)
+                    ? `gap &gt; ${n('macd_min_gap', 0.005)} &nbsp;·&nbsp; sep ≥ ${n('macd_sep_mult', 1.0)}× &nbsp;·&nbsp; opening`
+                    : `${b('ai_watch_macd_block_bearish', 0) ? 'not bearish' : ''}${b('ai_watch_macd_block_bearish', 0) && b('ai_watch_macd_block_narrowing', 0) ? ' &nbsp;·&nbsp; ' : ''}${b('ai_watch_macd_block_narrowing', 0) ? 'gap not closing' : ''}`)
+                : 'not required', macd],
     ['EXH',   n('ai_watch_exhaustion_rules', 1)
                 ? `≥ ${n('ai_watch_exhaustion_heat_min_pct', 40)}% and rising &nbsp;·&nbsp; or ≥ ${n('ai_watch_ob_flat_min_pct', 99)}% pinned`
                 : 'not required', exh],
-    ['EITHER', `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`, both],
+    ['EITHER', b('ai_watch_macd_exh_override', 0)
+                ? `EXH ≥ ${n('ai_watch_macd_exh_override_min_pct', 70)}% rising OR MACD rising = override`
+                : 'not required', both],
     ['RSI',   n('ai_watch_arm_require_cm_rsi', 0)
                 ? `CM RSI-2 rising${n('ai_watch_arm_cm_rsi_max', 100) < 100
                     ? ` &nbsp;·&nbsp; ${n('ai_watch_arm_cm_rsi_min', 0)}–${n('ai_watch_arm_cm_rsi_max', 100)} band` : ''}`
@@ -1195,15 +1225,25 @@ const _MACD_BLOCKER_LABELS = {
   'macd_bearish': 'MACD bear',
   'macd_gap_too_close': 'MACD narrow',
   'macd_gap_insufficient': 'MACD gap low',
+  'macd_gap_narrowing': 'MACD closing',
+  'macd_gap_dir_unknown': 'no MACD dir',
   'no_macd_data': 'no MACD',
   'macd_no_recent_cross': 'wait cross',
   'macd_bullish_gap': 'ready',
 };
 
+/** Gap-narrowing / size arm reasons — zombie when those levers are off. */
+const _MACD_GAP_ARM_CODES = new Set([
+  'macd_gap_narrowing', 'macd_gap_dir_unknown',
+  'macd_gap_too_close', 'macd_gap_insufficient',
+]);
+
 const _MACD_BLOCKER_DESCRIPTIONS = {
   'macd_bearish': 'MACD Bearish: Fast line is below slow signal line (bullish crossover required)',
   'macd_gap_too_close': 'MACD Narrow: Fast/slow separation gap is too close (< 0.005 minimum)',
   'macd_gap_insufficient': 'MACD Gap Low: Line separation is under 0.8× rolling standard deviation',
+  'macd_gap_narrowing': 'MACD Closing: Fast/slow gap is narrowing (arm veto when block_narrowing on)',
+  'macd_gap_dir_unknown': 'MACD gap direction unknown (needs bars)',
   'no_macd_data': 'No MACD: Real-time 1-minute bar MACD calculation not available yet',
   'macd_no_recent_cross': 'Wait Cross: Bullish crossover has not occurred within the confirm window',
 };
@@ -1221,6 +1261,21 @@ function _bookBlockerLabel(r) {
   const b = String(r.blocker || r.block_reason || '').trim();
   const code = String(r.block_code || '').trim().toLowerCase();
   const detail = String(r.block_detail || '').trim();
+  const cfg = (typeof get === 'function' ? get('config') : null) || {};
+  const gapArmLive = !!(cfg.ai_watch_arm_require_macd
+    || cfg.ai_watch_macd_block_narrowing);
+  const whyLow = (code || b).toLowerCase();
+  // When gap/narrowing is not an arm lever, do not advertise leftover
+  // macd_gap_* State strings — fall through to ready / other blockers.
+  if (!gapArmLive && _MACD_GAP_ARM_CODES.has(whyLow)) {
+    if (r.ready || phase === 'ready') return 'ready';
+    // Prefer a non-gap blocker if the wire still carries one.
+    if (b && !_MACD_GAP_ARM_CODES.has(b.toLowerCase())
+        && !['in zone', 'in_zone', 'buy', 'ready'].includes(b.toLowerCase())) {
+      return _MACD_BLOCKER_LABELS[b.toLowerCase()] || b;
+    }
+    return 'watching';
+  }
 
   if (_MACD_BLOCKER_LABELS[code]) {
     return _MACD_BLOCKER_LABELS[code];

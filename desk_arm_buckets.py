@@ -143,7 +143,7 @@ def bucket_label(bucket: str) -> str:
         "readiness": "tape/data not ready",
         "exh": "exhaustion / %R rising",
         "rsi": "CM RSI band / rising",
-        "macd_dir": "MACD direction / gap",
+        "macd_dir": "MACD direction",
         "heat": "mistimed / soft OB / cheap heat",
         "spread": "spread too wide",
         "zone": "zone / structure",

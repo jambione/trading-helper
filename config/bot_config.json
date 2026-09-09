@@ -139,7 +139,7 @@
   "ai_watch_exhaustion_heat_min_pct": 40.0,
   "ai_watch_exhaustion_rules": true,
   "ai_watch_in_zone_ignore_fade": false,
-  "ai_watch_macd_block_narrowing": true,
+  "ai_watch_macd_block_narrowing": false,
   "ai_watch_macd_exh_override": false,
   "ai_watch_macd_exh_override_min_pct": 70.0,
   "ai_watch_macd_max_age_sec": 60.0,

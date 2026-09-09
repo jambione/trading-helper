@@ -49,7 +49,7 @@ Write errors are swallowed (fail-open). Trading never depends on the ledger.
 | `readiness` | `tape_only`, `stale_quote`, `need_stream`, `no_macd_data`, `macd_not_realtime*` |
 | `exh` | `exh_falling`, `no_exhaustion*`, `exh_rising_required` |
 | `rsi` | `rsi_extended`, `rsi_not_rising`, `cm_rsi*` band fails |
-| `macd_dir` | `macd_bearish`, `macd_gap_narrowing`, `macd_gap_*` |
+| `macd_dir` | `macd_bearish`, historical `macd_gap_narrowing` / `macd_gap_*` (gap arm veto off when `ai_watch_macd_block_narrowing` false) |
 | `heat` | `mistimed_heat`, `soft_ob`, `late_heat`, `cheap_ob*` |
 | `spread` | `spread`, `wide_spread` |
 | `zone` | `above_zone`, `below_zone`, `no_structure`, `wait_setup` |
