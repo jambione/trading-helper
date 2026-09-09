@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~16:00 ET; #1b MACD-gap declutter shipped — narrowing off).
+Last updated: **2026-09-09** (~16:03 ET; occupancy = seat volume names, dead_reentry off for Thu).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -34,11 +34,11 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 1. **Score Wed capture** under live `give_r=0.20` / `give_max_pct=1%` (MFE≥0.25R median capture vs Tue; not day P&L alone).
 2. **Entry help #1 — ship `ai_watch_exhaustion_heat_max_pct` 65–70** (now 0/off). Blocks FSLY-class EXH 72; keeps Wed winners (EXH≤55). Do **not** require cm/pctr/macd_ok.
 3. **Declutter #1b — remove macd-gap from arms, states, watchlist** — **SHIPPED** — `ai_watch_macd_block_narrowing=false` (stop treating `macd_min_gap` as an arm veto). `require_macd` already false. Skim Wed’s `macd_gap_narrowing` blocks first so Thu arm flood isn’t a surprise. **Align all surfaces:** retire gap/narrowing from arm_why → ~8 veto buckets, decision_ledger, desk legend; clear MACD-gap State clutter; remove MACD-gap column/chip from dashboard watchlist. Scope = arm/state/UI for gap; don’t gut separate MACD *exit* paths same ship. Bearish block = later IRD tool.
-4. **Occupancy dig (tonight, no knob unless dig screams one)** — seed→admit→seat→arm→open conversion; vision = fed book → **2+ concurrent opens all day**. Wed noon: n_book=1, long flat occupancy. Output: ranked causes + at most **one** candidate lever for Thu — don’t ship movers/mom-cap/bearish/reseed cool in the same breath as heat_max.
+4. **Occupancy — dig done + Thu lever:** Wed thin book was not empty seeds — `dead_reentry` (1147) locked IRD/ODD/FSLY/GME while seed_rank kept feeding them; tape_only/stale seats secondary. Jonathan: if name still has volume/value, **seat it and let arms decide** (heat_max/RSI/stream), don’t all-day bench on a morning scratch. **Ship `ai_dead_reentry_block=false` for Thu** (config). Soften later only if 0-MFE rebought. Dig notes kept under Next #5.
 5. **Thu tape — paint-trust poller parity (ship tonight)** — CLI brief already ready; optional age ceiling 15→20 only if parity alone isn’t the story. Live for Thu RTH.
 6. **Exit #2 — green catch-up time-decay** — when `last > entry`, ~8s idle raise `local_stop` toward `last − min_cushion` (0.05R steps, raise-only). Defaults **off** → replay Tue+Wed → enable (code can land tonight; don’t enable live until replay).
 7. **Same-night side:** DiscordOCR.app pin ~16:15.
-8. **Explicitly NOT same-night ships:** movers hygiene, momentum cap, `macd_block_bearish`, occupancy knobs (reseed cool / dead_reentry / TOD trending floor) — dig/notes OK; ship after Thu sees heat_max + tape. Summary-vs-local_stop honesty stays parked.
+8. **Explicitly NOT same-night ships:** movers hygiene, momentum cap, `macd_block_bearish`, occupancy knobs beyond dead_reentry (reseed cool / TOD trending floor) — after Thu scores dead_reentry off + tape. Movers / mom-cap / bearish still parked. Summary-vs-local_stop honesty stays parked.
 
 ## Next (ranked)
 
@@ -46,7 +46,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 2. **Green catch-up trail (time-decay)** — Tonight #2 after heat_max. Stop rises to the gain when last > entry; idle ~8s; step 0.05R; floor under last; decay off when not green. Replay before enable.
 3. **Movers hygiene** — WYHG-class fat spread was Tue’s biggest single $ hole (−$1.28), separate from momentum.
 4. **Thu tape readiness** — Poller paint-trust parity (CLI brief ready); optional ceiling 15→20 after.
-5. **All-day occupancy (watchlist → 2–4 concurrent opens)** — Jonathan’s vision: a couple of open positions going *all day*, not a 9:30 burst then a dead book. A 1-name watchlist cannot feed that. Wed ~12:10: **n_book=1** (GME), **0 opens**, occupancy ~3 names ~10:00 then **flat until POET 11:34–11:58**. Seeds (trend/movers/research/mom) are on; seats aren’t — diagnose the *conversion* (seed → admit → seat → arm → open), not “add more seeders.” Known thinners: `dead_reentry` (max 1/symbol/day), stale/no-tape drops, admit gates, midday %/score/rvol, batched research, mom seats 0. Dig after heat_max + MACD-gap declutter. **Not** mid-RTH.
+5. **All-day occupancy (watchlist → 2–4 concurrent opens)** — Vision locked. Dig: #1 `dead_reentry` starving midday seats of seed_rank names; #2 tape_only/stale; #3 seed pool shrink. **Thu ship: `ai_dead_reentry_block=false`** so volume names still hit arms. Optional later: reseed cool / stale-seat policy — not before dead_reentry off is scored.
 6. **MACD declutter** — drop narrowing/gap arm veto after heat_max (#1b). Bearish block / momentum cap stay separate follow-ons.
 7. **Plan B dry-run scoreboard** — Only if Plan A still flat after leash + tape with clean n.
 8. **Bob float/volume pack** — Confirmation tips; not a new strategy.
