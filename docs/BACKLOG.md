@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-09** (~16:15 ET; green catch-up trail ON for Thu; dead_reentry off; heat_max=70).
+Last updated: **2026-09-10** (~08:37 ET; occupancy follow-up after Thu score).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -47,7 +47,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 2. **Green catch-up trail (time-decay)** — **SHIPPED ON for Thu.** Idle 8s / step 0.05R / green-only / raise-only. Score capture vs early-scratch Fri; kill switch = set enabled false if runners taxed.
 3. **Movers hygiene** — WYHG-class fat spread was Tue’s biggest single $ hole (−$1.28), separate from momentum.
 4. **Thu tape readiness** — Poller paint-trust parity **SHIPPED**; optional ceiling 15→20 after if needed.
-5. **All-day occupancy (watchlist → 2–4 concurrent opens)** — Vision locked. Dig: #1 `dead_reentry` starving midday seats of seed_rank names; #2 tape_only/stale; #3 seed pool shrink. **Thu ship: `ai_dead_reentry_block=false`** so volume names still hit arms. Optional later: reseed cool / stale-seat policy — not before dead_reentry off is scored.
+5. **All-day occupancy follow-up (after Thu 2026-09-10 score)** — Goal: ≥2 concurrent opens as session health via armable seats × overlapping holds. Do **not** loosen heat_max/RSI/EXH or slow green catch-up just to fill slots. Next levers if Thu still single-file after 10:15: (1) evict/churn unarmable `tape_only`/stale seats so liquid names get seats, (2) midday seed refresh (trending % / reseed cool after ~10:30). Score today's dead_reentry-off first.
 6. **MACD declutter** — drop narrowing/gap arm veto after heat_max (#1b). Bearish block / momentum cap stay separate follow-ons.
 7. **Plan B dry-run scoreboard** — Only if Plan A still flat after leash + tape with clean n.
 8. **Bob float/volume pack** — Confirmation tips; not a new strategy.
