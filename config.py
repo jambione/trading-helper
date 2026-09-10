@@ -1175,16 +1175,14 @@ DEFAULT_CONFIG = {
     "agy_backend":             "agy",
     "agy_cli_bin":             "agy",
     "agy_model":               "gemini-3.1-pro-high",
-    "claude_research_times": ["08:30", "11:30", "14:30"],
+    "claude_research_times": ["08:30", "14:30"],
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
     # Seed-only AI ranker (momentum+trending+movers → ≤5 names → watchlist).
     # Google AGY + Grok; recommend only; agreement required; never places.
     "ai_seed_rank_enabled": False,
     "ai_seed_rank_times": [
-        "09:25",
-        "10:00", "11:00", "12:00", "13:00", "14:00",
-        "15:00",
+        "09:25", "12:00", "15:00",
     ],
     "ai_seed_rank_weekdays_only": True,
     "ai_seed_rank_catchup_min": 45,
@@ -1200,7 +1198,7 @@ DEFAULT_CONFIG = {
     # web_x = web_search + x_search on xAI API; Claude CLI uses WebSearch/WebFetch.
     "claude_search_tools":      "web_x",
     "claude_max_turns":             8,
-    "claude_max_output_tokens": 10000,
+    "claude_max_output_tokens": 4000,
     "claude_use_prior_context":  True,
     # RS leaders + Stocktwits heat + peer AI board (compact research inject).
     "claude_use_desk_snapshot":  True,
@@ -1220,7 +1218,7 @@ DEFAULT_CONFIG = {
     "grok_search_tools":       "web_x",
     "grok_use_prior_context":  False,
     "grok_use_desk_snapshot":  True,
-    "grok_research_times": ["08:30", "11:30", "14:30"],
+    "grok_research_times": ["08:30", "14:30"],
     "grok_research_weekdays_only": True,
     "grok_research_catchup_min": 120,
     "grok_prompt_file": "ai_prompt.txt",  # shared research prompt for now

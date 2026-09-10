@@ -212,17 +212,16 @@
   "brave_tv_tab": 1,
   "claude_backend": "agy",
   "claude_cli_bin": "claude",
-  "claude_effort": "xhigh",
+  "claude_effort": "high",
   "claude_live_search": true,
-  "claude_max_output_tokens": 10000,
-  "claude_max_turns": 8,
+  "claude_max_output_tokens": 4000,
+  "claude_max_turns": 4,
   "claude_model": "sonnet",
   "claude_request_timeout": 600.0,
   "claude_research_catchup_min": 120,
   "claude_research_enabled": true,
   "claude_research_times": [
     "08:30",
-    "11:30",
     "14:30"
   ],
   "claude_research_weekdays_only": true,
@@ -243,7 +242,7 @@
   "grok_backend": "cli",
   "grok_cli_bin": "grok",
   "grok_live_search": true,
-  "grok_max_turns": 4,
+  "grok_max_turns": 2,
   "grok_model": "grok-4.5",
   "grok_prompt_file": "ai_prompt.txt",
   "grok_request_timeout": 600.0,
@@ -251,7 +250,6 @@
   "grok_research_enabled": true,
   "grok_research_times": [
     "08:30",
-    "11:30",
     "14:30"
   ],
   "grok_research_weekdays_only": true,
@@ -365,5 +363,10 @@
   "tv_webhook_secret": "",
   "use_rvol": true,
   "volume_surge_mult": 1.5,
-  "wr_length": 14
+  "wr_length": 14,
+  "ai_seed_rank_times": [
+    "09:25",
+    "12:00",
+    "15:00"
+  ]
 }
