@@ -244,6 +244,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_timeout": "stale timeout",
     "stale_timeout_reseed_block": "stale reseed",
     "stale_tape_cap": "stale seat cap",
+    "unarmable_steal": "unarmable steal",
     "stale_tape_admit": "tape too old",
     "no_tape": "no tape",
     "no_stream_trade": "no stream trade",
@@ -1289,6 +1290,231 @@ def _enforce_stale_tape_seat_cap(
             })
         _mark_stale_timeout_block(
             sym, now, cfg, cool_sec=no_trade_reseed_sec(cfg))
+        dropped.append(sym)
+    if dropped:
+        drop_watch_symbols(dropped)
+    return dropped
+
+
+def _is_stream_ready_seat(
+    rec: dict,
+    cfg: dict | None,
+    *,
+    now: float,
+) -> bool:
+    """True when a watching/armed row has young stream tape (≤ decision ceiling)."""
+    if not isinstance(rec, dict):
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status not in ("watching", "armed"):
+        return False
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    if src != "stream":
+        return False
+    age = row_quote_age_sec(rec, now=now)
+    if age is None:
+        age = _f_or_none(rec.get("last_ask_age_sec"))
+    if age is None:
+        return False
+    return float(age) <= decision_max_age_sec(cfg)
+
+
+def _is_unarmable_stale_watching(
+    rec: dict,
+    cfg: dict | None,
+    *,
+    now: float,
+) -> bool:
+    """True for a watching-only seat that cannot arm (stale tape / sticky quote).
+
+    Past subscribe grace only. Confirmed via ``stale_tape`` src, sticky
+    ``stale_quote`` block, or tape_only (``stale_tape``). Never armed /
+    submitted / filled.
+    """
+    if not isinstance(rec, dict):
+        return False
+    status = str(rec.get("status") or "").lower().strip()
+    if status != "watching":
+        return False
+    if _within_subscribe_grace(rec, cfg, now):
+        return False
+    # Young stream seat is armable on tape — never steal it.
+    if _is_stream_ready_seat(rec, cfg, now=now):
+        return False
+    src = str(
+        rec.get("last_ask_src") or rec.get("price_src") or ""
+    ).strip().lower()
+    code = str(rec.get("block_code") or "").strip().lower()
+    tape_only = src == "stale_tape"
+    sticky_stale_quote = code == "stale_quote"
+    if not (tape_only or sticky_stale_quote or src in ("none", "")):
+        return False
+    # Anti-thrash confirm: sticky block, streak, or dead-feed clock.
+    try:
+        streak = int(rec.get("stale_tape_streak") or 0)
+    except (TypeError, ValueError):
+        streak = 0
+    since = _f_or_none(rec.get("stale_feed_since"))
+    if sticky_stale_quote or streak >= 1 or (since is not None and since > 0):
+        return True
+    # Pure stale_tape src after grace is itself confirmation (seat-cap spirit).
+    return tape_only or src in ("none", "")
+
+
+def _candidate_young_stream_age(
+    cand: dict,
+    cfg: dict | None,
+    *,
+    now: float,
+    prefer_live: bool = False,
+) -> float | None:
+    """Return tape age when the candidate still has young stream; else None.
+
+    Row-stamped stream age first; ``live_print`` fallback. When
+    ``prefer_live`` is set (steal-time recheck), a dated live print that is
+    too old refuses; missing live_print falls back to the stamped age.
+    """
+    if not isinstance(cand, dict):
+        return None
+    sym = str(cand.get("symbol") or "").upper().strip()
+    ceiling = decision_max_age_sec(cfg)
+
+    live_age: float | None = None
+    live_seen = False
+    if sym:
+        try:
+            got = live_print(sym)
+            if got is not None and got[1] is not None:
+                live_seen = True
+                live_age = float(got[1])
+        except Exception:
+            pass
+
+    if prefer_live and live_seen:
+        return live_age if live_age is not None and live_age <= ceiling else None
+
+    src = str(
+        cand.get("last_ask_src") or cand.get("price_src") or ""
+    ).strip().lower()
+    age_f = _f_or_none(cand.get("last_ask_age_sec"))
+    if age_f is None:
+        age_f = _f_or_none(cand.get("tape_age_sec"))
+    if age_f is not None and float(age_f) <= ceiling:
+        if src in ("stream", ""):
+            return float(age_f)
+    if live_age is not None and live_age <= ceiling:
+        return float(live_age)
+    return None
+
+
+def _preferential_unarmable_steal(
+    state: dict,
+    *,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+    candidates: list | None = None,
+) -> list[str]:
+    """Drop worst unarmable-stale watching seats for young-stream admits.
+
+    Fires when stream-ready seats on the book are below 2 and at least one
+    inclusion-cleared young-stream candidate needs a seat. Never steals
+    armed/submitted/filled or open broker positions. No reseed cool (A2).
+    Returns dropped victim symbols.
+    """
+    if not isinstance(state, dict):
+        return []
+    stream_ready = 0
+    for rec in state.values():
+        if _is_stream_ready_seat(rec, cfg, now=now):
+            stream_ready += 1
+    if stream_ready >= 2:
+        return []
+
+    on_book = {
+        str(rec.get("symbol") or key or "").upper().strip()
+        for key, rec in state.items()
+        if isinstance(rec, dict)
+    }
+    admittees: list[tuple[str, float, float]] = []
+    for cand in candidates or []:
+        if not isinstance(cand, dict):
+            continue
+        sym = str(cand.get("symbol") or "").upper().strip()
+        if not sym or sym in on_book:
+            continue
+        age = _candidate_young_stream_age(cand, cfg, now=now)
+        if age is None:
+            continue
+        dvol = _f_or_none(cand.get("admit_dollar_volume"))
+        if dvol is None:
+            dvol = _f_or_none(cand.get("dollar_volume")) or 0.0
+        admittees.append((sym, float(dvol), float(age)))
+    if not admittees:
+        return []
+    # Prefer higher $vol, younger tape among waiting admittees.
+    admittees.sort(key=lambda t: (-t[1], t[2], t[0]))
+
+    victims: list[tuple[str, dict, float, float]] = []
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        if not _is_unarmable_stale_watching(rec, cfg, now=now):
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        try:
+            if gt is not None and gt.has_open_position(sym):
+                continue
+        except Exception:
+            pass
+        dvol = _f_or_none(rec.get("admit_dollar_volume")) or 0.0
+        age = row_quote_age_sec(rec, now=now)
+        if age is None:
+            age = _f_or_none(rec.get("last_ask_age_sec"))
+        age_f = float(age) if age is not None else 1e9
+        victims.append((sym, rec, float(dvol), age_f))
+    if not victims:
+        return []
+    # Worst first: lowest $vol, then oldest tape (stale_tape_cap spirit).
+    victims.sort(key=lambda t: (t[2], -t[3], t[0]))
+
+    need = max(0, 2 - stream_ready)
+    n = min(need, len(victims), len(admittees))
+    if n <= 0:
+        return []
+    dropped: list[str] = []
+    for i in range(n):
+        sym, _rec, dvol, age_f = victims[i]
+        admit_sym, _advol, admit_age = admittees[i]
+        # Re-check admittee still young-stream at steal time.
+        still = _candidate_young_stream_age(
+            {"symbol": admit_sym, "last_ask_age_sec": admit_age,
+             "last_ask_src": "stream"},
+            cfg, now=now, prefer_live=True,
+        )
+        if still is None:
+            continue
+        try:
+            events.append(cp.log_event(
+                "watch_drop", symbol=sym, reason="unarmable_steal",
+                admittee=admit_sym,
+                age_sec=round(age_f, 1) if age_f < 1e8 else None,
+                dollar_volume=round(dvol, 0) if dvol else None,
+                stream_ready_count=stream_ready,
+                admittee_age_sec=round(float(still), 1)))
+        except Exception:  # noqa: BLE001
+            events.append({
+                "kind": "watch_drop", "symbol": sym,
+                "reason": "unarmable_steal",
+                "admittee": admit_sym,
+                "stream_ready_count": stream_ready,
+            })
         dropped.append(sym)
     if dropped:
         drop_watch_symbols(dropped)
@@ -12403,6 +12629,9 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
     # Cap how many stale_tape rows may occupy the book so liquid stream-ready
     # trending / higher-$vol names keep seats (target sustained stream% ≥50).
+    # Preferential unarmable-stale steal (A1): when stream-ready seats < 2,
+    # drop worst confirmed unarmable watching rows so young-stream admits
+    # can take Finnhub budget on the next sync. No new cool (A2).
     try:
         with _WATCH_LOCK:
             _cap_state = dict(load_watch() or {})
@@ -12412,6 +12641,26 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
         _cap_dropped = _enforce_stale_tape_seat_cap(
             _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt)
         for _s in _cap_dropped:
+            touched.pop(_s, None)
+            _cap_state.pop(_s, None)
+        # Inclusion-cleared shortlist from the last sync funnel (cheap file
+        # read). Young-stream check happens inside the steal helper.
+        _steal_cands: list[dict] = []
+        try:
+            _funnel_path = REPORT_DIR / "admit_funnel.json"
+            if _funnel_path.is_file():
+                _funnel = json.loads(_funnel_path.read_text(encoding="utf-8"))
+                for _cs in (_funnel or {}).get("kept_symbols") or []:
+                    _sym = str(_cs or "").upper().strip()
+                    if not _sym or _sym in _cap_state:
+                        continue
+                    _steal_cands.append({"symbol": _sym})
+        except Exception:
+            _steal_cands = []
+        _steal_dropped = _preferential_unarmable_steal(
+            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            candidates=_steal_cands)
+        for _s in _steal_dropped:
             touched.pop(_s, None)
     except Exception:
         pass

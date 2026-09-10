@@ -618,6 +618,218 @@ def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
     assert "KEEP_HI" in ew.load_watch() and "STREAM" in ew.load_watch()
 
 
+def _steal_cfg(**over):
+    c = {
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_stream_subscribe_grace_sec": 90.0,
+        "ai_watch_stale_timeout_grace_sec": 90.0,
+    }
+    c.update(over)
+    return c
+
+
+def test_preferential_unarmable_steal_drops_worst_for_young_admit(
+        tmp_path, monkeypatch):
+    """stream_ready < 2 + young-stream admittee → drop lowest-$vol stale."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 9_000_000.0
+    state = {
+        "STALE_LO": {
+            "symbol": "STALE_LO", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 50e3,
+            "last_ask_age_sec": 400.0, "admit_ts": t0 - 600.0,
+            "stale_tape_streak": 3, "block_code": "stale_quote",
+        },
+        "STALE_HI": {
+            "symbol": "STALE_HI", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 40e6,
+            "last_ask_age_sec": 200.0, "admit_ts": t0 - 600.0,
+            "stale_tape_streak": 2, "block_code": "stale_quote",
+        },
+        "STREAM1": {
+            "symbol": "STREAM1", "status": "watching",
+            "last_ask_src": "stream", "last_ask_age_sec": 4.0,
+            "admit_dollar_volume": 1e6, "admit_ts": t0 - 600.0,
+        },
+    }
+    ew.save_watch(state)
+    monkeypatch.setattr(ew, "row_quote_age_sec",
+                        lambda rec, now=None: rec.get("last_ask_age_sec"))
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    events: list = []
+    dropped = ew._preferential_unarmable_steal(
+        state, cfg=_steal_cfg(), now=t0, events=events, cp=_CP, gt=_GT,
+        candidates=[{
+            "symbol": "FRESH", "last_ask_src": "stream",
+            "last_ask_age_sec": 5.0, "dollar_volume": 8e6,
+        }])
+    assert dropped == ["STALE_LO"]
+    assert "STALE_LO" not in ew.load_watch()
+    assert "STALE_HI" in ew.load_watch() and "STREAM1" in ew.load_watch()
+    steal_ev = [e for e in events if e.get("reason") == "unarmable_steal"]
+    assert len(steal_ev) == 1
+    assert steal_ev[0]["admittee"] == "FRESH"
+    assert steal_ev[0]["stream_ready_count"] == 1
+    assert "unarmable_steal" in ew._BLOCKER_LABELS
+
+
+def test_preferential_unarmable_steal_grace_protects(tmp_path, monkeypatch):
+    """Inside subscribe grace → not unarmable-stale; no steal."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    t0 = 9_100_000.0
+    state = {
+        "NEWSTALE": {
+            "symbol": "NEWSTALE", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 10e3,
+            "last_ask_age_sec": 500.0, "admit_ts": t0 - 30.0,  # in grace
+            "stale_tape_streak": 5, "block_code": "stale_quote",
+        },
+    }
+    ew.save_watch(state)
+    monkeypatch.setattr(ew, "row_quote_age_sec",
+                        lambda rec, now=None: rec.get("last_ask_age_sec"))
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    assert ew._is_unarmable_stale_watching(
+        state["NEWSTALE"], _steal_cfg(), now=t0) is False
+    dropped = ew._preferential_unarmable_steal(
+        state, cfg=_steal_cfg(), now=t0, events=[], cp=_CP, gt=_GT,
+        candidates=[{
+            "symbol": "FRESH", "last_ask_src": "stream",
+            "last_ask_age_sec": 3.0, "dollar_volume": 5e6,
+        }])
+    assert dropped == []
+    assert "NEWSTALE" in ew.load_watch()
+
+
+def test_preferential_unarmable_steal_no_thrash_when_stream_ready_ge_2(
+        tmp_path, monkeypatch):
+    """≥2 stream-ready seats → no steal even with unarmable-stale present."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    t0 = 9_200_000.0
+    state = {
+        "STALE": {
+            "symbol": "STALE", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 1e3,
+            "last_ask_age_sec": 300.0, "admit_ts": t0 - 600.0,
+            "stale_tape_streak": 4, "block_code": "stale_quote",
+        },
+        "S1": {
+            "symbol": "S1", "status": "watching",
+            "last_ask_src": "stream", "last_ask_age_sec": 2.0,
+            "admit_ts": t0 - 600.0,
+        },
+        "S2": {
+            "symbol": "S2", "status": "watching",
+            "last_ask_src": "stream", "last_ask_age_sec": 6.0,
+            "admit_ts": t0 - 600.0,
+        },
+    }
+    ew.save_watch(state)
+    monkeypatch.setattr(ew, "row_quote_age_sec",
+                        lambda rec, now=None: rec.get("last_ask_age_sec"))
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    dropped = ew._preferential_unarmable_steal(
+        state, cfg=_steal_cfg(), now=t0, events=[], cp=_CP, gt=_GT,
+        candidates=[{
+            "symbol": "FRESH", "last_ask_src": "stream",
+            "last_ask_age_sec": 4.0, "dollar_volume": 9e6,
+        }])
+    assert dropped == []
+    assert "STALE" in ew.load_watch()
+
+
+def test_preferential_unarmable_steal_never_touches_armed(
+        tmp_path, monkeypatch):
+    """Armed / submitted / filled / open broker positions are never stolen."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    t0 = 9_300_000.0
+    state = {
+        "ARMED": {
+            "symbol": "ARMED", "status": "armed",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 1e3,
+            "last_ask_age_sec": 400.0, "admit_ts": t0 - 600.0,
+            "stale_tape_streak": 9, "block_code": "stale_quote",
+        },
+        "HELD": {
+            "symbol": "HELD", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 2e3,
+            "last_ask_age_sec": 350.0, "admit_ts": t0 - 600.0,
+            "stale_tape_streak": 5, "block_code": "stale_quote",
+        },
+        "WATCH_STALE": {
+            "symbol": "WATCH_STALE", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_dollar_volume": 3e3,
+            "last_ask_age_sec": 300.0, "admit_ts": t0 - 600.0,
+            "stale_tape_streak": 3, "block_code": "stale_quote",
+        },
+    }
+    ew.save_watch(state)
+    monkeypatch.setattr(ew, "row_quote_age_sec",
+                        lambda rec, now=None: rec.get("last_ask_age_sec"))
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(sym):
+            return sym == "HELD"
+
+    events: list = []
+    # need=2 (0 stream-ready), 2 admittees, but only WATCH_STALE is stealable
+    dropped = ew._preferential_unarmable_steal(
+        state, cfg=_steal_cfg(), now=t0, events=events, cp=_CP, gt=_GT,
+        candidates=[
+            {"symbol": "A", "last_ask_src": "stream",
+             "last_ask_age_sec": 3.0, "dollar_volume": 5e6},
+            {"symbol": "B", "last_ask_src": "stream",
+             "last_ask_age_sec": 4.0, "dollar_volume": 4e6},
+        ])
+    assert dropped == ["WATCH_STALE"]
+    book = ew.load_watch()
+    assert "ARMED" in book and "HELD" in book
+    assert "WATCH_STALE" not in book
+    assert ew._is_unarmable_stale_watching(
+        state["ARMED"], _steal_cfg(), now=t0) is False
+
+
 def test_passes_inclusion_movers_min_price_and_dvol(monkeypatch):
     monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (4.0, 5.0))
     monkeypatch.setattr(
