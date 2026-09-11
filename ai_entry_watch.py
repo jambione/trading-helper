@@ -5918,6 +5918,16 @@ def sync_watch_from_source_panels(
         push_candidates_to_engine([r.get("symbol") for r in candidates])
     except Exception:
         pass
+    # Subscribe Finnhub (+ priority) for the shortlist BEFORE inclusion so
+    # passes_inclusion's live_print tape-age check is not empty. Without this,
+    # ensure_watch_stream only ran after a name was kept → midday no_tape /
+    # no_price / stale_tape_admit emptied the book (2026-09-11). Post-admit
+    # ensure_watch_stream below still runs. Dead seats still drop via
+    # no_stream_trade / stale_timeout after grace.
+    try:
+        ensure_watch_stream([r.get("symbol") for r in candidates])
+    except Exception:
+        pass
     try:
         # Keep the pre-gate rows: the gate returns rejects as {symbol, reason,
         # criteria} only, and scoring a reject needs the price and features it
