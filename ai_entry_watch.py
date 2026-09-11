@@ -1240,15 +1240,37 @@ def _enforce_stale_tape_seat_cap(
     events: list,
     cp,
     gt,
+    candidates: list | None = None,
 ) -> list[str]:
-    """Drop excess watching stale_tape rows so liquid stream names keep seats.
+    """Drop excess watching stale_tape rows when a young-stream admittee waits.
 
-    Keeps up to ``ai_watch_max_stale_tape_seats`` (highest $vol, youngest age).
-    Returns dropped symbols. <0 disables. Cap drops free seats only — no
-    reseed cool (same contract as unarmable_steal).
+    Demand-driven: if ``candidates`` is None/empty, or none are off-book with
+    young stream (``_candidate_young_stream_age``), return [] — do not churn
+    seats into vacuum. When ≥1 waiting young-stream admittee exists, keep up
+    to ``ai_watch_max_stale_tape_seats`` (highest $vol, youngest age) and drop
+    the rest. <0 disables. Cap drops free seats only — no reseed cool (same
+    contract as unarmable_steal / e8ff57e).
     """
     cap = max_stale_tape_seats(cfg)
     if cap < 0 or not isinstance(state, dict):
+        return []
+    on_book = {
+        str(rec.get("symbol") or key or "").upper().strip()
+        for key, rec in state.items()
+        if isinstance(rec, dict)
+    }
+    waiting = 0
+    for cand in candidates or []:
+        if not isinstance(cand, dict):
+            continue
+        sym = str(cand.get("symbol") or "").upper().strip()
+        if not sym or sym in on_book:
+            continue
+        if _candidate_young_stream_age(cand, cfg, now=now) is None:
+            continue
+        waiting += 1
+        break
+    if waiting <= 0:
         return []
     stale: list[tuple[str, dict, float, float]] = []
     for key, rec in state.items():
@@ -12630,24 +12652,18 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
 
         touched[sym] = rec
 
-    # Cap how many stale_tape rows may occupy the book so liquid stream-ready
-    # trending / higher-$vol names keep seats (target sustained stream% ≥50).
-    # Preferential unarmable-stale steal (A1): when stream-ready seats < 2,
-    # drop worst confirmed unarmable watching rows so young-stream admits
-    # can take Finnhub budget on the next sync. No new cool (A2).
+    # Demand-driven stale_tape_cap + preferential unarmable-stale steal (A1).
+    # Build inclusion-cleared funnel candidates first; cap only drops when a
+    # young-stream admittee is waiting (no blind churn into vacuum). Steal
+    # still fires when stream-ready seats < 2. No reseed cool on either path.
     try:
         with _WATCH_LOCK:
             _cap_state = dict(load_watch() or {})
         for _k, _v in touched.items():
             if isinstance(_v, dict):
                 _cap_state[_k] = _v
-        _cap_dropped = _enforce_stale_tape_seat_cap(
-            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt)
-        for _s in _cap_dropped:
-            touched.pop(_s, None)
-            _cap_state.pop(_s, None)
         # Inclusion-cleared shortlist from the last sync funnel (cheap file
-        # read). Young-stream check happens inside the steal helper.
+        # read). Young-stream check happens inside cap/steal helpers.
         _steal_cands: list[dict] = []
         try:
             _funnel_path = REPORT_DIR / "admit_funnel.json"
@@ -12660,6 +12676,12 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
                     _steal_cands.append({"symbol": _sym})
         except Exception:
             _steal_cands = []
+        _cap_dropped = _enforce_stale_tape_seat_cap(
+            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            candidates=_steal_cands)
+        for _s in _cap_dropped:
+            touched.pop(_s, None)
+            _cap_state.pop(_s, None)
         _steal_dropped = _preferential_unarmable_steal(
             _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             candidates=_steal_cands)

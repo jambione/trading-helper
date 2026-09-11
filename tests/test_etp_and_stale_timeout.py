@@ -571,11 +571,8 @@ def test_no_stream_trade_uses_stale_timeout_reseed(tmp_path, monkeypatch):
     assert until < t0 + 400.0
 
 
-def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
-    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
-    ew._STALE_TIMEOUT_UNTIL.clear()
-    t0 = 8_000_000.0
-    state = {
+def _cap_book_state(t0: float) -> dict:
+    return {
         "KEEP_HI": {
             "symbol": "KEEP_HI", "status": "watching",
             "last_ask_src": "stale_tape", "admit_dollar_volume": 50e6,
@@ -597,9 +594,55 @@ def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
             "admit_dollar_volume": 1e3,
         },
     }
+
+
+def test_enforce_stale_tape_seat_cap_no_demand_keeps_excess(
+        tmp_path, monkeypatch):
+    """No/empty young-stream admittees → do not churn seats into vacuum."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 8_000_000.0
+    state = _cap_book_state(t0)
     ew.save_watch(state)
     monkeypatch.setattr(ew, "row_quote_age_sec",
                         lambda rec, now=None: rec.get("last_ask_age_sec"))
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = {"ai_watch_max_stale_tape_seats": 2,
+           "ai_watch_decision_max_age_sec": 15.0}
+    assert ew._enforce_stale_tape_seat_cap(
+        state, cfg=cfg, now=t0, events=[], cp=_CP, gt=_GT) == []
+    assert ew._enforce_stale_tape_seat_cap(
+        state, cfg=cfg, now=t0, events=[], cp=_CP, gt=_GT,
+        candidates=[]) == []
+    assert ew._enforce_stale_tape_seat_cap(
+        state, cfg=cfg, now=t0, events=[], cp=_CP, gt=_GT,
+        candidates=[{
+            "symbol": "COLD", "last_ask_src": "stale_tape",
+            "last_ask_age_sec": 400.0,
+        }]) == []
+    assert "DROP_LO" in ew.load_watch()
+
+
+def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 8_000_000.0
+    state = _cap_book_state(t0)
+    ew.save_watch(state)
+    monkeypatch.setattr(ew, "row_quote_age_sec",
+                        lambda rec, now=None: rec.get("last_ask_age_sec"))
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
 
     class _CP:
         @staticmethod
@@ -614,8 +657,13 @@ def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
     events: list = []
     dropped = ew._enforce_stale_tape_seat_cap(
         state, cfg={"ai_watch_max_stale_tape_seats": 2,
+                    "ai_watch_decision_max_age_sec": 15.0,
                     "ai_watch_no_trade_reseed_sec": 900.0},
-        now=t0, events=events, cp=_CP, gt=_GT)
+        now=t0, events=events, cp=_CP, gt=_GT,
+        candidates=[{
+            "symbol": "FRESH", "last_ask_src": "stream",
+            "last_ask_age_sec": 5.0, "dollar_volume": 8e6,
+        }])
     assert dropped == ["DROP_LO"]
     assert "DROP_LO" not in ew.load_watch()
     assert "KEEP_HI" in ew.load_watch() and "STREAM" in ew.load_watch()
