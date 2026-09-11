@@ -682,16 +682,16 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
                     time.sleep(wait)
                     continue
                 if isinstance(code, int) and code >= 500:
-                    wait = alpaca_api.backoff_seconds(attempt, base_wait=1.0)
-                    if attempt < max_retries - 1:
-                        print(
-                            f"  [BARS] {symbol}: HTTP {resp.status_code} on {feed}; "
-                            f"backoff {wait:.1f}s (attempt {attempt + 1}/{max_retries})",
-                            flush=True,
-                        )
-                        time.sleep(wait)
-                        continue
-                    resp.raise_for_status()
+                    # Fail-fast on gateway errors. Serial 504 + sleep retries
+                    # across a 20-name book froze signal_state for minutes and
+                    # left the watch UI on stale_quote (2026-09-11). Skip to
+                    # next feed / next cycle instead of blocking the loop.
+                    print(
+                        f"  [BARS] {symbol}: HTTP {resp.status_code} on {feed} "
+                        f"— fail-fast (no backoff; attempt {attempt + 1})",
+                        flush=True,
+                    )
+                    break
                 resp.raise_for_status()
                 bars = resp.json().get("bars", [])
 
@@ -2364,25 +2364,45 @@ class SignalEngine:
                         self._ingest_state(state)
                     self._last_poll_time = time.time()
 
-                # 2. For each active ticker:
-                #      a) update last_price from Finnhub WebSocket (in-memory)
-                #      b) refresh bars if due (rate-limited, staggered)
-                #      c) log proximity to signal (every second, in-memory)
-                for ts in list(self.active.values()):
-                    self._refresh_bars(ts)
-                    self._check_proximity(ts)
-
-                # 3. Keep watch-book Finnhub slots alive, then drop true expiry
-                self._refresh_book_subscriptions()
-                self._expire_tickers()
-
-                # 4. Write signal_state.json so the dashboard can render
-                #    the visual proximity bars (throttled to every SIGNAL_STATE_INTERVAL s)
+                # 2. Publish tape/indicators BEFORE bar warm. Alpaca IEX can
+                #    stall for seconds per name; the desk still needs Finnhub
+                #    ages written or the watch UI sticks on stale_quote.
                 if now - self._last_state_write >= SIGNAL_STATE_INTERVAL:
                     self._write_signal_state()
                     self._last_state_write = time.time()
 
-                # 5. Sleep for the remainder of POLL_INTERVAL so we don't
+                # 3. For each active ticker:
+                #      a) update last_price from Finnhub WebSocket (in-memory)
+                #      b) refresh bars if due (rate-limited, staggered)
+                #      c) log proximity to signal (every second, in-memory)
+                # Cap first-load Alpaca warmups per cycle so one bad IEX day
+                # cannot monopolize the loop (book shortlist can be ~20).
+                first_load_budget = 2
+                for ts in list(self.active.values()):
+                    if (not ts.bars_fetched) and first_load_budget <= 0:
+                        self._check_proximity(ts)
+                        continue
+                    before = bool(ts.bars_fetched)
+                    self._refresh_bars(ts)
+                    if (not before) and (not ts.bars_fetched):
+                        # Attempted a first-load fetch this pass (or skipped
+                        # inside _refresh_bars on timers). Only spend budget
+                        # when last_bar_fetch moved recently.
+                        if time.time() - float(ts.last_bar_fetch or 0) < 2.0:
+                            first_load_budget -= 1
+                    self._check_proximity(ts)
+
+                # 4. Keep watch-book Finnhub slots alive, then drop true expiry
+                self._refresh_book_subscriptions()
+                self._expire_tickers()
+
+                # 5. Write again after proximity so RSI/EXH catch up when bars land
+                now2 = time.time()
+                if now2 - self._last_state_write >= SIGNAL_STATE_INTERVAL:
+                    self._write_signal_state()
+                    self._last_state_write = now2
+
+                # 6. Sleep for the remainder of POLL_INTERVAL so we don't
                 #    drift — if the above took 0.3 s we sleep 0.7 s.
                 elapsed = time.time() - cycle_start
                 sleep_for = max(0, POLL_INTERVAL - elapsed)
