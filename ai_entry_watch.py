@@ -254,6 +254,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_timeout_reseed_block": "stale reseed",
     "stale_tape_cap": "stale seat cap",
     "unarmable_steal": "unarmable steal",
+    "preheat_steal": "preheat steal",
     "stale_tape_admit": "tape too old",
     "no_tape": "no tape",
     "no_stream_trade": "no stream trade",
@@ -1130,6 +1131,348 @@ def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
 # consumed once by passes_inclusion / sync for a clear log line.
 _RESEED_STREAM_CLEARED: set[str] = set()
 
+# Continuous soft seed (movers+trending scout refresh). Process-local clock.
+_SOFT_SEED_LAST_TS: float = 0.0
+
+
+def soft_seed_interval_sec(cfg: dict | None = None) -> float:
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(cfg.get("ai_watch_soft_seed_interval_sec", 300.0) or 0.0))
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def warming_seat_quota(cfg: dict | None = None) -> int:
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0, int(cfg.get("ai_watch_warming_seats", 3)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def warming_exh_band(cfg: dict | None = None) -> tuple[float, float]:
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        lo = float(cfg.get("ai_watch_warming_exh_min", 15.0) or 15.0)
+    except (TypeError, ValueError):
+        lo = 15.0
+    try:
+        hi = float(cfg.get("ai_watch_warming_exh_max", 45.0) or 45.0)
+    except (TypeError, ValueError):
+        hi = 45.0
+    if hi < lo:
+        lo, hi = hi, lo
+    return lo, hi
+
+
+def _exh_from_row_or_ind(row: dict | None, ind: dict | None = None) -> float | None:
+    """0–100 heat from candidate row or engine indicator; None if unknown."""
+    for src in (ind, row):
+        if not isinstance(src, dict):
+            continue
+        for key in ("pctr", "exh", "exhaustion_pct", "heat_pct"):
+            v = _f_or_none(src.get(key))
+            if v is None:
+                continue
+            # Williams %R style (-100..0) → heat
+            if -100.5 <= v <= 0.5:
+                return max(0.0, min(100.0, 100.0 + v))
+            if 0.0 <= v <= 100.0:
+                return float(v)
+        nested = src.get("indicator") if isinstance(src.get("indicator"), dict) else None
+        if nested and src is row:
+            got = _exh_from_row_or_ind(None, nested)
+            if got is not None:
+                return got
+    return None
+
+
+def _exh_rising_hint(row: dict | None, ind: dict | None = None) -> bool | None:
+    for src in (ind, row):
+        if not isinstance(src, dict):
+            continue
+        if "pctr_rising" in src:
+            return bool(src.get("pctr_rising")) if src.get("pctr_rising") is not None else None
+        if "exh_rising" in src:
+            return bool(src.get("exh_rising")) if src.get("exh_rising") is not None else None
+        nested = src.get("indicator") if isinstance(src.get("indicator"), dict) else None
+        if nested and src is row:
+            return _exh_rising_hint(None, nested)
+    return None
+
+
+def is_warming_exh_profile(
+    exh: float | None,
+    exh_rising: bool | None,
+    cfg: dict | None = None,
+    *,
+    allow_unknown: bool = True,
+) -> bool:
+    """True when EXH is in the pre-heat scout band (or unknown if allowed)."""
+    lo, hi = warming_exh_band(cfg)
+    if exh is None:
+        return bool(allow_unknown)
+    if exh + 1e-9 < lo or exh - 1e-9 > hi:
+        return False
+    # Prefer rising; flat/unknown OK; falling is not a warming scout.
+    if exh_rising is False:
+        return False
+    return True
+
+
+def soft_seed_scout_score(
+    row: dict,
+    cfg: dict | None = None,
+    *,
+    ind: dict | None = None,
+) -> float:
+    """Higher = better soft-seed scout. Deprioritize hot/mistimed-looking RSI."""
+    exh = _exh_from_row_or_ind(row, ind)
+    rising = _exh_rising_hint(row, ind)
+    lo, hi = warming_exh_band(cfg)
+    score = 0.0
+    if exh is None:
+        score += 20.0  # unknown — still scouting
+    elif lo <= exh <= hi:
+        score += 50.0 + (hi - abs((lo + hi) / 2.0 - exh))
+        if rising is True:
+            score += 15.0
+    elif exh < lo:
+        score += 10.0
+    else:
+        # Already hot (≥ warming max) — deprioritize hard
+        score -= 40.0 + max(0.0, exh - hi)
+    rsi = None
+    for src in (ind, row):
+        if isinstance(src, dict):
+            rsi = _f_or_none(src.get("cm_rsi") or src.get("rsi"))
+            if rsi is not None:
+                break
+    if rsi is not None and rsi >= 52.0:
+        score -= 25.0
+    if rsi is not None and rsi >= 55.0:
+        score -= 15.0
+    dvol = _f_or_none(row.get("dollar_volume")) or 0.0
+    score += min(20.0, math.log10(max(dvol, 1.0)) * 2.0)
+    pct = _f_or_none(row.get("pct_change")) or 0.0
+    score += min(15.0, max(0.0, pct) * 0.3)
+    return score
+
+
+def _soft_seed_file_rows(cfg: dict) -> list[dict]:
+    """Lightweight movers + trending shortlist for soft seed (no seed-drop clear)."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    cfg = cfg if isinstance(cfg, dict) else {}
+
+    def _add(sym: str, payload: dict) -> None:
+        s = str(sym or "").upper().strip()
+        if not s or s in seen or is_levered_etp(s):
+            return
+        seen.add(s)
+        rows.append(payload)
+
+    if bool(cfg.get("ai_watch_soft_seed_trending", True)):
+        try:
+            path = ROOT / "trending_stocks.json"
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            for r in (raw.get("rows") or [])[:40]:
+                if not isinstance(r, dict) or r.get("is_crypto") is True:
+                    continue
+                s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+                if not s:
+                    continue
+                look = str(r.get("look_reason") or "").strip().upper()
+                if look == "WASH":
+                    continue
+                pct = _pct_change_value(r.get("pct_change"))
+                if pct is not None and pct <= 0:
+                    continue
+                try:
+                    score = float(r.get("trending_score", r.get("score") or 0) or 0)
+                except (TypeError, ValueError):
+                    score = 0.0
+                _add(s, {
+                    "symbol": s,
+                    "source": "trending",
+                    "price": r.get("price"),
+                    "pct_change": pct,
+                    "rvol": r.get("rvol"),
+                    "trending_score": score,
+                    "score": score,
+                    "reason": f"soft_seed trending {score:.1f}",
+                    "criteria": ["soft_seed", "trending"],
+                    "dollar_volume": (
+                        float(r["vol_session"]) * float(r["price"])
+                        if r.get("vol_session") and r.get("price") else None
+                    ),
+                })
+        except Exception:
+            pass
+
+    if bool(cfg.get("ai_watch_soft_seed_movers", True)):
+        try:
+            path = ROOT / "movers_stocks.json"
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            try:
+                max_age = float(cfg.get("ai_movers_max_age_sec", 900.0) or 0.0)
+            except (TypeError, ValueError):
+                max_age = 900.0
+            age = time.time() - float(raw.get("ts") or 0)
+            if max_age > 0 and raw.get("ts") and age > max_age:
+                raw = {}
+            for r in (raw.get("rows") or [])[:40]:
+                if not isinstance(r, dict):
+                    continue
+                s = str(r.get("symbol") or "").upper().strip()
+                if not s:
+                    continue
+                pct = _pct_change_value(r.get("pct_change"))
+                if pct is None or pct <= 0:
+                    continue
+                px = r.get("price")
+                dvol = None
+                try:
+                    if r.get("dollar_volume") is not None:
+                        dvol = float(r["dollar_volume"])
+                    elif px is not None and r.get("volume") is not None:
+                        dvol = float(px) * float(r["volume"])
+                except (TypeError, ValueError):
+                    dvol = None
+                _add(s, {
+                    "symbol": s,
+                    "source": "movers",
+                    "price": px,
+                    "pct_change": pct,
+                    "rvol": r.get("rvol"),
+                    "reason": f"soft_seed movers {pct:+.0f}%",
+                    "criteria": ["soft_seed", "movers"],
+                    "dollar_volume": dvol,
+                    "score": float(pct),
+                })
+        except Exception:
+            pass
+    return rows
+
+
+def maybe_soft_seed_rows(
+    cfg: dict,
+    *,
+    now: float,
+    seen: set[str] | None = None,
+    indicators: dict[str, dict] | None = None,
+) -> tuple[list[dict], bool]:
+    """Interval soft seed from movers + trending. Returns (rows, fired).
+
+    Mechanical only — no AGY. Prefers EXH 15–45 rising; deprioritizes hot RSI.
+    Does not call ``desk_candidate_rows`` (avoids clearing seed-drop tallies).
+    """
+    global _SOFT_SEED_LAST_TS
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_soft_seed_enabled", True)):
+        return [], False
+    interval = soft_seed_interval_sec(cfg)
+    if interval <= 0:
+        return [], False
+    t0 = float(now)
+    if _SOFT_SEED_LAST_TS > 0 and (t0 - _SOFT_SEED_LAST_TS) < interval:
+        return [], False
+    try:
+        if not trading_hours_active(cfg, t0, market_open=True):
+            return [], False
+    except Exception:
+        pass
+
+    try:
+        max_n = max(0, int(cfg.get("ai_watch_soft_seed_max", 12) or 0))
+    except (TypeError, ValueError):
+        max_n = 12
+    if max_n <= 0:
+        return [], False
+
+    seen = set(seen or set())
+    indicators = indicators if isinstance(indicators, dict) else {}
+    ranked: list[tuple[float, dict]] = []
+    for r in _soft_seed_file_rows(cfg):
+        sym = str(r.get("symbol") or "").upper().strip()
+        if not sym or sym in seen:
+            continue
+        ind = indicators.get(sym) if isinstance(indicators.get(sym), dict) else None
+        sc = soft_seed_scout_score(r, cfg, ind=ind)
+        out = dict(r)
+        crit = list(out.get("criteria") or [])
+        if "soft_seed" not in crit:
+            crit.append("soft_seed")
+        exh = _exh_from_row_or_ind(out, ind)
+        rising = _exh_rising_hint(out, ind)
+        if is_warming_exh_profile(exh, rising, cfg, allow_unknown=True):
+            out["seat_role"] = "warming"
+            if "warming" not in crit:
+                crit.append("warming")
+        out["criteria"] = crit
+        out["soft_seed"] = True
+        ranked.append((sc, out))
+    ranked.sort(key=lambda t: -t[0])
+    picked: list[dict] = []
+    for sc, row in ranked:
+        if len(picked) >= max_n:
+            break
+        if sc < 0 and any(s >= 20 for s, _ in ranked[: max(1, max_n)]):
+            continue
+        picked.append(row)
+    _SOFT_SEED_LAST_TS = t0
+    return picked, True
+
+
+def tag_warming_on_candidates(
+    rows: list[dict],
+    cfg: dict,
+    *,
+    indicators: dict[str, dict] | None = None,
+) -> int:
+    """Stamp ``seat_role=warming`` on inclusion candidates in the pre-heat band.
+
+    Returns count tagged. Does not bypass inclusion — tag only.
+    """
+    indicators = indicators if isinstance(indicators, dict) else {}
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or "").upper().strip()
+        ind = indicators.get(sym) if sym else None
+        exh = _exh_from_row_or_ind(r, ind if isinstance(ind, dict) else None)
+        rising = _exh_rising_hint(r, ind if isinstance(ind, dict) else None)
+        if not is_warming_exh_profile(exh, rising, cfg, allow_unknown=True):
+            continue
+        r["seat_role"] = "warming"
+        crit = list(r.get("criteria") or [])
+        if "warming" not in crit:
+            crit.append("warming")
+        r["criteria"] = crit
+        n += 1
+    return n
+
+
+def _is_protected_warming_seat(
+    rec: dict,
+    cfg: dict | None,
+    *,
+    now: float,
+) -> bool:
+    """Warming + young stream + not falling EXH — protect from stale_tape_cap."""
+    if not isinstance(rec, dict):
+        return False
+    if str(rec.get("seat_role") or "").strip().lower() != "warming":
+        return False
+    if not _is_stream_ready_seat(rec, cfg, now=now):
+        return False
+    ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+    if ind.get("pctr_falling") is True:
+        return False
+    return True
+
 
 def _stale_timeout_blocked(
     symbol: str,
@@ -1409,6 +1752,9 @@ def _enforce_stale_tape_seat_cap(
         ).strip().lower()
         if src != "stale_tape":
             continue
+        # Protect warming + young-stream + not-falling EXH from thrash drops.
+        if _is_protected_warming_seat(rec, cfg, now=now):
+            continue
         sym = str(rec.get("symbol") or key or "").upper().strip()
         if not sym:
             continue
@@ -1664,6 +2010,136 @@ def _preferential_unarmable_steal(
                 "reason": "unarmable_steal",
                 "admittee": admit_sym,
                 "stream_ready_count": stream_ready,
+            })
+        dropped.append(sym)
+    if dropped:
+        drop_watch_symbols(dropped)
+    return dropped
+
+
+def _preferential_preheat_steal(
+    state: dict,
+    *,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    gt,
+    candidates: list | None = None,
+) -> list[str]:
+    """Steal dead/unarmable seats for warming young-stream scouts (cool-free).
+
+    Fires when warming+stream-ready seats are below ``ai_watch_warming_seats``
+    and a warming (or soft_seed) candidate has young stream. Same victim class
+    as ``unarmable_steal``. Never steals armed/submitted/filled/open positions.
+    """
+    if not isinstance(state, dict):
+        return []
+    target = warming_seat_quota(cfg)
+    if target <= 0:
+        return []
+
+    warming_ready = 0
+    stream_ready = 0
+    for rec in state.values():
+        if not isinstance(rec, dict):
+            continue
+        if _is_stream_ready_seat(rec, cfg, now=now):
+            stream_ready += 1
+            if str(rec.get("seat_role") or "").lower() == "warming":
+                warming_ready += 1
+    # Need room toward warming quota OR stream-ready floor of 2.
+    need_warm = max(0, target - warming_ready)
+    need_stream = max(0, 2 - stream_ready)
+    need = max(need_warm, need_stream)
+    if need <= 0:
+        return []
+
+    on_book = {
+        str(rec.get("symbol") or key or "").upper().strip()
+        for key, rec in state.items()
+        if isinstance(rec, dict)
+    }
+    admittees: list[tuple[str, float, float]] = []
+    for cand in candidates or []:
+        if not isinstance(cand, dict):
+            continue
+        sym = str(cand.get("symbol") or "").upper().strip()
+        if not sym or sym in on_book:
+            continue
+        role = str(cand.get("seat_role") or "").lower()
+        crit = {str(c).lower() for c in (cand.get("criteria") or [])}
+        if role != "warming" and "warming" not in crit and "soft_seed" not in crit:
+            # Funnel kept_symbols alone — treat as scout if young stream.
+            if cand.get("soft_seed") is not True and role != "warming":
+                # Still allow plain funnel symbols when warming seats are short.
+                if need_warm <= 0:
+                    continue
+        age = _candidate_young_stream_age(cand, cfg, now=now)
+        if age is None:
+            continue
+        dvol = _f_or_none(cand.get("admit_dollar_volume"))
+        if dvol is None:
+            dvol = _f_or_none(cand.get("dollar_volume")) or 0.0
+        admittees.append((sym, float(dvol), float(age)))
+    if not admittees:
+        return []
+    admittees.sort(key=lambda t: (-t[1], t[2], t[0]))
+
+    victims: list[tuple[str, dict, float, float]] = []
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        if _is_protected_warming_seat(rec, cfg, now=now):
+            continue
+        if not _is_unarmable_stale_watching(rec, cfg, now=now):
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        try:
+            if gt is not None and gt.has_open_position(sym):
+                continue
+        except Exception:
+            pass
+        dvol = _f_or_none(rec.get("admit_dollar_volume")) or 0.0
+        age = row_quote_age_sec(rec, now=now)
+        if age is None:
+            age = _f_or_none(rec.get("last_ask_age_sec"))
+        age_f = float(age) if age is not None else 1e9
+        victims.append((sym, rec, float(dvol), age_f))
+    if not victims:
+        return []
+    victims.sort(key=lambda t: (t[2], -t[3], t[0]))
+
+    n = min(need, len(victims), len(admittees))
+    if n <= 0:
+        return []
+    dropped: list[str] = []
+    for i in range(n):
+        sym, _rec, dvol, age_f = victims[i]
+        admit_sym, _advol, admit_age = admittees[i]
+        still = _candidate_young_stream_age(
+            {"symbol": admit_sym, "last_ask_age_sec": admit_age,
+             "last_ask_src": "stream"},
+            cfg, now=now, prefer_live=True,
+        )
+        if still is None:
+            continue
+        try:
+            events.append(cp.log_event(
+                "watch_drop", symbol=sym, reason="preheat_steal",
+                admittee=admit_sym,
+                age_sec=round(age_f, 1) if age_f < 1e8 else None,
+                dollar_volume=round(dvol, 0) if dvol else None,
+                warming_ready=warming_ready,
+                warming_target=target,
+                admittee_age_sec=round(float(still), 1)))
+        except Exception:  # noqa: BLE001
+            events.append({
+                "kind": "watch_drop", "symbol": sym,
+                "reason": "preheat_steal",
+                "admittee": admit_sym,
             })
         dropped.append(sym)
     if dropped:
@@ -6042,6 +6518,25 @@ def sync_watch_from_source_panels(
     # poll_once behind us for seconds at a time.
     candidates = desk_candidate_rows(cfg)
 
+    # Continuous soft seed (movers+trending scout refresh, no AGY). Interval
+    # gated; prefers EXH 15–45. Merges into the same inclusion pipeline.
+    try:
+        seen_syms = {
+            str(r.get("symbol") or "").upper().strip()
+            for r in candidates if isinstance(r, dict)
+        }
+        soft_rows, soft_fired = maybe_soft_seed_rows(
+            cfg, now=t0, seen=seen_syms,
+            indicators=_engine_indicator_map())
+        if soft_fired and soft_rows:
+            candidates = list(candidates) + soft_rows
+            try:
+                ensure_watch_stream([r.get("symbol") for r in soft_rows], cfg=cfg)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # Make sure the engine is computing indicators for everything on the
     # shortlist, then admit only what clears the strict conjunctive gate.
     try:
@@ -6067,6 +6562,12 @@ def sync_watch_from_source_panels(
             for r in candidates if isinstance(r, dict)
         }
         candidates, rejected = apply_inclusion_gate(candidates, cfg)
+        # Tag warming after inclusion (admit ≠ arm). Quota protects seats later.
+        try:
+            tag_warming_on_candidates(
+                candidates, cfg, indicators=_engine_indicator_map())
+        except Exception:
+            pass
         # A name over its daily attempt cap must not be re-admitted. The poll
         # drops it, but seeding runs on its own cadence and put it straight
         # back: BULL was dropped for attempt_cap at 12:14:02, :16, :28, :40
@@ -6129,19 +6630,26 @@ def write_admit_funnel(
         str(r.get("source") or "") for r in (kept or []) if isinstance(r, dict))
     rej_reasons = Counter(
         str(r.get("reason") or "") for r in (rejected or []) if isinstance(r, dict))
+    kept_symbols = [
+        str(r.get("symbol") or "").upper()
+        for r in (kept or []) if isinstance(r, dict) and r.get("symbol")
+    ]
+    warming_n = sum(
+        1 for r in (kept or [])
+        if isinstance(r, dict)
+        and str(r.get("seat_role") or "").lower() == "warming"
+    )
     payload = {
         "ts": round(t0, 2),
         "n_candidates": len(candidates or []),
         "n_kept": len(kept or []),
         "n_rejected": len(rejected or []),
+        "warming_n": warming_n,
         "candidates_by_source": dict(by_src),
         "kept_by_source": dict(kept_src),
         "inclusion_reject_reasons": dict(rej_reasons),
         "seed_drops": seed,
-        "kept_symbols": [
-            str(r.get("symbol") or "").upper()
-            for r in (kept or []) if isinstance(r, dict) and r.get("symbol")
-        ],
+        "kept_symbols": kept_symbols,
     }
     path = REPORT_DIR / "admit_funnel.json"
     try:
@@ -6152,6 +6660,7 @@ def write_admit_funnel(
     except Exception:
         pass
     # Also stamp a compact event so the day journal sees the funnel.
+    # kept_symbols must land here too — json alone is not enough for digs.
     try:
         import ai_positions as cp
         top_seed = {
@@ -6163,7 +6672,10 @@ def write_admit_funnel(
             "admit_funnel",
             n_candidates=payload["n_candidates"],
             n_kept=payload["n_kept"],
+            kept_n=payload["n_kept"],
             n_rejected=payload["n_rejected"],
+            warming_n=warming_n,
+            kept_symbols=kept_symbols[:16],
             inclusion=dict(rej_reasons.most_common(8)),
             seed_drops=dict(sorted(top_seed.items(), key=lambda kv: -kv[1])[:12]),
         )
@@ -6275,9 +6787,22 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "confirm_ask", "confirm_ask_ts", "confirm_px_src",
             "arm_confirm_rsi_max",
             "stale_feed_since", "stale_tape_streak",
+            "seat_role",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
+        # Warming scout role (pre-heat seats). Prefer fresh row tag.
+        if str(row.get("seat_role") or "").strip().lower() == "warming":
+            rec["seat_role"] = "warming"
+        elif str(rec.get("seat_role") or "").lower() == "warming":
+            exh = exhaustion_pct(rec)
+            ind = rec.get("indicator") if isinstance(rec.get("indicator"), dict) else {}
+            rising = bool(ind["pctr_rising"]) if "pctr_rising" in ind else None
+            if not is_warming_exh_profile(
+                exh, rising, cfg if isinstance(cfg, dict) else {},
+                allow_unknown=exh is None,
+            ):
+                rec.pop("seat_role", None)
         # Attach a zone immediately on admission — do not wait up to 20s for
         # poll_once REST. Mom/ST names were stuck on "no zone" until then.
         try:
@@ -12829,6 +13354,12 @@ def poll_once(*, cfg: dict, now: float | None = None) -> list[dict]:
             _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
             candidates=_steal_cands)
         for _s in _steal_dropped:
+            touched.pop(_s, None)
+            _cap_state.pop(_s, None)
+        _preheat_dropped = _preferential_preheat_steal(
+            _cap_state, cfg=cfg, now=t0, events=events, cp=cp, gt=gt,
+            candidates=_steal_cands)
+        for _s in _preheat_dropped:
             touched.pop(_s, None)
     except Exception:
         pass

@@ -120,9 +120,19 @@ def test_write_admit_funnel_persists(tmp_path, monkeypatch):
     monkeypatch.setattr(ew, "REPORT_DIR", tmp_path)
     ew._clear_seed_drops()
     ew._note_seed_drop("movers", "BIAF", "thin_rvol", pct=52.0, rvol=0.8)
+    logged = {}
+
+    def _log_event(kind, **kw):
+        logged.clear()
+        logged["kind"] = kind
+        logged.update(kw)
+        return {"kind": kind, **kw}
+
+    import ai_positions as cp
+    monkeypatch.setattr(cp, "log_event", _log_event)
     out = ew.write_admit_funnel(
         candidates=[{"symbol": "AOUT", "source": "movers"}],
-        kept=[{"symbol": "AOUT", "source": "movers"}],
+        kept=[{"symbol": "AOUT", "source": "movers", "seat_role": "warming"}],
         rejected=[{"symbol": "PATH", "reason": "not_uptrend"}],
         now=1_000_000.0,
     )
@@ -133,3 +143,29 @@ def test_write_admit_funnel_persists(tmp_path, monkeypatch):
     assert data["inclusion_reject_reasons"]["not_uptrend"] == 1
     assert data["seed_drops"]["counts"]["movers"]["thin_rvol"] == 1
     assert out["kept_symbols"] == ["AOUT"]
+    assert data.get("warming_n") == 1
+    # Event must carry kept_symbols for earlier-book digs (A1).
+    assert logged.get("kind") == "admit_funnel"
+    assert logged.get("kept_symbols") == ["AOUT"]
+    assert logged.get("kept_n") == 1
+    assert logged.get("warming_n") == 1
+
+
+def test_soft_seed_and_warming_helpers():
+    assert DEFAULT_CONFIG["ai_watch_soft_seed_enabled"] is True
+    assert DEFAULT_CONFIG["ai_watch_warming_seats"] == 3
+    assert ew.warming_seat_quota({}) == 3
+    assert ew.is_warming_exh_profile(30.0, True, {}) is True
+    assert ew.is_warming_exh_profile(60.0, True, {}) is False
+    assert ew.is_warming_exh_profile(None, None, {}, allow_unknown=True) is True
+    assert ew.is_warming_exh_profile(30.0, False, {}) is False
+    row = {"symbol": "ABC", "pct_change": 12.0, "dollar_volume": 5e6}
+    sc_warm = ew.soft_seed_scout_score(
+        row, {}, ind={"pctr": -70.0, "pctr_rising": True, "cm_rsi": 40.0})
+    sc_hot = ew.soft_seed_scout_score(
+        row, {}, ind={"pctr": -20.0, "pctr_rising": True, "cm_rsi": 58.0})
+    assert sc_warm > sc_hot
+    tagged = [{"symbol": "W", "pctr": -65.0, "pctr_rising": True}]
+    assert ew.tag_warming_on_candidates(tagged, {}) == 1
+    assert tagged[0].get("seat_role") == "warming"
+    assert "preheat_steal" in ew._BLOCKER_LABELS

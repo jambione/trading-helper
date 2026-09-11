@@ -607,6 +607,18 @@ DEFAULT_CONFIG = {
     # Max watching rows that may sit on stale_tape at once. Excess dropped
     # (lowest $vol / oldest first). 0 = no stale_tape seats; <0 = unlimited.
     "ai_watch_max_stale_tape_seats": 2,
+    # Continuous soft seed (movers + trending) — earlier discovery without AGY.
+    # Interval gate inside sync; 0 / enabled false disables.
+    "ai_watch_soft_seed_enabled": True,
+    "ai_watch_soft_seed_interval_sec": 300.0,
+    "ai_watch_soft_seed_movers": True,
+    "ai_watch_soft_seed_trending": True,
+    "ai_watch_soft_seed_max": 12,
+    # Warming-seat quota: pre-heat scouts (EXH ~15–45 or unknown EXH + tape).
+    # Admission still ≠ arm. 0 disables quota / preheat steal.
+    "ai_watch_warming_seats": 3,
+    "ai_watch_warming_exh_min": 15.0,
+    "ai_watch_warming_exh_max": 45.0,
     # Post-admit Finnhub subscribe grace: paint await_stream instead of sticky
     # need-stream, and re-assert WS sub. Defaults to stale_timeout_grace_sec.
     "ai_watch_stream_subscribe_grace_sec": 90.0,
@@ -1880,6 +1892,14 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_movers_min_price",
     "ai_watch_movers_admit_max_tape_age_sec",
     "ai_watch_max_stale_tape_seats",
+    "ai_watch_soft_seed_enabled",
+    "ai_watch_soft_seed_interval_sec",
+    "ai_watch_soft_seed_movers",
+    "ai_watch_soft_seed_trending",
+    "ai_watch_soft_seed_max",
+    "ai_watch_warming_seats",
+    "ai_watch_warming_exh_min",
+    "ai_watch_warming_exh_max",
     "ai_watch_stream_subscribe_grace_sec",
     "ai_watch_engine_push_max",
     "ai_watch_stream_enabled",
