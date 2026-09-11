@@ -521,15 +521,17 @@ def test_clear_stale_quote_on_stream_age_le_15():
 
 
 def test_no_trade_reseed_longer_than_generic():
-    assert DEFAULT_CONFIG["ai_watch_no_trade_reseed_sec"] == 900.0
-    assert ew.no_trade_reseed_sec({}) == 900.0
+    # Default now matches stale_timeout_reseed (300); 0 still falls back.
+    assert DEFAULT_CONFIG["ai_watch_no_trade_reseed_sec"] == 300.0
+    assert ew.no_trade_reseed_sec({}) == 300.0
     assert ew.no_trade_reseed_sec({
         "ai_watch_no_trade_reseed_sec": 0,
         "ai_watch_stale_timeout_reseed_sec": 300.0,
     }) == 300.0
 
 
-def test_no_stream_trade_uses_long_reseed(tmp_path, monkeypatch):
+def test_no_stream_trade_uses_stale_timeout_reseed(tmp_path, monkeypatch):
+    """no_stream_trade cools via stale_timeout_reseed (~300s), not 900."""
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     ew._STALE_TIMEOUT_UNTIL.clear()
     t0 = 7_000_000.0
@@ -557,7 +559,7 @@ def test_no_stream_trade_uses_long_reseed(tmp_path, monkeypatch):
         rec, sym="THIN",
         cfg={
             "ai_watch_no_trade_after_subscribe_sec": 300.0,
-            "ai_watch_no_trade_reseed_sec": 900.0,
+            "ai_watch_no_trade_reseed_sec": 900.0,  # ignored by drop path
             "ai_watch_stale_timeout_grace_sec": 90.0,
             "ai_watch_decision_max_age_sec": 15.0,
             "ai_watch_stale_timeout_reseed_sec": 300.0,
@@ -565,7 +567,8 @@ def test_no_stream_trade_uses_long_reseed(tmp_path, monkeypatch):
         now=t0, events=events, cp=_CP, gt=_GT,
     ) is True
     until = ew._STALE_TIMEOUT_UNTIL.get("THIN", 0)
-    assert until >= t0 + 890.0  # long cool, not 300
+    assert until >= t0 + 290.0
+    assert until < t0 + 400.0
 
 
 def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
@@ -616,6 +619,7 @@ def test_enforce_stale_tape_seat_cap_drops_worst(tmp_path, monkeypatch):
     assert dropped == ["DROP_LO"]
     assert "DROP_LO" not in ew.load_watch()
     assert "KEEP_HI" in ew.load_watch() and "STREAM" in ew.load_watch()
+    assert "DROP_LO" not in ew._STALE_TIMEOUT_UNTIL  # no reseed cool
 
 
 def _steal_cfg(**over):

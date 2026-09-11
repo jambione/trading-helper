@@ -154,7 +154,7 @@
   "ai_watch_movers_min_price": 5.0,
   "ai_watch_movers_min_rvol": 1.0,
   "ai_watch_no_trade_after_subscribe_sec": 300.0,
-  "ai_watch_no_trade_reseed_sec": 900.0,
+  "ai_watch_no_trade_reseed_sec": 300.0,
   "ai_watch_ob_allow_flat_when_macd_armed": true,
   "ai_watch_ob_allow_hot": false,
   "ai_watch_ob_flat_min_pct": 99.0,

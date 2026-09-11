@@ -871,12 +871,16 @@ def no_trade_after_subscribe_sec(cfg: dict | None = None) -> float:
 
 
 def no_trade_reseed_sec(cfg: dict | None = None) -> float:
-    """Reseed cool after a no_stream_trade drop. 0 → stale_timeout_reseed_sec."""
+    """Reseed cool after a no_stream_trade drop. 0 → stale_timeout_reseed_sec.
+
+    Default matches ``ai_watch_stale_timeout_reseed_sec`` (300s). Kept as a
+    separate knob; no_stream_trade itself now uses stale_timeout_reseed_sec.
+    """
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
-        v = float(cfg.get("ai_watch_no_trade_reseed_sec", 900.0) or 0.0)
+        v = float(cfg.get("ai_watch_no_trade_reseed_sec", 300.0) or 0.0)
     except (TypeError, ValueError):
-        v = 900.0
+        v = 300.0
     if v > 0:
         return v
     return stale_timeout_reseed_sec(cfg)
@@ -1223,7 +1227,7 @@ def _maybe_no_trade_after_subscribe_drop(
             "elapsed_sec": round(float(now) - float(admitted), 1),
         })
     _mark_stale_timeout_block(
-        sym, now, cfg, cool_sec=no_trade_reseed_sec(cfg))
+        sym, now, cfg, cool_sec=stale_timeout_reseed_sec(cfg))
     drop_watch_symbols([sym])
     return True
 
@@ -1240,7 +1244,8 @@ def _enforce_stale_tape_seat_cap(
     """Drop excess watching stale_tape rows so liquid stream names keep seats.
 
     Keeps up to ``ai_watch_max_stale_tape_seats`` (highest $vol, youngest age).
-    Returns dropped symbols. <0 disables.
+    Returns dropped symbols. <0 disables. Cap drops free seats only — no
+    reseed cool (same contract as unarmable_steal).
     """
     cap = max_stale_tape_seats(cfg)
     if cap < 0 or not isinstance(state, dict):
@@ -1288,8 +1293,6 @@ def _enforce_stale_tape_seat_cap(
                 "kind": "watch_drop", "symbol": sym,
                 "reason": "stale_tape_cap",
             })
-        _mark_stale_timeout_block(
-            sym, now, cfg, cool_sec=no_trade_reseed_sec(cfg))
         dropped.append(sym)
     if dropped:
         drop_watch_symbols(dropped)

@@ -582,10 +582,11 @@ DEFAULT_CONFIG = {
     # drop the watch (Finnhub subscribed but never trades / tape went dark).
     # 0 disables. Default 5 min.
     "ai_watch_no_trade_after_subscribe_sec": 300.0,
-    # Reseed cool after a no_stream_trade drop (longer than generic stale_timeout
-    # reseed so thin +20% micro names do not bounce straight back onto the book).
-    # 0 falls back to ai_watch_stale_timeout_reseed_sec.
-    "ai_watch_no_trade_reseed_sec": 900.0,
+    # Reseed cool knob after a no_stream_trade drop. Default 300 — matches
+    # ai_watch_stale_timeout_reseed_sec (no_stream_trade uses that helper
+    # directly; this knob remains if still referenced). 0 falls back to
+    # ai_watch_stale_timeout_reseed_sec.
+    "ai_watch_no_trade_reseed_sec": 300.0,
     # Refuse admit when live tape is missing or older than this (seconds).
     # Prefer an empty slot over a permanent stale_quote row. 0 disables.
     "ai_watch_admit_max_tape_age_sec": 120.0,
