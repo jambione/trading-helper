@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """RSI × EXH × MACD-gap entry AB harness (phased run-loop).
 
-Sweeps entry-gate cells against historical ``arm_ok`` shadow arms, recomputes
-CM RSI-2 / fast-%R heat / MACD hist from 1m bars (do **not** trust logged
-``cm_rsi`` alone — see ``tools/rsi_counterfactual.py``), scores 30m MTM keeps,
-and writes an **advisory** champion under ``benchmarks/entry_ab/``.
+Candidates = ``shadow.jsonl`` ``arm_ok=true`` arms **∪** gate-family
+``decision_ledger`` refuses. Looser cells can KEEP events live blocked;
+LIVE must still fail those refuses (honesty check: ``ledger_pass_live``).
+
+Recomputes CM RSI-2 / fast-%R heat / MACD hist from 1m bars (do **not**
+trust logged ``cm_rsi`` alone — see ``tools/rsi_counterfactual.py``),
+scores 30m MTM keeps, writes an **advisory** champion under
+``benchmarks/entry_ab/``.
 
 Does **not** write ``config/bot_config.json`` or flip live arms/exits.
 Champion is research-only until Phase 1 / Sep 18 — operator applies by hand.
@@ -18,6 +22,7 @@ Usage (prefer Mac mini + .venv; bars + shadow live there)::
 
     .venv/bin/python tools/entry_arm_ab.py --from 2026-09-01 --to 2026-09-11 --phase A
     .venv/bin/python tools/entry_arm_ab.py --from 2026-09-01 --to 2026-09-11 --phase all
+    .venv/bin/python tools/entry_arm_ab.py --from 2026-09-01 --to 2026-09-11 --phase A --no-ledger
     .venv/bin/python tools/entry_arm_ab.py --summarize
 """
 from __future__ import annotations
@@ -25,7 +30,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import statistics
 import sys
 from collections import defaultdict
@@ -41,6 +45,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 ET = ZoneInfo("America/New_York")
 SHADOW = ROOT / "ai_reports" / "shadow.jsonl"
 OUTCOMES = ROOT / "ai_reports" / "outcomes.jsonl"
+LEDGER_DIR = ROOT / "ai_reports" / "decision_ledger"
 SEARCH_PATH = ROOT / "tools" / "entry_arm_ab_search.json"
 OUT_DIR = ROOT / "benchmarks" / "entry_ab"
 
@@ -51,6 +56,34 @@ CELL_KEYS = (
     "heat_min", "heat_max", "require_exh_rising",
     "require_macd", "macd_min_gap", "macd_block_narrowing",
 )
+
+# Gate-family ledger refuses eligible as counterfactual opens.
+# Provenance (rsi_not_realtime_*) and readiness/tape/occupancy are excluded.
+LEDGER_GATE_REASONS: frozenset[str] = frozenset({
+    # RSI / mistimed / soft OB / cheap OB
+    "rsi_extended",
+    "mistimed_heat",
+    "late_heat",
+    "already_extended",
+    "cheap_ob_band",
+    "extended_cheap",
+    # EXH
+    "exh_falling",
+    "heating_too_low",
+    "exh_not_rising",
+    "exh_rising_required",
+    "no_exhaustion",
+    # MACD
+    "macd_gap_narrowing",
+    "macd_required",
+    "no_macd",
+    "macd_missing",
+    "macd_gap_low",
+    "macd_gap_insufficient",
+    "macd_gap_too_close",
+})
+# Prefix matches for macd size refuses (macd_gap_*) beyond the exact set.
+LEDGER_GATE_PREFIXES: tuple[str, ...] = ("macd_gap_",)
 
 
 # ── imports from existing tools ──────────────────────────────────────────────
@@ -145,7 +178,34 @@ def _et_day(ts: float) -> str:
     )
 
 
-def load_arms(day_from: str, day_to: str, shadow: Path = SHADOW) -> list[dict]:
+def _et_minute_key(ts: float) -> tuple[str, str, int]:
+    """(symbol-less) day + minute-of-day for dedupe; caller adds symbol."""
+    dt = datetime.fromtimestamp(float(ts), timezone.utc).astimezone(ET)
+    return dt.strftime("%Y-%m-%d"), dt.hour * 60 + dt.minute
+
+
+def _refuse_token(arm_why: Any, arm_bucket: Any = None) -> str:
+    why = str(arm_why or "").strip().lower()
+    if why:
+        return why.split()[0].split(":")[0].strip()
+    buck = str(arm_bucket or "").strip().lower()
+    if buck:
+        return buck.split()[0].split(":")[0].strip()
+    return ""
+
+
+def is_ledger_gate_reason(token: str, include: frozenset[str] | None = None) -> bool:
+    tok = str(token or "").strip().lower()
+    if not tok:
+        return False
+    allowed = include if include is not None else LEDGER_GATE_REASONS
+    if tok in allowed:
+        return True
+    return any(tok.startswith(p) for p in LEDGER_GATE_PREFIXES)
+
+
+def load_shadow_arms(day_from: str, day_to: str, shadow: Path = SHADOW) -> list[dict]:
+    """``arm_ok=true`` shadow rows tagged ``source=shadow_arm``."""
     rows: list[dict] = []
     with shadow.open(encoding="utf-8") as fh:
         for line in fh:
@@ -161,8 +221,107 @@ def load_arms(day_from: str, day_to: str, shadow: Path = SHADOW) -> list[dict]:
             d = _et_day(float(r["ts"]))
             if d < day_from or d > day_to:
                 continue
-            rows.append(r)
+            out = dict(r)
+            out["source"] = "shadow_arm"
+            out["symbol"] = str(r["symbol"]).upper().strip()
+            rows.append(out)
     return rows
+
+
+# Back-compat alias
+load_arms = load_shadow_arms
+
+
+def load_ledger_refuses(
+    day_from: str,
+    day_to: str,
+    *,
+    ledger_dir: Path = LEDGER_DIR,
+    include_reasons: frozenset[str] | None = None,
+) -> tuple[list[dict], int]:
+    """Gate-family ledger refuses (arm_ok not True). Returns (rows, raw_count)."""
+    rows: list[dict] = []
+    raw = 0
+    allowed = include_reasons if include_reasons is not None else LEDGER_GATE_REASONS
+    # Inclusive day walk
+    try:
+        d0 = datetime.strptime(day_from, "%Y-%m-%d").date()
+        d1 = datetime.strptime(day_to, "%Y-%m-%d").date()
+    except ValueError:
+        return [], 0
+    day = d0
+    while day <= d1:
+        path = ledger_dir / f"{day.isoformat()}.jsonl"
+        day = day + timedelta(days=1)
+        if not path.exists():
+            continue
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if r.get("arm_ok") is True:
+                    continue
+                if not r.get("ts") or not r.get("symbol"):
+                    continue
+                tok = _refuse_token(r.get("arm_why"), r.get("arm_bucket"))
+                if not is_ledger_gate_reason(tok, allowed):
+                    continue
+                raw += 1
+                rows.append({
+                    "ts": float(r["ts"]),
+                    "symbol": str(r["symbol"]).upper().strip(),
+                    "arm_why": r.get("arm_why"),
+                    "arm_bucket": r.get("arm_bucket"),
+                    "arm_ok": r.get("arm_ok"),
+                    "source": "ledger_refuse",
+                    "refuse_token": tok,
+                })
+    return rows, raw
+
+
+def dedupe_candidates(rows: list[dict]) -> list[dict]:
+    """One candidate per (symbol, ET minute).
+
+    Keep earliest ts in the minute. If both shadow and ledger share a minute,
+    prefer ``shadow_arm`` (drop ledger dup). Documented choice: earliest ts
+    within the winning source; shadow always beats ledger for the same minute.
+    """
+    # key -> chosen row
+    best: dict[tuple[str, str, int], dict] = {}
+    for r in rows:
+        sym = str(r.get("symbol") or "").upper().strip()
+        try:
+            ts = float(r["ts"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not sym:
+            continue
+        day, minute = _et_minute_key(ts)
+        key = (sym, day, minute)
+        src = str(r.get("source") or "")
+        prev = best.get(key)
+        if prev is None:
+            best[key] = r
+            continue
+        prev_src = str(prev.get("source") or "")
+        # Shadow wins over ledger regardless of ts.
+        if prev_src != "shadow_arm" and src == "shadow_arm":
+            best[key] = r
+            continue
+        if prev_src == "shadow_arm" and src != "shadow_arm":
+            continue
+        # Same source family: earliest ts.
+        try:
+            if float(r["ts"]) < float(prev["ts"]):
+                best[key] = r
+        except (TypeError, ValueError):
+            pass
+    return sorted(best.values(), key=lambda x: (float(x["ts"]), str(x.get("symbol"))))
 
 
 def load_outcomes_index(path: Path = OUTCOMES) -> dict[tuple[str, str], list[dict]]:
@@ -486,19 +645,31 @@ def score_cell(
     min_n: int,
     live: dict,
 ) -> dict[str, Any]:
-    """prepared items: {day, half, mtm, fill_pl, fill_r, ind}."""
+    """prepared items: {day, half, mtm, fill_pl, fill_r, ind, source}."""
     keeps: list[float] = []
     by_half: dict[str, list[float]] = {"A": [], "B": []}
     fill_pl: list[float] = []
     fill_r: list[float] = []
     blocked = 0
+    n_shadow = 0
+    n_ledger = 0
+    ledger_pass_live = 0
+    is_live_cell = str(cell.get("id") or "") == "LIVE"
     for row in prepared:
         ok, _why = gate_keep(cell, row["ind"])
+        src = str(row.get("source") or "")
+        if src == "ledger_refuse" and is_live_cell and ok:
+            # Bug signal: LIVE should almost never keep a ledger refuse.
+            ledger_pass_live += 1
         if not ok:
             blocked += 1
             continue
         keeps.append(float(row["mtm"]))
         by_half[row["half"]].append(float(row["mtm"]))
+        if src == "shadow_arm":
+            n_shadow += 1
+        elif src == "ledger_refuse":
+            n_ledger += 1
         if row.get("fill_pl") is not None:
             fill_pl.append(float(row["fill_pl"]))
         if row.get("fill_r") is not None:
@@ -522,6 +693,9 @@ def score_cell(
         "id": cell["id"],
         "cell": {k: cell.get(k) for k in ("id",) + CELL_KEYS},
         "n": st["n"],
+        "n_shadow": n_shadow,
+        "n_ledger": n_ledger,
+        "ledger_pass_live": ledger_pass_live if is_live_cell else None,
         "blocked": blocked,
         "mean": st["mean"],
         "median": st["median"],
@@ -551,17 +725,21 @@ def rank_key(row: dict) -> tuple:
     )
 
 
-# ── prepare arms once ────────────────────────────────────────────────────────
+# ── prepare candidates once ──────────────────────────────────────────────────
 
-def prepare_arms(
-    arms: list[dict],
+def prepare_candidates(
+    candidates: list[dict],
     *,
     horizon_min: float,
     tl: int,
     rte_threshold: float,
     feed_note: str = "iex",
 ) -> tuple[list[dict], dict[str, int]]:
-    """Fetch bars once per (sym, day); attach recomputed ind + MTM + optional fill."""
+    """Fetch bars once per (sym, day); attach recomputed ind + MTM + optional fill.
+
+    ``candidates`` may mix ``shadow_arm`` and ``ledger_refuse`` rows (already
+    deduped). Missing indicators → fail closed (skip).
+    """
     import alpaca_api as aa
 
     sec_path = ROOT / "config" / "secrets.json"
@@ -570,9 +748,15 @@ def prepare_arms(
         {"api_key": sec["api_key"], "secret_key": sec["secret_key"]})
 
     by_key: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    for r in arms:
-        sym = str(r["symbol"]).upper().strip()
-        day = _et_day(float(r["ts"]))
+    for r in candidates:
+        sym = str(r.get("symbol") or "").upper().strip()
+        try:
+            ts = float(r["ts"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not sym:
+            continue
+        day = _et_day(ts)
         by_key[(sym, day)].append(r)
 
     days_sorted = sorted({d for _s, d in by_key})
@@ -585,7 +769,7 @@ def prepare_arms(
     outcomes_ix = load_outcomes_index()
     cache: dict[tuple[str, str], dict | None] = {}
     prepared: list[dict] = []
-    skip = defaultdict(int)
+    skip: dict[str, int] = defaultdict(int)
 
     for (sym, day), rows in sorted(by_key.items()):
         if (sym, day) not in cache:
@@ -626,10 +810,18 @@ def prepare_arms(
                 "ind": ind,
                 "fill_pl": fill_pl,
                 "fill_r": fill_r,
+                "source": str(r.get("source") or "shadow_arm"),
+                "arm_why": r.get("arm_why"),
+                "arm_bucket": r.get("arm_bucket"),
+                "refuse_token": r.get("refuse_token"),
             })
 
     _ = feed_note
     return prepared, dict(skip)
+
+
+# Back-compat
+prepare_arms = prepare_candidates
 
 
 # ── phase B / C helpers ──────────────────────────────────────────────────────
@@ -784,18 +976,25 @@ def append_results(rows: list[dict], phase: str) -> None:
 def print_table(rows: list[dict], live_row: dict | None, title: str) -> None:
     print(f"\n=== {title} ===")
     if live_row:
+        lpl = live_row.get("ledger_pass_live")
+        lpl_s = f"  ledger_pass_live={lpl}" if lpl is not None else ""
         print(
-            f"LIVE  n={live_row.get('n')}  mean="
-            f"{_fmt(live_row.get('mean'))}%  med={_fmt(live_row.get('median'))}%  "
+            f"LIVE  n={live_row.get('n')}  "
+            f"shadow={live_row.get('n_shadow')}  ledger={live_row.get('n_ledger')}  "
+            f"mean={_fmt(live_row.get('mean'))}%  med={_fmt(live_row.get('median'))}%  "
             f"win={_fmt(live_row.get('win_pct'), 1)}%  half_ok={live_row.get('half_ok')}"
+            f"{lpl_s}"
         )
+        if isinstance(lpl, int) and lpl > 0:
+            print(f"  WARN: LIVE kept {lpl} ledger refuses — gate/model mismatch?")
     print(
-        f"{'id':<28} {'n':>5} {'mean':>8} {'med':>8} {'win%':>6} "
-        f"{'half':>5} {'lift':>8}"
+        f"{'id':<28} {'n':>5} {'sh':>4} {'led':>4} {'mean':>8} {'med':>8} "
+        f"{'win%':>6} {'half':>5} {'lift':>8}"
     )
     for r in rows[:10]:
         print(
             f"{str(r.get('id')):<28} {r.get('n') or 0:>5} "
+            f"{r.get('n_shadow') or 0:>4} {r.get('n_ledger') or 0:>4} "
             f"{_fmt(r.get('mean')):>8} {_fmt(r.get('median')):>8} "
             f"{_fmt(r.get('win_pct'), 1):>6} "
             f"{'Y' if r.get('half_ok') else 'n':>5} "
@@ -818,8 +1017,12 @@ def print_champion(champ: dict | None, search: dict, reason: str = "") -> None:
         print(f"No champion. {reason}")
         return
     cell = champ["cell"]
-    print(f"id={cell.get('id')}  n={champ.get('n')}  mean={_fmt(champ.get('mean'))}%  "
-          f"lift={_fmt(champ.get('lift_vs_live'))}%  half_ok={champ.get('half_ok')}")
+    print(
+        f"id={cell.get('id')}  n={champ.get('n')}  "
+        f"shadow={champ.get('n_shadow')}  ledger={champ.get('n_ledger')}  "
+        f"mean={_fmt(champ.get('mean'))}%  "
+        f"lift={_fmt(champ.get('lift_vs_live'))}%  half_ok={champ.get('half_ok')}"
+    )
     print("bot_config keys:")
     for k, v in to_bot_config(cell, search).items():
         print(f"  {k}: {v}")
@@ -845,17 +1048,20 @@ def write_summary(
         "**Advisory only** — does not write `config/bot_config.json`.",
         "",
         "## LIVE control",
-        f"- n={live_row.get('n')} mean={_fmt(live_row.get('mean'))}% "
-        f"med={_fmt(live_row.get('median'))}% win={_fmt(live_row.get('win_pct'), 1)}%",
+        f"- n={live_row.get('n')} shadow={live_row.get('n_shadow')} "
+        f"ledger={live_row.get('n_ledger')} mean={_fmt(live_row.get('mean'))}% "
+        f"med={_fmt(live_row.get('median'))}% win={_fmt(live_row.get('win_pct'), 1)}%"
+        f" ledger_pass_live={live_row.get('ledger_pass_live')}",
         "",
         "## Top 10",
         "",
-        "| id | n | mean | med | win% | half_ok | lift |",
-        "|---|---:|---:|---:|---:|---|---:|",
+        "| id | n | n_shadow | n_ledger | mean | med | win% | half_ok | lift |",
+        "|---|---:|---:|---:|---:|---:|---:|---|---:|",
     ]
     for r in ranked[:10]:
         lines.append(
-            f"| {r.get('id')} | {r.get('n')} | {_fmt(r.get('mean'))} | "
+            f"| {r.get('id')} | {r.get('n')} | {r.get('n_shadow')} | "
+            f"{r.get('n_ledger')} | {_fmt(r.get('mean'))} | "
             f"{_fmt(r.get('median'))} | {_fmt(r.get('win_pct'), 1)} | "
             f"{r.get('half_ok')} | {_fmt(r.get('lift_vs_live'))} |"
         )
@@ -975,6 +1181,13 @@ def main() -> int:
                     help="print latest results / champion (alias --phase summarize)")
     ap.add_argument("--search", type=Path, default=SEARCH_PATH)
     ap.add_argument("--shadow", type=Path, default=SHADOW)
+    ap.add_argument("--ledger-dir", type=Path, default=LEDGER_DIR)
+    ap.add_argument("--no-ledger", action="store_true",
+                    help="shadow arms only (old behavior)")
+    ap.add_argument(
+        "--ledger-reasons", default=None,
+        help="comma-separated refuse tokens to include (default: built-in gate family)",
+    )
     ap.add_argument("--min-n", type=int, default=None)
     ap.add_argument("--horizon-min", type=float, default=None)
     ap.add_argument("--reset-results", action="store_true",
@@ -996,22 +1209,51 @@ def main() -> int:
     day_to = args.day_to or datetime.now(tz=ET).strftime("%Y-%m-%d")
     day_from = args.day_from
 
+    include_reasons = LEDGER_GATE_REASONS
+    if args.ledger_reasons:
+        parts = [p.strip().lower() for p in str(args.ledger_reasons).split(",") if p.strip()]
+        include_reasons = frozenset(parts) if parts else LEDGER_GATE_REASONS
+
     ensure_out()
     if args.reset_results:
         (OUT_DIR / "results.jsonl").write_text("", encoding="utf-8")
 
     print(f"entry_arm_ab  {day_from}..{day_to}  phase={args.phase}  "
-          f"min_n={min_n}  horizon={horizon:g}m")
+          f"min_n={min_n}  horizon={horizon:g}m  "
+          f"ledger={'off' if args.no_ledger else 'on'}")
     print("ADVISORY ONLY — does not write bot_config / live arms.")
 
-    arms = load_arms(day_from, day_to, args.shadow)
-    print(f"shadow arm_ok in window: {len(arms)}")
-    if not arms:
-        print("no arms — abort")
+    shadow_raw = load_shadow_arms(day_from, day_to, args.shadow)
+    shadow_rows = dedupe_candidates(shadow_raw)
+    print(f"shadow arms: {len(shadow_raw)}"
+          + (f" → deduped {len(shadow_rows)}" if len(shadow_rows) != len(shadow_raw)
+             else ""))
+
+    ledger_raw_n = 0
+    ledger_rows: list[dict] = []
+    if not args.no_ledger:
+        ledger_rows, ledger_raw_n = load_ledger_refuses(
+            day_from, day_to,
+            ledger_dir=args.ledger_dir,
+            include_reasons=include_reasons,
+        )
+        ledger_deduped = dedupe_candidates(ledger_rows)
+        print(f"ledger gate refuses (raw→deduped): "
+              f"{ledger_raw_n}→{len(ledger_deduped)}")
+        ledger_rows = ledger_deduped
+    else:
+        print("ledger gate refuses: skipped (--no-ledger)")
+
+    if not shadow_rows and not ledger_rows:
+        print("no candidates — abort")
         return 1
 
-    prepared, skip = prepare_arms(
-        arms, horizon_min=horizon, tl=tl, rte_threshold=rte_thr)
+    union = dedupe_candidates(shadow_rows + ledger_rows)
+    n_shadow_u = sum(1 for r in union if r.get("source") == "shadow_arm")
+    n_ledger_u = sum(1 for r in union if r.get("source") == "ledger_refuse")
+
+    prepared, skip = prepare_candidates(
+        union, horizon_min=horizon, tl=tl, rte_threshold=rte_thr)
     thin = False
     if len(prepared) < min_n:
         thin_n = int(search.get("min_n_thin", 15))
@@ -1021,9 +1263,15 @@ def main() -> int:
             min_n = thin_n
             thin = True
         else:
-            print(f"too few prepared arms ({len(prepared)}); abort")
+            print(f"too few prepared candidates ({len(prepared)}); abort")
             return 1
-    print(f"prepared keeps-eligible arms: {len(prepared)}  skip={skip}")
+    n_prep_s = sum(1 for r in prepared if r.get("source") == "shadow_arm")
+    n_prep_l = sum(1 for r in prepared if r.get("source") == "ledger_refuse")
+    print(
+        f"prepared: {len(prepared)}  (shadow_{n_prep_s} / ledger_{n_prep_l})  "
+        f"union_in={len(union)} (shadow_{n_shadow_u}/ledger_{n_ledger_u})  "
+        f"skip={skip}"
+    )
 
     phases = []
     if args.phase == "all":
@@ -1174,6 +1422,10 @@ def main() -> int:
         "day_from": day_from,
         "day_to": day_to,
         "n_prepared": len(prepared),
+        "n_prepared_shadow": n_prep_s,
+        "n_prepared_ledger": n_prep_l,
+        "ledger_enabled": not args.no_ledger,
+        "ledger_raw": ledger_raw_n,
         "skip": skip,
         "min_n": min_n,
         "thin_min_n": thin,
