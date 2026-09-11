@@ -1725,8 +1725,14 @@ def load_tickers() -> list:
                         t, rv, TICKER_MIN_RVOL)
                     continue
 
+                # src=book rows are data subscriptions the AI Watch shortlist
+                # pushed so Finnhub can print BEFORE inclusion (push_candidates
+                # → add-bulk). They are not momentum candidates. Counting them
+                # against TICKER_MAX_COUNT retired the shortlist under the
+                # 10-slot cap and starved admit with no_tape (2026-09-11).
+                is_book = src_tag.strip().lower() == "book"
                 row = {"ticker": t, "added": added, "_ts": added_ts,
-                       "_held": t in held}
+                       "_held": (t in held) or is_book}
                 if src_tag:
                     row["src"] = src_tag
                 kept.append(row)
@@ -1745,6 +1751,8 @@ def load_tickers() -> list:
             # from would go empty exactly when the desk was most active. Exempt
             # names are additive — they are already paid for by not being
             # REST-quoted — and the total is bounded below.
+            # Exempt set: held/watch (_committed_symbols) AND src=book
+            # shortlist pushes. Still hard-capped by _SUB_BUDGET.
             kept.sort(key=lambda e: (e["_held"], e["_ts"]), reverse=True)
             n_held = sum(1 for e in kept if e["_held"])
             limit = min(n_held + TICKER_MAX_COUNT, _SUB_BUDGET)
