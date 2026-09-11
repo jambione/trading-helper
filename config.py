@@ -587,6 +587,14 @@ DEFAULT_CONFIG = {
     # directly; this knob remains if still referenced). 0 falls back to
     # ai_watch_stale_timeout_reseed_sec.
     "ai_watch_no_trade_reseed_sec": 300.0,
+    # Same-day strike demote after repeated no_stream_trade drops (A2).
+    # After N drops for a symbol on the ET calendar day, refuse re-admit for
+    # the rest of that day. Young stream does NOT clear strikes (unlike the
+    # 300s reseed cool). ≤0 disables. Process-local for v1 (restart resets).
+    "ai_watch_no_stream_strike_limit": 2,
+    # Drop reasons that increment the strike counter. v1: no_stream_trade only
+    # (stale_timeout / stale_tape_cap / unarmable_steal stay cool-free / out).
+    "ai_watch_no_stream_strike_reasons": ["no_stream_trade"],
     # Refuse admit when live tape is missing or older than this (seconds).
     # Prefer an empty slot over a permanent stale_quote row. 0 disables.
     "ai_watch_admit_max_tape_age_sec": 120.0,
@@ -1865,6 +1873,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_stale_timeout_quiet_max_sec",
     "ai_watch_no_trade_after_subscribe_sec",
     "ai_watch_no_trade_reseed_sec",
+    "ai_watch_no_stream_strike_limit",
+    "ai_watch_no_stream_strike_reasons",
     "ai_watch_admit_max_tape_age_sec",
     "ai_watch_movers_min_dollar_volume",
     "ai_watch_movers_min_price",

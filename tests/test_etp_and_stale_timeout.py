@@ -149,11 +149,16 @@ def test_stale_timeout_knobs_default_around_six_minutes():
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_quiet_max_sec"] == 180.0
     assert DEFAULT_CONFIG["ai_watch_no_trade_after_subscribe_sec"] == 300.0
     assert DEFAULT_CONFIG["ai_watch_admit_max_tape_age_sec"] == 120.0
+    assert DEFAULT_CONFIG["ai_watch_no_stream_strike_limit"] == 2
+    assert DEFAULT_CONFIG["ai_watch_no_stream_strike_reasons"] == ["no_stream_trade"]
     assert ew.stale_timeout_sec({}) == 360.0
     assert ew.stale_timeout_reseed_sec({}) == 300.0
     assert ew.stale_timeout_grace_sec({}) == 90.0
     assert ew.stale_timeout_quiet_max_sec({}) == 180.0
     assert ew.stale_timeout_sec({"ai_watch_stale_timeout_sec": 0}) == 0.0
+    assert ew.no_stream_strike_limit({}) == 2
+    assert ew.no_stream_strike_reasons({}) == frozenset({"no_stream_trade"})
+    assert ew.no_stream_strike_limit({"ai_watch_no_stream_strike_limit": 0}) == 0
 
 
 def _drop_cfg(**over):
@@ -397,6 +402,7 @@ def test_no_trade_after_subscribe_drops_aehg_class(tmp_path, monkeypatch):
     """Finnhub-book name with only a 10+ min-old print is dropped after N min."""
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
     t0 = 5_000_000.0
     ew.save_watch({
         "AEHG": {
@@ -534,6 +540,7 @@ def test_no_stream_trade_uses_stale_timeout_reseed(tmp_path, monkeypatch):
     """no_stream_trade cools via stale_timeout_reseed (~300s), not 900."""
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
     t0 = 7_000_000.0
     ew.save_watch({
         "THIN": {
@@ -569,6 +576,159 @@ def test_no_stream_trade_uses_stale_timeout_reseed(tmp_path, monkeypatch):
     until = ew._STALE_TIMEOUT_UNTIL.get("THIN", 0)
     assert until >= t0 + 290.0
     assert until < t0 + 400.0
+
+
+# ── A2: same-day no_stream_trade strike demote ────────────────────────────
+
+def _strike_incl_cfg(**over):
+    c = {
+        "ai_watch_require_uptrend": False,
+        "ai_watch_min_price": 1.0,
+        "ai_min_dollar_volume": 0.0,
+        "ai_watch_max_float_m": 0,
+        "ai_watch_admit_max_tape_age_sec": 0,
+        "ai_watch_no_stream_strike_limit": 2,
+        "ai_watch_no_stream_strike_reasons": ["no_stream_trade"],
+    }
+    c.update(over)
+    return c
+
+
+def test_no_stream_strike_demote_after_two_same_day(monkeypatch):
+    """2× no_stream_trade same ET day → third admit is no_stream_strike_demote."""
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    # Fixed weekday ET midday so day-roll assertions are stable.
+    # passes_inclusion reads time.time() for the demote gate — pin the clock.
+    t0 = 1_786_618_800.0  # ~2026-08-14 12:00 ET-ish (same fixture as dead_reentry)
+    monkeypatch.setattr(ew.time, "time", lambda: t0)
+    cfg = _strike_incl_cfg()
+    assert ew._record_no_stream_strike("ACVA", t0, "no_stream_trade", cfg) == 1
+    assert ew._no_stream_strike_demoted("ACVA", t0, cfg) is False
+    assert ew._record_no_stream_strike("ACVA", t0 + 60.0, "no_stream_trade", cfg) == 2
+    assert ew._no_stream_strike_demoted("ACVA", t0 + 60.0, cfg) is True
+
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (8.0, 2.0))
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "ACVA", "price": 8.0, "pct_change": 12.0, "rvol": 3.0,
+         "criteria": ["mom_open"], "dollar_volume": 2e6,
+         "last_ask_ts": t0, "last_ask_src": "stream"},
+        cfg,
+    )
+    assert ok is False and why == "no_stream_strike_demote"
+    # Young stream must NOT clear strikes (revolving-door fix).
+    assert ew._no_stream_strike_count("ACVA", t0 + 120.0) == 2
+    assert ew._young_stream_alive(
+        "ACVA", cfg, now=t0 + 120.0,
+        row={"last_ask_ts": t0 + 119.0, "last_ask_src": "stream"},
+    ) is True
+    assert ew._no_stream_strike_demoted("ACVA", t0 + 120.0, cfg) is True
+
+
+def test_no_stream_strike_clears_on_new_et_day():
+    ew._NO_STREAM_STRIKES.clear()
+    t0 = 1_786_618_800.0
+    cfg = _strike_incl_cfg()
+    assert ew._record_no_stream_strike("TNON", t0, "no_stream_trade", cfg) == 1
+    assert ew._record_no_stream_strike("TNON", t0, "no_stream_trade", cfg) == 2
+    assert ew._no_stream_strike_demoted("TNON", t0, cfg) is True
+    next_day = t0 + 86400.0
+    assert ew._no_stream_strike_count("TNON", next_day) == 0
+    assert ew._no_stream_strike_demoted("TNON", next_day, cfg) is False
+
+
+def test_stale_tape_cap_and_unarmable_do_not_increment_strikes():
+    ew._NO_STREAM_STRIKES.clear()
+    t0 = 1_786_618_800.0
+    cfg = _strike_incl_cfg()
+    assert ew._record_no_stream_strike(
+        "FEIM", t0, "stale_tape_cap", cfg) == 0
+    assert ew._record_no_stream_strike(
+        "FEIM", t0, "unarmable_steal", cfg) == 0
+    assert ew._record_no_stream_strike(
+        "FEIM", t0, "stale_timeout", cfg) == 0
+    assert ew._no_stream_strike_count("FEIM", t0) == 0
+    assert ew._no_stream_strike_demoted("FEIM", t0, cfg) is False
+
+
+def test_no_stream_strike_limit_zero_disables(monkeypatch):
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    t0 = 1_786_618_800.0
+    cfg = _strike_incl_cfg(ai_watch_no_stream_strike_limit=0)
+    assert ew._record_no_stream_strike("ACVA", t0, "no_stream_trade", cfg) == 1
+    assert ew._record_no_stream_strike("ACVA", t0, "no_stream_trade", cfg) == 2
+    assert ew._no_stream_strike_demoted("ACVA", t0, cfg) is False
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (8.0, 2.0))
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    ok, _met, why = ew.passes_inclusion(
+        {"symbol": "ACVA", "price": 8.0, "pct_change": 12.0, "rvol": 3.0,
+         "criteria": ["mom_open"], "dollar_volume": 2e6},
+        cfg,
+    )
+    assert why != "no_stream_strike_demote"
+
+
+def test_no_stream_trade_drop_increments_strike_and_logs(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    t0 = 1_786_618_800.0
+    ew.save_watch({
+        "ACVA": {
+            "symbol": "ACVA", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = {
+        "ai_watch_no_trade_after_subscribe_sec": 300.0,
+        "ai_watch_stale_timeout_grace_sec": 90.0,
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+        "ai_watch_no_stream_strike_limit": 2,
+    }
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["ACVA"], sym="ACVA", cfg=cfg,
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is True
+    assert ew._no_stream_strike_count("ACVA", t0) == 1
+    drop = next(e for e in events if e.get("reason") == "no_stream_trade")
+    assert drop.get("no_stream_strikes") == 1
+    assert not drop.get("no_stream_strike_demote")
+
+    # Second drop → demote event.
+    ew.save_watch({
+        "ACVA": {
+            "symbol": "ACVA", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+    events2: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["ACVA"], sym="ACVA", cfg=cfg,
+        now=t0 + 1.0, events=events2, cp=_CP, gt=_GT,
+    ) is True
+    assert ew._no_stream_strike_count("ACVA", t0) == 2
+    assert any(e.get("kind") == "no_stream_strike_demote" for e in events2)
+    drop2 = next(e for e in events2 if e.get("reason") == "no_stream_trade")
+    assert drop2.get("no_stream_strikes") == 2
+    assert drop2.get("no_stream_strike_demote") is True
 
 
 def _cap_book_state(t0: float) -> dict:

@@ -108,6 +108,15 @@ _STALE_TIMEOUT_DEFAULT_SEC = 360.0  # 6 min RTH
 _STALE_TIMEOUT_RESEED_DEFAULT_SEC = 300.0  # 5 min (was 30m — too hungry)
 _STALE_TIMEOUT_GRACE_DEFAULT_SEC = 90.0  # don't count until on-book this long
 
+# Same-day no_stream_trade strike demote (A2 occupancy hygiene).
+# Module dict keyed by ET YYYY-MM-DD → {SYM: count}. v1 is process-local:
+# dashboard restart clears strikes (a name may take 2 more drops before demote).
+# Young stream does NOT clear strikes — that revolving door is the bug.
+# Only a new ET calendar day resets. Persist later if restart mid-day matters.
+_NO_STREAM_STRIKES: dict[str, dict[str, int]] = {}
+_NO_STREAM_STRIKE_LIMIT_DEFAULT = 2
+_NO_STREAM_STRIKE_REASONS_DEFAULT = ("no_stream_trade",)
+
 # symbol -> the quote's OWN unix time, from the last provable pricing.
 # Deliberately module-level rather than a record field: poll_once rebuilds the
 # full watch record every cycle, so a stamp written onto the record is gone
@@ -248,6 +257,7 @@ _BLOCKER_LABELS: dict[str, str] = {
     "stale_tape_admit": "tape too old",
     "no_tape": "no tape",
     "no_stream_trade": "no stream trade",
+    "no_stream_strike_demote": "no-stream demote",
     "levered_etp": "levered ETP",
     # Atomic confirm→submit (Package B): send ask moved / tape died after pass.
     "confirm_slip": "confirm slip",
@@ -886,6 +896,99 @@ def no_trade_reseed_sec(cfg: dict | None = None) -> float:
     return stale_timeout_reseed_sec(cfg)
 
 
+def no_stream_strike_limit(cfg: dict | None = None) -> int:
+    """Same-day no_stream_trade drops before refuse re-admit. ≤0 disables."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return int(cfg.get(
+            "ai_watch_no_stream_strike_limit",
+            _NO_STREAM_STRIKE_LIMIT_DEFAULT,
+        ))
+    except (TypeError, ValueError):
+        return _NO_STREAM_STRIKE_LIMIT_DEFAULT
+
+
+def no_stream_strike_reasons(cfg: dict | None = None) -> frozenset[str]:
+    """Drop reasons that increment the same-day strike counter. v1: no_stream_trade only."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    raw = cfg.get("ai_watch_no_stream_strike_reasons")
+    if raw is None:
+        return frozenset(_NO_STREAM_STRIKE_REASONS_DEFAULT)
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        return frozenset(parts) if parts else frozenset(_NO_STREAM_STRIKE_REASONS_DEFAULT)
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        parts = [str(p).strip() for p in raw if str(p).strip()]
+        return frozenset(parts) if parts else frozenset(_NO_STREAM_STRIKE_REASONS_DEFAULT)
+    return frozenset(_NO_STREAM_STRIKE_REASONS_DEFAULT)
+
+
+def _et_day_key(now: float | None = None) -> str:
+    """America/New_York calendar day YYYY-MM-DD for strike day-roll."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    t0 = float(now if now is not None else time.time())
+    return datetime.fromtimestamp(
+        t0, tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+
+
+def _prune_no_stream_strikes(et_day: str) -> None:
+    """Drop strike buckets from prior ET days (no multi-day blacklist)."""
+    stale = [d for d in _NO_STREAM_STRIKES if d != et_day]
+    for d in stale:
+        _NO_STREAM_STRIKES.pop(d, None)
+
+
+def _no_stream_strike_count(
+    symbol: str,
+    now: float | None = None,
+) -> int:
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return 0
+    day = _et_day_key(now)
+    _prune_no_stream_strikes(day)
+    return int((_NO_STREAM_STRIKES.get(day) or {}).get(sym) or 0)
+
+
+def _record_no_stream_strike(
+    symbol: str,
+    now: float,
+    reason: str,
+    cfg: dict | None = None,
+) -> int:
+    """Increment same-day strike for *reason* if configured. Returns new count.
+
+    Does not demote open positions — caller only invokes this on a watch_drop
+    after held/submitted checks. Young stream never clears these strikes.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return 0
+    reasons = no_stream_strike_reasons(cfg)
+    if str(reason or "").strip() not in reasons:
+        return _no_stream_strike_count(sym, now)
+    day = _et_day_key(now)
+    _prune_no_stream_strikes(day)
+    bucket = _NO_STREAM_STRIKES.setdefault(day, {})
+    n = int(bucket.get(sym) or 0) + 1
+    bucket[sym] = n
+    return n
+
+
+def _no_stream_strike_demoted(
+    symbol: str,
+    now: float,
+    cfg: dict | None = None,
+) -> bool:
+    """True when same-day no_stream strikes ≥ limit — refuse re-admit only."""
+    limit = no_stream_strike_limit(cfg)
+    if limit <= 0:
+        return False
+    return _no_stream_strike_count(symbol, now) >= limit
+
+
 def admit_max_tape_age_sec(cfg: dict | None = None) -> float:
     """Max live_print age to admit a name. 0 disables the admit tape gate."""
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1213,19 +1316,41 @@ def _maybe_no_trade_after_subscribe_drop(
     if src == "stream" and age_f is not None and age_f <= ceiling:
         _clear_stale_feed_since(rec)
         return False
+    strikes = _record_no_stream_strike(sym, now, "no_stream_trade", cfg)
+    limit = no_stream_strike_limit(cfg)
+    demoted = bool(limit > 0 and strikes >= limit)
     try:
         events.append(cp.log_event(
             "watch_drop", symbol=sym, reason="no_stream_trade",
             elapsed_sec=round(float(now) - float(admitted), 1),
             age_sec=round(age_f, 1) if age_f is not None else None,
-            src=src or None))
+            src=src or None,
+            no_stream_strikes=strikes,
+            no_stream_strike_limit=limit if limit > 0 else None,
+            no_stream_strike_demote=demoted or None))
     except Exception:  # noqa: BLE001
         events.append({
             "kind": "watch_drop",
             "symbol": sym,
             "reason": "no_stream_trade",
             "elapsed_sec": round(float(now) - float(admitted), 1),
+            "no_stream_strikes": strikes,
+            "no_stream_strike_demote": demoted or None,
         })
+    if demoted:
+        try:
+            events.append(cp.log_event(
+                "no_stream_strike_demote", symbol=sym,
+                strikes=strikes, limit=limit,
+                et_day=_et_day_key(now)))
+        except Exception:  # noqa: BLE001
+            events.append({
+                "kind": "no_stream_strike_demote",
+                "symbol": sym,
+                "strikes": strikes,
+                "limit": limit,
+                "et_day": _et_day_key(now),
+            })
     _mark_stale_timeout_block(
         sym, now, cfg, cool_sec=stale_timeout_reseed_sec(cfg))
     drop_watch_symbols([sym])
@@ -5506,6 +5631,11 @@ def passes_inclusion(
         # Cool lifted by a live print — keep going; criteria note for logs.
         if "reseed_allowed_stream" not in met:
             met = list(met) + ["reseed_allowed_stream"]
+    # Same-day strike demote after repeated no_stream_trade drops. Unlike
+    # stale_timeout_reseed, a young stream does NOT clear this — seats stay
+    # free until the next ET calendar day (A2 occupancy hygiene).
+    if sym and _no_stream_strike_demoted(sym, time.time(), cfg):
+        return False, met, "no_stream_strike_demote"
     # Admission range-position filter. Off by default (cap 0), so this only
     # writes down what it WOULD have refused until out-of-sample days say
     # whether the 2026-09-05 gradient holds. Fails open and swallows its own
@@ -6069,6 +6199,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             continue
         if _stale_timeout_blocked(sym, t0, cfg=cfg_d, row=r):
             continue
+        if _no_stream_strike_demoted(sym, t0, cfg_d):
+            continue
         _consume_reseed_stream_clear(sym)  # cool may have just cleared
         merged[sym] = r
 
@@ -6242,6 +6374,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                 _grace > 0
                 and not _dead_reentry_blocked(key, t0, cfg_g)
                 and not _stale_timeout_blocked(key, t0, cfg=cfg_g, row=rec)
+                and not _no_stream_strike_demoted(key, t0, cfg_g)
             ):
                 _seen = _f_or_none(rec.get("last_candidate_ts"))
                 if _seen is not None and (t0 - _seen) <= _grace:

@@ -23,6 +23,8 @@ def test_watch_config_defaults_present():
         "ai_watch_stale_timeout_grace_sec",
         "ai_watch_stale_timeout_reseed_sec",
         "ai_watch_stale_timeout_include_need_stream",
+        "ai_watch_no_stream_strike_limit",
+        "ai_watch_no_stream_strike_reasons",
     ):
         assert key in DEFAULT_CONFIG
     # Code default False so tests / paper keep REST fallback; live bot_config
@@ -32,6 +34,8 @@ def test_watch_config_defaults_present():
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_grace_sec"] == 90.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_reseed_sec"] == 300.0
     assert DEFAULT_CONFIG["ai_watch_stale_timeout_include_need_stream"] is False
+    assert DEFAULT_CONFIG["ai_watch_no_stream_strike_limit"] == 2
+    assert DEFAULT_CONFIG["ai_watch_no_stream_strike_reasons"] == ["no_stream_trade"]
     cfg = load_config()
     assert cfg["ai_watch_enabled"] is True
     # Live bot_config may flip agreement; defaults document the knobs.
