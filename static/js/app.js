@@ -19,6 +19,7 @@ import { init as initNews }                      from './news.js?v=134';
 import { init as initLeaderboard }               from './leaderboard.js?v=134';
 import { init as initPriceSpikes }               from './priceSpikes.js?v=134';
 import { init as initEngine }                    from './engine.js?v=134';
+import { init as initLeverDesk }                 from './leverDesk.js?v=179';
 import { init as initAdmin, open as openAdmin, toggle as toggleAdmin }  from './admin.js?v=136';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';
@@ -220,6 +221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { initLeaderboard(document.querySelector('[data-leaderboard]')); }         catch (e) { console.error('[app] initLeaderboard', e); }
   try { initPriceSpikes(document.querySelector('[data-price-spikes]')); }        catch (e) { console.error('[app] initPriceSpikes', e); }
   try { initEngine(document.querySelector('[data-panel="engine"]')); }           catch (e) { console.error('[app] initEngine', e); }
+  try { initLeverDesk(document.querySelector('[data-panel="lever-desk"]')); }    catch (e) { console.error('[app] initLeverDesk', e); }
   try { _initBbLive(); }                                                          catch (e) { console.error('[app] initBbLive', e); }
   if (!_isMobile) {
     try { initTradingView(document.querySelector('[data-panel="tradingview"]')); } catch (e) { console.error('[app] initTradingView', e); }

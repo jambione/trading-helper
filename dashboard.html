@@ -29,7 +29,7 @@
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
             rel="stylesheet"
         />
-        <link rel="stylesheet" href="/static/css/styles.css?v=160" />
+        <link rel="stylesheet" href="/static/css/styles.css?v=161" />
         <!-- TradingView tv.js is loaded on first chart open (tradingview.js) -->
     </head>
     <body>
@@ -184,6 +184,21 @@
                 </div>
             </div>
             <div data-engine-body class="engine-body hidden"></div>
+        </section>
+
+        <!-- ── LEVER DESK (owner only — keep/kill after close) ── -->
+        <section data-panel="lever-desk" class="lever-desk" aria-label="Lever Desk">
+            <div class="lever-desk-header">
+                <span class="panel-title">Lever Desk</span>
+                <span data-ld-verdict class="ld-chip">—</span>
+                <span data-ld-title class="ld-title"></span>
+                <span data-ld-meta class="ld-meta"></span>
+                <div class="lever-desk-actions">
+                    <button type="button" data-ld-refresh class="btn btn--ghost btn--sm">Refresh</button>
+                    <button type="button" data-ld-toggle class="btn btn--ghost btn--sm">Score</button>
+                </div>
+            </div>
+            <div data-ld-body class="lever-desk-body hidden"></div>
         </section>
 
         <!-- Mobile-only pager: Scan · Book -->
@@ -822,7 +837,7 @@
                     .catch((e) => console.warn("[sw] registration failed", e));
             }
         </script>
-        <script type="module" src="/static/js/app.js?v=178"></script>
+        <script type="module" src="/static/js/app.js?v=179"></script>
 
         <!-- ── Scrolling ticker feed ───────────────────────────────────── -->
         <script>

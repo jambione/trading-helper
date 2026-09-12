@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "levers": [
+    {
+      "id": "green_catchup_trail",
+      "title": "Green catch-up time-decay trail",
+      "hypothesis": "Idle raise of local_stop on green names improves hold capture without taxing runners.",
+      "status": "live",
+      "shipped_at": "2026-09-10",
+      "knobs": {
+        "ai_local_trail_time_decay_enabled": true,
+        "ai_local_trail_decay_idle_sec": 8.0,
+        "ai_local_trail_decay_step_r": 0.05
+      },
+      "baseline_sessions": ["2026-09-09"],
+      "score": {
+        "kind": "hold_capture",
+        "min_mfe_r": 0.25,
+        "min_n": 5,
+        "pass": { "median_capture_gte": 0.40 },
+        "kill": { "median_capture_lt": 0.15 }
+      },
+      "next_on_keep": "",
+      "next_on_kill": "revert time_decay_enabled to false (manual; API will not write bot_config)"
+    }
+  ]
+}

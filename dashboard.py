@@ -4533,6 +4533,155 @@ async def api_engine_report(request: Request):
     return JSONResponse({"ok": True, "days": days, "size": size, "report": report})
 
 
+# ── Lever Desk (operator keep/kill — not on /api/state) ───────────────────────
+
+_lever_desk_mod = None
+_ld_cache: dict = {"t": 0.0, "days": None, "payload": None}
+_LD_CACHE_SEC = 60.0
+
+
+def _get_lever_desk():
+    """Lazy-import tools/lever_desk.py (tools/ is not a package)."""
+    global _lever_desk_mod
+    if _lever_desk_mod is None:
+        import importlib.util
+        path = Path(__file__).parent / "tools" / "lever_desk.py"
+        spec = importlib.util.spec_from_file_location("lever_desk", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _lever_desk_mod = mod
+    return _lever_desk_mod
+
+
+def _require_lever_desk(request: Request) -> tuple[str, JSONResponse | None]:
+    """Admin when auth is on; open on localhost / auth-off (like engine report)."""
+    if not is_auth_required():
+        return "local", None
+    return _require_admin(request)
+
+
+def _ld_cache_clear():
+    _ld_cache["payload"] = None
+    _ld_cache["t"] = 0.0
+    _ld_cache["days"] = None
+
+
+@app.get("/api/lever-desk")
+async def api_lever_desk(request: Request):
+    """Score the active product lever. On-demand; never part of /api/state."""
+    _user, err = _require_lever_desk(request)
+    if err:
+        return err
+    try:
+        days = int(request.query_params.get("days", "10"))
+    except ValueError:
+        days = 10
+    refresh = request.query_params.get("refresh", "") in ("1", "true", "yes")
+
+    def _build():
+        mod = _get_lever_desk()
+        if not mod.REGISTRY_PATH.exists():
+            return {"ok": False, "error": "no registry", "_status": 404}
+        now = time.monotonic()
+        if (
+            not refresh
+            and _ld_cache["payload"] is not None
+            and _ld_cache["days"] == days
+            and (now - float(_ld_cache["t"])) < _LD_CACHE_SEC
+        ):
+            return _ld_cache["payload"]
+        payload = mod.snapshot(days_back=days)
+        payload["ok"] = True
+        _ld_cache["t"] = now
+        _ld_cache["days"] = days
+        _ld_cache["payload"] = payload
+        return payload
+
+    loop = asyncio.get_running_loop()
+    try:
+        payload = await loop.run_in_executor(None, _build)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    status = int(payload.pop("_status", 200))
+    if status != 200:
+        return JSONResponse(payload, status_code=status)
+    return JSONResponse(payload)
+
+
+@app.post("/api/lever-desk/classify")
+async def api_lever_desk_classify(request: Request):
+    _user, err = _require_lever_desk(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    text = str(body.get("text") or "")
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, lambda: _get_lever_desk().classify(text))
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/api/lever-desk/verdict")
+async def api_lever_desk_verdict(request: Request):
+    username, err = _require_lever_desk(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    verdict = str(body.get("verdict") or "").upper().strip()
+    note = str(body.get("note") or "")
+
+    def _write():
+        mod = _get_lever_desk()
+        snap = mod.snapshot(days_back=10)
+        score = (snap.get("lever") or {}).get("score")
+        out = mod.record_verdict(
+            verdict, note=note, operator=username or "", score=score)
+        _ld_cache_clear()
+        return out
+
+    loop = asyncio.get_running_loop()
+    try:
+        out = await loop.run_in_executor(None, _write)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, **out})
+
+
+@app.post("/api/lever-desk/activate")
+async def api_lever_desk_activate(request: Request):
+    _user, err = _require_lever_desk(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    lever_id = str(body.get("id") or "").strip()
+    if not lever_id:
+        return JSONResponse({"ok": False, "error": "id required"}, status_code=400)
+
+    def _act():
+        out = _get_lever_desk().activate(lever_id)
+        _ld_cache_clear()
+        return out
+
+    loop = asyncio.get_running_loop()
+    try:
+        out = await loop.run_in_executor(None, _act)
+    except KeyError:
+        return JSONResponse({"ok": False, "error": "unknown lever"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, **out})
+
+
 @app.post("/api/ticker-log/clear")
 async def api_clear():
     loop = asyncio.get_running_loop()

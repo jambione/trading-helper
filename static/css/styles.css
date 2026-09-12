@@ -4480,6 +4480,125 @@ body.engine-visible .engine-bar { display: block; }
 
 body.mobile .engine-bar { display: none !important; }
 
+/* ── Lever Desk (owner only — keep/kill after close) ─────────── */
+.lever-desk {
+  display: none;
+  margin: 0 14px 10px;
+  padding: 8px 14px;
+  background: var(--nav2);
+  border: 1px solid var(--border-hi);
+  border-radius: 10px;
+}
+body.user-jmb .lever-desk,
+body.engine-visible .lever-desk { display: block; }
+
+.lever-desk-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.lever-desk-actions { display: flex; gap: 6px; margin-left: auto; }
+.ld-title {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+.ld-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.ld-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-hi);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.ld-chip--keep    { color: #4ade80; border-color: rgba(74, 222, 128, 0.45); font-weight: 700; }
+.ld-chip--kill    { color: #f87171; border-color: rgba(248, 113, 113, 0.5); font-weight: 700; }
+.ld-chip--measure { color: #fbbf24; border-color: rgba(251, 191, 36, 0.45); font-weight: 700; }
+
+.lever-desk-body {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+body.mobile .lever-desk-body { display: none !important; }
+
+.ld-banner {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.ld-banner--warn {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+.ld-hypothesis { font-size: 13px; color: var(--text-dim); margin: 0 0 8px; }
+.ld-verdict-line { font-size: 13px; margin: 8px 0; color: var(--text); }
+.ld-knobs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.ld-knob {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.ld-table {
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin: 8px 0 12px;
+}
+.ld-table th, .ld-table td {
+  padding: 3px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.ld-table th:first-child, .ld-table td:first-child { text-align: left; }
+.ld-table th { color: var(--text-muted); text-transform: uppercase; font-size: 10px; }
+.ld-note { font-size: 12px; color: var(--text-dim); margin: 8px 0; }
+.ld-note--err { color: #f87171; }
+.ld-details { margin: 8px 0; font-size: 12px; color: var(--text-dim); }
+.ld-list { margin: 6px 0 0 16px; padding: 0; }
+.ld-list li { margin: 2px 0; }
+.ld-anchor { color: var(--text-muted); font-size: 11px; }
+.ld-record, .ld-classify {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card, transparent);
+}
+.ld-record-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+.ld-note-input, .ld-classify-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.ld-record-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.ld-btn--keep { color: #4ade80; border-color: rgba(74, 222, 128, 0.45); }
+.ld-btn--kill { color: #f87171; border-color: rgba(248, 113, 113, 0.5); }
+.ld-doctrine { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 700px) {
+  .ld-doctrine { grid-template-columns: 1fr; }
+}
+
 /* ── In-page toasts ─────────────────────────────────────────── */
 #toast-container {
   position: fixed;

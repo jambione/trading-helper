@@ -157,6 +157,15 @@ export const api = {
     request('POST', '/api/engine/restart', {},
             secret ? { 'X-Engine-Secret': secret } : undefined),
   getEngineReport: (days = 14) => request('GET', `/api/engine/report?days=${days}`),
+  // Lever Desk (operator keep/kill — admin when auth on)
+  getLeverDesk: (days = 10, refresh = false) =>
+    request('GET', `/api/lever-desk?days=${days}${refresh ? '&refresh=1' : ''}`),
+  classifyLeverIdea: (text) =>
+    request('POST', '/api/lever-desk/classify', { text }),
+  recordLeverVerdict: (verdict, note) =>
+    request('POST', '/api/lever-desk/verdict', { verdict, note }),
+  activateLever: (id) =>
+    request('POST', '/api/lever-desk/activate', { id }),
   getAccount:      ()       => request('GET',  '/api/account'),
   saveAccount:     body     => request('POST', '/api/account', body),
   changePassword:  body     => request('POST', '/api/account/password', body),
