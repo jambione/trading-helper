@@ -12,7 +12,7 @@
  */
 
 import { subscribe, selectTicker, get } from './store.js?v=134';
-import { api } from './api.js?v=133';
+import { api } from './api.js?v=181';
 
 // Start enabled if the browser already granted permission in a prior session
 let _enabled = (typeof Notification !== 'undefined' && Notification.permission === 'granted');

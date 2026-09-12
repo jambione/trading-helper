@@ -31,6 +31,16 @@ def test_api_helpers_exist():
     assert "/api/lever-desk" in _API
 
 
+def test_lever_desk_and_app_share_one_api_module_pin():
+    """Two ?v= pins for api.js → two module instances → getLeverDesk missing."""
+    import re
+    app_pins = set(re.findall(r"api\.js\?v=(\d+)", _APP))
+    ld_pins = set(re.findall(r"api\.js\?v=(\d+)", _LD))
+    assert app_pins, "app.js must pin api.js"
+    assert ld_pins, "leverDesk.js must pin api.js"
+    assert app_pins == ld_pins, f"api.js pin mismatch app={app_pins} leverDesk={ld_pins}"
+
+
 def test_css_shows_for_owner_and_not_in_hidden_block():
     assert ".lever-desk" in _CSS
     assert "body.user-jmb .lever-desk" in _CSS

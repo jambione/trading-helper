@@ -5,7 +5,7 @@
  * verdict, and classify new ideas. Never writes trading knobs.
  */
 
-import { api } from './api.js?v=134';
+import { api } from './api.js?v=181';
 
 let $root, $verdict, $title, $meta, $body, $toggle;
 let _open = false;
