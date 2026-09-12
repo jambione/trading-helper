@@ -330,19 +330,34 @@ def concurrency_for_day(
         "n_outcomes": len(outcomes),
         "seated_source": seated_src,
         "open_source": open_src,
+        # Filled in score_day_bundle once hot_rate is known; placeholder here.
         "phase1_read": _phase1_read(peaks_a, peaks_o),
     }
 
 
-def _phase1_read(peak_a: int, peak_o: int) -> str:
+def _phase1_read(
+    peak_a: int,
+    peak_o: int,
+    *,
+    pct_armable_ge_3: float | None = None,
+    hot_rate: float | None = None,
+) -> str:
+    """Terse one-liner for TLDR table (not a long essay)."""
     gap = peak_a - peak_o
-    if gap >= 2 and peak_a >= 3 and peak_o <= 1:
-        return "seating/earlier-book problem (armable≥3 often available, open≤1)"
-    if gap <= 1 and peak_a < 2:
-        return "setup scarcity (armable rarely ≥2; gap small)"
-    if gap >= 2:
-        return "concurrency left on table (armable peak ahead of opens)"
-    return "mixed / modest gap"
+    bits: list[str] = []
+    if pct_armable_ge_3 is not None and pct_armable_ge_3 < 0.01:
+        bits.append("never 3 armable")
+    elif gap >= 2 and peak_a >= 3 and peak_o <= 1:
+        bits.append("seat miss")
+    elif gap <= 1 and peak_a < 2:
+        bits.append("scarce setups")
+    elif gap >= 2:
+        bits.append("gap on table")
+    if hot_rate is not None and hot_rate >= 0.5:
+        bits.append("arrived-hot high")
+    elif hot_rate is not None and hot_rate >= 0.3:
+        bits.append("arrived-hot mid")
+    return "; ".join(bits) if bits else "mixed"
 
 
 def arrived_hot_for_day(
@@ -440,6 +455,13 @@ def score_day_bundle(
     )
     hot = arrived_hot_for_day(day, intervals, funnel, kept_first)
     dollars = dollar_deployment(outcomes_by_day.get(day) or [], conc["peak_open"])
+    hot_rate = hot.get("mistimed_first_hot_rate")
+    conc["phase1_read"] = _phase1_read(
+        int(conc["peak_armable_concurrent"]),
+        int(conc["peak_open"]),
+        pct_armable_ge_3=conc.get("pct_minutes_armable_ge_3"),
+        hot_rate=float(hot_rate) if hot_rate is not None else None,
+    )
     return {
         "day": day,
         "method": METHOD,
@@ -453,6 +475,7 @@ def score_day_bundle(
             "kept_symbols_instrumented": hot.get("kept_symbols_instrumented"),
         },
         "dollars": dollars,
+        "read": conc["phase1_read"],
     }
 
 
@@ -500,84 +523,128 @@ def _fmt_num(x: Any, nd: int = 2) -> str:
         return str(x)
 
 
+def _range_label(payload: dict) -> str:
+    a, b = payload.get("day_from"), payload.get("day_to")
+    if a == b:
+        return str(a)
+    return f"{a}..{b}"
+
+
+def _pl_cell(pl: Any) -> str:
+    if pl is None:
+        return "—"
+    return f"{float(pl):+.2f}"
+
+
+def _hot_sample_line(syms: list[dict], limit: int = 5) -> str:
+    if not syms:
+        return "(none)"
+    parts = []
+    for s in syms[:limit]:
+        rsi = s.get("first_rsi")
+        rsi_s = f"{rsi:.0f}" if rsi is not None else "—"
+        why = str(s.get("first_refuse_why") or "").replace("_heat", "").replace("_", " ")
+        parts.append(
+            f"{s.get('symbol')} {why} {rsi_s} @{str(s.get('time_et') or '')[:5]}"
+        )
+    return "; ".join(parts)
+
+
+def render_tldr_lines(payload: dict, *, hot_limit: int = 5) -> list[str]:
+    """Short scannable block — default stdout + top of summary.md."""
+    lines = [f"overlap_miss  {_range_label(payload)}", ""]
+    hdr = (
+        f"{'day':<10} {'armable':>7} {'seated':>7} {'open':>5} {'gap':>4} "
+        f"{'open≥2%':>7} {'hot%':>5} {'$':>7}  read"
+    )
+    lines.append(hdr)
+    for r in payload.get("days") or []:
+        c = r.get("concurrency") or {}
+        a = r.get("arrived_hot") or {}
+        d = r.get("dollars") or {}
+        read = r.get("read") or c.get("phase1_read") or "—"
+        lines.append(
+            f"{r['day']:<10} "
+            f"{c.get('peak_armable_concurrent', 0):>7} "
+            f"{c.get('peak_seated', 0):>7} "
+            f"{c.get('peak_open', 0):>5} "
+            f"{c.get('gap_armable_minus_open', 0):>4} "
+            f"{_fmt_pct(c.get('pct_minutes_open_ge_2')).replace('%', ''):>7} "
+            f"{_fmt_pct(a.get('mistimed_first_hot_rate')).replace('%', ''):>5} "
+            f"{_pl_cell(d.get('day_realized_pl_usd')):>7}  {read}"
+        )
+    pooled = payload.get("pooled") or {}
+    lines += [
+        "",
+        f"pooled: armable≥3 min%={_fmt_pct(pooled.get('pct_minutes_armable_ge_3_avg'))}  "
+        f"open≥2 min%={_fmt_pct(pooled.get('pct_minutes_open_ge_2_avg'))}  "
+        f"hot%={_fmt_pct(pooled.get('mistimed_first_hot_rate_avg'))}  "
+        f"sum$={_fmt_num(pooled.get('day_realized_pl_usd_sum'), 2)}",
+        "",
+    ]
+    hot_bits = []
+    for r in payload.get("days") or []:
+        syms = (r.get("arrived_hot") or {}).get("arrived_hot_symbols") or []
+        if syms:
+            hot_bits.append(_hot_sample_line(syms, hot_limit))
+            break
+    lines.append(f"arrived-hot (top {hot_limit}): {hot_bits[0] if hot_bits else '(none)'}")
+    return lines
+
+
 def render_summary(payload: dict) -> str:
     lines = [
         "# Overlap miss digest",
         "",
-        f"Generated `{payload.get('generated_at')}`  ·  "
-        f"range `{payload.get('day_from')}` → `{payload.get('day_to')}`"
+        f"Generated `{payload.get('generated_at')}`  ·  `{_range_label(payload)}`"
         + (f"  ·  label `{payload['label']}`" if payload.get("label") else ""),
         "",
-        f"**Method:** {METHOD}",
+        "## TLDR",
         "",
-        "## Per day",
+        "```",
+        *render_tldr_lines(payload, hot_limit=5),
+        "```",
         "",
-        "| day | peak_armable | peak_seated | peak_open | gap | "
-        "armable≥3 min% | open≥2 min% | mistimed_first_hot | day $ | read |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "## Per day (detail)",
+        "",
+        "| day | armable | seated | open | gap | open≥2% | hot% | $ | read |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for r in payload.get("days") or []:
         c = r.get("concurrency") or {}
         a = r.get("arrived_hot") or {}
         d = r.get("dollars") or {}
-        pl = d.get("day_realized_pl_usd")
-        pl_s = f"${pl:+.2f}" if pl is not None else "—"
         lines.append(
             f"| {r['day']} | {c.get('peak_armable_concurrent')} | "
             f"{c.get('peak_seated')} | {c.get('peak_open')} | "
             f"{c.get('gap_armable_minus_open')} | "
-            f"{_fmt_pct(c.get('pct_minutes_armable_ge_3'))} | "
             f"{_fmt_pct(c.get('pct_minutes_open_ge_2'))} | "
-            f"{_fmt_pct(a.get('mistimed_first_hot_rate'))} | {pl_s} | "
-            f"{c.get('phase1_read', '')} |"
+            f"{_fmt_pct(a.get('mistimed_first_hot_rate'))} | "
+            f"{_pl_cell(d.get('day_realized_pl_usd'))} | "
+            f"{r.get('read') or c.get('phase1_read', '')} |"
         )
 
     pooled = payload.get("pooled") or {}
     lines += [
         "",
-        "## Pooled",
+        f"**Pooled:** armable≥3 min%={_fmt_pct(pooled.get('pct_minutes_armable_ge_3_avg'))} · "
+        f"open≥2 min%={_fmt_pct(pooled.get('pct_minutes_open_ge_2_avg'))} · "
+        f"hot%={_fmt_pct(pooled.get('mistimed_first_hot_rate_avg'))} · "
+        f"sum$={_fmt_num(pooled.get('day_realized_pl_usd_sum'), 2)}",
         "",
-        f"- days: {pooled.get('n_days')}",
-        f"- avg peak_armable: {_fmt_num(pooled.get('peak_armable_concurrent_avg'), 2)}",
-        f"- avg peak_open: {_fmt_num(pooled.get('peak_open_avg'), 2)}",
-        f"- avg gap_armable_minus_open: {_fmt_num(pooled.get('gap_armable_minus_open_avg'), 2)}",
-        f"- avg % minutes armable≥3: {_fmt_pct(pooled.get('pct_minutes_armable_ge_3_avg'))}",
-        f"- avg % minutes open≥2: {_fmt_pct(pooled.get('pct_minutes_open_ge_2_avg'))}",
-        f"- avg mistimed_first_hot_rate: {_fmt_pct(pooled.get('mistimed_first_hot_rate_avg'))}",
-        f"- sum day realized $: {_fmt_num(pooled.get('day_realized_pl_usd_sum'), 2)}",
+        "<details><summary>Method</summary>",
         "",
-        "## Arrived-hot samples (first day with any)",
+        METHOD,
         "",
-    ]
-    shown = False
-    for r in payload.get("days") or []:
-        syms = (r.get("arrived_hot") or {}).get("arrived_hot_symbols") or []
-        if not syms:
-            continue
-        lines.append(f"### {r['day']}")
-        lines.append("")
-        lines.append("| symbol | why | RSI | time ET |")
-        lines.append("|---|---|---:|---|")
-        for s in syms[:15]:
-            rsi = s.get("first_rsi")
-            rsi_s = f"{rsi:.1f}" if rsi is not None else "—"
-            lines.append(
-                f"| {s.get('symbol')} | {s.get('first_refuse_why')} | "
-                f"{rsi_s} | {s.get('time_et')} |"
-            )
-        lines.append("")
-        shown = True
-        break
-    if not shown:
-        lines.append("_No arrived-hot symbols in range._")
-        lines.append("")
-
-    lines += [
-        "## Kill criteria",
+        "</details>",
+        "",
+        "<details><summary>Kill criteria</summary>",
         "",
         "```",
         KILL_FOOTER,
         "```",
+        "",
+        "</details>",
         "",
     ]
     return "\n".join(lines)
@@ -616,34 +683,35 @@ def write_outputs(payload: dict, label: str | None) -> dict[str, str]:
     }
 
 
-def run(day_from: str, day_to: str, label: str | None = None) -> dict[str, Any]:
-    print(f"overlap_miss_digest  {day_from} → {day_to}  report={_report()}")
-    print(f"method: {METHOD}")
+def run(
+    day_from: str,
+    day_to: str,
+    label: str | None = None,
+    *,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    if verbose:
+        print(f"overlap_miss_digest  {day_from} → {day_to}  report={_report()}")
+        print(f"method: {METHOD}")
+        print("loading shadow arm_ok (may take a bit on large files)…")
+
     intervals = ebb.load_drop_intervals(day_from, day_to)
     funnel = ebb.load_admit_funnel_events(day_from, day_to)
     kept_first = ebb.first_kept_ts_by_symbol(funnel)
-    print("loading shadow arm_ok (may take a bit on large files)…")
     shadow = load_shadow_arm_ok(day_from, day_to)
     outcomes = load_outcomes_by_day(day_from, day_to)
     entry_oks = load_entry_ok(day_from, day_to)
-    print(
-        f"watch_drop_syms={len(intervals)}  funnel={len(funnel)}  "
-        f"shadow_days={len(shadow)}  outcome_days={len(outcomes)}"
-    )
+
+    if verbose:
+        print(
+            f"watch_drop_syms={len(intervals)}  funnel={len(funnel)}  "
+            f"shadow_days={len(shadow)}  outcome_days={len(outcomes)}"
+        )
 
     day_rows = []
     for day in _days(day_from, day_to):
-        row = score_day_bundle(
-            day, shadow, intervals, funnel, kept_first, outcomes, entry_oks)
-        c = row["concurrency"]
-        print(
-            f"  {day}  armable={c['peak_armable_concurrent']}  "
-            f"seated={c['peak_seated']}  open={c['peak_open']}  "
-            f"gap={c['gap_armable_minus_open']}  "
-            f"hot_rate={_fmt_pct(row['arrived_hot'].get('mistimed_first_hot_rate'))}  "
-            f"[{c['phase1_read']}]"
-        )
-        day_rows.append(row)
+        day_rows.append(score_day_bundle(
+            day, shadow, intervals, funnel, kept_first, outcomes, entry_oks))
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -658,7 +726,30 @@ def run(day_from: str, day_to: str, label: str | None = None) -> dict[str, Any]:
     }
     paths = write_outputs(payload, label)
     payload["wrote"] = paths
-    print(f"wrote {paths['summary_md']}")
+
+    # Default: TLDR only. Verbose adds method / kill / fuller hot list / sources.
+    for line in render_tldr_lines(payload, hot_limit=5):
+        print(line)
+    print(f"\nwrote {paths['summary_md']}")
+
+    if verbose:
+        print("\n--- verbose ---")
+        print(f"method: {METHOD}")
+        print()
+        print("kill criteria:")
+        print(KILL_FOOTER)
+        print()
+        for r in day_rows:
+            c = r.get("concurrency") or {}
+            print(
+                f"  {r['day']}  seated_src={c.get('seated_source')}  "
+                f"open_src={c.get('open_source')}  "
+                f"shadow_arm_ok={c.get('n_shadow_arm_ok')}  "
+                f"outcomes={c.get('n_outcomes')}"
+            )
+            syms = (r.get("arrived_hot") or {}).get("arrived_hot_symbols") or []
+            if syms:
+                print(f"  arrived-hot (up to 12): {_hot_sample_line(syms, 12)}")
     return payload
 
 
@@ -668,6 +759,10 @@ def main() -> int:
     ap.add_argument("--from", dest="day_from", default="")
     ap.add_argument("--to", dest="day_to", default="")
     ap.add_argument("--label", default="", help="output stem override")
+    ap.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="also print method, kill criteria, sources, fuller arrived-hot",
+    )
     args = ap.parse_args()
 
     if args.day:
@@ -681,7 +776,7 @@ def main() -> int:
         if day_to < day_from:
             ap.error("--to before --from")
 
-    run(day_from, day_to, label=(args.label or None))
+    run(day_from, day_to, label=(args.label or None), verbose=args.verbose)
     return 0
 
 
