@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import time
@@ -34,6 +35,7 @@ from ai_paths import resolve_report_dir  # noqa: E402
 REGISTRY_PATH = ROOT / "config" / "lever_desk.json"
 VALID_VERDICTS = frozenset({"KEEP", "KILL", "MEASURE"})
 SCORE_KINDS = frozenset({"hold_capture", "session_r"})
+_LEVER_STATUSES = frozenset({"queued", "live", "keep", "kill", "measure"})
 
 
 def _desk_dir(report_dir: Path | None = None) -> Path:
@@ -43,17 +45,189 @@ def _desk_dir(report_dir: Path | None = None) -> Path:
     return out
 
 
-def load_registry(path: Path | None = None) -> dict[str, Any]:
-    p = Path(path) if path is not None else REGISTRY_PATH
-    if not p.exists():
+def runtime_registry_path(report_dir: Path | None = None) -> Path:
+    return _desk_dir(report_dir) / "registry.json"
+
+
+def _read_registry_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
         return {"version": 1, "levers": []}
-    data = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "levers": []}
     if not isinstance(data, dict):
         return {"version": 1, "levers": []}
-    levers = data.get("levers")
-    if not isinstance(levers, list):
+    if not isinstance(data.get("levers"), list):
         data["levers"] = []
     return data
+
+
+def load_registry(
+    path: Path | None = None,
+    report_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Prefer the mini runtime registry (dashboard edits); else tracked config."""
+    if path is not None:
+        return _read_registry_file(Path(path))
+    runtime = runtime_registry_path(report_dir)
+    if runtime.exists():
+        return _read_registry_file(runtime)
+    return _read_registry_file(REGISTRY_PATH)
+
+
+def registry_source(report_dir: Path | None = None) -> str:
+    if runtime_registry_path(report_dir).exists():
+        return "runtime"
+    if REGISTRY_PATH.exists():
+        return "config"
+    return "empty"
+
+
+def save_registry(registry: dict[str, Any], report_dir: Path | None = None) -> Path:
+    """Write operator registry under the report dir — never bot_config / git config."""
+    path = runtime_registry_path(report_dir)
+    payload = {
+        "version": int(registry.get("version") or 1),
+        "levers": list(registry.get("levers") or []),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _slugify(text: str) -> str:
+    raw = re.sub(r"[^a-zA-Z0-9]+", "_", (text or "").strip().lower()).strip("_")
+    return (raw[:48] or "lever")
+
+
+def normalize_lever(raw: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("lever must be an object")
+    title = str(raw.get("title") or "").strip()
+    lid = str(raw.get("id") or "").strip() or _slugify(title)
+    lid = _slugify(lid) if lid else "lever"
+    if not title:
+        title = lid
+    hypothesis = str(raw.get("hypothesis") or "").strip()
+    status = str(raw.get("status") or "live").strip().lower()
+    if status not in _LEVER_STATUSES:
+        status = "live"
+    shipped = str(raw.get("shipped_at") or "").strip()
+    if not shipped:
+        shipped = eod.bars.day_of(time.time())
+
+    knobs = raw.get("knobs")
+    if isinstance(knobs, str):
+        knobs = knobs.strip()
+        knobs = json.loads(knobs) if knobs else {}
+    if knobs is None:
+        knobs = {}
+    if not isinstance(knobs, dict):
+        raise ValueError("knobs must be a JSON object")
+
+    baseline = raw.get("baseline_sessions") or []
+    if isinstance(baseline, str):
+        baseline = [x.strip() for x in baseline.split(",") if x.strip()]
+    if not isinstance(baseline, list):
+        baseline = []
+
+    score_in = raw.get("score") if isinstance(raw.get("score"), dict) else {}
+    # Flat form fields from the dashboard
+    kind = str(raw.get("score_kind") or score_in.get("kind") or "hold_capture").strip()
+    if kind not in SCORE_KINDS:
+        raise ValueError(f"score.kind must be one of {sorted(SCORE_KINDS)}")
+    try:
+        min_mfe = float(raw.get("min_mfe_r", score_in.get("min_mfe_r", 0.25)))
+    except (TypeError, ValueError) as e:
+        raise ValueError("min_mfe_r must be a number") from e
+    try:
+        min_n = int(raw.get("min_n", score_in.get("min_n", 5)))
+    except (TypeError, ValueError) as e:
+        raise ValueError("min_n must be an int") from e
+
+    pas = score_in.get("pass") if isinstance(score_in.get("pass"), dict) else {}
+    kill = score_in.get("kill") if isinstance(score_in.get("kill"), dict) else {}
+    if raw.get("pass_median_capture_gte") is not None:
+        pas = {**pas, "median_capture_gte": float(raw["pass_median_capture_gte"])}
+    if raw.get("kill_median_capture_lt") is not None:
+        kill = {**kill, "median_capture_lt": float(raw["kill_median_capture_lt"])}
+    if raw.get("pass_median_live_r_gte") is not None:
+        pas = {**pas, "median_live_r_gte": float(raw["pass_median_live_r_gte"])}
+    if raw.get("kill_median_live_r_lt") is not None:
+        kill = {**kill, "median_live_r_lt": float(raw["kill_median_live_r_lt"])}
+
+    score: dict[str, Any] = {
+        "kind": kind,
+        "min_n": max(1, min_n),
+    }
+    if kind == "hold_capture":
+        score["min_mfe_r"] = min_mfe
+        score["pass"] = pas or {"median_capture_gte": 0.40}
+        score["kill"] = kill or {"median_capture_lt": 0.15}
+    else:
+        score["pass"] = pas
+        score["kill"] = kill
+
+    return {
+        "id": lid,
+        "title": title,
+        "hypothesis": hypothesis,
+        "status": status,
+        "shipped_at": shipped,
+        "knobs": knobs,
+        "baseline_sessions": [str(x) for x in baseline],
+        "score": score,
+        "next_on_keep": str(raw.get("next_on_keep") or ""),
+        "next_on_kill": str(raw.get("next_on_kill") or ""),
+    }
+
+
+def upsert_lever(
+    raw: dict[str, Any],
+    *,
+    report_dir: Path | None = None,
+    make_active: bool = True,
+) -> dict[str, Any]:
+    """Create or update a lever from the dashboard. Writes runtime registry only."""
+    report_dir = report_dir or resolve_report_dir()
+    # Seed runtime from tracked config on first edit so we don't lose the default.
+    if not runtime_registry_path(report_dir).exists() and REGISTRY_PATH.exists():
+        save_registry(_read_registry_file(REGISTRY_PATH), report_dir)
+
+    lever = normalize_lever(raw)
+    registry = load_registry(report_dir=report_dir)
+    levers = [L for L in (registry.get("levers") or []) if isinstance(L, dict)]
+    found = False
+    for i, L in enumerate(levers):
+        if str(L.get("id")) == lever["id"]:
+            levers[i] = lever
+            found = True
+            break
+    if not found:
+        levers.append(lever)
+
+    if make_active or lever["status"] == "live":
+        lever["status"] = "live"
+        for L in levers:
+            if str(L.get("id")) != lever["id"] and str(L.get("status")) == "live":
+                L["status"] = "queued"
+
+    registry["levers"] = levers
+    path = save_registry(registry, report_dir)
+    active_id = None
+    if make_active:
+        activate(lever["id"], report_dir=report_dir)
+        active_id = lever["id"]
+    else:
+        active_id = load_state(report_dir).get("active_id")
+    return {
+        "lever": lever,
+        "created": not found,
+        "active_id": active_id,
+        "registry_path": str(path),
+        "registry_source": "runtime",
+    }
 
 
 def load_state(report_dir: Path | None = None) -> dict[str, Any]:
@@ -388,11 +562,12 @@ def snapshot(
     days, by_day = ca.load_sessions(days_back, report_dir, repo)
     trig = _exit_trig(report_dir, repo, days)
 
-    registry = load_registry()
+    registry = load_registry(report_dir=report_dir)
     state = load_state(report_dir)
     status_overlay = load_status(report_dir)
     lever = active_lever(registry, state)
     scored = score_lever(lever, by_day, days_back=days_back, gap=gap, trig=trig)
+    src = registry_source(report_dir)
 
     levers_summary = []
     live_ids = []
@@ -419,6 +594,8 @@ def snapshot(
             "status": status_overlay.get(lid) or str(lever.get("status") or "queued"),
             "shipped_at": lever.get("shipped_at") or "",
             "knobs": lever.get("knobs") or {},
+            "baseline_sessions": lever.get("baseline_sessions") or [],
+            "score_rules": lever.get("score") or {},
             "score": scored,
             "next_on_keep": lever.get("next_on_keep") or "",
             "next_on_kill": lever.get("next_on_kill") or "",
@@ -442,6 +619,7 @@ def snapshot(
         "active_id": (lever or {}).get("id") if lever else None,
         "lever": lever_out,
         "levers": levers_summary,
+        "registry_source": src,
         "doctrine": {
             "keep": [{"item": k.get("item"), "anchor": k.get("anchor")} for k in (audit.get("keep") or [])],
             "kill": [{"item": k.get("item"), "anchor": k.get("anchor")} for k in (audit.get("kill") or [])],
@@ -467,7 +645,7 @@ def record_verdict(
         raise ValueError(f"verdict must be one of {sorted(VALID_VERDICTS)}")
 
     report_dir = report_dir or resolve_report_dir()
-    registry = load_registry()
+    registry = load_registry(report_dir=report_dir)
     state = load_state(report_dir)
     lever = active_lever(registry, state)
     if not lever:
@@ -516,14 +694,28 @@ def record_verdict(
 
 
 def activate(lever_id: str, *, report_dir: Path | None = None) -> dict[str, Any]:
-    registry = load_registry()
+    report_dir = report_dir or resolve_report_dir()
+    registry = load_registry(report_dir=report_dir)
     ids = {str(L.get("id")) for L in (registry.get("levers") or []) if isinstance(L, dict)}
     if lever_id not in ids:
         raise KeyError(lever_id)
+    # Persist "one live topic" into the runtime registry (seed from git config
+    # on first activate so dashboard edits don't lose the default lever).
+    if not runtime_registry_path(report_dir).exists() and REGISTRY_PATH.exists():
+        save_registry(_read_registry_file(REGISTRY_PATH), report_dir)
+        registry = load_registry(report_dir=report_dir)
+    for L in registry.get("levers") or []:
+        if not isinstance(L, dict):
+            continue
+        if str(L.get("id")) == lever_id:
+            L["status"] = "live"
+        elif str(L.get("status")) == "live":
+            L["status"] = "queued"
+    save_registry(registry, report_dir)
     state = load_state(report_dir)
     state["active_id"] = lever_id
     save_state(state, report_dir)
-    return {"active_id": lever_id}
+    return {"active_id": lever_id, "registry_source": registry_source(report_dir)}
 
 
 def main() -> int:

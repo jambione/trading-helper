@@ -7,7 +7,7 @@
  */
 
 import { subscribe, selectTicker, get } from './store.js?v=134';
-import { api } from './api.js?v=181';
+import { api } from './api.js?v=182';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 
 let _rowsEl     = null;   // <div data-ticker-rows>

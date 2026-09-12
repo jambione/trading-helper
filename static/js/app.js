@@ -5,7 +5,7 @@
  * No rendering logic lives here — that belongs in the component modules.
  */
 
-import { connect, on, api }                      from './api.js?v=181';
+import { connect, on, api }                      from './api.js?v=182';
 import { subscribe, set, selectTicker }          from './store.js?v=134';
 import { init as initFeeds }                     from './feeds.js?v=174';
 import { init as initTickers }                   from './tickers.js?v=147';
@@ -19,7 +19,7 @@ import { init as initNews }                      from './news.js?v=134';
 import { init as initLeaderboard }               from './leaderboard.js?v=134';
 import { init as initPriceSpikes }               from './priceSpikes.js?v=134';
 import { init as initEngine }                    from './engine.js?v=134';
-import { init as initLeverDesk }                 from './leverDesk.js?v=181';
+import { init as initLeverDesk }                 from './leverDesk.js?v=182';
 import { init as initAdmin, open as openAdmin, toggle as toggleAdmin }  from './admin.js?v=136';
 import { init as initHotkeys, registerHotkey }   from './hotkeys.js?v=133';
 import { init as initSessions, refresh as refreshSessions } from './sessions.js';

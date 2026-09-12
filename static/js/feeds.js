@@ -8,7 +8,7 @@
  */
 
 import { subscribe, get } from './store.js?v=134';
-import { api }       from './api.js?v=181';
+import { api }       from './api.js?v=182';
 import { copyTicker, isTvClickOpenEnabled } from './tickers.js?v=147';
 import { createSymbolMembershipWatcher } from './panelFlash.js?v=136';
 import * as notifications from './notifications.js?v=133';

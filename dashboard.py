@@ -4682,6 +4682,35 @@ async def api_lever_desk_activate(request: Request):
     return JSONResponse({"ok": True, **out})
 
 
+@app.post("/api/lever-desk/lever")
+async def api_lever_desk_upsert(request: Request):
+    """Create or update a lever topic from the dashboard (runtime registry only)."""
+    _user, err = _require_lever_desk(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    make_active = body.get("make_active", True)
+    if isinstance(make_active, str):
+        make_active = make_active.lower() not in ("0", "false", "no")
+
+    def _write():
+        out = _get_lever_desk().upsert_lever(body, make_active=bool(make_active))
+        _ld_cache_clear()
+        return out
+
+    loop = asyncio.get_running_loop()
+    try:
+        out = await loop.run_in_executor(None, _write)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, **out})
+
+
 @app.post("/api/ticker-log/clear")
 async def api_clear():
     loop = asyncio.get_running_loop()

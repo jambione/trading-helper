@@ -139,6 +139,33 @@ def test_activate_unknown_404(client):
     assert res.status_code == 404
 
 
+def test_upsert_lever_from_dashboard(client):
+    bot = Path(__file__).resolve().parents[1] / "config" / "bot_config.json"
+    before = bot.read_bytes() if bot.exists() else None
+    res = client.post("/api/lever-desk/lever", json={
+        "id": "occupancy_dead_reentry",
+        "title": "Dead reentry off",
+        "hypothesis": "Seat liquid names instead of all-day bench after scratch",
+        "shipped_at": "2026-09-12",
+        "knobs": {"ai_dead_reentry_block": False},
+        "score_kind": "hold_capture",
+        "min_n": 5,
+        "make_active": True,
+    })
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ok"] is True
+    assert body["active_id"] == "occupancy_dead_reentry"
+    assert (client.tmp_path / "lever_desk" / "registry.json").exists()
+    if before is not None:
+        assert bot.read_bytes() == before
+
+    got = client.get("/api/lever-desk?refresh=1")
+    assert got.status_code == 200
+    assert got.json()["active_id"] == "occupancy_dead_reentry"
+    assert got.json()["registry_source"] == "runtime"
+
+
 def test_auth_on_non_admin_403(tmp_path, monkeypatch):
     monkeypatch.setattr(d, "is_auth_required", lambda: True)
     d._ld_cache_clear()

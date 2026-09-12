@@ -211,3 +211,34 @@ def test_unknown_score_kind_is_measure():
     scored = ld.score_lever(lever, by_day, days_back=10, gap=None)
     assert scored["verdict"] == "MEASURE"
     assert "unknown score.kind" in scored["reason"]
+
+
+def test_upsert_lever_writes_runtime_registry_not_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_REPORT_DIR", str(tmp_path))
+    cfg = tmp_path / "config_lever.json"
+    _write_registry(cfg, _base_lever())
+    monkeypatch.setattr(ld, "REGISTRY_PATH", cfg)
+    before = cfg.read_bytes()
+
+    out = ld.upsert_lever({
+        "id": "heat_max_70",
+        "title": "Heat max 70",
+        "hypothesis": "Block EXH>70 FSLY-class arms",
+        "shipped_at": "2026-09-12",
+        "knobs": {"ai_watch_exhaustion_heat_max_pct": 70},
+        "score_kind": "hold_capture",
+        "min_mfe_r": 0.25,
+        "min_n": 5,
+        "pass_median_capture_gte": 0.4,
+        "kill_median_capture_lt": 0.15,
+    }, report_dir=tmp_path, make_active=True)
+
+    assert out["lever"]["id"] == "heat_max_70"
+    assert out["active_id"] == "heat_max_70"
+    assert (tmp_path / "lever_desk" / "registry.json").exists()
+    assert cfg.read_bytes() == before  # tracked config untouched
+    snap = ld.snapshot(days_back=5, report_dir=tmp_path, repo=tmp_path,
+                       cfg={"desk_product": "observe"})
+    assert snap["active_id"] == "heat_max_70"
+    assert snap["registry_source"] == "runtime"
+    assert snap["lever"]["title"] == "Heat max 70"

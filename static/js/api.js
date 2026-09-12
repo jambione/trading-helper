@@ -166,6 +166,8 @@ export const api = {
     request('POST', '/api/lever-desk/verdict', { verdict, note }),
   activateLever: (id) =>
     request('POST', '/api/lever-desk/activate', { id }),
+  saveLever: (body) =>
+    request('POST', '/api/lever-desk/lever', body),
   getAccount:      ()       => request('GET',  '/api/account'),
   saveAccount:     body     => request('POST', '/api/account', body),
   changePassword:  body     => request('POST', '/api/account/password', body),

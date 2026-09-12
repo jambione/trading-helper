@@ -4571,13 +4571,44 @@ body.mobile .lever-desk-body { display: none !important; }
 .ld-list { margin: 6px 0 0 16px; padding: 0; }
 .ld-list li { margin: 2px 0; }
 .ld-anchor { color: var(--text-muted); font-size: 11px; }
-.ld-record, .ld-classify {
+.ld-topic, .ld-record, .ld-classify {
   margin: 12px 0;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card, transparent);
 }
+.ld-topic-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0 10px;
+}
+.ld-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 12px;
+  margin: 8px 0;
+}
+.ld-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ld-field--wide { grid-column: 1 / -1; }
+.ld-input, .ld-select {
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.ld-select { min-width: 200px; }
 .ld-record-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
 .ld-note-input, .ld-classify-input {
   width: 100%;

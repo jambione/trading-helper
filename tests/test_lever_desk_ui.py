@@ -28,7 +28,16 @@ def test_api_helpers_exist():
     assert "classifyLeverIdea" in _API
     assert "recordLeverVerdict" in _API
     assert "activateLever" in _API
+    assert "saveLever" in _API
     assert "/api/lever-desk" in _API
+    assert "/api/lever-desk/lever" in _DASH
+
+
+def test_ui_has_topic_editor_hooks():
+    assert "data-ld-save-topic" in _LD
+    assert "data-ld-pick" in _LD
+    assert "data-ld-activate" in _LD
+    assert "Save & score this topic" in _LD or "save-topic" in _LD
 
 
 def test_lever_desk_and_app_share_one_api_module_pin():

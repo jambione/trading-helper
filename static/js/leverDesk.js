@@ -1,11 +1,11 @@
 /**
  * leverDesk.js — Operator keep/kill strip for the active product lever.
  *
- * One job: load /api/lever-desk on demand, show the scorecard, record a
- * verdict, and classify new ideas. Never writes trading knobs.
+ * Load /api/lever-desk, switch/edit the topic, score it, record a verdict,
+ * classify new ideas. Never writes bot_config / trading knobs.
  */
 
-import { api } from './api.js?v=181';
+import { api } from './api.js?v=182';
 
 let $root, $verdict, $title, $meta, $body, $toggle;
 let _open = false;
@@ -139,6 +139,83 @@ function _doctrineDetails(doctrine) {
     </details>`;
 }
 
+function _topicEditor(data) {
+  const lever = data.lever || {};
+  const rules = lever.score_rules || {};
+  const pas = rules.pass || {};
+  const kill = rules.kill || {};
+  const levers = data.levers || [];
+  const active = data.active_id || lever.id || '';
+  const opts = levers.map(L =>
+    `<option value="${_esc(L.id)}" ${L.id === active ? 'selected' : ''}>${_esc(L.title || L.id)} (${_esc(L.status)})</option>`
+  ).join('');
+  const knobsJson = JSON.stringify(lever.knobs || {}, null, 2);
+  const src = data.registry_source || 'config';
+  return `
+    <div class="ld-topic">
+      <div class="ld-record-label">Topic (what we are scoring)</div>
+      <div class="ld-topic-row">
+        <select data-ld-pick class="ld-select">${opts || '<option value="">(none yet)</option>'}</select>
+        <button type="button" class="btn btn--ghost btn--sm" data-ld-activate>Activate</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-ld-new-topic>New topic</button>
+      </div>
+      <div class="ld-note">Registry: ${_esc(src)} · edits save on the mini under ai_reports/lever_desk/ — not bot_config</div>
+      <div class="ld-form">
+        <label class="ld-field"><span>Id</span>
+          <input data-ld-f-id class="ld-input" value="${_esc(lever.id || '')}" placeholder="green_catchup_trail" /></label>
+        <label class="ld-field"><span>Title</span>
+          <input data-ld-f-title class="ld-input" value="${_esc(lever.title || '')}" /></label>
+        <label class="ld-field ld-field--wide"><span>Hypothesis</span>
+          <textarea data-ld-f-hypothesis class="ld-input" rows="2">${_esc(lever.hypothesis || '')}</textarea></label>
+        <label class="ld-field"><span>Shipped (ET day)</span>
+          <input data-ld-f-shipped class="ld-input" value="${_esc(lever.shipped_at || '')}" placeholder="YYYY-MM-DD" /></label>
+        <label class="ld-field"><span>Score kind</span>
+          <select data-ld-f-kind class="ld-select">
+            <option value="hold_capture" ${rules.kind !== 'session_r' ? 'selected' : ''}>hold_capture</option>
+            <option value="session_r" ${rules.kind === 'session_r' ? 'selected' : ''}>session_r</option>
+          </select></label>
+        <label class="ld-field"><span>Min MFE R</span>
+          <input data-ld-f-min-mfe class="ld-input" type="number" step="0.05" value="${_esc(rules.min_mfe_r ?? 0.25)}" /></label>
+        <label class="ld-field"><span>Min n</span>
+          <input data-ld-f-min-n class="ld-input" type="number" step="1" value="${_esc(rules.min_n ?? 5)}" /></label>
+        <label class="ld-field"><span>Pass capture ≥</span>
+          <input data-ld-f-pass class="ld-input" type="number" step="0.05" value="${_esc(pas.median_capture_gte ?? 0.40)}" /></label>
+        <label class="ld-field"><span>Kill capture &lt;</span>
+          <input data-ld-f-kill class="ld-input" type="number" step="0.05" value="${_esc(kill.median_capture_lt ?? 0.15)}" /></label>
+        <label class="ld-field ld-field--wide"><span>Knobs (JSON, docs only)</span>
+          <textarea data-ld-f-knobs class="ld-input" rows="3">${_esc(knobsJson)}</textarea></label>
+      </div>
+      <div class="ld-topic-row">
+        <button type="button" class="btn btn--sm btn--primary" data-ld-save-topic>Save &amp; score this topic</button>
+        <span data-ld-topic-msg class="ld-note"></span>
+      </div>
+    </div>`;
+}
+
+function _readTopicForm() {
+  const knobsRaw = $body.querySelector('[data-ld-f-knobs]')?.value || '{}';
+  let knobs;
+  try {
+    knobs = JSON.parse(knobsRaw);
+  } catch (e) {
+    throw new Error(`Knobs JSON: ${e.message}`);
+  }
+  return {
+    id: $body.querySelector('[data-ld-f-id]')?.value || '',
+    title: $body.querySelector('[data-ld-f-title]')?.value || '',
+    hypothesis: $body.querySelector('[data-ld-f-hypothesis]')?.value || '',
+    shipped_at: $body.querySelector('[data-ld-f-shipped]')?.value || '',
+    status: 'live',
+    knobs,
+    score_kind: $body.querySelector('[data-ld-f-kind]')?.value || 'hold_capture',
+    min_mfe_r: $body.querySelector('[data-ld-f-min-mfe]')?.value,
+    min_n: $body.querySelector('[data-ld-f-min-n]')?.value,
+    pass_median_capture_gte: $body.querySelector('[data-ld-f-pass]')?.value,
+    kill_median_capture_lt: $body.querySelector('[data-ld-f-kill]')?.value,
+    make_active: true,
+  };
+}
+
 function _renderBody(data) {
   if (!$body) return;
   if (!data) {
@@ -155,6 +232,7 @@ function _renderBody(data) {
   if (gap) {
     html += `<div class="ld-banner ld-banner--warn">${_esc(gap)}</div>`;
   }
+  html += _topicEditor(data);
   html += `<div class="ld-note">Corpus: ${corpus.outcomes_lines ?? '—'} outcomes · ${corpus.events_lines ?? '—'} events</div>`;
   html += `<p class="ld-hypothesis">${_esc(lever.hypothesis || '')}</p>`;
   html += _knobChips(lever.knobs);
@@ -163,7 +241,7 @@ function _renderBody(data) {
   html += _scoreRows(score);
 
   if (latest) {
-    html += `<div class="ld-note">Latest session ${ _esc(latest.session) }
+    html += `<div class="ld-note">Latest session ${_esc(latest.session)}
       (context, not the verdict): n=${latest.n}
       paper ${_fmt(latest.paper_r)} R · live ${_fmt(latest.live_r)} R</div>`;
   }
@@ -196,6 +274,60 @@ function _renderBody(data) {
 }
 
 function _wireBody() {
+  $body.querySelector('[data-ld-activate]')?.addEventListener('click', async () => {
+    const id = $body.querySelector('[data-ld-pick]')?.value;
+    const msg = $body.querySelector('[data-ld-topic-msg]');
+    if (!id) return;
+    try {
+      await api.activateLever(id);
+      if (msg) msg.textContent = `Activated ${id}`;
+      await _load(true);
+    } catch (e) {
+      if (msg) msg.textContent = e.message;
+      else alert(e.message);
+    }
+  });
+
+  $body.querySelector('[data-ld-new-topic]')?.addEventListener('click', () => {
+    const idEl = $body.querySelector('[data-ld-f-id]');
+    const titleEl = $body.querySelector('[data-ld-f-title]');
+    const hypEl = $body.querySelector('[data-ld-f-hypothesis]');
+    const shipEl = $body.querySelector('[data-ld-f-shipped]');
+    const knobsEl = $body.querySelector('[data-ld-f-knobs]');
+    if (idEl) idEl.value = '';
+    if (titleEl) titleEl.value = '';
+    if (hypEl) hypEl.value = '';
+    if (shipEl) shipEl.value = new Date().toISOString().slice(0, 10);
+    if (knobsEl) knobsEl.value = '{\n  \n}';
+    titleEl?.focus();
+  });
+
+  $body.querySelector('[data-ld-save-topic]')?.addEventListener('click', async () => {
+    const msg = $body.querySelector('[data-ld-topic-msg]');
+    try {
+      const body = _readTopicForm();
+      if (!body.title && !body.id) throw new Error('Title or id required');
+      const res = await api.saveLever(body);
+      if (msg) msg.textContent = res.created ? `Created ${res.lever?.id}` : `Updated ${res.lever?.id}`;
+      await _load(true);
+    } catch (e) {
+      if (msg) msg.textContent = e.message;
+      else alert(e.message);
+    }
+  });
+
+  $body.querySelector('[data-ld-pick]')?.addEventListener('change', (ev) => {
+    const id = ev.target.value;
+    const L = (_data?.levers || []).find(x => x.id === id);
+    // Prefill id/title from summary; full fields reload after Activate.
+    if (L) {
+      const idEl = $body.querySelector('[data-ld-f-id]');
+      const titleEl = $body.querySelector('[data-ld-f-title]');
+      if (idEl) idEl.value = L.id || '';
+      if (titleEl) titleEl.value = L.title || '';
+    }
+  });
+
   $body.querySelectorAll('[data-ld-verdict-btn]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const verdict = btn.getAttribute('data-ld-verdict-btn');

@@ -14,7 +14,7 @@
  */
 
 import { subscribe } from './store.js?v=134';
-import { api }       from './api.js?v=181';
+import { api }       from './api.js?v=182';
 
 const SECRET_LS = 'ss:engine-secret'; // pragma: allowlist secret (localStorage key name)
 

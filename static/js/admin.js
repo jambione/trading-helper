@@ -7,7 +7,7 @@
  *   News        — create / delete news items shown in the news feed
  */
 
-import { api } from './api.js?v=181';
+import { api } from './api.js?v=182';
 import { refresh as refreshSessions } from './sessions.js?v=133';
 
 let _backdrop = null;
