@@ -236,8 +236,9 @@ def inventory(report_dir: Path | None = None, repo: Path | None = None) -> dict[
     gap = None
     if n_ev > 100 and n_out < 30:
         gap = (
-            f"events={n_ev} but outcomes={n_out}. This clone is missing the "
-            "closed-trade ledger (often still on the mini). Do not invent P&L."
+            f"events={n_ev} but outcomes={n_out}. Closed-trade ledger looks thin "
+            "on this clone (full outcomes usually live on the mini). "
+            "Do not invent P&L."
         )
     return {
         "roots": [str(r) for r in roots if r.exists()],

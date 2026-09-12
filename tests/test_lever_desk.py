@@ -101,7 +101,19 @@ def test_thin_n_is_measure():
     }
     scored = ld.score_lever(_base_lever(), by_day, days_back=10, gap=None)
     assert scored["verdict"] == "MEASURE"
-    assert "thin n" in scored["reason"]
+    assert "2/2 fills with MFE≥0.25R" in scored["reason"]
+    assert "need 5" in scored["reason"]
+
+
+def test_thin_n_explains_zero_qualifying():
+    # Many fills, none reach the MFE bar — the Wed scorecard empty-sample case.
+    trades = [_outcome(r=0.05, mfe=0.10) for _ in range(8)]
+    by_day = {"2026-09-11": trades}
+    scored = ld.score_lever(_base_lever(), by_day, days_back=10, gap=None)
+    assert scored["verdict"] == "MEASURE"
+    assert "0/8 fills with MFE≥0.25R" in scored["reason"]
+    assert scored["current"]["max_mfe_r"] == 0.10
+    assert "max MFE 0.10R" in scored["reason"]
 
 
 def test_pass_threshold_keep():
@@ -138,8 +150,31 @@ def test_gap_forces_measure(tmp_path, monkeypatch):
     snap = ld.snapshot(days_back=10, report_dir=tmp_path, repo=tmp_path,
                        cfg={"desk_product": "observe"})
     assert snap["gap"]
+    assert snap["corpus"]["outcomes_lines"] < 30
     assert snap["lever"]["score"]["verdict"] == "MEASURE"
     assert "gap" in snap["lever"]["score"]["reason"]
+
+
+def test_snapshot_clears_gap_when_outcomes_are_plentiful(tmp_path, monkeypatch):
+    """Events ≫ outcomes is normal on the mini; do not cry missing ledger."""
+    monkeypatch.setenv("AI_REPORT_DIR", str(tmp_path))
+    monkeypatch.setattr(ld, "REGISTRY_PATH", tmp_path / "lever_desk.json")
+    _write_registry(tmp_path / "lever_desk.json", _base_lever())
+
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(json.dumps({"ts": _ts(), "kind": "arm"}) for _ in range(200)) + "\n",
+        encoding="utf-8",
+    )
+    rows = [
+        json.dumps(_outcome(r=0.05, mfe=0.10, day="2026-09-11"))
+        for _ in range(40)
+    ]
+    (tmp_path / "outcomes.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    snap = ld.snapshot(days_back=10, report_dir=tmp_path, repo=tmp_path,
+                       cfg={"desk_product": "observe"})
+    assert snap["corpus"]["outcomes_lines"] >= 30
+    assert snap["gap"] is None
+    assert "gap" not in (snap["lever"]["score"]["reason"] or "")
 
 
 def test_classify_passthrough():

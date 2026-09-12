@@ -72,6 +72,7 @@ function _scoreRows(score) {
         <tbody>
           ${row('n', 'n', v => v == null ? '—' : String(v))}
           ${row('n qualifying', 'n_qualifying', v => v == null ? '—' : String(v))}
+          ${row('max MFE R', 'max_mfe_r', v => _fmt(v, 3))}
           ${row('median capture', 'median_capture', _pct)}
           ${row('median MFE R', 'median_mfe_r', v => _fmt(v, 3))}
           ${row('median realized R', 'median_realized_r', v => _fmt(v, 3))}
@@ -148,12 +149,13 @@ function _renderBody(data) {
   const score = lever.score || {};
   const latest = data.latest;
   const gap = data.gap;
+  const corpus = data.corpus || {};
 
   let html = '';
   if (gap) {
-    html += `<div class="ld-banner ld-banner--warn">${_esc(gap)}
-      Run this on the mini. Do not invent P&amp;L.</div>`;
+    html += `<div class="ld-banner ld-banner--warn">${_esc(gap)}</div>`;
   }
+  html += `<div class="ld-note">Corpus: ${corpus.outcomes_lines ?? '—'} outcomes · ${corpus.events_lines ?? '—'} events</div>`;
   html += `<p class="ld-hypothesis">${_esc(lever.hypothesis || '')}</p>`;
   html += _knobChips(lever.knobs);
   html += `<div class="ld-verdict-line"><strong>${_esc(score.verdict || '—')}</strong>

@@ -109,12 +109,14 @@ def hold_capture(trades: list[dict], *, min_mfe_r: float = 0.25) -> dict[str, An
     """Hold-period capture from outcome rows only — no bar fetch."""
     reasons: Counter[str] = Counter()
     caps: list[float] = []
-    mfes: list[float] = []
+    mfes_qual: list[float] = []
+    all_mfes: list[float] = []
     realized: list[float] = []
     n_local = 0
     give_ok = 0
     give_n = 0
     n_qualifying = 0
+    n_mfe_missing = 0
 
     for d in trades:
         reason = str(d.get("close_reason") or "unknown")
@@ -132,11 +134,15 @@ def hold_capture(trades: list[dict], *, min_mfe_r: float = 0.25) -> dict[str, An
 
         if rf is not None:
             realized.append(rf)
-        if mf is not None and mf >= float(min_mfe_r):
-            n_qualifying += 1
-            if mf > 0.01 and rf is not None:
-                caps.append(rf / mf)
-                mfes.append(mf)
+        if mf is None:
+            n_mfe_missing += 1
+        else:
+            all_mfes.append(mf)
+            if mf >= float(min_mfe_r):
+                n_qualifying += 1
+                if mf > 0.01 and rf is not None:
+                    caps.append(rf / mf)
+                    mfes_qual.append(mf)
 
         if reason == "local_trail":
             n_local += 1
@@ -153,8 +159,11 @@ def hold_capture(trades: list[dict], *, min_mfe_r: float = 0.25) -> dict[str, An
     return {
         "n": len(trades),
         "n_qualifying": n_qualifying,
+        "n_mfe_missing": n_mfe_missing,
+        "min_mfe_r": float(min_mfe_r),
+        "max_mfe_r": (max(all_mfes) if all_mfes else None),
         "median_capture": (statistics.median(caps) if caps else None),
-        "median_mfe_r": (statistics.median(mfes) if mfes else None),
+        "median_mfe_r": (statistics.median(mfes_qual) if mfes_qual else None),
         "median_realized_r": (statistics.median(realized) if realized else None),
         "n_local_trail": n_local,
         "give_lt_mfe_frac": (give_ok / give_n) if give_n else None,
@@ -185,9 +194,16 @@ def _hold_capture_verdict(
     if gap:
         return "MEASURE", f"gap — {gap}"
     min_n = int(score_cfg.get("min_n") or 5)
+    min_mfe = float(current.get("min_mfe_r") or score_cfg.get("min_mfe_r") or 0.25)
+    n = int(current.get("n") or 0)
     nq = int(current.get("n_qualifying") or 0)
     if nq < min_n:
-        return "MEASURE", f"thin n ({nq} < {min_n})"
+        max_mfe = current.get("max_mfe_r")
+        max_s = f"{float(max_mfe):.2f}R" if max_mfe is not None else "—"
+        return (
+            "MEASURE",
+            f"{nq}/{n} fills with MFE≥{min_mfe:g}R (need {min_n}; max MFE {max_s})",
+        )
     med = current.get("median_capture")
     if med is None:
         return "MEASURE", "no capture sample"
@@ -236,8 +252,12 @@ def _session_r_verdict(
         return "MEASURE", f"gap — {gap}"
     min_n = int(score_cfg.get("min_n") or 5)
     n = int(current.get("n") or 0)
+    n_sessions = int(current.get("n_sessions") or 0)
     if n < min_n:
-        return "MEASURE", f"thin n ({n} < {min_n})"
+        return (
+            "MEASURE",
+            f"{n} fills across {n_sessions} sessions (need {min_n} fills)",
+        )
     med = current.get("median_live_r")
     if med is None:
         return "MEASURE", "no session_r sample"
@@ -359,7 +379,12 @@ def snapshot(
 
     audit = ca.audit(days_back=days_back, report_dir=report_dir, cfg=cfg, repo=repo)
     corpus = audit.get("corpus") or {}
-    gap = corpus.get("gap")
+    totals = corpus.get("totals") or {}
+    outcomes_n = int(totals.get("outcomes_lines") or 0)
+    events_n = int(totals.get("events_lines") or 0)
+    # Auditor gap is for laptop clones with almost no outcomes. Never surface
+    # "missing ledger" when the book clearly has closed trades.
+    gap = corpus.get("gap") if outcomes_n < 30 else None
     days, by_day = ca.load_sessions(days_back, report_dir, repo)
     trig = _exit_trig(report_dir, repo, days)
 
@@ -407,8 +432,8 @@ def snapshot(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "gap": gap,
         "corpus": {
-            "outcomes_lines": (corpus.get("totals") or {}).get("outcomes_lines", 0),
-            "events_lines": (corpus.get("totals") or {}).get("events_lines", 0),
+            "outcomes_lines": outcomes_n,
+            "events_lines": events_n,
             "roots": corpus.get("roots") or [],
         },
         "go_live": audit.get("go_live"),
