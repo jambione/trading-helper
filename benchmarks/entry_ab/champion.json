@@ -1,0 +1,67 @@
+{
+  "half_ok": false,
+  "reject_reason": "no cell beat LIVE on both day-halves with min_n",
+  "live": {
+    "id": "LIVE",
+    "cell": {
+      "id": "LIVE",
+      "rsi_max": 60.0,
+      "rsi_require_rising": false,
+      "rsi_allow_falling_below": 20.0,
+      "mistimed_heat": true,
+      "mistimed_rsi_min": 52.0,
+      "mistimed_rsi_peak_min": 55.0,
+      "heat_min": 40.0,
+      "heat_max": 70.0,
+      "require_exh_rising": true,
+      "require_macd": false,
+      "macd_min_gap": 0.015,
+      "macd_block_narrowing": false
+    },
+    "n": 6,
+    "n_shadow": 4,
+    "n_ledger": 2,
+    "ledger_pass_live": 2,
+    "blocked": 512,
+    "mean": 2.9769296703359793,
+    "median": 0.3607844342091233,
+    "win_pct": 50.0,
+    "half_a": {
+      "n": 6,
+      "mean": 2.9769296703359793,
+      "median": 0.3607844342091233,
+      "win_pct": 50.0
+    },
+    "half_b": {
+      "n": 0,
+      "mean": null,
+      "median": null,
+      "win_pct": null
+    },
+    "lift_vs_live": 0.0,
+    "lift_a": 0.0,
+    "lift_b": null,
+    "half_ok": false,
+    "fill_n": 0,
+    "fill_pl_sum": null,
+    "fill_r_mean": null,
+    "complexity": 6
+  },
+  "meta": {
+    "day_from": "2026-09-10",
+    "day_to": "2026-09-10",
+    "n_prepared": 518,
+    "n_prepared_shadow": 14,
+    "n_prepared_ledger": 504,
+    "ledger_enabled": true,
+    "ledger_raw": 1524,
+    "skip": {
+      "no_ind": 111,
+      "no_forward": 13
+    },
+    "min_n": 25,
+    "thin_min_n": false,
+    "champ_reason": "no cell beat LIVE on both day-halves with min_n"
+  },
+  "advisory": true
+}

@@ -1,0 +1,57 @@
+{
+  "id": "rsi_max_off",
+  "cell": {
+    "id": "rsi_max_off",
+    "rsi_max": null,
+    "rsi_require_rising": false,
+    "rsi_allow_falling_below": 20.0,
+    "mistimed_heat": true,
+    "mistimed_rsi_min": 52.0,
+    "mistimed_rsi_peak_min": 55.0,
+    "heat_min": 40.0,
+    "heat_max": 70.0,
+    "require_exh_rising": true,
+    "require_macd": false,
+    "macd_min_gap": 0.015,
+    "macd_block_narrowing": false
+  },
+  "n": 63,
+  "blocked": 1377,
+  "mean": 0.27913253749225125,
+  "median": -0.23201856148491384,
+  "win_pct": 41.26984126984127,
+  "half_a": {
+    "n": 38,
+    "mean": 2.017438890628548,
+    "median": 1.7830609212481308,
+    "win_pct": 60.526315789473685
+  },
+  "half_b": {
+    "n": 25,
+    "mean": -2.36309311927492,
+    "median": -0.5926724137931004,
+    "win_pct": 12.0
+  },
+  "lift_vs_live": 0.0,
+  "lift_a": 0.0,
+  "lift_b": 0.0,
+  "half_ok": true,
+  "fill_n": 7,
+  "fill_pl_sum": -1.9800000000000306,
+  "fill_r_mean": null,
+  "complexity": 6,
+  "bot_config": {
+    "ai_watch_arm_cm_rsi_max": null,
+    "ai_watch_arm_cm_rsi_require_rising": false,
+    "ai_watch_arm_cm_rsi_allow_falling_below": 20.0,
+    "ai_watch_mistimed_heat_enabled": true,
+    "ai_watch_mistimed_heat_rsi_min": 52.0,
+    "ai_watch_mistimed_heat_rsi_peak_min": 55.0,
+    "ai_watch_exhaustion_heat_min_pct": 40.0,
+    "ai_watch_exhaustion_heat_max_pct": 70.0,
+    "ai_watch_require_exh_rising": true,
+    "ai_watch_arm_require_macd": false,
+    "macd_min_gap": 0.015,
+    "ai_watch_macd_block_narrowing": false
+  }
+}
