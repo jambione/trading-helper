@@ -172,7 +172,7 @@ def test_auth_on_non_admin_403(tmp_path, monkeypatch):
 
     users = tmp_path / "users.json"
     monkeypatch.setattr(auth, "_USERS_FILE", users)
-    assert auth.create_user("alice", "s3cret1", admin=False)
+    assert auth.create_user("alice", "s3cret1", admin=False)  # pragma: allowlist secret
 
     reg = tmp_path / "lever_desk.json"
     reg.write_text(json.dumps(_registry()), encoding="utf-8")
@@ -186,7 +186,7 @@ def test_auth_on_non_admin_403(tmp_path, monkeypatch):
     monkeypatch.setattr(d, "record_traffic_hit", lambda *a, **k: None)
 
     c = TestClient(d.app)
-    c.post("/auth/login", json={"username": "alice", "password": "s3cret1"})
+    c.post("/auth/login", json={"username": "alice", "password": "s3cret1"})  # pragma: allowlist secret
     res = c.get("/api/lever-desk")
     assert res.status_code == 403
     assert res.json()["error"] == "Admin access required"
