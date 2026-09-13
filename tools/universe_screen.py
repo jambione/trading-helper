@@ -87,6 +87,18 @@ Read-only. Writes only its own screen JSON. Usage (mini, venv):
     .venv/bin/python tools/universe_screen.py
     .venv/bin/python tools/universe_screen.py --universes desk,rejects,gap_hold
     .venv/bin/python tools/universe_screen.py --horizons 15,30 --days 20
+
+Lab-only honest denominator (does not touch live desk / bot_config arms):
+
+    .venv/bin/python tools/universe_screen.py \\
+        --universes setup,early_rvol,desk --max-shares-m 10 \\
+        --horizons 15,30,60,120 --days 40 --cost-report triple \\
+        --out benchmarks/universe_cost/honest_YYYY-MM-DD.json
+
+``--cost-report triple`` prints payX under fixed_079 (flat 0.79%), live_iex
+(live give% + Roll/tick or shadow spread_r), and live_sip (live give% +
+SIP NBBO RT% = 100*(ask-bid)/mid, quote age < 60s). Stale/missing SIP
+quotes are unpriceable and excluded from SIP medians.
 """
 from __future__ import annotations
 
@@ -111,7 +123,7 @@ SCREEN_DIR = Path(ROOT) / "ai_reports" / "screens"
 # Measured 2026-08: 1R = 5% of price, give + spread = 0.158 R round trip.
 R_PCT_OF_PRICE = 5.0
 COST_PCT = 0.158 * R_PCT_OF_PRICE          # 0.79% of price — the FIXED model
-GIVE_PCT = 0.10 * R_PCT_OF_PRICE           # what the ratchet surrenders
+GIVE_PCT = 0.10 * R_PCT_OF_PRICE           # legacy measured-model give (0.10R)
 TICK_USD = 0.01                            # the irreducible minimum spread
 
 # Pre-registered playability bar. Stated before any universe was run, and
@@ -125,6 +137,16 @@ PLAYABLE_MIN_GREEN = 0.70
 
 ET_OFFSET_H = 4                            # August is EDT
 MIN_ROLL_BARS = 30                         # below this Roll is noise
+
+# Triple-cost lab report (--cost-report triple). Live give is read from
+# config at runtime; measured/fixed paths above stay on GIVE_PCT so old
+# screens reproduce. SIP quotes older than this at the sample stamp are
+# unpriceable and excluded from SIP medians (no fictional floor).
+SIP_QUOTE_MAX_AGE_SEC = 60.0
+SIP_COV_FLOOR = 0.50                       # below this, verdict_sip=UNPRICEABLE
+TRIPLE_THIN_N = 30
+TRIPLE_THIN_SESSIONS = 5
+COST_CACHE_DIR = Path(ROOT) / "benchmarks" / "universe_cost"
 
 
 def _et_hm(ts: float) -> tuple[int, int]:
@@ -487,6 +509,580 @@ def validate_cost(bars: dict[str, list[dict]], quoted: dict[tuple, float],
               f"reading. A universe that fails here fails harder in reality.")
 
 
+# --------------------------------------------------------- triple cost lab
+
+def live_give_pct(cfg: dict | None = None,
+                  override: float | None = None) -> float:
+    """Live trail give as a percent of price.
+
+    ``give_r × R_PCT_OF_PRICE``, capped by ``ai_local_trail_give_max_pct``
+    when that ceiling is > 0. Current live (give_r=0.2, max_pct=1.0) → 1.0.
+    ``override`` (CLI ``--give-pct``) wins when set so sensitivity runs do
+    not require editing bot_config.
+    """
+    if override is not None:
+        return float(override)
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        give_r = float(cfg.get("ai_local_trail_give_r", 0.10) or 0.10)
+    except (TypeError, ValueError):
+        give_r = 0.10
+    give = give_r * R_PCT_OF_PRICE
+    try:
+        max_pct = float(cfg.get("ai_local_trail_give_max_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        max_pct = 0.0
+    if max_pct > 0:
+        give = min(give, max_pct)
+    return give
+
+
+def fee_pct_from_bps(fee_bps: float) -> float:
+    """Flat fee in percent of price. 10 bps → 0.10%. Default 0 invents nothing."""
+    try:
+        bps = float(fee_bps or 0.0)
+    except (TypeError, ValueError):
+        bps = 0.0
+    return max(0.0, bps) / 100.0
+
+
+def sip_rt_spread_pct(bid: float, ask: float) -> float | None:
+    """Round-trip spread as percent of mid from a SIP NBBO.
+
+    Definition used everywhere in the triple report (and in payX):
+
+        RT% = 100 * (ask - bid) / mid
+
+    That is one full touch (enter at ask, exit at bid) = 2 × half-spread%.
+    Missing or crossed books return None so the caller can mark the
+    name-day unpriceable rather than floor into fiction.
+    """
+    try:
+        b, a = float(bid), float(ask)
+    except (TypeError, ValueError):
+        return None
+    if b <= 0 or a <= 0 or a < b:
+        return None
+    mid = 0.5 * (a + b)
+    if mid <= 0:
+        return None
+    return 100.0 * (a - b) / mid
+
+
+def quote_is_fresh(sample_ts: float, quote_ts: float,
+                   max_age_sec: float = SIP_QUOTE_MAX_AGE_SEC) -> bool:
+    """True only when the quote is at or before the sample and younger than max_age.
+
+    age = sample_ts − quote_ts. Future quotes and age ≥ max_age are
+    unpriceable — excluded from SIP medians, never floored.
+    """
+    try:
+        age = float(sample_ts) - float(quote_ts)
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= age < float(max_age_sec)
+
+
+def iex_spread_pct(bars: list[dict], day: str, symbol: str,
+                   quoted: dict[tuple, float] | None = None
+                   ) -> tuple[float, str]:
+    """IEX-era spread term for the live_iex cost model.
+
+    Prefer a sane shadow ``spread_r`` (desk IEX quotes) when present;
+    otherwise Roll floored at one tick; otherwise the tick alone.
+    """
+    quoted = quoted or {}
+    q = quoted.get((symbol, day))
+    if q is not None and q > 0:
+        return float(q), "shadow"
+    path = [b for b in bars if b["day"] == day and DS._in_rth(b) and b["c"] > 0]
+    if not path:
+        # No RTH tape to estimate from — charge the legacy fixed spread
+        # term so the row stays in the IEX median rather than vanishing.
+        return max(0.0, COST_PCT - GIVE_PCT), "no_rth"
+    price = statistics.median(b["c"] for b in path)
+    floor = tick_spread_pct(price)
+    roll = roll_spread_pct(bars, day)
+    if roll is None:
+        return floor, "tick"
+    return max(roll, floor), "roll"
+
+
+class SipQuoteCache:
+    """Point-in-time SIP NBBO cache under benchmarks/universe_cost/.
+
+    Research-only: ``feed=sip`` via ``alpaca_api.research_feed_rest`` /
+    ``research_bar_end``. Never touches live entry feeds.
+    """
+
+    def __init__(self, cache_dir: Path | None = None):
+        self.dir = Path(cache_dir or COST_CACHE_DIR)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._mem: dict[tuple[str, str], list[dict]] = {}
+        self._client = None
+        self._client_failed = False
+        self.fetch_errors = 0
+        self.fetch_ok = 0
+
+    def _disk_path(self, symbol: str, day: str) -> Path:
+        return self.dir / f"sip_quotes_{day}_{symbol.upper()}.json"
+
+    def _load_disk(self, symbol: str, day: str) -> list[dict] | None:
+        path = self._disk_path(symbol, day)
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        rows = raw.get("quotes") if isinstance(raw, dict) else raw
+        if not isinstance(rows, list):
+            return None
+        out = []
+        for r in rows:
+            try:
+                out.append({
+                    "ts": float(r["ts"]),
+                    "bid": float(r["bid"]),
+                    "ask": float(r["ask"]),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
+        out.sort(key=lambda x: x["ts"])
+        return out
+
+    def _save_disk(self, symbol: str, day: str, rows: list[dict]) -> None:
+        path = self._disk_path(symbol, day)
+        try:
+            path.write_text(json.dumps({
+                "symbol": symbol.upper(), "day": day, "feed": "sip",
+                "quotes": rows,
+            }), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _client_or_none(self):
+        if self._client_failed:
+            return None
+        if self._client is not None:
+            return self._client
+        try:
+            import alpaca_api as aa
+            from config import load_config
+            cfg = load_config()
+            self._client = aa.connect_data_client(cfg)
+            if self._client is None:
+                self._client_failed = True
+        except Exception:
+            self._client_failed = True
+            self._client = None
+        return self._client
+
+    def _fetch_day(self, symbol: str, day: str) -> list[dict]:
+        """Fetch RTH SIP quotes for one name-day; empty list on failure."""
+        client = self._client_or_none()
+        if client is None:
+            self.fetch_errors += 1
+            return []
+        try:
+            import alpaca_api as aa
+            from alpaca.data.requests import StockQuotesRequest
+            from alpaca.data.enums import DataFeed
+            start = datetime.strptime(day, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc) + timedelta(hours=9 + ET_OFFSET_H,
+                                                 minutes=25)
+            end_req = start + timedelta(hours=7)   # through ~16:25 ET
+            end = aa.research_bar_end("sip", requested_end=end_req)
+            if end <= start:
+                self.fetch_errors += 1
+                return []
+            kw = {"feed": DataFeed.SIP}
+            try:
+                from alpaca.common.enums import Sort as _Sort
+                kw["sort"] = _Sort.ASC
+            except Exception:
+                pass
+            req = StockQuotesRequest(
+                symbol_or_symbols=symbol.upper(),
+                start=start, end=end, limit=10000, **kw)
+            raw = client.get_stock_quotes(req)
+            data = getattr(raw, "data", None) or {}
+            quotes = data.get(symbol.upper()) or data.get(symbol) or []
+            rows = []
+            for q in quotes:
+                ts = getattr(q, "timestamp", None)
+                if ts is None:
+                    continue
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                bid = float(getattr(q, "bid_price", 0) or 0)
+                ask = float(getattr(q, "ask_price", 0) or 0)
+                if bid <= 0 or ask <= 0:
+                    continue
+                rows.append({"ts": ts.timestamp(), "bid": bid, "ask": ask})
+            rows.sort(key=lambda x: x["ts"])
+            self.fetch_ok += 1
+            return rows
+        except Exception:
+            self.fetch_errors += 1
+            return []
+
+    def quotes_for(self, symbol: str, day: str) -> list[dict]:
+        key = (symbol.upper(), day)
+        if key in self._mem:
+            return self._mem[key]
+        rows = self._load_disk(symbol, day)
+        if rows is None:
+            rows = self._fetch_day(symbol, day)
+            if rows:
+                self._save_disk(symbol, day, rows)
+            else:
+                # Cache the miss so we do not hammer a failing name-day.
+                self._save_disk(symbol, day, [])
+        self._mem[key] = rows or []
+        return self._mem[key]
+
+    def quote_at(self, symbol: str, day: str, sample_ts: float,
+                 max_age_sec: float = SIP_QUOTE_MAX_AGE_SEC
+                 ) -> dict | None:
+        """Latest SIP quote at or before sample_ts with age < max_age_sec."""
+        rows = self.quotes_for(symbol, day)
+        if not rows:
+            return None
+        # Binary search for last quote_ts <= sample_ts.
+        lo, hi = 0, len(rows) - 1
+        best = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if rows[mid]["ts"] <= sample_ts:
+                best = rows[mid]
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best is None:
+            return None
+        if not quote_is_fresh(sample_ts, best["ts"], max_age_sec):
+            return None
+        return best
+
+
+def sip_spread_for_name_day(cache: SipQuoteCache, symbol: str, day: str,
+                            sample_ts: float,
+                            max_age_sec: float = SIP_QUOTE_MAX_AGE_SEC
+                            ) -> tuple[float | None, str]:
+    """SIP RT spread% at sample_ts, or (None, reason) when unpriceable."""
+    if not sample_ts:
+        return None, "no_sample_ts"
+    q = cache.quote_at(symbol, day, float(sample_ts), max_age_sec)
+    if q is None:
+        # Distinguish miss vs stale when we have any quotes that day.
+        rows = cache.quotes_for(symbol, day)
+        if not rows:
+            return None, "no_quotes"
+        # Nearest at-or-before, even if stale — for the reason label only.
+        prior = [r for r in rows if r["ts"] <= sample_ts]
+        if not prior:
+            return None, "no_prior_quote"
+        age = float(sample_ts) - prior[-1]["ts"]
+        if age >= max_age_sec:
+            return None, "stale"
+        return None, "unusable"
+    rt = sip_rt_spread_pct(q["bid"], q["ask"])
+    if rt is None:
+        return None, "bad_book"
+    return rt, "sip"
+
+
+def triple_costs_for_name_day(
+    bars: list[dict], day: str, symbol: str, sample_ts: float,
+    give_live: float, fee_pct: float,
+    quoted: dict[tuple, float] | None,
+    sip_cache: SipQuoteCache | None,
+) -> dict:
+    """Per-name-day costs for fixed_079 / live_iex / live_sip.
+
+    ``live_sip`` is None when unpriceable (stale/missing SIP quote). Those
+    rows are excluded from SIP medians — never substituted with a floor.
+    """
+    iex_sp, iex_src = iex_spread_pct(bars, day, symbol, quoted)
+    fixed = COST_PCT + fee_pct
+    live_iex = give_live + iex_sp + fee_pct
+    sip_sp, sip_src = (None, "no_cache")
+    if sip_cache is not None:
+        sip_sp, sip_src = sip_spread_for_name_day(
+            sip_cache, symbol, day, sample_ts)
+    live_sip = (give_live + sip_sp + fee_pct) if sip_sp is not None else None
+    return {
+        "fixed_079": fixed,
+        "live_iex": live_iex,
+        "live_sip": live_sip,
+        "iex_spread_src": iex_src,
+        "sip_src": sip_src,
+        "give_live_pct": give_live,
+        "fee_pct": fee_pct,
+        "iex_spread_pct": iex_sp,
+        "sip_spread_pct": sip_sp,
+    }
+
+
+def playability_from_costs(rows: list[dict], score: dict,
+                           cost_key: str = "cost") -> dict:
+    """Playability using ``cost_key`` on each row (skips rows with None)."""
+    if not rows:
+        return {"verdict": "EMPTY"}
+    priced = [r for r in rows if r.get(cost_key) is not None]
+    if not priced:
+        return {"verdict": "UNPRICEABLE", "pay_x": None,
+                "median_cost_pct": None, "coverage": 0.0,
+                "why": f"no rows with {cost_key}"}
+    med_mfe = statistics.median(r["mfe"] for r in priced)
+    # Prefer the session-level score's M/A and green (same samples' days).
+    ratio = score.get("mfe_over_mae") or 0.0
+    green = (score["sessions_green"] / score["sessions"]) if score.get(
+        "sessions") else 0.0
+    costs = [float(r[cost_key]) for r in priced]
+    med_cost = statistics.median(costs)
+    bar = PLAYABLE_MULT * med_cost
+    clears = sum(1 for r in priced if r["mfe"] >= r[cost_key]) / len(priced)
+    fails = []
+    if med_mfe < bar:
+        fails.append(f"medMFE {med_mfe:.2f}% < {bar:.2f}%")
+    if ratio < PLAYABLE_MIN_RATIO:
+        fails.append(f"MFE/MAE {ratio:.2f} < {PLAYABLE_MIN_RATIO}")
+    if green < PLAYABLE_MIN_GREEN:
+        fails.append(f"green {green:.0%} < {PLAYABLE_MIN_GREEN:.0%}")
+    return {
+        "verdict": "PLAYABLE" if not fails else "UNPLAYABLE",
+        "pay_x": med_mfe / med_cost if med_cost else None,
+        "median_cost_pct": med_cost,
+        "median_mfe": med_mfe,
+        "bar_pct": bar,
+        "pct_clearing_cost": clears,
+        "n_priced": len(priced),
+        "coverage": len(priced) / len(rows) if rows else 0.0,
+        "why": "; ".join(fails) or "clears the pre-registered bar",
+    }
+
+
+def verdict_sip(play: dict, score: dict, sip_cov: float,
+                cov_floor: float = SIP_COV_FLOOR) -> str:
+    """Lab verdict on SIP cost only. Coverage below floor → UNPRICEABLE."""
+    if sip_cov < cov_floor:
+        return "UNPRICEABLE"
+    n = int(score.get("n") or 0)
+    sessions = int(score.get("sessions") or 0)
+    if n < TRIPLE_THIN_N or sessions < TRIPLE_THIN_SESSIONS:
+        return "THIN"
+    if play.get("verdict") == "PLAYABLE":
+        return "PLAYABLE"
+    return "UNPLAYABLE"
+
+
+def universe_label(name: str, max_shares_m: float) -> str:
+    if name == "setup":
+        return f"setup≤{max_shares_m:g}M"
+    return name
+
+
+def _fmt_pay(x) -> str:
+    if x is None:
+        return "  n/a"
+    return f"{x:6.2f}"
+
+
+def run_triple_cost_report(args, names: list[str], horizons: list[int],
+                           bars: dict, plans: dict,
+                           give_live: float, fee_pct: float) -> int:
+    """Side-by-side fixed_079 / live_iex / live_sip payX for lab kill/keep."""
+    quoted = load_quoted_spreads(args.days)
+    sip_cache = SipQuoteCache(COST_CACHE_DIR)
+    cov_floor = float(getattr(args, "sip_cov_floor", SIP_COV_FLOOR) or SIP_COV_FLOOR)
+
+    print("\n=== TRIPLE COST REPORT (lab only) ===")
+    print(f"  give_live={give_live:.3f}% of price  fee={fee_pct:.3f}%  "
+          f"SIP max age={SIP_QUOTE_MAX_AGE_SEC:.0f}s  "
+          f"sip_cov floor={cov_floor:.0%}")
+    print("  RT SIP spread% = 100*(ask-bid)/mid (= 2× half-spread); "
+          "stale/missing → unpriceable, excluded from SIP medians\n")
+
+    hdr = (f"{'universe':<14}{'horiz':>6}{'n':>6}{'sess':>5}"
+           f"{'medMFE':>8}{'M/A':>6}"
+           f"{'payX_079':>9}{'payX_iex':>9}{'payX_sip':>9}"
+           f"{'sip_cov%':>9}{'verdict_sip':>14}")
+    print(hdr)
+    print("-" * len(hdr))
+
+    payload: dict = {
+        "give_live_pct": give_live,
+        "fee_pct": fee_pct,
+        "sip_quote_max_age_sec": SIP_QUOTE_MAX_AGE_SEC,
+        "sip_cov_floor": cov_floor,
+        "cost_models": {
+            "fixed_079": "flat 0.79% RT (HANDOFF reproduce)",
+            "live_iex": "live give% + Roll/tick or shadow spread_r",
+            "live_sip": "live give% + SIP RT 100*(ask-bid)/mid; age<60s",
+        },
+        "bar": {"mult": PLAYABLE_MULT, "min_ratio": PLAYABLE_MIN_RATIO,
+                "min_green": PLAYABLE_MIN_GREEN},
+        "results": {},
+    }
+    summary_lines = [
+        "# Honest-cost triple payX (lab only)",
+        "",
+        f"give_live={give_live:.3f}%  fee={fee_pct:.3f}%  "
+        f"SIP age<{SIP_QUOTE_MAX_AGE_SEC:.0f}s  cov_floor={cov_floor:.0%}",
+        "",
+        "Kill/keep is documentation only — no live desk / seed changes.",
+        "",
+        "```",
+        hdr,
+        "-" * len(hdr),
+    ]
+
+    for n in names:
+        plan = plans.get(n) or {}
+        if not plan:
+            continue
+        label = universe_label(n, args.max_shares_m)
+        for hz in horizons:
+            stride = args.stride or hz
+            rows = []
+            sip_priced = 0
+            sip_total = 0
+            for day, members in plan.items():
+                for sym, elig in members.items():
+                    b = bars.get(sym)
+                    if not b:
+                        continue
+                    sample_ts = float(elig or 0.0)
+                    costs = triple_costs_for_name_day(
+                        b, day, sym, sample_ts, give_live, fee_pct,
+                        quoted, sip_cache)
+                    got = DS.sample_excursions(
+                        b, day, hz, stride, sample_ts, True)
+                    for r in got:
+                        r["cost_fixed_079"] = costs["fixed_079"]
+                        r["cost_live_iex"] = costs["live_iex"]
+                        r["cost_live_sip"] = costs["live_sip"]
+                        r["cost"] = costs["fixed_079"]  # default for score
+                    if got:
+                        sip_total += 1
+                        if costs["live_sip"] is not None:
+                            sip_priced += 1
+                    rows.extend(got)
+            s = DS.score(rows)
+            if s["verdict"] == "EMPTY":
+                line = (f"{label:<14}{hz:>6}{0:>6}{'':>5}"
+                        f"{'':>8}{'':>6}{'':>9}{'':>9}{'':>9}"
+                        f"{'':>9}{'EMPTY':>14}")
+                print(line)
+                summary_lines.append(line)
+                payload["results"][f"{n}@{hz}m"] = {
+                    "label": label, "drift": s, "empty": True}
+                continue
+            p079 = playability_from_costs(rows, s, "cost_fixed_079")
+            piex = playability_from_costs(rows, s, "cost_live_iex")
+            psip = playability_from_costs(rows, s, "cost_live_sip")
+            # Coverage is share of name-days (not samples) with a fresh SIP quote.
+            sip_cov = (sip_priced / sip_total) if sip_total else 0.0
+            # Recompute SIP play using only priced rows' coverage signal.
+            if psip.get("coverage") is not None and sip_total:
+                # Prefer name-day coverage for the verdict floor.
+                pass
+            v_sip = verdict_sip(psip, s, sip_cov, cov_floor)
+            ratio = s.get("mfe_over_mae") or 0.0
+            line = (f"{label:<14}{hz:>6}{s['n']:>6}{s['sessions']:>5}"
+                    f"{s['median_mfe']:>8.3f}{ratio:>6.2f}"
+                    f"{_fmt_pay(p079.get('pay_x'))}"
+                    f"{_fmt_pay(piex.get('pay_x'))}"
+                    f"{_fmt_pay(psip.get('pay_x'))}"
+                    f"{sip_cov:>8.0%}{v_sip:>14}")
+            print(line)
+            summary_lines.append(line)
+            payload["results"][f"{n}@{hz}m"] = {
+                "label": label,
+                "horizon_min": hz,
+                "drift": s,
+                "pay_x_079": p079.get("pay_x"),
+                "pay_x_iex": piex.get("pay_x"),
+                "pay_x_sip": psip.get("pay_x"),
+                "sip_cov": sip_cov,
+                "sip_name_days_priced": sip_priced,
+                "sip_name_days_total": sip_total,
+                "verdict_sip": v_sip,
+                "playable_079": p079,
+                "playable_iex": piex,
+                "playable_sip": psip,
+            }
+            # Lab kill/keep notes for setup @15m (and longer).
+            if n == "setup" and hz in (15, 30, 60):
+                note = _setup_kill_keep_note(
+                    hz, psip.get("pay_x"), sip_cov, cov_floor, s, psip)
+                if note:
+                    payload["results"][f"{n}@{hz}m"]["lab_note"] = note
+        print()
+
+    print(f"SIP quote cache: ok={sip_cache.fetch_ok}  "
+          f"errors={sip_cache.fetch_errors}  dir={sip_cache.dir}")
+    summary_lines.extend(["```", ""])
+    summary_lines.append(
+        f"SIP fetch ok={sip_cache.fetch_ok} errors={sip_cache.fetch_errors}")
+    # early_rvol shelf note
+    for key, cell in payload["results"].items():
+        if key.startswith("early_rvol@") and cell.get("verdict_sip") in (
+                "PLAYABLE", "THIN"):
+            hz = cell.get("horizon_min")
+            if hz and hz >= 60:
+                summary_lines.append(
+                    f"- early_rvol @{hz}m clears SIP bar → "
+                    "86s shelf is the wrong harvest window; no live change.")
+                break
+
+    day = datetime.now().strftime("%Y-%m-%d")
+    out_arg = getattr(args, "out", None) or ""
+    if out_arg:
+        outp = Path(out_arg)
+        if not outp.is_absolute():
+            outp = Path(ROOT) / outp
+    else:
+        outp = COST_CACHE_DIR / f"honest_{day}.json"
+    outp.parent.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "day": day,
+        "universes": names,
+        "horizons": horizons,
+        "days": args.days,
+        "max_shares_m": args.max_shares_m,
+        "lab_only": True,
+        **payload,
+    }
+    outp.write_text(json.dumps(doc, indent=2, default=str), encoding="utf-8")
+    md = outp.parent / "summary.md"
+    summary_lines.append(f"wrote {outp}")
+    md.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+    print(f"\nwrote {outp}")
+    print(f"wrote {md}")
+    return 0
+
+
+def _setup_kill_keep_note(hz: int, pay_sip, sip_cov: float, cov_floor: float,
+                          score: dict, play: dict) -> str | None:
+    if sip_cov < cov_floor:
+        return (f"setup @{hz}m SIP unpriceable "
+                f"(cov={sip_cov:.0%} < {cov_floor:.0%}); no lab kill.")
+    if pay_sip is None:
+        return None
+    n = int(score.get("n") or 0)
+    if pay_sip < PLAYABLE_MULT and n >= TRIPLE_THIN_N:
+        return (f"setup @{hz}m SIP-payX={pay_sip:.2f} < {PLAYABLE_MULT:.0f} "
+                f"with n={n} — lab-kill this constructor (document only; "
+                "do not change live seeds).")
+    if pay_sip >= PLAYABLE_MULT and play.get("verdict") != "PLAYABLE":
+        return (f"setup @{hz}m SIP-payX={pay_sip:.2f} ≥ {PLAYABLE_MULT:.0f} "
+                "but green/M/A/n still fail — magnitude lead, not PLAYABLE.")
+    return None
+
+
 # ------------------------------------------------------------------ scoring
 
 def playability(rows: list[dict], score: dict) -> dict:
@@ -592,7 +1188,25 @@ def main() -> int:
                     choices=("measured", "fixed"),
                     help="measured = give + this name's own estimated spread "
                          "(Roll, floored at one tick). fixed = the flat 0.79%% "
-                         "used before 2026-08-23, kept for reproducibility.")
+                         "used before 2026-08-23, kept for reproducibility. "
+                         "Ignored when --cost-report triple.")
+    ap.add_argument("--cost-report", default="none",
+                    choices=("none", "triple"),
+                    help="triple = side-by-side fixed_079 / live_iex / "
+                         "live_sip payX (lab only; writes "
+                         "benchmarks/universe_cost/).")
+    ap.add_argument("--give-pct", type=float, default=None,
+                    help="override live give%% for triple report "
+                         "(default = from bot_config trail knobs)")
+    ap.add_argument("--fee-bps", type=float, default=0.0,
+                    help="optional flat fee in bps added to all three "
+                         "triple-report models (default 0)")
+    ap.add_argument("--sip-cov-floor", type=float, default=SIP_COV_FLOOR,
+                    help="min SIP name-day coverage for a real verdict_sip "
+                         "(else UNPRICEABLE)")
+    ap.add_argument("--out", default="",
+                    help="triple report JSON path "
+                         "(default benchmarks/universe_cost/honest_YYYY-MM-DD.json)")
     ap.add_argument("--days", type=int, default=20)
     ap.add_argument("--horizons", default="15,30,60")
     ap.add_argument("--stride", type=int, default=0,
@@ -630,12 +1244,26 @@ def main() -> int:
     print(f"universe screen  universes={names}  horizons={horizons}min")
     print(f"  symbol pool={len(syms)} (shadow + rejects)  "
           f"window={start.date()}..{end.date()}")
-    print(f"  cost model: {args.cost_model}", end="")
-    if args.cost_model == "measured":
-        print(f" — give {GIVE_PCT:.2f}% + per-name spread "
-              f"(Roll, floored at one ${TICK_USD:.2f} tick)")
+
+    cfg = {}
+    try:
+        from config import load_config
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    give_live = live_give_pct(cfg, override=args.give_pct)
+    fee_pct = fee_pct_from_bps(args.fee_bps)
+
+    if args.cost_report == "triple":
+        print(f"  cost report: triple  give_live={give_live:.3f}%  "
+              f"fee={fee_pct:.3f}%")
     else:
-        print(f" — flat {COST_PCT:.2f}% for every name")
+        print(f"  cost model: {args.cost_model}", end="")
+        if args.cost_model == "measured":
+            print(f" — give {GIVE_PCT:.2f}% + per-name spread "
+                  f"(Roll, floored at one ${TICK_USD:.2f} tick)")
+        else:
+            print(f" — flat {COST_PCT:.2f}% for every name")
     print(f"  playable needs medMFE >= {PLAYABLE_MULT:.0f}x that name's own "
           f"round trip, MFE/MAE >= {PLAYABLE_MIN_RATIO}, "
           f"green >= {PLAYABLE_MIN_GREEN:.0%}\n")
@@ -646,9 +1274,6 @@ def main() -> int:
         return 0
     print(f"  bars for {len(bars)}/{len(syms)} symbols")
 
-    validate_cost(bars, load_quoted_spreads(args.days), args.cost_model)
-    print()
-
     plans = {}
     for n in names:
         try:
@@ -658,6 +1283,13 @@ def main() -> int:
             plans[n] = {}
         if not plans[n]:
             print(f"  {n}: empty universe")
+
+    if args.cost_report == "triple":
+        return run_triple_cost_report(
+            args, names, horizons, bars, plans, give_live, fee_pct)
+
+    validate_cost(bars, load_quoted_spreads(args.days), args.cost_model)
+    print()
 
     hdr = (f"{'universe':<16}{'horiz':>6}{'names':>7}{'n':>7}{'sess':>5}"
            f"{'medPx':>8}{'cost%':>7}{'medMFE':>8}{'M/A':>6}{'sigma':>7}"
@@ -671,8 +1303,6 @@ def main() -> int:
         if not plan:
             continue
         n_names = sum(len(v) for v in plan.values())
-        ets = sorted(_et_hm(t) for d in plan.values() for t in d.values() if t)
-        med_et = ets[len(ets) // 2] if ets else (0, 0)
         prices = []
         for day, members in plan.items():
             for sym in members:

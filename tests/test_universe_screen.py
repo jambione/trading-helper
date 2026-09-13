@@ -287,3 +287,143 @@ def test_an_unknown_universe_resolves_empty_rather_than_guessing():
     class A:
         rvol, gap, news_age, refresh_news = 5.0, 3.0, 60.0, False
     assert us.resolve("nonsense", 5, A()) == {}
+
+
+# ------------------------------------------------------------- triple cost
+
+def test_live_give_pct_from_give_r_and_max_pct():
+    """Live Wed 9/9: give_r=0.2 × 5% R = 1.0, capped by max_pct=1.0 → 1.0."""
+    assert us.live_give_pct({
+        "ai_local_trail_give_r": 0.2,
+        "ai_local_trail_give_max_pct": 1.0,
+    }) == pytest.approx(1.0)
+
+
+def test_live_give_pct_cap_binds_when_give_r_is_wide():
+    assert us.live_give_pct({
+        "ai_local_trail_give_r": 0.5,          # 2.5% uncapped
+        "ai_local_trail_give_max_pct": 1.0,
+    }) == pytest.approx(1.0)
+
+
+def test_live_give_pct_uncapped_when_max_pct_off():
+    assert us.live_give_pct({
+        "ai_local_trail_give_r": 0.2,
+        "ai_local_trail_give_max_pct": 0.0,
+    }) == pytest.approx(1.0)
+
+
+def test_live_give_pct_cli_override_wins():
+    assert us.live_give_pct(
+        {"ai_local_trail_give_r": 0.2, "ai_local_trail_give_max_pct": 1.0},
+        override=0.75,
+    ) == pytest.approx(0.75)
+
+
+def test_fee_bps_converts_to_percent_of_price():
+    assert us.fee_pct_from_bps(10) == pytest.approx(0.10)
+    assert us.fee_pct_from_bps(0) == 0.0
+
+
+def test_sip_rt_spread_is_full_touch_not_half():
+    """RT% = 100*(ask-bid)/mid = 2 × half-spread%."""
+    # $10 mid, $0.02 wide → 0.20% RT
+    assert us.sip_rt_spread_pct(9.99, 10.01) == pytest.approx(0.20, abs=1e-6)
+
+
+def test_sip_rt_spread_rejects_a_crossed_or_empty_book():
+    assert us.sip_rt_spread_pct(10.01, 9.99) is None
+    assert us.sip_rt_spread_pct(0, 10) is None
+
+
+def test_quote_age_at_or_over_60s_is_unpriceable():
+    sample = 1_000_000.0
+    assert us.quote_is_fresh(sample, sample - 59.9) is True
+    assert us.quote_is_fresh(sample, sample - 60.0) is False
+    assert us.quote_is_fresh(sample, sample - 61.0) is False
+    assert us.quote_is_fresh(sample, sample + 1.0) is False  # future
+
+
+def test_stale_sip_quote_excluded_from_sip_median(tmp_path):
+    """age ≥ 60s → unpriceable; live_sip is None, not a floored fiction."""
+    cache = us.SipQuoteCache(tmp_path)
+    day = DAY
+    sample = _ts(10, 0)
+    # Quote 90s before the sample — stale under the 60s rule.
+    cache._mem[("TEM", day)] = [{
+        "ts": sample - 90.0, "bid": 9.99, "ask": 10.01,
+    }]
+    bars = [_bar(9, 30 + i, 10, 10.1, 9.9, 10) for i in range(60)]
+    costs = us.triple_costs_for_name_day(
+        bars, day, "TEM", sample,
+        give_live=1.0, fee_pct=0.0, quoted={}, sip_cache=cache)
+    assert costs["live_sip"] is None
+    assert costs["sip_src"] == "stale"
+    assert costs["fixed_079"] == pytest.approx(us.COST_PCT)
+    assert costs["live_iex"] > 1.0   # give + some spread
+
+
+def test_fresh_sip_quote_prices_live_sip(tmp_path):
+    cache = us.SipQuoteCache(tmp_path)
+    day = DAY
+    sample = _ts(10, 0)
+    cache._mem[("TEM", day)] = [{
+        "ts": sample - 5.0, "bid": 9.99, "ask": 10.01,
+    }]
+    bars = [_bar(9, 30 + i, 10, 10.1, 9.9, 10) for i in range(60)]
+    costs = us.triple_costs_for_name_day(
+        bars, day, "TEM", sample,
+        give_live=1.0, fee_pct=0.0, quoted={}, sip_cache=cache)
+    assert costs["live_sip"] == pytest.approx(1.0 + 0.20)
+    assert costs["sip_src"] == "sip"
+    assert set(costs).issuperset(
+        {"fixed_079", "live_iex", "live_sip"})
+
+
+def test_triple_playability_exposes_all_three_payx_keys():
+    """A priced row set yields pay_x under each of the three cost keys."""
+    rows = []
+    for _ in range(40):
+        rows.append({
+            "mfe": 4.0, "mae": 2.0, "net": 1.0, "day": DAY,
+            "cost_fixed_079": 0.79,
+            "cost_live_iex": 1.2,
+            "cost_live_sip": 1.5,
+        })
+    score = _score(4.0, 2.0, sessions=10, green=8)
+    p079 = us.playability_from_costs(rows, score, "cost_fixed_079")
+    piex = us.playability_from_costs(rows, score, "cost_live_iex")
+    psip = us.playability_from_costs(rows, score, "cost_live_sip")
+    assert p079["pay_x"] == pytest.approx(4.0 / 0.79)
+    assert piex["pay_x"] == pytest.approx(4.0 / 1.2)
+    assert psip["pay_x"] == pytest.approx(4.0 / 1.5)
+    cell = {
+        "pay_x_079": p079["pay_x"],
+        "pay_x_iex": piex["pay_x"],
+        "pay_x_sip": psip["pay_x"],
+    }
+    assert set(cell) == {"pay_x_079", "pay_x_iex", "pay_x_sip"}
+
+
+def test_verdict_sip_unpriceable_when_coverage_below_floor():
+    play = {"verdict": "PLAYABLE"}
+    score = {"n": 100, "sessions": 10}
+    assert us.verdict_sip(play, score, sip_cov=0.2, cov_floor=0.5) == (
+        "UNPRICEABLE")
+
+
+def test_verdict_sip_thin_when_sample_is_short():
+    play = {"verdict": "PLAYABLE"}
+    score = {"n": 10, "sessions": 2}
+    assert us.verdict_sip(play, score, sip_cov=0.9) == "THIN"
+
+
+def test_existing_fixed_and_measured_cost_models_unchanged():
+    """--cost-model fixed|measured defaults must keep working."""
+    bars = [_bar(9, 30 + i, 2.0, 2.0, 2.0, 2.0) for i in range(60)]
+    assert us.name_cost_pct(bars, DAY, "fixed") == (us.COST_PCT, "fixed")
+    cost, src = us.name_cost_pct(bars, DAY, "measured")
+    assert src in ("tick", "roll")
+    assert cost >= us.GIVE_PCT
+    # Legacy give stays 0.10R for measured — live 0.20R is triple-report only.
+    assert us.GIVE_PCT == pytest.approx(0.50)

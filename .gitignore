@@ -169,6 +169,7 @@ benchmarks/earlier_book/results.jsonl
 benchmarks/earlier_book/summary.md
 benchmarks/earlier_book/after_*.json
 benchmarks/overlap_miss/
+benchmarks/universe_cost/
 benchmarks/entry_ab/results.jsonl
 benchmarks/entry_ab/summary.md
 benchmarks/entry_ab/phase_a_top.json
