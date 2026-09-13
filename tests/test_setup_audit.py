@@ -33,6 +33,30 @@ def test_exit_knobs_are_fingerprinted():
         assert k in fp, f"{k} changes what the desk banks and must be stamped"
 
 
+def test_green_catchup_trail_decay_is_fingerprinted(monkeypatch):
+    """Live green catch-up decay must not CRITICAL as unfingerprinted."""
+    import learn_stamps
+    fp = set(learn_stamps._FINGERPRINT_KEYS)
+    decay = (
+        "ai_local_trail_time_decay_enabled",
+        "ai_local_trail_decay_idle_sec",
+        "ai_local_trail_decay_step_r",
+        "ai_local_trail_decay_max_mfe_r",
+    )
+    for k in decay:
+        assert k in fp, f"{k} changes the shelf and must be stamped"
+    monkeypatch.setattr(sa, "CRITICAL", [])
+    monkeypatch.setattr(sa, "WARN", [])
+    live = {
+        "ai_local_trail_time_decay_enabled": True,
+        "ai_local_trail_decay_idle_sec": 8.0,
+        "ai_local_trail_decay_step_r": 0.05,
+        "ai_local_trail_decay_max_mfe_r": 0.0,
+    }
+    sa.audit_fingerprint(live)
+    assert not sa.CRITICAL, sa.CRITICAL
+
+
 def test_regime_patterns_catch_the_exit_knobs():
     import re
     for k in ("ai_exit_min_hold_sec", "ai_local_trail_give_r",

@@ -157,6 +157,12 @@ _FINGERPRINT_KEYS = (
     "ai_local_trail_tighten_mfe_r",
     "ai_local_trail_damp_sec",
     "ai_local_trail_print_ring",
+    # Green catch-up time-decay: idle raise of the shelf toward last while
+    # green. Two decay settings must not stamp the same config_fp.
+    "ai_local_trail_time_decay_enabled",
+    "ai_local_trail_decay_idle_sec",
+    "ai_local_trail_decay_step_r",
+    "ai_local_trail_decay_max_mfe_r",
     # Dead-trade is a time-stop, so it decides holds the same way the
     # min-hold gate does — and the two now interact.
     "ai_dead_trade_min",

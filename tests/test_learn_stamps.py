@@ -120,6 +120,25 @@ def test_fingerprint_covers_the_knobs_that_decide_what_a_trade_banks():
         assert k in keys, k
 
 
+def test_fingerprint_covers_green_catchup_trail_decay():
+    """Live green catch-up decay knobs must stamp distinct regimes."""
+    keys = set(ls._FINGERPRINT_KEYS)
+    for k in ("ai_local_trail_time_decay_enabled",
+              "ai_local_trail_decay_idle_sec",
+              "ai_local_trail_decay_step_r",
+              "ai_local_trail_decay_max_mfe_r"):
+        assert k in keys, k
+    base = {
+        "ai_local_trail_time_decay_enabled": True,
+        "ai_local_trail_decay_idle_sec": 8.0,
+        "ai_local_trail_decay_step_r": 0.05,
+        "ai_local_trail_decay_max_mfe_r": 0.0,
+        "paper": True,
+    }
+    moved = dict(base, ai_local_trail_decay_idle_sec=16.0)
+    assert ls.config_fingerprint(base) != ls.config_fingerprint(moved)
+
+
 def test_changing_a_trail_knob_changes_the_fingerprint():
     import learn_stamps as ls
     base = {"ai_local_trail_arm_pct": 0.15, "paper": True}

@@ -155,3 +155,20 @@ cache/
 .agentsroom/
 scratchpad/**
 !scratchpad/README.md
+
+# Seed-rank board snapshots (rewritten each slot; same class as suggestions.json)
+seed_rank_agy.json
+seed_rank_grok.json
+seed_rank_gx.json
+seed_rank_ax.json
+seed_rank_claude.json
+
+# Regenerable bench runs (tools rewrite these). Keep intentional baselines
+# tracked: earlier_book/baseline.json, entry_ab/champion.json + runner_up.json.
+benchmarks/earlier_book/results.jsonl
+benchmarks/earlier_book/summary.md
+benchmarks/earlier_book/after_*.json
+benchmarks/overlap_miss/
+benchmarks/entry_ab/results.jsonl
+benchmarks/entry_ab/summary.md
+benchmarks/entry_ab/phase_a_top.json
