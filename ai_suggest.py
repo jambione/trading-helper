@@ -53,7 +53,7 @@ from stocktwits_trending import (  # noqa: E402
 
 # Agent Tools API (web_search / x_search). Legacy chat live-search is 410 Gone.
 XAI_RESPONSES_URL = "https://api.x.ai/v1/responses"
-DEFAULT_XAI_MODEL = "grok-4.5"
+DEFAULT_XAI_MODEL = "grok-4.6"
 DEFAULT_PROMPT_FILE = "ai_prompt.txt"
 # Full research + agent tools is slow; default well above chat-only timeouts.
 DEFAULT_TIMEOUT = 600.0
@@ -1979,7 +1979,9 @@ def call_grok_cli(
                 text=True,
                 timeout=max(30.0, float(timeout)),
                 env=env,
-                cwd=str(ROOT),
+                # Empty workspace — same as AGY/Claude. Repo ROOT pulls
+                # CLAUDE.md / git status into the session and can cancel.
+                cwd=_cli_workspace(),
             )
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(

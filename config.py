@@ -1232,7 +1232,7 @@ DEFAULT_CONFIG = {
     "grok_max_price":          100.0,   # display / idea price ceiling ($)
     "grok_backend":            "cli",   # subscription: grok CLI / grok login
     "grok_cli_bin":            "grok",
-    "grok_model":              "grok-4.5",
+    "grok_model":              "grok-4.6",
     "grok_max_turns":               4,  # A/B: t4 beat t8 on quality/token impact
     "grok_live_search":         True,
     # Same modes as claude_search_tools; used when grok_backend=api.

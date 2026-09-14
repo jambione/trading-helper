@@ -732,6 +732,46 @@ def test_cli_resolver_and_default_backend():
     assert isinstance(claude_cli_available(), bool)
 
 
+def test_call_grok_cli_uses_empty_workspace_cwd(monkeypatch, tmp_path):
+    """Grok CLI must not run from the repo ROOT (same as AGY/Claude).
+
+    Repo cwd pulls CLAUDE.md / git status into the session and has been
+    observed to cancel research polls; the empty workspace keeps the
+    cached prefix stable.
+    """
+    import json
+    import ai_suggest as m
+
+    monkeypatch.setattr(m, "resolve_grok_cli", lambda bin=None: "/fake/grok")
+    monkeypatch.setattr(m, "cli_logged_in", lambda: True)
+    monkeypatch.setattr(m, "_cli_workspace", lambda: str(tmp_path))
+    monkeypatch.setattr(m, "DEFAULT_XAI_MODEL", "grok-4.6")
+    captured = {}
+
+    class _P:
+        returncode = 0
+        stdout = json.dumps({
+            "text": "GROK_OK",
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+            "total_cost_usd": 0.0,
+            "num_turns": 1,
+        })
+        stderr = ""
+
+    def _run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["kw"] = kw
+        return _P()
+
+    monkeypatch.setattr(m.subprocess, "run", _run)
+    text = m.call_grok_cli("Reply GROK_OK", timeout=30, max_turns=1)
+    assert text.strip() == "GROK_OK"
+    assert captured["kw"].get("cwd") == str(tmp_path)
+    assert captured["kw"].get("cwd") != str(m.ROOT)
+    assert "-m" in captured["cmd"]
+    assert "grok-4.6" in captured["cmd"]
+
+
 def test_claude_output_looks_logged_out():
     from ai_suggest import claude_output_looks_logged_out
     assert claude_output_looks_logged_out("Not logged in · Please run /login")
