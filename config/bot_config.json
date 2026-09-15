@@ -41,6 +41,7 @@
   "ai_local_trail_be_at_spread_k": 0.0,
   "ai_local_trail_decay_idle_sec": 8.0,
   "ai_local_trail_decay_max_mfe_r": 0.0,
+  "ai_local_trail_decay_overtake": false,
   "ai_local_trail_decay_step_r": 0.05,
   "ai_local_trail_enabled": true,
   "ai_local_trail_give_max_pct": 1.0,

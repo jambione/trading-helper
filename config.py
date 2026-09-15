@@ -1128,15 +1128,18 @@ DEFAULT_CONFIG = {
     # name is 0.4R; cap keeps the 0.10R identity.
     "ai_local_trail_min_give_max_r":   0.20,
     # Green catch-up time-decay: while last > entry, idle raises local_stop
-    # toward last − min_cushion in step_r chunks; at ceiling + idle overtake
-    # to last (trail-hit, no dip). Raise-only overlay on give_r.
-    # Jonathan 2026-09-09: ON for Thu live — score capture vs early-scratch;
-    # flip off Friday if runners get taxed.
+    # toward last − min_cushion in step_r chunks. Ceiling mode is
+    # last−cushion (~$0.01 when min_give_px=0) unless
+    # ai_local_trail_decay_overtake=True (legacy stop>=last, no dip).
+    # Raise-only overlay on give_r.
     "ai_local_trail_time_decay_enabled": True,
     "ai_local_trail_decay_idle_sec":  8.0,
     "ai_local_trail_decay_step_r":    0.05,
     # Optional MFE ceiling for decay; 0 = off (green gate alone).
     "ai_local_trail_decay_max_mfe_r": 0.0,
+    # True = stop>=last at ceiling (legacy overtake). False = park at
+    # last−cushion and wait for a 1¢ dip (Jonathan 2026-09-15).
+    "ai_local_trail_decay_overtake":  False,
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
     # 0.30 let FGI/SPAI/TDIC open 2R in the hole on a stale ask (08-14).
     "ai_fill_abort_r":                 0.15,
@@ -1861,6 +1864,7 @@ SAFE_CONFIG_KEYS = [
     "ai_local_trail_decay_idle_sec",
     "ai_local_trail_decay_step_r",
     "ai_local_trail_decay_max_mfe_r",
+    "ai_local_trail_decay_overtake",
     "ai_breakeven_offset_px",
     "ai_book_tick_sec",
     "ai_shelf_tick_sec",

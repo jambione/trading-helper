@@ -114,6 +114,8 @@ DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R = 0.20
 DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED = True
 DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC = 8.0
 DEFAULT_LOCAL_TRAIL_DECAY_STEP_R = 0.05
+# True = legacy overtake stop>=last at ceiling; False = park at last−cushion.
+DEFAULT_LOCAL_TRAIL_DECAY_OVERTAKE = True
 # Optional: only decay while mfe_r is under this. 0 = off (green gate alone).
 DEFAULT_LOCAL_TRAIL_DECAY_MAX_MFE_R = 0.0
 # Runner (tranche B) trail distance, in R — NOT percent. A fixed percent trail
@@ -2967,11 +2969,13 @@ def green_catchup_raise(
     Primary gate is ``last > entry``. On a new peak the idle clock resets; after
     ``ai_local_trail_decay_idle_sec`` with no new peak, step up by
     ``ai_local_trail_decay_step_r`` × R (raise-only). When a step would reach
-    or clamp to the min-give ceiling under last, **overtake**: return stop at
-    ``last`` so the next shelf tick's trail-hit liquidates green without
-    requiring a dip into the stop. Returns the absolute stop to demand, or
-    None when the overlay is inactive this tick. Does not replace static
-    give_r — caller takes ``max(static, this)``.
+    or clamp to the min-give ceiling under last:
+      - ``ai_local_trail_decay_overtake=True`` (legacy): return stop at ``last``
+        so trail-hit liquidates with no dip.
+      - ``False`` (live): park at ``last − cushion`` (~$0.01) and wait for a
+        1¢ dip into the stop.
+    Returns the absolute stop to demand, or None when inactive this tick.
+    Does not replace static give_r — caller takes ``max(static, this)``.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not bool(cfg.get(
@@ -3062,15 +3066,24 @@ def green_catchup_raise(
     raised = float(prev) + n_steps * step_px
     # Raise-only forever; never loosen.
     raised = max(raised, float(prev))
-    # Overtake-at-ceiling: while still green, when this idle step would clamp
-    # to (or past) last − min_cushion — or the shelf is already parked there —
-    # set stop >= last so trail-hit liquidates without needing a 1¢ dip.
+    # Ceiling: overtake to last (legacy) or park at last−cushion (live).
     at_ceiling = float(prev) + 1e-9 >= ceiling - 1e-9
     would_clamp = raised + 1e-9 >= ceiling
     if at_ceiling or would_clamp:
         pos["trail_decay_last_step_at"] = float(last_step) + n_steps * idle_need
-        pos["trail_decay_overtake"] = True
-        return round(float(last), 2)
+        overtake = bool(cfg.get(
+            "ai_local_trail_decay_overtake",
+            DEFAULT_LOCAL_TRAIL_DECAY_OVERTAKE,
+        ))
+        if overtake:
+            pos["trail_decay_overtake"] = True
+            return round(float(last), 2)
+        # Park under last (min_give cushion; live = $0.01 when min_give_px=0)
+        parked = round(float(last) - max(cushion, 0.01), 2)
+        if parked + 1e-9 <= float(prev):
+            return None  # already there — bank clock only
+        pos.pop("trail_decay_overtake", None)
+        return parked
     if raised + 1e-9 >= float(last):
         raised = float(last) - max(cushion, 0.01)
     if raised + 1e-9 <= float(prev):

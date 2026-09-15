@@ -3018,7 +3018,7 @@ def test_green_catchup_overtake_at_ceiling():
     """At ceiling + idle: overtake stop >= last so trail-hit needs no dip."""
     # Shelf already one step under ceiling; next idle step would clamp → overtake.
     pos = _green_catchup_pos(local_stop_price=10.45)
-    cfg = _green_catchup_cfg()
+    cfg = _green_catchup_cfg(ai_local_trail_decay_overtake=True)
     t0 = 1_000_000.0
     cp.local_profit_stop(pos, cfg, now=t0)  # arm idle
     got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
@@ -3030,12 +3030,31 @@ def test_green_catchup_overtake_at_ceiling():
 def test_green_catchup_overtake_when_already_at_ceiling():
     """prev already at last−cushion + idle → overtake to last."""
     pos = _green_catchup_pos(local_stop_price=10.49)  # ceiling with min_give=0
-    cfg = _green_catchup_cfg()
+    cfg = _green_catchup_cfg(ai_local_trail_decay_overtake=True)
     t0 = 1_000_000.0
     cp.local_profit_stop(pos, cfg, now=t0)
     got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
     assert got == pytest.approx(10.50)
     assert pos.get("trail_decay_overtake") is True
+
+
+def test_green_catchup_parks_at_last_minus_cushion():
+    """overtake=False: at ceiling park at last−$0.01, no trail_decay_overtake."""
+    cfg = _green_catchup_cfg(ai_local_trail_decay_overtake=False)
+    t0 = 1_000_000.0
+    # Would-clamp path: shelf one step under ceiling.
+    pos = _green_catchup_pos(local_stop_price=10.45)
+    cp.local_profit_stop(pos, cfg, now=t0)
+    got = cp.local_profit_stop(pos, cfg, now=t0 + 8.0)
+    assert got == pytest.approx(10.49)
+    assert not pos.get("trail_decay_overtake")
+    # Already-at-ceiling path: bank clock only (already parked).
+    pos2 = _green_catchup_pos(local_stop_price=10.49)
+    cp.local_profit_stop(pos2, cfg, now=t0)
+    got2 = cp.local_profit_stop(pos2, cfg, now=t0 + 8.0)
+    # Raise-only static + park: stay at 10.49 under last 10.50
+    assert got2 == pytest.approx(10.49)
+    assert not pos2.get("trail_decay_overtake")
 
 
 def test_green_catchup_red_no_overtake():
