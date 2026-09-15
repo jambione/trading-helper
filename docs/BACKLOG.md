@@ -1,12 +1,13 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-10** (~08:37 ET; occupancy follow-up after Thu score).
+Last updated: **2026-09-15** (three-knob lean Plan A — ship after RTH).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
 - **Progress ladder:** clean arms → MFE≥0.25R → capture → med R/$ → equity.
-- **Plan A** = stream-fresh + EXH rising (heating) + RSI≤60 + soft_ob/mistimed_heat; local trail; broker stop off.
+- **Plan A** = stream-fresh + EXH rising in heat band + RSI timer (live still level-capped ≤60 + mistimed/soft_ob; **target** direction-only per Sep-11) + confirm_ticks=1; no MACD arm / no MACD OB pin; local trail; broker stop off.
+- **RSI interim:** `cm_rsi_max=60` + mistimed/soft_ob are **not** sacred. Sep-11 lean timer = direction-only (block falling when RSI > ~10; no level max / mistimed level gates). Do **not** soften EXH/RSI or touch arm-code this week — measure the three-knob ship first.
 - **Plan B** = burst trial, code-ready, **live off** until Plan A earns a dry-run open.
 - Mid-RTH: no strategy retunes unless on fire (ops OK).
 
@@ -16,6 +17,7 @@ Last updated: **2026-09-10** (~08:37 ET; occupancy follow-up after Thu score).
 
 | When | Item | Status | Notes |
 |------|------|--------|-------|
+| **Mon 2026-09-15 after RTH** | Lean Plan A three-knob | **LOCAL → deploy after close** | `confirm_ticks` 2→**1**; `ob_allow_flat_when_macd_armed`→**false**; `require_realtime_macd`→**false**. Uptrend **stays on**. No arm-code / no EXH/RSI softens this week. **Wed measure:** fewer `arm_confirming`, ~zero `overbought_macd_armed`, same/more clean EXH↑+RSI arms → occupancy dig if still thin. |
 | **Wed 2026-09-09** | Tight local-trail leash | **LIVE** `11564d3` + follow-ons | `give_r` 0.35→**0.20**, `give_max_pct` 1.75→**1.0**. Synth stop / Plan A arms untouched. Scorecard: `docs/WED_2026-09-09.md` |
 | **Wed AM** | AGY seed-rank fix | **LIVE** `736549b` | `agy_model=gemini-3.1-pro-high`; skip `--effort` on `*-high` ids. Prove at ~09:25 seed slot |
 | **Thu** | Tape readiness #1 — poller paint-trust parity | **SHIPPED** | `_paint_trust_young_stream_field` on Class C poller + `should_arm_buy` (mirror `apply_tape_blocker`). Age ceiling 15→20 still parked. |
