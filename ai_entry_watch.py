@@ -1206,11 +1206,36 @@ def soft_seed_interval_sec(cfg: dict | None = None) -> float:
 
 
 def warming_seat_quota(cfg: dict | None = None) -> int:
+    """Canonical scout / preheat quota (``ai_watch_warming_seats``)."""
     cfg = cfg if isinstance(cfg, dict) else {}
     try:
         return max(0, int(cfg.get("ai_watch_warming_seats", 3)))
     except (TypeError, ValueError):
         return 3
+
+
+def scout_seat_quota(cfg: dict | None = None) -> int:
+    """Scout seats for bench/docs. Canonical knob: ``ai_watch_warming_seats``.
+
+    ``ai_watch_scout_seats`` overrides when present so one desk can rename the
+    quota without breaking preheat_steal (which still reads warming_seats).
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if "ai_watch_scout_seats" in cfg:
+        try:
+            return max(0, int(cfg.get("ai_watch_scout_seats") or 0))
+        except (TypeError, ValueError):
+            pass
+    return warming_seat_quota(cfg)
+
+
+def pin_slot_quota(cfg: dict | None = None) -> int:
+    """Protected Elite-6 pin seats. 0 disables the pin class."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0, int(cfg.get("ai_watch_pin_slots", 6) or 0))
+    except (TypeError, ValueError):
+        return 6
 
 
 def warming_exh_band(cfg: dict | None = None) -> tuple[float, float]:
@@ -1713,6 +1738,256 @@ def _is_protected_warming_seat(
     return True
 
 
+# Elite-6 pin stream-ready accrual (same ET day). Process-local v1 + rec stamp.
+_PIN_READY_ACCUM: dict[str, float] = {}
+_PIN_READY_MARK: dict[str, float] = {}
+_PIN_READY_DAY: str = ""
+_PIN_HEAT_SOURCES = frozenset({"momentum", "movers", "trending"})
+
+
+def _pin_roll_et_day(now: float) -> None:
+    global _PIN_READY_DAY
+    day = _et_day_key(now)
+    if day == _PIN_READY_DAY:
+        return
+    _PIN_READY_ACCUM.clear()
+    _PIN_READY_MARK.clear()
+    _PIN_READY_DAY = day
+
+
+def _is_protected_pin_seat(
+    rec: dict,
+    cfg: dict | None,
+    *,
+    now: float,
+) -> bool:
+    """True when seat_role=pin and steal protection is enabled.
+
+    Pins are immune to preheat_steal / unarmable_steal / stale_tape_cap.
+    Demote-dead and A2 still clear pin status separately.
+    """
+    del now  # API parity with warming helper; demote-dead is a separate pass.
+    if not isinstance(rec, dict):
+        return False
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if not bool(cfg.get("ai_watch_pin_protect_steals", True)):
+        return False
+    return str(rec.get("seat_role") or "").strip().lower() == "pin"
+
+
+def _pin_ready_sec(sym: str, rec: dict | None = None) -> float:
+    sym_u = str(sym or "").upper().strip()
+    if sym_u and sym_u in _PIN_READY_ACCUM:
+        return float(_PIN_READY_ACCUM.get(sym_u) or 0.0)
+    if isinstance(rec, dict):
+        v = _f_or_none(rec.get("pin_stream_ready_sec"))
+        if v is not None:
+            return float(v)
+    return 0.0
+
+
+def _accumulate_pin_stream_ready(
+    rec: dict,
+    cfg: dict | None,
+    *,
+    now: float,
+) -> None:
+    """Accrue same-ET-day stream-ready seconds; track continuous dead for pins."""
+    if not isinstance(rec, dict):
+        return
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if not sym:
+        return
+    _pin_roll_et_day(now)
+    ready = _is_stream_ready_seat(rec, cfg, now=now)
+    if ready:
+        last = _PIN_READY_MARK.get(sym)
+        if last is not None and float(last) < float(now):
+            _PIN_READY_ACCUM[sym] = float(
+                _PIN_READY_ACCUM.get(sym) or 0.0
+            ) + (float(now) - float(last))
+        elif sym not in _PIN_READY_ACCUM:
+            _PIN_READY_ACCUM[sym] = float(
+                _f_or_none(rec.get("pin_stream_ready_sec")) or 0.0
+            )
+        _PIN_READY_MARK[sym] = float(now)
+        rec["pin_stream_ready_sec"] = float(_PIN_READY_ACCUM.get(sym) or 0.0)
+        rec.pop("pin_dead_since", None)
+        return
+    _PIN_READY_MARK.pop(sym, None)
+    if str(rec.get("seat_role") or "").strip().lower() == "pin":
+        if _f_or_none(rec.get("pin_dead_since")) is None:
+            rec["pin_dead_since"] = float(now)
+
+
+def _pin_metrics_snapshot(rec: dict, sym: str) -> dict:
+    dvol = _f_or_none(rec.get("admit_dollar_volume"))
+    if dvol is None:
+        dvol = _f_or_none(rec.get("dollar_volume"))
+    return {
+        "stream_ready_sec": round(_pin_ready_sec(sym, rec), 1),
+        "dollar_volume": round(float(dvol), 0) if dvol is not None else None,
+        "source": str(rec.get("source") or "")[:24] or None,
+        "status": str(rec.get("status") or "")[:16] or None,
+    }
+
+
+def _log_pin_event(
+    events: list | None,
+    cp,
+    kind: str,
+    *,
+    symbol: str,
+    reason: str,
+    rec: dict | None = None,
+) -> None:
+    snap = _pin_metrics_snapshot(rec or {}, symbol)
+    payload = {"kind": kind, "symbol": symbol, "reason": reason, **snap}
+    if events is None:
+        events = []
+    try:
+        if cp is not None:
+            events.append(cp.log_event(kind, symbol=symbol, reason=reason, **snap))
+            return
+    except Exception:  # noqa: BLE001
+        pass
+    events.append(payload)
+
+
+def _apply_pin_roles(
+    state: dict,
+    *,
+    cfg: dict | None,
+    now: float,
+    events: list | None = None,
+    cp=None,
+) -> list[str]:
+    """Demote dead pins and promote heat+stream-ready seats into free pin slots.
+
+    Returns symbols newly promoted (caller may ensure_watch_stream). Process-
+    local stream-ready accrual; prefer heat sources (momentum/movers/trending).
+    """
+    if not isinstance(state, dict):
+        return []
+    cfg = cfg if isinstance(cfg, dict) else {}
+    events = events if isinstance(events, list) else []
+    slots = pin_slot_quota(cfg)
+    promoted: list[str] = []
+
+    for rec in state.values():
+        if isinstance(rec, dict):
+            _accumulate_pin_stream_ready(rec, cfg, now=now)
+
+    if slots <= 0:
+        for key, rec in list(state.items()):
+            if not isinstance(rec, dict):
+                continue
+            if str(rec.get("seat_role") or "").strip().lower() != "pin":
+                continue
+            sym = str(rec.get("symbol") or key or "").upper().strip()
+            rec["seat_role"] = "warming"
+            rec.pop("pin_dead_since", None)
+            if sym:
+                _log_pin_event(
+                    events, cp, "pin_demote", symbol=sym,
+                    reason="pins_disabled", rec=rec)
+        return promoted
+
+    try:
+        demote_dead = max(
+            0.0, float(cfg.get("ai_watch_pin_demote_dead_sec", 600.0) or 0.0))
+    except (TypeError, ValueError):
+        demote_dead = 600.0
+    try:
+        min_ready = max(
+            0.0,
+            float(cfg.get("ai_watch_pin_min_stream_ready_sec", 120.0) or 0.0))
+    except (TypeError, ValueError):
+        min_ready = 120.0
+    try:
+        min_dvol = max(
+            0.0,
+            float(cfg.get("ai_watch_pin_min_dollar_volume", 2e6) or 0.0))
+    except (TypeError, ValueError):
+        min_dvol = 2e6
+
+    # Demote: continuous dead / A2-demoted lose pin protection.
+    for key, rec in list(state.items()):
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("seat_role") or "").strip().lower() != "pin":
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        if _no_stream_strike_demoted(sym, now, cfg):
+            rec["seat_role"] = "warming"
+            rec.pop("pin_dead_since", None)
+            _log_pin_event(
+                events, cp, "pin_demote", symbol=sym,
+                reason="a2_demoted", rec=rec)
+            continue
+        dead_since = _f_or_none(rec.get("pin_dead_since"))
+        if (
+            demote_dead > 0
+            and dead_since is not None
+            and (float(now) - float(dead_since)) >= demote_dead
+        ):
+            rec["seat_role"] = "warming"
+            rec.pop("pin_dead_since", None)
+            _log_pin_event(
+                events, cp, "pin_demote", symbol=sym,
+                reason="dead_timeout", rec=rec)
+
+    pin_n = sum(
+        1 for rec in state.values()
+        if isinstance(rec, dict)
+        and str(rec.get("seat_role") or "").strip().lower() == "pin"
+    )
+    free = max(0, slots - pin_n)
+    if free <= 0:
+        return promoted
+
+    ranked: list[tuple[float, float, str, dict]] = []
+    for key, rec in state.items():
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("seat_role") or "").strip().lower() == "pin":
+            continue
+        sym = str(rec.get("symbol") or key or "").upper().strip()
+        if not sym:
+            continue
+        status = str(rec.get("status") or "").lower().strip()
+        if status not in ("watching", "armed"):
+            continue
+        if _no_stream_strike_demoted(sym, now, cfg):
+            continue
+        src = str(rec.get("source") or "").lower().strip()
+        if src not in _PIN_HEAT_SOURCES:
+            continue
+        if not _is_stream_ready_seat(rec, cfg, now=now):
+            continue
+        ready_sec = _pin_ready_sec(sym, rec)
+        if ready_sec < min_ready:
+            continue
+        dvol = _f_or_none(rec.get("admit_dollar_volume"))
+        if dvol is None:
+            dvol = _f_or_none(rec.get("dollar_volume")) or 0.0
+        if float(dvol) < min_dvol:
+            continue
+        ranked.append((float(ready_sec), float(dvol), sym, rec))
+    ranked.sort(key=lambda t: (-t[0], -t[1], t[2]))
+    for ready_sec, dvol, sym, rec in ranked[:free]:
+        rec["seat_role"] = "pin"
+        rec.pop("pin_dead_since", None)
+        rec["pin_stream_ready_sec"] = float(ready_sec)
+        promoted.append(sym)
+        _log_pin_event(
+            events, cp, "pin_promote", symbol=sym,
+            reason="metrics", rec=rec)
+    return promoted
+
+
 def _stale_timeout_blocked(
     symbol: str,
     now: float,
@@ -2045,7 +2320,9 @@ def _enforce_stale_tape_seat_cap(
         ).strip().lower()
         if src != "stale_tape":
             continue
-        # Protect warming + young-stream + not-falling EXH from thrash drops.
+        # Protect pins and warming+young-stream from thrash drops.
+        if _is_protected_pin_seat(rec, cfg, now=now):
+            continue
         if _is_protected_warming_seat(rec, cfg, now=now):
             continue
         sym = str(rec.get("symbol") or key or "").upper().strip()
@@ -2252,6 +2529,11 @@ def _preferential_unarmable_steal(
     for key, rec in state.items():
         if not isinstance(rec, dict):
             continue
+        # Pins + stream-ready warming are not steal victims for scouts.
+        if _is_protected_pin_seat(rec, cfg, now=now):
+            continue
+        if _is_protected_warming_seat(rec, cfg, now=now):
+            continue
         if not _is_unarmable_stale_watching(rec, cfg, now=now):
             continue
         sym = str(rec.get("symbol") or key or "").upper().strip()
@@ -2382,6 +2664,8 @@ def _preferential_preheat_steal(
     victims: list[tuple[str, dict, float, float]] = []
     for key, rec in state.items():
         if not isinstance(rec, dict):
+            continue
+        if _is_protected_pin_seat(rec, cfg, now=now):
             continue
         if _is_protected_warming_seat(rec, cfg, now=now):
             continue
@@ -6932,12 +7216,21 @@ def write_admit_funnel(
         if isinstance(r, dict)
         and str(r.get("seat_role") or "").lower() == "warming"
     )
+    pin_n = sum(
+        1 for r in (kept or [])
+        if isinstance(r, dict)
+        and str(r.get("seat_role") or "").lower() == "pin"
+    )
+    # Scouts == warming seats in the funnel; sync later stamps live book counts.
+    scout_n = warming_n
     payload = {
         "ts": round(t0, 2),
         "n_candidates": len(candidates or []),
         "n_kept": len(kept or []),
         "n_rejected": len(rejected or []),
         "warming_n": warming_n,
+        "pin_n": pin_n,
+        "scout_n": scout_n,
         "candidates_by_source": dict(by_src),
         "kept_by_source": dict(kept_src),
         "inclusion_reject_reasons": dict(rej_reasons),
@@ -6968,6 +7261,8 @@ def write_admit_funnel(
             kept_n=payload["n_kept"],
             n_rejected=payload["n_rejected"],
             warming_n=warming_n,
+            pin_n=pin_n,
+            scout_n=scout_n,
             kept_symbols=kept_symbols[:16],
             inclusion=dict(rej_reasons.most_common(8)),
             seed_drops=dict(sorted(top_seed.items(), key=lambda kv: -kv[1])[:12]),
@@ -7080,12 +7375,16 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             "confirm_ask", "confirm_ask_ts", "confirm_px_src",
             "arm_confirm_rsi_max",
             "stale_feed_since", "stale_tape_streak",
-            "seat_role",
+            "seat_role", "pin_stream_ready_sec", "pin_dead_since",
         ):
             if prev.get(k) is not None:
                 rec[k] = prev[k]
-        # Warming scout role (pre-heat seats). Prefer fresh row tag.
-        if str(row.get("seat_role") or "").strip().lower() == "warming":
+        # Seat roles: pin wins over warming; warming scout prefers fresh tag.
+        prev_role = str(prev.get("seat_role") or "").strip().lower()
+        row_role = str(row.get("seat_role") or "").strip().lower()
+        if prev_role == "pin":
+            rec["seat_role"] = "pin"
+        elif row_role == "warming":
             rec["seat_role"] = "warming"
         elif str(rec.get("seat_role") or "").lower() == "warming":
             exh = exhaustion_pct(rec)
@@ -7159,6 +7458,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
 
     # Keep in-flight paper entries even if they left the panels (still managing).
     # Also keep daily A/X duel champions (research) — desk-only sync would drop them.
+    # Elite-6 pins stay on the book off-panel (soft-seed thrash must not evict).
+    _pin_keep_syms: list[str] = []
     for sym, rec in old.items():
         if not isinstance(rec, dict):
             continue
@@ -7167,6 +7468,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             continue
         status = str(rec.get("status") or "").lower().strip()
         is_duel = bool(rec.get("duel") or rec.get("duel_source"))
+        is_pin = str(rec.get("seat_role") or "").strip().lower() == "pin"
 
         # ADMISSION GRACE. The book is rebuilt from THIS cycle's candidates,
         # so a name that momentarily fails one inclusion filter loses its row
@@ -7180,7 +7482,7 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
         # confirmation would quietly exclude the borderline names it was never
         # aimed at. This keeps the ROW alive, not the verdict; every gate
         # still runs on every poll. 0 disables.
-        if status not in ("submitted", "filled") and not is_duel:
+        if status not in ("submitted", "filled") and not is_duel and not is_pin:
             if is_levered_etp(key):
                 continue
             try:
@@ -7199,8 +7501,8 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
                     new_state[key] = dict(rec)
                     continue
 
-        if status in ("submitted", "filled") or is_duel:
-            if status in ("invalidated", "expired") and not is_duel:
+        if status in ("submitted", "filled") or is_duel or is_pin:
+            if status in ("invalidated", "expired") and not is_duel and not is_pin:
                 continue
             if (
                 status not in ("submitted", "filled")
@@ -7215,6 +7517,63 @@ def _sync_watch_locked(candidates: list[dict], t0: float, cfg: dict | None = Non
             kept = dict(rec)
             kept["symbol"] = key
             new_state[key] = kept
+            if is_pin and status not in ("submitted", "filled"):
+                _pin_keep_syms.append(key)
+
+    # Promote / demote pins by metrics; ensure stream on promote + pin re-keep.
+    _pin_events: list = []
+    try:
+        import ai_positions as _cp_pin
+    except Exception:  # noqa: BLE001
+        _cp_pin = None
+    try:
+        _promoted = _apply_pin_roles(
+            new_state, cfg=cfg if isinstance(cfg, dict) else {},
+            now=t0, events=_pin_events, cp=_cp_pin)
+    except Exception:  # noqa: BLE001
+        _promoted = []
+    for _psym in _pin_keep_syms:
+        _prec = new_state.get(_psym)
+        if isinstance(_prec, dict) and str(
+            _prec.get("seat_role") or ""
+        ).strip().lower() == "pin":
+            try:
+                _log_pin_event(
+                    _pin_events, _cp_pin, "pin_keep", symbol=_psym,
+                    reason="off_panel", rec=_prec)
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        _stream_syms = list(dict.fromkeys(
+            list(_promoted or []) + list(_pin_keep_syms or [])))
+        if _stream_syms:
+            ensure_watch_stream(_stream_syms)
+    except Exception:
+        pass
+
+    # Stamp pin/scout counts onto admit_funnel when present (cheap).
+    try:
+        _pin_n = sum(
+            1 for r in new_state.values()
+            if isinstance(r, dict)
+            and str(r.get("seat_role") or "").lower() == "pin"
+        )
+        _scout_n = sum(
+            1 for r in new_state.values()
+            if isinstance(r, dict)
+            and str(r.get("seat_role") or "").lower() == "warming"
+        )
+        _funnel_path = REPORT_DIR / "admit_funnel.json"
+        if _funnel_path.is_file():
+            _funnel = json.loads(_funnel_path.read_text(encoding="utf-8"))
+            if isinstance(_funnel, dict):
+                _funnel["pin_n"] = _pin_n
+                _funnel["scout_n"] = _scout_n
+                _tmp = _funnel_path.with_suffix(".json.tmp")
+                _tmp.write_text(json.dumps(_funnel, indent=2), encoding="utf-8")
+                _tmp.replace(_funnel_path)
+    except Exception:
+        pass
 
     save_watch(new_state)
     # Book membership is the universe that needs live quotes + indicators.
