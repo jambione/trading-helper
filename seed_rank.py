@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Seed-only AI ranker: recommend ≤5 names from the live seed union.
+"""Seed-only AI ranker: recommend ≤N names from the live seed union.
 
 Freezes momentum + trending + movers at prompt time, asks Google AGY and/or Grok
-to rank from THAT list only. A name becomes a watch suggestion only when
-**both** models list it (agreement). Solo picks are logged, not published.
+to rank from THAT list only. Default publish mode is **union**: take up to
+``ai_seed_rank_per_model_max`` from each model, merge by symbol, cap at
+``ai_seed_rank_max``, and tag each row with its primary source. When
+``ai_seed_rank_second_opinion`` is on, attach a peer ``agree|caution|pass``
+derived from the other model's raw ranks (informational; does not block).
+
+Set ``ai_seed_rank_publish_mode="agreement"`` or
+``ai_seed_rank_require_agreement=True`` to restore the legacy intersection path
+(only names both models list).
 
 Buying and selling stay with the mechanical book. This module only names.
 """
@@ -26,6 +33,8 @@ DEFAULT_TIMES = [
     "15:00",
 ]
 MAX_SUGGESTIONS = 5
+PER_MODEL_MAX_DEFAULT = 3
+BOTH_SCORE_BOOST = 0.5  # slight ranking boost when both models list a name
 PROMPT_FILE = ROOT / "ai_seed_rank_prompt.txt"
 SEED_RANK_AGY = ROOT / "seed_rank_agy.json"
 SEED_RANK_CLAUDE = SEED_RANK_AGY  # legacy alias
@@ -36,12 +45,17 @@ SEED_RANK_AX = SEED_RANK_GX  # legacy alias
 _DESK_SRC = frozenset({
     "momentum", "trending", "mom", "st", "stocktwits", "movers",
 })
+_CAUTION_KEYWORDS = frozenset({
+    "thin", "float", "trap", "fade", "chase", "extended", "illiquid",
+    "halt", "dilution", "risk", "avoid", "pass", "crowded", "late",
+})
 
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {
     "fetching_g": False,
     "fetching_x": False,
     "slot_inflight": "",
+    "last_publish_slot": "",
 }
 
 
@@ -77,6 +91,19 @@ def _cfg(cfg: dict | None, key: str, default):
     cfg = cfg if isinstance(cfg, dict) else {}
     val = cfg.get(key)
     return default if val is None else val
+
+
+def publish_mode(cfg: dict | None) -> str:
+    """Return ``agreement`` or ``union``.
+
+    Legacy ``ai_seed_rank_require_agreement=True`` forces agreement mode even
+    when ``ai_seed_rank_publish_mode`` says union.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if bool(_cfg(cfg, "ai_seed_rank_require_agreement", False)):
+        return "agreement"
+    mode = str(_cfg(cfg, "ai_seed_rank_publish_mode", "union") or "union").strip().lower()
+    return "agreement" if mode == "agreement" else "union"
 
 
 def enabled(cfg: dict | None) -> bool:
@@ -288,10 +315,179 @@ def agree_suggestions(
             "invalidation": inv,
             "summary": summary,
             "agreement": True,
+            "both": True,
+            "primary_source": "both",
             "source_mark": "GX",
         }))
     scored.sort(key=lambda t: -t[0])
     return [row for _, row in scored[:max(0, int(max_n))]]
+
+
+def _row_map(rows: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or "").upper().strip()
+        if sym and sym not in out:
+            out[sym] = r
+    return out
+
+
+def _reason_has_caution(reason: str) -> bool:
+    low = str(reason or "").lower()
+    return any(k in low for k in _CAUTION_KEYWORDS)
+
+
+def derive_second_opinion(
+    sym: str,
+    *,
+    primary: str,
+    both: bool,
+    a_full: dict[str, dict],
+    x_full: dict[str, dict],
+    a_top: set[str],
+    x_top: set[str],
+) -> dict[str, str]:
+    """Peer opinion from raw ranks — no extra network call.
+
+    - both listed in top-N → ``agree``
+    - peer omitted entirely → ``pass``
+    - peer listed outside top-N or reason has risk keywords → ``caution``
+    """
+    sym = str(sym or "").upper().strip()
+    primary_l = str(primary or "").lower()
+    if primary_l in ("xai", "grok"):
+        peer, peer_full, peer_top = "agy", a_full, a_top
+    else:
+        # agy / both → peer is Grok
+        peer, peer_full, peer_top = "xai", x_full, x_top
+
+    if both or (sym in a_top and sym in x_top):
+        note = str(peer_full.get(sym, {}).get("reason") or "")[:120]
+        return {"from": peer, "status": "agree", "note": note}
+
+    peer_row = peer_full.get(sym)
+    if peer_row is None:
+        return {"from": peer, "status": "pass", "note": "omitted by peer"}
+    note = str(peer_row.get("reason") or "")[:120]
+    if sym not in peer_top or _reason_has_caution(note):
+        return {"from": peer, "status": "caution", "note": note or "outside peer top-N"}
+    return {"from": peer, "status": "agree", "note": note}
+
+
+def union_suggestions(
+    a_rows: list[dict],
+    x_rows: list[dict],
+    *,
+    per_model_max: int = PER_MODEL_MAX_DEFAULT,
+    max_n: int = MAX_SUGGESTIONS,
+    second_opinion: bool = True,
+) -> list[dict]:
+    """Union of per-model top-N, ranked by best score with a both-boost.
+
+    Primary source when both list a name: the model with the higher individual
+    score; on tie prefer AGY (first-seen). ``both=True`` and source_mark GX.
+    """
+    per_n = max(0, int(per_model_max))
+    a_top_rows = [r for r in a_rows if isinstance(r, dict) and r.get("symbol")][:per_n]
+    x_top_rows = [r for r in x_rows if isinstance(r, dict) and r.get("symbol")][:per_n]
+    a_full = _row_map(a_rows)
+    x_full = _row_map(x_rows)
+    a_top = {str(r.get("symbol") or "").upper() for r in a_top_rows}
+    x_top = {str(r.get("symbol") or "").upper() for r in x_top_rows}
+    a_map = _row_map(a_top_rows)
+    x_map = _row_map(x_top_rows)
+
+    scored: list[tuple[float, dict]] = []
+    for sym in set(a_map) | set(x_map):
+        a = a_map.get(sym)
+        x = x_map.get(sym)
+        both = a is not None and x is not None
+        if both:
+            sa, sx = _score(a), _score(x)
+            avg = (sa + sx) / 2.0
+            rank_score = avg + BOTH_SCORE_BOOST
+            # Both-listed → GX / gx_agree. Tie-break for peer note: higher score.
+            mark = "GX"
+            primary_out = "both"
+            reason_a = str(a.get("reason") or "").strip()
+            reason_x = str(x.get("reason") or "").strip()
+            if reason_a and reason_x and reason_a != reason_x:
+                reason = f"A:{reason_a} | X:{reason_x}"[:80]
+            else:
+                reason = (reason_a or reason_x or "GX agree")[:80]
+            inv = str(a.get("invalidation") or x.get("invalidation") or "")[:120]
+            summary = str(a.get("summary") or x.get("summary") or "")[:200]
+            pub_score = round(avg, 2)
+            agreement = True
+        elif a is not None:
+            primary_out, mark = "agy", "G"
+            reason = str(a.get("reason") or "").strip()[:80]
+            inv = str(a.get("invalidation") or "")[:120]
+            summary = str(a.get("summary") or "")[:200]
+            pub_score = round(_score(a), 2)
+            rank_score = float(pub_score)
+            agreement = False
+        else:
+            assert x is not None
+            primary_out, mark = "xai", "X"
+            reason = str(x.get("reason") or "").strip()[:80]
+            inv = str(x.get("invalidation") or "")[:120]
+            summary = str(x.get("summary") or "")[:200]
+            pub_score = round(_score(x), 2)
+            rank_score = float(pub_score)
+            agreement = False
+
+        row: dict[str, Any] = {
+            "symbol": sym,
+            "score": pub_score,
+            "reason": reason,
+            "invalidation": inv,
+            "summary": summary,
+            "agreement": agreement,
+            "both": both,
+            "primary_source": primary_out,
+            "source_mark": mark,
+        }
+        if second_opinion:
+            op = derive_second_opinion(
+                sym,
+                primary=primary_out,
+                both=both,
+                a_full=a_full,
+                x_full=x_full,
+                a_top=a_top,
+                x_top=x_top,
+            )
+            row["second_opinion"] = op
+            # Surface peer caution/pass in reason when solo (≤80 chars).
+            if not both and op.get("status") in ("caution", "pass"):
+                tag = "X" if op.get("from") == "xai" else "A"
+                note = str(op.get("note") or op.get("status") or "").strip()
+                # Avoid duplicating status when note already states it.
+                if note and note != op.get("status"):
+                    extra = f"{tag}:{op.get('status')} {note}"
+                else:
+                    extra = f"{tag}:{op.get('status')}"
+                merged = f"{reason} | {extra}" if reason else extra
+                row["reason"] = merged[:80]
+        scored.append((rank_score, row))
+
+    scored.sort(key=lambda t: (-t[0], t[1]["symbol"]))
+    return [row for _, row in scored[:max(0, int(max_n))]]
+
+
+def _criteria_for_row(row: dict, *, default_mark: str = "") -> list[str]:
+    mark = str(row.get("source_mark") or default_mark or "").upper()
+    if row.get("both") or row.get("agreement") or mark in ("GX", "AX", "BOTH"):
+        return ["seed_rank", "gx_agree"]
+    primary = str(row.get("primary_source") or "").lower()
+    if primary in ("xai", "grok") or mark == "X":
+        return ["seed_rank", "xai"]
+    if primary in ("agy", "google", "gemini") or mark in ("G", "A"):
+        return ["seed_rank", "agy"]
+    return ["seed_rank"]
 
 
 def write_board(
@@ -302,17 +498,36 @@ def write_board(
     slot: str,
     now: float | None = None,
     agreement_only: bool = True,
+    watch_facing: bool = True,
+    publish_mode_label: str = "",
 ) -> Path:
-    """Write a watch-facing board. Agreement boards carry source_mark GX."""
+    """Write a seed-rank board. ``watch_facing=False`` = audit-only (raw)."""
     t0 = float(now if now is not None else time.time())
-    if source in ("ax", "both", "agreement"):
-        src_label = "agy"  # watch tag; mark GX on each row
+    if source in ("ax", "both", "agreement", "gx"):
+        src_label = "agy"  # watch tag; per-row source_mark carries GX/G/X
         path = SEED_RANK_AX
         mark = "GX"
     elif source in ("agy", "anthropic", "claude", "a", "google", "gemini"):
         src_label, path, mark = "agy", SEED_RANK_AGY, "G"
     else:
         src_label, path, mark = "xai", SEED_RANK_GROK, "X"
+    rows_out = []
+    for row in suggestions:
+        row_mark = str(row.get("source_mark") or mark)
+        reason = str(row.get("reason") or "")
+        if not reason.startswith("seed_rank"):
+            reason = f"seed_rank: {reason}".strip()[:80]
+        else:
+            reason = reason[:80]
+        out = {
+            **row,
+            "source": str(row.get("primary_source") or src_label),
+            "source_mark": row_mark,
+            "agreement": bool(row.get("agreement", row_mark in ("GX", "AX"))),
+            "criteria": row.get("criteria") or _criteria_for_row(row, default_mark=row_mark),
+            "reason": reason,
+        }
+        rows_out.append(out)
     payload = {
         "ts": t0,
         "et": datetime.fromtimestamp(t0, ET).strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -322,21 +537,9 @@ def write_board(
         "seed_ts": frozen.get("ts"),
         "seed_n": frozen.get("n"),
         "agreement_only": bool(agreement_only),
-        "rows": [
-            {
-                **row,
-                "source": src_label,
-                "source_mark": row.get("source_mark") or mark,
-                "agreement": bool(row.get("agreement", mark == "GX")),
-                "criteria": ["seed_rank", "gx_agree"] if mark == "GX" else ["seed_rank"],
-                "reason": (
-                    str(row.get("reason") or "")
-                    if str(row.get("reason") or "").startswith("seed_rank")
-                    else f"seed_rank: {row.get('reason') or ''}"
-                ).strip()[:80],
-            }
-            for row in suggestions
-        ],
+        "watch_facing": bool(watch_facing),
+        "publish_mode": publish_mode_label or ("agreement" if agreement_only else "union"),
+        "rows": rows_out,
         "suggestions": suggestions,
     }
     path.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
@@ -345,7 +548,7 @@ def write_board(
 
 def write_raw(source: str, slot: str, suggestions: list[dict], *, frozen: dict,
               now: float | None = None) -> Path:
-    """Per-model raw ranks for a slot (not watch-facing until agreement)."""
+    """Per-model raw ranks for a slot (audit; publish path decides watch boards)."""
     t0 = float(now if now is not None else time.time())
     path = raw_path(source, slot)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -374,6 +577,23 @@ def _load_raw(source: str, slot: str) -> list[dict] | None:
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
+def _publish_counts(rows: list[dict]) -> dict[str, int]:
+    agy_solo = xai_solo = both = 0
+    for r in rows:
+        if r.get("both") or str(r.get("source_mark") or "").upper() in ("GX", "AX"):
+            both += 1
+        elif str(r.get("primary_source") or "").lower() in ("xai", "grok"):
+            xai_solo += 1
+        else:
+            agy_solo += 1
+    return {
+        "agy_solo": agy_solo,
+        "xai_solo": xai_solo,
+        "both": both,
+        "published_n": len(rows),
+    }
+
+
 def publish_agreement(
     cfg: dict | None,
     slot: str,
@@ -381,47 +601,112 @@ def publish_agreement(
     *,
     now: float | None = None,
 ) -> dict:
-    """If both raw ranks for *slot* exist, publish intersection to watch boards.
+    """Publish seed-rank boards once both raw ranks for *slot* exist.
 
-    Solo picks are never written to the watch-facing boards when agreement is
-    required (default). Empty intersection clears the GX board.
+    ``union`` (default): capped union of per-model tops → ``seed_rank_gx.json``
+    (watch-facing). Per-model boards get that model's raw list with
+    ``watch_facing=False`` for audit.
+
+    ``agreement``: intersection only (legacy); mirrors the same list onto
+    gx/agy/grok boards.
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     t0 = float(now if now is not None else time.time())
-    require = bool(_cfg(cfg, "ai_seed_rank_require_agreement", True))
+    mode = publish_mode(cfg)
+    want_opinion = bool(_cfg(cfg, "ai_seed_rank_second_opinion", True))
+    max_n = int(_cfg(cfg, "ai_seed_rank_max", MAX_SUGGESTIONS))
+    per_max = int(_cfg(cfg, "ai_seed_rank_per_model_max", PER_MODEL_MAX_DEFAULT))
+    a_enabled = bool(_cfg(cfg, "ai_seed_rank_agy", _cfg(cfg, "ai_seed_rank_claude", True)))
+    x_enabled = bool(_cfg(cfg, "ai_seed_rank_grok", True))
     a_rows = _load_raw("agy", slot)
     x_rows = _load_raw("xai", slot)
     result: dict[str, Any] = {
-        "ts": t0, "kind": "agreement", "slot": slot,
-        "seed_n": frozen.get("n"), "n": 0, "symbols": [], "error": None,
+        "ts": t0, "kind": "seed_rank_publish", "slot": slot,
+        "publish_mode": mode, "seed_n": frozen.get("n"),
+        "n": 0, "symbols": [], "error": None,
+        "agy_solo": 0, "xai_solo": 0, "both": 0, "published_n": 0,
     }
-    if a_rows is None or x_rows is None:
+    # Agreement always needs both raws. Union waits for each enabled side.
+    need_a = a_enabled or mode == "agreement"
+    need_x = x_enabled or mode == "agreement"
+    if (need_a and a_rows is None) or (need_x and x_rows is None):
         result["error"] = "waiting_for_both"
+        result["kind"] = "agreement" if mode == "agreement" else "seed_rank_publish"
         return result
+    a_rows = a_rows or []
+    x_rows = x_rows or []
 
-    if require:
-        agreed = agree_suggestions(
-            a_rows, x_rows,
-            max_n=int(_cfg(cfg, "ai_seed_rank_max", MAX_SUGGESTIONS)),
+    if mode == "agreement":
+        published = agree_suggestions(a_rows, x_rows, max_n=max_n)
+        if want_opinion:
+            a_full, x_full = _row_map(a_rows), _row_map(x_rows)
+            a_top = set(a_full)
+            x_top = set(x_full)
+            for row in published:
+                row["second_opinion"] = derive_second_opinion(
+                    row["symbol"],
+                    primary="both",
+                    both=True,
+                    a_full=a_full,
+                    x_full=x_full,
+                    a_top=a_top,
+                    x_top=x_top,
+                )
+        write_board(
+            "ax", published, frozen=frozen, slot=slot, now=t0,
+            agreement_only=True, watch_facing=True, publish_mode_label=mode,
+        )
+        write_board(
+            "agy", published, frozen=frozen, slot=slot, now=t0,
+            agreement_only=True, watch_facing=True, publish_mode_label=mode,
+        )
+        write_board(
+            "xai", published, frozen=frozen, slot=slot, now=t0,
+            agreement_only=True, watch_facing=True, publish_mode_label=mode,
         )
     else:
-        # Fallback: publish each side's full list (legacy / measure off).
-        agreed = a_rows[: int(_cfg(cfg, "ai_seed_rank_max", MAX_SUGGESTIONS))]
+        published = union_suggestions(
+            a_rows, x_rows,
+            per_model_max=per_max,
+            max_n=max_n,
+            second_opinion=want_opinion,
+        )
+        # Canonical watch feed.
+        write_board(
+            "ax", published, frozen=frozen, slot=slot, now=t0,
+            agreement_only=False, watch_facing=True, publish_mode_label=mode,
+        )
+        # Per-model raw snapshots for audit (not watch-facing).
+        if a_enabled:
+            write_board(
+                "agy", a_rows[:max(per_max, max_n)], frozen=frozen, slot=slot, now=t0,
+                agreement_only=False, watch_facing=False, publish_mode_label=mode,
+            )
+        if x_enabled:
+            write_board(
+                "xai", x_rows[:max(per_max, max_n)], frozen=frozen, slot=slot, now=t0,
+                agreement_only=False, watch_facing=False, publish_mode_label=mode,
+            )
 
-    # Watch boards: only agreed names (or empty). Mirror onto A/X files so the
-    # existing research_candidate_rows path picks them up without a new source.
-    write_board("ax", agreed, frozen=frozen, slot=slot, now=t0, agreement_only=require)
-    write_board("agy", agreed, frozen=frozen, slot=slot, now=t0, agreement_only=require)
-    write_board("xai", agreed, frozen=frozen, slot=slot, now=t0, agreement_only=require)
-    result["n"] = len(agreed)
-    result["symbols"] = [s["symbol"] for s in agreed]
-    if not agreed:
-        result["error"] = "no_agreement"
-    append_log({
-        **result,
-        "a_symbols": [str(r.get("symbol") or "").upper() for r in a_rows],
-        "x_symbols": [str(r.get("symbol") or "").upper() for r in x_rows],
-    })
+    counts = _publish_counts(published)
+    result.update(counts)
+    result["n"] = len(published)
+    result["symbols"] = [s["symbol"] for s in published]
+    if not published:
+        result["error"] = "no_agreement" if mode == "agreement" else "empty_union"
+
+    # Emit seed_rank_publish once per slot (workers may call publish repeatedly).
+    should_log = False
+    with _LOCK:
+        if _STATE.get("last_publish_slot") != slot:
+            _STATE["last_publish_slot"] = slot
+            should_log = True
+    if should_log:
+        append_log({
+            **result,
+            "a_symbols": [str(r.get("symbol") or "").upper() for r in a_rows],
+            "x_symbols": [str(r.get("symbol") or "").upper() for r in x_rows],
+        })
     return result
 
 
@@ -534,9 +819,14 @@ def run_one(
         append_log(result)
         return result
 
-    suggestions = parse_rank_response(
-        text, allowed, max_n=int(_cfg(cfg, "ai_seed_rank_max", MAX_SUGGESTIONS)))
-    # Raw only — watch boards publish after both sides finish (agreement).
+    # Parse up to max(per_model_max, max) so union can take per-model tops
+    # even when the published board is smaller.
+    parse_n = max(
+        int(_cfg(cfg, "ai_seed_rank_max", MAX_SUGGESTIONS)),
+        int(_cfg(cfg, "ai_seed_rank_per_model_max", PER_MODEL_MAX_DEFAULT)),
+    )
+    suggestions = parse_rank_response(text, allowed, max_n=parse_n)
+    # Raw only — watch boards publish after both sides finish.
     write_raw(source, slot or "manual", suggestions, frozen=frozen, now=t0)
     result["n"] = len(suggestions)
     result["symbols"] = [s["symbol"] for s in suggestions]
@@ -545,7 +835,8 @@ def run_one(
     append_log(result)
     if slot:
         pub = publish_agreement(cfg, slot, frozen, now=t0)
-        result["agreement"] = pub
+        result["publish"] = pub
+        result["agreement"] = pub  # legacy key
     return result
 
 
@@ -561,20 +852,23 @@ def _sources_to_run(cfg: dict) -> list[tuple[str, str]]:
 def tick(cfg: dict | None, now: float | None = None) -> list[str]:
     """If a seed-rank slot is due, kick both models on the same frozen list.
 
-    Watch suggestions appear only after both raw ranks exist and agree.
+    Watch suggestions publish after both raw ranks exist (union or agreement).
     """
     cfg = cfg if isinstance(cfg, dict) else {}
     if not enabled(cfg):
         return []
     t0 = float(now if now is not None else time.time())
     sources = _sources_to_run(cfg)
-    if len(sources) < 2 and bool(_cfg(cfg, "ai_seed_rank_require_agreement", True)):
+    mode = publish_mode(cfg)
+    if len(sources) < 2 and mode == "agreement":
         # Agreement needs both sides; do not publish solo ranks as suggestions.
         append_log({
             "ts": t0, "kind": "skip",
             "error": "agreement_needs_both_models",
             "sources": [s for s, _ in sources],
         })
+        return []
+    if not sources:
         return []
 
     with _LOCK:
@@ -597,6 +891,7 @@ def tick(cfg: dict | None, now: float | None = None) -> list[str]:
     _save_last_slot(slot)
     with _LOCK:
         _STATE["slot_inflight"] = slot
+        _STATE["last_publish_slot"] = ""  # allow a fresh seed_rank_publish log
         for _, flag in sources:
             _STATE[flag] = True
 
@@ -609,8 +904,8 @@ def tick(cfg: dict | None, now: float | None = None) -> list[str]:
                 still = any(_STATE.get(f) for _, f in sources)
                 if not still:
                     _STATE["slot_inflight"] = ""
-                    # Final agreement publish + watch sync (idempotent if
-                    # run_one already published when the second side finished).
+                    # Final publish + watch sync (idempotent if run_one already
+                    # published when the second side finished).
                     try:
                         publish_agreement(cfg, slot, frozen, now=time.time())
                     except Exception:
