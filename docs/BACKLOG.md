@@ -7,7 +7,7 @@ Last updated: **2026-09-15** (three-knob lean Plan A — ship after RTH).
 - **One product lever at a time** (observe/log through RTH; change off-hours).
 - **Progress ladder:** clean arms → MFE≥0.25R → capture → med R/$ → equity.
 - **Plan A** = stream-fresh + EXH rising in heat band + RSI timer (live still level-capped ≤60 + mistimed/soft_ob; **target** direction-only per Sep-11) + confirm_ticks=1; no MACD arm / no MACD OB pin; local trail; broker stop off.
-- **RSI interim:** `cm_rsi_max=60` + mistimed/soft_ob are **not** sacred. Sep-11 lean timer = direction-only (block falling when RSI > ~10; no level max / mistimed level gates). Do **not** soften EXH/RSI or touch arm-code this week — measure the three-knob ship first.
+- **RSI interim:** `cm_rsi_max=60` + mistimed/soft_ob are **not** sacred. **Target** = direction-only (block trending-down when RSI > ~10; no level max 60 / mistimed level gates). Do **not** soften EXH/RSI or touch arm-code this week — measure the three-knob ship first. **After Wed score:** measure direction-only (`entry_arm_ab` / ledger refuses) → ship only if lift holds.
 - **Plan B** = burst trial, code-ready, **live off** until Plan A earns a dry-run open.
 - Mid-RTH: no strategy retunes unless on fire (ops OK).
 
@@ -45,8 +45,10 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 
 ## Next (ranked)
 
-1. **Entry help — heat_max 65–70** — Tonight after Wed score. See after-close path.
-2. **Green catch-up trail (time-decay)** — **SHIPPED ON for Thu.** Idle 8s / step 0.05R / green-only / raise-only. Score capture vs early-scratch Fri; kill switch = set enabled false if runners taxed.
+1. **Wed measure three-knob lean Plan A** — fewer `arm_confirming`, ~zero `overbought_macd_armed`, same/more clean EXH↑+RSI arms. If still thin → occupancy dig (not RSI/EXH soften).
+2. **RSI direction-only (after Wed)** — **Measure then ship.** Null/`off` `cm_rsi_max` level refuse; mistimed_heat + soft_ob **off**; keep direction refuse for falling when RSI > ~10 (`allow_falling_below=10` / require-rising path). Score with `entry_arm_ab` + ledger gate refuses; ship only if lift holds. Operator target — not frozen at max60.
+3. **Entry help — heat_max 65–70** — Parked behind Wed three-knob + RSI dir measure unless EXH band is the proven leak.
+4. **Green catch-up trail (time-decay)** — **SHIPPED ON for Thu.** Idle 8s / step 0.05R / green-only / raise-only. Score capture vs early-scratch Fri; kill switch = set enabled false if runners taxed.
 3. **Movers hygiene** — WYHG-class fat spread was Tue’s biggest single $ hole (−$1.28), separate from momentum.
 4. **Thu tape readiness** — Poller paint-trust parity **SHIPPED**; optional ceiling 15→20 after if needed.
 5. **All-day occupancy follow-up (after Thu 2026-09-10 score)** — Goal: ≥2 concurrent opens as session health via armable seats × overlapping holds. Do **not** loosen heat_max/RSI/EXH or slow green catch-up just to fill slots. Next levers if Thu still single-file after 10:15: (1) evict/churn unarmable `tape_only`/stale seats so liquid names get seats, (2) midday seed refresh (trending % / reseed cool after ~10:30). Score today's dead_reentry-off first.
