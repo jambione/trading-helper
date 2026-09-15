@@ -595,6 +595,10 @@ DEFAULT_CONFIG = {
     # Drop reasons that increment the strike counter. v1: no_stream_trade only
     # (stale_timeout / stale_tape_cap / unarmable_steal stay cool-free / out).
     "ai_watch_no_stream_strike_reasons": ["no_stream_trade"],
+    # After ensure_watch_stream, do not accrue no_stream_trade strikes for
+    # this many seconds (subscribe lag). Drop / arm-block still apply.
+    # 0 disables. Dig 2026-09-14: stream-before-keep coverage, not A2 off.
+    "ai_watch_no_stream_strike_grace_sec": 60.0,
     # Refuse admit when live tape is missing or older than this (seconds).
     # Prefer an empty slot over a permanent stale_quote row. 0 disables.
     "ai_watch_admit_max_tape_age_sec": 120.0,
@@ -607,12 +611,15 @@ DEFAULT_CONFIG = {
     # Max watching rows that may sit on stale_tape at once. Excess dropped
     # (lowest $vol / oldest first). 0 = no stale_tape seats; <0 = unlimited.
     "ai_watch_max_stale_tape_seats": 2,
-    # Continuous soft seed (movers + trending) — earlier discovery without AGY.
+    # Continuous soft seed (trending + movers + momentum + research) —
+    # earlier discovery scout path. Shared max; sources compete on scout score.
     # Interval gate inside sync; 0 / enabled false disables.
     "ai_watch_soft_seed_enabled": True,
     "ai_watch_soft_seed_interval_sec": 300.0,
     "ai_watch_soft_seed_movers": True,
     "ai_watch_soft_seed_trending": True,
+    "ai_watch_soft_seed_momentum": True,
+    "ai_watch_soft_seed_research": True,
     "ai_watch_soft_seed_max": 12,
     # Warming-seat quota: pre-heat scouts (EXH ~15–45 or unknown EXH + tape).
     # Admission still ≠ arm. 0 disables quota / preheat steal.
@@ -1887,6 +1894,7 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_no_trade_reseed_sec",
     "ai_watch_no_stream_strike_limit",
     "ai_watch_no_stream_strike_reasons",
+    "ai_watch_no_stream_strike_grace_sec",
     "ai_watch_admit_max_tape_age_sec",
     "ai_watch_movers_min_dollar_volume",
     "ai_watch_movers_min_price",
@@ -1896,6 +1904,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_soft_seed_interval_sec",
     "ai_watch_soft_seed_movers",
     "ai_watch_soft_seed_trending",
+    "ai_watch_soft_seed_momentum",
+    "ai_watch_soft_seed_research",
     "ai_watch_soft_seed_max",
     "ai_watch_warming_seats",
     "ai_watch_warming_exh_min",

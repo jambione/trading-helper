@@ -116,6 +116,11 @@ _STALE_TIMEOUT_GRACE_DEFAULT_SEC = 90.0  # don't count until on-book this long
 _NO_STREAM_STRIKES: dict[str, dict[str, int]] = {}
 _NO_STREAM_STRIKE_LIMIT_DEFAULT = 2
 _NO_STREAM_STRIKE_REASONS_DEFAULT = ("no_stream_trade",)
+# Last ensure_watch_stream wall time per symbol — strike grace window.
+_STREAM_ENSURED_AT: dict[str, float] = {}
+# Last no_stream_grace log ts per symbol (once per ensure window).
+_NO_STREAM_GRACE_LOGGED_AT: dict[str, float] = {}
+_NO_STREAM_STRIKE_GRACE_DEFAULT_SEC = 60.0
 
 # symbol -> the quote's OWN unix time, from the last provable pricing.
 # Deliberately module-level rather than a record field: poll_once rebuilds the
@@ -924,6 +929,58 @@ def no_stream_strike_reasons(cfg: dict | None = None) -> frozenset[str]:
     return frozenset(_NO_STREAM_STRIKE_REASONS_DEFAULT)
 
 
+def no_stream_strike_grace_sec(cfg: dict | None = None) -> float:
+    """Seconds after ensure_watch_stream where no_stream_trade does not strike.
+
+    Drop / arm refusal still apply — this only delays A2 strike accrual while
+    Finnhub subscribe is catching up. 0 disables.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get(
+                "ai_watch_no_stream_strike_grace_sec",
+                _NO_STREAM_STRIKE_GRACE_DEFAULT_SEC,
+            ) or 0.0))
+    except (TypeError, ValueError):
+        return float(_NO_STREAM_STRIKE_GRACE_DEFAULT_SEC)
+
+
+def _mark_stream_ensured(
+    symbols,
+    *,
+    now: float | None = None,
+) -> None:
+    """Stamp ensure_watch_stream wall time for strike-grace checks."""
+    t0 = float(now if now is not None else time.time())
+    for raw in symbols or []:
+        sym = str(raw or "").upper().strip()
+        if not sym:
+            continue
+        _STREAM_ENSURED_AT[sym] = t0
+
+
+def _within_no_stream_strike_grace(
+    symbol: str,
+    now: float,
+    cfg: dict | None = None,
+) -> bool:
+    """True when *symbol* was ensure_watch_stream'd within the grace window."""
+    grace = no_stream_strike_grace_sec(cfg)
+    if grace <= 0:
+        return False
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return False
+    ensured = _STREAM_ENSURED_AT.get(sym)
+    if ensured is None:
+        return False
+    try:
+        return (float(now) - float(ensured)) < grace
+    except (TypeError, ValueError):
+        return False
+
+
 def _et_day_key(now: float | None = None) -> str:
     """America/New_York calendar day YYYY-MM-DD for strike day-roll."""
     from datetime import datetime
@@ -1097,6 +1154,9 @@ def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
     Called on admit/re-admit so AEHG/AOUT-class are not left on REST while
     SCAN already prints. Merges into the existing priority set (does not
     wipe desk/engine priorities). Safe no-op when Finnhub is unavailable.
+
+    Stamps ``_STREAM_ENSURED_AT`` for A2 strike grace
+    (``ai_watch_no_stream_strike_grace_sec``).
     """
     wanted: list[str] = []
     seen: set[str] = set()
@@ -1109,6 +1169,7 @@ def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
     out = {"requested": len(wanted), "subscribed": 0, "pushed": 0}
     if not wanted:
         return out
+    _mark_stream_ensured(wanted)
     try:
         from finnhub_stream import (
             set_subscribe_priority, get_subscribe_priority, request_subscribe,
@@ -1131,7 +1192,8 @@ def ensure_watch_stream(symbols, *, cfg: dict | None = None) -> dict:
 # consumed once by passes_inclusion / sync for a clear log line.
 _RESEED_STREAM_CLEARED: set[str] = set()
 
-# Continuous soft seed (movers+trending scout refresh). Process-local clock.
+# Continuous soft seed (trending/movers/momentum/research scout refresh).
+# Process-local clock.
 _SOFT_SEED_LAST_TS: float = 0.0
 
 
@@ -1260,8 +1322,28 @@ def soft_seed_scout_score(
     return score
 
 
-def _soft_seed_file_rows(cfg: dict) -> list[dict]:
-    """Lightweight movers + trending shortlist for soft seed (no seed-drop clear)."""
+def _soft_seed_max_price(cfg: dict) -> Any:
+    """Price cap for soft-seed momentum/research enrichment (same as desk seeds)."""
+    try:
+        from desk_risk import dynamic_max_price
+        eq = float(
+            dashboard_state()
+            .get("ai_positions", {})
+            .get("account", {})
+            .get("equity") or 0.0
+        )
+        return dynamic_max_price(eq, cfg)
+    except Exception:
+        return cfg.get("ai_max_price", cfg.get("claude_max_price"))
+
+
+def _soft_seed_source_rows(cfg: dict) -> list[dict]:
+    """Lightweight soft-seed shortlist from all enabled scout sources.
+
+    Order (first claim wins within the soft-seed batch): trending → movers →
+    momentum → research. Does **not** call ``desk_candidate_rows`` / clear
+    seed-drop tallies. Inclusion still gates every row later.
+    """
     rows: list[dict] = []
     seen: set[str] = set()
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1353,7 +1435,160 @@ def _soft_seed_file_rows(cfg: dict) -> list[dict]:
                 })
         except Exception:
             pass
+
+    # Momentum desk / big-mover / mom_open-class — reuse helpers, never
+    # desk_candidate_rows (avoids wiping seed-drop tallies).
+    if bool(cfg.get("ai_watch_soft_seed_momentum", True)):
+        try:
+            max_price = _soft_seed_max_price(cfg)
+            try:
+                min_pct = float(cfg.get("ai_watch_min_pct_change", 50.0) or 50.0)
+            except (TypeError, ValueError):
+                min_pct = 50.0
+            scored: list[tuple[float, dict]] = []
+            have: set[str] = set()
+            for sc, r in _momentum_flagged_from_dashboard(max_price):
+                sym = str(r.get("symbol") or "").upper().strip()
+                if not sym or sym in have:
+                    continue
+                have.add(sym)
+                scored.append((float(sc), r))
+            for sc, r in _big_mover_from_dashboard(max_price, min_pct):
+                sym = str(r.get("symbol") or "").upper().strip()
+                if not sym or sym in have:
+                    continue
+                have.add(sym)
+                scored.append((float(sc), r))
+            # Soft open-class: remaining desk names under price cap (no
+            # thin_rvol seed-drop — soft-seed is scout eligibility only).
+            for r in _dashboard_tickers():
+                if not isinstance(r, dict):
+                    continue
+                s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
+                if not s or not s[0].isalpha() or s in have:
+                    continue
+                if is_levered_etp(s):
+                    continue
+                if not _price_under_cap(r.get("price"), max_price):
+                    continue
+                if _is_wash_look(r):
+                    continue
+                pct = _pct_change_value(r.get("pct_change"))
+                try:
+                    px = float(r.get("price")) if r.get("price") is not None else None
+                except (TypeError, ValueError):
+                    px = None
+                try:
+                    dvol = float(r.get("day_vol")) if r.get("day_vol") is not None else None
+                except (TypeError, ValueError):
+                    dvol = None
+                rank = abs(float(pct)) if pct is not None else 0.0
+                have.add(s)
+                scored.append((rank, {
+                    "symbol": s,
+                    "trending_score": round(rank, 2),
+                    "score": round(rank, 2),
+                    "reason": "soft_seed momentum open",
+                    "agreement": True,
+                    "source": "momentum",
+                    "price": px,
+                    "pct_change": pct,
+                    "rvol": r.get("rvol"),
+                    "dollar_volume": (dvol * px) if (dvol and px) else None,
+                    "criteria": ["mom_open"],
+                }))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            for _, r in scored[:40]:
+                s = str(r.get("symbol") or "").upper().strip()
+                if not s:
+                    continue
+                row = dict(r)
+                row["source"] = "momentum"
+                row["reason"] = (
+                    f"soft_seed momentum {row.get('reason') or ''}".strip()[:80]
+                )
+                row["criteria"] = ["soft_seed", "momentum"]
+                _add(s, row)
+        except Exception:
+            pass
+
+    # Research / suggestions boards (+ seed_rank via research_candidate_rows).
+    # Enrich quotes like the desk research seed; do not re-impose thin_rvol.
+    if bool(cfg.get("ai_watch_soft_seed_research", True)):
+        try:
+            max_price = _soft_seed_max_price(cfg)
+            desk_rows, tr_by = _live_quote_map()
+            added = 0
+            for r in research_candidate_rows():
+                if added >= 40:
+                    break
+                s = str(r.get("symbol") or "").upper().strip()
+                if not s:
+                    continue
+                if is_levered_etp(s):
+                    continue
+                live = desk_rows.get(s) or {}
+                tr = tr_by.get(s) or {}
+                px_src = (
+                    live.get("price") if live.get("price") is not None
+                    else tr.get("price")
+                )
+                pct_src = (
+                    live.get("pct_change")
+                    if live.get("pct_change") is not None
+                    else tr.get("pct_change")
+                )
+                rvol_src = (
+                    live.get("rvol") if live.get("rvol") is not None
+                    else tr.get("rvol")
+                )
+                if not _price_under_cap(px_src, max_price):
+                    continue
+                try:
+                    px = float(px_src) if px_src is not None else None
+                except (TypeError, ValueError):
+                    px = None
+                pct_f = _pct_change_value(pct_src)
+                try:
+                    dvol = (
+                        float(live.get("day_vol"))
+                        if live.get("day_vol") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    dvol = None
+                if dvol is None and tr.get("vol_session") is not None and px:
+                    try:
+                        dvol = float(tr.get("vol_session"))
+                    except (TypeError, ValueError):
+                        dvol = None
+                src = str(r.get("source") or "research").lower().strip() or "research"
+                try:
+                    sc_raw = r.get("score", r.get("trending_score"))
+                    score_f = float(sc_raw) if sc_raw is not None else 0.0
+                except (TypeError, ValueError):
+                    score_f = 0.0
+                row = dict(r)
+                row.update({
+                    "price": px,
+                    "pct_change": pct_f,
+                    "rvol": rvol_src,
+                    "dollar_volume": (dvol * px) if (dvol and px) else None,
+                    "source": src,
+                    "reason": f"soft_seed research {row.get('reason') or src}"[:80],
+                    "criteria": ["soft_seed", "research"],
+                    "score": score_f,
+                })
+                before = len(rows)
+                _add(s, row)
+                if len(rows) > before:
+                    added += 1
+        except Exception:
+            pass
     return rows
+
+
+# Back-compat alias (older tests / call sites).
+_soft_seed_file_rows = _soft_seed_source_rows
 
 
 def maybe_soft_seed_rows(
@@ -1363,10 +1598,14 @@ def maybe_soft_seed_rows(
     seen: set[str] | None = None,
     indicators: dict[str, dict] | None = None,
 ) -> tuple[list[dict], bool]:
-    """Interval soft seed from movers + trending. Returns (rows, fired).
+    """Interval soft seed from trending, movers, momentum, and research.
 
-    Mechanical only — no AGY. Prefers EXH 15–45 rising; deprioritizes hot RSI.
-    Does not call ``desk_candidate_rows`` (avoids clearing seed-drop tallies).
+    Knobs: ``ai_watch_soft_seed_{trending,movers,momentum,research}`` (each
+    independently switchable) plus shared ``ai_watch_soft_seed_max``. Sources
+    compete on ``soft_seed_scout_score`` (EXH band / RSI / dvol / pct) — no
+    per-source quota. Mechanical only. Prefers EXH 15–45 rising; deprioritizes
+    hot RSI. Does not call ``desk_candidate_rows`` (avoids clearing seed-drop
+    tallies).
     """
     global _SOFT_SEED_LAST_TS
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -1394,7 +1633,7 @@ def maybe_soft_seed_rows(
     seen = set(seen or set())
     indicators = indicators if isinstance(indicators, dict) else {}
     ranked: list[tuple[float, dict]] = []
-    for r in _soft_seed_file_rows(cfg):
+    for r in _soft_seed_source_rows(cfg):
         sym = str(r.get("symbol") or "").upper().strip()
         if not sym or sym in seen:
             continue
@@ -1659,41 +1898,95 @@ def _maybe_no_trade_after_subscribe_drop(
     if src == "stream" and age_f is not None and age_f <= ceiling:
         _clear_stale_feed_since(rec)
         return False
-    strikes = _record_no_stream_strike(sym, now, "no_stream_trade", cfg)
-    limit = no_stream_strike_limit(cfg)
-    demoted = bool(limit > 0 and strikes >= limit)
-    try:
-        events.append(cp.log_event(
-            "watch_drop", symbol=sym, reason="no_stream_trade",
-            elapsed_sec=round(float(now) - float(admitted), 1),
-            age_sec=round(age_f, 1) if age_f is not None else None,
-            src=src or None,
-            no_stream_strikes=strikes,
-            no_stream_strike_limit=limit if limit > 0 else None,
-            no_stream_strike_demote=demoted or None))
-    except Exception:  # noqa: BLE001
-        events.append({
-            "kind": "watch_drop",
-            "symbol": sym,
-            "reason": "no_stream_trade",
-            "elapsed_sec": round(float(now) - float(admitted), 1),
-            "no_stream_strikes": strikes,
-            "no_stream_strike_demote": demoted or None,
-        })
-    if demoted:
+    # Stream-before-strike grace: recently ensure_watch_stream'd names still
+    # drop (free the seat) but do not accrue A2 strikes while subscribe lags.
+    # Arm/fill remain blocked on no stream. After grace, strikes resume.
+    grace_hold = _within_no_stream_strike_grace(sym, now, cfg)
+    if grace_hold:
+        ensured_at = _STREAM_ENSURED_AT.get(sym)
+        try:
+            grace_age = (
+                round(float(now) - float(ensured_at), 1)
+                if ensured_at is not None else None
+            )
+        except (TypeError, ValueError):
+            grace_age = None
+        last_log = _NO_STREAM_GRACE_LOGGED_AT.get(sym)
+        if last_log is None or (
+            ensured_at is not None and float(last_log) < float(ensured_at)
+        ):
+            _NO_STREAM_GRACE_LOGGED_AT[sym] = float(now)
+            try:
+                events.append(cp.log_event(
+                    "no_stream_grace", symbol=sym,
+                    grace_sec=no_stream_strike_grace_sec(cfg),
+                    ensure_age_sec=grace_age,
+                    elapsed_sec=round(float(now) - float(admitted), 1),
+                    age_sec=round(age_f, 1) if age_f is not None else None,
+                    src=src or None))
+            except Exception:  # noqa: BLE001
+                events.append({
+                    "kind": "no_stream_grace",
+                    "symbol": sym,
+                    "grace_sec": no_stream_strike_grace_sec(cfg),
+                    "ensure_age_sec": grace_age,
+                })
+        strikes = _no_stream_strike_count(sym, now)
+        demoted = False
         try:
             events.append(cp.log_event(
-                "no_stream_strike_demote", symbol=sym,
-                strikes=strikes, limit=limit,
-                et_day=_et_day_key(now)))
+                "watch_drop", symbol=sym, reason="no_stream_trade",
+                elapsed_sec=round(float(now) - float(admitted), 1),
+                age_sec=round(age_f, 1) if age_f is not None else None,
+                src=src or None,
+                no_stream_strikes=strikes,
+                no_stream_strike_grace=True,
+                no_stream_strike_demote=None))
         except Exception:  # noqa: BLE001
             events.append({
-                "kind": "no_stream_strike_demote",
+                "kind": "watch_drop",
                 "symbol": sym,
-                "strikes": strikes,
-                "limit": limit,
-                "et_day": _et_day_key(now),
+                "reason": "no_stream_trade",
+                "elapsed_sec": round(float(now) - float(admitted), 1),
+                "no_stream_strikes": strikes,
+                "no_stream_strike_grace": True,
             })
+    else:
+        strikes = _record_no_stream_strike(sym, now, "no_stream_trade", cfg)
+        limit = no_stream_strike_limit(cfg)
+        demoted = bool(limit > 0 and strikes >= limit)
+        try:
+            events.append(cp.log_event(
+                "watch_drop", symbol=sym, reason="no_stream_trade",
+                elapsed_sec=round(float(now) - float(admitted), 1),
+                age_sec=round(age_f, 1) if age_f is not None else None,
+                src=src or None,
+                no_stream_strikes=strikes,
+                no_stream_strike_limit=limit if limit > 0 else None,
+                no_stream_strike_demote=demoted or None))
+        except Exception:  # noqa: BLE001
+            events.append({
+                "kind": "watch_drop",
+                "symbol": sym,
+                "reason": "no_stream_trade",
+                "elapsed_sec": round(float(now) - float(admitted), 1),
+                "no_stream_strikes": strikes,
+                "no_stream_strike_demote": demoted or None,
+            })
+        if demoted:
+            try:
+                events.append(cp.log_event(
+                    "no_stream_strike_demote", symbol=sym,
+                    strikes=strikes, limit=limit,
+                    et_day=_et_day_key(now)))
+            except Exception:  # noqa: BLE001
+                events.append({
+                    "kind": "no_stream_strike_demote",
+                    "symbol": sym,
+                    "strikes": strikes,
+                    "limit": limit,
+                    "et_day": _et_day_key(now),
+                })
     _mark_stale_timeout_block(
         sym, now, cfg, cool_sec=stale_timeout_reseed_sec(cfg))
     drop_watch_symbols([sym])
@@ -6518,8 +6811,8 @@ def sync_watch_from_source_panels(
     # poll_once behind us for seconds at a time.
     candidates = desk_candidate_rows(cfg)
 
-    # Continuous soft seed (movers+trending scout refresh, no AGY). Interval
-    # gated; prefers EXH 15–45. Merges into the same inclusion pipeline.
+    # Continuous soft seed (trending/movers/momentum/research scout refresh).
+    # Interval gated; prefers EXH 15–45. Merges into the same inclusion pipeline.
     try:
         seen_syms = {
             str(r.get("symbol") or "").upper().strip()

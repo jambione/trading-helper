@@ -4,6 +4,12 @@
 Scores whether names get **seated before** mistimed/hot RSI, not whether
 arms/exits are looser. Does **not** write ``config/bot_config.json``.
 
+Soft-seed scout sources (post source-parity): trending, movers, momentum,
+and research/suggestions — shared ``ai_watch_soft_seed_max``, compete on
+scout score. This bench does not require new per-source metrics; optional
+digs can count ``criteria`` containing ``soft_seed`` by ``source`` in
+admit/watch logs.
+
 Metrics (per ET day + pooled):
   mistimed_first_hot_rate   — mistimed-family symbols with no prior same-day
                               heating_too_low (arrived already hot). Lower better.
@@ -468,7 +474,12 @@ def _fmt(v: Any) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Earlier-book coverage benchmark")
+    ap = argparse.ArgumentParser(
+        description=(
+            "Earlier-book coverage benchmark "
+            "(soft-seed sources: trending+movers+momentum+research)"
+        ),
+    )
     ap.add_argument("--from", dest="day_from", default="2026-09-08")
     ap.add_argument("--to", dest="day_to", default="2026-09-11")
     ap.add_argument("--label", default="baseline")

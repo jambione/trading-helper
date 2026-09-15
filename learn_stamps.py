@@ -131,6 +131,7 @@ _FINGERPRINT_KEYS = (
     "ai_watch_no_trade_reseed_sec",
     "ai_watch_no_stream_strike_limit",
     "ai_watch_no_stream_strike_reasons",
+    "ai_watch_no_stream_strike_grace_sec",
     "ai_watch_admit_max_tape_age_sec",
     "ai_watch_movers_min_dollar_volume",
     "ai_watch_movers_min_price",

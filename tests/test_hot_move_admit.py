@@ -153,6 +153,8 @@ def test_write_admit_funnel_persists(tmp_path, monkeypatch):
 
 def test_soft_seed_and_warming_helpers():
     assert DEFAULT_CONFIG["ai_watch_soft_seed_enabled"] is True
+    assert DEFAULT_CONFIG["ai_watch_soft_seed_momentum"] is True
+    assert DEFAULT_CONFIG["ai_watch_soft_seed_research"] is True
     assert DEFAULT_CONFIG["ai_watch_warming_seats"] == 3
     assert ew.warming_seat_quota({}) == 3
     assert ew.is_warming_exh_profile(30.0, True, {}) is True

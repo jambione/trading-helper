@@ -676,6 +676,7 @@ def test_no_stream_trade_drop_increments_strike_and_logs(tmp_path, monkeypatch):
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     ew._STALE_TIMEOUT_UNTIL.clear()
     ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
     t0 = 1_786_618_800.0
     ew.save_watch({
         "ACVA": {
@@ -701,6 +702,8 @@ def test_no_stream_trade_drop_increments_strike_and_logs(tmp_path, monkeypatch):
         "ai_watch_decision_max_age_sec": 15.0,
         "ai_watch_stale_timeout_reseed_sec": 300.0,
         "ai_watch_no_stream_strike_limit": 2,
+        # Ensure stamp absent / stale → strikes accrue (grace off path).
+        "ai_watch_no_stream_strike_grace_sec": 60.0,
     }
     events: list = []
     assert ew._maybe_no_trade_after_subscribe_drop(
@@ -729,6 +732,162 @@ def test_no_stream_trade_drop_increments_strike_and_logs(tmp_path, monkeypatch):
     drop2 = next(e for e in events2 if e.get("reason") == "no_stream_trade")
     assert drop2.get("no_stream_strikes") == 2
     assert drop2.get("no_stream_strike_demote") is True
+
+
+def test_no_stream_strike_grace_suppresses_strike_after_ensure(tmp_path, monkeypatch):
+    """Recent ensure_watch_stream → drop still fires, strike does not."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
+    ew._NO_STREAM_GRACE_LOGGED_AT.clear()
+    t0 = 1_786_618_800.0
+    ew.save_watch({
+        "NEWSUB": {
+            "symbol": "NEWSUB", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+    # Subscribe just happened — inside 60s grace.
+    ew._mark_stream_ensured(["NEWSUB"], now=t0 - 10.0)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = {
+        "ai_watch_no_trade_after_subscribe_sec": 300.0,
+        "ai_watch_stale_timeout_grace_sec": 90.0,
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+        "ai_watch_no_stream_strike_limit": 2,
+        "ai_watch_no_stream_strike_grace_sec": 60.0,
+    }
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["NEWSUB"], sym="NEWSUB", cfg=cfg,
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is True
+    assert ew._no_stream_strike_count("NEWSUB", t0) == 0
+    assert any(e.get("kind") == "no_stream_grace" for e in events)
+    drop = next(e for e in events if e.get("reason") == "no_stream_trade")
+    assert drop.get("no_stream_strike_grace") is True
+    assert not any(e.get("kind") == "no_stream_strike_demote" for e in events)
+
+
+def test_no_stream_strike_resumes_after_grace(tmp_path, monkeypatch):
+    """Past ensure grace → strikes accrue and demote still works."""
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
+    t0 = 1_786_618_800.0
+    ew._mark_stream_ensured(["LATE"], now=t0 - 120.0)  # outside 60s grace
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = {
+        "ai_watch_no_trade_after_subscribe_sec": 300.0,
+        "ai_watch_stale_timeout_grace_sec": 90.0,
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+        "ai_watch_no_stream_strike_limit": 2,
+        "ai_watch_no_stream_strike_grace_sec": 60.0,
+    }
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+    for i in range(2):
+        ew.save_watch({
+            "LATE": {
+                "symbol": "LATE", "status": "watching",
+                "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+            },
+        })
+        events: list = []
+        assert ew._maybe_no_trade_after_subscribe_drop(
+            ew.load_watch()["LATE"], sym="LATE", cfg=cfg,
+            now=t0 + float(i), events=events, cp=_CP, gt=_GT,
+        ) is True
+    assert ew._no_stream_strike_count("LATE", t0) == 2
+    assert ew._no_stream_strike_demoted("LATE", t0, cfg) is True
+
+
+def test_no_stream_grace_zero_disables(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
+    t0 = 1_786_618_800.0
+    ew._mark_stream_ensured(["Z"], now=t0 - 5.0)
+    ew.save_watch({
+        "Z": {
+            "symbol": "Z", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = {
+        "ai_watch_no_trade_after_subscribe_sec": 300.0,
+        "ai_watch_stale_timeout_grace_sec": 90.0,
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+        "ai_watch_no_stream_strike_grace_sec": 0.0,
+        "ai_watch_no_stream_strike_limit": 2,
+    }
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["Z"], sym="Z", cfg=cfg,
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is True
+    assert ew._no_stream_strike_count("Z", t0) == 1
+    assert not any(e.get("kind") == "no_stream_grace" for e in events)
+
+
+def test_arm_still_blocks_without_stream_during_strike_grace(monkeypatch):
+    """Honesty: grace delays strikes only — arm still needs young stream."""
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
+    t0 = 1_786_618_800.0
+    monkeypatch.setattr(ew.time, "time", lambda: t0)
+    ew._mark_stream_ensured(["ARM"], now=t0 - 5.0)
+    # No young stream print.
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "float_feed.float_shares", lambda s: 5.0, raising=False)
+    # passes_inclusion may still admit; arm path uses stream_price_required.
+    # Spot-check: strike grace must not clear demote or invent stream.
+    assert ew._within_no_stream_strike_grace("ARM", t0, {
+        "ai_watch_no_stream_strike_grace_sec": 60.0,
+    }) is True
+    assert ew._young_stream_alive(
+        "ARM", {"ai_watch_decision_max_age_sec": 15.0}, now=t0,
+        row={"last_ask_src": "stale_tape"},
+    ) is False
 
 
 def _cap_book_state(t0: float) -> dict:
