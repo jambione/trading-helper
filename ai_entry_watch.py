@@ -121,6 +121,11 @@ _STREAM_ENSURED_AT: dict[str, float] = {}
 # Last no_stream_grace log ts per symbol (once per ensure window).
 _NO_STREAM_GRACE_LOGGED_AT: dict[str, float] = {}
 _NO_STREAM_STRIKE_GRACE_DEFAULT_SEC = 60.0
+# Stale-stay restream: once per dead-tape episode, ensure_watch_stream and
+# defer drop for ai_watch_stale_restream_grace_sec (dig 2026-09-15 B1).
+_STALE_RESTREAM_AT: dict[str, float] = {}
+_STALE_RESTREAM_LOGGED: set[str] = set()
+_STALE_RESTREAM_GRACE_DEFAULT_SEC = 60.0
 
 # symbol -> the quote's OWN unix time, from the last provable pricing.
 # Deliberately module-level rather than a record field: poll_once rebuilds the
@@ -946,6 +951,144 @@ def no_stream_strike_grace_sec(cfg: dict | None = None) -> float:
         return float(_NO_STREAM_STRIKE_GRACE_DEFAULT_SEC)
 
 
+def stale_restream_grace_sec(cfg: dict | None = None) -> float:
+    """Hold a stale/no_stream drop this long after one ensure_watch_stream.
+
+    Dig 2026-09-15: majority ``stream_then_silent`` — seats wait the full
+    no_trade window then drop; soft-seed cannot re-keep (stale_tape_admit).
+    0 disables. Arm/fill still require honest live tape.
+    """
+    cfg = cfg if isinstance(cfg, dict) else {}
+    try:
+        return max(0.0, float(
+            cfg.get(
+                "ai_watch_stale_restream_grace_sec",
+                _STALE_RESTREAM_GRACE_DEFAULT_SEC,
+            ) or 0.0))
+    except (TypeError, ValueError):
+        return float(_STALE_RESTREAM_GRACE_DEFAULT_SEC)
+
+
+def stale_restream_pins_only(cfg: dict | None = None) -> bool:
+    """When true, restream-hold applies only to pin/warming seats."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return bool(cfg.get("ai_watch_stale_restream_pins_only", False))
+
+
+def _clear_stale_restream(symbol: str) -> None:
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return
+    _STALE_RESTREAM_AT.pop(sym, None)
+    _STALE_RESTREAM_LOGGED.discard(sym)
+
+
+def _within_stale_restream_grace(
+    symbol: str,
+    now: float,
+    cfg: dict | None = None,
+) -> bool:
+    grace = stale_restream_grace_sec(cfg)
+    if grace <= 0:
+        return False
+    sym = str(symbol or "").upper().strip()
+    started = _STALE_RESTREAM_AT.get(sym)
+    if started is None:
+        return False
+    try:
+        return (float(now) - float(started)) < grace
+    except (TypeError, ValueError):
+        return False
+
+
+def _eligible_stale_restream(rec: dict | None, cfg: dict | None) -> bool:
+    if not stale_restream_pins_only(cfg):
+        return True
+    role = str((rec or {}).get("seat_role") or "").strip().lower()
+    return role in ("pin", "warming")
+
+
+def _maybe_stale_restream_hold(
+    rec: dict,
+    *,
+    sym: str,
+    cfg: dict,
+    now: float,
+    events: list,
+    cp,
+    age_sec: float | None = None,
+    src: str | None = None,
+    reason: str = "no_stream_trade",
+) -> bool:
+    """Ensure stream once and defer drop during restream grace.
+
+    Returns True when the caller must **hold** (not drop) this poll.
+    After grace expires still-stale, returns False and logs
+    ``stale_restream_fail`` so the existing drop path proceeds.
+    """
+    grace = stale_restream_grace_sec(cfg)
+    if grace <= 0:
+        return False
+    if not _eligible_stale_restream(rec, cfg):
+        return False
+    sym_u = str(sym or "").upper().strip()
+    if not sym_u:
+        return False
+
+    started = _STALE_RESTREAM_AT.get(sym_u)
+    if started is None:
+        _STALE_RESTREAM_AT[sym_u] = float(now)
+        try:
+            ensure_watch_stream([sym_u], cfg=cfg)
+        except Exception:
+            pass
+        if sym_u not in _STALE_RESTREAM_LOGGED:
+            _STALE_RESTREAM_LOGGED.add(sym_u)
+            role = str(rec.get("seat_role") or "") or None
+            try:
+                events.append(cp.log_event(
+                    "stale_restream_grace", symbol=sym_u,
+                    grace_sec=grace, reason=reason,
+                    age_sec=round(age_sec, 1) if age_sec is not None else None,
+                    src=src or None, seat_role=role))
+            except Exception:  # noqa: BLE001
+                events.append({
+                    "kind": "stale_restream_grace",
+                    "symbol": sym_u,
+                    "grace_sec": grace,
+                    "reason": reason,
+                    "seat_role": role,
+                })
+        return True
+
+    try:
+        elapsed = float(now) - float(started)
+    except (TypeError, ValueError):
+        elapsed = grace
+    if elapsed < grace:
+        return True
+
+    # Grace exhausted — allow drop; clear episode for a future re-admit.
+    role = str(rec.get("seat_role") or "") or None
+    try:
+        events.append(cp.log_event(
+            "stale_restream_fail", symbol=sym_u,
+            grace_sec=grace, held_sec=round(elapsed, 1),
+            reason=reason,
+            age_sec=round(age_sec, 1) if age_sec is not None else None,
+            src=src or None, seat_role=role))
+    except Exception:  # noqa: BLE001
+        events.append({
+            "kind": "stale_restream_fail",
+            "symbol": sym_u,
+            "grace_sec": grace,
+            "held_sec": round(elapsed, 1),
+            "reason": reason,
+        })
+    _clear_stale_restream(sym_u)
+    return False
+
+
 def _mark_stream_ensured(
     symbols,
     *,
@@ -1764,12 +1907,16 @@ def _is_protected_pin_seat(
     """True when seat_role=pin and steal protection is enabled.
 
     Pins are immune to preheat_steal / unarmable_steal / stale_tape_cap.
-    Demote-dead and A2 still clear pin status separately.
+    Demote-dead and A2 still clear pin status separately. Also true while a
+    pin is inside stale-restream grace (dig 2026-09-15 B2 light).
     """
-    del now  # API parity with warming helper; demote-dead is a separate pass.
     if not isinstance(rec, dict):
         return False
     cfg = cfg if isinstance(cfg, dict) else {}
+    sym = str(rec.get("symbol") or "").upper().strip()
+    if sym and _within_stale_restream_grace(sym, now, cfg):
+        if str(rec.get("seat_role") or "").strip().lower() == "pin":
+            return True
     if not bool(cfg.get("ai_watch_pin_protect_steals", True)):
         return False
     return str(rec.get("seat_role") or "").strip().lower() == "pin"
@@ -2072,6 +2219,7 @@ def _maybe_stale_timeout_drop(
         return False
     if not _stale_feed_condition(rec, px_src, cfg, now=now):
         _clear_stale_feed_since(rec)
+        _clear_stale_restream(sym)
         return False
     status = str(rec.get("status") or "").lower().strip()
     if status in ("submitted", "filled"):
@@ -2088,11 +2236,18 @@ def _maybe_stale_timeout_drop(
     elapsed = float(now) - float(since)
     if elapsed < limit:
         return False
+    age_f = row_quote_age_sec(rec, now=now)
+    if _maybe_stale_restream_hold(
+        rec, sym=sym, cfg=cfg, now=now, events=events, cp=cp,
+        age_sec=age_f, src=str(px_src or "") or None, reason="stale_timeout",
+    ):
+        return False
     try:
         events.append(cp.log_event(
             "watch_drop", symbol=sym, reason="stale_timeout",
             elapsed_sec=round(elapsed, 1), src=px_src,
-            block=str(rec.get("block_code") or "")))
+            block=str(rec.get("block_code") or ""),
+            seat_role=str(rec.get("seat_role") or "") or None))
     except Exception:  # noqa: BLE001
         events.append({
             "kind": "watch_drop",
@@ -2100,6 +2255,7 @@ def _maybe_stale_timeout_drop(
             "reason": "stale_timeout",
             "elapsed_sec": round(elapsed, 1),
         })
+    _clear_stale_restream(sym)
     _mark_stale_timeout_block(sym, now, cfg)
     drop_watch_symbols([sym])
     return True
@@ -2156,6 +2312,7 @@ def _maybe_no_trade_after_subscribe_drop(
             age_f = float(got[1])
             if age_f <= ceiling:
                 _clear_stale_feed_since(rec)
+                _clear_stale_restream(sym)
                 return False
     except Exception:
         pass
@@ -2172,11 +2329,21 @@ def _maybe_no_trade_after_subscribe_drop(
             age_f = None
     if src == "stream" and age_f is not None and age_f <= ceiling:
         _clear_stale_feed_since(rec)
+        _clear_stale_restream(sym)
+        return False
+    # Dig 2026-09-15 B1: re-stream once and hold drop during grace before
+    # freeing the seat. Arm/fill still blocked on stale. Pins/warming always
+    # eligible; pins_only knob narrows if dig says thrash is pin-only.
+    if _maybe_stale_restream_hold(
+        rec, sym=sym, cfg=cfg, now=now, events=events, cp=cp,
+        age_sec=age_f, src=src or None, reason="no_stream_trade",
+    ):
         return False
     # Stream-before-strike grace: recently ensure_watch_stream'd names still
     # drop (free the seat) but do not accrue A2 strikes while subscribe lags.
     # Arm/fill remain blocked on no stream. After grace, strikes resume.
     grace_hold = _within_no_stream_strike_grace(sym, now, cfg)
+    seat_role = str(rec.get("seat_role") or "") or None
     if grace_hold:
         ensured_at = _STREAM_ENSURED_AT.get(sym)
         try:
@@ -2198,7 +2365,7 @@ def _maybe_no_trade_after_subscribe_drop(
                     ensure_age_sec=grace_age,
                     elapsed_sec=round(float(now) - float(admitted), 1),
                     age_sec=round(age_f, 1) if age_f is not None else None,
-                    src=src or None))
+                    src=src or None, seat_role=seat_role))
             except Exception:  # noqa: BLE001
                 events.append({
                     "kind": "no_stream_grace",
@@ -2213,7 +2380,7 @@ def _maybe_no_trade_after_subscribe_drop(
                 "watch_drop", symbol=sym, reason="no_stream_trade",
                 elapsed_sec=round(float(now) - float(admitted), 1),
                 age_sec=round(age_f, 1) if age_f is not None else None,
-                src=src or None,
+                src=src or None, seat_role=seat_role,
                 no_stream_strikes=strikes,
                 no_stream_strike_grace=True,
                 no_stream_strike_demote=None))
@@ -2225,6 +2392,7 @@ def _maybe_no_trade_after_subscribe_drop(
                 "elapsed_sec": round(float(now) - float(admitted), 1),
                 "no_stream_strikes": strikes,
                 "no_stream_strike_grace": True,
+                "seat_role": seat_role,
             })
     else:
         strikes = _record_no_stream_strike(sym, now, "no_stream_trade", cfg)
@@ -2235,7 +2403,7 @@ def _maybe_no_trade_after_subscribe_drop(
                 "watch_drop", symbol=sym, reason="no_stream_trade",
                 elapsed_sec=round(float(now) - float(admitted), 1),
                 age_sec=round(age_f, 1) if age_f is not None else None,
-                src=src or None,
+                src=src or None, seat_role=seat_role,
                 no_stream_strikes=strikes,
                 no_stream_strike_limit=limit if limit > 0 else None,
                 no_stream_strike_demote=demoted or None))
@@ -2247,6 +2415,7 @@ def _maybe_no_trade_after_subscribe_drop(
                 "elapsed_sec": round(float(now) - float(admitted), 1),
                 "no_stream_strikes": strikes,
                 "no_stream_strike_demote": demoted or None,
+                "seat_role": seat_role,
             })
         if demoted:
             try:
@@ -2262,6 +2431,7 @@ def _maybe_no_trade_after_subscribe_drop(
                     "limit": limit,
                     "et_day": _et_day_key(now),
                 })
+    _clear_stale_restream(sym)
     _mark_stale_timeout_block(
         sym, now, cfg, cool_sec=stale_timeout_reseed_sec(cfg))
     drop_watch_symbols([sym])
@@ -2327,6 +2497,9 @@ def _enforce_stale_tape_seat_cap(
             continue
         sym = str(rec.get("symbol") or key or "").upper().strip()
         if not sym:
+            continue
+        # Never steal/cap-drop a seat mid restream grace (B2).
+        if _within_stale_restream_grace(sym, now, cfg):
             continue
         try:
             if gt is not None and gt.has_open_position(sym):
@@ -2539,6 +2712,8 @@ def _preferential_unarmable_steal(
         sym = str(rec.get("symbol") or key or "").upper().strip()
         if not sym:
             continue
+        if _within_stale_restream_grace(sym, now, cfg):
+            continue
         try:
             if gt is not None and gt.has_open_position(sym):
                 continue
@@ -2673,6 +2848,8 @@ def _preferential_preheat_steal(
             continue
         sym = str(rec.get("symbol") or key or "").upper().strip()
         if not sym:
+            continue
+        if _within_stale_restream_grace(sym, now, cfg):
             continue
         try:
             if gt is not None and gt.has_open_position(sym):
@@ -6995,8 +7172,8 @@ def research_candidate_rows() -> list[dict]:
         (ROOT / "claude_suggestions.json", "agy"),  # legacy filename
         (ROOT / "suggestions.json", "agy"),
         (ROOT / "grok_suggestions.json", "xai"),
-        # Agreement board first among seed-rank files; G/X mirrors are the
-        # same intersection when ai_seed_rank_require_agreement is on.
+        # Canonical seed-rank watch feed is seed_rank_gx (legacy ax). Per-model
+        # boards may be audit-only (watch_facing=false) under union publish.
         (ROOT / "seed_rank_gx.json", "agy"),
         (ROOT / "seed_rank_ax.json", "agy"),  # legacy agreement filename
         (ROOT / "seed_rank_agy.json", "agy"),
@@ -7013,6 +7190,8 @@ def research_candidate_rows() -> list[dict]:
             continue
         # Stale seed-rank boards must not re-seed yesterday's list.
         if str(raw.get("kind") or "") == "seed_rank":
+            if raw.get("watch_facing") is False:
+                continue
             try:
                 age = time.time() - float(raw.get("ts") or 0)
             except (TypeError, ValueError):
@@ -7038,13 +7217,22 @@ def research_candidate_rows() -> list[dict]:
                 continue
             seen.add(s)
             reason = str(r.get("reason") or r.get("summary") or "research")[:80]
+            # Seed-rank published rows stay watch-admissible (agreement gate
+            # unchanged). Per-row source_mark / second_opinion live on the board.
+            row_src = str(r.get("primary_source") or r.get("source") or src_label).lower()
+            if row_src in ("xai", "grok"):
+                row_src_label = "xai"
+            elif row_src in ("agy", "google", "gemini", "both"):
+                row_src_label = "agy" if row_src != "both" else src_label
+            else:
+                row_src_label = src_label
             out.append({
                 "symbol": s,
                 "trending_score": _score_from_row(r),
                 "score": _score_from_row(r),
                 "reason": reason,
                 "agreement": True,
-                "source": src_label,
+                "source": row_src_label,
             })
     return out
 

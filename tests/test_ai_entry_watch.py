@@ -25,6 +25,8 @@ def test_watch_config_defaults_present():
         "ai_watch_stale_timeout_include_need_stream",
         "ai_watch_no_stream_strike_limit",
         "ai_watch_no_stream_strike_reasons",
+        "ai_watch_stale_restream_grace_sec",
+        "ai_watch_stale_restream_pins_only",
     ):
         assert key in DEFAULT_CONFIG
     # Code default False so tests / paper keep REST fallback; live bot_config

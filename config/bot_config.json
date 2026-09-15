@@ -368,5 +368,11 @@
     "09:25",
     "12:00",
     "15:00"
-  ]
+  ],
+  "ai_watch_stale_restream_grace_sec": 60.0,
+  "ai_watch_stale_restream_pins_only": false,
+  "ai_seed_rank_require_agreement": false,
+  "ai_seed_rank_publish_mode": "union",
+  "ai_seed_rank_per_model_max": 3,
+  "ai_seed_rank_second_opinion": true
 }

@@ -151,6 +151,8 @@ def test_stale_timeout_knobs_default_around_six_minutes():
     assert DEFAULT_CONFIG["ai_watch_admit_max_tape_age_sec"] == 120.0
     assert DEFAULT_CONFIG["ai_watch_no_stream_strike_limit"] == 2
     assert DEFAULT_CONFIG["ai_watch_no_stream_strike_reasons"] == ["no_stream_trade"]
+    assert DEFAULT_CONFIG["ai_watch_stale_restream_grace_sec"] == 60.0
+    assert DEFAULT_CONFIG["ai_watch_stale_restream_pins_only"] is False
     assert ew.stale_timeout_sec({}) == 360.0
     assert ew.stale_timeout_reseed_sec({}) == 300.0
     assert ew.stale_timeout_grace_sec({}) == 90.0
@@ -159,6 +161,8 @@ def test_stale_timeout_knobs_default_around_six_minutes():
     assert ew.no_stream_strike_limit({}) == 2
     assert ew.no_stream_strike_reasons({}) == frozenset({"no_stream_trade"})
     assert ew.no_stream_strike_limit({"ai_watch_no_stream_strike_limit": 0}) == 0
+    assert ew.stale_restream_grace_sec({}) == 60.0
+    assert ew.stale_restream_grace_sec({"ai_watch_stale_restream_grace_sec": 0}) == 0.0
 
 
 def _drop_cfg(**over):
@@ -170,6 +174,9 @@ def _drop_cfg(**over):
         # 0 = any dated tape is still "quiet"; tests that want a true dead
         # drop set age high or leave this 0 and use src=none.
         "ai_watch_stale_timeout_quiet_max_sec": 0.0,
+        # Legacy drop tests assert immediate eviction; restream is covered
+        # separately.
+        "ai_watch_stale_restream_grace_sec": 0.0,
     }
     c.update(over)
     return c
@@ -437,6 +444,7 @@ def test_no_trade_after_subscribe_drops_aehg_class(tmp_path, monkeypatch):
             "ai_watch_stream_subscribe_grace_sec": 90.0,
             "ai_watch_decision_max_age_sec": 15.0,
             "ai_watch_stale_timeout_reseed_sec": 300.0,
+            "ai_watch_stale_restream_grace_sec": 0.0,
         },
         now=t0, events=events, cp=_CP, gt=_GT,
     )
@@ -541,6 +549,8 @@ def test_no_stream_trade_uses_stale_timeout_reseed(tmp_path, monkeypatch):
     monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
     ew._STALE_TIMEOUT_UNTIL.clear()
     ew._NO_STREAM_STRIKES.clear()
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
     t0 = 7_000_000.0
     ew.save_watch({
         "THIN": {
@@ -570,6 +580,7 @@ def test_no_stream_trade_uses_stale_timeout_reseed(tmp_path, monkeypatch):
             "ai_watch_stale_timeout_grace_sec": 90.0,
             "ai_watch_decision_max_age_sec": 15.0,
             "ai_watch_stale_timeout_reseed_sec": 300.0,
+            "ai_watch_stale_restream_grace_sec": 0.0,
         },
         now=t0, events=events, cp=_CP, gt=_GT,
     ) is True
@@ -704,6 +715,7 @@ def test_no_stream_trade_drop_increments_strike_and_logs(tmp_path, monkeypatch):
         "ai_watch_no_stream_strike_limit": 2,
         # Ensure stamp absent / stale → strikes accrue (grace off path).
         "ai_watch_no_stream_strike_grace_sec": 60.0,
+        "ai_watch_stale_restream_grace_sec": 0.0,
     }
     events: list = []
     assert ew._maybe_no_trade_after_subscribe_drop(
@@ -741,6 +753,8 @@ def test_no_stream_strike_grace_suppresses_strike_after_ensure(tmp_path, monkeyp
     ew._NO_STREAM_STRIKES.clear()
     ew._STREAM_ENSURED_AT.clear()
     ew._NO_STREAM_GRACE_LOGGED_AT.clear()
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
     t0 = 1_786_618_800.0
     ew.save_watch({
         "NEWSUB": {
@@ -769,6 +783,7 @@ def test_no_stream_strike_grace_suppresses_strike_after_ensure(tmp_path, monkeyp
         "ai_watch_stale_timeout_reseed_sec": 300.0,
         "ai_watch_no_stream_strike_limit": 2,
         "ai_watch_no_stream_strike_grace_sec": 60.0,
+        "ai_watch_stale_restream_grace_sec": 0.0,
     }
     events: list = []
     assert ew._maybe_no_trade_after_subscribe_drop(
@@ -788,6 +803,8 @@ def test_no_stream_strike_resumes_after_grace(tmp_path, monkeypatch):
     ew._STALE_TIMEOUT_UNTIL.clear()
     ew._NO_STREAM_STRIKES.clear()
     ew._STREAM_ENSURED_AT.clear()
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
     t0 = 1_786_618_800.0
     ew._mark_stream_ensured(["LATE"], now=t0 - 120.0)  # outside 60s grace
 
@@ -808,6 +825,7 @@ def test_no_stream_strike_resumes_after_grace(tmp_path, monkeypatch):
         "ai_watch_stale_timeout_reseed_sec": 300.0,
         "ai_watch_no_stream_strike_limit": 2,
         "ai_watch_no_stream_strike_grace_sec": 60.0,
+        "ai_watch_stale_restream_grace_sec": 0.0,
     }
     monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
     for i in range(2):
@@ -831,6 +849,8 @@ def test_no_stream_grace_zero_disables(tmp_path, monkeypatch):
     ew._STALE_TIMEOUT_UNTIL.clear()
     ew._NO_STREAM_STRIKES.clear()
     ew._STREAM_ENSURED_AT.clear()
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
     t0 = 1_786_618_800.0
     ew._mark_stream_ensured(["Z"], now=t0 - 5.0)
     ew.save_watch({
@@ -858,6 +878,7 @@ def test_no_stream_grace_zero_disables(tmp_path, monkeypatch):
         "ai_watch_stale_timeout_reseed_sec": 300.0,
         "ai_watch_no_stream_strike_grace_sec": 0.0,
         "ai_watch_no_stream_strike_limit": 2,
+        "ai_watch_stale_restream_grace_sec": 0.0,
     }
     events: list = []
     assert ew._maybe_no_trade_after_subscribe_drop(
@@ -1227,3 +1248,220 @@ def test_passes_inclusion_movers_min_price_and_dvol(monkeypatch):
          "criteria": []},
         cfg)
     assert ok is False and why == "thin_dollar_volume"
+
+
+# ── Dig 2026-09-15 B1: stale restream grace before drop ───────────────────
+
+def _restream_cfg(**over):
+    c = {
+        "ai_watch_no_trade_after_subscribe_sec": 300.0,
+        "ai_watch_stale_timeout_grace_sec": 90.0,
+        "ai_watch_stream_subscribe_grace_sec": 90.0,
+        "ai_watch_decision_max_age_sec": 15.0,
+        "ai_watch_stale_timeout_reseed_sec": 300.0,
+        "ai_watch_no_stream_strike_limit": 2,
+        "ai_watch_no_stream_strike_grace_sec": 0.0,
+        "ai_watch_stale_restream_grace_sec": 60.0,
+        "ai_watch_stale_restream_pins_only": False,
+        "ai_watch_pin_protect_steals": True,
+    }
+    c.update(over)
+    return c
+
+
+def test_stale_restream_holds_drop_and_ensures_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
+    t0 = 8_000_000.0
+    ensured: list = []
+
+    def _fake_ensure(syms, cfg=None):
+        ensured.extend(syms)
+        ew._mark_stream_ensured(syms, now=t0)
+        return {"requested": len(list(syms or [])), "subscribed": 1, "pushed": 0}
+
+    monkeypatch.setattr(ew, "ensure_watch_stream", _fake_ensure)
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+    ew.save_watch({
+        "HOLD": {
+            "symbol": "HOLD", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+            "seat_role": "warming",
+        },
+    })
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = _restream_cfg()
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["HOLD"], sym="HOLD", cfg=cfg,
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is False
+    assert "HOLD" in ew.load_watch()
+    assert ensured == ["HOLD"]
+    assert any(e.get("kind") == "stale_restream_grace" for e in events)
+    assert not any(
+        e.get("kind") == "watch_drop" and e.get("reason") == "no_stream_trade"
+        for e in events
+    )
+
+    # Mid-grace poll: still hold, do not re-ensure.
+    events2: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["HOLD"], sym="HOLD", cfg=cfg,
+        now=t0 + 30.0, events=events2, cp=_CP, gt=_GT,
+    ) is False
+    assert ensured == ["HOLD"]
+    assert not any(e.get("kind") == "stale_restream_grace" for e in events2)
+    assert not any(e.get("kind") == "watch_drop" for e in events2)
+
+
+def test_stale_restream_drops_after_grace_if_still_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_TIMEOUT_UNTIL.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    ew._STREAM_ENSURED_AT.clear()
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
+    t0 = 8_100_000.0
+    monkeypatch.setattr(
+        ew, "ensure_watch_stream",
+        lambda syms, cfg=None: ew._mark_stream_ensured(syms, now=t0) or {
+            "requested": 1, "subscribed": 1, "pushed": 0})
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+    ew.save_watch({
+        "DROPME": {
+            "symbol": "DROPME", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = _restream_cfg()
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["DROPME"], sym="DROPME", cfg=cfg,
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is False
+
+    events2: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["DROPME"], sym="DROPME", cfg=cfg,
+        now=t0 + 61.0, events=events2, cp=_CP, gt=_GT,
+    ) is True
+    assert any(e.get("kind") == "stale_restream_fail" for e in events2)
+    assert any(e.get("reason") == "no_stream_trade" for e in events2)
+    assert "DROPME" not in ew.load_watch()
+
+
+def test_pin_not_stolen_during_restream_grace(tmp_path, monkeypatch):
+    ew._STALE_RESTREAM_AT.clear()
+    t0 = 8_200_000.0
+    ew._STALE_RESTREAM_AT["PIN1"] = t0
+    rec = {"symbol": "PIN1", "seat_role": "pin", "status": "watching"}
+    cfg = _restream_cfg()
+    assert ew._within_stale_restream_grace("PIN1", t0 + 10.0, cfg) is True
+    assert ew._is_protected_pin_seat(rec, cfg, now=t0 + 10.0) is True
+
+    # Scout steal must skip restreaming non-pin seats too.
+    state = {
+        "SCOUT": {
+            "symbol": "SCOUT", "status": "watching",
+            "seat_role": "warming",
+            "last_ask_src": "stale_tape", "last_ask_age_sec": 200.0,
+            "admit_dollar_volume": 1e5, "block_code": "stale_quote",
+        },
+    }
+    ew._STALE_RESTREAM_AT["SCOUT"] = t0
+    monkeypatch.setattr(ew, "_is_unarmable_stale_watching", lambda *_a, **_k: True)
+    monkeypatch.setattr(ew, "row_quote_age_sec", lambda *_a, **_k: 200.0)
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    dropped = ew._enforce_stale_tape_seat_cap(
+        state, cfg={**cfg, "ai_watch_max_stale_tape_seats": 0},
+        now=t0 + 5.0, events=[], cp=_CP, gt=_GT, candidates=[],
+    )
+    assert "SCOUT" not in dropped
+
+
+def test_arm_still_blocks_stale_during_restream_grace(monkeypatch):
+    """Restream hold keeps the seat; arm still needs young stream."""
+    ew._STALE_RESTREAM_AT.clear()
+    t0 = 8_300_000.0
+    ew._STALE_RESTREAM_AT["ARM2"] = t0
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: None)
+    assert ew._within_stale_restream_grace("ARM2", t0 + 5.0, _restream_cfg())
+    assert ew._young_stream_alive(
+        "ARM2", {"ai_watch_decision_max_age_sec": 15.0}, now=t0,
+        row={"last_ask_src": "stale_tape"},
+    ) is False
+
+
+def test_stale_restream_pins_only_skips_plain_seats(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "WATCH_STATE_PATH", tmp_path / "watch.json")
+    ew._STALE_RESTREAM_AT.clear()
+    ew._STALE_RESTREAM_LOGGED.clear()
+    ew._NO_STREAM_STRIKES.clear()
+    t0 = 8_400_000.0
+    ensured: list = []
+    monkeypatch.setattr(
+        ew, "ensure_watch_stream",
+        lambda syms, cfg=None: ensured.extend(syms) or {
+            "requested": 1, "subscribed": 1, "pushed": 0})
+    monkeypatch.setattr(ew, "live_print", lambda *_a, **_k: (5.0, 400.0))
+    ew.save_watch({
+        "PLAIN": {
+            "symbol": "PLAIN", "status": "watching",
+            "last_ask_src": "stale_tape", "admit_ts": t0 - 600.0,
+        },
+    })
+
+    class _CP:
+        @staticmethod
+        def log_event(kind, **kw):
+            return {"kind": kind, **kw}
+
+    class _GT:
+        @staticmethod
+        def has_open_position(_sym):
+            return False
+
+    cfg = _restream_cfg(ai_watch_stale_restream_pins_only=True)
+    events: list = []
+    assert ew._maybe_no_trade_after_subscribe_drop(
+        ew.load_watch()["PLAIN"], sym="PLAIN", cfg=cfg,
+        now=t0, events=events, cp=_CP, gt=_GT,
+    ) is True
+    assert ensured == []
+    assert any(e.get("reason") == "no_stream_trade" for e in events)

@@ -599,6 +599,12 @@ DEFAULT_CONFIG = {
     # this many seconds (subscribe lag). Drop / arm-block still apply.
     # 0 disables. Dig 2026-09-14: stream-before-keep coverage, not A2 off.
     "ai_watch_no_stream_strike_grace_sec": 60.0,
+    # Dig 2026-09-15 B1: before no_stream_trade / stale_timeout drop, call
+    # ensure_watch_stream once and hold the seat this many seconds. Still
+    # drops after grace if tape stays dead. Arm/fill require live tape.
+    # 0 disables. pins_only=true narrows hold to pin/warming seats.
+    "ai_watch_stale_restream_grace_sec": 60.0,
+    "ai_watch_stale_restream_pins_only": False,
     # Refuse admit when live tape is missing or older than this (seconds).
     # Prefer an empty slot over a permanent stale_quote row. 0 disables.
     "ai_watch_admit_max_tape_age_sec": 120.0,
@@ -1217,7 +1223,9 @@ DEFAULT_CONFIG = {
     "claude_research_weekdays_only": True,
     "claude_research_catchup_min": 120,
     # Seed-only AI ranker (momentum+trending+movers → ≤5 names → watchlist).
-    # Google AGY + Grok; recommend only; agreement required; never places.
+    # Google AGY + Grok; recommend only; never places. Default publish is union
+    # of per-model top-N with peer second_opinion; set publish_mode=agreement
+    # (or require_agreement=True) to restore intersection-only.
     "ai_seed_rank_enabled": False,
     "ai_seed_rank_times": [
         "09:25", "12:00", "15:00",
@@ -1228,7 +1236,10 @@ DEFAULT_CONFIG = {
     "ai_seed_rank_agy": True,
     "ai_seed_rank_claude": True,  # legacy alias for ai_seed_rank_agy
     "ai_seed_rank_grok": True,
-    "ai_seed_rank_require_agreement": True,  # both models must list the name
+    "ai_seed_rank_require_agreement": False,  # legacy; True forces agreement mode
+    "ai_seed_rank_publish_mode": "union",  # "union" | "agreement"
+    "ai_seed_rank_per_model_max": 3,  # names taken from each model before union
+    "ai_seed_rank_second_opinion": True,  # attach peer agree|caution|pass on rows
     "ai_seed_rank_require_setup": False,  # mechanical stage-1 pre-filter
     "ai_seed_rank_max_shares_m": 30.0,
     "claude_request_timeout":   600.0,
@@ -1905,6 +1916,8 @@ SAFE_CONFIG_KEYS = [
     "ai_watch_no_stream_strike_limit",
     "ai_watch_no_stream_strike_reasons",
     "ai_watch_no_stream_strike_grace_sec",
+    "ai_watch_stale_restream_grace_sec",
+    "ai_watch_stale_restream_pins_only",
     "ai_watch_admit_max_tape_age_sec",
     "ai_watch_movers_min_dollar_volume",
     "ai_watch_movers_min_price",
