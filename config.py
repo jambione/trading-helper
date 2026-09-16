@@ -1183,6 +1183,12 @@ DEFAULT_CONFIG = {
     "ai_admit_ledger_seed":           True,
     "ai_admit_ledger_inclusion":      True,
     "ai_admit_ledger_kept_sample":    False,  # optional paired digs; off v1
+    # Proposal ledger — attributed seed/inclusion kept+dropped (observe-only).
+    # Additive to admit_ledger. State-change + heartbeat; fail-open.
+    "ai_proposal_ledger_enabled":     True,
+    "ai_proposal_ledger_seed":        True,
+    "ai_proposal_ledger_inclusion":   True,
+    "ai_proposal_ledger_heartbeat_sec": 300,  # 5m dwell reconstruct
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
     # On sell_signal while green, move stop to entry (never loosen).
@@ -1902,6 +1908,10 @@ SAFE_CONFIG_KEYS = [
     "ai_admit_ledger_seed",
     "ai_admit_ledger_inclusion",
     "ai_admit_ledger_kept_sample",
+    "ai_proposal_ledger_enabled",
+    "ai_proposal_ledger_seed",
+    "ai_proposal_ledger_inclusion",
+    "ai_proposal_ledger_heartbeat_sec",
     "ai_position_shadow_enabled",
     "ai_sell_signal_breakeven",
     "ai_heal_unprotected",

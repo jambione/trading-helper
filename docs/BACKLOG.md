@@ -1,7 +1,7 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-16** (admit_ledger observe-only — ship after RTH).
+Last updated: **2026-09-16** (proposal_ledger + source_scorecard — ship after RTH).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
@@ -11,6 +11,7 @@ Last updated: **2026-09-16** (admit_ledger observe-only — ship after RTH).
 - **Plan B** = burst trial, code-ready, **live off** until Plan A earns a dry-run open.
 - Mid-RTH: no strategy retunes unless on fire (ops OK).
 - **admit_ledger** = refused-side instrument (`ai_reports/admit_ledger/YYYY-MM-DD.jsonl`, uncapped seed + inclusion). Observe-only; does not change who gets in. Gate grading (select/neutral/invert) after ≥1–2 RTH days of rows. Occupancy churn stays the weekly primary.
+- **proposal_ledger** = attributed proposal instrument (`ai_reports/proposal_ledger/YYYY-MM-DD.jsonl`, kept+dropped, proposer≠owner, state-change+5m heartbeat). Additive to admit_ledger. **source_scorecard** grades suppliers after ≥1–2 RTH days of ledger (GROSS + controls); no live demote/cap until pre-registered rules fire with adequate n.
 
 ---
 
@@ -19,6 +20,7 @@ Last updated: **2026-09-16** (admit_ledger observe-only — ship after RTH).
 | When | Item | Status | Notes |
 |------|------|--------|-------|
 | **Tue 2026-09-16 after RTH** | admit_ledger (refused seed+inclusion) | **LOCAL → deploy after close** | Logging-only; fail-open; knobs on. Prefer alone if sharing a restart with occupancy A2/A3 would confuse attribution. |
+| **Tue 2026-09-16 after RTH** | proposal_ledger + source_norm + source_scorecard | **LOCAL → deploy after close** | Observe-only; additive to admit_ledger; state-change+5m heartbeat. Scorecard nightly via watchdog. No live seed-cap/demote in this pack. |
 | **Mon 2026-09-15 after RTH** | Lean Plan A three-knob | **LIVE** | `confirm_ticks=1`; `ob_allow_flat_when_macd_armed=false`; `require_realtime_macd=false`. **Wed measure:** fewer `arm_confirming`, ~zero `overbought_macd_armed`, same/more clean EXH↑+RSI arms → occupancy dig if still thin. |
 | **Wed 2026-09-09** | Tight local-trail leash | **LIVE** `11564d3` + follow-ons | `give_r` 0.35→**0.20**, `give_max_pct` 1.75→**1.0**. Synth stop / Plan A arms untouched. Scorecard: `docs/WED_2026-09-09.md` |
 | **Wed AM** | AGY seed-rank fix | **LIVE** `736549b` | `agy_model=gemini-3.1-pro-high`; skip `--effort` on `*-high` ids. Prove at ~09:25 seed slot |

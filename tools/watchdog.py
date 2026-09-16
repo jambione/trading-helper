@@ -623,7 +623,12 @@ def main() -> int:
                         "--horizons", "15,30,60")
                     rc_l = run_learn_job(
                         py, "admission_latency.py", "--days", "20")
-                    log(f"drift rc={rc_d}; gate rc={rc_g}; latency rc={rc_l}")
+                    # Supplier grading on proposals (observe-only; GROSS + controls).
+                    # Fail-soft: missing ledger day → nonzero rc, never blocks trading.
+                    rc_src = run_learn_job(
+                        py, "source_scorecard.py", "--day", day_key)
+                    log(f"drift rc={rc_d}; gate rc={rc_g}; latency rc={rc_l}; "
+                        f"source_scorecard rc={rc_src}")
                     # Full audit once a day: the log-coverage scan is the
                     # half --quick skips, and a field that quietly stopped
                     # being written invalidates the screens above it.

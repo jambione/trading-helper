@@ -5398,6 +5398,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
             scored.sort(key=lambda t: t[0], reverse=True)
             for _, r in scored[:n]:
                 if r["symbol"] in seen:
+                    _note_proposal_overlap("momentum", r["symbol"], row=r)
                     continue
                 seen.add(r["symbol"])
                 rows.append(r)
@@ -5438,7 +5439,17 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 if not isinstance(r, dict):
                     continue
                 s = str(r.get("ticker") or r.get("symbol") or "").upper().strip()
-                if not s or not s[0].isalpha() or s in seen:
+                if not s or not s[0].isalpha():
+                    continue
+                if s in seen:
+                    _note_proposal_overlap(
+                        "momentum", s,
+                        extra={
+                            "price": r.get("price"),
+                            "pct": _pct_change_value(r.get("pct_change")),
+                            "rvol": r.get("rvol"),
+                        },
+                    )
                     continue
                 if is_levered_etp(s):
                     continue
@@ -5551,6 +5562,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 if added >= n:
                     break
                 if r["symbol"] in seen:
+                    _note_proposal_overlap("momentum", r["symbol"], row=r)
                     continue
                 seen.add(r["symbol"])
                 rows.append(r)
@@ -5578,6 +5590,18 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         continue
                     s = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
                     if not s or not s[0].isalpha():
+                        continue
+                    if s in seen:
+                        # Attribute the propose without changing first-wins ownership.
+                        _note_proposal_overlap(
+                            "trending", s,
+                            extra={
+                                "price": r.get("price"),
+                                "pct": _pct_change_value(r.get("pct_change")),
+                                "rvol": r.get("rvol"),
+                                "score": r.get("trending_score", r.get("score")),
+                            },
+                        )
                         continue
                     if is_levered_etp(s):
                         continue
@@ -5733,7 +5757,17 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     if not isinstance(r, dict):
                         continue
                     s = str(r.get("symbol") or "").upper().strip()
-                    if not s or not s[0].isalpha() or s in seen:
+                    if not s or not s[0].isalpha():
+                        continue
+                    if s in seen:
+                        _note_proposal_overlap(
+                            "movers", s,
+                            extra={
+                                "price": r.get("price"),
+                                "pct": r.get("pct_change"),
+                                "rvol": r.get("rvol"),
+                            },
+                        )
                         continue
                     # Defense in depth: movers_screener already drops these,
                     # but a stale movers_stocks.json must not re-admit them.
@@ -5924,7 +5958,16 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     continue
                 if s in seen:
                     # Mom/movers already own the row — do not let research
-                    # re-claim a stream-ready momentum seat.
+                    # re-claim a stream-ready momentum seat. Still attribute.
+                    _note_proposal_overlap(
+                        str(r.get("source") or "research"),
+                        s,
+                        extra={
+                            "price": px,
+                            "pct": pct_f,
+                            "rvol": rvol_src,
+                        },
+                    )
                     continue
                 seen.add(s)
                 added += 1
@@ -5962,6 +6005,7 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                     # had called it out. Ownership and visibility are
                     # different questions, so tag the criteria and leave the
                     # source alone.
+                    owner_src = None
                     for prev in rows:
                         if str(prev.get("symbol") or "").upper().strip() != s:
                             continue
@@ -5969,7 +6013,14 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                         if "bro_call" not in crit:
                             crit.append("bro_call")
                             prev["criteria"] = crit
+                        owner_src = str(prev.get("source") or "") or None
                         break
+                    _note_proposal_overlap(
+                        str(r.get("source") or "bb_live"),
+                        s,
+                        row=r,
+                        owner=owner_src,
+                    )
                     continue
                 # Cap NEW symbols only. `continue` rather than `break` so a
                 # call further down the list can still tag a row above it.
@@ -5978,6 +6029,26 @@ def desk_candidate_rows(cfg: dict | None = None) -> list[dict]:
                 seen.add(s)
                 added += 1
                 rows.append(r)
+        except Exception:
+            pass
+
+    # Observe-only: every shortlist survivor is a seed kept proposal.
+    for r in rows:
+        try:
+            sym = str(r.get("symbol") or "").upper().strip()
+            if not sym:
+                continue
+            src = str(r.get("source") or "").strip().lower() or "unknown"
+            _note_proposal(
+                stage="seed",
+                symbol=sym,
+                proposer=src,
+                decision="kept",
+                reason=None,
+                owner=None,
+                row=r if isinstance(r, dict) else None,
+                cfg=cfg,
+            )
         except Exception:
             pass
 
@@ -6008,6 +6079,67 @@ def last_rejected() -> list[dict]:
 def _clear_seed_drops() -> None:
     _seed_drop_counts.clear()
     _seed_drop_samples.clear()
+
+
+def _note_proposal(
+    *,
+    stage: str,
+    symbol: str,
+    proposer: str,
+    decision: str,
+    reason: str | None = None,
+    owner: str | None = None,
+    row: dict | None = None,
+    extra: dict | None = None,
+    cfg: dict | None = None,
+) -> None:
+    """Observe-only proposal ledger write. Fail-open. Never raises."""
+    try:
+        cfg_l = cfg if isinstance(cfg, dict) else _push_cfg()
+        if not bool(cfg_l.get("ai_proposal_ledger_enabled", True)):
+            return
+        import proposal_ledger as _pl
+        _pl.log_proposal(
+            stage=stage,
+            symbol=symbol,
+            proposer=proposer,
+            decision=decision,
+            reason=reason,
+            owner=owner,
+            row=row,
+            extra=extra,
+            cfg=cfg_l,
+        )
+    except Exception:
+        pass
+
+
+def _note_proposal_overlap(
+    proposer: str,
+    symbol: str,
+    *,
+    row: dict | None = None,
+    extra: dict | None = None,
+    owner: str | None = None,
+) -> None:
+    """Second source proposed a symbol already claimed this pass — attribute it.
+
+    Does not change shortlist ownership. Counts as a seed ``kept`` proposal for
+    scorecard attribution (passed seed filters; lost first-wins seat).
+    """
+    own = owner
+    if own is None and isinstance(row, dict):
+        own = str(row.get("source") or "") or None
+    _note_proposal(
+        stage="seed",
+        symbol=symbol,
+        proposer=proposer,
+        decision="kept",
+        reason=None,
+        owner=own,
+        row=row,
+        extra=extra,
+    )
 
 
 def _note_seed_drop(
@@ -6045,6 +6177,17 @@ def _note_seed_drop(
             )
     except Exception:
         pass
+    # Attributed proposal ledger (state-change + heartbeat). Additive.
+    feat = {k: v for k, v in extra.items() if v is not None}
+    _note_proposal(
+        stage="seed",
+        symbol=symbol,
+        proposer=src,
+        decision="dropped",
+        reason=why,
+        owner=None,
+        extra=feat or None,
+    )
 
 
 def seed_drop_snapshot() -> dict:
@@ -7164,6 +7307,19 @@ def apply_inclusion_gate(
         out["criteria"] = met
         kept.append(out)
         kept_syms.add(sym)
+        # Observe-only proposal ledger — inclusion kept.
+        src_k = str(row.get("source") or "").strip().lower()
+        _note_proposal(
+            stage="inclusion",
+            symbol=sym,
+            proposer=src_k or "unknown",
+            decision="kept",
+            reason=None,
+            owner=src_k or None,
+            row=out,
+            extra={"criteria": met},
+            cfg=cfg,
+        )
     for rec in last_reject.values():
         rejected.append(rec)
         why = str(rec.get("reason") or "")
@@ -7186,6 +7342,24 @@ def apply_inclusion_gate(
                     extra={"criteria": rec.get("criteria")},
                     cfg=cfg,
                 )
+        except Exception:
+            pass
+        # Attributed proposal ledger — inclusion dropped (incl. dwell_*).
+        try:
+            sym_r = str(rec.get("symbol") or "")
+            src_row = row_by_sym.get(sym_r) or {}
+            src_p = str(src_row.get("source") or "").strip().lower()
+            _note_proposal(
+                stage="inclusion",
+                symbol=sym_r,
+                proposer=src_p or "unknown",
+                decision="dropped",
+                reason=why,
+                owner=src_p or None,
+                row=src_row if isinstance(src_row, dict) else None,
+                extra={"criteria": rec.get("criteria")},
+                cfg=cfg,
+            )
         except Exception:
             pass
     for gone in [s for s in _admit_ticks if s not in seen]:
