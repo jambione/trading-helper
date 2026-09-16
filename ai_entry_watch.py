@@ -6281,7 +6281,14 @@ def push_candidates_to_engine(symbols: list[str]) -> dict:
         if m not in _pushed_at or (now - _pushed_at[m]) > hold_missing:
             to_push.append(m)
     for s in wanted:
-        if s in missing:
+        # Refresh is for names the engine ALREADY knows. Testing `s in missing`
+        # leaked every name the cap had just truncated out of `missing` back
+        # into the push, so ai_watch_engine_push_max never bound: the cap
+        # dropped a name from the net-new list and this loop pushed it anyway.
+        # That is the subscription budget the cap exists to protect (~50
+        # concurrent Finnhub WS subs), and overflow is silent — no trades, no
+        # forming bars, no indicator state, refused later as a fade.
+        if s not in known:
             continue
         if s not in _pushed_at or (now - _pushed_at[s]) > hold_refresh:
             to_push.append(s)
