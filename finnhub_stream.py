@@ -314,22 +314,72 @@ async def _finnhub_stream(api_key: str, tickers: list):
 
     while True:
         try:
-            async with websockets.connect(url, ping_interval=30) as ws:
+            # open_timeout 30s: on degraded Wi‑Fi the handshake often takes
+            # 6–10s; the websockets default (~10s) then flaps connected=False
+            # and the desk freezes on stale_quote with SOCKET DOWN.
+            # ping_timeout 60s: same path was killing live sockets with
+            # "keepalive ping timeout" while HTTPS still worked (2026-09-16).
+            async with websockets.connect(
+                url, ping_interval=30, ping_timeout=60, open_timeout=30,
+            ) as ws:
                 reconnect_attempts    = 0
                 FINNHUB_STATE.connected = True
-                FINNHUB_STATE.add_log("INFO", f"Finnhub connected ({len(tickers)} tickers)")
+                # Re-subscribe the live set on EVERY connect. Engine starts
+                # with tickers=[] and fills via the pending queue; a reconnect
+                # that only used the original empty list left connected=True
+                # with zero wire subscriptions (2026-09-16 stale_quote storm).
+                with FINNHUB_STATE.lock:
+                    want = {
+                        str(t or "").upper().strip()
+                        for t in list(FINNHUB_STATE.subscribed) + list(tickers or [])
+                        if str(t or "").strip()
+                    }
+                    FINNHUB_STATE.subscribed = set()
+                to_sub = sorted(want)[:MAX_WS_SUBSCRIPTIONS]
+                FINNHUB_STATE.add_log(
+                    "INFO", f"Finnhub connected — subscribing {len(to_sub)} tickers"
+                )
+                print(f"[FH] connected — subscribing {len(to_sub)} tickers", flush=True)
 
-                for ticker in tickers[:MAX_WS_SUBSCRIPTIONS]:  # free-tier WS ceiling
+                for ticker in to_sub:
                     await ws.send(json.dumps({"type": "subscribe", "symbol": ticker}))
                     with FINNHUB_STATE.lock:
                         FINNHUB_STATE.subscribed.add(ticker)
 
-                # Receive loop: 1-second timeout lets us drain pending subs
+                # Receive loop: 1-second timeout lets us drain pending subs.
+                # Silence kill: flaky Wi‑Fi leaves a half-open socket that
+                # still reports connected=True while no trades arrive — the
+                # desk then freezes on stale_quote (2026-09-16: ages ~180s+
+                # with subscribed=28, fresh=0). Break out and reconnect.
+                last_msg_at = time.time()
+                silence_limit = float(os.getenv("FINNHUB_WS_SILENCE_SEC", "45") or 45)
                 while True:
                     try:
                         message = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                        last_msg_at = time.time()
                     except asyncio.TimeoutError:
+                        # Only silence-kill once we actually have subscriptions.
+                        # Engine starts the socket with tickers=[] and enqueues
+                        # names later — an empty socket is quiet by design.
+                        with FINNHUB_STATE.lock:
+                            n_sub = len(FINNHUB_STATE.subscribed)
+                        if (
+                            silence_limit > 0
+                            and n_sub > 0
+                            and (time.time() - last_msg_at) >= silence_limit
+                        ):
+                            raise RuntimeError(
+                                f"Finnhub WS silent >{silence_limit:.0f}s "
+                                f"with {n_sub} subs — reconnecting"
+                            )
+                        before = n_sub
                         await _drain_pending(ws)
+                        # New subs deserve a fresh silence window — thin names
+                        # may not print in the first seconds after subscribe.
+                        with FINNHUB_STATE.lock:
+                            after = len(FINNHUB_STATE.subscribed)
+                        if after > before:
+                            last_msg_at = time.time()
                         continue
 
                     try:
@@ -362,6 +412,8 @@ async def _finnhub_stream(api_key: str, tickers: list):
             FINNHUB_STATE.connected = False
             reconnect_attempts += 1
             wait = base_wait * (2 ** min(reconnect_attempts - 1, max_reconnect - 1))
+            msg = f"Finnhub error ({reconnect_attempts}/{max_reconnect}): {str(e)[:120]}"
+            print(f"[FH] {msg}", flush=True)
             if reconnect_attempts >= max_reconnect:
                 FINNHUB_STATE.add_log(
                     "ERROR",
@@ -372,8 +424,7 @@ async def _finnhub_stream(api_key: str, tickers: list):
             else:
                 FINNHUB_STATE.add_log(
                     "WARN",
-                    f"Finnhub error ({reconnect_attempts}/{max_reconnect}): "
-                    f"{str(e)[:80]}. Reconnecting in {wait:.0f}s…"
+                    f"{msg}. Reconnecting in {wait:.0f}s…"
                 )
                 await asyncio.sleep(wait)
         finally:

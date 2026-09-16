@@ -194,7 +194,9 @@ BAR_TIMEFRAME  = os.getenv("BAR_TIMEFRAME",  "1Min")
 # keeps cached_df from rotting if the tape goes quiet later.
 ALPACA_RT_SKIP_REFRESH = os.getenv("ALPACA_RT_SKIP_REFRESH", "1") in ("1", "true", "yes")
 ALPACA_RT_SAFETY_REFRESH_S = float(os.getenv("ALPACA_RT_SAFETY_REFRESH_S", "300"))
-ALPACA_BAR_MAX_RETRIES = int(os.getenv("ALPACA_BAR_MAX_RETRIES", "4"))
+# 1 = fail-fast under degraded Wi‑Fi. Serial 4×timeouts across a 20-name
+# book used to freeze signal_state for minutes (2026-09-16 stale_quote day).
+ALPACA_BAR_MAX_RETRIES = int(os.getenv("ALPACA_BAR_MAX_RETRIES", "1"))
 
 # When on, every symbol on the dashboard ticker list (momentum desk universe)
 # is eligible for engine tracking — not only transcription "mentioned" /
@@ -608,6 +610,35 @@ def row_triggers_tracking(row: dict, track_desk: bool | None = None) -> tuple[bo
 
 # ── Alpaca bar fetching ───────────────────────────────────────────────────────
 
+# Circuit breaker: consecutive IEX timeouts open the circuit so Finnhub WS
+# ages keep getting published instead of the main loop wedging on HTTPS.
+_BAR_FAIL_STREAK = 0
+_BAR_CIRCUIT_UNTIL = 0.0
+_BAR_CIRCUIT_OPEN_AFTER = int(os.getenv("ALPACA_BAR_CIRCUIT_AFTER", "3"))
+_BAR_CIRCUIT_COOLDOWN_S = float(os.getenv("ALPACA_BAR_CIRCUIT_COOLDOWN_S", "45"))
+
+
+def _bar_circuit_open() -> bool:
+    return time.time() < float(_BAR_CIRCUIT_UNTIL or 0)
+
+
+def _bar_circuit_note(ok: bool, *, why: str = "") -> None:
+    global _BAR_FAIL_STREAK, _BAR_CIRCUIT_UNTIL
+    if ok:
+        _BAR_FAIL_STREAK = 0
+        return
+    _BAR_FAIL_STREAK = int(_BAR_FAIL_STREAK or 0) + 1
+    if _BAR_FAIL_STREAK < max(1, _BAR_CIRCUIT_OPEN_AFTER):
+        return
+    _BAR_CIRCUIT_UNTIL = time.time() + max(5.0, _BAR_CIRCUIT_COOLDOWN_S)
+    _BAR_FAIL_STREAK = 0
+    print(
+        f"  [BARS] circuit OPEN {_BAR_CIRCUIT_COOLDOWN_S:.0f}s "
+        f"(IEX degraded{': ' + why if why else ''}) — keeping tape writes alive",
+        flush=True,
+    )
+
+
 def fetch_bars(symbol: str, api_key: str, secret_key: str,
                count: int = BAR_COUNT,
                timeframe: str = BAR_TIMEFRAME,
@@ -624,8 +655,12 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
       HTTP 429s respect Retry-After (else exponential backoff + jitter).
       Process-wide throttle spaces multi-symbol warm/refresh so 32 names do
       not stampede the free IEX quota.
+      Circuit-breaker on consecutive timeouts so a bad Wi‑Fi day cannot
+      starve Finnhub tape publication.
     """
     if not api_key or not secret_key:
+        return None
+    if _bar_circuit_open():
         return None
 
     lookback = int(lookback_days if lookback_days is not None else BAR_LOOKBACK_DAYS)
@@ -664,7 +699,10 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
         for attempt in range(max_retries):
             try:
                 alpaca_api.throttle_alpaca_request()
-                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                # 5s fail-fast: under degraded Wi‑Fi a 10s serial timeout across
+                # a 20–30 name book wedged signal_state for minutes and left
+                # the watch UI on stale_quote (2026-09-16). Skip to next cycle.
+                resp = requests.get(url, params=params, headers=headers, timeout=5)
                 code = getattr(resp, "status_code", None)
                 if code == 429:
                     wait = alpaca_api.backoff_seconds(
@@ -713,6 +751,7 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
                 if len(df) >= min_needed:
                     print(f"  [BARS] {symbol}: {len(df)} bars via {feed} ✓"
                           f" (lookback={lookback}d)")
+                    _bar_circuit_note(True)
                     return df
 
                 # Not enough yet — try the next feed
@@ -738,7 +777,10 @@ def fetch_bars(symbol: str, api_key: str, secret_key: str,
                 print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
                 break
             except Exception as e:
+                err = str(e)
                 print(f"  [BARS] {symbol}: {feed} fetch failed — {e}")
+                if "timed out" in err.lower() or "timeout" in err.lower():
+                    _bar_circuit_note(False, why="timeout")
                 break
 
     print(f"  [BARS] {symbol}: ❌ could not get {min_needed} bars on any feed "
@@ -2391,6 +2433,11 @@ class SignalEngine:
                         if time.time() - float(ts.last_bar_fetch or 0) < 2.0:
                             first_load_budget -= 1
                     self._check_proximity(ts)
+                    # Keep Finnhub ages on disk even while IEX bar warm stalls.
+                    now_mid = time.time()
+                    if now_mid - self._last_state_write >= SIGNAL_STATE_INTERVAL:
+                        self._write_signal_state()
+                        self._last_state_write = now_mid
 
                 # 4. Keep watch-book Finnhub slots alive, then drop true expiry
                 self._refresh_book_subscriptions()
