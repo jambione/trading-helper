@@ -83,7 +83,7 @@
   "ai_premarket_working_sell": false,
   "ai_prompt_file": "ai_prompt.txt",
   "ai_quote_poll": 15.0,
-  "ai_reentry_cooldown_sec": 300.0,
+  "ai_reentry_cooldown_sec": 120.0,
   "ai_reentry_min_mfe_r": 0.5,
   "ai_require_agreement": false,
   "ai_risk_pct": 1.0,
