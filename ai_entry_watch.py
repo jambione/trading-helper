@@ -6027,6 +6027,24 @@ def _note_seed_drop(
             if v is not None:
                 row[k] = v
         samples.append(row)
+    # Observe-only refused-side ledger (uncapped). Fail-open.
+    try:
+        cfg_l = _push_cfg()
+        if bool(cfg_l.get("ai_admit_ledger_enabled", True)) and bool(
+            cfg_l.get("ai_admit_ledger_seed", True)
+        ):
+            import admit_ledger as _al
+            feat = {k: v for k, v in extra.items() if v is not None}
+            _al.log_refuse(
+                stage="seed",
+                symbol=symbol,
+                reason=why,
+                source=src,
+                extra=feat or None,
+                cfg=cfg_l,
+            )
+    except Exception:
+        pass
 
 
 def seed_drop_snapshot() -> dict:
@@ -7123,11 +7141,13 @@ def apply_inclusion_gate(
     seen: set[str] = set()
     kept_syms: set[str] = set()
     last_reject: dict[str, dict] = {}
+    row_by_sym: dict[str, dict] = {}
     for row in rows:
         sym = str(row.get("symbol") or "").upper().strip()
         if not sym or sym in kept_syms:
             continue
         seen.add(sym)
+        row_by_sym[sym] = row
         ok, met, why = passes_inclusion(row, cfg, indicators=indicators)
         if not ok:
             last_reject[sym] = {"symbol": sym, "reason": why, "criteria": met}
@@ -7149,6 +7169,25 @@ def apply_inclusion_gate(
         why = str(rec.get("reason") or "")
         if not why.startswith("dwell_"):
             _admit_ticks.pop(rec["symbol"], None)
+        # Observe-only refused-side ledger (uncapped). Fail-open.
+        try:
+            if bool(cfg.get("ai_admit_ledger_enabled", True)) and bool(
+                cfg.get("ai_admit_ledger_inclusion", True)
+            ):
+                import admit_ledger as _al
+                sym_r = str(rec.get("symbol") or "")
+                src_row = row_by_sym.get(sym_r) or {}
+                _al.log_refuse(
+                    stage="inclusion",
+                    symbol=sym_r,
+                    reason=why,
+                    source=str(src_row.get("source") or ""),
+                    row=src_row if isinstance(src_row, dict) else None,
+                    extra={"criteria": rec.get("criteria")},
+                    cfg=cfg,
+                )
+        except Exception:
+            pass
     for gone in [s for s in _admit_ticks if s not in seen]:
         _admit_ticks.pop(gone, None)
     return kept, rejected

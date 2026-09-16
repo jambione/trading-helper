@@ -1176,6 +1176,13 @@ DEFAULT_CONFIG = {
     # already allowed when this flag is on.
     "ai_dead_reentry_block":           False,
     "ai_reentry_min_mfe_r":            0.50,
+    # Refused-side admit ledger (observe-only). Uncapped seed + inclusion
+    # refuses → ai_reports/admit_ledger/YYYY-MM-DD.jsonl. Fail-open; does not
+    # change keep/arm/exit. Gate grading uses this after ≥1–2 RTH days.
+    "ai_admit_ledger_enabled":        True,
+    "ai_admit_ledger_seed":           True,
+    "ai_admit_ledger_inclusion":      True,
+    "ai_admit_ledger_kept_sample":    False,  # optional paired digs; off v1
     # Exit-side decision log while held (MAE/MFE, exit_why). tools/exit_report.
     "ai_position_shadow_enabled":     True,
     # On sell_signal while green, move stop to entry (never loosen).
@@ -1891,6 +1898,10 @@ SAFE_CONFIG_KEYS = [
     "ai_late_hold_dead_trade_min",
     "ai_dead_reentry_block",
     "ai_reentry_min_mfe_r",
+    "ai_admit_ledger_enabled",
+    "ai_admit_ledger_seed",
+    "ai_admit_ledger_inclusion",
+    "ai_admit_ledger_kept_sample",
     "ai_position_shadow_enabled",
     "ai_sell_signal_breakeven",
     "ai_heal_unprotected",
