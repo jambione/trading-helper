@@ -1,13 +1,13 @@
 # Trading-helper backlog (desk tracker)
 
 Living list of levers, parks, and evidence. Update when a lever ships or the order changes.
-Last updated: **2026-09-16** (proposal_ledger + source_scorecard — ship after RTH).
+Last updated: **2026-09-16** (half-split dig → ship **mistimed_heat=false** only; full dir-only still parked).
 
 ## Operating rules
 - **One product lever at a time** (observe/log through RTH; change off-hours).
 - **Progress ladder:** clean arms → MFE≥0.25R → capture → med R/$ → equity.
 - **Plan A** = stream-fresh + EXH rising in heat band + RSI timer (live still level-capped ≤60 + mistimed/soft_ob; **target** direction-only per Sep-11) + confirm_ticks=1; no MACD arm / no MACD OB pin; local trail; broker stop off.
-- **RSI interim:** `cm_rsi_max=60` + mistimed/soft_ob are **not** sacred. **Target** = direction-only (block trending-down when RSI > ~10; no level max 60 / mistimed level gates). Do **not** soften EXH/RSI or touch arm-code this week — measure the three-knob ship first. **After Wed score:** measure direction-only (`entry_arm_ab` / ledger refuses) → ship only if lift holds.
+- **RSI interim:** `cm_rsi_max=60` + soft_ob still **LIVE**; **`mistimed_heat=false` shipped 2026-09-16** (live-effective slice of narrower PASS cell — see Next #2). Full dir-only (`rsi_max=null`) still **parked** (`half_ok=False`). Do **not** soften EXH / heat band / `require_exh_rising`. Do **not** auto-apply `exh_heat_min20`.
 - **Plan B** = burst trial, code-ready, **live off** until Plan A earns a dry-run open.
 - Mid-RTH: no strategy retunes unless on fire (ops OK).
 - **admit_ledger** = refused-side instrument (`ai_reports/admit_ledger/YYYY-MM-DD.jsonl`, uncapped seed + inclusion). Observe-only; does not change who gets in. Gate grading (select/neutral/invert) after ≥1–2 RTH days of rows. Occupancy churn stays the weekly primary.
@@ -27,6 +27,8 @@ Last updated: **2026-09-16** (proposal_ledger + source_scorecard — ship after 
 | **Thu** | Tape readiness #1 — poller paint-trust parity | **SHIPPED** | `_paint_trust_young_stream_field` on Class C poller + `should_arm_buy` (mirror `apply_tape_blocker`). Age ceiling 15→20 still parked. |
 | **Thu+** | Optional `decision_max_age_sec` 15→20 | Parked behind #1 | Reclaims ~417 RTH border (15–20s) denials |
 | **Thu** | Green catch-up time-decay trail | **LIVE** (enable true) | `ai_local_trail_time_decay_enabled=true`, idle 8s, step 0.05R; overlay on give_r 0.20/1%; score capture vs early-scratch; flip off Fri if runners taxed |
+| **Wed 2026-09-16 after RTH** | RSI direction-only (`rsi_dir_only_fall_gt10`) | **FAIL — no ship** | AB 9/11–9/16: mean lift +0.085% but `half_ok=False`. Kitchen-sink parked. |
+| **Wed 2026-09-16 after RTH** | Half-split dig → mistimed off | **SHIP mistimed=false** | Dig: Wed 9/16 tanked dir-only half B (−1.72% day lift); `rsi_extended` dominated LIVE-blocked keeps. Narrower AB PASS: `rsi_dir_mistimed_off_keep_max60`. Live ship = **mistimed off only** (fall=10 not live-wired when `require_rising=false`). `allow_falling_below` stays 20; soft_ob stays on; max60 stays. Fri kill: flip mistimed back if no MFE/arrived-hot lift. Artifact: `benchmarks/entry_ab/half_split_dig_2026-09-11_2026-09-16.md`. |
 
 ### Wed scorecard (capture first)
 Among fills with **MFE≥0.25R**: median capture clearly better than Tue (aim ≥~40% of MFE; Tue QBTS ~3%). Trail give$ < MFE$ on most local_trails. Pass/fail on capture, not day P&L alone.
@@ -50,7 +52,7 @@ Same peaks, new leash: **−$0.51 → +$3.38** (+$3.89), all from 6 local_trail 
 ## Next (ranked)
 
 1. **Wed measure three-knob lean Plan A** — fewer `arm_confirming`, ~zero `overbought_macd_armed`, same/more clean EXH↑+RSI arms. If still thin → occupancy dig (not RSI/EXH soften).
-2. **RSI direction-only (after Wed)** — **Measure then ship.** Null/`off` `cm_rsi_max` level refuse; mistimed_heat + soft_ob **off**; keep direction refuse for falling when RSI > ~10 (`allow_falling_below=10` / require-rising path). Score with `entry_arm_ab` + ledger gate refuses; ship only if lift holds. Operator target — not frozen at max60.
+2. **RSI timing — mistimed off LIVE; full dir-only PARKED** — Half-split dig 9/11–9/16: half A=`[9/11,9/14]` half B=`[9/15,9/16]`. Dir-only pain = **Wed 9/16** day lift −1.72% vs LIVE; LIVE-blocked keeps dominated by **`rsi_extended`** (A×95 / B×149) — nulling max floods ledger. Narrower PASS: `rsi_dir_mistimed_off_keep_max60` n=35 mean=+0.879% lift=+0.687% half_ok=True (lift_a=+0.20 / lift_b=+0.93). **Shipped:** `ai_watch_mistimed_heat_enabled=false` only (operator: live-effective path). **Not shipped:** `allow_falling_below=10` (harness-only while `require_rising=false`), `rsi_max=null`, soft_ob off. Caveat: lone `rsi_mistimed_off` cell was AB FAIL (lift=−0.12) — Fri score is kill switch. Optional follow-up: align `cm_rsi_allows_buy` falling floor with harness `gate_keep` so fall=10 is live-testable. Dig: `benchmarks/entry_ab/half_split_dig_*.md`.
 3. **Entry help — heat_max 65–70** — Parked behind Wed three-knob + RSI dir measure unless EXH band is the proven leak.
 4. **Green catch-up trail (time-decay)** — **SHIPPED ON for Thu.** Idle 8s / step 0.05R / green-only / raise-only. Score capture vs early-scratch Fri; kill switch = set enabled false if runners taxed.
 3. **Movers hygiene** — WYHG-class fat spread was Tue’s biggest single $ hole (−$1.28), separate from momentum.

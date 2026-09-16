@@ -43,6 +43,13 @@
       "rsi_allow_falling_below": 10.0,
       "mistimed_heat": false
     },
+    {
+      "id": "rsi_dir_mistimed_off_keep_max60",
+      "rsi_max": 60.0,
+      "rsi_require_rising": false,
+      "rsi_allow_falling_below": 10.0,
+      "mistimed_heat": false
+    },
 
     {"id": "exh_heat_max_off", "heat_max": 0.0},
     {"id": "exh_heat_max65", "heat_max": 65.0},

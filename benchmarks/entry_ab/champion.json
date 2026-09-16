@@ -1,67 +1,79 @@
 {
-  "half_ok": false,
-  "reject_reason": "no cell beat LIVE on both day-halves with min_n",
-  "live": {
-    "id": "LIVE",
-    "cell": {
-      "id": "LIVE",
-      "rsi_max": 60.0,
-      "rsi_require_rising": false,
-      "rsi_allow_falling_below": 20.0,
-      "mistimed_heat": true,
-      "mistimed_rsi_min": 52.0,
-      "mistimed_rsi_peak_min": 55.0,
-      "heat_min": 40.0,
-      "heat_max": 70.0,
-      "require_exh_rising": true,
-      "require_macd": false,
-      "macd_min_gap": 0.015,
-      "macd_block_narrowing": false
-    },
-    "n": 6,
-    "n_shadow": 4,
-    "n_ledger": 2,
-    "ledger_pass_live": 2,
-    "blocked": 512,
-    "mean": 2.9769296703359793,
-    "median": 0.3607844342091233,
-    "win_pct": 50.0,
-    "half_a": {
-      "n": 6,
-      "mean": 2.9769296703359793,
-      "median": 0.3607844342091233,
-      "win_pct": 50.0
-    },
-    "half_b": {
-      "n": 0,
-      "mean": null,
-      "median": null,
-      "win_pct": null
-    },
-    "lift_vs_live": 0.0,
-    "lift_a": 0.0,
-    "lift_b": null,
-    "half_ok": false,
-    "fill_n": 0,
-    "fill_pl_sum": null,
-    "fill_r_mean": null,
-    "complexity": 6
+  "id": "rsi_dir_mistimed_off_keep_max60",
+  "cell": {
+    "id": "rsi_dir_mistimed_off_keep_max60",
+    "rsi_max": 60.0,
+    "rsi_require_rising": false,
+    "rsi_allow_falling_below": 10.0,
+    "mistimed_heat": false,
+    "mistimed_rsi_min": 52.0,
+    "mistimed_rsi_peak_min": 55.0,
+    "heat_min": 40.0,
+    "heat_max": 70.0,
+    "require_exh_rising": true,
+    "require_macd": false,
+    "macd_min_gap": 0.015,
+    "macd_block_narrowing": false
   },
+  "n": 35,
+  "n_shadow": 13,
+  "n_ledger": 22,
+  "ledger_pass_live": null,
+  "blocked": 3912,
+  "mean": 0.8791826583252693,
+  "median": -0.1438159156280016,
+  "win_pct": 31.428571428571427,
+  "half_a": {
+    "n": 14,
+    "mean": -1.32918888171157,
+    "median": -0.1438159156280016,
+    "win_pct": 14.285714285714286
+  },
+  "half_b": {
+    "n": 21,
+    "mean": 2.3514303516831623,
+    "median": -0.1451378809869345,
+    "win_pct": 42.857142857142854
+  },
+  "lift_vs_live": 0.6873698167682346,
+  "lift_a": 0.1979817990879622,
+  "lift_b": 0.9317721370142942,
+  "half_ok": true,
+  "fill_n": 5,
+  "fill_pl_sum": 0.19999999999998685,
+  "fill_r_mean": null,
+  "complexity": 7,
+  "bot_config": {
+    "ai_watch_arm_cm_rsi_max": 60.0,
+    "ai_watch_arm_cm_rsi_require_rising": false,
+    "ai_watch_arm_cm_rsi_allow_falling_below": 10.0,
+    "ai_watch_mistimed_heat_enabled": false,
+    "ai_watch_mistimed_heat_rsi_min": 52.0,
+    "ai_watch_mistimed_heat_rsi_peak_min": 55.0,
+    "ai_watch_exhaustion_heat_min_pct": 40.0,
+    "ai_watch_exhaustion_heat_max_pct": 70.0,
+    "ai_watch_require_exh_rising": true,
+    "ai_watch_arm_require_macd": false,
+    "macd_min_gap": 0.015,
+    "ai_watch_macd_block_narrowing": false
+  },
+  "advisory": true,
+  "note": "Do not auto-apply; Phase 1 / Sep 18 checkpoint.",
   "meta": {
-    "day_from": "2026-09-10",
-    "day_to": "2026-09-10",
-    "n_prepared": 518,
-    "n_prepared_shadow": 14,
-    "n_prepared_ledger": 504,
+    "day_from": "2026-09-11",
+    "day_to": "2026-09-16",
+    "n_prepared": 3947,
+    "n_prepared_shadow": 122,
+    "n_prepared_ledger": 3825,
     "ledger_enabled": true,
-    "ledger_raw": 1524,
+    "ledger_raw": 13300,
     "skip": {
-      "no_ind": 111,
-      "no_forward": 13
+      "no_ind": 646,
+      "no_forward": 51,
+      "no_bars": 3
     },
     "min_n": 25,
     "thin_min_n": false,
-    "champ_reason": "no cell beat LIVE on both day-halves with min_n"
-  },
-  "advisory": true
+    "champ_reason": ""
+  }
 }
