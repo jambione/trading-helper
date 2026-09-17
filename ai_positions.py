@@ -98,6 +98,11 @@ DEFAULT_MAX_SPREAD_PCT = 1.0
 # Day-scalp dead trade: minutes held with no meaningful MFE.
 DEFAULT_DEAD_TRADE_MIN = 22.0
 DEFAULT_DEAD_TRADE_MFE_R = 0.10
+# Fast no-progress flatten (seconds after fill confirm). Attacks stagnant
+# opens that never print meaningful MFE before the minute-scale dead_trade.
+DEFAULT_NO_PROGRESS_ENABLED = True
+DEFAULT_NO_PROGRESS_SEC = 60.0
+DEFAULT_NO_PROGRESS_MFE_R = 0.05
 # Abort a new fill if last is already through the stop or this far
 # under the intended entry (FGI/SPAI/TDIC −2R IEX slips).
 DEFAULT_FILL_ABORT_R = 0.15
@@ -2667,6 +2672,75 @@ def _tight_give_clears_entry(
     give = local_trail_give(last_f, risk_f, tight_cfg, mfe_r=99.0,
                             spread_r=spread_r)
     return last_f - give > entry_f + 1e-9
+
+
+def _stamp_entry_confirmed(pos: dict[str, Any], now: float | None = None) -> None:
+    """Mark fill confirmed and freeze the no-progress clock start once."""
+    if not isinstance(pos, dict):
+        return
+    if not pos.get("entry_confirmed"):
+        try:
+            pos["entry_confirmed_at"] = float(
+                now if now is not None else time.time())
+        except (TypeError, ValueError):
+            pos["entry_confirmed_at"] = time.time()
+    pos["entry_confirmed"] = True
+
+
+def no_progress_due(
+    pos: dict[str, Any] | None,
+    now: float | None = None,
+    cfg: dict | None = None,
+) -> bool:
+    """True when a confirmed open has stagnated under the MFE floor for T sec.
+
+    Clock starts at ``entry_confirmed_at`` (fill), not submit ``entry_time``.
+    Does not consult ``ai_exit_min_hold_sec``: once age ≥ T the flatten fires
+    even if min_hold is longer. When min_hold is shorter than T it has already
+    expired by the time this returns True.
+    """
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    # Missing key → off (partial test cfgs). Live bot_config sets true.
+    if not bool(cfg.get("ai_no_progress_flatten_enabled", False)):
+        return False
+    if not isinstance(pos, dict):
+        return False
+    if not pos.get("entry_confirmed") or pos.get("closing_reason"):
+        return False
+    if pos.get("tranche_a_filled"):
+        return False
+    _loc = _num(pos.get("local_stop_price"))
+    _ent = _num(pos.get("entry_price"))
+    if _loc is not None and _ent is not None and _loc > _ent + 1e-9:
+        return False  # trail already locked green — not a stagnant open
+    try:
+        t_sec = float(cfg.get("ai_no_progress_sec", DEFAULT_NO_PROGRESS_SEC)
+                      or 0.0)
+    except (TypeError, ValueError):
+        t_sec = DEFAULT_NO_PROGRESS_SEC
+    if t_sec <= 0:
+        return False
+    try:
+        mfe_need = float(
+            cfg.get("ai_no_progress_mfe_r", DEFAULT_NO_PROGRESS_MFE_R) or 0.0)
+    except (TypeError, ValueError):
+        mfe_need = DEFAULT_NO_PROGRESS_MFE_R
+    mfe = _num(pos.get("mfe_r"))
+    if mfe is not None and mfe + 1e-12 >= mfe_need:
+        return False
+    start = _num(pos.get("entry_confirmed_at"))
+    if start is None:
+        # Legacy confirmed rows (pre-stamp): fall back to entry_time so a
+        # stagnant open after deploy is still eligible. New fills stamp
+        # entry_confirmed_at on first confirm.
+        start = _num(pos.get("entry_time"))
+    if start is None:
+        return False
+    try:
+        age = float(now if now is not None else time.time()) - float(start)
+    except (TypeError, ValueError):
+        return False
+    return age + 1e-9 >= t_sec
 
 
 def soft_exit_held_back(pos: dict[str, Any] | None,
@@ -5347,7 +5421,7 @@ def manage_open_positions(
                             px = round(float(bid), 2) if bid and bid > 0 else None
                             if px is not None:
                                 _rest_working_sell(ticker, pos, px, "flatten")
-                            pos["entry_confirmed"] = True
+                            _stamp_entry_confirmed(pos, now)
                             pos["working_sell_state"] = pos.get("working_sell_state") or "held_dark"
                             events.append({
                                 "ticker": ticker, "event": "fill_through_stop",
@@ -5362,7 +5436,7 @@ def manage_open_positions(
                         out = alpaca_trader.close_out(ticker) or {}
                         if isinstance(out, dict) and out.get("order_id"):
                             pos["close_order_id"] = str(out["order_id"])
-                        pos["entry_confirmed"] = True
+                        _stamp_entry_confirmed(pos, now)
                         pos["closing_reason"] = "fill_through_stop"
                         events.append({
                             "ticker": ticker, "event": "fill_through_stop",
@@ -5374,7 +5448,7 @@ def manage_open_positions(
                         )
                         changed = True
                         continue
-            pos["entry_confirmed"] = True
+            _stamp_entry_confirmed(pos, now)
             # High print ratchets the shelf; low print is the liquidation
             # trigger so a tape dip through TRAIL sells even if the broker
             # mark is still above.
@@ -6044,6 +6118,35 @@ def manage_open_positions(
                               pos.get("entry_time") or now)) / 60.0, 1))
                 changed = True
                 continue
+
+        # Fast no-progress flatten (seconds after fill confirm). Fires before
+        # the minute-scale dead_trade backstop; ignores min_hold past T.
+        if no_progress_due(pos, now):
+            mfe = _num(pos.get("mfe_r"))
+            start = _num(pos.get("entry_confirmed_at")) or _num(
+                pos.get("entry_time")) or now
+            age_sec = max(0.0, float(now) - float(start))
+            alpaca_trader.cancel_open_orders(ticker)
+            out = alpaca_trader.close_out(ticker) or {}
+            if isinstance(out, dict) and out.get("order_id"):
+                pos["close_order_id"] = str(out["order_id"])
+            pos["closing_reason"] = "no_progress"
+            exit_why[ticker] = "no_progress"
+            events.append({
+                "ticker": ticker, "event": "no_progress",
+                "age_sec": round(age_sec, 1),
+                "mfe_r": mfe,
+            })
+            log_event(
+                "no_progress", symbol=ticker,
+                age_sec=round(age_sec, 1), mfe_r=mfe,
+                threshold_r=_cfg_float(
+                    "ai_no_progress_mfe_r", DEFAULT_NO_PROGRESS_MFE_R),
+                timeout_sec=_cfg_float(
+                    "ai_no_progress_sec", DEFAULT_NO_PROGRESS_SEC),
+            )
+            changed = True
+            continue
 
         # Day-scalp dead trade: no scale-out, never ran (MFE < 0.10R).
         # A shelf already above entry means the trail locked profit — leave it.

@@ -2326,6 +2326,7 @@ def test_dead_trade_exits_flat_trade_after_timeout(tmp_path, monkeypatch):
     cfg = {
         "ai_dead_trade_min": 22.0,
         "ai_dead_trade_mfe_r": 0.10,
+        "ai_no_progress_flatten_enabled": False,
         "ai_local_trail_enabled": False,
         "ai_position_shadow_enabled": False,
         "ai_sell_signal_breakeven": False,
@@ -2690,6 +2691,149 @@ def test_ratchet_invariant_passes_when_runner_locked_at_entry():
     rows = cp.evaluate_ratchet_invariants(state, detail, orders)
     assert rows[0]["ok"] is True
     assert rows[0]["event"] == "ratchet_ok"
+
+
+def test_no_progress_flattens_when_mfe_stays_flat_for_timeout(
+        tmp_path, monkeypatch):
+    """MFE ~0 for 60s after fill confirm → market flatten (no_progress)."""
+    t0 = 1_000_000.0
+    _seed_state(
+        tmp_path, monkeypatch,
+        time_stop_days=None, entry_time=t0 - 5.0,
+        entry_confirmed=True, entry_confirmed_at=t0,
+        last_seen_price=40.50, mfe_r=0.0, mae_r=0.0,
+        tranche_a_filled=False, local_stop_price=40.25,
+        entry_price=40.50, risk_per_share=2.5,
+    )
+    cfg = {
+        "ai_no_progress_flatten_enabled": True,
+        "ai_no_progress_sec": 60.0,
+        "ai_no_progress_mfe_r": 0.05,
+        "ai_exit_min_hold_sec": 30.0,  # lower than T — must not extend past T
+        "ai_dead_trade_min": 0,
+        "ai_local_trail_enabled": False,
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_watch_exhaustion_rules": False,
+    }
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_no_progress_flatten_enabled": True,
+        "ai_watch_exhaustion_rules": False,
+    }.get(key, default))
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             current_price=40.50)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=t0 + 60.0)
+    assert any(e.get("event") == "no_progress" for e in events), events
+    assert stub.closed == ["NVDA"]
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "no_progress"
+
+
+def test_no_progress_skips_when_mfe_clears_threshold(tmp_path, monkeypatch):
+    """MFE hits 0.05R at 30s → this rule does not flatten."""
+    t0 = 1_000_000.0
+    _seed_state(
+        tmp_path, monkeypatch,
+        time_stop_days=None, entry_time=t0,
+        entry_confirmed=True, entry_confirmed_at=t0,
+        last_seen_price=40.625, mfe_r=0.05, mae_r=0.0,
+        tranche_a_filled=False, local_stop_price=40.25,
+        entry_price=40.50, risk_per_share=2.5,
+    )
+    cfg = {
+        "ai_no_progress_flatten_enabled": True,
+        "ai_no_progress_sec": 60.0,
+        "ai_no_progress_mfe_r": 0.05,
+        "ai_dead_trade_min": 0,
+        "ai_local_trail_enabled": False,
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_watch_exhaustion_rules": False,
+    }
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+    }.get(key, default))
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             current_price=40.625)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    # Past timeout, but MFE already proved the trade.
+    events = cp.manage_open_positions(now=t0 + 90.0)
+    assert not any(e.get("event") == "no_progress" for e in events)
+    assert stub.closed == []
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"].get("closing_reason") is None
+
+
+def test_no_progress_does_not_fire_before_fill_confirm(tmp_path, monkeypatch):
+    """Unconfirmed resting entry must not be flattened by no_progress."""
+    t0 = 1_000_000.0
+    _seed_state(
+        tmp_path, monkeypatch,
+        time_stop_days=None, entry_time=t0,
+        entry_confirmed=False, entry_limit_price=40.55,
+        last_seen_price=None, mfe_r=None,
+        tranche_a_filled=False,
+    )
+    cfg = {
+        "ai_no_progress_flatten_enabled": True,
+        "ai_no_progress_sec": 60.0,
+        "ai_no_progress_mfe_r": 0.05,
+        "ai_dead_trade_min": 0,
+        "ai_entry_limit_ttl_sec": 900.0,
+        "ai_local_trail_enabled": False,
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+    }
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+    }.get(key, default))
+    stub = _StubBrokerManage(order_status="new", position_open=False)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=t0 + 120.0)
+    assert not any(e.get("event") == "no_progress" for e in events)
+    assert "NVDA" not in stub.closed
+    assert "NVDA" in json.loads(_state_path(tmp_path).read_text())
+
+
+def test_no_progress_due_helper_respects_confirm_clock():
+    pos = {
+        "entry_confirmed": True,
+        "entry_confirmed_at": 1000.0,
+        "entry_time": 900.0,
+        "mfe_r": 0.0,
+        "entry_price": 40.0,
+        "local_stop_price": 39.75,
+    }
+    cfg = {
+        "ai_no_progress_flatten_enabled": True,
+        "ai_no_progress_sec": 60.0,
+        "ai_no_progress_mfe_r": 0.05,
+    }
+    assert cp.no_progress_due(pos, now=1059.0, cfg=cfg) is False
+    assert cp.no_progress_due(pos, now=1060.0, cfg=cfg) is True
+    pos["mfe_r"] = 0.05
+    assert cp.no_progress_due(pos, now=1100.0, cfg=cfg) is False
+    pos["mfe_r"] = 0.0
+    pos["entry_confirmed"] = False
+    assert cp.no_progress_due(pos, now=1100.0, cfg=cfg) is False
 
 
 def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):

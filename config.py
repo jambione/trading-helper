@@ -1186,6 +1186,13 @@ DEFAULT_CONFIG = {
     # (S/CRCL on 2026-08-11) waiting for an exhaustion exit that is now off.
     "ai_dead_trade_min":               30.0,
     "ai_dead_trade_mfe_r":            0.10,
+    # Fast no-progress flatten (Plan A pack #7, 2026-09-17): after fill
+    # confirm, if peak MFE_r stays under the threshold for T seconds →
+    # market flatten with close_reason=no_progress. Clock starts at confirm,
+    # not submit. Does not wait on ai_exit_min_hold_sec past T.
+    "ai_no_progress_flatten_enabled":  True,
+    "ai_no_progress_sec":              60.0,
+    "ai_no_progress_mfe_r":            0.05,
     # Paper experiment: last-hour hold (gate 1+2, 2026-08-20). When on,
     # daytime auto-arm is off. New entries only 14:00–15:30 ET on names
     # admitted in that window; 2% hard stop, no 0.10R shelf, 30m dead,
@@ -1945,6 +1952,9 @@ SAFE_CONFIG_KEYS = [
     "ai_day_scalp_dual_tranche",
     "ai_dead_trade_min",
     "ai_dead_trade_mfe_r",
+    "ai_no_progress_flatten_enabled",
+    "ai_no_progress_sec",
+    "ai_no_progress_mfe_r",
     "desk_product",
     "ai_h4_paper",
     "ai_h3_paper",

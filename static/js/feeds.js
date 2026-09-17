@@ -1090,6 +1090,9 @@ function _paintBookLegend(cfg, row) {
                 + ` &nbsp;=&nbsp; ${n('ai_watch_synth_stop_pct', 5)}% under entry`, null],
     ['BE',    `floor at fill +$${n('ai_breakeven_offset_px', 0)} once ${n('ai_local_trail_be_at_r', 0)}R or ${n('ai_local_trail_be_at_pct', 0)}%`, null],
     ['DEAD',  `${n('ai_dead_trade_min', 0)}m held with MFE under ${n('ai_dead_trade_mfe_r', 0)}R`, null],
+    ['NOPROG', b('ai_no_progress_flatten_enabled', 0)
+                ? `${n('ai_no_progress_sec', 60)}s after fill with MFE under ${n('ai_no_progress_mfe_r', 0.05)}R`
+                : 'off', null],
     ['STALE', `no live quote for ${n('ai_stale_data_max_age_sec', 15)}s → close`, null],
     ['EOD',   b('ai_eod_liquidate_enabled', 1) ? `flatten at ${s('ai_eod_liquidate_time', '15:50')}` : 'no EOD flatten', null],
   ];
