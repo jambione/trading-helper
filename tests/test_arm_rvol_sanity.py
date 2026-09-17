@@ -85,7 +85,37 @@ def test_the_refusal_has_a_label_that_does_not_say_too_hot():
     assert label and "hot" not in label.lower()
 
 
-def test_the_default_is_above_every_plausible_reading():
+def test_the_default_disables_the_bound():
+    """Missing bot_config key must not revive rvol_implausible (was 25)."""
     d = _config.DEFAULT_CONFIG["ai_watch_arm_rvol_sane_max"]
-    assert d > 19.5, "must not refuse the plausible 8-20x band"
-    assert d < 26.8, "must refuse the broken cluster"
+    assert float(d or 0) <= 0.0
+
+
+def test_should_arm_buy_respects_sane_max_zero_and_twenty_five():
+    """Integration: sane_max=0 never rvol_implausible; =25 still can."""
+    from tests.test_ai_entry_watch import _armable_rec, _last_cfg
+
+    rec = _armable_rec()
+    rec["source"] = "momentum"
+    rec["structure"]["zone_kind"] = "at_last"
+    rec["structure"]["synthetic"] = True
+    rec["structure"]["reward_risk"] = 0.6
+    rec["rvol"] = 1044.9
+    rec["indicator"]["pctr"] = -30.0
+    rec["indicator"]["pctr_rising"] = True
+    rec["indicator"]["pctr_falling"] = False
+
+    cfg0 = _last_cfg(
+        ai_watch_arm_rvol_sane_max=0.0,
+        ai_watch_arm_require_cm_rsi=False,
+        ai_watch_soft_ob_enabled=False,
+        ai_watch_mistimed_heat_enabled=False,
+        ai_watch_exhaustion_heat_min_pct=0.0,
+    )
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=cfg0)
+    assert ok is True, why
+    assert why != "rvol_implausible"
+
+    cfg25 = dict(cfg0, ai_watch_arm_rvol_sane_max=25.0)
+    ok, why = ew.should_arm_buy(rec, ask=32.0, bid=31.9, cfg=cfg25)
+    assert ok is False and why == "rvol_implausible"

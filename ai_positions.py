@@ -117,12 +117,11 @@ DEFAULT_LOCAL_TRAIL_MIN_GIVE_MAX_R = 0.20
 # While last > entry, idle ~8s with no new peak raises local_stop toward
 # last − min_cushion in step_r chunks. At ceiling + idle: overtake to last
 # so trail-hit liquidates green without a dip. Raise-only; off when not green.
-# Jonathan 2026-09-09: live ON for Thu — score capture vs early-scratch;
-# flip off Friday if runners get taxed.
+# Live ON: idle catch-up under greens; overtake at ceiling banks without a dip.
 DEFAULT_LOCAL_TRAIL_TIME_DECAY_ENABLED = True
 DEFAULT_LOCAL_TRAIL_DECAY_IDLE_SEC = 8.0
 DEFAULT_LOCAL_TRAIL_DECAY_STEP_R = 0.05
-# True = legacy overtake stop>=last at ceiling; False = park at last−cushion.
+# True = overtake stop>=last at ceiling; False = park at last−cushion.
 DEFAULT_LOCAL_TRAIL_DECAY_OVERTAKE = True
 # Optional: only decay while mfe_r is under this. 0 = off (green gate alone).
 DEFAULT_LOCAL_TRAIL_DECAY_MAX_MFE_R = 0.0

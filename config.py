@@ -515,8 +515,8 @@ DEFAULT_CONFIG = {
     # tape. Those nineteen averaged -0.236R against -0.035R for the book as a
     # whole and cost -4.48R. The five plausible 8-20 readings are left alone:
     # this refuses what cannot be true, and takes no view on what is merely
-    # extreme. 0 disables.
-    "ai_watch_arm_rvol_sane_max":      25.0,
+    # extreme. 0 disables (Plan A 2026-09-17: kill rvol_implausible arm refuses).
+    "ai_watch_arm_rvol_sane_max":      0.0,
     # Cap how many LOOK tags apply_look_highlights may set panel-wide.
     "ai_watch_look_max":                  20,
     # False (default after 2026-08-11): allow non-EXT trending heat onto the
@@ -1164,9 +1164,9 @@ DEFAULT_CONFIG = {
     "ai_local_trail_decay_step_r":    0.05,
     # Optional MFE ceiling for decay; 0 = off (green gate alone).
     "ai_local_trail_decay_max_mfe_r": 0.0,
-    # True = stop>=last at ceiling (legacy overtake). False = park at
-    # last−cushion and wait for a 1¢ dip (Jonathan 2026-09-15).
-    "ai_local_trail_decay_overtake":  False,
+    # True = stop>=last at ceiling (overtake; greens bank without a dip).
+    # False = park at last−cushion and wait for a 1¢ dip.
+    "ai_local_trail_decay_overtake":  True,
     # Abort a confirm when fill or tape is this far (R) through the limit/stop.
     # 0.30 let FGI/SPAI/TDIC open 2R in the hole on a stale ask (08-14).
     "ai_fill_abort_r":                 0.15,
@@ -1569,6 +1569,8 @@ _EFFECTIVE_KEYS = (
     "ai_broker_stop_enabled",
     "ai_heal_unprotected",
     "ai_local_trail_enabled",
+    "ai_local_trail_time_decay_enabled",
+    "ai_local_trail_decay_overtake",
     "ai_premarket_working_sell",
     "ai_phase_b_enabled",
     "ai_phase_b_dry_run",
