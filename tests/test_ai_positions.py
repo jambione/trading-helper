@@ -2836,6 +2836,150 @@ def test_no_progress_due_helper_respects_confirm_clock():
     assert cp.no_progress_due(pos, now=1100.0, cfg=cfg) is False
 
 
+def _exh_fall_cfg(**over):
+    cfg = {
+        "ai_exh_falling_flatten_enabled": True,
+        "ai_exh_falling_flatten_confirm_ticks": 2,
+        "ai_no_progress_flatten_enabled": False,
+        "ai_dead_trade_min": 0,
+        "ai_local_trail_enabled": False,
+        "ai_position_shadow_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_heal_unprotected": False,
+        "ai_watch_exhaustion_rules": False,
+        "ai_exit_left_overbought": False,
+        "ai_exit_macd_liquidate": False,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_exh_falling_flatten_closes_when_pctr_falling(tmp_path, monkeypatch):
+    """Confirmed open + pctr_falling for confirm ticks → market flatten."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_confirmed=True, entry_confirmed_at=1_000_000.0,
+        entry_time=1_000_000.0, last_seen_price=40.60,
+        entry_price=40.50, mfe_r=0.04, local_stop_price=40.25,
+        tranche_a_filled=False,
+    )
+    cfg = _exh_fall_cfg()
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+        "ai_exit_macd_liquidate": False,
+        "ai_exh_falling_flatten_enabled": True,
+    }.get(key, default))
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {
+        "NVDA": {"pctr": -40.0, "pctr_falling": True, "pctr_rising": False},
+    })
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             current_price=40.60)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    # Tick 1: streak builds, no exit yet (confirm=2).
+    events = cp.manage_open_positions(now=1_000_010.0)
+    assert not any(e.get("event") == "exh_falling_flatten" for e in events)
+    assert stub.closed == []
+    # Tick 2: confirmed falling → flatten.
+    events = cp.manage_open_positions(now=1_000_013.0)
+    assert any(e.get("event") == "exh_falling_flatten" for e in events), events
+    assert stub.closed == ["NVDA"]
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"]["closing_reason"] == "exh_falling_flatten"
+
+
+def test_exh_falling_flatten_skips_when_pctr_rising(tmp_path, monkeypatch):
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_confirmed=True, entry_confirmed_at=1_000_000.0,
+        entry_time=1_000_000.0, last_seen_price=40.60,
+        entry_price=40.50, mfe_r=0.04, local_stop_price=40.25,
+        tranche_a_filled=False,
+    )
+    cfg = _exh_fall_cfg()
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+        "ai_exit_macd_liquidate": False,
+    }.get(key, default))
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: {
+        "NVDA": {"pctr": -30.0, "pctr_falling": False, "pctr_rising": True},
+    })
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             current_price=40.60)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    for t in (1_000_010.0, 1_000_013.0, 1_000_016.0):
+        events = cp.manage_open_positions(now=t)
+        assert not any(e.get("event") == "exh_falling_flatten" for e in events)
+    assert stub.closed == []
+    assert json.loads(_state_path(tmp_path).read_text())["NVDA"].get(
+        "closing_reason") is None
+
+
+def test_exh_falling_flatten_single_tick_flicker_no_exit(tmp_path, monkeypatch):
+    """confirm=2: one falling tick then rising → streak resets, no flatten."""
+    _seed_state(
+        tmp_path, monkeypatch,
+        entry_confirmed=True, entry_confirmed_at=1_000_000.0,
+        entry_time=1_000_000.0, last_seen_price=40.60,
+        entry_price=40.50, mfe_r=0.04, local_stop_price=40.25,
+        tranche_a_filled=False,
+    )
+    cfg = _exh_fall_cfg(ai_exh_falling_flatten_confirm_ticks=2)
+    monkeypatch.setattr(cp, "_entry_cfg", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_all", lambda: cfg)
+    monkeypatch.setattr(cp, "_cfg_flag", lambda key, default=True: {
+        "ai_local_trail_enabled": False,
+        "ai_sell_signal_breakeven": False,
+        "ai_watch_exhaustion_rules": False,
+        "ai_exit_macd_liquidate": False,
+    }.get(key, default))
+    ind = {"NVDA": {"pctr": -40.0, "pctr_falling": True, "pctr_rising": False}}
+    monkeypatch.setattr(cp, "_engine_indicators", lambda: ind)
+    stub = _StubBrokerManage(order_status="new", position_open=True,
+                             current_price=40.60)
+    monkeypatch.setitem(sys.modules, "alpaca_trader", stub)
+
+    events = cp.manage_open_positions(now=1_000_010.0)
+    assert not any(e.get("event") == "exh_falling_flatten" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"].get("exh_fall_streak") == 1
+
+    # Flicker back to rising — streak must clear.
+    ind["NVDA"] = {"pctr": -35.0, "pctr_falling": False, "pctr_rising": True}
+    events = cp.manage_open_positions(now=1_000_013.0)
+    assert not any(e.get("event") == "exh_falling_flatten" for e in events)
+    state = json.loads(_state_path(tmp_path).read_text())
+    assert state["NVDA"].get("exh_fall_streak") in (None, 0)
+    assert stub.closed == []
+
+
+def test_exh_falling_flatten_due_helper():
+    cfg = {
+        "ai_exh_falling_flatten_enabled": True,
+        "ai_exh_falling_flatten_confirm_ticks": 2,
+    }
+    pos = {"entry_confirmed": True}
+    assert cp.exh_falling_flatten_due(
+        pos, {"pctr": -40.0, "pctr_falling": True}, cfg) is False
+    assert pos.get("exh_fall_streak") == 1
+    assert cp.exh_falling_flatten_due(
+        pos, {"pctr": -40.0, "pctr_falling": True}, cfg) is True
+    pos2 = {"entry_confirmed": True}
+    assert cp.exh_falling_flatten_due(
+        pos2, {"pctr": -30.0, "pctr_falling": False, "pctr_rising": True},
+        cfg) is False
+    assert "exh_fall_streak" not in pos2 or pos2.get("exh_fall_streak") is None
+
+
 def test_dead_trade_skips_when_mfe_proves_the_trade(tmp_path, monkeypatch):
     _seed_state(
         tmp_path, monkeypatch,

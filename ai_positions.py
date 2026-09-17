@@ -103,6 +103,9 @@ DEFAULT_DEAD_TRADE_MFE_R = 0.10
 DEFAULT_NO_PROGRESS_ENABLED = True
 DEFAULT_NO_PROGRESS_SEC = 60.0
 DEFAULT_NO_PROGRESS_MFE_R = 0.05
+# Open long + EXH/pctr falling → market flatten (exit mirror of require_exh_rising).
+DEFAULT_EXH_FALLING_FLATTEN_ENABLED = True
+DEFAULT_EXH_FALLING_FLATTEN_CONFIRM_TICKS = 2
 # Abort a new fill if last is already through the stop or this far
 # under the intended entry (FGI/SPAI/TDIC −2R IEX slips).
 DEFAULT_FILL_ABORT_R = 0.15
@@ -2685,6 +2688,47 @@ def _stamp_entry_confirmed(pos: dict[str, Any], now: float | None = None) -> Non
         except (TypeError, ValueError):
             pos["entry_confirmed_at"] = time.time()
     pos["entry_confirmed"] = True
+
+
+def exh_falling_flatten_due(
+    pos: dict[str, Any] | None,
+    sig: dict[str, Any] | None,
+    cfg: dict | None = None,
+) -> bool:
+    """True when a confirmed open has EXH/pctr falling for N consecutive ticks.
+
+    Exit mirror of ``ai_watch_require_exh_rising`` on entry. Dedicated flag —
+    independent of ``ai_exit_left_overbought``. Always fires on falling
+    (underwater or green). Missing %R abstains. Resets streak on any
+    non-falling read.
+    """
+    cfg = cfg if isinstance(cfg, dict) else _cfg_all()
+    if not bool(cfg.get("ai_exh_falling_flatten_enabled", False)):
+        return False
+    if not isinstance(pos, dict):
+        return False
+    if not pos.get("entry_confirmed") or pos.get("closing_reason"):
+        return False
+    ind = sig if isinstance(sig, dict) else {}
+    # Need a real %R reading — do not invent an exit from a blank indicator.
+    if ind.get("pctr") is None and ind.get("pctr_falling") is None:
+        pos.pop("exh_fall_streak", None)
+        return False
+    falling = bool(ind.get("pctr_falling"))
+    if not falling:
+        pos.pop("exh_fall_streak", None)
+        return False
+    try:
+        need = int(cfg.get(
+            "ai_exh_falling_flatten_confirm_ticks",
+            DEFAULT_EXH_FALLING_FLATTEN_CONFIRM_TICKS,
+        ) or DEFAULT_EXH_FALLING_FLATTEN_CONFIRM_TICKS)
+    except (TypeError, ValueError):
+        need = DEFAULT_EXH_FALLING_FLATTEN_CONFIRM_TICKS
+    need = max(1, need)
+    streak = int(pos.get("exh_fall_streak") or 0) + 1
+    pos["exh_fall_streak"] = streak
+    return streak >= need
 
 
 def no_progress_due(
@@ -6095,6 +6139,52 @@ def manage_open_positions(
                               pctr=sig.get("pctr"))
                     changed = True
                     continue
+
+        # EXH/pctr falling flatten — exit mirror of require_exh_rising on
+        # entry. Dedicated flag; does not enable left_overbought. Always
+        # when falling (green or red). Confirm ticks anti-flicker.
+        if (
+            pos.get("entry_confirmed")
+            and not pos.get("closing_reason")
+            and bool(_cfg_all().get("ai_exh_falling_flatten_enabled", False))
+        ):
+            sig_fall = dict(indicators.get(ticker) or {})
+            live_px = _num(pos.get("last_seen_price"))
+            if live_px:
+                try:
+                    import ai_entry_watch as _ew_fall
+                    got = _ew_fall.live_exhaustion(
+                        ticker, live_px, _cfg_all(), now)
+                    if got:
+                        pctr_l, _ex, _ris, fall_l = got
+                        sig_fall["pctr"] = round(pctr_l, 2)
+                        sig_fall["pctr_falling"] = bool(fall_l)
+                        sig_fall["pctr_rising"] = bool(_ris)
+                except Exception:
+                    pass
+            prev_streak = pos.get("exh_fall_streak")
+            fire = exh_falling_flatten_due(pos, sig_fall, _cfg_all())
+            if pos.get("exh_fall_streak") != prev_streak:
+                changed = True  # persist anti-flicker streak across ticks
+            if fire:
+                alpaca_trader.cancel_open_orders(ticker)
+                out = alpaca_trader.close_out(ticker) or {}
+                if isinstance(out, dict) and out.get("order_id"):
+                    pos["close_order_id"] = str(out["order_id"])
+                pos["closing_reason"] = "exh_falling_flatten"
+                exit_why[ticker] = "exh_falling_flatten"
+                events.append({
+                    "ticker": ticker, "event": "exh_falling_flatten",
+                    "pctr": sig_fall.get("pctr"),
+                    "streak": pos.get("exh_fall_streak"),
+                })
+                log_event(
+                    "exh_falling_flatten", symbol=ticker,
+                    pctr=sig_fall.get("pctr"),
+                    streak=pos.get("exh_fall_streak"),
+                )
+                changed = True
+                continue
 
         # MACD thesis break — liquidate. Lives HERE, in the 3s positions loop,
         # and deliberately not in the 0.25s shelf tick: that loop's contract is

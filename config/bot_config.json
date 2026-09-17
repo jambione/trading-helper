@@ -16,6 +16,8 @@
   "ai_dead_reentry_block": false,
   "ai_dead_trade_mfe_r": 0.1,
   "ai_dead_trade_min": 30.0,
+  "ai_exh_falling_flatten_confirm_ticks": 2,
+  "ai_exh_falling_flatten_enabled": true,
   "ai_no_progress_flatten_enabled": true,
   "ai_no_progress_mfe_r": 0.05,
   "ai_no_progress_sec": 60.0,

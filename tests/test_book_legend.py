@@ -47,6 +47,8 @@ KEYS = [
     "ai_watch_synth_stop_pct", "ai_min_reward_risk", "ai_watch_min_stop_pct",
     "ai_dead_trade_mfe_r", "ai_no_progress_flatten_enabled",
     "ai_no_progress_sec", "ai_no_progress_mfe_r",
+    "ai_exh_falling_flatten_enabled",
+    "ai_exh_falling_flatten_confirm_ticks",
     "ai_stale_data_max_age_sec",
     "ai_broker_stop_enabled", "ai_eod_liquidate_enabled",
     "ai_watch_require_live_pctr", "ai_watch_require_realtime_rsi",

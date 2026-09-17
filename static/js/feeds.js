@@ -1093,6 +1093,9 @@ function _paintBookLegend(cfg, row) {
     ['NOPROG', b('ai_no_progress_flatten_enabled', 0)
                 ? `${n('ai_no_progress_sec', 60)}s after fill with MFE under ${n('ai_no_progress_mfe_r', 0.05)}R`
                 : 'off', null],
+    ['EXHFALL', b('ai_exh_falling_flatten_enabled', 0)
+                ? `EXH falling ×${n('ai_exh_falling_flatten_confirm_ticks', 2)} polls → flatten`
+                : 'off', null],
     ['STALE', `no live quote for ${n('ai_stale_data_max_age_sec', 15)}s → close`, null],
     ['EOD',   b('ai_eod_liquidate_enabled', 1) ? `flatten at ${s('ai_eod_liquidate_time', '15:50')}` : 'no EOD flatten', null],
   ];

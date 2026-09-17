@@ -1193,6 +1193,11 @@ DEFAULT_CONFIG = {
     "ai_no_progress_flatten_enabled":  True,
     "ai_no_progress_sec":              60.0,
     "ai_no_progress_mfe_r":            0.05,
+    # Open Plan A long + EXH/pctr falling → market flatten (pack #9).
+    # Dedicated flag — does not turn on left_overbought scalp semantics.
+    # Confirm ticks: consecutive falling polls before exit (2 = anti-flicker).
+    "ai_exh_falling_flatten_enabled":  True,
+    "ai_exh_falling_flatten_confirm_ticks": 2,
     # Paper experiment: last-hour hold (gate 1+2, 2026-08-20). When on,
     # daytime auto-arm is off. New entries only 14:00–15:30 ET on names
     # admitted in that window; 2% hard stop, no 0.10R shelf, 30m dead,
@@ -1955,6 +1960,8 @@ SAFE_CONFIG_KEYS = [
     "ai_no_progress_flatten_enabled",
     "ai_no_progress_sec",
     "ai_no_progress_mfe_r",
+    "ai_exh_falling_flatten_enabled",
+    "ai_exh_falling_flatten_confirm_ticks",
     "desk_product",
     "ai_h4_paper",
     "ai_h3_paper",
