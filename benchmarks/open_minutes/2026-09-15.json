@@ -1,0 +1,32 @@
+{
+  "day": "2026-09-15",
+  "rth": "09:30-16:00",
+  "rth_minutes": 390,
+  "source_used": "position_shadow",
+  "shadow_meta": {
+    "rows_rth": 1330,
+    "rows_real": 1319,
+    "rows_ghost": 11,
+    "ttl_sec": 30.0,
+    "source": "position_shadow",
+    "path": "/Users/jambimac/repo/trading-helper/ai_reports/position_shadow.jsonl"
+  },
+  "open_ge1": 45,
+  "open_ge1_pct": 11.54,
+  "open_ge2": 31,
+  "open_ge2_pct": 7.95,
+  "open_ge3": 0,
+  "open_ge3_pct": 0.0,
+  "zero_minutes": 345,
+  "zero_pct": 88.46,
+  "peak_open_n": 2,
+  "peak_open_hm": "14:21",
+  "first_zero_after_peak_hm": "14:52",
+  "count_hist": {
+    "0": 345,
+    "1": 14,
+    "2": 31
+  },
+  "pass_ge1": false,
+  "pass_note": "FAIL: zero open minutes present"
+}
