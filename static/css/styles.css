@@ -2548,20 +2548,23 @@ body.mobile [data-tv-toggle-btn] {
   display: grid;
   align-items: center;
   column-gap: 6px;
-  /* Ticker | State | Last | Entry | Stop | RSI | EXH | P&L
+  /* Ticker | State | Last | Chg | Entry | Stop | RSI | EXH | P&L
      RSI + EXH are the live arm levers. MACD column removed — not an arm
      gate anymore (exit engine still uses MACD off-screen). Hold stays gone:
      the Stop cell shows the min-hold countdown while it runs and the stop
-     price after. Qty is display:none and must not occupy a track. */
+     price after. Qty is display:none and must not occupy a track.
+     Chg is its own track: as a chip inside Last, a wide price and a wide
+     percent shared one cell and the PRICE was what got ellipsed. */
   grid-template-columns:
-    minmax(48px, 0.8fr)
+    minmax(48px, 0.75fr)
     minmax(4.6rem, 0.95fr)
-    minmax(54px, 0.8fr)
+    minmax(52px, 0.7fr)
+    minmax(44px, 0.55fr)
+    minmax(48px, 0.62fr)
+    minmax(56px, 0.75fr)
     minmax(50px, 0.7fr)
-    minmax(58px, 0.8fr)
-    minmax(52px, 0.75fr)
-    minmax(58px, 0.8fr)
-    minmax(52px, 0.75fr);
+    minmax(56px, 0.75fr)
+    minmax(50px, 0.7fr);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2622,6 +2625,7 @@ body.mobile [data-tv-toggle-btn] {
    EXH column, never added here, so it rendered left inside a right-aligned
    track and the values sat a column-width away from the word EXH. */
 .panel-ai-watch .feed-cols--ai-book .cell-price,
+.panel-ai-watch .feed-cols--ai-book .cell-chg,
 .panel-ai-watch .feed-cols--ai-book .cell-entry,
 .panel-ai-watch .feed-cols--ai-book .cell-hold,
 .panel-ai-watch .feed-cols--ai-book .cell-rsi,
@@ -2629,17 +2633,15 @@ body.mobile [data-tv-toggle-btn] {
 .panel-ai-watch .feed-cols--ai-book .cell-qty,
 .panel-ai-watch .feed-cols--ai-book .cell-pl { text-align: right; }
 
-/* Day % chip beside Last — Scan-style, no extra column. */
-.panel-ai-watch .feed-cols--ai-book .cell-price .cell-chg-inline {
-  display: inline-block;
-  margin-left: 0.35em;
-  font-size: 0.78em;
+/* Day % — its own column, sized to the value rather than to whatever the
+   price cell had left over. */
+.panel-ai-watch .feed-cols--ai-book .cell-chg {
+  font-size: 11.5px;
   font-weight: 600;
-  opacity: 0.92;
   white-space: nowrap;
 }
-.panel-ai-watch .feed-cols--ai-book .cell-price.chg-pos .cell-chg-inline { color: #4ade80; }
-.panel-ai-watch .feed-cols--ai-book .cell-price.chg-neg .cell-chg-inline { color: #f87171; }
+.panel-ai-watch .feed-cols--ai-book .cell-chg.chg-pos { color: #4ade80; }
+.panel-ai-watch .feed-cols--ai-book .cell-chg.chg-neg { color: #f87171; }
 
 /* Extreme movers not on the book — each line must name a reason. */
 .panel-ai-watch .ai-book-extreme-off {
@@ -2671,14 +2673,15 @@ body.mobile [data-tv-toggle-btn] {
    Qty stays desk-col-extra (hidden). State stays visible (no squeeze hide). */
 body.mobile .panel-ai-watch .feed-cols--ai-book {
   grid-template-columns:
-    minmax(0, 1.1fr)
     minmax(0, 1fr)
     minmax(0, 0.95fr)
-    minmax(0, 0.85fr)
-    minmax(0, 1fr);
+    minmax(0, 0.8fr)
+    minmax(0, 0.6fr)
+    minmax(0, 0.75fr)
+    minmax(0, 0.9fr);
   grid-template-areas:
-    "ticker state last entry pl"
-    "stop   rsi   exh   exh   exh";
+    "ticker state last chg entry pl"
+    "stop   rsi   exh  exh exh   exh";
   row-gap: 5px;
   column-gap: 8px;
   align-items: center;
@@ -2691,6 +2694,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book > .th-state,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-last,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-price { grid-area: last; }
+body.mobile .panel-ai-watch .feed-cols--ai-book > .th-chg,
+body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-chg { grid-area: chg; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
 body.mobile .panel-ai-watch .feed-cols--ai-book > .th-stop,
@@ -2718,6 +2723,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .ai-book-status {
   line-height: 1.1;
 }
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-price,
+body.mobile .panel-ai-watch .feed-cols--ai-book .cell-chg,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-entry,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-trail,
 body.mobile .panel-ai-watch .feed-cols--ai-book .cell-hold,
@@ -2728,14 +2734,15 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
 @media (max-width: 700px) {
   .panel-ai-watch .feed-cols--ai-book {
     grid-template-columns:
-      minmax(0, 1.1fr)
       minmax(0, 1fr)
       minmax(0, 0.95fr)
-      minmax(0, 0.85fr)
-      minmax(0, 1fr);
+      minmax(0, 0.8fr)
+      minmax(0, 0.6fr)
+      minmax(0, 0.75fr)
+      minmax(0, 0.9fr);
     grid-template-areas:
-      "ticker state last entry pl"
-      "stop   rsi   exh   exh   exh";
+      "ticker state last chg entry pl"
+      "stop   rsi   exh  exh exh   exh";
     row-gap: 5px;
     column-gap: 8px;
     align-items: center;
@@ -2748,6 +2755,8 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
   .panel-ai-watch .feed-cols--ai-book > .ai-book-status { grid-area: state; }
   .panel-ai-watch .feed-cols--ai-book > .th-last,
   .panel-ai-watch .feed-cols--ai-book > .cell-price { grid-area: last; }
+  .panel-ai-watch .feed-cols--ai-book > .th-chg,
+  .panel-ai-watch .feed-cols--ai-book > .cell-chg { grid-area: chg; }
   .panel-ai-watch .feed-cols--ai-book > .th-entry,
   .panel-ai-watch .feed-cols--ai-book > .cell-entry { grid-area: entry; }
   .panel-ai-watch .feed-cols--ai-book > .th-stop,
@@ -2775,6 +2784,7 @@ body.mobile .panel-ai-watch .feed-cols--ai-book .cell-exh {
     line-height: 1.1;
   }
   .panel-ai-watch .feed-cols--ai-book .cell-price,
+  .panel-ai-watch .feed-cols--ai-book .cell-chg,
   .panel-ai-watch .feed-cols--ai-book .cell-entry,
   .panel-ai-watch .feed-cols--ai-book .cell-trail,
   .panel-ai-watch .feed-cols--ai-book .cell-hold,

@@ -544,6 +544,8 @@ function _bookSortVal(r, col) {
         || r.status === 'filled' || r.status === 'submitted');
       return open ? (num(r.avg_entry) ?? num(r.entry_price)) : null;
     }
+    case 'chg':
+      return num(_bookPct(r));
     case 'stop':
       return num(_bookStopPx(r));
     case 'exh': {
@@ -1480,16 +1482,21 @@ function _updateBookRow(el, r) {
         'price-flash--up', 'price-flash--down'), 600);
     }
     if (rawPx != null) _bookPrevPrices[symKey] = rawPx;
-    const pct = _bookPct(r);
-    const chgTxt = _fmtBookChg(pct);
-    const wantHtml = chgTxt
-      ? `${_esc(px)}<span class="cell-chg-inline">${_esc(chgTxt)}</span>`
-      : _esc(px);
-    if (priceEl.innerHTML !== wantHtml) priceEl.innerHTML = wantHtml;
+    _setText(priceEl, px);
     // Steady day-change colour (same chg-pos / chg-neg as Momentum CHG%).
-    const chgMod = _bookChgClass(pct);
+    const chgMod = _bookChgClass(_bookPct(r));
     priceEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
     priceEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
+  }
+  // Chg is its own column: a row painted before this split has no .cell-chg,
+  // so patch what is there and let the next full render add the cell.
+  const bookChgEl = el.querySelector('.cell-chg');
+  if (bookChgEl) {
+    const pct = _bookPct(r);
+    const chgMod = _bookChgClass(pct);
+    _setText(bookChgEl, _fmtBookChg(pct) || '\u2014');
+    bookChgEl.classList.toggle('chg-pos', chgMod === 'chg-pos');
+    bookChgEl.classList.toggle('chg-neg', chgMod === 'chg-neg');
   }
   const rsiEl = el.querySelector('.cell-rsi');
   if (rsiEl) {
@@ -1545,16 +1552,14 @@ function _bookRowHtml(r) {
     : ((phase === 'ready' || statusLabel === 'ready' || statusLabel === 'buy')
       ? 'ticker-row feed-row feed-row--ai-book feed-row--ai-ready'
       : 'ticker-row feed-row feed-row--ai-book');
-  const priceInner = chgTxt
-    ? `${_esc(px)}<span class="cell-chg-inline">${_esc(chgTxt)}</span>`
-    : _esc(px);
   return `<div class="${rowCls}" data-book-symbol="${_esc(sym)}" data-feed-symbol="${_esc(sym)}">`
     + `<div class="feed-cols feed-cols--ai-book">`
     + `<div class="cell-ticker">${_esc(sym)}${r.bro_call
       ? `<span class="bro-badge" title="Trader Bro called this one out">BRO</span>`
       : ''}</div>`
     + `<div class="${statusCls}" title="${_esc(_bookBlockerTitle(r))}">${_esc(statusLabel)}</div>`
-    + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${priceInner}</div>`
+    + `<div class="cell-price${chgMod ? ` ${chgMod}` : ''}" data-price="${_esc(sym)}">${_esc(px)}</div>`
+    + `<div class="cell-chg${chgMod ? ` ${chgMod}` : ''}">${_esc(chgTxt || '\u2014')}</div>`
     + `<div class="cell-entry">${_esc(_fmtEntry(r))}</div>`
     + `<div class="cell-trail${_holdLeft(r) != null ? ' is-held' : ''}${_shelfHit(r) ? ' is-hit' : ''}" title="${_esc(_stopCellTitle(r))}"${_holdDataAttrs(r)}>${_esc(trail)}</div>`
     + `<div class="cell-rsi${_rsiPairClass(r)}${crit.rsi === true ? ' crit--pass' : ''}"${_fmtRsiTitle(r) ? ` title="${_esc(_fmtRsiTitle(r))}"` : ''}>${_esc(_bookRsiText(r))}</div>`

@@ -31,6 +31,7 @@ COLUMNS = [
     ("ticker", "cell-ticker"),
     ("state", "ai-book-status"),
     ("last", "cell-price"),
+    ("chg", "cell-chg"),
     ("entry", "cell-entry"),
     ("stop", "cell-trail"),
     ("rsi", "cell-rsi"),
@@ -104,7 +105,7 @@ def test_the_book_tracks_have_pixel_minimums():
     i = _CSS.index("\n.feed-cols--ai-book {")
     block = _CSS[i:_CSS.index("}", i)]
     tracks = re.findall(r"minmax\(([^,]+),", block)
-    assert len(tracks) == 8, f"expected 8 tracks, found {len(tracks)}"
+    assert len(tracks) == 9, f"expected 9 tracks, found {len(tracks)}"
     for t in tracks:
         t = t.strip()
         assert re.fullmatch(r"\d+(\.\d+)?(px|rem)", t), (
@@ -113,7 +114,7 @@ def test_the_book_tracks_have_pixel_minimums():
 
 # ── the headers are wired ────────────────────────────────────────────────
 
-def test_all_eight_columns_are_sortable():
+def test_all_nine_columns_are_sortable():
     block = _book_header_block()
     for col, _cell in COLUMNS:
         assert f'data-book-sort-col="{col}"' in block, f"{col} not sortable"
